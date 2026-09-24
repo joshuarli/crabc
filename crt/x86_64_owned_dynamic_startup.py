@@ -148,6 +148,9 @@ def names_layout(root: str) -> dict[str, str]:
         "d": names_path(root, "d", 3000, "libowned-startup-name-d.so"),
         "e": names_path(root, "e", 3000, "libowned-startup-name-e.so"),
         "f": names_path(root, "f", 3000, "libowned-startup-name-f.so"),
+        "g": names_path(root, "g", 3000, "libowned-startup-name-g.so"),
+        # Built for linking only; no search path names its directory.
+        "missing": names_path(root, "missing", 600, "libowned-startup-name-missing.so"),
         "leaf": f"{short}/{NAMES_LEAF}",
         "deep": f"{short}/{NAMES_DEEP}",
         # Two 3000-byte directories and one whose candidate is exactly the
@@ -171,7 +174,7 @@ def names_environment(layout: dict[str, str], mode: str, case: str) -> dict[str,
     environment = {"NAMES_CASE": case, "NAMES_PROGRAM": layout[f"program-{mode}-{NAMES_CASES[case]}"],
                    "NAMES_A": layout["a"], "NAMES_B": layout["b"], "NAMES_LEAF": layout["leaf"]}
     if case == "dlopen":
-        environment.update(NAMES_C=layout["c"], NAMES_D=layout["d"], NAMES_DEEP=layout["deep"])
+        environment.update(NAMES_C=layout["c"], NAMES_D=layout["d"], NAMES_DEEP=layout["deep"], NAMES_G=layout["g"])
     elif case == "search":
         directories = [layout[key].rpartition("/")[0]
                        for key in ("search-long-1", "search-long-2", "search-skipped", "search")]
@@ -606,23 +609,31 @@ def execute_wide(recorder: Recorder, root: Path, work: Path) -> list[dict[str, o
 NAMES_IMAGES = {
     "leaf": ("leaf", "names_leaf_value", 3, None, False),
     "deep": ("leaf", "names_deep_value", 4, None, False),
+    "missing": ("leaf", "names_missing_value", 11, None, False),
     "a": ("leaf", "names_a_value", 1, None, True),
     "b": ("origin", "names_b_value", 200, "leaf", True),
     "c": ("leaf", "names_c_value", 5, None, False),
     "d": ("origin", "names_d_value", 400, "deep", False),
     "e": ("leaf", "names_e_value", 6, None, False),
     "f": ("leaf", "names_f_value", 7, None, False),
+    "g": ("origin", "names_g_value", 600, "missing", False),
     "search-long-1": ("leaf", "names_search_value", 8, None, False),
     "search-long-2": ("leaf", "names_search_value", 8, None, False),
     "search-skipped": ("leaf", "names_search_value", 8, None, False),
     "search": ("leaf", "names_search_value", 9, None, False),
 }
-DEPENDENCY_SYMBOL = {"leaf": "names_leaf_value", "deep": "names_deep_value"}
+DEPENDENCY_SYMBOL = {"leaf": "names_leaf_value", "deep": "names_deep_value", "missing": "names_missing_value"}
+# Search paths other than the layout's shared RUNPATH.
+NAMES_RUNPATH = {"g": "$ORIGIN"}
+# The only image that also exports a long C++-mangled-style symbol.
+NAMES_LONG = "c"
 
 
 def names_defines(key: str) -> list[str]:
     role, symbol, value, dependency, _pathname = NAMES_IMAGES[key]
     defines = [f"-DNAMES_SYMBOL={symbol}", f"-DNAMES_ID={value}"]
+    if key == NAMES_LONG:
+        defines.append("-DNAMES_LONG")
     if role == "leaf":
         return ["-DNAMES_LEAF", *defines]
     return ["-DNAMES_ORIGIN", *defines, f"-DNAMES_LEAF_SYMBOL={DEPENDENCY_SYMBOL[dependency]}"]
@@ -675,11 +686,12 @@ def build_names(recorder: Recorder, product: Path, work: Path) -> dict[str, obje
             final[key] = directory / "final" / basename
             replay_link(recorder, f"relink-names-{key}", normal[key], final[key],
                         soname=candidate_layout[key] if pathname else None,
-                        runpath=candidate_layout["runpath"] if dependency else None)
+                        runpath=NAMES_RUNPATH.get(key, candidate_layout["runpath"]) if dependency else None)
         oracle_output = Path(oracle_layout[key])
         oracle_output.parent.mkdir(parents=True, exist_ok=True)
         soname = oracle_layout[key] if pathname else basename
-        search = ["-Wl,--enable-new-dtags", f"-Wl,-rpath,{oracle_layout['runpath']}", "-Wl,--no-as-needed",
+        search = ["-Wl,--enable-new-dtags", f"-Wl,-rpath,{NAMES_RUNPATH.get(key, oracle_layout['runpath'])}",
+                  "-Wl,--no-as-needed",
                   oracle_layout[dependency]] if dependency else []
         recorder.run(f"oracle-names-{key}", [str(ORACLE_COMPILER), "-fPIC", "-shared", *FIXTURE_FLAGS, *defines,
                                              str(NAMES_SOURCE), f"-Wl,-soname,{soname}", *search,
@@ -746,8 +758,13 @@ def execute_names(recorder: Recorder, root: Path, work: Path) -> list[dict[str, 
                 oracle_transcript = reference.stdout.decode(errors="replace")
                 # Every stored name the oracle reports must match all three views.
                 reports = [item.rpartition(":")[2] for item in oracle_transcript.split(";") if item.count(":") == 2]
+                # The dlopen case's diagnostics must be exact in the oracle.
+                expected = ("missing=0,missing(5037,1);again(1);g=0,needed(", ",1);",
+                            "bare:299:1:1:Cross-device link;bare-zero:299:1:1:No error information;",
+                            "overlong:4999:1:1:Filename too long;lifecycle(0,1,1);") if case == "dlopen" else ()
                 require(reference.returncode == NAMES_STATUS and reference.stderr == b"" and reports
-                        and all(item == "111" for item in reports) and "dlopen-failed" not in oracle_transcript,
+                        and all(item == "111" for item in reports) and "dlopen-failed" not in oracle_transcript
+                        and all(item in oracle_transcript for item in expected),
                         f"{label}: pinned musl oracle observed {oracle_transcript!r} status {reference.returncode} "
                         f"{reference.stderr.decode(errors='replace')!r}")
                 require(observed.returncode == NAMES_STATUS and transcript == oracle_transcript

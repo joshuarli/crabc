@@ -10,13 +10,26 @@ use core::ptr;
 
 /// Private dlopen failure record filled by the interpreter. It mirrors ldso's
 /// `x86_64_runtime_registry::RuntimeDiagnostic`: a musl message kind, a Linux
-/// errno (or relocation type), and up to three NUL-terminated copied names.
+/// errno (or relocation type, or [`CALLER_ERRNO`]), and the failure's names,
+/// each NUL-terminated, in an anonymous mapping of exactly `text_len` bytes
+/// that this receiver unmaps. A null `text` means the loader could not map it.
 #[repr(C)]
-struct RuntimeDiagnostic { kind: c_int, number: c_int, text: [u8; 1024] }
+struct RuntimeDiagnostic { kind: c_int, number: c_int, text: *mut u8, text_len: usize }
 impl RuntimeDiagnostic {
-    const fn empty() -> Self { Self { kind: 0, number: 0, text: [0; 1024] } }
+    const fn empty() -> Self { Self { kind: 0, number: 0, text: ptr::null_mut(), text_len: 0 } }
 }
-const _: () = assert!(core::mem::size_of::<RuntimeDiagnostic>() == 1032);
+const _: () = assert!(core::mem::size_of::<RuntimeDiagnostic>() == 24);
+impl Drop for RuntimeDiagnostic {
+    fn drop(&mut self) {
+        if !self.text.is_null() {
+            // SAFETY: the loader transferred this exact anonymous mapping.
+            let _ = unsafe { super::raw_syscall::syscall2(super::raw_syscall::SYS_MUNMAP, self.text as i64, self.text_len as i64) };
+        }
+    }
+}
+/// `number` for a failure musl reports without setting errno: its `%m` is
+/// the caller's errno (a bare name over NAME_MAX).
+const CALLER_ERRNO: c_int = -1;
 const DIAGNOSTIC_LOAD: c_int = 1;
 const DIAGNOSTIC_NEEDED: c_int = 2;
 const DIAGNOSTIC_NOT_LOADED: c_int = 3;
@@ -38,15 +51,19 @@ extern "C" {
 
 #[path = "dlfcn_diagnostic.rs"]
 mod diagnostic;
-pub(super) use diagnostic::{invalid_handle, symbol_not_found, Diagnostic};
+pub(super) use diagnostic::{invalid_handle, symbol_not_found, thread_cleanup, Diagnostic, Message};
 
 /// Format pinned musl 1.2.6 `ldso/dynlink.c` dlopen diagnostics (MIT,
 /// 9fa28ece75d8a2191de7c5bb53bed224c5947417) from the loader's record.
 ///
 /// # Safety
-/// `name` is the caller's readable dlopen pathname.
-unsafe fn open_diagnostic(name: *const u8, record: &RuntimeDiagnostic) -> Diagnostic {
-    let text = &record.text;
+/// `name` is the caller's readable dlopen pathname; `caller_errno` is the
+/// thread's errno when dlopen was called.
+unsafe fn open_diagnostic(name: *const u8, record: &RuntimeDiagnostic, caller_errno: c_int) -> Message {
+    let text: &[u8] = if record.text.is_null() { &[] }
+        // SAFETY: the loader filled every byte of its transferred mapping.
+        else { unsafe { core::slice::from_raw_parts(record.text, record.text_len) } };
+    let number = if record.number == CALLER_ERRNO { caller_errno } else { record.number };
     // The loader copies up to three NUL-terminated parts in order.
     let part = |ordinal: usize| -> &[u8] {
         let mut parts = text.split(|byte| *byte == 0);
@@ -55,7 +72,7 @@ unsafe fn open_diagnostic(name: *const u8, record: &RuntimeDiagnostic) -> Diagno
     let message = Diagnostic::new();
     match record.kind {
         DIAGNOSTIC_NEEDED => message.bytes(b"Error loading shared library ").bytes(part(0)).bytes(b": ")
-            .errno(record.number).bytes(b" (needed by ").bytes(part(1)).bytes(b")"),
+            .errno(number).bytes(b" (needed by ").bytes(part(1)).bytes(b")"),
         DIAGNOSTIC_NOT_LOADED => unsafe { message.bytes(b"Library ").text(name) }.bytes(b" is not already loaded"),
         DIAGNOSTIC_EXITING => message.bytes(b"Cannot dlopen while program is exiting."),
         DIAGNOSTIC_SYMBOL => message.bytes(b"Error relocating ").bytes(part(0)).bytes(b": ").bytes(part(1))
@@ -65,14 +82,14 @@ unsafe fn open_diagnostic(name: *const u8, record: &RuntimeDiagnostic) -> Diagno
         DIAGNOSTIC_RELOCATION_TYPE => message.bytes(b"Error relocating ").bytes(part(0))
             .bytes(b": unsupported relocation type ").decimal(record.number),
         DIAGNOSTIC_RELRO => message.bytes(b"Error relocating ").bytes(part(0)).bytes(b": RELRO protection failed: ")
-            .errno(record.number),
+            .errno(number),
         DIAGNOSTIC_FORK => message.bytes(b"State of ").bytes(part(0)).bytes(b" is inconsistent due to multithreaded fork\n"),
         // The loader leaves no other kind for a failed named open.
         kind => {
             debug_assert_eq!(kind, DIAGNOSTIC_LOAD);
-            unsafe { message.bytes(b"Error loading shared library ").text(name) }.bytes(b": ").errno(record.number)
+            unsafe { message.bytes(b"Error loading shared library ").text(name) }.bytes(b": ").errno(number)
         }
-    }
+    }.finish()
 }
 
 /// Musl disables deferred cancellation across one loader transaction. The
@@ -100,10 +117,11 @@ impl Drop for CancellationGuard {
 /// # Safety
 /// `name` is null or a readable NUL-terminated C pathname; the caller holds a
 /// [`CancellationGuard`].
-pub(super) unsafe fn open_object(name: *const c_char, flags: c_int) -> Result<*mut c_void, Diagnostic> {
+pub(super) unsafe fn open_object(name: *const c_char, flags: c_int) -> Result<*mut c_void, Message> {
+    let caller_errno = unsafe { super::errno::get_errno() };
     let mut record = RuntimeDiagnostic::empty();
     let handle = unsafe { __crabc_x86_64_runtime_open(name.cast(), flags, &mut record) };
-    if handle.is_null() && !name.is_null() { Err(unsafe { open_diagnostic(name.cast(), &record) }) }
+    if handle.is_null() && !name.is_null() { Err(unsafe { open_diagnostic(name.cast(), &record, caller_errno) }) }
     else { Ok(handle) }
 }
 
@@ -111,10 +129,11 @@ pub(super) unsafe fn open_object(name: *const c_char, flags: c_int) -> Result<*m
 /// `name` is null or a readable NUL-terminated C pathname.
 #[no_mangle]
 pub unsafe extern "C" fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void {
+    let caller_errno = unsafe { super::errno::get_errno() };
     let _cancellation = unsafe { CancellationGuard::enter() };
     let mut record = RuntimeDiagnostic::empty();
     let handle = unsafe { __crabc_x86_64_runtime_open(name.cast(), flags, &mut record) };
-    if handle.is_null() && !name.is_null() { unsafe { open_diagnostic(name.cast(), &record) }.publish(); }
+    if handle.is_null() && !name.is_null() { unsafe { open_diagnostic(name.cast(), &record, caller_errno) }.publish(); }
     handle
 }
 

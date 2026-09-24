@@ -228,6 +228,10 @@ impl ObjectName {
 
 pub(super) type Opened = (i64, LoadedName);
 
+/// The error of a selection that failed without a syscall setting errno;
+/// musl's diagnostic then shows the caller's errno.
+pub(super) const UNSET_ERRNO: i32 = -1;
+
 unsafe fn direct(name: &[u8]) -> Result<Opened, i32> {
     if name.is_empty() { return Err(22); }
     // The name is stored as given; the kernel alone limits its length.
@@ -325,7 +329,8 @@ unsafe fn object_paths(object: &Object) -> Result<ObjectPaths<'_>, i32> {
 /// load ancestry. dlopen itself starts at the main executable, as musl does.
 pub(super) unsafe fn open<'a>(name: &[u8], ancestors: impl Iterator<Item = &'a Object>) -> Result<Opened, i32> {
     if name.is_empty() || name.contains(&b'/') { return unsafe { direct(name) }; }
-    if name.len() > NAME_MAX { return Err(36); }
+    // Musl returns before any open without setting errno.
+    if name.len() > NAME_MAX { return Err(UNSET_ERRNO); }
     let environment = unsafe { ENVIRONMENT_PATH };
     if !environment.is_null() {
         if let Some(opened) = unsafe { path_open(c_string(environment), name) }? { return Ok(opened); }

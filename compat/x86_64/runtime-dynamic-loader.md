@@ -274,10 +274,16 @@ state and musl's `%s`/`%p`/`%d`/`%m` spellings. `run_ldso_static_dlfcn.sh`
 PIE output, and weak overrides with musl `libc.a`; the dynamic runner
 compares the seven `libc.so` exports with musl's.
 
-`dlerror` text is pinned musl's. `runtime_open` fills a private 1032-byte
-`RuntimeDiagnostic` (message kind, errno or relocation type, and up to three
-copied names) before rollback unmaps the failed suffix; `general_dlfcn`
-formats it with libc's own `strerror` table, and the RuntimeV1 loader facade
+`dlerror` text is pinned musl's, with musl `dlerror.c`'s lifetime: each
+message is formatted into an internal-allocator buffer sized to it, replaced
+and freed by the thread's next loader error, consumed once by `dlerror`, and
+handed at a non-final thread's exit to a lock-free list that the next error
+drains (`__dl_thread_cleanup`). `runtime_open` fills a private
+`RuntimeDiagnostic` (message kind, errno or relocation type, and the full
+copied names in an exact-size mapping that libc unmaps) before rollback
+unmaps the failed suffix; `general_dlfcn` formats it with libc's own
+`strerror` table. A bare name over `NAME_MAX` carries `UNSET_ERRNO`, so `%m`
+shows the dlopen caller's errno as in musl. The RuntimeV1 loader facade
 copies the same bytes instead of publishing them as `dlerror`. The kinds follow musl 1.2.6 `ldso/dynlink.c`'s
 dlopen order: root load (`%m`, or the NOLOAD text for every NOLOAD root
 failure), dependency load with `(needed by <path>)`, constructor state after

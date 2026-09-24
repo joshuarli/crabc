@@ -3052,6 +3052,18 @@ unsafe fn create_selected_worker_with_attributes(
     0
 }
 
+/// musl pthread_exit's `__dl_thread_cleanup` for a task that is not the
+/// last: hand its `dlerror` buffer to the next loader error. The final task
+/// instead keeps it through ordinary process exit.
+///
+/// # Safety
+/// The calling task is past user cleanup and TSD destruction and exits next.
+#[inline(always)]
+unsafe fn release_dlerror_buffer() {
+    #[cfg(any(crabc_x86_dynamic_runtime, crabc_owned_static_sysroot))]
+    unsafe { super::fixed_graph_dlfcn::thread_cleanup() };
+}
+
 /// Exit a selected worker and publish its typed result for its admitted joiner.
 ///
 /// This is valid only when called by a callback created through this leaf's
@@ -3095,6 +3107,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             // task-state transition, so pthread_exit is ordinary process exit.
             unsafe { exit_selected_final_runtime_task() }
         }
+        unsafe { release_dlerror_buffer() };
         unsafe { retire_initial_signal_target() };
         // SAFETY: only a non-final initial task reaches this point. Its
         // cancellation state is disabled and no ordinary-exit callback will
@@ -3166,6 +3179,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
                 super::native_mimalloc_lifecycle::retain_selected_nonfinal_worker_after_process_done()
             };
         }
+        unsafe { release_dlerror_buffer() };
         unsafe { retire_selected_worker_signal_target(control) };
     }
     // SAFETY: a selected non-final worker reaches only the immediate Linux

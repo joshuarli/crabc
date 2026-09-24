@@ -18,6 +18,7 @@ use core::ptr;
 #[path = "dlfcn_diagnostic.rs"]
 mod diagnostic;
 use diagnostic::{invalid_handle, symbol_not_found, Diagnostic};
+pub(super) use diagnostic::thread_cleanup;
 
 #[path = "static_dl_iterate_phdr.rs"]
 mod static_dl_iterate_phdr;

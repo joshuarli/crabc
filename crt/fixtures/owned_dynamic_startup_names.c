@@ -12,14 +12,32 @@
  * each arm and supplies the expected paths, so the transcript never contains
  * a root-dependent byte.
  *
+ * Musl formats each dlerror message into a per-thread buffer sized to it,
+ * so the dlopen case also reads messages naming a 3000-byte requester and a
+ * 5000-byte symbol, resolves a 717-byte C++-mangled-style symbol, and checks
+ * that a message is consumed once, stays per-thread, and survives many
+ * worker threads that exit with an unread one.
+ *
  * Roles: NAMES_LEAF with NAMES_SYMBOL and NAMES_ID exports one identifier;
  * NAMES_ORIGIN additionally calls NAMES_LEAF_SYMBOL from its bare-named
  * dependency; otherwise the executable, whose case is NAMES_CASE.
  */
 #define _GNU_SOURCE
 
+#define NAMES_C10 "9component"
+#define NAMES_C100 NAMES_C10 NAMES_C10 NAMES_C10 NAMES_C10 NAMES_C10 \
+	NAMES_C10 NAMES_C10 NAMES_C10 NAMES_C10 NAMES_C10
+#define NAMES_C500 NAMES_C100 NAMES_C100 NAMES_C100 NAMES_C100 NAMES_C100
+#define NAMES_LONG_NAME "_ZN5crabc" NAMES_C500 NAMES_C100 NAMES_C100 "5valueEv"
+#define NAMES_MISSING_NAME "_ZN5crabc" NAMES_C500 NAMES_C500 NAMES_C500 NAMES_C500 NAMES_C500 \
+	NAMES_C500 NAMES_C500 NAMES_C500 NAMES_C500 NAMES_C500 "7missingEv"
+
 #if defined(NAMES_LEAF)
 int NAMES_SYMBOL(void) { return NAMES_ID; }
+#if defined(NAMES_LONG)
+int names_long_value(void) __asm__(NAMES_LONG_NAME);
+int names_long_value(void) { return 10 * NAMES_ID; }
+#endif
 
 #elif defined(NAMES_ORIGIN)
 int NAMES_LEAF_SYMBOL(void);
@@ -28,6 +46,7 @@ int NAMES_SYMBOL(void) { return NAMES_ID + NAMES_LEAF_SYMBOL(); }
 #else
 #include <dlfcn.h>
 #include <errno.h>
+#include <pthread.h>
 #include <link.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -93,6 +112,11 @@ static void *open_object(const char *name, int flags)
 	return handle;
 }
 
+static void *open_quietly(const char *name)
+{
+	return dlopen(name, RTLD_NOW);
+}
+
 static void *lookup(void *handle, const char *symbol)
 {
 	return handle ? dlsym(handle, symbol) : 0;
@@ -105,23 +129,62 @@ static void identify(const char *tag, void *symbol, const char *expected)
 	report(tag, symbol, expected);
 }
 
-/* The name's length, whether dlopen failed, and the message's %m text.
- * The candidate's dlerror text is a fixed 1024-byte copy (libc
- * `dlfcn_diagnostic.rs`) where musl allocates, so a name beyond it compares
- * only the failure and the message prefix. */
-static void refuse(const char *tag, const char *name, int with_errno)
+/* The name's length, whether dlopen failed, whether the message names it
+ * in full, and the %m text after it. Musl rejects a bare name over NAME_MAX
+ * before any open and formats whatever errno the caller left. */
+static void refuse(const char *tag, const char *name, int caller_errno)
 {
-	/* Musl rejects a bare name over NAME_MAX before any open and formats
-	 * whatever the caller's errno holds; the installed loader reports
-	 * ENAMETOOLONG. Preset that value so only the rejection is compared. */
-	errno = ENAMETOOLONG;
+	errno = caller_errno;
 	void *handle = dlopen(name, RTLD_NOW);
 	const char *error = dlerror();
 	const char *prefix = "Error loading shared library ";
-	const char *tail = error ? strrchr(error, ':') : 0;
-	int shaped = error && !strncmp(error, prefix, strlen(prefix)) && (!with_errno || (tail && tail[1] == ' '));
-	if (!with_errno) tail = 0;
-	printf("%s:%zu:%d:%d:%s;", tag, strlen(name), handle == 0, shaped, shaped && tail ? tail + 2 : "");
+	size_t length = strlen(prefix), name_length = strlen(name);
+	int named = error && !strncmp(error, prefix, length) && !strncmp(error + length, name, name_length)
+	            && !strncmp(error + length + name_length, ": ", 2);
+	printf("%s:%zu:%d:%d:%s;", tag, name_length, handle == 0, named, named ? error + length + name_length + 2 : "");
+}
+
+/* Whether `error` is exactly `first second third`, and its length. */
+static void message(const char *tag, const char *error, const char *first, const char *second, const char *third)
+{
+	size_t a = strlen(first), b = strlen(second);
+	int exact = error && !strncmp(error, first, a) && !strncmp(error + a, second, b) && !strcmp(error + a + b, third);
+	printf("%s(%zu,%d);", tag, error ? strlen(error) : 0, exact);
+}
+
+/* A worker's failure is its own; it exits without reading it. */
+static void *failing_worker(void *unused)
+{
+	(void)unused;
+	if (dlopen("/names-missing/worker.so", RTLD_NOW)) return (void *)1;
+	return 0;
+}
+
+static void *reading_worker(void *unused)
+{
+	(void)unused;
+	if (dlerror()) return (void *)1;
+	(void)dlopen("/names-missing/reader.so", RTLD_NOW);
+	const char *error = dlerror();
+	return (void *)(long)(!error || strcmp(error, "Error loading shared library /names-missing/reader.so: "
+	                                              "No such file or directory") || dlerror());
+}
+
+/* dlerror is consumed once, per thread, across exiting workers. */
+static void lifecycle(void)
+{
+	(void)dlopen("/names-missing/main.so", RTLD_NOW);
+	int failures = 0;
+	for (int index = 0; index < 64; ++index) {
+		pthread_t thread;
+		void *result = 0;
+		if (pthread_create(&thread, 0, index % 2 ? reading_worker : failing_worker, 0)
+		    || pthread_join(thread, &result) || result)
+			++failures;
+	}
+	const char *error = dlerror();
+	int own = error && !strcmp(error, "Error loading shared library /names-missing/main.so: No such file or directory");
+	printf("lifecycle(%d,%d,%d);", failures, own, dlerror() == 0);
 }
 
 int main(void)
@@ -141,10 +204,20 @@ int main(void)
 		void *d = open_object(path("NAMES_D"), RTLD_NOW);
 		identify("d", lookup(d, "names_d_value"), path("NAMES_D"));
 		identify("deep", lookup(d, "names_deep_value"), path("NAMES_DEEP"));
+		identify("long", lookup(c, NAMES_LONG_NAME), path("NAMES_C"));
+		printf("missing=%d,", lookup(c, NAMES_MISSING_NAME) != 0);
+		message("missing", dlerror(), "Symbol not found: ", NAMES_MISSING_NAME, "");
+		printf("again(%d);", dlerror() == 0);
+		/* The dependency is on no search path; the requester's origin
+		 * exceeds musl's candidate buffer. */
+		printf("g=%d,", open_quietly(path("NAMES_G")) != 0);
+		message("needed", dlerror(), "Error loading shared library libowned-startup-name-missing.so: "
+		        "No such file or directory (needed by ", path("NAMES_G"), ")");
 		char bare[300];
 		memset(bare, 'n', sizeof bare - 1);
 		bare[sizeof bare - 1] = 0;
-		refuse("bare", bare, 1);
+		refuse("bare", bare, EXDEV);
+		refuse("bare-zero", bare, 0);
 		char *overlong = malloc(5000);
 		if (!overlong) return 91;
 		memset(overlong, 'o', 4999);
@@ -152,6 +225,7 @@ int main(void)
 		overlong[4999] = 0;
 		refuse("overlong", overlong, 0);
 		free(overlong);
+		lifecycle();
 	} else if (!strcmp(which, "search")) {
 		void *search = open_object("libowned-startup-name-search.so", RTLD_NOW);
 		identify("search", lookup(search, "names_search_value"), path("NAMES_SEARCH"));

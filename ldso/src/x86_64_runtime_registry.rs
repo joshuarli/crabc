@@ -580,13 +580,16 @@ const EINVAL: i32 = 22;
 
 /// Private dlopen failure record shared only with the installed libc bridge.
 /// The loader classifies the first failure in musl's dlopen order and copies
-/// up to three NUL-terminated names before rollback unmaps their storage;
-/// libc owns the pinned-musl `dlerror` text for each kind. `number` is a
-/// Linux errno, or the relocation type for `DIAGNOSTIC_RELOCATION_TYPE`.
+/// its names, each NUL-terminated, into an anonymous mapping of exactly
+/// `text_len` bytes before rollback unmaps their storage; ownership of that
+/// mapping passes to libc, which owns the pinned-musl `dlerror` text for each
+/// kind. A null `text` means the mapping failed. `number` is a Linux errno,
+/// `x86_64_library_search::UNSET_ERRNO` (libc then formats the dlopen caller's
+/// errno, as musl does), or the relocation type for `DIAGNOSTIC_RELOCATION_TYPE`.
 #[repr(C)]
-struct RuntimeDiagnostic { kind: i32, number: i32, text: [u8; DIAGNOSTIC_TEXT] }
-const DIAGNOSTIC_TEXT: usize = 1024;
-const _: () = assert!(core::mem::size_of::<RuntimeDiagnostic>() == 1032);
+struct RuntimeDiagnostic { kind: i32, number: i32, text: *mut u8, text_len: usize }
+const _: () = assert!(core::mem::size_of::<RuntimeDiagnostic>() == 24);
+
 /// `Error loading shared library <dlopen name>: %m`
 const DIAGNOSTIC_LOAD: i32 = 1;
 /// `Error loading shared library <needed>: %m (needed by <requester>)`
@@ -606,20 +609,28 @@ const DIAGNOSTIC_RELRO: i32 = 8;
 /// `State of <object> is inconsistent due to multithreaded fork\n`
 const DIAGNOSTIC_FORK: i32 = 9;
 
-/// Record one failure. Every part keeps its terminator; a long earlier part
-/// is truncated rather than displacing later terminators.
+/// Record one failure, with every part in full and terminated. Each open
+/// records at most one failure, into a record whose text libc has not seen.
 fn report(output: &mut RuntimeDiagnostic, kind: i32, number: i32, parts: &[&[u8]]) {
     output.kind = kind;
     output.number = number;
+    let length = parts.iter().try_fold(0usize, |total, part| total.checked_add(part.len())?.checked_add(1));
+    let Some(length) = length.filter(|length| *length != 0) else { return; };
+    let address = unsafe { syscall6(SYS_MMAP, 0, length as i64, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
+    if is_linux_error(address) { return; }
+    let text = address as *mut u8;
     let mut used = 0;
-    for (index, part) in parts.iter().enumerate() {
-        let room = DIAGNOSTIC_TEXT - used - (parts.len() - index);
-        let length = part.len().min(room);
-        output.text[used..used + length].copy_from_slice(&part[..length]);
-        used += length;
-        output.text[used] = 0;
-        used += 1;
+    for part in parts {
+        // SAFETY: the fresh mapping holds every part and its terminator.
+        unsafe {
+            core::ptr::copy_nonoverlapping(part.as_ptr(), text.add(used), part.len());
+            *text.add(used + part.len()) = 0;
+        }
+        used += part.len() + 1;
     }
+    output.text = text;
+    output.text_len = length;
 }
 
 unsafe fn node_name(node: *mut RuntimeObject) -> &'static [u8] {
@@ -921,6 +932,8 @@ unsafe extern "C" fn runtime_open(filename: *const u8, flags: i32, diagnostic: *
     if diagnostic.is_null() { return core::ptr::null_mut(); }
     let diagnostic = unsafe { &mut *diagnostic };
     diagnostic.kind = 0;
+    diagnostic.text = core::ptr::null_mut();
+    diagnostic.text_len = 0;
     if filename.is_null() {
         let _guard = RuntimeGuard::acquire();
         return unsafe { (*REGISTRY.0.get()).head.cast() };
@@ -979,7 +992,8 @@ unsafe fn dependency_scope<'a>(registry: &RuntimeRegistry, root: *mut RuntimeObj
 unsafe extern "C" fn runtime_symbol(handle: *mut c_void, name: *const u8, caller: usize, error: *mut i32) -> *mut c_void {
     if error.is_null() || name.is_null() { return core::ptr::null_mut(); }
     unsafe { *error = 0; }
-    let Some(length) = (unsafe { bounded_nul(name, MAX_PATH) }) else { unsafe { *error = ERROR_SYMBOL; } return core::ptr::null_mut(); };
+    // Musl's dlsym has no symbol-name length limit.
+    let Some(length) = (unsafe { bounded_nul(name, isize::MAX as usize) }) else { unsafe { *error = ERROR_SYMBOL; } return core::ptr::null_mut(); };
     let name = unsafe { core::slice::from_raw_parts(name, length) };
     // Musl's dlsym performs no allocation: it walks the global symbol list or
     // the handle's load-time dependency list under its loader lock. Resolve
