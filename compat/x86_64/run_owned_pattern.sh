@@ -102,6 +102,37 @@ run_in_root() {
         >"$output" 2>"${output%.stdout}.stderr"
 }
 
+# Directory-stream syscall evidence: in every candidate root, trace the
+# glob corpus and a directory-free baseline for both the pinned-musl oracle
+# and the candidate, then require the candidate's workload to make musl's
+# directory, descriptor-flag and file-status calls and no more mappings.
+readonly PROFILE_BASELINE=fnmatch-escaped
+readonly PROFILE_WORKLOAD=glob-corpus
+trace_in_root() {
+    local root="$1" transcript="$2"
+    shift 2
+    timeout 120 env -i PATH="$PATH" HOME=/fixture/home \
+        strace -f -qq -o "$transcript" chroot "$root" "$@" >/dev/null 2>&1
+}
+
+profile_directory_streams() {
+    local root="$1" label="$2" selector
+    shift 2
+    cp "$work/oracle" "$root/oracle-consumer"
+    for selector in "$PROFILE_BASELINE" "$PROFILE_WORKLOAD"; do
+        trace_in_root "$root" "$work/$label-musl-$selector.strace" /oracle-consumer "$selector"
+        trace_in_root "$root" "$work/$label-$selector.strace" "$@" "$selector"
+    done
+    if ! python3 -B "$ROOT/compat/x86_64/owned_syscall_profile.py" compare /oracle-consumer \
+        "$work/$label-musl-$PROFILE_BASELINE.strace" "$work/$label-musl-$PROFILE_WORKLOAD.strace" \
+        "$1" "$work/$label-$PROFILE_BASELINE.strace" "$work/$label-$PROFILE_WORKLOAD.strace" \
+        >"$work/$label-syscalls.json"; then
+        printf 'owned pattern %s: glob-corpus syscalls differ from pinned musl: %s\n' \
+            "$label" "$(cat "$work/$label-syscalls.json")" >&2
+        return 1
+    fi
+}
+
 run_case_in_root() {
     local root="$1" label="$2" selector="$3" output
     output="$work/$label-$selector.stdout"
@@ -202,6 +233,7 @@ run_static_mode() {
             failures=1
         fi
     done
+    profile_directory_streams "$root" "static-$mode" /consumer || failures=1
     [ "$failures" -eq 0 ]
 }
 
@@ -237,6 +269,11 @@ run_dynamic_mode() {
             failures=1
         fi
     done
+    if [ "$entry" = direct ]; then
+        profile_directory_streams "$root" "dynamic-$mode-$entry" "$INTERPRETER" /consumer || failures=1
+    else
+        profile_directory_streams "$root" "dynamic-$mode-$entry" /consumer || failures=1
+    fi
     [ "$failures" -eq 0 ]
 }
 
@@ -281,4 +318,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned pattern: PASS (same project-header object with pinned musl; C/POSIX/C.UTF-8 fnmatch; invalid bytes and classes; glob sort, append, offsets, tilde, mark, trailing slash, ownership, and dropped-privilege unreadable callback; static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+printf 'owned pattern: PASS (same project-header object with pinned musl; C/POSIX/C.UTF-8 fnmatch; invalid bytes and classes; glob sort, append, offsets, tilde, mark, trailing slash, ownership, and dropped-privilege unreadable callback; glob-corpus directory-stream, descriptor-flag, file-status and mapping syscalls against musl; static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"

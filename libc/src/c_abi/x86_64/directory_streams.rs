@@ -26,10 +26,14 @@
 //!   `src/dirent/scandir.c` maps to the allocation-owned result boundary below.
 //!
 //! Musl allocates stream state through `calloc` and releases it through
-//! `free`. This deliberately allocation-free static archive does not select a
-//! public or hidden C allocator. Instead, each `DIR` state object owns one
-//! private anonymous 4 KiB mapping and `closedir` releases that exact mapping;
-//! it is a bounded implementation detail, not a reusable allocator. The
+//! `free`. The installed products (`crabc_x86_owned_runtime`) do the same
+//! through the selected C allocator. The frozen allocation-free static
+//! archive selects no public or hidden C allocator; there each `DIR` state
+//! object owns one private anonymous 4 KiB mapping and `closedir` releases
+//! that exact mapping, a bounded implementation detail rather than a
+//! reusable allocator. As in musl, `opendir` relies on `O_DIRECTORY` and
+//! makes only `open`'s close-on-exec fix-up after the descriptor, while
+//! `fdopendir` alone validates a caller descriptor. The
 //! selected direct syscall paths omit musl cancellation-point machinery. The
 //! standalone `x86-scandir` feature preserves that boundary, and the owned
 //! static aggregate deliberately does not add an entry checkpoint: pinned musl
@@ -66,6 +70,8 @@ const LINUX_ERRNO_MAX: i64 = 4_095;
 const EBADF: c_int = 9;
 const EIO: c_int = 5;
 const ENOENT: c_int = 2;
+// The frozen archive's private stream mapping only.
+#[cfg(not(crabc_x86_owned_runtime))]
 const ENOMEM: c_int = 12;
 const ENOTDIR: c_int = 20;
 const EOPNOTSUPP: c_int = 95;
@@ -74,14 +80,20 @@ const AT_FDCWD: c_int = -100;
 const FD_CLOEXEC: c_int = 1;
 const F_GETFL: c_int = 3;
 const F_SETFD: c_int = 2;
+// The frozen archive's private stream mapping only.
+#[cfg(not(crabc_x86_owned_runtime))]
 const MAP_ANONYMOUS: c_int = 0x20;
+#[cfg(not(crabc_x86_owned_runtime))]
 const MAP_PRIVATE: c_int = 0x02;
 const O_CLOEXEC: c_int = 0x80_000;
 const O_DIRECTORY: c_int = 0x1_0000;
 const O_LARGEFILE: c_int = 0x8_000;
 const O_PATH: c_int = 0x20_0000;
 const O_RDONLY: c_int = 0;
+// The frozen archive's private stream mapping only.
+#[cfg(not(crabc_x86_owned_runtime))]
 const PROT_READ: c_int = 0x1;
+#[cfg(not(crabc_x86_owned_runtime))]
 const PROT_WRITE: c_int = 0x2;
 const SEEK_SET: c_int = 0;
 const S_IFDIR: u32 = 0o040_000;
@@ -157,10 +169,55 @@ unsafe fn directory_failure(error: c_int) -> *mut DirectoryStream {
     ptr::null_mut()
 }
 
+// Musl's `calloc`/`free` stream ownership, through the installed C allocator.
+#[cfg(crabc_x86_owned_runtime)]
+unsafe extern "C" {
+    fn calloc(count: usize, size: usize) -> *mut c_void;
+    fn free(allocation: *mut c_void);
+}
+
+/// Allocate zero-filled stream state as musl's `calloc(1, sizeof *dir)`.
+///
+/// A null result has published the allocator's `ENOMEM`.
+#[cfg(crabc_x86_owned_runtime)]
+#[inline(always)]
+unsafe fn allocate_stream() -> *mut DirectoryStream {
+    // SAFETY: the C allocator returns null or one zero-filled allocation of
+    // the requested size with `malloc` alignment, which covers
+    // `DirectoryStream`'s pointer-sized alignment.
+    unsafe { calloc(1, size_of::<DirectoryStream>()) }.cast()
+}
+
+/// Release stream state from [`allocate_stream`].
+#[cfg(crabc_x86_owned_runtime)]
+#[inline(always)]
+unsafe fn release_stream(stream: *mut DirectoryStream) {
+    // SAFETY: the caller passes one live allocation from `allocate_stream`.
+    unsafe { free(stream.cast()) };
+}
+
+/// Release stream state from [`allocate_stream`]'s private mapping.
+#[cfg(not(crabc_x86_owned_runtime))]
+#[inline(always)]
+unsafe fn release_stream(stream: *mut DirectoryStream) {
+    // The mapping is private state with a known address and fixed length. Its
+    // unmap failure cannot arise for a valid stream; preserve musl's public
+    // closedir result from close rather than expose a second allocator-like
+    // failure channel.
+    let _ = unsafe {
+        raw_syscall::syscall2(
+            raw_syscall::SYS_MUNMAP,
+            stream as usize as i64,
+            DIRECTORY_MAPPING_SIZE as i64,
+        )
+    };
+}
+
 /// Allocate one private, zero-filled stream-state mapping without selecting a
 /// C allocator.
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline(always)]
-unsafe fn allocate_stream_mapping() -> *mut DirectoryStream {
+unsafe fn allocate_stream() -> *mut DirectoryStream {
     // SAFETY: this is the fixed private anonymous mapping contract: no input
     // address, a page-sized writable buffer, no descriptor, and zero offset.
     let result = unsafe {
@@ -193,9 +250,43 @@ unsafe fn allocate_stream_mapping() -> *mut DirectoryStream {
     stream
 }
 
-/// Validate a descriptor and create state that owns it on success.
+/// Musl's best-effort close-on-exec update. Its result is deliberately
+/// ignored: `open` issues it after every `O_CLOEXEC` descriptor, and
+/// `fdopendir` after transferring ownership.
 #[inline(always)]
-unsafe fn allocate_directory_stream(file_descriptor: c_int) -> *mut DirectoryStream {
+unsafe fn set_close_on_exec(file_descriptor: c_int) {
+    let _ = unsafe {
+        raw_syscall::syscall3(
+            raw_syscall::SYS_FCNTL,
+            i64::from(file_descriptor),
+            i64::from(F_SETFD),
+            i64::from(FD_CLOEXEC),
+        )
+    };
+}
+
+/// Create stream state that owns `file_descriptor`, or return null with the
+/// allocation error published.
+#[inline(always)]
+unsafe fn new_directory_stream(file_descriptor: c_int) -> *mut DirectoryStream {
+    let stream = unsafe { allocate_stream() };
+    if !stream.is_null() {
+        // SAFETY: `stream` is fresh, zero-filled, exclusively owned storage
+        // large enough and aligned for `DirectoryStream`.
+        unsafe {
+            (*stream).tell = 0;
+            (*stream).file_descriptor = file_descriptor;
+            (*stream).buffer_position = 0;
+            (*stream).buffer_end = 0;
+        }
+    }
+    stream
+}
+
+/// Validate a caller descriptor and create state that owns it on success,
+/// as musl's `fdopendir`.
+#[inline(always)]
+unsafe fn adopt_directory_descriptor(file_descriptor: c_int) -> *mut DirectoryStream {
     let mode = match unsafe { stat_compat::fstat_mode(file_descriptor) } {
         Ok(mode) => mode,
         Err(error) => {
@@ -226,29 +317,10 @@ unsafe fn allocate_directory_stream(file_descriptor: c_int) -> *mut DirectoryStr
         return unsafe { directory_failure(ENOTDIR) };
     }
 
-    let stream = unsafe { allocate_stream_mapping() };
-    if stream.is_null() {
-        return ptr::null_mut();
+    let stream = unsafe { new_directory_stream(file_descriptor) };
+    if !stream.is_null() {
+        unsafe { set_close_on_exec(file_descriptor) };
     }
-    // SAFETY: `stream` is a fresh, page-aligned private mapping large enough
-    // for `DirectoryStream`; its bytes are zero-filled by anonymous mmap.
-    unsafe {
-        (*stream).tell = 0;
-        (*stream).file_descriptor = file_descriptor;
-        (*stream).buffer_position = 0;
-        (*stream).buffer_end = 0;
-    }
-    // Musl makes a best-effort close-on-exec update after descriptor
-    // validation. Its result is deliberately ignored: ownership has already
-    // transferred and the stream remains usable if the update is unavailable.
-    let _ = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_FCNTL,
-            i64::from(file_descriptor),
-            i64::from(F_SETFD),
-            i64::from(FD_CLOEXEC),
-        )
-    };
     stream
 }
 
@@ -327,6 +399,10 @@ unsafe fn next_record(stream: &mut DirectoryStream) -> *mut Dirent {
 /// `path` must point to a readable NUL-terminated pathname for the complete
 /// raw Linux `openat(2)` call, unless the caller deliberately exercises a
 /// kernel pointer-fault path. The caller owns pathname resolution races.
+// Internal callers such as `nftw` reach this one public provider, as they
+// reach musl's separate `opendir.c`; keep it a call rather than an inlined
+// copy now that its body is small.
+#[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut DirectoryStream {
     // SAFETY: the caller owns the raw pathname contract; Linux x86's fourth
@@ -345,16 +421,14 @@ pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut DirectoryStream {
         unsafe { set_linux_error(descriptor) };
         return ptr::null_mut();
     }
-    let stream = unsafe { allocate_directory_stream(descriptor as c_int) };
+    // Musl's `open` follows every O_CLOEXEC descriptor with this fix-up;
+    // O_DIRECTORY has already rejected a non-directory.
+    unsafe { set_close_on_exec(descriptor as c_int) };
+    let stream = unsafe { new_directory_stream(descriptor as c_int) };
     if stream.is_null() {
-        // Preserve the ownership-validation/allocation failure across raw
-        // descriptor cleanup, exactly as a failed opendir must report its
-        // original stream-construction error rather than close's result.
-        let saved_errno = unsafe { errno::get_errno() };
+        // The raw close publishes no errno, so the allocation failure stays
+        // the reported error, as in musl's `__syscall(SYS_close, fd)`.
         let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
-        // SAFETY: this selected C ABI restores its own already-published
-        // stream-construction error after cleanup.
-        unsafe { errno::set_errno(saved_errno) };
     }
     stream
 }
@@ -368,10 +442,10 @@ pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut DirectoryStream {
 pub extern "C" fn fdopendir(file_descriptor: c_int) -> *mut DirectoryStream {
     // SAFETY: Linux validates the scalar descriptor and the helper does not
     // dereference caller-provided memory.
-    unsafe { allocate_directory_stream(file_descriptor) }
+    unsafe { adopt_directory_descriptor(file_descriptor) }
 }
 
-/// Close the owned descriptor and release its private stream mapping.
+/// Close the owned descriptor and release its stream state.
 ///
 /// # Safety
 ///
@@ -389,17 +463,9 @@ pub unsafe extern "C" fn closedir(stream: *mut DirectoryStream) -> c_int {
     let close_result = unsafe {
         raw_syscall::syscall1(raw_syscall::SYS_CLOSE, i64::from(file_descriptor))
     };
-    // The mapping is private state with a known address and fixed length. Its
-    // unmap failure cannot arise for a valid stream; preserve musl's public
-    // closedir result from close rather than expose a second allocator-like
-    // failure channel.
-    let _ = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_MUNMAP,
-            stream as usize as i64,
-            DIRECTORY_MAPPING_SIZE as i64,
-        )
-    };
+    // SAFETY: `stream` is the caller's live exclusive stream; it is not used
+    // after release.
+    unsafe { release_stream(stream) };
     c_status(close_result)
 }
 
