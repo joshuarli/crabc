@@ -87,40 +87,157 @@ unsafe fn native_mimalloc_deallocate(pointer: *mut c_void) {
     }
 }
 
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
+// Application allocator replacement follows musl 1.2.6. A program (or, in a
+// dynamic process, any preempting image) may replace `malloc`, `free` and
+// `realloc`, and optionally `calloc`, the aligned entries and
+// `malloc_usable_size`. Libc's derived entries then reach the replacement
+// through the public symbols: `calloc` allocates with public `malloc` and
+// zeroes (`calloc.c`), `reallocarray` calls public `realloc`
+// (`reallocarray.c`), `posix_memalign` and `memalign` call public
+// `aligned_alloc`, `valloc` calls public `memalign`, and libc's own
+// `aligned_alloc` refuses with ENOMEM once `malloc` is replaced (mallocng
+// `DISABLE_ALIGNED_ALLOC`), because a native pointer must never reach the
+// application's `free`. Libc-private storage keeps using the `*_internal`
+// seam below and never crosses either way.
+//
+// Each public name is an assembler alias of a private Rust body rather than
+// a Rust definition. Rust binds a crate's own strong definitions locally, so
+// libc code calling `free` or `realloc` would otherwise skip a replacement
+// even though `malloc` (weak, hence interposable) reached it; with no Rust
+// definition of the name, every libc reference is an ordinary preemptible
+// external call, as in musl's libc.so with its dynamic list. Musl also keeps
+// each entry in its own archive member, so a static program's definitions
+// preempt libc.a without a duplicate-symbol error; these entries share one
+// object, so the static archive binds each alias weak. libc.so keeps musl's
+// dynamic bindings: weak `malloc`, strong others. Rust places module-level
+// assembly in this module's object, so each alias resolves to its body.
+macro_rules! public_allocator_alias {
+    ($name:literal, $body:path, $binding:literal) => {
+        core::arch::global_asm!(
+            concat!(".", $binding, " ", $name),
+            concat!(".type ", $name, ",@function"),
+            concat!(".set ", $name, ", {body}"),
+            body = sym $body,
+        );
+    };
+}
+
+#[cfg(crabc_x86_dynamic_runtime)]
+macro_rules! derived_allocator_alias {
+    ($name:literal, $body:path) => { public_allocator_alias!($name, $body, "globl"); };
+}
+#[cfg(not(crabc_x86_dynamic_runtime))]
+macro_rules! derived_allocator_alias {
+    ($name:literal, $body:path) => { public_allocator_alias!($name, $body, "weak"); };
+}
+
+public_allocator_alias!("malloc", libc_malloc, "weak");
+derived_allocator_alias!("free", libc_free);
+derived_allocator_alias!("calloc", libc_calloc);
+derived_allocator_alias!("realloc", libc_realloc);
+derived_allocator_alias!("reallocarray", libc_reallocarray);
+derived_allocator_alias!("aligned_alloc", libc_aligned_alloc);
+derived_allocator_alias!("posix_memalign", libc_posix_memalign);
+derived_allocator_alias!("memalign", libc_memalign);
+derived_allocator_alias!("valloc", libc_valloc);
+
+/// The address the public `name` symbol resolves to in the final process,
+/// read from its GOT slot, which honors ELF preemption in the static link and
+/// through the dynamic loader alike.
+macro_rules! public_entry {
+    ($name:literal) => {{
+        let address: usize;
+        // SAFETY: a RIP-relative load of this image's GOT slot for `$name`;
+        // the slot is immutable once relocation has completed.
+        unsafe {
+            core::arch::asm!(
+                concat!("mov {0}, qword ptr [rip + ", $name, "@GOTPCREL]"),
+                out(reg) address,
+                options(nomem, nostack, preserves_flags, pure),
+            )
+        };
+        address
+    }};
+}
+
+/// Whether the resolved public `malloc` is not libc's own body.
+#[inline]
+fn application_malloc_replaced() -> bool {
+    public_entry!("malloc") != libc_malloc as *const () as usize
+}
+
+// Calls through the resolved public entries use their GOT addresses as
+// opaque pointers. A declared `malloc` would be a recognized library call:
+// LLVM then folds `malloc` plus zeroing back into a call to `calloc`, which is
+// this function itself.
+#[inline]
+unsafe fn public_malloc(size: SizeT) -> *mut c_void {
+    let address = public_entry!("malloc");
+    // SAFETY: the resolved `malloc` has the C `malloc` signature.
+    let entry: unsafe extern "C" fn(SizeT) -> *mut c_void = unsafe { core::mem::transmute(address) };
+    unsafe { entry(size) }
+}
+
+#[inline]
+unsafe fn public_realloc(pointer: *mut c_void, size: SizeT) -> *mut c_void {
+    let address = public_entry!("realloc");
+    // SAFETY: the resolved `realloc` has the C `realloc` signature.
+    let entry: unsafe extern "C" fn(*mut c_void, SizeT) -> *mut c_void =
+        unsafe { core::mem::transmute(address) };
+    unsafe { entry(pointer, size) }
+}
+
+#[inline]
+unsafe fn public_aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_void {
+    let address = public_entry!("aligned_alloc");
+    // SAFETY: the resolved `aligned_alloc` has the C signature.
+    let entry: unsafe extern "C" fn(SizeT, SizeT) -> *mut c_void =
+        unsafe { core::mem::transmute(address) };
+    unsafe { entry(alignment, size) }
+}
+
+#[inline]
+unsafe fn public_memalign(alignment: SizeT, size: SizeT) -> *mut c_void {
+    let address = public_entry!("memalign");
+    // SAFETY: the resolved `memalign` has the C signature.
+    let entry: unsafe extern "C" fn(SizeT, SizeT) -> *mut c_void =
+        unsafe { core::mem::transmute(address) };
+    unsafe { entry(alignment, size) }
+}
+
+unsafe extern "C" fn libc_malloc(size: SizeT) -> *mut c_void {
     unsafe { native_mimalloc_allocate(size, NATIVE_MIMALLOC_MALLOC_ALIGNMENT, false) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn free(pointer: *mut c_void) {
+unsafe extern "C" fn libc_free(pointer: *mut c_void) {
     unsafe { native_mimalloc_deallocate(pointer) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
+unsafe extern "C" fn libc_calloc(count: SizeT, size: SizeT) -> *mut c_void {
     let Some(total) = count.checked_mul(size) else {
         unsafe { cabi_set_allocator_errno(ENOMEM) };
         return null_mut();
     };
-    if total == 0 {
-        return unsafe { malloc(0) };
+    if application_malloc_replaced() {
+        let allocation = unsafe { public_malloc(total) };
+        if !allocation.is_null() {
+            unsafe { core::ptr::write_bytes(allocation.cast::<u8>(), 0, total) };
+        }
+        return allocation;
     }
-    unsafe { native_mimalloc_allocate(total, NATIVE_MIMALLOC_MALLOC_ALIGNMENT, true) }
+    unsafe { native_mimalloc_allocate(total, NATIVE_MIMALLOC_MALLOC_ALIGNMENT, total != 0) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn realloc(pointer: *mut c_void, new_size: SizeT) -> *mut c_void {
+unsafe extern "C" fn libc_realloc(pointer: *mut c_void, new_size: SizeT) -> *mut c_void {
+    // Musl's `realloc(NULL, n)` allocates internally, like this native path.
     if pointer.is_null() {
-        return unsafe { malloc(new_size) };
+        return unsafe { native_mimalloc_allocate(new_size, NATIVE_MIMALLOC_MALLOC_ALIGNMENT, false) };
     }
     let block = unsafe { core::ptr::NonNull::new_unchecked(pointer.cast::<u8>()) };
     unsafe { native_mimalloc_allocation_result(native_reallocate(Some(block), new_size)) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn reallocarray(
+unsafe extern "C" fn libc_reallocarray(
     pointer: *mut c_void,
     count: SizeT,
     size: SizeT,
@@ -129,27 +246,27 @@ pub unsafe extern "C" fn reallocarray(
         unsafe { cabi_set_allocator_errno(ENOMEM) };
         return null_mut();
     };
-    unsafe { realloc(pointer, total) }
+    unsafe { public_realloc(pointer, total) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_void {
-    if alignment == 0 {
-        return unsafe { malloc(size) };
-    }
-    if !native_mimalloc_is_power_of_two(alignment) {
+unsafe extern "C" fn libc_aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_void {
+    // Mallocng order: zero passes its power-of-two test, then the size and
+    // alignment bounds, then the replaced-malloc refusal.
+    if alignment != 0 && !native_mimalloc_is_power_of_two(alignment) {
         unsafe { cabi_set_allocator_errno(EINVAL) };
         return null_mut();
     }
-    if size > usize::MAX - alignment || alignment >= MUSL_MALLOCNG_MAX_ALIGNMENT {
+    if size > usize::MAX - alignment || alignment >= MUSL_MALLOCNG_MAX_ALIGNMENT
+        || application_malloc_replaced()
+    {
         unsafe { cabi_set_allocator_errno(ENOMEM) };
         return null_mut();
     }
+    let alignment = alignment.max(NATIVE_MIMALLOC_MALLOC_ALIGNMENT);
     unsafe { native_mimalloc_allocate(size, alignment, false) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn posix_memalign(
+unsafe extern "C" fn libc_posix_memalign(
     result: *mut *mut c_void,
     alignment: SizeT,
     size: SizeT,
@@ -161,7 +278,7 @@ pub unsafe extern "C" fn posix_memalign(
         unsafe { cabi_set_allocator_errno(EINVAL) };
         return EINVAL;
     }
-    let allocation = unsafe { aligned_alloc(alignment, size) };
+    let allocation = unsafe { public_aligned_alloc(alignment, size) };
     if allocation.is_null() {
         return unsafe { cabi_allocator_errno() };
     }
@@ -169,18 +286,12 @@ pub unsafe extern "C" fn posix_memalign(
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn memalign(alignment: SizeT, size: SizeT) -> *mut c_void {
-    if alignment == 0 {
-        unsafe { malloc(size) }
-    } else {
-        unsafe { aligned_alloc(alignment, size) }
-    }
+unsafe extern "C" fn libc_memalign(alignment: SizeT, size: SizeT) -> *mut c_void {
+    unsafe { public_aligned_alloc(alignment, size) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn valloc(size: SizeT) -> *mut c_void {
-    unsafe { memalign(4096, size) }
+unsafe extern "C" fn libc_valloc(size: SizeT) -> *mut c_void {
+    unsafe { public_memalign(4096, size) }
 }
 
 /// Internal owned allocation through the same selected native owner.

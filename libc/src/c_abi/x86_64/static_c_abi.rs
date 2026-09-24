@@ -1373,8 +1373,11 @@ mod allocator_observability {
     use core::ffi::c_void;
 
     /// Observe the selected native engine only; an x86 native pointer never
-    /// enters the bundled C backend's `mi_usable_size` route.
+    /// enters the bundled C backend's `mi_usable_size` route. The static
+    /// archive binds it weak, like the allocation entries, so an
+    /// application's replacement preempts it as a separate musl member would.
     #[no_mangle]
+    #[cfg_attr(not(crabc_x86_dynamic_runtime), linkage = "weak")]
     pub unsafe extern "C" fn malloc_usable_size(pointer: *mut c_void) -> usize {
         let Some(block) = core::ptr::NonNull::new(pointer.cast::<u8>()) else {
             return 0;

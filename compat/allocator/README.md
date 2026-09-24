@@ -1972,6 +1972,23 @@ the allocator itself rejects is not reachable after installed startup, which
 initializes the process owner before any constructor; the pre-start
 rejection above remains its evidence.
 
+Application allocator replacement is checked through installed products by:
+
+```sh
+./scripts/dev-x86_64.sh owned-allocator-override [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]
+```
+
+`compat/x86_64/owned_allocator_override_probe.c` defines its own allocator,
+either the whole malloc family or only `malloc`/`free`/`realloc`. That
+allocator rejects any pointer it did not allocate. The runner links the probe
+in all six native-shadow entry modes and requires the pinned-musl transcript:
+- caller-owned results (`strdup`, `strndup`, `asprintf`, `wcsdup`,
+  `realpath`, `getline` growth, `open_memstream`) come from the application
+  allocator;
+- `calloc` and `reallocarray` reach it;
+- libc-owned storage (stdio, environment, regex, threads) stays coherent.
+The contract and its one difference from musl are in `known-differences.md`.
+
 A separate dynamic OS-aligned singleton owner-exit route is available on native
 x86-64:
 

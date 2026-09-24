@@ -597,6 +597,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-native-allocator-fork [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed native-shadow fork/atfork allocation against musl
   owned-native-worker-lifecycle [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed audited native-shadow worker owner lifecycle against musl
   owned-native-allocator-stress [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  run pinned test-stress.c and the seeded audited soak through installed native-shadow products
+  owned-allocator-override [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed native-shadow application allocator replacement against musl
   owned-aio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed POSIX AIO against pinned musl
   owned-process-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed residual POSIX process control
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
@@ -7243,7 +7244,7 @@ case "$command" in
     native-thread-signal-abi) ;;
     owned-system-cancellation) ;;
     owned-rand) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-native-allocator-stress|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-calendar-component|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-native-allocator-stress|owned-allocator-override|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-calendar-component|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-strfmon) ;;
     owned-process-globals) ;;
     owned-pthread-spin) ;;
@@ -7497,7 +7498,7 @@ case "$command" in
             set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         fi
         ;;
-    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-native-allocator-stress|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy|owned-regex)
+    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-native-allocator-stress|owned-allocator-override|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy|owned-regex)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
@@ -9606,6 +9607,10 @@ case "$command" in
     owned-native-allocator-stress)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_native_allocator_stress.sh "$@"
+        ;;
+    owned-allocator-override)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_allocator_override.sh "$@"
         ;;
     owned-aio)
         ensure_image
