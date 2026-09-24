@@ -132,9 +132,9 @@ check_cxx_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]endservent$' ||
+    grep -Eq '[[:space:]]endservent$' <<<"$undefined" ||
         fail "$profile $tree C++ probe does not retain C linkage for endservent"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*endservent'; then
+    if grep -Eq '_Z[0-9].*endservent' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled endservent reference"
     fi
 }

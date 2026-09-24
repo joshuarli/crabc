@@ -74,9 +74,9 @@ done
     -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]wcswcs$' ||
+    grep -Eq '[[:space:]]wcswcs$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for wcswcs"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*wcswcs'; then
+    if grep -Eq '_Z[0-9].*wcswcs' <<<"$undefined"; then
         fail "C++ probe retained a mangled wcswcs reference"
     fi
 done

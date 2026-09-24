@@ -458,7 +458,7 @@ fi
 if grep -Eq 'libc\.a\((memcpy|memset|strlen)\.lo\)' "$link_map"; then
     fail "candidate selected a pinned-musl byte-string implementation"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

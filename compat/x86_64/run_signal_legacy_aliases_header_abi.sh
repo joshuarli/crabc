@@ -73,9 +73,9 @@ assert_unmangled_reference() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]bsd_signal$' ||
+    grep -Eq '[[:space:]]bsd_signal$' <<<"$undefined" ||
         fail "$tree $profile probe does not retain unmangled bsd_signal"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*bsd_signal'; then
+    if grep -Eq '_Z.*bsd_signal' <<<"$undefined"; then
         fail "$tree $profile probe retained a mangled bsd_signal reference"
     fi
 }

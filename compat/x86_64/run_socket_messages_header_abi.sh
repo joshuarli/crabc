@@ -121,7 +121,7 @@ for mode in musl project; do
     fi
     undefined="$(nm -u "$object")"
     for symbol in setsockopt getsockopt sendmsg recvmsg sendmmsg recvmmsg sockatmark; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "${mode} C++ GNU probe lacks unmangled ${symbol} reference"
     done
 done

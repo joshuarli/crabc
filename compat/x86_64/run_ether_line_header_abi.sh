@@ -132,9 +132,9 @@ check_cxx_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]ether_line$' ||
+    grep -Eq '[[:space:]]ether_line$' <<<"$undefined" ||
         fail "$profile $tree C++ probe does not retain C linkage for ether_line"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*ether_line'; then
+    if grep -Eq '_Z[0-9].*ether_line' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled ether_line reference"
     fi
 }

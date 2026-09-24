@@ -94,10 +94,10 @@ for variant in oracle project; do
     undefined="$(nm --undefined-only "$object")"
     for symbol in bind_textdomain_codeset bindtextdomain catclose catgets catopen \
         dcgettext dcngettext dgettext dngettext gettext ngettext textdomain; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "C++ probe does not retain C linkage for ${symbol} (${variant})"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*(gettext|textdomain|catopen|catclose|catgets)'; then
+    if grep -Eq '_Z[0-9].*(gettext|textdomain|catopen|catclose|catgets)' <<<"$undefined"; then
         fail "C++ probe retained a mangled gettext/catalog reference (${variant})"
     fi
 done

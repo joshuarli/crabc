@@ -52,9 +52,9 @@ fi
 
 for object in "$reference_object" "$candidate_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]utime$' ||
+    grep -Eq '[[:space:]]utime$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for utime"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z5utime'; then
+    if grep -Eq '_Z5utime' <<<"$undefined"; then
         fail "C++ probe retained a mangled utime reference"
     fi
 done

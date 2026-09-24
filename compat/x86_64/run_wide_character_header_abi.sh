@@ -72,16 +72,16 @@ for tree in reference candidate; do
                 fail "$tree did not preprocess $include_root/$header"
         done
         if sed -n -E 's/^[. ]+ (\/[^[:space:]]+).*$/\1/p' "$trace" |
-            grep -Ev "^($include_root|$builtin_include)/" | grep -q .; then
+            grep -Ev "^($include_root|$builtin_include)/" | grep . >/dev/null; then
             fail "$tree trace escaped its declared header roots"
         fi
     done
     undefined="$(nm --undefined-only "$cxx_object" | awk '{print $NF}')"
     for symbol in "${SYMBOLS[@]}"; do
-        printf '%s\n' "$undefined" | grep -Fxq "$symbol" ||
+        grep -Fxq "$symbol" <<<"$undefined" ||
             fail "$tree C++ object lost C linkage for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '^_Z.*(wcs|wmem|isw|tow|wct)'; then
+    if grep -Eq '^_Z.*(wcs|wmem|isw|tow|wct)' <<<"$undefined"; then
         fail "$tree C++ object retains a mangled selected reference"
     fi
     printf 'PASS: %s/C11+C++17\n' "$tree"

@@ -89,10 +89,10 @@ for variant in oracle project; do
         -o "$object"
     undefined="$(nm --undefined-only "$object")"
     for symbol in strerror strerror_r strerror_l; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" \
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" \
             || fail "C++ probe does not retain C linkage for ${symbol} (${variant})"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*strerror'; then
+    if grep -Eq '_Z[0-9].*strerror' <<<"$undefined"; then
         fail "C++ probe retained a mangled error-string reference (${variant})"
     fi
 done

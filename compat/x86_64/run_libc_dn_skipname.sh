@@ -70,10 +70,8 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" |
-                grep -Eq '[[:space:]][T][[:space:]]dn_skipname$'; then
-                if printf '%s\n' "$definitions" |
-                    grep -Eq '[[:space:]][T][[:space:]](dn_expand|ns_skiprr)$'; then
+            if grep -Eq '[[:space:]][T][[:space:]]dn_skipname$' <<<"$definitions"; then
+                if grep -Eq '[[:space:]][T][[:space:]](dn_expand|ns_skiprr)$' <<<"$definitions"; then
                     fail "dn_skipname archive member also defines a parser sibling"
                 fi
                 printf '%s\n' "$member"
@@ -122,10 +120,10 @@ esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" dn_skipname.lo >"$musl_object"
 readelf --symbols --wide "$musl_object" |
-    grep -Eq '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+dn_skipname\.c$' ||
+    grep -E '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+dn_skipname\.c$' >/dev/null ||
     fail "pinned musl dn_skipname object no longer maps to dn_skipname.c"
 readelf --symbols --wide "$musl_object" |
-    grep -Eq '[[:space:]]83[[:space:]]+FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+dn_skipname$' ||
+    grep -E '[[:space:]]83[[:space:]]+FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+dn_skipname$' >/dev/null ||
     fail "pinned musl dn_skipname object layout drifted"
 if [ -n "$(nm --undefined-only "$musl_object")" ]; then
     fail "pinned musl dn_skipname object unexpectedly has a dependency"

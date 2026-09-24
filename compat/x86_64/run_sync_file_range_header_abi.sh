@@ -119,9 +119,9 @@ compile_gnu_profile() {
                     -DCRABC_EXPECT_SYNC_FILE_RANGE -nostdinc++ \
                     "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]sync_file_range$' ||
+                grep -Eq '[[:space:]]sync_file_range$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage (${tree})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z.*sync_file_range'; then
+                if grep -Eq '_Z.*sync_file_range' <<<"$undefined"; then
                     fail "C++ probe retained a mangled sync_file_range reference (${tree})"
                 fi
             fi

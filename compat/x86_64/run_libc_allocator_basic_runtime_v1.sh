@@ -202,7 +202,7 @@ builtins_archive="$work_dir/libcrabc-builtins.a"
 python3 "$ROOT_DIR/builtins/build_x86_64.py" --output "$builtins_archive" \
     >"$work_dir/builtins-build.log"
 [ -f "$builtins_archive" ] || fail "owned compiler helper builder did not emit an archive"
-nm -g --defined-only "$builtins_archive" | grep -Eq '[[:space:]]T[[:space:]]__popcountdi2$' \
+nm -g --defined-only "$builtins_archive" | grep -E '[[:space:]]T[[:space:]]__popcountdi2$' >/dev/null \
     || fail "owned compiler helper archive lacks __popcountdi2"
 
 mapfile -t observability_members < <(
@@ -269,12 +269,12 @@ assert_elf_function_binding "$observer_elf_symbols" \
     malloc_usable_size GLOBAL "allocator observer"
 for symbol in mi_malloc_aligned mi_zalloc mi_realloc_aligned mi_free mi_usable_size; do
     nm -g --defined-only "$work_dir/owners/${backend_members[0]}" |
-        grep -Eq "[[:space:]]T[[:space:]]${symbol}$" \
+        grep -E "[[:space:]]T[[:space:]]${symbol}$" >/dev/null \
         || fail "bundled AArch64-equivalent backend lacks ${symbol}"
 done
 for symbol in "${expected_wrapper_symbols[@]}" malloc_usable_size; do
     if nm -g --defined-only "$work_dir/owners/${backend_members[0]}" |
-        grep -Eq "[[:space:]][TW][[:space:]]${symbol}$"; then
+        grep -E "[[:space:]][TW][[:space:]]${symbol}$" >/dev/null; then
         fail "bundled backend unexpectedly exports public allocator symbol ${symbol}"
     fi
 done
@@ -355,7 +355,7 @@ if grep -Eq 'GLOBAL +DEFAULT +.*__crabc_x86_static_tls_bootstrap$' \
     "$candidate_symbols"; then
     fail "candidate exposes the hidden static-TLS bootstrap"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

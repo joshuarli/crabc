@@ -100,9 +100,9 @@ assert_cxx_profile() {
         -o "$project_object"
     for object in "$oracle_object" "$project_object"; do
         undefined="$(nm --undefined-only "$object")"
-        printf '%s\n' "$undefined" | grep -Eq '[[:space:]]sigpending$' ||
+        grep -Eq '[[:space:]]sigpending$' <<<"$undefined" ||
             fail "${profile} C++ probe did not retain unmangled sigpending"
-        if printf '%s\n' "$undefined" | grep -Eq '_Z.*sigpending'; then
+        if grep -Eq '_Z.*sigpending' <<<"$undefined"; then
             fail "${profile} C++ probe retained a mangled sigpending reference"
         fi
     done

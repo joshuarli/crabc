@@ -104,10 +104,10 @@ compile_profile() {
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
                 for symbol in insque remque; do
-                    printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+                    grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
                         fail "C++ probe does not retain C linkage for ${symbol} (${variant}, ${label})"
                 done
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*(insque|remque)'; then
+                if grep -Eq '_Z[0-9].*(insque|remque)' <<<"$undefined"; then
                     fail "C++ probe retained a mangled intrusive-queue reference (${variant}, ${label})"
                 fi
             fi

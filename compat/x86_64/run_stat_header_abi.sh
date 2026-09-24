@@ -40,9 +40,9 @@ check_statx_c_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
-    printf '%s\n' "$undefined" | grep -Fxq statx ||
+    grep -Fxq statx <<<"$undefined" ||
         fail "$label C++ object lacks an unmangled statx reference"
-    if printf '%s\n' "$undefined" | grep -Eq '^_Z.*statx'; then
+    if grep -Eq '^_Z.*statx' <<<"$undefined"; then
         fail "$label C++ object retains a mangled statx reference"
     fi
 }

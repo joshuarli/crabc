@@ -185,7 +185,7 @@ PY
         grep -Eq 'NEEDED|JMPREL|PLTGOT' "$dynamic"; then
         fail "$label candidate selected dynamic runtime state"
     fi
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
         fail "$label candidate retains an unresolved symbol"
     fi
     if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \

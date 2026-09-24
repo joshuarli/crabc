@@ -251,11 +251,11 @@ check_cxx_linkage() {
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
     while IFS= read -r symbol; do
         [ -n "$symbol" ] || continue
-        printf '%s\n' "$undefined" | grep -Fxq "$symbol" ||
+        grep -Fxq "$symbol" <<<"$undefined" ||
             fail "$profile $tree C++ probe lost unmangled $symbol linkage"
     done < <(expected_cxx_symbols "$profile")
-    if printf '%s\n' "$undefined" | grep -Eq \
-        '_Z.*(fopen|freopen|printf|vprintf|asprintf|vasprintf|__fsetlocking|__fbufsize)'; then
+    if grep -Eq \
+        '_Z.*(fopen|freopen|printf|vprintf|asprintf|vasprintf|__fsetlocking|__fbufsize)' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled stdio reference"
     fi
 }

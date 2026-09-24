@@ -93,7 +93,7 @@ for symbol in __errno_location __environ environ getenv putenv clearenv \
     getlogin getlogin_r; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then fail "candidate has unresolved symbols"; fi
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then fail "candidate has unresolved symbols"; fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then fail "candidate is dynamic"; fi
 grep -Eq '[[:space:]]TLS[[:space:]]' "$headers" || fail "candidate lacks selected errno TLS"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \

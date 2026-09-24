@@ -131,9 +131,9 @@ check_cxx_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]res_init$' ||
+    grep -Eq '[[:space:]]res_init$' <<<"$undefined" ||
         fail "$profile $tree C++ probe does not retain C linkage for res_init"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*res_init'; then
+    if grep -Eq '_Z[0-9].*res_init' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled res_init reference"
     fi
 }

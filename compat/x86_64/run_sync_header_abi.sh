@@ -193,9 +193,9 @@ check_cxx_symbol() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]sync$' ||
+    grep -Eq '[[:space:]]sync$' <<<"$undefined" ||
         fail "$tree $profile C++ probe does not retain C linkage for sync"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*sync'; then
+    if grep -Eq '_Z.*sync' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled sync reference"
     fi
 }

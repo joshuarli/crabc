@@ -221,14 +221,14 @@ check_cxx_symbols() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C linkage for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(statfs|fstatfs|statvfs|fstatvfs)'; then
+    if grep -Eq '_Z.*(statfs|fstatfs|statvfs|fstatvfs)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled filesystem-capacity reference"
     fi
     if profile_is_largefile64 "$profile" &&
-        printf '%s\n' "$undefined" | grep -Eq '[[:space:]](statfs64|fstatfs64|statvfs64|fstatvfs64)$'; then
+        grep -Eq '[[:space:]](statfs64|fstatfs64|statvfs64|fstatvfs64)$' <<<"$undefined"; then
         fail "$tree $profile did not macro-alias its large-file function spelling"
     fi
 }

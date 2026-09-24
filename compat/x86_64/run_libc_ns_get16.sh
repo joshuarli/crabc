@@ -70,10 +70,8 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" |
-                grep -Eq '[[:space:]][T][[:space:]]ns_get16$'; then
-                if printf '%s\n' "$definitions" |
-                    grep -Eq '[[:space:]][T][[:space:]](dn_expand|dn_skipname|ns_get32|ns_put16|ns_put32|ns_initparse|ns_parserr|ns_skiprr|ns_name_uncompress)$'; then
+            if grep -Eq '[[:space:]][T][[:space:]]ns_get16$' <<<"$definitions"; then
+                if grep -Eq '[[:space:]][T][[:space:]](dn_expand|dn_skipname|ns_get32|ns_put16|ns_put32|ns_initparse|ns_parserr|ns_skiprr|ns_name_uncompress)$' <<<"$definitions"; then
                     fail "ns_get16 archive member also defines a nameserver sibling"
                 fi
                 printf '%s\n' "$member"
@@ -122,10 +120,10 @@ esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" ns_parse.lo >"$musl_object"
 readelf --symbols --wide "$musl_object" |
-    grep -Eq '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+ns_parse\.c$' ||
+    grep -E '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+ns_parse\.c$' >/dev/null ||
     fail "pinned musl ns_parse object no longer maps to ns_parse.c"
 readelf --symbols --wide "$musl_object" |
-    grep -Eq '[[:space:]]11[[:space:]]+FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+ns_get16$' ||
+    grep -E '[[:space:]]11[[:space:]]+FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+ns_get16$' >/dev/null ||
     fail "pinned musl ns_get16 object layout drifted"
 objdump -dr --disassemble=ns_get16 "$musl_object" >"$musl_disassembly"
 if grep -Eq '\b(call|syscall)\b|R_X86_64_' "$musl_disassembly"; then

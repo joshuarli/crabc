@@ -149,10 +149,10 @@ assert_cxx_c_linkage() {
     fi
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe lacks unmangled $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*mlock'; then
+    if grep -Eq '_Z.*mlock' <<<"$undefined"; then
         fail "$tree $profile C++ probe retains a mangled memory-lock symbol"
     fi
 }

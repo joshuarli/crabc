@@ -56,11 +56,11 @@ for interpreter in "$work_dir/ld-crabc-x86_64-public-dlfcn.so" \
     "$work_dir/ld-crabc-x86_64-public-dlfcn-malformed.so"; do
     [ "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN ] ||
         fail "interpreter is not ET_DYN: $interpreter"
-    ! readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)|\(RELR\)' ||
+    ! readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)|\(RELR\)' >/dev/null ||
         fail "interpreter selected an ambient runtime: $interpreter"
-    ! readelf -lW "$interpreter" | grep -q ' TLS ' ||
+    ! readelf -lW "$interpreter" | grep ' TLS ' >/dev/null ||
         fail "interpreter selected PT_TLS: $interpreter"
-    readelf -lW "$interpreter" | grep -q GNU_RELRO ||
+    readelf -lW "$interpreter" | grep GNU_RELRO >/dev/null ||
         fail "interpreter lacks GNU_RELRO: $interpreter"
     readelf -Ws "$interpreter" | awk \
         '$4 == "OBJECT" && $7 != "UND" && $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1" && $3 == 64 { found=1 } END { exit found ? 0 : 1 }' ||
@@ -178,9 +178,9 @@ for candidate in "$work_dir/main-crabc-public-dlfcn" \
     "$work_dir/main-crabc-public-dlfcn-override-addr"; do
     [ "$(readelf -h "$candidate" | awk '/Type:/{print $2}')" = DYN ] ||
         fail "public candidate is not ET_DYN: $candidate"
-    ! readelf -dW "$candidate" | grep -Eq '\(NEEDED\).*(libc|libgcc|ld-linux)' ||
+    ! readelf -dW "$candidate" | grep -E '\(NEEDED\).*(libc|libgcc|ld-linux)' >/dev/null ||
         fail "public candidate selected an ambient runtime: $candidate"
-    if readelf -lW "$candidate" | grep -q ' TLS '; then
+    if readelf -lW "$candidate" | grep ' TLS ' >/dev/null; then
         readelf -Ws "$candidate" | awk '$4 == "TLS" { print }' >&2
         fail "public candidate selected PT_TLS: $candidate"
     fi
@@ -239,7 +239,7 @@ readelf -Ws "$work_dir/main-crabc-public-dlfcn" | awk \
     '$5 == "WEAK" && $7 == "UND" && $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1" { found=1 } END { exit found ? 0 : 1 }' ||
     fail 'public candidate lost weak loader-record import'
 readelf -rW "$work_dir/main-crabc-public-dlfcn" |
-    grep -Eq 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1' ||
+    grep -E 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1' >/dev/null ||
     fail 'public candidate lacks loader-record GLOB_DAT'
 
 require_needed() {

@@ -19,9 +19,9 @@ assert_cxx_posix_fallocate_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]posix_fallocate$' ||
+    grep -Eq '[[:space:]]posix_fallocate$' <<<"$undefined" ||
         fail "$profile C++ probe does not retain C linkage for posix_fallocate"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*posix_fallocate'; then
+    if grep -Eq '_Z.*posix_fallocate' <<<"$undefined"; then
         fail "$profile C++ probe retains a mangled posix_fallocate reference"
     fi
 }

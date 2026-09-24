@@ -81,10 +81,10 @@ esac
 
 interpreter="$work_dir/ld-crabc-x86_64-general-initial-tls.so"
 test "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN
-if readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)|\((RELR|RELRSZ|RELRENT)\)'; then
+if readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)|\((RELR|RELRSZ|RELRENT)\)' >/dev/null; then
     fail 'general initial-TLS interpreter selected an external bootstrap runtime'
 fi
-if readelf -lW "$interpreter" | grep -q ' TLS '; then
+if readelf -lW "$interpreter" | grep ' TLS ' >/dev/null; then
     fail 'general initial-TLS interpreter selected interpreter TLS'
 fi
 if ! readelf --dyn-syms -W "$interpreter" | awk '$8 == "__tls_get_addr" && $7 != "UND" { found = 1 } END { exit found ? 0 : 1 }'; then
@@ -181,12 +181,12 @@ require_dependency_init_array() {
 for binary in "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so"; do
     require_dependency_init_array "$binary"
 done
-if readelf -dW "$work_dir/main-crabc" | grep -Eq '\((INIT_ARRAY|INIT_ARRAYSZ|INIT|FINI|FINI_ARRAY|FINI_ARRAYSZ|PREINIT_ARRAY|PREINIT_ARRAYSZ)\)'; then
+if readelf -dW "$work_dir/main-crabc" | grep -E '\((INIT_ARRAY|INIT_ARRAYSZ|INIT|FINI|FINI_ARRAY|FINI_ARRAYSZ|PREINIT_ARRAY|PREINIT_ARRAYSZ)\)' >/dev/null; then
     fail 'main fixture selected lifecycle metadata outside the dependency-only boundary'
 fi
 
 for binary in "$work_dir/main-crabc" "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so"; do
-    readelf -lW "$binary" | grep -q ' TLS ' || fail "fixture lacks PT_TLS: $binary"
+    readelf -lW "$binary" | grep ' TLS ' >/dev/null || fail "fixture lacks PT_TLS: $binary"
     if readelf -rW "$binary" | awk '/R_X86_64_/ { if ($3 != "R_X86_64_RELATIVE" && $3 != "R_X86_64_GLOB_DAT" && $3 != "R_X86_64_JUMP_SLOT" && $3 != "R_X86_64_DTPMOD64" && $3 != "R_X86_64_DTPOFF64") exit 1 }'; then :; else
         fail "fixture escaped the initial GNU-Dynamic relocation profile: $binary"
     fi

@@ -71,7 +71,7 @@ assert_static_closure() {
     readelf --dynamic --wide "$candidate_path" >"$dynamic_path" || true
     readelf --relocs --wide "$candidate_path" >"$relocs_path"
     objdump -d "$candidate_path" >"$disassembly_path"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep -q .; then
+    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep . >/dev/null; then
         fail "${label} has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers_path" "$dynamic_path"; then

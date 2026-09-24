@@ -183,7 +183,7 @@ for symbol in uname get_nprocs get_nprocs_conf get_phys_pages get_avphys_pages \
         fail "getloadavg candidate unexpectedly pulls ${symbol}"
     fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

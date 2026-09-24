@@ -156,7 +156,7 @@ objdump -d --disassemble=umask "$candidate" >"$umask_disassembly"
 
 grep -Eq '[[:space:]]umask$' "$candidate_symbols" ||
     fail "candidate lacks umask"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

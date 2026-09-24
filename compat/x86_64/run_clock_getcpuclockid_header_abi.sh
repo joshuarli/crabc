@@ -98,9 +98,9 @@ done
     -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]clock_getcpuclockid$' ||
+    grep -Eq '[[:space:]]clock_getcpuclockid$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for clock_getcpuclockid"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*clock_getcpuclockid'; then
+    if grep -Eq '_Z.*clock_getcpuclockid' <<<"$undefined"; then
         fail "C++ probe retained a mangled clock_getcpuclockid reference"
     fi
 done

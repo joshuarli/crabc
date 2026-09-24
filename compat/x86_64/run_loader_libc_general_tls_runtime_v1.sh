@@ -247,9 +247,9 @@ PY
 for interpreter in "$work_dir"/ld-general-runtime-v1*.so; do
     [ "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN ] ||
         fail "interpreter is not ET_DYN: $interpreter"
-    ! readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)' ||
+    ! readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)' >/dev/null ||
         fail "interpreter selected an ambient runtime: $interpreter"
-    ! readelf -lW "$interpreter" | grep -q ' TLS ' ||
+    ! readelf -lW "$interpreter" | grep ' TLS ' >/dev/null ||
         fail "interpreter selected its own PT_TLS: $interpreter"
     require_record_outside_page_rounded_relro "$interpreter"
 done
@@ -341,31 +341,31 @@ if ! readelf -Ws "$work_dir/main-valid" | awk \
     '$5 == "WEAK" && $7 == "UND" && $8 == "__crabc_x86_64_loader_tls_runtime_v1" { found = 1 } END { exit found ? 0 : 1 }'; then
     fail 'general libc consumer lost its exact weak loader record import'
 fi
-if ! readelf -rW "$work_dir/main-valid" | grep -Eq \
-    'R_X86_64_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1'; then
+if ! readelf -rW "$work_dir/main-valid" | grep -E \
+    'R_X86_64_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1' >/dev/null; then
     fail 'general libc consumer lacks the checked RuntimeV1 record GOT relocation'
 fi
 if ! readelf -Ws "$work_dir/main-strong-record" | awk \
     '$5 == "GLOBAL" && $7 == "UND" && $8 == "__crabc_x86_64_loader_tls_runtime_v1" { found = 1 } END { exit found ? 0 : 1 }'; then
     fail 'strong main-image RuntimeV1 record import was not retained'
 fi
-if ! readelf -rW "$work_dir/main-strong-record" | grep -Eq \
-    'R_X86_64_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1'; then
+if ! readelf -rW "$work_dir/main-strong-record" | grep -E \
+    'R_X86_64_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1' >/dev/null; then
     fail 'strong main-image RuntimeV1 record import lacks its GOT relocation'
 fi
 if ! readelf -Ws "$work_dir/libleft-weak-record.so" | awk \
     '$5 == "WEAK" && $7 == "UND" && $8 == "__crabc_x86_64_loader_tls_runtime_v1" { found = 1 } END { exit found ? 0 : 1 }'; then
     fail 'weak DSO RuntimeV1 record import was not retained'
 fi
-if ! readelf -rW "$work_dir/libleft-weak-record.so" | grep -Eq \
-    'R_X86_64_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1'; then
+if ! readelf -rW "$work_dir/libleft-weak-record.so" | grep -E \
+    'R_X86_64_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1' >/dev/null; then
     fail 'weak DSO RuntimeV1 record import lacks its GOT relocation'
 fi
 for binary in "$work_dir/main-valid" "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so"; do
-    readelf -lW "$binary" | grep -q ' TLS ' || fail "graph fixture lacks PT_TLS: $binary"
+    readelf -lW "$binary" | grep ' TLS ' >/dev/null || fail "graph fixture lacks PT_TLS: $binary"
 done
 for binary in "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so"; do
-    readelf -dW "$binary" | grep -Eq '\(INIT_ARRAY\)|\(INIT_ARRAYSZ\)' ||
+    readelf -dW "$binary" | grep -E '\(INIT_ARRAY\)|\(INIT_ARRAYSZ\)' >/dev/null ||
         fail "dependency fixture lacks its DT_INIT_ARRAY pair: $binary"
 done
 
@@ -408,7 +408,7 @@ mv "$work_dir/libleft-normal.so" "$left_dir/libleft.so"
 cc -nostdlib -no-pie -fno-stack-protector -ffreestanding \
     -fno-asynchronous-unwind-tables -Wl,-e,_start "$START" "$STATIC_MAIN" \
     "$work_dir/libconsumer-static.a" -o "$work_dir/main-static"
-if readelf -lW "$work_dir/main-static" | grep -q 'Requesting program interpreter'; then
+if readelf -lW "$work_dir/main-static" | grep 'Requesting program interpreter' >/dev/null; then
     fail 'static-mode negative fixture unexpectedly gained PT_INTERP'
 fi
 if readelf -Ws "$work_dir/main-static" | awk \

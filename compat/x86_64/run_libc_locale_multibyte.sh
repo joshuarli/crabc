@@ -142,7 +142,7 @@ for symbol in __ctype_get_mb_cur_max __errno_location btowc localeconv mblen \
     wcsrtombs wcstombs wctob wctomb; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

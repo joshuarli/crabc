@@ -152,7 +152,7 @@ candidate_primary_value="$(awk '$4 == "FUNC" && $8 == "__stack_chk_fail" { print
 candidate_local_value="$(awk '$4 == "FUNC" && $8 == "__stack_chk_fail_local" { print $2 }' "$candidate_symbols")"
 [ -n "$candidate_primary_value" ] && [ "$candidate_primary_value" = "$candidate_local_value" ] ||
     fail "candidate stack-check failure aliases do not share one address"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED|JMPREL|PLTGOT' \

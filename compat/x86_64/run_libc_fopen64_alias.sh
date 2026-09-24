@@ -175,7 +175,7 @@ objdump -d "$candidate" >"$candidate_disassembly"
 awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "fopen" { found = 1 } END { exit(found ? 0 : 1) }' \
     "$candidate_symbols" || fail "candidate fopen lost strong ELF binding"
 assert_no_fopen64_symbol "$candidate_symbols" "candidate"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

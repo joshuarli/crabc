@@ -97,9 +97,9 @@ assert_cxx_header_contract() {
         for object in "$oracle_object" "$project_object"; do
             undefined="$(nm --undefined-only "$object")"
             symbol=__libc_current_sigrtmin
-            printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+            grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
                 fail "${profile} C++ probe did not retain unmangled ${symbol}"
-            if printf '%s\n' "$undefined" | grep -Eq "_Z.*${symbol}"; then
+            if grep -Eq "_Z.*${symbol}" <<<"$undefined"; then
                 fail "${profile} C++ probe retained a mangled ${symbol} reference"
             fi
         done

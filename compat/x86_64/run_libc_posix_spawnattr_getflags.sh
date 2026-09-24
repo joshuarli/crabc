@@ -93,8 +93,8 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" posix_spawnattr_getflags.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq \
-    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]].*[[:space:]]posix_spawnattr_getflags$' ||
+readelf --symbols --wide "$musl_object" | grep -E \
+    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]].*[[:space:]]posix_spawnattr_getflags$' >/dev/null ||
     fail "pinned musl posix_spawnattr_getflags.lo lacks strong posix_spawnattr_getflags"
 
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
@@ -132,7 +132,7 @@ objdump -d --disassemble=posix_spawnattr_getflags "$candidate" \
     >"$posix_spawnattr_getflags_disassembly"
 grep -Eq '[[:space:]]posix_spawnattr_getflags$' "$candidate_symbols" ||
     fail "candidate lacks posix_spawnattr_getflags"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

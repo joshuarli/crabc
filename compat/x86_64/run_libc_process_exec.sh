@@ -315,7 +315,7 @@ assert_static_candidate_shape() {
     readelf --program-headers --wide "$executable" >"$headers_path"
     readelf --dynamic --wide "$executable" >"$dynamic_path" || true
     readelf --relocs --wide "$executable" >"$relocations_path"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep -q .; then
+    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep . >/dev/null; then
         fail "$label has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -620,7 +620,7 @@ if grep -Eq 'libc\.a\((execve|execv|execvp|execvpe|execl|execle|execlp|fexecve)\
     "$candidate_map"; then
     fail "candidate selected a pinned-musl exec-family implementation"
 fi
-if strings -a "$full_closure" | grep -Fq '/proc/self/fd'; then
+if strings -a "$full_closure" | grep -F '/proc/self/fd' >/dev/null; then
     fail "selected fexecve closure contains a forbidden procfd fallback"
 fi
 assert_execve_syscall_path "$candidate"

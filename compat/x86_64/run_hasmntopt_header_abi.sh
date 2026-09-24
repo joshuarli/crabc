@@ -200,9 +200,9 @@ check_cxx_symbol() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]hasmntopt$' ||
+    grep -Eq '[[:space:]]hasmntopt$' <<<"$undefined" ||
         fail "$tree $profile C++ probe does not retain C linkage for hasmntopt"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*hasmntopt'; then
+    if grep -Eq '_Z.*hasmntopt' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled hasmntopt reference"
     fi
 }

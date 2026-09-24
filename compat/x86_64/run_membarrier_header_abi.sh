@@ -107,15 +107,15 @@ compile_profile() {
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
                 if [ "$variant" = oracle ]; then
-                    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]_Z10membarrierii$' ||
+                    grep -Eq '[[:space:]]_Z10membarrierii$' <<<"$undefined" ||
                         fail "pinned musl C++ header lost its documented membarrier spelling (${label})"
-                    if printf '%s\n' "$undefined" | grep -Eq '[[:space:]]membarrier$'; then
+                    if grep -Eq '[[:space:]]membarrier$' <<<"$undefined"; then
                         fail "pinned musl C++ header unexpectedly gained C linkage (${label})"
                     fi
                 else
-                    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]membarrier$' ||
+                    grep -Eq '[[:space:]]membarrier$' <<<"$undefined" ||
                         fail "project C++ header does not retain C linkage for membarrier (${label})"
-                    if printf '%s\n' "$undefined" | grep -Eq '_Z10membarrierii$'; then
+                    if grep -Eq '_Z10membarrierii$' <<<"$undefined"; then
                         fail "project C++ header retained the musl-only mangled membarrier reference (${label})"
                     fi
                 fi

@@ -224,7 +224,7 @@ if [ "${observability_symbols[*]}" != "${expected_observability_symbols[*]}" ]; 
     fail "observability object export surface drifted"
 fi
 nm -g --defined-only "$work_dir/owners/${backend_members[0]}" |
-    grep -Eq '[[:space:]]T[[:space:]]mi_usable_size$' \
+    grep -E '[[:space:]]T[[:space:]]mi_usable_size$' >/dev/null \
     || fail "bundled AArch64-equivalent backend lacks mi_usable_size"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
@@ -297,7 +297,7 @@ if grep -Eq 'GLOBAL +DEFAULT +.*__crabc_x86_static_tls_bootstrap$' \
     "$candidate_symbols"; then
     fail "candidate exposes the hidden static-TLS bootstrap"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

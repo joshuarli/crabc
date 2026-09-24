@@ -87,9 +87,9 @@ for variant in oracle project; do
         "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
     undefined="$(nm --undefined-only "$object")"
     for symbol in psignal psiginfo; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "C++ probe does not retain C linkage for ${symbol} (${variant})"
-        if printf '%s\n' "$undefined" | grep -Eq "_Z[0-9].*${symbol}"; then
+        if grep -Eq "_Z[0-9].*${symbol}" <<<"$undefined"; then
             fail "C++ probe retained a mangled ${symbol} reference (${variant})"
         fi
     done

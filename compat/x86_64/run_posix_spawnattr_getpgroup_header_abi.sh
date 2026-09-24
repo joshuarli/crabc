@@ -135,9 +135,9 @@ check_cxx_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]posix_spawnattr_getpgroup$' ||
+    grep -Eq '[[:space:]]posix_spawnattr_getpgroup$' <<<"$undefined" ||
         fail "$profile $tree C++ probe does not retain C linkage for posix_spawnattr_getpgroup"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*posix_spawnattr_getpgroup'; then
+    if grep -Eq '_Z[0-9].*posix_spawnattr_getpgroup' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled posix_spawnattr_getpgroup reference"
     fi
 }

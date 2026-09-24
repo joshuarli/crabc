@@ -64,10 +64,10 @@ done
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
     for symbol in iconv iconv_close iconv_open; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "C++ probe does not retain C linkage for ${symbol}"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '^.*[[:space:]]_Z.*iconv'; then
+    if grep -Eq '^.*[[:space:]]_Z.*iconv' <<<"$undefined"; then
         fail "C++ probe retained a mangled iconv reference"
     fi
 done

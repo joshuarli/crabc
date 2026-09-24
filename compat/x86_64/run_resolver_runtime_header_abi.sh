@@ -88,11 +88,11 @@ check_cxx_linkage() {
     undefined="$(nm --undefined-only "$object")"
     for symbol in __res_state __h_errno_location res_init res_query \
         res_querydomain res_search res_mkquery res_send dn_comp; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "C++ probe lacks unmangled ${symbol}"
     done
-    if printf '%s\n' "$undefined" | grep -Eq \
-        '_Z[0-9].*(res_state|h_errno|res_init|res_query|res_search|res_mkquery|res_send|dn_comp)'; then
+    if grep -Eq \
+        '_Z[0-9].*(res_state|h_errno|res_init|res_query|res_search|res_mkquery|res_send|dn_comp)' <<<"$undefined"; then
         fail "C++ probe retained a mangled resolver reference"
     fi
 }

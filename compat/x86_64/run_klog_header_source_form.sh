@@ -124,9 +124,9 @@ extract_klog_macros() {
 check_cxx_linkage() {
     local tree="$1" profile="$2" object="$3" undefined
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]klogctl$' ||
+    grep -Eq '[[:space:]]klogctl$' <<<"$undefined" ||
         fail "$profile $tree C++ probe lost unmangled klogctl linkage"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*klogctl'; then
+    if grep -Eq '_Z.*klogctl' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled klogctl reference"
     fi
 }

@@ -131,9 +131,9 @@ assert_cxx_c_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
-    printf '%s\n' "$undefined" | grep -Fxq __freadable ||
+    grep -Fxq __freadable <<<"$undefined" ||
         fail "$tree C++ probe does not retain C spelling __freadable"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*__freadable'; then
+    if grep -Eq '_Z.*__freadable' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled __freadable reference"
     fi
 }

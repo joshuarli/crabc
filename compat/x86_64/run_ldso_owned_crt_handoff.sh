@@ -49,15 +49,15 @@ build_interpreter "$work_dir/ld-crabc-x86_64-owned-crt-handoff-malformed.so" --c
 
 for interpreter in "$work_dir/ld-crabc-x86_64-owned-crt-handoff.so" \
     "$work_dir/ld-crabc-x86_64-owned-crt-handoff-malformed.so"; do
-    if readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)'; then
+    if readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)' >/dev/null; then
         printf '%s\n' "ERROR: interpreter selected an ambient runtime: $interpreter" >&2
         exit 1
     fi
-    if readelf -lW "$interpreter" | grep -q ' TLS '; then
+    if readelf -lW "$interpreter" | grep ' TLS ' >/dev/null; then
         printf '%s\n' "ERROR: interpreter selected PT_TLS: $interpreter" >&2
         exit 1
     fi
-    if ! readelf -lW "$interpreter" | grep -q 'GNU_RELRO'; then
+    if ! readelf -lW "$interpreter" | grep 'GNU_RELRO' >/dev/null; then
         printf '%s\n' "ERROR: interpreter lacks PT_GNU_RELRO: $interpreter" >&2
         exit 1
     fi
@@ -127,7 +127,7 @@ require_needed_names() {
 
 for binary in "$work_dir/main-owned" "$work_dir/main-musl" "$work_dir/main-malformed" "$work_dir/main-early-fini"; do
     require_needed_names "$binary" libmid-owned-crt.so
-    if ! readelf -lW "$binary" | grep -q 'GNU_RELRO'; then
+    if ! readelf -lW "$binary" | grep 'GNU_RELRO' >/dev/null; then
         printf '%s\n' "ERROR: main lacks PT_GNU_RELRO: $binary" >&2
         exit 1
     fi
@@ -139,7 +139,7 @@ if ! readelf -Ws "$work_dir/main-owned" | awk '$5 == "WEAK" && $7 == "UND" && $8
     printf '%s\n' 'ERROR: Scrt1-owned main lost its weak owned-CRT record import' >&2
     exit 1
 fi
-if ! readelf -rW "$work_dir/main-owned" | grep -Eq 'R_X86_64_GLOB_DAT.*__crabc_x86_64_owned_crt_handoff'; then
+if ! readelf -rW "$work_dir/main-owned" | grep -E 'R_X86_64_GLOB_DAT.*__crabc_x86_64_owned_crt_handoff' >/dev/null; then
     printf '%s\n' 'ERROR: Scrt1-owned main lacks the checked GOT record relocation' >&2
     exit 1
 fi
@@ -147,7 +147,7 @@ for binary in "$work_dir/main-owned" "$work_dir/main-musl" "$work_dir/main-malfo
     "$work_dir/libmid-owned-crt.so" "$work_dir/libleaf-owned-crt.so"; do
     # A libc DT_NEEDED edge would invalidate this private fixture's explicit
     # local six-argument boundary and reintroduce ambient lifecycle state.
-    if readelf -dW "$binary" | grep -Eq '\(NEEDED\).*(libc|libgcc|ld-linux)'; then
+    if readelf -dW "$binary" | grep -E '\(NEEDED\).*(libc|libgcc|ld-linux)' >/dev/null; then
         printf '%s\n' "ERROR: owned-CRT fixture selected an ambient libc/runtime: $binary" >&2
         exit 1
     fi

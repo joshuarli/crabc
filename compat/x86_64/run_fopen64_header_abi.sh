@@ -165,9 +165,9 @@ assert_object_references_fopen_only() {
     local undefined
 
     undefined="$(nm --undefined-only "$object" | awk '{ print $NF }')"
-    printf '%s\n' "$undefined" | grep -Fxq fopen ||
+    grep -Fxq fopen <<<"$undefined" ||
         fail "$tree $profile did not retain an unmangled fopen reference"
-    if printf '%s\n' "$undefined" | grep -Eq '(^fopen64$|_Z.*fopen)'; then
+    if grep -Eq '(^fopen64$|_Z.*fopen)' <<<"$undefined"; then
         fail "$tree $profile retained an ELF or mangled fopen64 reference"
     fi
 }

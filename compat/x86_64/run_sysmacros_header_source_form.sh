@@ -134,7 +134,7 @@ check_direct_trace() {
         fail "$profile $tree trace omitted $root/sys/sysmacros.h"
     [ "$(trace_paths "$trace" | wc -l)" -eq 1 ] ||
         fail "$profile $tree direct sys/sysmacros.h inclusion acquired transitive headers"
-    if trace_paths "$trace" | grep -Eq '/(linux|asm)/'; then
+    if trace_paths "$trace" | grep -E '/(linux|asm)/' >/dev/null; then
         fail "$profile $tree direct sys/sysmacros.h leaked a Linux/UAPI header"
     fi
 }
@@ -211,7 +211,7 @@ check_aarch64_trace() {
         fail "$profile frozen-AArch64 trace omitted project sys/sysmacros.h"
     [ "$(trace_paths "$trace" | wc -l)" -eq 1 ] ||
         fail "$profile frozen-AArch64 sys/sysmacros.h inclusion acquired transitive headers"
-    if trace_paths "$trace" | grep -Eq '/(linux|asm)/'; then
+    if trace_paths "$trace" | grep -E '/(linux|asm)/' >/dev/null; then
         fail "$profile frozen-AArch64 sys/sysmacros.h leaked a Linux/UAPI header"
     fi
 }

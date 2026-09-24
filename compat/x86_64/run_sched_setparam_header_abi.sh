@@ -47,9 +47,9 @@ for tree in oracle project; do
         "$ORACLE_CC" -std=c++17 -x c++ "${feature_args[@]}" -fno-builtin \
             "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
         undefined="$(nm --undefined-only "$object")"
-        printf '%s\n' "$undefined" | grep -Eq '[[:space:]]sched_setparam$' ||
+        grep -Eq '[[:space:]]sched_setparam$' <<<"$undefined" ||
             fail "$tree $profile C++ witness lacks unmangled sched_setparam"
-        if printf '%s\n' "$undefined" | grep -Eq '_Z.*sched_setparam'; then
+        if grep -Eq '_Z.*sched_setparam' <<<"$undefined"; then
             fail "$tree $profile C++ witness retained a mangled sched_setparam reference"
         fi
     done

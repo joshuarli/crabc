@@ -139,7 +139,7 @@ if [ "${duplication_symbols[*]}" != "${expected_duplication_symbols[*]}" ]; then
 fi
 for symbol in mi_malloc_aligned mi_free; do
     nm -g --defined-only "$work_dir/selected-members/${backend_members[0]}" |
-        grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" \
+        grep -E "[[:space:]][TW][[:space:]]${symbol}$" >/dev/null \
         || fail "bundled AArch64-equivalent backend lacks $symbol"
 done
 
@@ -172,7 +172,7 @@ if grep -Eq 'libc\.a\((strdup|strndup|aligned_alloc|calloc|free|malloc|memalign|
     "$link_map"; then
     fail "candidate selected a pinned-musl duplication or allocator implementation"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

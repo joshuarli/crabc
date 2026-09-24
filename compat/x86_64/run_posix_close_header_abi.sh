@@ -132,9 +132,9 @@ check_cxx_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]posix_close$' ||
+    grep -Eq '[[:space:]]posix_close$' <<<"$undefined" ||
         fail "$profile $tree C++ probe does not retain C linkage for posix_close"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*posix_close'; then
+    if grep -Eq '_Z[0-9].*posix_close' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled posix_close reference"
     fi
 }

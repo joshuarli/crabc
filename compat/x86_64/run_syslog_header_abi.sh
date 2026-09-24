@@ -62,7 +62,7 @@ for language in c c++; do
                     done < <(sed -n -E 's/^[. ]+ (\/[^[:space:]]+).*$/\1/p' "$work_dir/trace")
                     grep -Fq "$root/$header" "$work_dir/trace" || fail "direct header missing"
                     for symbol in closelog openlog setlogmask syslog; do
-                        nm --undefined-only "$work_dir/$tree.o" | grep -Eq "[[:space:]]${symbol}$" ||
+                        nm --undefined-only "$work_dir/$tree.o" | grep -E "[[:space:]]${symbol}$" >/dev/null ||
                             fail "$tree/$language lost C linkage for $symbol"
                     done
                     run_cc "$compiler" "${args[@]}" -E -dM -include "$header" - < /dev/null |

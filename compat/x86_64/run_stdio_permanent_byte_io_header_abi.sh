@@ -106,11 +106,11 @@ assert_cxx_c_linkage() {
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
     for symbol in fgetc getc getchar fputc putc putchar ungetc; do
-        printf '%s\n' "$undefined" | grep -Fxq "$symbol" ||
+        grep -Fxq "$symbol" <<<"$undefined" ||
             fail "$tree C++ probe does not retain C spelling $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq \
-        '_Z.*(fgetc|getc|getchar|fputc|putc|putchar|ungetc)'; then
+    if grep -Eq \
+        '_Z.*(fgetc|getc|getchar|fputc|putc|putchar|ungetc)' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled permanent-byte-I/O reference"
     fi
 }

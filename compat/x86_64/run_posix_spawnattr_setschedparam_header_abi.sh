@@ -116,9 +116,9 @@ check_cxx_linkage() {
     local tree="$1" profile="$2" object="$3" undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]posix_spawnattr_setschedparam$' ||
+    grep -Eq '[[:space:]]posix_spawnattr_setschedparam$' <<<"$undefined" ||
         fail "$profile $tree C++ probe does not retain C linkage for posix_spawnattr_setschedparam"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*posix_spawnattr_setschedparam'; then
+    if grep -Eq '_Z[0-9].*posix_spawnattr_setschedparam' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled posix_spawnattr_setschedparam reference"
     fi
 }

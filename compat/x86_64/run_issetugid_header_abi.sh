@@ -131,9 +131,9 @@ compile_visible_profile() {
                     -U_DEFAULT_SOURCE "$@" -DCRABC_EXPECT_ISSETUGID \
                     -nostdinc++ "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]issetugid$' ||
+                grep -Eq '[[:space:]]issetugid$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for issetugid (${label}, ${variant})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*issetugid'; then
+                if grep -Eq '_Z[0-9].*issetugid' <<<"$undefined"; then
                     fail "C++ probe retained a mangled issetugid reference (${label}, ${variant})"
                 fi
             fi

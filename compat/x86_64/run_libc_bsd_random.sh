@@ -85,7 +85,7 @@ mkdir "$work_dir/owner"
 )
 object="$work_dir/owner/$owner"
 for symbol in "${SYMBOLS[@]}"; do
-    nm -g --defined-only "$object" | grep -Eq "[[:space:]]${symbol}$" ||
+    nm -g --defined-only "$object" | grep -E "[[:space:]]${symbol}$" >/dev/null ||
         fail "provider omits ${symbol}"
 done
 # The selected owner intentionally uses the established private raw-syscall

@@ -113,9 +113,9 @@ compile_cxx() {
         fail "$tree C++17 direct <link.h> source-form probe failed: $(sed -n '/error:/p' "$trace" | sed -n '1p')"
     fi
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]dl_iterate_phdr$' ||
+    grep -Eq '[[:space:]]dl_iterate_phdr$' <<<"$undefined" ||
         fail "$tree C++17 probe lost C linkage for dl_iterate_phdr"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*dl_iterate_phdr'; then
+    if grep -Eq '_Z[0-9].*dl_iterate_phdr' <<<"$undefined"; then
         fail "$tree C++17 probe retained mangled dl_iterate_phdr linkage"
     fi
 }

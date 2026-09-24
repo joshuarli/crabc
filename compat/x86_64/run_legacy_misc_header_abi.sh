@@ -147,9 +147,9 @@ compile_visible_profile() {
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
                 while IFS= read -r symbol; do
-                    printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+                    grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
                         fail "C++ probe lacks C linkage for ${symbol} (${label}, ${variant})"
-                    if printf '%s\n' "$undefined" | grep -Eq "_Z[0-9].*${symbol}"; then
+                    if grep -Eq "_Z[0-9].*${symbol}" <<<"$undefined"; then
                         fail "C++ probe retained a mangled ${symbol} reference (${label}, ${variant})"
                     fi
                 done < <(symbols_for_expectation "$expectation")

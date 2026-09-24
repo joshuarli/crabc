@@ -99,9 +99,9 @@ compile_positive_profile() {
                     "$definition" -DCRABC_EXPECT_GETSUBOPT \
                     -nostdinc++ "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]getsubopt$' ||
+                grep -Eq '[[:space:]]getsubopt$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for getsubopt (${variant}, ${definition})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*getsubopt'; then
+                if grep -Eq '_Z[0-9].*getsubopt' <<<"$undefined"; then
                     fail "C++ probe retained a mangled getsubopt reference (${variant}, ${definition})"
                 fi
             fi

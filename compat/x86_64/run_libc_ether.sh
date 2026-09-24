@@ -79,7 +79,7 @@ assert_ordinary_extraction() {
 
     ld -r --no-undefined --undefined="$symbol" -o "$object" "$archive_path" ||
         fail "ordinary extraction failed for $symbol"
-    nm -g --defined-only "$object" | grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" ||
+    nm -g --defined-only "$object" | grep -E "[[:space:]][TW][[:space:]]${symbol}$" >/dev/null ||
         fail "ordinary extraction did not define $symbol"
 }
 
@@ -181,7 +181,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap "${ETHER_SYMBOLS
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -201,7 +201,7 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt|malloc|calloc|realloc|free|sprintf|sn
     "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
-if strings "$candidate" | grep -Fq '/etc/ethers'; then
+if strings "$candidate" | grep -F '/etc/ethers' >/dev/null; then
     fail "candidate embeds an unselected /etc/ethers dependency"
 fi
 if grep -Eq '[[:space:]](getaddrinfo|getnameinfo|gethostbyaddr|gethostbyname|res_init|socket|connect|open|read|close)$' \

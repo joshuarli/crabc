@@ -207,9 +207,9 @@ check_cxx_symbol() {
     local symbol undefined
     symbol="$(variant_symbol "$variant")"
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+    grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
         fail "$tree $profile <$variant> C++ probe does not retain C linkage for $symbol"
-    if printf '%s\n' "$undefined" | grep -Eq "_Z.*${symbol}"; then
+    if grep -Eq "_Z.*${symbol}" <<<"$undefined"; then
         fail "$tree $profile <$variant> C++ probe retained a mangled $symbol reference"
     fi
 }

@@ -45,7 +45,7 @@ require_no_alloca_reference() {
     local undefined
 
     undefined="$(nm --undefined-only "$object_path")"
-    if printf '%s\n' "$undefined" | grep -Eq '[[:space:]]alloca$'; then
+    if grep -Eq '[[:space:]]alloca$' <<<"$undefined"; then
         fail "header object retained a callable alloca reference"
     fi
 }
@@ -140,7 +140,7 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "static candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -173,9 +173,8 @@ fi
 case_disassembly="$(sed -n '/<crabc_x86_64_alloca_case>:/,/^$/p' \
     "$candidate_disassembly")"
 [ -n "$case_disassembly" ] || fail "candidate lacks the dynamic alloca case"
-printf '%s\n' "$case_disassembly" | \
-    grep -Eq 'sub[[:space:]]+%r(ax|dx|cx|si|di|8|9|10|11|12|13|14|15),%rsp' \
-    || fail "candidate did not emit a dynamic stack allocation"
+grep -Eq 'sub[[:space:]]+%r(ax|dx|cx|si|di|8|9|10|11|12|13|14|15),%rsp' \
+    <<<"$case_disassembly" || fail "candidate did not emit a dynamic stack allocation"
 
 env -i "$candidate" || fail "freestanding alloca candidate failed"
 printf 'x86 static musl-compatible alloca builtin: PASS\n'

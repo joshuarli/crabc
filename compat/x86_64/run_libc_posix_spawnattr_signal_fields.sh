@@ -49,13 +49,13 @@ done
 mkdir "$work_dir/owner"; ( cd "$work_dir/owner"; ar x "$archive" "${owners[0]}"; for symbol in "${SYMBOLS[@]}"; do objcopy --only-section=".text.${symbol}" --keep-symbol="$symbol" "${owners[0]}" "${symbol}.o"; ar rcs "$selected_archive" "${symbol}.o"; done )
 for symbol in "${SYMBOLS[@]}"; do
     object="$work_dir/owner/${symbol}.o"; mapfile -t exports < <(nm -g --defined-only --format=posix "$object" | awk '$2 ~ /^[TW]$/ { print $1 }' | sort -u); [ "${exports[*]}" = "$symbol" ] || fail "$symbol object export surface drifted"
-    if nm --undefined-only --format=posix "$object" | awk '$1 != "_GLOBAL_OFFSET_TABLE_" { print $1 }' | grep -q .; then fail "$symbol object unexpectedly depends on another symbol"; fi
+    if nm --undefined-only --format=posix "$object" | awk '$1 != "_GLOBAL_OFFSET_TABLE_" { print $1 }' | grep . >/dev/null; then fail "$symbol object unexpectedly depends on another symbol"; fi
     objdump -d "$object" >"$work_dir/${symbol}-disassembly"; if grep -Eq '[[:space:]](call|syscall)([[:space:]]|$)' "$work_dir/${symbol}-disassembly"; then fail "$symbol object unexpectedly performs a call or syscall"; fi
 done
 "$ORACLE_CC" -std=c11 -DCRABC_POSIX_SPAWNATTR_SIGNAL_FIELDS_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections -Wl,-Map,"$link_map" compat/x86_64/libc_posix_spawnattr_signal_fields_probe.c compat/x86_64/libc_posix_spawnattr_signal_fields_start.S "$selected_archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"; readelf --program-headers --wide "$candidate" >"$candidate_headers"; readelf --sections --wide "$candidate" >"$candidate_sections"; readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true; readelf --relocs --wide "$candidate" >"$candidate_relocations"; objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in "${SYMBOLS[@]}"; do awk -v symbol="$symbol" '$4 == "FUNC" && $5 == "GLOBAL" && $8 == symbol { found = 1 } END { exit(found ? 0 : 1) }' "$candidate_symbols" || fail "candidate lacks global $symbol"; done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then fail "candidate retains an unresolved symbol"; fi
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then fail "candidate retains an unresolved symbol"; fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$candidate_headers" "$candidate_dynamic"; then fail "candidate selects a dynamic dependency"; fi
 if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr|__errno_location|%fs:' "$candidate_headers" "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then fail "candidate unexpectedly retains errno or TLS"; fi
 if grep -Eq '[[:space:]]\.plt([[:space:]]|$)' "$candidate_sections" || grep -Eq '(/opt/musl-|libc\.a\(|glibc|ld-linux|libc\.so\.6)' "$link_map" "$candidate_headers" "$candidate_dynamic"; then fail "candidate selected an ambient runtime"; fi

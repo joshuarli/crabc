@@ -81,9 +81,9 @@ for variant in oracle project; do
         -D_POSIX_C_SOURCE=200809L -DCRABC_EXPECT_STRSIGNAL \
         "${include_args[@]}" -c "$cxx_probe" -o "$object"
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]strsignal$' ||
+    grep -Eq '[[:space:]]strsignal$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for strsignal (${variant})"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*strsignal'; then
+    if grep -Eq '_Z[0-9].*strsignal' <<<"$undefined"; then
         fail "C++ probe retained a mangled strsignal reference (${variant})"
     fi
 done

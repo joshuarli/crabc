@@ -74,9 +74,9 @@ compile_visible_profile() {
                     -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE \
                     "$definition" "${include_args[@]}" -c "$cxx_probe" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]clock_settime$' ||
+                grep -Eq '[[:space:]]clock_settime$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for clock_settime (${variant}, ${profile})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z.*clock_settime'; then
+                if grep -Eq '_Z.*clock_settime' <<<"$undefined"; then
                     fail "C++ probe retained a mangled clock_settime reference (${variant}, ${profile})"
                 fi
             fi

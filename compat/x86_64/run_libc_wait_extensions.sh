@@ -119,7 +119,7 @@ for symbol in __errno_location wait3 wait4; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" ||
         fail "candidate lacks ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

@@ -110,11 +110,11 @@ check_trace() {
 check_cxx_linkage() {
     local object="$1" undefined
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]nftw$' ||
+    grep -Eq '[[:space:]]nftw$' <<<"$undefined" ||
         fail "C++ probe does not retain nftw's C spelling"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]ftw$' ||
+    grep -Eq '[[:space:]]ftw$' <<<"$undefined" ||
         fail "C++ probe does not retain ftw's C spelling"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(ftw|nftw)'; then
+    if grep -Eq '_Z.*(ftw|nftw)' <<<"$undefined"; then
         fail "C++ probe retained a mangled ftw/nftw spelling"
     fi
 }

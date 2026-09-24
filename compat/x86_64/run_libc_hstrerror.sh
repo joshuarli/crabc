@@ -89,7 +89,7 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" hstrerror.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq '[[:space:]]hstrerror$' ||
+readelf --symbols --wide "$musl_object" | grep -E '[[:space:]]hstrerror$' >/dev/null ||
     fail "pinned musl archive lacks hstrerror.lo"
 strings -a "$musl_object" >"$musl_strings"
 for message in 'Host not found' 'Try again' 'Non-recoverable error' \

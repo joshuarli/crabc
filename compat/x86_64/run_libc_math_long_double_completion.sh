@@ -219,7 +219,7 @@ for provider in \
 		fail "candidate exposes private powl provider ${provider}"
 	fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
 	fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
@@ -287,7 +287,7 @@ for pair in 'exp10:pow10' 'exp10f:pow10f' 'exp10l:pow10l'; do
 	[ "$strong_value" = "$weak_value" ] ||
 		fail "aggregate candidate does not retain same-address ${strong}/${weak} alias"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$aggregate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$aggregate_symbols" | grep . >/dev/null; then
 	fail "aggregate candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$aggregate_headers" "$aggregate_dynamic"; then

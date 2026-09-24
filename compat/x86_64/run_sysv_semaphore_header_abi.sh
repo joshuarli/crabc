@@ -237,10 +237,10 @@ check_cxx_symbols() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C linkage for ${symbol}"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z(6semctl|6semget|5semop|10semtimedop)'; then
+    if grep -Eq '_Z(6semctl|6semget|5semop|10semtimedop)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled SysV semaphore reference"
     fi
 }

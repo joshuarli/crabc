@@ -252,7 +252,7 @@ readelf --relocs --wide "$candidate" >"$candidate_relocations"
 filter_debug_relocations "$candidate_relocations" "$candidate_runtime_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 assert_h_errno_symbols "$candidate_symbols" "candidate"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

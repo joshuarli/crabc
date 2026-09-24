@@ -195,9 +195,9 @@ check_cxx_symbol() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]lchown$' ||
+    grep -Eq '[[:space:]]lchown$' <<<"$undefined" ||
         fail "$tree $profile C++ probe does not retain C linkage for lchown"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*lchown'; then
+    if grep -Eq '_Z.*lchown' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled lchown reference"
     fi
 }

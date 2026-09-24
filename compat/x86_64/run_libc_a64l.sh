@@ -127,7 +127,7 @@ esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" a64l.lo >"$musl_object"
 for symbol in a64l l64a; do
-    readelf --symbols --wide "$musl_object" | grep -Eq "[[:space:]]${symbol}$" ||
+    readelf --symbols --wide "$musl_object" | grep -E "[[:space:]]${symbol}$" >/dev/null ||
         fail "pinned musl a64l.lo lacks ${symbol}"
 done
 
@@ -217,7 +217,7 @@ for symbol in a64l; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

@@ -182,10 +182,10 @@ done
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
     for symbol in hcreate hdestroy hsearch hcreate_r hdestroy_r hsearch_r; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "C++ probe does not retain C linkage for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*(hcreate|hdestroy|hsearch)'; then
+    if grep -Eq '_Z[0-9].*(hcreate|hdestroy|hsearch)' <<<"$undefined"; then
         fail "C++ probe retained a mangled hash-table reference"
     fi
 done
@@ -253,7 +253,7 @@ readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 grep -Eq 'Type:[[:space:]]+EXEC[[:space:]]+\(Executable file\)' \
     <(readelf --file-header --wide "$candidate") || fail "candidate is not ET_EXEC"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

@@ -71,10 +71,8 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" |
-                grep -Eq '[[:space:]][T][[:space:]]pthread_spin_destroy$'; then
-                if printf '%s\n' "$definitions" |
-                    grep -Eq '[[:space:]][TWDVBR][[:space:]](pthread_spin_init|pthread_spin_lock|pthread_spin_trylock|pthread_spin_unlock|pthread_mutex_|pthread_cond_|pthread_rwlock_|pthread_create|pthread_join|pthread_cancel)$'; then
+            if grep -Eq '[[:space:]][T][[:space:]]pthread_spin_destroy$' <<<"$definitions"; then
+                if grep -Eq '[[:space:]][TWDVBR][[:space:]](pthread_spin_init|pthread_spin_lock|pthread_spin_trylock|pthread_spin_unlock|pthread_mutex_|pthread_cond_|pthread_rwlock_|pthread_create|pthread_join|pthread_cancel)$' <<<"$definitions"; then
                     fail "pthread_spin_destroy archive member also defines a synchronization or thread sibling"
                 fi
                 printf '%s\n' "$member"
@@ -180,7 +178,7 @@ objdump -d "$candidate" >"$candidate_disassembly"
 objdump -d --disassemble=pthread_spin_destroy "$candidate" >"$spin_destroy_disassembly"
 grep -Eq '[[:space:]]pthread_spin_destroy$' "$candidate_symbols" ||
     fail "archive-free candidate does not retain pthread_spin_destroy"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "archive-free candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP' "$candidate_program_headers"; then

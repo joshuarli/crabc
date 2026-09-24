@@ -80,10 +80,10 @@ for object in "$oracle_cxx" "$project_cxx"; do
     undefined="$(nm --undefined-only "$object")"
     for symbol in sem_close sem_destroy sem_getvalue sem_init sem_open sem_post \
         sem_timedwait sem_trywait sem_unlink sem_wait; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" \
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" \
             || fail "C++ probe does not retain C linkage for ${symbol}"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*sem_(close|destroy|getvalue|init|open|post|timedwait|trywait|unlink|wait)'; then
+    if grep -Eq '_Z[0-9].*sem_(close|destroy|getvalue|init|open|post|timedwait|trywait|unlink|wait)' <<<"$undefined"; then
         fail "C++ probe retained a mangled POSIX semaphore reference"
     fi
 done

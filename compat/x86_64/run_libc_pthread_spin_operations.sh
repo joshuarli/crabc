@@ -125,8 +125,8 @@ mapfile -t members < <(ar t "$archive" | grep -E '^c\..+\.rcgu\.o$')
     ar x "$archive" "${members[@]}"
     for member in "${members[@]}"; do
         definitions="$(nm -g --defined-only "$member")"
-        if printf '%s\n' "$definitions" | grep -Eq \
-            '[[:space:]][T][[:space:]]pthread_spin_lock$'; then
+        if grep -Eq \
+            '[[:space:]][T][[:space:]]pthread_spin_lock$' <<<"$definitions"; then
             printf '%s\n' "$member"
         fi
     done
@@ -140,8 +140,8 @@ operation_member="$members_dir/${operation_members[0]}"
     cd "$members_dir"
     for member in "${members[@]}"; do
         definitions="$(nm -g --defined-only "$member")"
-        if printf '%s\n' "$definitions" | grep -Eq \
-            '[[:space:]][T][[:space:]]pthread_spin_init$'; then
+        if grep -Eq \
+            '[[:space:]][T][[:space:]]pthread_spin_init$' <<<"$definitions"; then
             printf '%s\n' "$member"
         fi
     done
@@ -170,7 +170,7 @@ for symbol in pthread_spin_init pthread_spin_lock pthread_spin_trylock pthread_s
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not retain ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "archive-free candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP' "$candidate_program_headers" ||

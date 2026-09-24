@@ -272,11 +272,11 @@ check_cxx_c_linkage() {
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
     while IFS= read -r symbol; do
         [ -n "$symbol" ] || continue
-        printf '%s\n' "$undefined" | grep -Fxq "$symbol" ||
+        grep -Fxq "$symbol" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C spelling $symbol"
     done < <(expected_cxx_symbols "$profile")
-    if printf '%s\n' "$undefined" | grep -Eq \
-        '_Z.*(stdin|stdout|stderr|fflush|fread|fwrite|fgetc|getc|getchar|fputc|putc|putchar|ungetc|feof|ferror|clearerr|fileno)'; then
+    if grep -Eq \
+        '_Z.*(stdin|stdout|stderr|fflush|fread|fwrite|fgetc|getc|getchar|fputc|putc|putchar|ungetc|feof|ferror|clearerr|fileno)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled stdio reference"
     fi
 }

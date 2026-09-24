@@ -111,8 +111,8 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" ether.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq \
-    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]].*[[:space:]]ether_line$' ||
+readelf --symbols --wide "$musl_object" | grep -E \
+    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]].*[[:space:]]ether_line$' >/dev/null ||
     fail "pinned musl ether.lo lacks strong ether_line"
 
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
@@ -165,7 +165,7 @@ objdump -d "$candidate" >"$candidate_disassembly"
 objdump -d --disassemble=ether_line "$candidate" >"$ether_line_disassembly"
 grep -Eq '[[:space:]]ether_line$' "$candidate_symbols" ||
     fail "candidate lacks ether_line"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

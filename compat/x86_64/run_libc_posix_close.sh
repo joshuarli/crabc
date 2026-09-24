@@ -64,7 +64,7 @@ assert_static_closure() {
     readelf --dynamic --wide "$candidate_path" >"$candidate_dynamic" || true
     readelf --relocs --wide "$candidate_path" >"$candidate_relocations"
     objdump -d "$candidate_path" >"$candidate_disassembly"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+    if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
         fail "candidate has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
@@ -125,7 +125,7 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" posix_close.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq '[[:space:]]posix_close$' ||
+readelf --symbols --wide "$musl_object" | grep -E '[[:space:]]posix_close$' >/dev/null ||
     fail "pinned musl posix_close.lo lacks posix_close"
 
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \

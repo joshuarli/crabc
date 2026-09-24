@@ -100,9 +100,9 @@ check_cxx_linkage() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in signalfd; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "C++ probe did not retain unmangled ${symbol}"
-        if printf '%s\n' "$undefined" | grep -Eq "_Z.*${symbol}"; then
+        if grep -Eq "_Z.*${symbol}" <<<"$undefined"; then
             fail "C++ probe retained a mangled ${symbol}"
         fi
     done

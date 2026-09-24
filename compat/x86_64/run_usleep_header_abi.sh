@@ -76,9 +76,9 @@ done
     -I "$ROOT_DIR/include" -c "$cxx_probe" -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]usleep$' ||
+    grep -Eq '[[:space:]]usleep$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for usleep"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*usleep'; then
+    if grep -Eq '_Z.*usleep' <<<"$undefined"; then
         fail "C++ probe retained a mangled usleep reference"
     fi
 done

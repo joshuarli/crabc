@@ -50,7 +50,7 @@ assert_static_closure() {
     objdump -d "$candidate_path" >"$disassembly"
     objdump -d --disassemble=lfind "$candidate_path" >"$lfind_disassembly"
     objdump -d --disassemble=lsearch "$candidate_path" >"$lsearch_disassembly"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
         fail "candidate has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

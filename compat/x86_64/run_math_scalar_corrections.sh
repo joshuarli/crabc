@@ -38,7 +38,7 @@ for symbol in fmaf fmal powf; do
     grep -Eq "FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+$symbol$" "$work/candidate.symbols"
 done
 if grep -Eq 'INTERP|TLS|NEEDED' "$work/candidate.segments" "$work/candidate.dynamic"; then exit 1; fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$work/candidate.symbols" | grep -q .; then exit 1; fi
+if awk '$7 == "UND" && NF >= 8 { print }' "$work/candidate.symbols" | grep . >/dev/null; then exit 1; fi
 if grep -Eq '[[:space:]](v[a-z0-9]+|addp[sd]|subp[sd]|mulp[sd]|divp[sd]|sqrtp[sd])([[:space:]]|$)' "$work/candidate.disassembly"; then exit 1; fi
 python3 compat/x86_64/verify_math_scalar_corrections.py \
     --candidate "$work/candidate.stream" --oracle "$work/oracle.stream" --output "$work/exact"

@@ -125,7 +125,7 @@ public_value="$(awk '$8 == "strerror_l" { print $2; exit }' "$symbols")"
     fail "strerror_l is not a same-address __strerror_l alias"
 awk '$8 == "strerror_l" && $5 == "WEAK" { found=1 } END { exit !found }' "$symbols" ||
     fail "strerror_l is not weak in final ELF"
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

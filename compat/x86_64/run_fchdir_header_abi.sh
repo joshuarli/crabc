@@ -78,9 +78,9 @@ for variant in oracle project; do
         -D_POSIX_C_SOURCE=200809L -DCRABC_EXPECT_FCHDIR -fno-builtin \
         "${include_args[@]}" -c "$cxx_probe" -o "$object"
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]fchdir$' ||
+    grep -Eq '[[:space:]]fchdir$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for fchdir (${variant})"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*fchdir'; then
+    if grep -Eq '_Z.*fchdir' <<<"$undefined"; then
         fail "C++ probe retained a mangled fchdir reference (${variant})"
     fi
 done

@@ -184,7 +184,7 @@ for unselected in feof_unlocked fileno_unlocked _IO_ferror_unlocked \
         fail "candidate unexpectedly pulls independently selected ${unselected}"
     fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

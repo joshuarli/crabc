@@ -47,15 +47,15 @@ build_interpreter "$work_dir/ld-crabc-x86_64-fixed-graph-introspection-malformed
 for interpreter in "$work_dir/ld-crabc-x86_64-fixed-graph-introspection.so" \
     "$work_dir/ld-crabc-x86_64-fixed-graph-introspection-malformed.so"; do
     test "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN
-    if readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)|\(RELR\)'; then
+    if readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)|\(RELR\)' >/dev/null; then
         printf '%s\n' "ERROR: introspection interpreter selected an ambient or widened runtime: $interpreter" >&2
         exit 1
     fi
-    if readelf -lW "$interpreter" | grep -q ' TLS '; then
+    if readelf -lW "$interpreter" | grep ' TLS ' >/dev/null; then
         printf '%s\n' "ERROR: introspection interpreter selected PT_TLS: $interpreter" >&2
         exit 1
     fi
-    if ! readelf -lW "$interpreter" | grep -q GNU_RELRO; then
+    if ! readelf -lW "$interpreter" | grep GNU_RELRO >/dev/null; then
         printf '%s\n' "ERROR: introspection interpreter lacks PT_GNU_RELRO: $interpreter" >&2
         exit 1
     fi
@@ -94,11 +94,11 @@ build_candidate_main "$work_dir/ld-crabc-x86_64-fixed-graph-introspection-malfor
 for binary in "$work_dir/main-fixed-graph-introspection" \
     "$work_dir/main-fixed-graph-introspection-malformed" \
     "$work_dir/libmid-introspection.so" "$work_dir/libleaf-introspection.so"; do
-    if readelf -dW "$binary" | grep -Eq '\(NEEDED\).*(libc|libgcc|ld-linux)'; then
+    if readelf -dW "$binary" | grep -E '\(NEEDED\).*(libc|libgcc|ld-linux)' >/dev/null; then
         printf '%s\n' "ERROR: candidate graph selected an ambient runtime: $binary" >&2
         exit 1
     fi
-    if readelf -lW "$binary" | grep -q ' TLS '; then
+    if readelf -lW "$binary" | grep ' TLS ' >/dev/null; then
         printf '%s\n' "ERROR: candidate graph selected PT_TLS: $binary" >&2
         exit 1
     fi
@@ -108,7 +108,7 @@ if ! readelf -Ws "$work_dir/main-fixed-graph-introspection" | awk '$5 == "WEAK" 
     printf '%s\n' 'ERROR: candidate main lost its weak introspection record import' >&2
     exit 1
 fi
-if ! readelf -rW "$work_dir/main-fixed-graph-introspection" | grep -Eq 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_introspection_v1'; then
+if ! readelf -rW "$work_dir/main-fixed-graph-introspection" | grep -E 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_introspection_v1' >/dev/null; then
     printf '%s\n' 'ERROR: candidate main lacks the exact weak GLOB_DAT record relocation' >&2
     exit 1
 fi

@@ -145,7 +145,7 @@ for symbol in fclose fcntl fileno fseek fstat fread fwrite tmpfile umask; do
 done
 awk '$8 == "tmpfile" && $4 == "FUNC" && $5 == "GLOBAL" { found=1 } END { exit !found }' \
     "$candidate_symbols" || fail "candidate tmpfile lost strong ELF binding"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

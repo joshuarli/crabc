@@ -69,27 +69,27 @@ case "${CRABC_LDSO_INITIAL_GRAPH_ROOT:-source}" in
 esac
 
 test "$(readelf -h "$work_dir/ld-crabc-x86_64-initial-graph.so" | awk '/Type:/{print $2}')" = DYN
-if readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -Eq '\(NEEDED\)|\(INTERP\)'; then
+if readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -E '\(NEEDED\)|\(INTERP\)' >/dev/null; then
     printf '%s\n' 'ERROR: interpreter selected an external runtime' >&2
     exit 1
 fi
-if readelf -lW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -q ' TLS '; then
+if readelf -lW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep ' TLS ' >/dev/null; then
     printf '%s\n' 'ERROR: interpreter selected PT_TLS' >&2
     exit 1
 fi
-if ! readelf -lW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -q 'GNU_RELRO'; then
+if ! readelf -lW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep 'GNU_RELRO' >/dev/null; then
     printf '%s\n' 'ERROR: interpreter did not emit PT_GNU_RELRO' >&2
     exit 1
 fi
-if readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -Eq '\((RELR|RELRSZ|RELRENT)\)'; then
+if readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -E '\((RELR|RELRSZ|RELRENT)\)' >/dev/null; then
     printf '%s\n' 'ERROR: interpreter selected unsupported packed relative relocations' >&2
     exit 1
 fi
-if ! readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -q '(RELA)'; then
+if ! readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep '(RELA)' >/dev/null; then
     printf '%s\n' 'ERROR: interpreter bootstrap has no DT_RELA table' >&2
     exit 1
 fi
-if ! readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -Eq '\(RELAENT\)[[:space:]]+24 \(bytes\)'; then
+if ! readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -E '\(RELAENT\)[[:space:]]+24 \(bytes\)' >/dev/null; then
     printf '%s\n' 'ERROR: interpreter bootstrap RELA entry size drifted' >&2
     exit 1
 fi
@@ -144,32 +144,32 @@ if [ "$main_musl_interpreter" != "$MUSL_LOADER" ] || [ "$main_crabc_interpreter"
 fi
 
 for binary in "$work_dir/main-musl" "$work_dir/main-crabc" "$work_dir/libmid.so"; do
-    if ! readelf -dW "$binary" | grep -Fq "Library runpath: [$work_dir]"; then
+    if ! readelf -dW "$binary" | grep -F "Library runpath: [$work_dir]" >/dev/null; then
         printf '%s\n' "ERROR: fixture RUNPATH is not the one absolute owned directory: $binary" >&2
         exit 1
     fi
 done
 
 for binary in "$work_dir/main-musl" "$work_dir/main-crabc" "$work_dir/libmid.so" "$work_dir/libleaf.so"; do
-    if readelf -lW "$binary" | grep -q ' TLS '; then
+    if readelf -lW "$binary" | grep ' TLS ' >/dev/null; then
         printf '%s\n' "ERROR: fixture unexpectedly selected TLS: $binary" >&2
         exit 1
     fi
 done
-if ! readelf -dW "$work_dir/libleaf.so" | grep -q '(RELR)'; then
+if ! readelf -dW "$work_dir/libleaf.so" | grep '(RELR)' >/dev/null; then
     printf '%s\n' 'ERROR: packed leaf fixture has no DT_RELR' >&2
     exit 1
 fi
-if ! readelf -dW "$work_dir/libleaf.so" | grep -Eq '\(RELRSZ\)[[:space:]]+[1-9][0-9]* \(bytes\)'; then
+if ! readelf -dW "$work_dir/libleaf.so" | grep -E '\(RELRSZ\)[[:space:]]+[1-9][0-9]* \(bytes\)' >/dev/null; then
     printf '%s\n' 'ERROR: packed leaf fixture has no nonempty DT_RELRSZ' >&2
     exit 1
 fi
-if ! readelf -dW "$work_dir/libleaf.so" | grep -Eq '\(RELRENT\)[[:space:]]+8 \(bytes\)'; then
+if ! readelf -dW "$work_dir/libleaf.so" | grep -E '\(RELRENT\)[[:space:]]+8 \(bytes\)' >/dev/null; then
     printf '%s\n' 'ERROR: packed leaf fixture DT_RELRENT drifted' >&2
     exit 1
 fi
 for binary in "$work_dir/main-musl" "$work_dir/main-crabc" "$work_dir/libmid.so" "$work_dir/libleaf.so"; do
-    if ! readelf -lW "$binary" | grep -q 'GNU_RELRO'; then
+    if ! readelf -lW "$binary" | grep 'GNU_RELRO' >/dev/null; then
         printf '%s\n' "ERROR: fixture did not emit PT_GNU_RELRO: $binary" >&2
         exit 1
     fi
@@ -325,7 +325,7 @@ fi
 # incomplete rather than treating the existing stream as an unscoped tag.
 cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
 printf '\000\000\000\160\000\000\000\000' | dd of="$work_dir/libleaf.so" bs=1 seek="$relrent_dynamic_entry" conv=notrunc status=none
-if readelf -dW "$work_dir/libleaf.so" | grep -q '(RELRENT)'; then
+if readelf -dW "$work_dir/libleaf.so" | grep '(RELRENT)' >/dev/null; then
     printf '%s\n' 'ERROR: incomplete DT_RELR mutation retained DT_RELRENT' >&2
     exit 1
 fi
@@ -336,7 +336,7 @@ mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
 # must be rejected at parse time before the loader looks at any payload word.
 cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
 printf '\020\000\000\000\000\000\000\000' | dd of="$work_dir/libleaf.so" bs=1 seek=$((relrent_dynamic_entry + 8)) conv=notrunc status=none
-if ! readelf -dW "$work_dir/libleaf.so" | grep -Eq '\(RELRENT\)[[:space:]]+16 \(bytes\)'; then
+if ! readelf -dW "$work_dir/libleaf.so" | grep -E '\(RELRENT\)[[:space:]]+16 \(bytes\)' >/dev/null; then
     printf '%s\n' 'ERROR: malformed DT_RELRENT mutation did not take effect' >&2
     exit 1
 fi
@@ -482,7 +482,7 @@ if [ -z "$tls_header_offset" ]; then
     exit 1
 fi
 printf '\007\000\000\000' | dd of="$work_dir/libleaf.so" bs=1 seek="$tls_header_offset" conv=notrunc status=none
-if ! readelf -lW "$work_dir/libleaf.so" | grep -q ' TLS '; then
+if ! readelf -lW "$work_dir/libleaf.so" | grep ' TLS ' >/dev/null; then
     printf '%s\n' 'ERROR: PT_TLS mutation did not take effect' >&2
     exit 1
 fi
@@ -502,7 +502,7 @@ if [ -z "$rela_offset" ]; then
     exit 1
 fi
 printf '\005\000\000\000\000\000\000\000' | dd of="$work_dir/libmid.so" bs=1 seek=$((rela_offset + 8)) conv=notrunc status=none
-if ! readelf -rW "$work_dir/libmid.so" | grep -q R_X86_64_COPY; then
+if ! readelf -rW "$work_dir/libmid.so" | grep R_X86_64_COPY >/dev/null; then
     printf '%s\n' 'ERROR: unsupported relocation mutation did not take effect' >&2
     exit 1
 fi
@@ -540,7 +540,7 @@ if [ -z "$flags_dynamic_entry" ]; then
     exit 1
 fi
 printf '\044\000\000\000\000\000\000\000' | dd of="$work_dir/libmid.so" bs=1 seek="$flags_dynamic_entry" conv=notrunc status=none
-if ! readelf -dW "$work_dir/libmid.so" | grep -q '(RELR)'; then
+if ! readelf -dW "$work_dir/libmid.so" | grep '(RELR)' >/dev/null; then
     printf '%s\n' 'ERROR: DT_RELR mutation did not take effect' >&2
     exit 1
 fi
@@ -556,7 +556,7 @@ if [ -z "$flags_dynamic_entry" ]; then
     exit 1
 fi
 printf '\026\000\000\000\000\000\000\000' | dd of="$work_dir/libmid.so" bs=1 seek="$flags_dynamic_entry" conv=notrunc status=none
-if ! readelf -dW "$work_dir/libmid.so" | grep -q '(TEXTREL)'; then
+if ! readelf -dW "$work_dir/libmid.so" | grep '(TEXTREL)' >/dev/null; then
     printf '%s\n' 'ERROR: DT_TEXTREL mutation did not take effect' >&2
     exit 1
 fi
@@ -570,7 +570,7 @@ if [ -z "$flags_dynamic_entry" ]; then
     exit 1
 fi
 printf '\020\000\000\000\000\000\000\000' | dd of="$work_dir/libmid.so" bs=1 seek=$((flags_dynamic_entry + 8)) conv=notrunc status=none
-if ! readelf -dW "$work_dir/libmid.so" | grep -q 'STATIC_TLS'; then
+if ! readelf -dW "$work_dir/libmid.so" | grep 'STATIC_TLS' >/dev/null; then
     printf '%s\n' 'ERROR: DF_STATIC_TLS mutation did not take effect' >&2
     exit 1
 fi
@@ -587,7 +587,7 @@ if [ -z "$main_flags_dynamic_entry" ]; then
     exit 1
 fi
 printf '\014\000\000\000\000\000\000\000' | dd of="$work_dir/main-crabc" bs=1 seek="$main_flags_dynamic_entry" conv=notrunc status=none
-if ! readelf -dW "$work_dir/main-crabc" | grep -q '(INIT)'; then
+if ! readelf -dW "$work_dir/main-crabc" | grep '(INIT)' >/dev/null; then
     printf '%s\n' 'ERROR: main DT_INIT mutation did not take effect' >&2
     exit 1
 fi

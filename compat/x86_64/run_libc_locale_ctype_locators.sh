@@ -116,7 +116,7 @@ objdump -d "$candidate" >"$disassembly"
 for symbol in "${SELECTED_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

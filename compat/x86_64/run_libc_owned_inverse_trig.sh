@@ -177,7 +177,7 @@ for provider in "${SHARED_NUMERIC_PROVIDERS[@]}"; do
 	grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]${provider}$" \
 		"$candidate_symbols" || fail "raw candidate lacks selected ${provider} provider"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
 	fail "raw candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
@@ -297,7 +297,7 @@ PY
 		grep -Eq 'NEEDED|JMPREL|PLTGOT' "$dynamic"; then
 		fail "${label} installed candidate selected dynamic runtime state"
 	fi
-	if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+	if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
 		fail "${label} installed candidate has unresolved symbols"
 	fi
 	if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \

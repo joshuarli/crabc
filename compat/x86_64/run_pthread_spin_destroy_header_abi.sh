@@ -131,9 +131,9 @@ check_cxx_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]pthread_spin_destroy$' ||
+    grep -Eq '[[:space:]]pthread_spin_destroy$' <<<"$undefined" ||
         fail "$profile $tree C++ probe does not retain C linkage for pthread_spin_destroy"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*pthread_spin_destroy'; then
+    if grep -Eq '_Z[0-9].*pthread_spin_destroy' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled pthread_spin_destroy reference"
     fi
 }

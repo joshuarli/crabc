@@ -121,9 +121,9 @@ compile_gnu_profile() {
                     -U_DEFAULT_SOURCE -D_GNU_SOURCE -DCRABC_EXPECT_COPY_FILE_RANGE \
                     -nostdinc++ "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]copy_file_range$' ||
+                grep -Eq '[[:space:]]copy_file_range$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for copy_file_range (${variant})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*copy_file_range'; then
+                if grep -Eq '_Z[0-9].*copy_file_range' <<<"$undefined"; then
                     fail "C++ probe retained a mangled copy_file_range reference (${variant})"
                 fi
             fi
@@ -144,9 +144,9 @@ compile_cxx_extension_profile() {
             "$@" -DCRABC_EXPECT_COPY_FILE_RANGE -nostdinc++ \
             "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
         undefined="$(nm --undefined-only "$object")"
-        printf '%s\n' "$undefined" | grep -Eq '[[:space:]]copy_file_range$' ||
+        grep -Eq '[[:space:]]copy_file_range$' <<<"$undefined" ||
             fail "C++ ${label} probe does not retain C linkage (${variant})"
-        if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*copy_file_range'; then
+        if grep -Eq '_Z[0-9].*copy_file_range' <<<"$undefined"; then
             fail "C++ ${label} probe retained a mangled copy_file_range reference (${variant})"
         fi
     done

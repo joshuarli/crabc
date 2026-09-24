@@ -77,9 +77,9 @@ assert_unmangled_references() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in sighold sigignore sigrelse sigset; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree C++ probe does not retain unmangled $symbol"
-        if printf '%s\n' "$undefined" | grep -Eq "_Z.*${symbol}"; then
+        if grep -Eq "_Z.*${symbol}" <<<"$undefined"; then
             fail "$tree C++ probe retained a mangled $symbol reference"
         fi
     done

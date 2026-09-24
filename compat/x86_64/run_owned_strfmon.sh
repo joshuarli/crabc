@@ -52,11 +52,11 @@ compile_header_witnesses() {
     for object in "$c_object" "$cxx_object"; do
         local undefined
         undefined="$(nm --undefined-only "$object")"
-        printf '%s\n' "$undefined" | grep -Eq '[[:space:]]strfmon$' || {
+        grep -Eq '[[:space:]]strfmon$' <<<"$undefined" || {
             printf 'owned strfmon header witness lacks unmangled strfmon: %s\n' "$object" >&2
             return 1
         }
-        printf '%s\n' "$undefined" | grep -Eq '[[:space:]]strfmon_l$' || {
+        grep -Eq '[[:space:]]strfmon_l$' <<<"$undefined" || {
             printf 'owned strfmon header witness lacks unmangled strfmon_l: %s\n' "$object" >&2
             return 1
         }

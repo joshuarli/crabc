@@ -18,8 +18,8 @@ for tree in musl project; do
     object="$work_dir/$tree-$profile.o"
     "$ORACLE_CC" -nostdinc -nostdinc++ -I "$include" -std=c++17 -x c++ -U_GNU_SOURCE -U_POSIX_C_SOURCE -U_XOPEN_SOURCE "${defs[@]}" -c "$ROOT_DIR/compat/x86_64/service_lifecycle_header_abi_probe.cpp" -o "$object" || fail "$tree C++ $profile declaration"
     undefined="$(nm --undefined-only "$object")"
-    for symbol in getservent setservent; do printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" || fail "$tree C++ $profile lacks C linkage for $symbol"; done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(getservent|setservent)'; then fail "$tree C++ $profile retained mangled linkage"; fi
+    for symbol in getservent setservent; do grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" || fail "$tree C++ $profile lacks C linkage for $symbol"; done
+    if grep -Eq '_Z.*(getservent|setservent)' <<<"$undefined"; then fail "$tree C++ $profile retained mangled linkage"; fi
   done
 done
 printf 'x86 pinned-musl/project C/C++ <netdb.h> service lifecycle ABI: PASS\n'

@@ -281,7 +281,7 @@ if [ "${environment_symbols[*]}" != "${expected_environment_symbols[*]}" ]; then
     fail "environment runtime object export surface drifted"
 fi
 for forbidden in __putenv __env_rm_add; do
-    if nm -g --defined-only "$archive" 2>/dev/null | grep -Eq "[[:space:]]${forbidden}$"; then
+    if nm -g --defined-only "$archive" 2>/dev/null | grep -E "[[:space:]]${forbidden}$" >/dev/null; then
         fail "archive accidentally exports musl-private ${forbidden}"
     fi
 done
@@ -406,7 +406,7 @@ for alias in environ _environ ___environ; do
         END { exit !found }' "$candidate_symbols" ||
         fail "environment alias is not a weak x86 LP64 object: ${alias}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

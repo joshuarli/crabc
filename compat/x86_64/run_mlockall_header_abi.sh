@@ -86,9 +86,9 @@ for variant in oracle project; do
         "${include_args[@]}" -c \
         "$ROOT_DIR/compat/x86_64/mlockall_header_abi_probe.cpp" -o "$object"
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]mlockall$' ||
+    grep -Eq '[[:space:]]mlockall$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for mlockall (${variant})"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*mlockall'; then
+    if grep -Eq '_Z[0-9].*mlockall' <<<"$undefined"; then
         fail "C++ probe retained mangled mlockall reference (${variant})"
     fi
 done

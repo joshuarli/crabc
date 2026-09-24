@@ -22,9 +22,9 @@ for header_root in "$root/include" /opt/musl-1.2.6/include; do
   object="$work/header.$label.$compiler.o"
   "$cc" -x c++ -std=c++17 "${header_flags[@]}" -I"$header_root" -c "$root/compat/x86_64/lrand48_header_abi_probe.cpp" -o "$object"
   for s in "${symbols[@]}"; do
-   nm -u "$object" | grep -Eq "[[:space:]]$s$" || fail "$label C++ linkage lost $s"
+   nm -u "$object" | grep -E "[[:space:]]$s$" >/dev/null || fail "$label C++ linkage lost $s"
   done
-  nm -u "$object" | grep -Eq '[[:space:]]_Z' && fail "$label C++ linkage is mangled"
+  nm -u "$object" | grep -E '[[:space:]]_Z' >/dev/null && fail "$label C++ linkage is mangled"
  done
 done
 "$oracle" -std=c11 -I"$root/include" "$root/compat/x86_64/libc_lrand48_probe.c" -o "$work/reference"; "$work/reference" || { status=$?; fail "pinned-musl differential failed at probe $status"; }
@@ -33,13 +33,13 @@ archive="$target/x86_64-unknown-linux-musl/debug/libc.a"; [ -f "$archive" ] || f
 for s in "${symbols[@]}"; do grep -Fqx "$s" "$root/compat/x86_64/static_c_abi_exports.txt" || fail "export list omits $s"; done
 mapfile -t owner < <(nm -A --defined-only "$archive" | awk '$NF=="lrand48" {x=$1;sub(/^.*\.a:/,"",x);sub(/:.*$/,"",x);print x}' | sort -u); [ "${#owner[@]}" = 1 ] || fail "lrand48 needs one owner"
 mkdir "$work/o"; (cd "$work/o"; ar x "$archive" "${owner[0]}"; mv "${owner[0]}" provider.o; ar rcs "$work/provider.a" provider.o)
-for s in "${symbols[@]}"; do nm -g --defined-only "$work/o/provider.o" | grep -Eq "[[:space:]]$s$" || fail "provider omits $s"; done
+for s in "${symbols[@]}"; do nm -g --defined-only "$work/o/provider.o" | grep -E "[[:space:]]$s$" >/dev/null || fail "provider omits $s"; done
 # Rust's private mutable-state symbols stay compiler-mangled; only unmangled
 # names cross this C ABI boundary, where the exact closure is the nine APIs.
 unexpected_exports="$(comm -23 <(nm -g --defined-only "$work/o/provider.o" | awk '$NF !~ /^_R/ {print $NF}' | sort -u) <(printf '%s\n' "${symbols[@]}" | sort))"; [ -z "$unexpected_exports" ] || fail "provider has non-rand48 C ABI export: $unexpected_exports"
 undefined="$(nm -u "$work/o/provider.o")"; [ -z "$undefined" ] || fail "provider has undefined dependency: $undefined"
 objdump -d "$work/o/provider.o" >"$work/dis"; grep -Eq '[[:space:]]syscall([[:space:]]|$)|__errno_location|memcpy|memmove|memset' "$work/dis" && fail "provider widened into runtime helper"
 "$oracle" -std=c11 -DCRABC_LRAND48_FREESTANDING -I"$root/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined "$root/compat/x86_64/libc_lrand48_probe.c" "$root/compat/x86_64/libc_lrand48_start.S" "$work/provider.a" -o "$work/candidate"
-readelf -l "$work/candidate" | grep -Eq '[[:space:]]TLS[[:space:]]' && fail "candidate has TLS"; readelf -d "$work/candidate" 2>/dev/null | grep -Eq 'NEEDED|INTERP' && fail "candidate has dynamic dependency" || true
+readelf -l "$work/candidate" | grep -E '[[:space:]]TLS[[:space:]]' >/dev/null && fail "candidate has TLS"; readelf -d "$work/candidate" 2>/dev/null | grep -E 'NEEDED|INTERP' >/dev/null && fail "candidate has dynamic dependency" || true
 "$work/candidate" || fail "static differential failed"
 printf 'x86 static libc lrand48: PASS\n'

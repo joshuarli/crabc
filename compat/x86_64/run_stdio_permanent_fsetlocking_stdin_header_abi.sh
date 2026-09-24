@@ -132,9 +132,9 @@ assert_cxx_c_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
-    printf '%s\n' "$undefined" | grep -Fxq __fsetlocking ||
+    grep -Fxq __fsetlocking <<<"$undefined" ||
         fail "$tree C++ probe does not retain C spelling __fsetlocking"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*__fsetlocking'; then
+    if grep -Eq '_Z.*__fsetlocking' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled __fsetlocking reference"
     fi
 }

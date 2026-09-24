@@ -206,9 +206,9 @@ check_cxx_c_linkage() {
 
     profile_requires_gnu "$profile" || return 0
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]memfd_create$' ||
+    grep -Eq '[[:space:]]memfd_create$' <<<"$undefined" ||
         fail "$tree $profile C++ probe lacks C-linkage memfd_create"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*memfd_create'; then
+    if grep -Eq '_Z.*memfd_create' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled memfd_create reference"
     fi
 }

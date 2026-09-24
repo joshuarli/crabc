@@ -70,9 +70,8 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" | grep -Eq '[[:space:]][T][[:space:]]aio_error$'; then
-                if printf '%s\n' "$definitions" |
-                    grep -Eq '[[:space:]][TWDVBR][[:space:]](aio_cancel|aio_fsync|aio_read|aio_return|aio_suspend|aio_write|lio_listio)$'; then
+            if grep -Eq '[[:space:]][T][[:space:]]aio_error$' <<<"$definitions"; then
+                if grep -Eq '[[:space:]][TWDVBR][[:space:]](aio_cancel|aio_fsync|aio_read|aio_return|aio_suspend|aio_write|lio_listio)$' <<<"$definitions"; then
                     fail "aio_error archive member also defines an AIO operation sibling"
                 fi
                 printf '%s\n' "$member"

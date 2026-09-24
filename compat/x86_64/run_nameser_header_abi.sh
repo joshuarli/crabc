@@ -36,11 +36,11 @@ check_cxx_c_linkage() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in dn_skipname dn_expand _ns_flagdata ns_get16 ns_get32 ns_put16 ns_put32 ns_skiprr ns_initparse ns_parserr ns_name_uncompress; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree C++ probe does not retain C linkage for ${symbol}"
     done
     for mangled in '_Z.*dn_skipname' '_Z.*dn_expand' '_Z.*_ns_flagdata' '_Z.*ns_get16' '_Z.*ns_get32' '_Z.*ns_put16' '_Z.*ns_put32' '_Z.*ns_skiprr' '_Z.*ns_initparse' '_Z.*ns_parserr' '_Z.*ns_name_uncompress'; do
-        if printf '%s\n' "$undefined" | grep -Eq "$mangled"; then
+        if grep -Eq "$mangled" <<<"$undefined"; then
             fail "$tree C++ probe retained a mangled selected-nameserver reference"
         fi
     done

@@ -129,9 +129,9 @@ compile_positive_profile() {
                     -U_DEFAULT_SOURCE "$definition" -nostdinc++ \
                     "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]getloadavg$' ||
+                grep -Eq '[[:space:]]getloadavg$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for getloadavg (${variant}, ${definition})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*getloadavg'; then
+                if grep -Eq '_Z[0-9].*getloadavg' <<<"$undefined"; then
                     fail "C++ probe retained a mangled getloadavg reference (${variant}, ${definition})"
                 fi
             fi

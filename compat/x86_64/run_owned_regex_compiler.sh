@@ -88,7 +88,7 @@ for symbol in regcomp regfree __crabc_x86_regex_cabi_malloc __crabc_x86_regex_ca
     __crabc_x86_regex_cabi_realloc __crabc_x86_regex_cabi_free; do
     grep -Eq "[[:space:]]${symbol}$" "$work_dir/symbols" || fail "candidate lacks ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$work_dir/headers" "$work_dir/dynamic"; then

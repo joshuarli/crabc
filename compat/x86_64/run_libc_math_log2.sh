@@ -88,10 +88,10 @@ for mode in sse x87; do
 	for object in "$header_cxx_reference" "$header_cxx_candidate"; do
 		undefined="$(nm --undefined-only "$object")"
 		for symbol in log2 log2f; do
-			printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+			grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
 				fail "C++ ${mode} probe does not retain unmangled ${symbol}"
 		done
-		if printf '%s\n' "$undefined" | grep -Eq '_Z.*log2'; then
+		if grep -Eq '_Z.*log2' <<<"$undefined"; then
 			fail "C++ ${mode} probe retained a mangled log2 reference"
 		fi
 	done
@@ -152,7 +152,7 @@ for unselected in log logf logl log1p log1pf log1pl log2l log10 log10f log10l \
 		fail "candidate accidentally retains unselected ${unselected}"
 	fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
 	fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

@@ -61,9 +61,9 @@ done
     -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]mktemp$' ||
+    grep -Eq '[[:space:]]mktemp$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for mktemp"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z6mktempPc'; then
+    if grep -Eq '_Z6mktempPc' <<<"$undefined"; then
         fail "C++ probe retained a mangled mktemp reference"
     fi
 done

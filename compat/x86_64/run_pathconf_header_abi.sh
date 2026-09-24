@@ -103,9 +103,9 @@ compile_profile() {
                     -U_DEFAULT_SOURCE "$@" -nostdinc++ "${include_args[@]}" \
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]pathconf$' ||
+                grep -Eq '[[:space:]]pathconf$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for pathconf (${variant}, ${label})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*pathconf'; then
+                if grep -Eq '_Z[0-9].*pathconf' <<<"$undefined"; then
                     fail "C++ probe retained a mangled pathconf reference (${variant}, ${label})"
                 fi
             fi

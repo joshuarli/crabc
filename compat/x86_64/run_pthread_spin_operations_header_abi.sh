@@ -41,9 +41,9 @@ candidate_object="$work_dir/candidate.o"
     -c "$CXX_PROBE" -o "$candidate_object"
 for object_path in "$reference_object" "$candidate_object"; do
     for symbol in pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
-        nm -u "$object_path" | grep -Eq "[[:space:]]${symbol}$" ||
+        nm -u "$object_path" | grep -E "[[:space:]]${symbol}$" >/dev/null ||
             fail "C++ object does not retain an unmangled ${symbol} reference"
-        if nm -u "$object_path" | grep -Eq "_Z[[:alnum:]_]*${symbol}"; then
+        if nm -u "$object_path" | grep -E "_Z[[:alnum:]_]*${symbol}" >/dev/null; then
             fail "C++ object mangles ${symbol}"
         fi
     done

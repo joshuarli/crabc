@@ -55,7 +55,7 @@ for unselected in calloc malloc free realloc; do if grep -Eq "[[:space:]][TW][[:
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_INTEGER_ARITHMETIC_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined compat/x86_64/libc_integer_arithmetic_probe.c compat/x86_64/libc_integer_arithmetic_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"; readelf --program-headers --wide "$candidate" >"$headers"; readelf --dynamic --wide "$candidate" >"$dynamic" || true; readelf --relocs --wide "$candidate" >"$relocs"; objdump -d "$candidate" >"$disassembly"
 for symbol in abs labs llabs div ldiv lldiv; do grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"; done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then fail "candidate has unresolved symbols"; fi
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then fail "candidate has unresolved symbols"; fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then fail "candidate is dynamic"; fi
 if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' "$headers" "$relocs" "$symbols" "$disassembly"; then fail "candidate retains TLS"; fi
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$symbols" "$disassembly"; then fail "candidate selects unowned runtime symbols"; fi

@@ -204,7 +204,7 @@ for unrelated in alarm ualarm timer_create timer_delete timer_getoverrun \
         fail "candidate unexpectedly pulls $unrelated"
     fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

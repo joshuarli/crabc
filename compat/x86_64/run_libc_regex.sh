@@ -85,7 +85,7 @@ builtin_include="$($CANDIDATE_CC -print-file-name=include)"
     "$ROOT_DIR/compat/x86_64/regex_header_abi_probe.cpp" -o "$musl_cxx"
 for object in "$project_cxx" "$musl_cxx"; do
     for symbol in regcomp regexec regerror regfree; do
-        nm --undefined-only "$object" | grep -Eq "[[:space:]]${symbol}$" ||
+        nm --undefined-only "$object" | grep -E "[[:space:]]${symbol}$" >/dev/null ||
             fail "C++ regex probe lost C linkage for ${symbol}"
     done
 done
@@ -128,7 +128,7 @@ objdump -d "$candidate" >"$disassembly"
 for symbol in __crabc_x86_static_tls_bootstrap regcomp regexec regerror regfree; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

@@ -115,10 +115,10 @@ assert_cxx_c_linkage() {
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
     for symbol in sscanf vsscanf; do
-        printf '%s\n' "$undefined" | grep -Fxq "$symbol" ||
+        grep -Fxq "$symbol" <<<"$undefined" ||
             fail "$tree C++ probe does not retain C spelling $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(sscanf|vsscanf)'; then
+    if grep -Eq '_Z.*(sscanf|vsscanf)' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled scanf reference"
     fi
 }

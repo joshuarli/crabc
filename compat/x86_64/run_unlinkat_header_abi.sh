@@ -188,9 +188,9 @@ check_cxx_symbol() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]unlinkat$' ||
+    grep -Eq '[[:space:]]unlinkat$' <<<"$undefined" ||
         fail "$tree $profile C++ probe does not retain C linkage for unlinkat"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*unlinkat'; then
+    if grep -Eq '_Z.*unlinkat' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled unlinkat reference"
     fi
 }

@@ -73,10 +73,8 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" |
-                grep -Eq '[[:space:]][R][[:space:]]in6addr_any$'; then
-                if printf '%s\n' "$definitions" |
-                    grep -Eq '[[:space:]][R][[:space:]]in6addr_loopback$'; then
+            if grep -Eq '[[:space:]][R][[:space:]]in6addr_any$' <<<"$definitions"; then
+                if grep -Eq '[[:space:]][R][[:space:]]in6addr_loopback$' <<<"$definitions"; then
                     fail "in6addr_any archive member also defines in6addr_loopback"
                 fi
                 printf '%s\n' "$member"
@@ -127,10 +125,10 @@ esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" in6addr_any.lo >"$musl_object"
 readelf --symbols --wide "$musl_object" |
-    grep -Eq '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+in6addr_any\.c$' ||
+    grep -E '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+in6addr_any\.c$' >/dev/null ||
     fail "pinned musl in6addr_any object no longer maps to in6addr_any.c"
 readelf --symbols --wide "$musl_object" |
-    grep -Eq '[[:space:]]16[[:space:]]+OBJECT[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+in6addr_any$' ||
+    grep -E '[[:space:]]16[[:space:]]+OBJECT[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+in6addr_any$' >/dev/null ||
     fail "pinned musl in6addr_any object layout drifted"
 if [ -n "$(nm --undefined-only "$musl_object")" ]; then
     fail "pinned musl in6addr_any object unexpectedly has a dependency"
@@ -141,10 +139,10 @@ grep -Eq '00000000[[:space:]]+00000000[[:space:]]+00000000[[:space:]]+00000000[[
 
 ar p "$musl_archive" in6addr_loopback.lo >"$musl_loopback_object"
 readelf --symbols --wide "$musl_loopback_object" |
-    grep -Eq '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+in6addr_loopback\.c$' ||
+    grep -E '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+in6addr_loopback\.c$' >/dev/null ||
     fail "pinned musl loopback sibling no longer maps independently"
 readelf --symbols --wide "$musl_loopback_object" |
-    grep -Eq '[[:space:]]16[[:space:]]+OBJECT[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+in6addr_loopback$' ||
+    grep -E '[[:space:]]16[[:space:]]+OBJECT[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+in6addr_loopback$' >/dev/null ||
     fail "pinned musl loopback sibling layout drifted"
 readelf --hex-dump=.rodata.in6addr_loopback "$musl_loopback_object" \
     >"$musl_loopback_bytes"

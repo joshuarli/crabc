@@ -176,17 +176,17 @@ for symbol in "${expected_wrapper_symbols[@]}"; do
 done
 for symbol in __errno_location ___errno_location; do
     nm -g --defined-only "$work_dir/selected-members/${errno_members[0]}" |
-        grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" \
+        grep -E "[[:space:]][TW][[:space:]]${symbol}$" >/dev/null \
         || fail "selected errno owner lacks $symbol"
 done
 for symbol in mi_malloc_aligned mi_zalloc mi_realloc_aligned mi_free; do
     nm -g --defined-only "$work_dir/selected-members/${backend_members[0]}" |
-        grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" \
+        grep -E "[[:space:]][TW][[:space:]]${symbol}$" >/dev/null \
         || fail "bundled AArch64-equivalent backend lacks $symbol"
 done
 for symbol in "${expected_wrapper_symbols[@]}" malloc_usable_size; do
     if nm -g --defined-only "$work_dir/selected-members/${backend_members[0]}" |
-        grep -Eq "[[:space:]][TW][[:space:]]${symbol}$"; then
+        grep -E "[[:space:]][TW][[:space:]]${symbol}$" >/dev/null; then
         fail "bundled backend unexpectedly exports public allocator symbol $symbol"
     fi
 done
@@ -225,7 +225,7 @@ if grep -Eq 'libc\.a\((aligned_alloc|calloc|free|libc_calloc|lite_malloc|malloc|
     "$link_map"; then
     fail "candidate selected a pinned-musl allocator implementation"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

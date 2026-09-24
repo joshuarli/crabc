@@ -62,7 +62,7 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             if nm -g --defined-only "$member" |
-                grep -Eq '[[:space:]][TW][[:space:]]l64a$'; then
+                grep -E '[[:space:]][TW][[:space:]]l64a$' >/dev/null; then
                 printf '%s\n' "$member"
             fi
         done
@@ -123,7 +123,7 @@ esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" a64l.lo >"$musl_object"
 for symbol in a64l l64a; do
-    readelf --symbols --wide "$musl_object" | grep -Eq "[[:space:]]${symbol}$" ||
+    readelf --symbols --wide "$musl_object" | grep -E "[[:space:]]${symbol}$" >/dev/null ||
         fail "pinned musl a64l.lo lacks ${symbol}"
 done
 
@@ -183,7 +183,7 @@ objdump -d --disassemble=l64a "$candidate" >"$candidate_disassembly"
 awk '$4 == "FUNC" && $5 == "GLOBAL" && $8 == "l64a" { found = 1 }
      END { exit(found ? 0 : 1) }' "$candidate_symbols" ||
     fail "candidate lacks global l64a"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

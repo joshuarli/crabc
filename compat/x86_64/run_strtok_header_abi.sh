@@ -105,9 +105,9 @@ compile_profile() {
                     -DCRABC_EXPECT_STRTOK -nostdinc++ "${include_args[@]}" \
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]strtok$' ||
+                grep -Eq '[[:space:]]strtok$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for strtok (${variant}, ${definitions_name})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*strtok'; then
+                if grep -Eq '_Z[0-9].*strtok' <<<"$undefined"; then
                     fail "C++ probe retained a mangled strtok reference (${variant}, ${definitions_name})"
                 fi
             fi

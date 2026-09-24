@@ -74,9 +74,9 @@ compile_visible_profile() {
                     -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE \
                     "$definition" "${include_args[@]}" -c "$cxx_probe" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]timer_gettime$' ||
+                grep -Eq '[[:space:]]timer_gettime$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for timer_gettime (${variant}, ${profile})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z.*timer_gettime'; then
+                if grep -Eq '_Z.*timer_gettime' <<<"$undefined"; then
                     fail "C++ probe retained a mangled timer_gettime reference (${variant}, ${profile})"
                 fi
             fi

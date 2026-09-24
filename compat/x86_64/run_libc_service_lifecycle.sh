@@ -20,22 +20,22 @@ readelf --symbols --wide "$work_dir/musl-serv.o" >"$work_dir/musl-symbols"
 grep -Eq '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+serv\.c$' "$work_dir/musl-symbols" || fail "pinned musl object lost serv.c mapping"
 for symbol in getservent setservent; do
   grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT.*[[:space:]]${symbol}$" "$work_dir/musl-symbols" || fail "pinned musl serv object lacks $symbol"
-  objdump -dr --disassemble="$symbol" "$work_dir/musl-serv.o" | grep -Eq '[[:space:]]ret([[:space:]]|$)' || fail "pinned musl $symbol is not a direct leaf"
+  objdump -dr --disassemble="$symbol" "$work_dir/musl-serv.o" | grep -E '[[:space:]]ret([[:space:]]|$)' >/dev/null || fail "pinned musl $symbol is not a direct leaf"
 done
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector -I "$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_service_lifecycle_probe.c" -o "$reference"
 env -i LC_ALL=C TZ=UTC "$reference" || fail "pinned-musl lifecycle fixture failed"
 build_source_runtime_libc "$target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit static archive"
 (cd "$members" && ar x "$archive" $(ar t "$archive" | grep -E '^c\\..+\\.rcgu\\.o$'))
-mapfile -t selected < <(for obj in "$members"/*; do names="$(nm -g --defined-only "$obj")"; if printf '%s\n' "$names" | grep -Eq '[[:space:]]T[[:space:]]getservent$'; then printf '%s\n' "$obj"; fi; done)
+mapfile -t selected < <(for obj in "$members"/*; do names="$(nm -g --defined-only "$obj")"; if grep -Eq '[[:space:]]T[[:space:]]getservent$' <<<"$names"; then printf '%s\n' "$obj"; fi; done)
 [ "${#selected[@]}" = 1 ] || fail "getservent must have one provider object"
 provider="${selected[0]}"; definitions="$(nm -g --defined-only "$provider")"
-for symbol in getservent setservent; do printf '%s\n' "$definitions" | grep -Eq "[[:space:]]T[[:space:]]${symbol}$" || fail "provider lacks $symbol"; done
-if printf '%s\n' "$definitions" | grep -Eq '[[:space:]](endservent|getservbyname|getservbyport|getprotoent|res_query|getaddrinfo|malloc|free)$'; then fail "provider leaks unselected service/resolver sibling"; fi
+for symbol in getservent setservent; do grep -Eq "[[:space:]]T[[:space:]]${symbol}$" <<<"$definitions" || fail "provider lacks $symbol"; done
+if grep -Eq '[[:space:]](endservent|getservbyname|getservbyport|getprotoent|res_query|getaddrinfo|malloc|free)$' <<<"$definitions"; then fail "provider leaks unselected service/resolver sibling"; fi
 "$ORACLE_CC" -std=c11 -DCRABC_SERVICE_LIFECYCLE_FREESTANDING -I "$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--gc-sections -Wl,--no-undefined "$ROOT_DIR/compat/x86_64/libc_service_lifecycle_probe.c" "$ROOT_DIR/compat/x86_64/libc_service_lifecycle_start.S" "$provider" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$work_dir/symbols"; readelf --program-headers --wide "$candidate" >"$work_dir/headers"; readelf --dynamic --wide "$candidate" >"$work_dir/dynamic" || true; objdump -d "$candidate" >"$work_dir/disassembly"
-if awk '$7 == "UND" && NF >= 8 {print}' "$work_dir/symbols" | grep -q . || grep -Eq 'INTERP|NEEDED|[[:space:]]TLS[[:space:]]|__errno_location|__h_errno_location|%fs:|crabc_core|mimalloc' "$work_dir/symbols" "$work_dir/headers" "$work_dir/dynamic" "$work_dir/disassembly"; then fail "candidate is not source-closed static provider"; fi
-for symbol in getservent setservent; do objdump -d --disassemble="$symbol" "$candidate" | grep -Eq '[[:space:]]ret([[:space:]]|$)' || fail "$symbol lacks direct return"; done
-if objdump -d --disassemble=getservent "$candidate" | grep -Eq '\b(call|syscall)\b'; then fail "getservent unexpectedly calls"; fi
+if awk '$7 == "UND" && NF >= 8 {print}' "$work_dir/symbols" | grep . >/dev/null || grep -Eq 'INTERP|NEEDED|[[:space:]]TLS[[:space:]]|__errno_location|__h_errno_location|%fs:|crabc_core|mimalloc' "$work_dir/symbols" "$work_dir/headers" "$work_dir/dynamic" "$work_dir/disassembly"; then fail "candidate is not source-closed static provider"; fi
+for symbol in getservent setservent; do objdump -d --disassemble="$symbol" "$candidate" | grep -E '[[:space:]]ret([[:space:]]|$)' >/dev/null || fail "$symbol lacks direct return"; done
+if objdump -d --disassemble=getservent "$candidate" | grep -E '\b(call|syscall)\b' >/dev/null; then fail "getservent unexpectedly calls"; fi
 env -i LC_ALL=C TZ=UTC "$candidate" || fail "candidate lifecycle fixture failed"
 printf 'x86 static crabc-libc service lifecycle: PASS\n'

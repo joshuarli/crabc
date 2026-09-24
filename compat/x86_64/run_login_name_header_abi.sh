@@ -40,10 +40,10 @@ for project in oracle project; do
         -o "$object"
     undefined="$(nm --undefined-only "$object")"
     for symbol in getlogin getlogin_r; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$project C++ witness lacks unmangled $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*getlogin'; then
+    if grep -Eq '_Z.*getlogin' <<<"$undefined"; then
         fail "$project C++ witness retained a mangled login-name reference"
     fi
 done

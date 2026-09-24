@@ -216,11 +216,11 @@ check_cxx_symbols() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C linkage for ${symbol}"
     done
-    if printf '%s\n' "$undefined" | grep -Eq \
-        '_Z(8getxattr|9lgetxattr|9fgetxattr|9listxattr|10llistxattr|10flistxattr|8setxattr|9lsetxattr|9fsetxattr|11removexattr|12lremovexattr|12fremovexattr)'; then
+    if grep -Eq \
+        '_Z(8getxattr|9lgetxattr|9fgetxattr|9listxattr|10llistxattr|10flistxattr|8setxattr|9lsetxattr|9fsetxattr|11removexattr|12lremovexattr|12fremovexattr)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled sys/xattr reference"
     fi
 }

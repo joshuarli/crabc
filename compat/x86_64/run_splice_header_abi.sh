@@ -121,9 +121,9 @@ compile_gnu_profile() {
                     -U_DEFAULT_SOURCE -D_GNU_SOURCE -DCRABC_EXPECT_SPLICE \
                     -nostdinc++ "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]splice$' ||
+                grep -Eq '[[:space:]]splice$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for splice (${variant})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*splice'; then
+                if grep -Eq '_Z[0-9].*splice' <<<"$undefined"; then
                     fail "C++ probe retained a mangled splice reference (${variant})"
                 fi
             fi
@@ -144,9 +144,9 @@ compile_cxx_extension_profile() {
             "$@" -DCRABC_EXPECT_SPLICE -nostdinc++ \
             "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
         undefined="$(nm --undefined-only "$object")"
-        printf '%s\n' "$undefined" | grep -Eq '[[:space:]]splice$' ||
+        grep -Eq '[[:space:]]splice$' <<<"$undefined" ||
             fail "C++ ${label} probe does not retain C linkage (${variant})"
-        if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*splice'; then
+        if grep -Eq '_Z[0-9].*splice' <<<"$undefined"; then
             fail "C++ ${label} probe retained a mangled splice reference (${variant})"
         fi
     done

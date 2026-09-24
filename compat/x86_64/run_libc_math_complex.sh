@@ -68,7 +68,7 @@ for symbol in __fpclassify __fpclassifyf __fpclassifyl __signbit __signbitf \
 	cproj cprojf cprojl; do
 	grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then fail "candidate has unresolved symbols"; fi
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then fail "candidate has unresolved symbols"; fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then fail "candidate is dynamic"; fi
 if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' "$headers" "$relocs" "$symbols" "$disassembly"; then fail "candidate retains TLS"; fi
 if grep -Eq 'crabc_core|mimalloc|sha_crypt|libm' "$symbols" "$disassembly"; then fail "candidate selects an unowned math/runtime dependency"; fi

@@ -147,7 +147,7 @@ for selected in __errno_location sched_getcpu; do
     grep -Eq "[[:space:]]${selected}$" "$candidate_symbols" ||
         fail "candidate does not define ${selected}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

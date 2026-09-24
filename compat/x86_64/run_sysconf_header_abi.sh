@@ -103,9 +103,9 @@ compile_profile() {
                     -U_DEFAULT_SOURCE "$@" -nostdinc++ "${include_args[@]}" \
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]sysconf$' ||
+                grep -Eq '[[:space:]]sysconf$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for sysconf (${variant}, ${label})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*sysconf'; then
+                if grep -Eq '_Z[0-9].*sysconf' <<<"$undefined"; then
                     fail "C++ probe retained a mangled sysconf reference (${variant}, ${label})"
                 fi
             fi

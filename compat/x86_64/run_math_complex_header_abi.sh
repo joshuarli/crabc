@@ -91,10 +91,10 @@ for mode in sse x87; do
 			conj conjf conjl acosl asinl atanl atan2l ceill exp2l expl expm1l \
 			fabsl floorl fmodl log10l log1pl log2l logl lrintl llrintl rintl \
 			remainderl remquol sqrtl truncl; do
-			printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+			grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
 				fail "C++ ${mode} probe does not retain unmangled ${symbol}"
 		done
-		if printf '%s\n' "$undefined" | grep -Eq '_Z.*(creal|cimag|conj|fpclassifyl|signbitl|acosl|exp2l|remquol|sqrtl)'; then
+		if grep -Eq '_Z.*(creal|cimag|conj|fpclassifyl|signbitl|acosl|exp2l|remquol|sqrtl)' <<<"$undefined"; then
 			fail "C++ ${mode} probe retained a mangled math/complex reference"
 		fi
 	done

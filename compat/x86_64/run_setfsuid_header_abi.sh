@@ -52,9 +52,9 @@ for tree in oracle project; do
     "$ORACLE_CC" -std=c++17 -x c++ -D_GNU_SOURCE -fno-builtin \
         "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]setfsuid$' ||
+    grep -Eq '[[:space:]]setfsuid$' <<<"$undefined" ||
         fail "$tree C++ witness lacks unmangled setfsuid"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*setfsuid'; then
+    if grep -Eq '_Z.*setfsuid' <<<"$undefined"; then
         fail "$tree C++ witness retained a mangled setfsuid reference"
     fi
 done

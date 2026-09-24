@@ -150,10 +150,10 @@ check_cxx_c_linkage() {
     undefined="$(nm --undefined-only "$object")"
     for symbol in pthread_cancel pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
         _pthread_cleanup_push _pthread_cleanup_pop; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C linkage for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(_pthread_cleanup_(push|pop)|pthread_(cancel|setcancelstate|setcanceltype|testcancel))'; then
+    if grep -Eq '_Z.*(_pthread_cleanup_(push|pop)|pthread_(cancel|setcancelstate|setcanceltype|testcancel))' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled pthread-cancellation reference"
     fi
 }

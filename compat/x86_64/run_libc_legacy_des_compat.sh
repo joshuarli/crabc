@@ -215,7 +215,7 @@ if ! cmp -s "$expected_feature_bindings" "$feature_bindings"; then
     diff -u "$expected_feature_bindings" "$feature_bindings" >&2 || true
     fail "narrow feature changed the full global binding surface"
 fi
-comm -23 "$baseline_surface" "$feature_surface" | grep -q . &&
+comm -23 "$baseline_surface" "$feature_surface" | grep . >/dev/null &&
     fail "narrow feature removes a frozen default export"
 comm -13 "$feature_surface" "$both_surface" >"$both_additions"
 printf 'fmtmsg T\n' >"$both_addition_bindings"
@@ -279,7 +279,7 @@ for symbol in _start __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks required inert-DES closure symbol $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$candidate_headers" "$candidate_dynamic"; then

@@ -142,12 +142,12 @@ check_cxx_linkage() {
     local tree="$1" profile="$2" object="$3" undefined
     undefined="$(nm --undefined-only "$object")"
     if profile_is_visible "$tree" "$profile"; then
-        printf '%s\n' "$undefined" | grep -Eq '[[:space:]]__h_errno_location$' ||
+        grep -Eq '[[:space:]]__h_errno_location$' <<<"$undefined" ||
             fail "$profile C++ probe lacks unmangled __h_errno_location"
-        if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*h_errno'; then
+        if grep -Eq '_Z[0-9].*h_errno' <<<"$undefined"; then
             fail "$profile C++ probe retained a mangled h_errno reference"
         fi
-    elif printf '%s\n' "$undefined" | grep -Eq '[[:space:]]__h_errno_location$'; then
+    elif grep -Eq '[[:space:]]__h_errno_location$' <<<"$undefined"; then
         fail "$profile hidden C++ probe retained h_errno macro linkage"
     fi
 }

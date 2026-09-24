@@ -317,14 +317,14 @@ check_cxx_c_linkage() {
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
     while IFS= read -r expected; do
         [ -n "$expected" ] || continue
-        if ! printf '%s\n' "$undefined" | grep -Fxq "$expected"; then
+        if ! grep -Fxq "$expected" <<<"$undefined"; then
             printf 'C++ linkage mismatch: %s does not retain C-linkage symbol %s\n' \
                 "$label" "$expected" >&2
             return 1
         fi
     done < <(expected_cxx_symbols "$profile")
-    if printf '%s\n' "$undefined" | grep -Eq \
-        '_Z.*(malloc|strtol|qsort|getenv|setenv|unsetenv|rand_r|realpath|putenv|drand48|mktemp|mkstemps|mkostemps|valloc|memalign|reallocarray|qsort_r|clearenv|secure_getenv|strtof_l|strtod_l|strtold_l)'; then
+    if grep -Eq \
+        '_Z.*(malloc|strtol|qsort|getenv|setenv|unsetenv|rand_r|realpath|putenv|drand48|mktemp|mkstemps|mkostemps|valloc|memalign|reallocarray|qsort_r|clearenv|secure_getenv|strtof_l|strtod_l|strtold_l)' <<<"$undefined"; then
         printf 'C++ linkage mismatch: %s retains a mangled <stdlib.h> reference\n' \
             "$label" >&2
         return 1

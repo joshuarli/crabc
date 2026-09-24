@@ -118,10 +118,10 @@ assert_success_case() {
                 compile_case "$tree" "$language" "$profile" "$header_case" object "$object" "$trace" ||
                     fail "$tree $language $profile/$header_case did not compile"
                 for symbol in $linkage_symbols; do
-                    nm --undefined-only "$object" | grep -Eq "[[:space:]]${symbol}$" ||
+                    nm --undefined-only "$object" | grep -E "[[:space:]]${symbol}$" >/dev/null ||
                         fail "$tree C++ $profile/$header_case lacks unmangled $symbol"
                 done
-                if nm --undefined-only "$object" | grep -Eq "_Z.*(${mangled_symbols})"; then
+                if nm --undefined-only "$object" | grep -E "_Z.*(${mangled_symbols})" >/dev/null; then
                     fail "$tree C++ $profile/$header_case retained a mangled C reference"
                 fi
             else

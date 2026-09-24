@@ -71,7 +71,7 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             if nm -g --defined-only "$member" |
-                grep -Eq '[[:space:]][TW][[:space:]]inet_ntoa$'; then
+                grep -E '[[:space:]][TW][[:space:]]inet_ntoa$' >/dev/null; then
                 printf '%s\n' "$member"
             fi
         done
@@ -117,9 +117,9 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" inet_ntoa.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq '[[:space:]]inet_ntoa$' ||
+readelf --symbols --wide "$musl_object" | grep -E '[[:space:]]inet_ntoa$' >/dev/null ||
     fail "pinned musl archive lacks inet_ntoa.lo"
-nm --undefined-only "$musl_object" | grep -Eq '[[:space:]]snprintf$' ||
+nm --undefined-only "$musl_object" | grep -E '[[:space:]]snprintf$' >/dev/null ||
     fail "pinned musl inet_ntoa source no longer calls snprintf"
 strings -a "$musl_object" >"$musl_strings"
 grep -Fxq '%d.%d.%d.%d' "$musl_strings" ||

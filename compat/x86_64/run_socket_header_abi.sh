@@ -50,9 +50,9 @@ check_cxx_in6addr_any_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]in6addr_any$' ||
+    grep -Eq '[[:space:]]in6addr_any$' <<<"$undefined" ||
         fail "$tree C++ probe does not retain C linkage for in6addr_any"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*in6addr_any'; then
+    if grep -Eq '_Z.*in6addr_any' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled in6addr_any reference"
     fi
 }
@@ -63,9 +63,9 @@ check_cxx_in6addr_loopback_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]in6addr_loopback$' ||
+    grep -Eq '[[:space:]]in6addr_loopback$' <<<"$undefined" ||
         fail "$tree C++ probe does not retain C linkage for in6addr_loopback"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*in6addr_loopback'; then
+    if grep -Eq '_Z.*in6addr_loopback' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled in6addr_loopback reference"
     fi
 }

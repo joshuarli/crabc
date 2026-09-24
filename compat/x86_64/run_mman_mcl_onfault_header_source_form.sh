@@ -140,7 +140,7 @@ check_x86_trace() {
         grep -Fq "$root/$header" "$trace" ||
             fail "$profile $tree direct <sys/mman.h> trace omitted $root/$header"
     done
-    if trace_paths "$trace" | grep -Eq '/(linux|asm)/'; then
+    if trace_paths "$trace" | grep -E '/(linux|asm)/' >/dev/null; then
         fail "$profile $tree direct <sys/mman.h> leaked a Linux/UAPI header"
     fi
 }
@@ -206,7 +206,7 @@ check_aarch64_trace() {
     if grep -Fq "$PROJECT_INCLUDE/bits/mman.h" "$trace"; then
         fail "$profile frozen-AArch64 trace leaked the x86 mapping header"
     fi
-    if trace_paths "$trace" | grep -Eq '/(linux|asm)/'; then
+    if trace_paths "$trace" | grep -E '/(linux|asm)/' >/dev/null; then
         fail "$profile frozen-AArch64 direct <sys/mman.h> leaked a Linux/UAPI header"
     fi
 }

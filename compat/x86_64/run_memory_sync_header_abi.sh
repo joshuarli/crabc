@@ -185,9 +185,9 @@ check_cxx_c_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]msync$' ||
+    grep -Eq '[[:space:]]msync$' <<<"$undefined" ||
         fail "$tree $profile C++ probe does not retain C linkage for msync"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*msync'; then
+    if grep -Eq '_Z.*msync' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled msync reference"
     fi
 }

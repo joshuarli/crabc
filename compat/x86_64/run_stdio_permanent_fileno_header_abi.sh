@@ -111,9 +111,9 @@ assert_cxx_c_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
-    printf '%s\n' "$undefined" | grep -Fxq fileno ||
+    grep -Fxq fileno <<<"$undefined" ||
         fail "$tree C++ probe does not retain C spelling fileno"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*fileno'; then
+    if grep -Eq '_Z.*fileno' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled fileno reference"
     fi
 }

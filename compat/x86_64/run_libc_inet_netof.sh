@@ -74,9 +74,9 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" | grep -Eq '[[:space:]][TW][[:space:]]inet_netof$'; then
+            if grep -Eq '[[:space:]][TW][[:space:]]inet_netof$' <<<"$definitions"; then
                 for collateral in inet_network inet_makeaddr inet_lnaof; do
-                    if printf '%s\n' "$definitions" | grep -Eq "[[:space:]][TW][[:space:]]${collateral}$"; then
+                    if grep -Eq "[[:space:]][TW][[:space:]]${collateral}$" <<<"$definitions"; then
                         fail "inet_netof archive member also defines ${collateral}"
                     fi
                 done
@@ -125,10 +125,10 @@ esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" inet_legacy.lo >"$musl_object"
 for symbol in inet_network inet_makeaddr inet_lnaof inet_netof; do
-    readelf --symbols --wide "$musl_object" | grep -Eq "[[:space:]]${symbol}$" ||
+    readelf --symbols --wide "$musl_object" | grep -E "[[:space:]]${symbol}$" >/dev/null ||
         fail "pinned musl inet_legacy.c no longer defines ${symbol}"
 done
-nm --undefined-only "$musl_object" | grep -Eq '[[:space:]]inet_addr$' ||
+nm --undefined-only "$musl_object" | grep -E '[[:space:]]inet_addr$' >/dev/null ||
     fail "pinned musl inet_network no longer carries its unselected inet_addr dependency"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \

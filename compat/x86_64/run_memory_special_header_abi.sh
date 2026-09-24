@@ -62,11 +62,11 @@ for tree in oracle project; do
     "$ORACLE_CC" -std=c++17 -x c++ -fno-builtin "${gnu_definitions[@]}" \
         "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]explicit_bzero$' ||
+    grep -Eq '[[:space:]]explicit_bzero$' <<<"$undefined" ||
         fail "$tree C++ witness lacks unmangled explicit_bzero"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]swab$' ||
+    grep -Eq '[[:space:]]swab$' <<<"$undefined" ||
         fail "$tree C++ witness lacks unmangled swab"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(explicit_bzero|swab)'; then
+    if grep -Eq '_Z.*(explicit_bzero|swab)' <<<"$undefined"; then
         fail "$tree C++ witness retained a mangled explicit_bzero or swab reference"
     fi
 done

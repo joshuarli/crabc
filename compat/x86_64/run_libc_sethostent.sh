@@ -88,7 +88,7 @@ assert_static_candidate_closure() {
     readelf --dynamic --wide "$candidate_path" >"$dynamic" || true
     readelf --relocs --wide "$candidate_path" >"$relocations"
     objdump -d "$candidate_path" >"$disassembly"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
         fail "$label candidate retains an unresolved symbol"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
@@ -168,11 +168,11 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" ent.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq \
-    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]].*[[:space:]]sethostent$' ||
+readelf --symbols --wide "$musl_object" | grep -E \
+    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]].*[[:space:]]sethostent$' >/dev/null ||
     fail "pinned musl ent.lo lacks strong sethostent"
-readelf --symbols --wide "$musl_object" | grep -Eq \
-    '[[:space:]]FUNC[[:space:]]+WEAK[[:space:]].*[[:space:]]setnetent$' ||
+readelf --symbols --wide "$musl_object" | grep -E \
+    '[[:space:]]FUNC[[:space:]]+WEAK[[:space:]].*[[:space:]]setnetent$' >/dev/null ||
     fail "pinned musl ent.lo lacks weak setnetent alias"
 
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -E -H "$PROBE" \

@@ -71,10 +71,8 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" |
-                grep -Eq '[[:space:]][T][[:space:]]endservent$'; then
-                if printf '%s\n' "$definitions" |
-                    grep -Eq '[[:space:]][TWDVBR][[:space:]](getservent|setservent|getservbyname|getservbyport|endhostent|endnetent|endprotoent|sethostent|setnetent|setprotoent|res_init|res_query|getaddrinfo)$'; then
+            if grep -Eq '[[:space:]][T][[:space:]]endservent$' <<<"$definitions"; then
+                if grep -Eq '[[:space:]][TWDVBR][[:space:]](getservent|setservent|getservbyname|getservbyport|endhostent|endnetent|endprotoent|sethostent|setnetent|setprotoent|res_init|res_query|getaddrinfo)$' <<<"$definitions"; then
                     fail "endservent archive member also defines a service, netdb, or resolver sibling"
                 fi
                 printf '%s\n' "$member"
@@ -176,7 +174,7 @@ objdump -d "$candidate" >"$candidate_disassembly"
 objdump -d --disassemble=endservent "$candidate" >"$endservent_disassembly"
 grep -Eq '[[:space:]]endservent$' "$candidate_symbols" ||
     fail "archive-free candidate does not retain endservent"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "archive-free candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP' "$candidate_program_headers"; then

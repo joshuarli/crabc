@@ -180,7 +180,7 @@ for symbol in "${SYMBOLS[@]}"; do
 		fail "raw candidate falls through to weak ${symbol}"
 	fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
 	fail "raw candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
@@ -298,7 +298,7 @@ PY
 		grep -Eq 'NEEDED|JMPREL|PLTGOT' "$installed_dynamic"; then
 		fail "${label} installed candidate selected dynamic runtime state"
 	fi
-	if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+	if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
 		fail "${label} installed candidate has unresolved symbols"
 	fi
 	if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \

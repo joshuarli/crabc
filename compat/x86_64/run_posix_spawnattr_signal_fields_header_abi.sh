@@ -40,8 +40,8 @@ check_cxx_linkage() {
     local tree="$1" profile="$2" object="$3" undefined name
     undefined="$(nm --undefined-only "$object")"
     for name in posix_spawnattr_setflags posix_spawnattr_setsigmask posix_spawnattr_getsigmask posix_spawnattr_setsigdefault posix_spawnattr_getsigdefault; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${name}$" || fail "$profile $tree C++ probe does not retain C linkage for $name"
-        if printf '%s\n' "$undefined" | grep -Eq "_Z[0-9].*${name}"; then fail "$profile $tree C++ probe retained a mangled $name reference"; fi
+        grep -Eq "[[:space:]]${name}$" <<<"$undefined" || fail "$profile $tree C++ probe does not retain C linkage for $name"
+        if grep -Eq "_Z[0-9].*${name}" <<<"$undefined"; then fail "$profile $tree C++ probe retained a mangled $name reference"; fi
     done
 }
 [ "$#" -eq 0 ] || fail "usage: $0"

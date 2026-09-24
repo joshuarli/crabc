@@ -148,10 +148,10 @@ check_cxx_c_linkage() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C linkage for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*inet_(pton|ntop|aton|addr|ntoa|makeaddr|lnaof)'; then
+    if grep -Eq '_Z.*inet_(pton|ntop|aton|addr|ntoa|makeaddr|lnaof)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled inet-address reference"
     fi
 }

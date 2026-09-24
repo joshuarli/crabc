@@ -75,9 +75,9 @@ fi
     -c "$cxx_probe" -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]ftime$' ||
+    grep -Eq '[[:space:]]ftime$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for ftime"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*ftime'; then
+    if grep -Eq '_Z.*ftime' <<<"$undefined"; then
         fail "C++ probe retained a mangled ftime reference"
     fi
 done

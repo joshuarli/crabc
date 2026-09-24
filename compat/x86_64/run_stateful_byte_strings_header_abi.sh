@@ -61,8 +61,8 @@ for tree in oracle project; do
     object="$work_dir/$tree-gnu-cxx.o"
     run_compiler "$compiler" -std=c++17 -x c++ -U_GNU_SOURCE -U_BSD_SOURCE -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE -D_GNU_SOURCE -nostdinc++ ${include_args[@]} -c "$CXX_PROBE" -o "$object"
     for symbol in dirname strcasestr strtok_r; do
-        nm --undefined-only "$object" | grep -Eq "[[:space:]]$symbol$" || fail "C++ probe does not retain C linkage for $symbol ($tree)"
-        if nm --undefined-only "$object" | grep -Eq "_Z[0-9].*$symbol"; then fail "C++ probe retained a mangled $symbol reference ($tree)"; fi
+        nm --undefined-only "$object" | grep -E "[[:space:]]$symbol$" >/dev/null || fail "C++ probe does not retain C linkage for $symbol ($tree)"
+        if nm --undefined-only "$object" | grep -E "_Z[0-9].*$symbol" >/dev/null; then fail "C++ probe retained a mangled $symbol reference ($tree)"; fi
     done
 done
 

@@ -48,11 +48,11 @@ for interpreter in "$work_dir/ld-crabc-x86_64-dladdr-symbol-bounds.so" \
     "$work_dir/ld-crabc-x86_64-dladdr-symbol-bounds-malformed.so"; do
     [ "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN ] ||
         fail "interpreter is not ET_DYN: $interpreter"
-    ! readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)|\(RELR\)' ||
+    ! readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)|\(RELR\)' >/dev/null ||
         fail "interpreter selected an ambient runtime: $interpreter"
-    ! readelf -lW "$interpreter" | grep -q ' TLS ' ||
+    ! readelf -lW "$interpreter" | grep ' TLS ' >/dev/null ||
         fail "interpreter selected PT_TLS: $interpreter"
-    readelf -lW "$interpreter" | grep -q GNU_RELRO ||
+    readelf -lW "$interpreter" | grep GNU_RELRO >/dev/null ||
         fail "interpreter lacks GNU_RELRO: $interpreter"
     readelf -Ws "$interpreter" | awk \
         '$4 == "OBJECT" && $7 != "UND" && $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1" && $3 == 64 { found=1 } END { exit found ? 0 : 1 }' ||
@@ -66,11 +66,11 @@ cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now \
     -Wl,-soname,libmid-dladdr-symbol-bounds.so -Wl,-rpath,"$work_dir" "$MID" \
     -L"$work_dir" -Wl,--no-as-needed -l:libleaf-dladdr-symbol-bounds.so \
     -o "$work_dir/libmid-dladdr-symbol-bounds.so"
-! readelf -dW "$work_dir/libleaf-dladdr-symbol-bounds.so" | grep -Eq '\(NEEDED\)|\(GNU_HASH\)|\(RUNPATH\)' ||
+! readelf -dW "$work_dir/libleaf-dladdr-symbol-bounds.so" | grep -E '\(NEEDED\)|\(GNU_HASH\)|\(RUNPATH\)' >/dev/null ||
     fail 'dladdr leaf selected a widened dynamic dependency or tag'
-readelf -dW "$work_dir/libleaf-dladdr-symbol-bounds.so" | grep -q '(RELR)' ||
+readelf -dW "$work_dir/libleaf-dladdr-symbol-bounds.so" | grep '(RELR)' >/dev/null ||
     fail 'dladdr leaf lost its required packed RELR stream'
-! readelf -lW "$work_dir/libleaf-dladdr-symbol-bounds.so" | grep -q ' TLS ' ||
+! readelf -lW "$work_dir/libleaf-dladdr-symbol-bounds.so" | grep ' TLS ' >/dev/null ||
     fail 'dladdr leaf selected PT_TLS'
 readelf --dyn-syms -W "$work_dir/libleaf-dladdr-symbol-bounds.so" | awk \
     '$4 == "OBJECT" && $5 == "GLOBAL" && $8 == "dladdr_bounded_data" && $3 == 4 { found=1 } END { exit found ? 0 : 1 }' ||
@@ -130,9 +130,9 @@ for candidate in "$work_dir/main-crabc-dladdr-symbol-bounds" \
     "$work_dir/main-crabc-dladdr-symbol-bounds-malformed"; do
     [ "$(readelf -h "$candidate" | awk '/Type:/{print $2}')" = DYN ] ||
         fail "candidate is not ET_DYN: $candidate"
-    ! readelf -dW "$candidate" | grep -Eq '\(NEEDED\).*(libc|libgcc|ld-linux)' ||
+    ! readelf -dW "$candidate" | grep -E '\(NEEDED\).*(libc|libgcc|ld-linux)' >/dev/null ||
         fail "candidate selected an ambient runtime: $candidate"
-    ! readelf -lW "$candidate" | grep -q ' TLS ' ||
+    ! readelf -lW "$candidate" | grep ' TLS ' >/dev/null ||
         fail "candidate selected PT_TLS: $candidate"
     readelf -Ws "$candidate" | awk \
         '$7 != "UND" && $8 == "dladdr" { found=1 } END { exit found ? 0 : 1 }' ||
@@ -142,7 +142,7 @@ readelf -Ws "$work_dir/main-crabc-dladdr-symbol-bounds" | awk \
     '$5 == "WEAK" && $7 == "UND" && $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1" { found=1 } END { exit found ? 0 : 1 }' ||
     fail 'candidate lost weak loader-record import'
 readelf -rW "$work_dir/main-crabc-dladdr-symbol-bounds" |
-    grep -Eq 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1' ||
+    grep -E 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1' >/dev/null ||
     fail 'candidate lacks loader-record GLOB_DAT'
 
 require_needed() {

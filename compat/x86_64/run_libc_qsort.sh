@@ -49,7 +49,7 @@ assert_static_closure() {
     readelf --relocs --wide "$candidate_path" >"$relocs"
     objdump -d "$candidate_path" >"$disassembly"
     objdump -d --disassemble=qsort "$candidate_path" >"$qsort_disassembly"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
         fail "candidate has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

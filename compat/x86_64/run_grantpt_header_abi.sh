@@ -76,9 +76,9 @@ done
     -c "$cxx_probe" -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]grantpt$' ||
+    grep -Eq '[[:space:]]grantpt$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for grantpt"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z7grantpti'; then
+    if grep -Eq '_Z7grantpti' <<<"$undefined"; then
         fail "C++ probe retained a mangled grantpt reference"
     fi
 done

@@ -276,10 +276,10 @@ check_cxx_linkage() {
     fi
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${symbols[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$profile C++ probe lost unmangled $symbol linkage"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(pthread_exit|pthread_getschedparam|pthread_mutex_getprioceiling|pthread_mutex_setprioceiling|pthread_mutexattr_gettype|pthread_condattr_getclock|pthread_condattr_getpshared|pthread_rwlockattr_getpshared|pthread_barrierattr_getpshared|pthread_attr_getguardsize|pthread_attr_getstack|pthread_attr_getscope|pthread_attr_setschedparam|pthread_attr_getschedparam|pthread_getname_np)'; then
+    if grep -Eq '_Z.*(pthread_exit|pthread_getschedparam|pthread_mutex_getprioceiling|pthread_mutex_setprioceiling|pthread_mutexattr_gettype|pthread_condattr_getclock|pthread_condattr_getpshared|pthread_rwlockattr_getpshared|pthread_barrierattr_getpshared|pthread_attr_getguardsize|pthread_attr_getstack|pthread_attr_getscope|pthread_attr_setschedparam|pthread_attr_getschedparam|pthread_getname_np)' <<<"$undefined"; then
         fail "$profile C++ probe retained a mangled pthread declaration"
     fi
 }
@@ -288,10 +288,10 @@ check_cxx_signal_owner_linkage() {
     local profile="$1" object="$2" undefined
     undefined="$(nm --undefined-only "$object")"
     for symbol in pthread_sigmask pthread_kill; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$profile C++ signal-owner witness lost unmangled $symbol linkage"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(pthread_sigmask|pthread_kill)'; then
+    if grep -Eq '_Z.*(pthread_sigmask|pthread_kill)' <<<"$undefined"; then
         fail "$profile C++ signal-owner witness retained mangled signal linkage"
     fi
 }

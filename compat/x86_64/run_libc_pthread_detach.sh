@@ -131,9 +131,9 @@ fi
 grep -Fq 'CLONE_CHILD_CLEARTID' libc/src/c_abi/x86_64/pthread_create_join.rs ||
     fail "selected worker source lacks CLONE_CHILD_CLEARTID"
 detach_source="$(sed -n '/pub(super) unsafe fn detach_selected_worker/,/\/\/\/ Detach one selected static pthread\/C11 worker/p' libc/src/c_abi/x86_64/pthread_create_join.rs)"
-printf '%s\n' "$detach_source" | grep -Fq 'SelectedWorkerLifecycleState::Detached' ||
+grep -Fq 'SelectedWorkerLifecycleState::Detached' <<<"$detach_source" ||
     fail "selected detach source lacks its detached ownership claim"
-if printf '%s\n' "$detach_source" | grep -Eq 'reap_finished_detached_selected_workers|reclaim_withdrawn_selected_worker|raw_syscall|unmap_worker'; then
+if grep -Eq 'reap_finished_detached_selected_workers|reclaim_withdrawn_selected_worker|raw_syscall|unmap_worker' <<<"$detach_source"; then
     fail "selected detach source must remain state-only without a wait or reaper"
 fi
 detached_reaper_source="$(sed -n '/fn claim_finished_detached_selected_worker/,/\/\/\/ Release mappings for a registry-withdrawn/p' libc/src/c_abi/x86_64/pthread_create_join.rs)"
@@ -141,7 +141,7 @@ for marker in 'SelectedWorkerLifecycleState::Detached.encode()' \
     'child_tid.load(Ordering::Acquire)' \
     'SelectedWorkerLifecycleState::DetachedReclaiming.encode()' \
     'release_selected_worker_locked'; do
-    printf '%s\n' "$detached_reaper_source" | grep -Fq "$marker" ||
+    grep -Fq "$marker" <<<"$detached_reaper_source" ||
         fail "selected detached reaper lacks ${marker}"
 done
 [ "$(grep -Fc 'reap_finished_detached_selected_workers();' libc/src/c_abi/x86_64/pthread_create_join.rs)" -eq 2 ] ||

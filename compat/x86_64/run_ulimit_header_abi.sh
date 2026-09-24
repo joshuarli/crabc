@@ -76,9 +76,9 @@ for variant in oracle project; do
         -D_POSIX_C_SOURCE=200809L -DCRABC_EXPECT_ULIMIT -fno-builtin \
         "${include_args[@]}" -c "$cxx_probe" -o "$object"
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]ulimit$' ||
+    grep -Eq '[[:space:]]ulimit$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for ulimit (${variant})"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*ulimit'; then
+    if grep -Eq '_Z.*ulimit' <<<"$undefined"; then
         fail "C++ probe retained a mangled ulimit reference (${variant})"
     fi
 done

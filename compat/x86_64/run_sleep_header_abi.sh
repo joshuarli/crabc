@@ -72,9 +72,9 @@ done
     -c "$cxx_probe" -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]sleep$' ||
+    grep -Eq '[[:space:]]sleep$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for sleep"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z5sleepj'; then
+    if grep -Eq '_Z5sleepj' <<<"$undefined"; then
         fail "C++ probe retained a mangled sleep reference"
     fi
 done

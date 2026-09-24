@@ -90,7 +90,7 @@ readelf --relocs --wide "$candidate" >"$relocs"
 objdump -d "$candidate" >"$disassembly"
 objdump -d --disassemble=ctermid "$candidate" >"$ctermid_disassembly"
 grep -Eq "[[:space:]]ctermid$" "$symbols" || fail "candidate lacks ctermid"
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then

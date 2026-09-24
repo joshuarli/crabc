@@ -165,9 +165,9 @@ check_cxx_linkage() {
     local tree="$1" profile="$2" object="$3" undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]reboot$' ||
+    grep -Eq '[[:space:]]reboot$' <<<"$undefined" ||
         fail "$profile $tree C++ probe lost unmangled reboot linkage"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*reboot'; then
+    if grep -Eq '_Z[0-9].*reboot' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled reboot reference"
     fi
 }

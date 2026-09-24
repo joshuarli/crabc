@@ -105,9 +105,9 @@ for profile in strict posix xopen gnu bsd; do
                 object="$work_dir/${variant}-${profile}-crypt-header.o"
                 run_compiler "$compiler" -std=c++17 "${profile_args[@]}" -nostdinc++ "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]crypt$' || fail "C++ probe does not retain C linkage for crypt (${variant}, ${profile})"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]crypt_r$' || fail "C++ probe does not retain C linkage for crypt_r (${variant}, ${profile})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*(crypt|crypt_r)'; then
+                grep -Eq '[[:space:]]crypt$' <<<"$undefined" || fail "C++ probe does not retain C linkage for crypt (${variant}, ${profile})"
+                grep -Eq '[[:space:]]crypt_r$' <<<"$undefined" || fail "C++ probe does not retain C linkage for crypt_r (${variant}, ${profile})"
+                if grep -Eq '_Z[0-9].*(crypt|crypt_r)' <<<"$undefined"; then
                     fail "C++ probe retained a mangled crypt reference (${variant}, ${profile})"
                 fi
 
@@ -115,8 +115,8 @@ for profile in strict posix xopen gnu bsd; do
                     object="$work_dir/${variant}-${profile}-unistd-crypt.o"
                     run_compiler "$compiler" -std=c++17 "${profile_args[@]}" -DCRABC_EXPECT_UNISTD_CRYPT -nostdinc++ "${include_args[@]}" -c "$UNISTD_CXX_PROBE" -o "$object"
                     undefined="$(nm --undefined-only "$object")"
-                    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]crypt$' || fail "C++ <unistd.h> probe does not retain C linkage for crypt (${variant}, ${profile})"
-                    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*crypt'; then
+                    grep -Eq '[[:space:]]crypt$' <<<"$undefined" || fail "C++ <unistd.h> probe does not retain C linkage for crypt (${variant}, ${profile})"
+                    if grep -Eq '_Z[0-9].*crypt' <<<"$undefined"; then
                         fail "C++ <unistd.h> probe retained a mangled crypt reference (${variant}, ${profile})"
                     fi
                 elif run_compiler "$compiler" -std=c++17 "${profile_args[@]}" -nostdinc++ "${include_args[@]}" -c "$UNISTD_CXX_PROBE" -o "$work_dir/${variant}-${profile}-unistd-hidden-cxx.o" >"$work_dir/${variant}-${profile}-unistd-hidden-cxx.out" 2>&1; then

@@ -106,10 +106,10 @@ assert_cxx_c_linkage() {
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
     for symbol in feof ferror clearerr; do
-        printf '%s\n' "$undefined" | grep -Fxq "$symbol" ||
+        grep -Fxq "$symbol" <<<"$undefined" ||
             fail "$tree C++ probe does not retain C spelling $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(feof|ferror|clearerr)'; then
+    if grep -Eq '_Z.*(feof|ferror|clearerr)' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled permanent-stream-status reference"
     fi
 }

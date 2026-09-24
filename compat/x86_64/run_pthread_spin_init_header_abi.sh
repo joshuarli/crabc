@@ -52,9 +52,9 @@ done
 "$ORACLE_CC" -std=c++17 -x c++ -nostdinc++ -I "$ROOT_DIR/include" \
     -c "$CXX_PROBE" -o "$candidate_object"
 for object_path in "$reference_object" "$candidate_object"; do
-    nm -u "$object_path" | grep -Eq '[[:space:]]pthread_spin_init$' ||
+    nm -u "$object_path" | grep -E '[[:space:]]pthread_spin_init$' >/dev/null ||
         fail "C++ object does not retain an unmangled pthread_spin_init reference"
-    if nm -u "$object_path" | grep -Eq '_Z[[:alnum:]_]*pthread_spin_init'; then
+    if nm -u "$object_path" | grep -E '_Z[[:alnum:]_]*pthread_spin_init' >/dev/null; then
         fail "C++ object mangles pthread_spin_init"
     fi
 done

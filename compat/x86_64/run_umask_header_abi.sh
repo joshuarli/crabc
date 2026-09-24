@@ -104,9 +104,9 @@ compile_profile() {
                     -U_DEFAULT_SOURCE "$@" -nostdinc++ "${include_args[@]}" \
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]umask$' ||
+                grep -Eq '[[:space:]]umask$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for umask (${variant}, ${label})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*umask'; then
+                if grep -Eq '_Z[0-9].*umask' <<<"$undefined"; then
                     fail "C++ probe retained a mangled umask reference (${variant}, ${label})"
                 fi
             fi

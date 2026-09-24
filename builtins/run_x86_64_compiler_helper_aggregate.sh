@@ -146,9 +146,9 @@ missing = [name for name in names if re.search(r'(?:call|jmp)\S*\s+[^\n]*<' + re
 if missing:
     raise SystemExit('candidate has no direct transfer to helper(s): ' + ', '.join(missing))
 PY
-readelf -hW "$candidate" | grep -Fq 'Type:                              EXEC (Executable file)' || fail "candidate is not ET_EXEC"
-readelf -lW "$candidate" | grep -Eq 'INTERP| TLS ' && fail "candidate has an interpreter or TLS"
-if readelf -dW "$candidate" | grep -Eq '\((NEEDED|JMPREL|PLTGOT)\)'; then
+readelf -hW "$candidate" | grep -F 'Type:                              EXEC (Executable file)' >/dev/null || fail "candidate is not ET_EXEC"
+readelf -lW "$candidate" | grep -E 'INTERP| TLS ' >/dev/null && fail "candidate has an interpreter or TLS"
+if readelf -dW "$candidate" | grep -E '\((NEEDED|JMPREL|PLTGOT)\)' >/dev/null; then
     fail "candidate has dynamic linkage"
 fi
 [ ! -s "$WORK_DIR/raw/candidate-undefined.stdout" ] || fail "candidate retains an undefined symbol"

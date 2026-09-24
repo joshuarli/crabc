@@ -62,9 +62,9 @@ for tree in oracle project; do
     "$ORACLE_CC" -std=c++17 -x c++ -D_GNU_SOURCE -fno-builtin \
         "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]sched_getaffinity$' ||
+    grep -Eq '[[:space:]]sched_getaffinity$' <<<"$undefined" ||
         fail "$tree GNU C++ witness lacks unmangled sched_getaffinity"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*sched_getaffinity'; then
+    if grep -Eq '_Z.*sched_getaffinity' <<<"$undefined"; then
         fail "$tree GNU C++ witness retained a mangled sched_getaffinity reference"
     fi
 done

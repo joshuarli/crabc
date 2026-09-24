@@ -117,7 +117,7 @@ objdump -d "$candidate" >"$candidate_disassembly"
 grep -Eq 'Type:[[:space:]]+EXEC[[:space:]]+\(Executable file\)' \
     <(readelf --file-header --wide "$candidate") || fail "candidate is not ET_EXEC"
 assert_strong_function "$candidate_symbols" strsignal candidate
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

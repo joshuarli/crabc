@@ -235,11 +235,11 @@ check_cxx_symbols() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C linkage for ${symbol}"
     done
-    if printf '%s\n' "$undefined" | grep -Eq \
-        '_Z(12gettimeofday|10getitimer|10setitimer|6utimes|7futimes|9futimesat|7lutimes|12settimeofday|7adjtime)'; then
+    if grep -Eq \
+        '_Z(12gettimeofday|10getitimer|10setitimer|6utimes|7futimes|9futimesat|7lutimes|12settimeofday|7adjtime)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled sys/time reference"
     fi
 }

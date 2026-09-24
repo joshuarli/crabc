@@ -221,7 +221,7 @@ grep -Fq "$archive($traversal_member)" "$link_map" ||
 if [ "$(grep -Fc "$archive($traversal_member)" "$link_map")" -lt 1 ]; then
     fail "selected archive member set drifted during extraction"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

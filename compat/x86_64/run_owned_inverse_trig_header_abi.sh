@@ -55,10 +55,10 @@ for mode in sse x87; do
 	for object in "$reference" "$candidate"; do
 		undefined="$(nm --undefined-only "$object")"
 		for symbol in "${SYMBOLS[@]}"; do
-			printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+			grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
 				fail "C++ ${mode} probe does not retain unmangled ${symbol}"
 		done
-		if printf '%s\n' "$undefined" | grep -Eq '_Z.*(asin|acos|atan)'; then
+		if grep -Eq '_Z.*(asin|acos|atan)' <<<"$undefined"; then
 			fail "C++ ${mode} probe retained a mangled inverse-trigonometry reference"
 		fi
 	done

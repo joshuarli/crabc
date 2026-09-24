@@ -66,11 +66,11 @@ done
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
     for symbol in getgroups getresuid getresgid; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" || {
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" || {
             fail "C++ probe does not retain C linkage for ${symbol}"
         }
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z(9getgroups|9getresuid|9getresgid)'; then
+    if grep -Eq '_Z(9getgroups|9getresuid|9getresgid)' <<<"$undefined"; then
         fail "C++ probe retained a mangled credential-observation reference"
     fi
 done

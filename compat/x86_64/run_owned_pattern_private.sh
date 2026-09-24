@@ -32,7 +32,7 @@ python3 -B "$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py" \
 # Keep the table in the retained evidence leaf so review can inspect the exact
 # normal-product boundary that the cfg-gated archive below does not replace.
 nm -g --defined-only "$work/static-product/usr/lib/libc.a" >"$work/normal-symbols.txt"
-if awk '$NF ~ /^__crabc_test_shell_/' "$work/normal-symbols.txt" | grep -q .; then
+if awk '$NF ~ /^__crabc_test_shell_/' "$work/normal-symbols.txt" | grep . >/dev/null; then
     printf 'private pattern bridge leaked into normal static product\n' >&2
     exit 1
 fi

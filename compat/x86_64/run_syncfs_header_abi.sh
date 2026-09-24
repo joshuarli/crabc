@@ -197,9 +197,9 @@ check_cxx_c_linkage() {
 
     profile_requires_gnu "$profile" || return 0
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]syncfs$' ||
+    grep -Eq '[[:space:]]syncfs$' <<<"$undefined" ||
         fail "$tree $profile C++ probe lacks C-linkage syncfs"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z6syncfsi'; then
+    if grep -Eq '_Z6syncfsi' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled syncfs reference"
     fi
 }

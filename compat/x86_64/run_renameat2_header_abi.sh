@@ -205,9 +205,9 @@ check_cxx_symbol() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]renameat2$' ||
+    grep -Eq '[[:space:]]renameat2$' <<<"$undefined" ||
         fail "$tree $profile C++ probe does not retain C linkage for renameat2"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*renameat2'; then
+    if grep -Eq '_Z.*renameat2' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled renameat2 reference"
     fi
 }

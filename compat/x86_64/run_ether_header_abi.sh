@@ -134,9 +134,9 @@ check_cxx_linkage() {
     undefined="$(nm --undefined-only "$object")"
     for symbol in ether_aton ether_aton_r ether_ntoa ether_ntoa_r ether_line \
         ether_ntohost ether_hostton; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$profile $tree C++ probe does not retain C linkage for $symbol"
-        if printf '%s\n' "$undefined" | grep -Eq "_Z[0-9].*${symbol}"; then
+        if grep -Eq "_Z[0-9].*${symbol}" <<<"$undefined"; then
             fail "$profile $tree C++ probe retained a mangled $symbol reference"
         fi
     done

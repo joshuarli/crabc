@@ -207,7 +207,7 @@ require_weak_main_got_import() {
         '$5 == "WEAK" && $7 == "UND" && $8 == symbol { found = 1 } END { exit found ? 0 : 1 }'; then
         fail "missing exact weak undefined main-image import: $symbol"
     fi
-    if ! readelf -rW "$binary" | grep -Eq "R_X86_64_GLOB_DAT.*${symbol}"; then
+    if ! readelf -rW "$binary" | grep -E "R_X86_64_GLOB_DAT.*${symbol}" >/dev/null; then
         fail "missing exact main-image GLOB_DAT relocation: $symbol"
     fi
 }
@@ -215,9 +215,9 @@ require_weak_main_got_import() {
 for interpreter in "$work_dir"/ld-dynamic-main-thread-runtime-v1*.so; do
     [ "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN ] ||
         fail "interpreter is not ET_DYN: $interpreter"
-    ! readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)' ||
+    ! readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)' >/dev/null ||
         fail "interpreter selected an ambient runtime: $interpreter"
-    ! readelf -lW "$interpreter" | grep -q ' TLS ' ||
+    ! readelf -lW "$interpreter" | grep ' TLS ' >/dev/null ||
         fail "interpreter selected its own PT_TLS: $interpreter"
 done
 
@@ -225,11 +225,11 @@ require_needed_names "$work_dir/main-valid" libcrabc-dynamic-main-thread-runtime
 require_needed_names "$work_dir/main-owned-record-definition" \
     libcrabc-dynamic-main-thread-runtime-v1.so libowned-crt-record-definition.so
 for main in "$work_dir/main-valid" "$work_dir/main-owned-record-definition"; do
-    readelf -lW "$main" | grep -q 'Requesting program interpreter' ||
+    readelf -lW "$main" | grep 'Requesting program interpreter' >/dev/null ||
         fail "main lacks PT_INTERP: $main"
-    readelf -lW "$main" | grep -q ' TLS ' || fail "main lacks PT_TLS: $main"
+    readelf -lW "$main" | grep ' TLS ' >/dev/null || fail "main lacks PT_TLS: $main"
     for tag in INIT FINI PREINIT_ARRAY PREINIT_ARRAYSZ INIT_ARRAY INIT_ARRAYSZ FINI_ARRAY FINI_ARRAYSZ; do
-        readelf -dW "$main" | grep -q "($tag)" ||
+        readelf -dW "$main" | grep "($tag)" >/dev/null ||
             fail "real Scrt1 main lost DT_$tag: $main"
     done
     require_weak_main_got_import "$main" __crabc_x86_64_owned_crt_handoff
@@ -239,16 +239,16 @@ if ! readelf -Ws "$work_dir/main-strong-owned-record" | awk \
     '$5 == "GLOBAL" && $7 == "UND" && $8 == "__crabc_x86_64_owned_crt_handoff" { found = 1 } END { exit found ? 0 : 1 }'; then
     fail 'strong owned-CRT main import was not retained'
 fi
-if ! readelf -rW "$work_dir/main-strong-owned-record" | grep -Eq \
-    'R_X86_64_GLOB_DAT.*__crabc_x86_64_owned_crt_handoff'; then
+if ! readelf -rW "$work_dir/main-strong-owned-record" | grep -E \
+    'R_X86_64_GLOB_DAT.*__crabc_x86_64_owned_crt_handoff' >/dev/null; then
     fail 'strong owned-CRT main import lacks its GLOB_DAT relocation'
 fi
 
 require_needed_names "$work_dir/libcrabc-dynamic-main-thread-runtime-v1.so"
-readelf -lW "$work_dir/libcrabc-dynamic-main-thread-runtime-v1.so" | grep -q ' TLS ' ||
+readelf -lW "$work_dir/libcrabc-dynamic-main-thread-runtime-v1.so" | grep ' TLS ' >/dev/null ||
     fail 'private dynamic libc lacks PT_TLS errno'
-! readelf -dW "$work_dir/libcrabc-dynamic-main-thread-runtime-v1.so" | grep -Eq \
-    '\(SYMBOLIC\)|\(GNU_HASH\)|\(INIT\)|\(FINI\)|\(PREINIT_ARRAY\)|\(INIT_ARRAY\)|\(FINI_ARRAY\)' ||
+! readelf -dW "$work_dir/libcrabc-dynamic-main-thread-runtime-v1.so" | grep -E \
+    '\(SYMBOLIC\)|\(GNU_HASH\)|\(INIT\)|\(FINI\)|\(PREINIT_ARRAY\)|\(INIT_ARRAY\)|\(FINI_ARRAY\)' >/dev/null ||
     fail 'private dynamic libc selected unsupported lookup or lifecycle tags'
 for symbol in __errno_location __libc_start_main; do
     if ! readelf --dyn-syms -W "$work_dir/libcrabc-dynamic-main-thread-runtime-v1.so" | awk \

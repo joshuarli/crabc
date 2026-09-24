@@ -281,7 +281,7 @@ extract_protocol_member() {
             definitions="$(nm -g --defined-only --format=posix "$member" | awk '$2 ~ /^[TWDVBR]$/ { print $1 }')"
             selected_count=0
             for symbol in "${PROTOCOL_SYMBOLS[@]}"; do
-                if printf '%s\n' "$definitions" | grep -Fqx "$symbol"; then
+                if grep -Fqx "$symbol" <<<"$definitions"; then
                     selected_count=$((selected_count + 1))
                 fi
             done
@@ -404,7 +404,7 @@ for symbol in "${PROTOCOL_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "archive-free candidate does not retain ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "archive-free candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP' "$candidate_program_headers"; then
@@ -425,7 +425,7 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt|malloc|calloc|realloc|free|memcpy|mem
     "$candidate_symbols" "$candidate_disassembly"; then
     fail "archive-free candidate selects an unowned runtime or byte-string dependency"
 fi
-if strings "$candidate" | grep -Fq '/etc/protocols'; then
+if strings "$candidate" | grep -F '/etc/protocols' >/dev/null; then
     fail "archive-free candidate embeds an unselected /etc/protocols dependency"
 fi
 for unselected in \

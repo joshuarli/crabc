@@ -79,9 +79,9 @@ check_cxx_linkage() {
             posix_spawn_file_actions_addfchdir_np)
     fi
     for name in "${names[@]}"; do
-        nm --undefined-only "$object" | grep -Eq "[[:space:]]${name}$" ||
+        nm --undefined-only "$object" | grep -E "[[:space:]]${name}$" >/dev/null ||
             fail "$profile $tree C++ probe lacks unmangled $name"
-        if nm --undefined-only "$object" | grep -Eq "_Z[0-9].*${name}"; then
+        if nm --undefined-only "$object" | grep -E "_Z[0-9].*${name}" >/dev/null; then
             fail "$profile $tree C++ probe retained mangled $name"
         fi
     done

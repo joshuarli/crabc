@@ -55,10 +55,10 @@ done
     -I "$ROOT_DIR/include" -c "$cxx_probe" -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]_exit$' || {
+    grep -Eq '[[:space:]]_exit$' <<<"$undefined" || {
         fail "C++ probe does not retain C linkage for _exit"
     }
-    if printf '%s\n' "$undefined" | grep -Eq '_Z5_exiti'; then
+    if grep -Eq '_Z5_exiti' <<<"$undefined"; then
         fail "C++ probe retained a mangled _exit reference"
     fi
 done

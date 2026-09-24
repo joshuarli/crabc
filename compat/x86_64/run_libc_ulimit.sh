@@ -62,7 +62,7 @@ assert_static_closure() {
     grep -Eq 'Type:[[:space:]]+EXEC[[:space:]]+\(Executable file\)' \
         <(readelf --file-header --wide "$candidate_path") ||
         fail "${label} is not ET_EXEC"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep -q .; then
+    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep . >/dev/null; then
         fail "${label} has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

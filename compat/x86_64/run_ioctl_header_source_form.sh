@@ -160,7 +160,7 @@ check_x86_trace() {
                 fail "$profile $tree direct <sys/ioctl.h> trace omitted bits/alltypes.h"
             ;;
     esac
-    if trace_paths "$trace" | grep -Eq '/(linux|asm)/'; then
+    if trace_paths "$trace" | grep -E '/(linux|asm)/' >/dev/null; then
         fail "$profile $tree direct <$header> leaked a Linux/UAPI header"
     fi
 }
@@ -270,7 +270,7 @@ check_aarch64_trace() {
             ;;
         *) fail "unknown direct ioctl header: $header" ;;
     esac
-    if trace_paths "$trace" | grep -Eq '/(linux|asm)/'; then
+    if trace_paths "$trace" | grep -E '/(linux|asm)/' >/dev/null; then
         fail "$profile frozen-AArch64 direct <$header> leaked a Linux/UAPI header"
     fi
 }

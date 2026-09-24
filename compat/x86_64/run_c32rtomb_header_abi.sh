@@ -86,9 +86,9 @@ check_cxx_c_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
-    printf '%s\n' "$undefined" | grep -Fxq c32rtomb ||
+    grep -Fxq c32rtomb <<<"$undefined" ||
         fail "$label did not retain an unmangled c32rtomb reference"
-    if printf '%s\n' "$undefined" | grep -Eq '^_Z.*c32rtomb'; then
+    if grep -Eq '^_Z.*c32rtomb' <<<"$undefined"; then
         fail "$label retains a mangled c32rtomb reference"
     fi
 }

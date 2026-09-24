@@ -141,13 +141,13 @@ check_cxx_c_linkage() {
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
     for symbol in "${CXX_SYMBOLS[@]}"; do
-        if ! printf '%s\n' "$undefined" | grep -Fxq "$symbol"; then
+        if ! grep -Fxq "$symbol" <<<"$undefined"; then
             printf 'C++ linkage mismatch: %s does not retain C-linkage symbol %s\n' \
                 "$label" "$symbol" >&2
             return 1
         fi
     done
-    if printf '%s\n' "$undefined" | grep -Eq '^_Z.*(setlocale|localeconv)'; then
+    if grep -Eq '^_Z.*(setlocale|localeconv)' <<<"$undefined"; then
         printf 'C++ linkage mismatch: %s retains a mangled locale-profile reference\n' \
             "$label" >&2
         return 1

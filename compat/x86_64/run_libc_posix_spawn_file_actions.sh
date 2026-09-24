@@ -146,7 +146,7 @@ if grep -Eq 'libc\.a\(posix_spawn_file_actions_(init|addclose|adddup2|addopen|ad
     "$link_map"; then
     fail "candidate selected a pinned-musl file-actions implementation"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

@@ -74,9 +74,9 @@ compile_visible_profile() {
                     -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE \
                     "$definition" "${include_args[@]}" -c "$cxx_probe" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]timer_getoverrun$' ||
+                grep -Eq '[[:space:]]timer_getoverrun$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for timer_getoverrun (${variant}, ${profile})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z.*timer_getoverrun'; then
+                if grep -Eq '_Z.*timer_getoverrun' <<<"$undefined"; then
                     fail "C++ probe retained a mangled timer_getoverrun reference (${variant}, ${profile})"
                 fi
             fi

@@ -67,9 +67,9 @@ build_consumer "$work_dir/libconsumer-static.a" --cfg crabc_loader_libc_tls_runt
 for interpreter in "$work_dir"/ld-runtime-v1*.so; do
     [ "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN ] ||
         fail "interpreter is not ET_DYN: $interpreter"
-    ! readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)' ||
+    ! readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)' >/dev/null ||
         fail "interpreter selected an ambient runtime: $interpreter"
-    ! readelf -lW "$interpreter" | grep -q ' TLS ' ||
+    ! readelf -lW "$interpreter" | grep ' TLS ' >/dev/null ||
         fail "interpreter selected its own PT_TLS: $interpreter"
 done
 readelf --syms -W "$work_dir/ld-runtime-v1.so" | awk \
@@ -115,8 +115,8 @@ if ! readelf -Ws "$work_dir/main-valid" | awk \
     '$5 == "WEAK" && $7 == "UND" && $8 == "__crabc_x86_64_loader_tls_runtime_v1" { found = 1 } END { exit found ? 0 : 1 }'; then
     fail 'dynamic libc consumer lost its exact weak loader record import'
 fi
-if ! readelf -rW "$work_dir/main-valid" | grep -Eq \
-    'R_X86_64_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1'; then
+if ! readelf -rW "$work_dir/main-valid" | grep -E \
+    'R_X86_64_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1' >/dev/null; then
     fail 'dynamic libc consumer lacks the checked RuntimeV1 record GOT relocation'
 fi
 
@@ -132,10 +132,10 @@ env -i PATH=/usr/bin:/bin "$work_dir/main-poisoned-dtv"
 cc -nostdlib -no-pie -fno-stack-protector -ffreestanding -fno-asynchronous-unwind-tables \
     -Wl,-e,_start "$START" "$STATIC_MAIN" "$work_dir/libconsumer-static.a" \
     -o "$work_dir/main-static"
-if readelf -lW "$work_dir/main-static" | grep -q 'Requesting program interpreter'; then
+if readelf -lW "$work_dir/main-static" | grep 'Requesting program interpreter' >/dev/null; then
     fail 'static-mode negative fixture unexpectedly gained PT_INTERP'
 fi
-if readelf -dW "$work_dir/main-static" | grep -Eq '\(NEEDED\)|\(INTERP\)'; then
+if readelf -dW "$work_dir/main-static" | grep -E '\(NEEDED\)|\(INTERP\)' >/dev/null; then
     fail 'static-mode negative fixture selected a dynamic runtime'
 fi
 if readelf -Ws "$work_dir/main-static" | awk \

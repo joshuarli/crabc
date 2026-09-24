@@ -134,9 +134,9 @@ check_cxx_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]posix_spawnattr_getschedpolicy$' ||
+    grep -Eq '[[:space:]]posix_spawnattr_getschedpolicy$' <<<"$undefined" ||
         fail "$profile $tree C++ probe does not retain C linkage for posix_spawnattr_getschedpolicy"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*posix_spawnattr_getschedpolicy'; then
+    if grep -Eq '_Z[0-9].*posix_spawnattr_getschedpolicy' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled posix_spawnattr_getschedpolicy reference"
     fi
 }

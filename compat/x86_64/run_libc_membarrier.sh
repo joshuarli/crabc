@@ -177,7 +177,7 @@ for symbol in __membarrier __membarrier_init __tl_lock __tl_unlock \
         fail "membarrier candidate unexpectedly pulls ${symbol}"
     fi
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

@@ -93,8 +93,8 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" res_init.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq \
-    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]].*[[:space:]]res_init$' ||
+readelf --symbols --wide "$musl_object" | grep -E \
+    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]].*[[:space:]]res_init$' >/dev/null ||
     fail "pinned musl res_init.lo lacks strong res_init"
 
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
@@ -129,7 +129,7 @@ objdump -d "$candidate" >"$candidate_disassembly"
 objdump -d --disassemble=res_init "$candidate" >"$res_init_disassembly"
 grep -Eq '[[:space:]]res_init$' "$candidate_symbols" ||
     fail "candidate lacks res_init"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

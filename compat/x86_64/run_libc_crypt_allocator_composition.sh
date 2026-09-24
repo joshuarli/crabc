@@ -177,7 +177,7 @@ for symbol in aligned_alloc free; do
         "allocator wrapper"
 done
 assert_elf_function_binding "$wrapper_elf_symbols" malloc WEAK "allocator wrapper"
-# With pipefail, `nm | grep -q` is not a sound presence check: grep may exit
+# With pipefail, `nm | grep` is not a sound presence check: grep may exit >/dev/null
 # after its first match, then make a still-writing nm fail with SIGPIPE. Drain
 # each symbol table into a file before matching it.
 nm -g --defined-only "$selected_member_dir/${backend_members[0]}" >"$backend_symbols"
@@ -238,10 +238,10 @@ if grep -Eq 'libc\.a\((aligned_alloc|calloc|free|libc_calloc|lite_malloc|malloc|
     "$link_map"; then
     fail "candidate selected a pinned-musl allocator implementation"
 fi
-if grep -F "$full_archive(" "$link_map" | grep -Eq -- '-static\.o\)'; then
+if grep -F "$full_archive(" "$link_map" | grep -E -- '-static\.o\)' >/dev/null; then
     fail "candidate selected an additional backend from the full crabc archive"
 fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate has unresolved symbols"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$candidate_headers" "$candidate_dynamic"; then

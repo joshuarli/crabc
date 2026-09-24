@@ -136,15 +136,15 @@ check_undefined_symbols() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in iopl ioperm; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile object does not retain ${symbol} declaration reference"
     done
     for inline_name in "${INLINE_NAMES[@]}"; do
-        if printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${inline_name}$"; then
+        if grep -Eq "[[:space:]]${inline_name}$" <<<"$undefined"; then
             fail "$tree $profile object made inline ${inline_name} an external reference"
         fi
     done
-    if [[ "$profile" == cxx17-* ]] && printf '%s\n' "$undefined" | grep -Eq '_Z.*(iopl|ioperm)'; then
+    if [[ "$profile" == cxx17-* ]] && grep -Eq '_Z.*(iopl|ioperm)' <<<"$undefined"; then
         fail "$tree $profile object retained mangled iopl/ioperm references"
     fi
 }

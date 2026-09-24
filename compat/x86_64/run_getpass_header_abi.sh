@@ -61,9 +61,9 @@ done
     -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]getpass$' ||
+    grep -Eq '[[:space:]]getpass$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for getpass"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z7getpassPKc'; then
+    if grep -Eq '_Z7getpassPKc' <<<"$undefined"; then
         fail "C++ probe retained a mangled getpass reference"
     fi
 done

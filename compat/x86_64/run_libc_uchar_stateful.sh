@@ -199,7 +199,7 @@ mkdir "$work_dir/provider"
 provider_object="$work_dir/provider/${c16_members[0]}"
 for symbol in "${PROVIDER_SYMBOLS[@]}"; do
     nm -g --defined-only --format=posix "$provider_object" |
-        awk '$2 ~ /^[TW]$/ { print $1 }' | grep -Fxq "$symbol" ||
+        awk '$2 ~ /^[TW]$/ { print $1 }' | grep -Fx "$symbol" >/dev/null ||
         fail "provider object does not export $symbol"
 done
 nm --undefined-only --format=posix "$provider_object" |
@@ -270,7 +270,7 @@ for symbol in "${PROVIDER_SYMBOLS[@]}" mbrtowc wcrtomb setlocale __errno_locatio
          END { exit(found ? 0 : 1) }' "$candidate_symbols" ||
         fail "candidate lacks global $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

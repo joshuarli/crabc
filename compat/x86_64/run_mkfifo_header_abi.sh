@@ -185,9 +185,9 @@ check_cxx_symbol() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]mkfifo$' ||
+    grep -Eq '[[:space:]]mkfifo$' <<<"$undefined" ||
         fail "$tree $profile C++ probe does not retain C linkage for mkfifo"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z6mkfifo'; then
+    if grep -Eq '_Z6mkfifo' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled mkfifo reference"
     fi
 }

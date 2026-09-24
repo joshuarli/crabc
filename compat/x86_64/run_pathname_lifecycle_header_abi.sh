@@ -188,10 +188,10 @@ check_cxx_symbols() {
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${CXX_SYMBOLS[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C linkage for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z(5chdir|6getcwd|5mkdir|6unlink|5rmdir|6remove|6rename|4link|7symlink|8readlink|5chmod|6fchmod|8truncate)'; then
+    if grep -Eq '_Z(5chdir|6getcwd|5mkdir|6unlink|5rmdir|6remove|6rename|4link|7symlink|8readlink|5chmod|6fchmod|8truncate)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled pathname-lifecycle reference"
     fi
 }

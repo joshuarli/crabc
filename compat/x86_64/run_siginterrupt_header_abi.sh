@@ -114,9 +114,9 @@ for variant in oracle project; do
         "$ROOT_DIR/compat/x86_64/siginterrupt_header_abi_probe.cpp" \
         -o "$object"
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]siginterrupt$' ||
+    grep -Eq '[[:space:]]siginterrupt$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for siginterrupt (${variant})"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*siginterrupt'; then
+    if grep -Eq '_Z[0-9].*siginterrupt' <<<"$undefined"; then
         fail "C++ probe retained a mangled siginterrupt reference (${variant})"
     fi
 done

@@ -94,8 +94,8 @@ extract_resolver_object() {
 
     while IFS= read -r member; do
         ar p "$archive_path" "$member" >"$output_path"
-        if readelf --symbols --wide "$output_path" | grep -Eq \
-            '[[:space:]]__res_mkquery$'; then
+        if readelf --symbols --wide "$output_path" | grep -E \
+            '[[:space:]]__res_mkquery$' >/dev/null; then
             return
         fi
     done < <(ar t "$archive_path")

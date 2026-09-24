@@ -49,15 +49,15 @@ build_interpreter "$work_dir/ld-crabc-x86_64-fixed-graph-dlfcn-malformed.so" \
 for interpreter in "$work_dir/ld-crabc-x86_64-fixed-graph-dlfcn.so" \
     "$work_dir/ld-crabc-x86_64-fixed-graph-dlfcn-malformed.so"; do
     test "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN
-    if readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)|\(RELR\)'; then
+    if readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)|\(RELR\)' >/dev/null; then
         printf '%s\n' "ERROR: fixed-graph dlfcn interpreter selected an ambient runtime: $interpreter" >&2
         exit 1
     fi
-    if readelf -lW "$interpreter" | grep -q ' TLS '; then
+    if readelf -lW "$interpreter" | grep ' TLS ' >/dev/null; then
         printf '%s\n' "ERROR: fixed-graph dlfcn interpreter selected PT_TLS: $interpreter" >&2
         exit 1
     fi
-    if ! readelf -lW "$interpreter" | grep -q GNU_RELRO; then
+    if ! readelf -lW "$interpreter" | grep GNU_RELRO >/dev/null; then
         printf '%s\n' "ERROR: fixed-graph dlfcn interpreter lacks PT_GNU_RELRO: $interpreter" >&2
         exit 1
     fi
@@ -121,11 +121,11 @@ for binary in "$work_dir/main-fixed-graph-dlfcn" \
     "$work_dir/main-fixed-graph-dlfcn-dso-import" \
     "$work_dir/libmid-dlfcn-dso-import.so" \
     "$work_dir/libmid-dlfcn.so" "$work_dir/libleaf-dlfcn.so"; do
-    if readelf -dW "$binary" | grep -Eq '\(NEEDED\).*(libc|libgcc|ld-linux)'; then
+    if readelf -dW "$binary" | grep -E '\(NEEDED\).*(libc|libgcc|ld-linux)' >/dev/null; then
         printf '%s\n' "ERROR: fixed-graph dlfcn candidate selected an ambient runtime: $binary" >&2
         exit 1
     fi
-    if readelf -lW "$binary" | grep -q ' TLS '; then
+    if readelf -lW "$binary" | grep ' TLS ' >/dev/null; then
         printf '%s\n' "ERROR: fixed-graph dlfcn candidate selected PT_TLS: $binary" >&2
         exit 1
     fi
@@ -135,7 +135,7 @@ if ! readelf -Ws "$work_dir/main-fixed-graph-dlfcn" | awk '$5 == "WEAK" && $7 ==
     printf '%s\n' 'ERROR: candidate main lost its weak fixed-graph dlfcn record import' >&2
     exit 1
 fi
-if ! readelf -rW "$work_dir/main-fixed-graph-dlfcn" | grep -Eq 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1'; then
+if ! readelf -rW "$work_dir/main-fixed-graph-dlfcn" | grep -E 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1' >/dev/null; then
     printf '%s\n' 'ERROR: candidate main lacks the exact weak GLOB_DAT record relocation' >&2
     exit 1
 fi
@@ -143,7 +143,7 @@ if ! readelf -Ws "$work_dir/main-fixed-graph-dlfcn-strong-import" | awk '$5 == "
     printf '%s\n' 'ERROR: strong-import negative fixture did not retain a global undefined record' >&2
     exit 1
 fi
-if ! readelf -rW "$work_dir/main-fixed-graph-dlfcn-strong-import" | grep -Eq 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1'; then
+if ! readelf -rW "$work_dir/main-fixed-graph-dlfcn-strong-import" | grep -E 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1' >/dev/null; then
     printf '%s\n' 'ERROR: strong-import negative fixture lacks its record GLOB_DAT' >&2
     exit 1
 fi
@@ -151,7 +151,7 @@ if ! readelf -Ws "$work_dir/libmid-dlfcn-dso-import.so" | awk '$5 == "WEAK" && $
     printf '%s\n' 'ERROR: DSO-import negative fixture did not retain a weak undefined record' >&2
     exit 1
 fi
-if ! readelf -rW "$work_dir/libmid-dlfcn-dso-import.so" | grep -Eq 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1'; then
+if ! readelf -rW "$work_dir/libmid-dlfcn-dso-import.so" | grep -E 'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1' >/dev/null; then
     printf '%s\n' 'ERROR: DSO-import negative fixture lacks its record GLOB_DAT' >&2
     exit 1
 fi

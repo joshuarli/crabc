@@ -215,9 +215,9 @@ for required in \
 done
 call_once_source="$(sed -n '/pub unsafe extern "C" fn call_once(/,$p' \
     libc/src/c_abi/x86_64/pthread_once.rs)"
-printf '%s\n' "$call_once_source" | grep -Fq 'run_selected_once(flag, function)' ||
+grep -Fq 'run_selected_once(flag, function)' <<<"$call_once_source" ||
     fail "call_once does not use the private shared once state machine"
-if printf '%s\n' "$call_once_source" | grep -Eq '\bpthread_once[[:space:]]*\('; then
+if grep -Eq '\bpthread_once[[:space:]]*\(' <<<"$call_once_source"; then
     fail "call_once crosses an interposable pthread C ABI"
 fi
 

@@ -113,10 +113,10 @@ for profile in gnu bsd; do
             -c "$cxx_probe" -o "$object"
         undefined="$(nm --undefined-only "$object")"
         for symbol in wait3 wait4; do
-            printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+            grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
                 fail "${profile} ${tree} C++ probe lacks C linkage for ${symbol}"
         done
-        if printf '%s\n' "$undefined" | grep -Eq '_Z(5wait3|5wait4)'; then
+        if grep -Eq '_Z(5wait3|5wait4)' <<<"$undefined"; then
             fail "${profile} ${tree} C++ probe retains mangled wait-extension reference"
         fi
     done

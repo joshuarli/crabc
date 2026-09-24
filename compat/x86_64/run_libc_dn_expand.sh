@@ -83,10 +83,8 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" |
-                grep -Eq '[[:space:]][W][[:space:]]dn_expand$'; then
-                if printf '%s\n' "$definitions" |
-                    grep -Eq '[[:space:]][TW][[:space:]](dn_skipname|ns_get16|ns_get32|ns_put16|ns_put32|ns_initparse|ns_parserr|ns_skiprr|ns_name_uncompress)$'; then
+            if grep -Eq '[[:space:]][W][[:space:]]dn_expand$' <<<"$definitions"; then
+                if grep -Eq '[[:space:]][TW][[:space:]](dn_skipname|ns_get16|ns_get32|ns_put16|ns_put32|ns_initparse|ns_parserr|ns_skiprr|ns_name_uncompress)$' <<<"$definitions"; then
                     fail "dn_expand archive member also defines a nameserver sibling"
                 fi
                 printf '%s\n' "$member"

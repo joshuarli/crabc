@@ -79,9 +79,9 @@ done
     -c "$cxx_probe" -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]aio_error$' ||
+    grep -Eq '[[:space:]]aio_error$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for aio_error"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*aio_error'; then
+    if grep -Eq '_Z.*aio_error' <<<"$undefined"; then
         fail "C++ probe retained a mangled aio_error reference"
     fi
 done

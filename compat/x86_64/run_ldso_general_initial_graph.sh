@@ -52,11 +52,11 @@ esac
 
 interpreter="$work_dir/ld-crabc-x86_64-general-initial-graph.so"
 test "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN
-if readelf -dW "$interpreter" | grep -Eq '\(NEEDED\)|\(INTERP\)|\((RELR|RELRSZ|RELRENT)\)'; then
+if readelf -dW "$interpreter" | grep -E '\(NEEDED\)|\(INTERP\)|\((RELR|RELRSZ|RELRENT)\)' >/dev/null; then
     printf '%s\n' 'ERROR: general interpreter selected an external or unsupported bootstrap runtime' >&2
     exit 1
 fi
-if readelf -lW "$interpreter" | grep -q ' TLS '; then
+if readelf -lW "$interpreter" | grep ' TLS ' >/dev/null; then
     printf '%s\n' 'ERROR: general initial graph selected interpreter TLS' >&2
     exit 1
 fi
@@ -90,18 +90,18 @@ build_main() {
 
 build_main "$interpreter" "$work_dir/main"
 
-if ! readelf -dW "$work_dir/main" | grep -Fq "Library runpath: [$left_dir:$right_dir]"; then
+if ! readelf -dW "$work_dir/main" | grep -F "Library runpath: [$left_dir:$right_dir]" >/dev/null; then
     printf '%s\n' 'ERROR: main lost its ordered two-directory absolute RUNPATH' >&2
     exit 1
 fi
 for binary in "$left_dir/libleft.so" "$right_dir/libright.so"; do
-    if ! readelf -dW "$binary" | grep -Fq "Library runpath: [$shared_dir]"; then
+    if ! readelf -dW "$binary" | grep -F "Library runpath: [$shared_dir]" >/dev/null; then
         printf '%s\n' "ERROR: dependency lost its selected absolute RUNPATH: $binary" >&2
         exit 1
     fi
 done
 for binary in "$work_dir/main" "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so"; do
-    if readelf -lW "$binary" | grep -q ' TLS '; then
+    if readelf -lW "$binary" | grep ' TLS ' >/dev/null; then
         printf '%s\n' "ERROR: initial graph fixture selected TLS: $binary" >&2
         exit 1
     fi
@@ -158,7 +158,7 @@ for malformed in zero nonexecutable; do
     cc -D"$macro" -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now \
         -Wl,-soname,libleft.so -Wl,-rpath,"$shared_dir" "$LEFT" -L"$shared_dir" \
         -Wl,--no-as-needed -l:libshared.so -o "$left_dir/libleft-$malformed.so"
-    readelf -dW "$left_dir/libleft-$malformed.so" | grep -Eq '\((INIT_ARRAY|INIT_ARRAYSZ)\)' || {
+    readelf -dW "$left_dir/libleft-$malformed.so" | grep -E '\((INIT_ARRAY|INIT_ARRAYSZ)\)' >/dev/null || {
         printf 'ERROR: %s fixture did not emit DT_INIT_ARRAY metadata\n' "$malformed" >&2
         exit 1
     }
@@ -203,7 +203,7 @@ cc -DCRABC_GENERAL_CYCLE_CALLBACK_MARKER -fPIC -shared -nostdlib \
 for binary in "$cycle_dir/libshared-cycle.so" \
     "$cycle_dir/libleft-cycle-seed.so" "$cycle_dir/libright-cycle.so" \
     "$cycle_dir/libleft-cycle.so"; do
-    if readelf -lW "$binary" | grep -q ' TLS '; then
+    if readelf -lW "$binary" | grep ' TLS ' >/dev/null; then
         printf '%s\n' "ERROR: cycle fixture selected TLS: $binary" >&2
         exit 1
     fi
@@ -272,7 +272,7 @@ expect_cycle_ctorplan_rejection
 cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,-init,left_value \
     -Wl,-soname,libleft.so -Wl,-rpath,"$shared_dir" "$LEFT" -L"$shared_dir" \
     -Wl,--no-as-needed -l:libshared.so -o "$left_dir/libleft-legacy-init.so"
-readelf -dW "$left_dir/libleft-legacy-init.so" | grep -Fq '(INIT)' || {
+readelf -dW "$left_dir/libleft-legacy-init.so" | grep -F '(INIT)' >/dev/null || {
     printf '%s\n' 'ERROR: legacy-init fixture did not emit DT_INIT metadata' >&2
     exit 1
 }
@@ -282,7 +282,7 @@ cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now \
     -Wl,-soname,libleft.so -Wl,-rpath,"$shared_dir" "$LEFT" -L"$shared_dir" \
     -Wl,--no-as-needed -l:libshared.so -Wl,-fini,left_value \
     -o "$left_dir/libleft-legacy-fini.so"
-readelf -dW "$left_dir/libleft-legacy-fini.so" | grep -Fq '(FINI)' || {
+readelf -dW "$left_dir/libleft-legacy-fini.so" | grep -F '(FINI)' >/dev/null || {
     printf '%s\n' 'ERROR: legacy-fini fixture did not emit DT_FINI metadata' >&2
     exit 1
 }
@@ -291,7 +291,7 @@ replace_left_and_expect_rejection "$left_dir/libleft-legacy-fini.so" graph 'lega
 cc -DCRABC_GENERAL_FINI_ARRAY -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now \
     -Wl,-soname,libleft.so -Wl,-rpath,"$shared_dir" "$LEFT" -L"$shared_dir" \
     -Wl,--no-as-needed -l:libshared.so -o "$left_dir/libleft-fini-array.so"
-readelf -dW "$left_dir/libleft-fini-array.so" | grep -Eq '\((FINI_ARRAY|FINI_ARRAYSZ)\)' || {
+readelf -dW "$left_dir/libleft-fini-array.so" | grep -E '\((FINI_ARRAY|FINI_ARRAYSZ)\)' >/dev/null || {
     printf '%s\n' 'ERROR: fini-array fixture did not emit DT_FINI_ARRAY metadata' >&2
     exit 1
 }

@@ -236,15 +236,15 @@ check_cxx_symbols() {
     fi
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C linkage for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(posix_fadvise|readahead)'; then
+    if grep -Eq '_Z.*(posix_fadvise|readahead)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled descriptor-advice reference"
     fi
     case "$profile" in
         c11-largefile64|cxx17-largefile64)
-            if printf '%s\n' "$undefined" | grep -Eq '[[:space:]]posix_fadvise64$'; then
+            if grep -Eq '[[:space:]]posix_fadvise64$' <<<"$undefined"; then
                 fail "$tree $profile did not macro-alias posix_fadvise64"
             fi
             ;;

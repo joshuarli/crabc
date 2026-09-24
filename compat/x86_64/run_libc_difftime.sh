@@ -90,9 +90,9 @@ for object in "$header_cxx_reference" "$header_cxx_candidate"; do
     [ "$object" = "$header_cxx_candidate" ] && include_args=(-I "$ROOT_DIR/include")
     "$ORACLE_CC" -std=c++17 -x c++ -D_GNU_SOURCE -fno-builtin \
         "${include_args[@]}" -c compat/x86_64/time_header_abi_probe.cpp -o "$object"
-    nm --undefined-only "$object" | grep -Eq '[[:space:]]difftime$' ||
+    nm --undefined-only "$object" | grep -E '[[:space:]]difftime$' >/dev/null ||
         fail "C++ header probe does not retain unmangled difftime"
-    if nm --undefined-only "$object" | grep -Eq '_Z.*difftime'; then
+    if nm --undefined-only "$object" | grep -E '_Z.*difftime' >/dev/null; then
         fail "C++ header probe retained a mangled difftime reference"
     fi
 done

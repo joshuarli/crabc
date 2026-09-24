@@ -92,10 +92,10 @@ done
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
     for symbol in sched_get_priority_max sched_get_priority_min; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "C++ probe does not retain C linkage for ${symbol}"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*sched_get_priority_(max|min)'; then
+    if grep -Eq '_Z.*sched_get_priority_(max|min)' <<<"$undefined"; then
         fail "C++ probe retained a mangled priority-bound reference"
     fi
 done

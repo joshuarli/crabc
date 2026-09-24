@@ -85,13 +85,12 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" | grep -Eq '[[:space:]][T][[:space:]]ns_initparse$'; then
+            if grep -Eq '[[:space:]][T][[:space:]]ns_initparse$' <<<"$definitions"; then
                 for symbol in ns_initparse ns_parserr ns_name_uncompress; do
-                    printf '%s\n' "$definitions" | grep -Eq "[[:space:]][T][[:space:]]${symbol}$" ||
+                    grep -Eq "[[:space:]][T][[:space:]]${symbol}$" <<<"$definitions" ||
                         fail "parser selected object does not define ${symbol}"
                 done
-                if printf '%s\n' "$definitions" |
-                    grep -Eq '[[:space:]][TW][[:space:]](dn_expand|dn_skipname|ns_get16|ns_get32|ns_put16|ns_put32|ns_skiprr|_ns_flagdata)$'; then
+                if grep -Eq '[[:space:]][TW][[:space:]](dn_expand|dn_skipname|ns_get16|ns_get32|ns_put16|ns_put32|ns_skiprr|_ns_flagdata)$' <<<"$definitions"; then
                     fail "nameser parser archive member also defines a selected helper"
                 fi
                 printf '%s\n' "$member"

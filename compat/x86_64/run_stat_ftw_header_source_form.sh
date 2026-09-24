@@ -238,9 +238,9 @@ check_cxx_linkage() {
     local object="$1" symbol undefined
     undefined="$(nm --undefined-only "$object")"
     for symbol in stat lstat fstatat ftw nftw; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "C++ source-form probe lost C linkage for $symbol"
-        if printf '%s\n' "$undefined" | grep -Eq "_Z[0-9].*${symbol}"; then
+        if grep -Eq "_Z[0-9].*${symbol}" <<<"$undefined"; then
             fail "C++ source-form probe retained mangled linkage for $symbol"
         fi
     done

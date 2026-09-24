@@ -137,7 +137,7 @@ for symbol in bind_textdomain_codeset bindtextdomain catclose catgets catopen \
     dcgettext dcngettext dgettext dngettext gettext ngettext textdomain; do
     assert_strong_function "$candidate_symbols" "$symbol" candidate
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

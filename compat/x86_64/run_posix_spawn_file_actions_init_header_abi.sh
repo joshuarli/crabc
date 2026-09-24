@@ -132,9 +132,9 @@ check_cxx_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]posix_spawn_file_actions_init$' ||
+    grep -Eq '[[:space:]]posix_spawn_file_actions_init$' <<<"$undefined" ||
         fail "$profile $tree C++ probe does not retain C linkage for posix_spawn_file_actions_init"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*posix_spawn_file_actions_init'; then
+    if grep -Eq '_Z[0-9].*posix_spawn_file_actions_init' <<<"$undefined"; then
         fail "$profile $tree C++ probe retained a mangled posix_spawn_file_actions_init reference"
     fi
 }

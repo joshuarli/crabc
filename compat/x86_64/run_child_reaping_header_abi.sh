@@ -76,11 +76,11 @@ done
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
     for symbol in wait waitpid waitid; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" || {
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" || {
             fail "C++ probe does not retain C linkage for ${symbol}"
         }
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z(4wait|7waitpid|6waitid)'; then
+    if grep -Eq '_Z(4wait|7waitpid|6waitid)' <<<"$undefined"; then
         fail "C++ probe retained a mangled child-reaping reference"
     fi
 done

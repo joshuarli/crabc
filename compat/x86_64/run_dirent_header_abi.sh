@@ -304,10 +304,10 @@ check_cxx_c_linkage() {
     fi
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain requested C spelling for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(closedir|dirfd|fdopendir|opendir|readdir|rewinddir|posix_getdents|alphasort|scandir|seekdir|telldir|getdents|versionsort)'; then
+    if grep -Eq '_Z.*(closedir|dirfd|fdopendir|opendir|readdir|rewinddir|posix_getdents|alphasort|scandir|seekdir|telldir|getdents|versionsort)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled dirent reference"
     fi
 }

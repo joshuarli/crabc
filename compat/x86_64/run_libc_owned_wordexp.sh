@@ -227,7 +227,7 @@ PY
 		grep -Eq 'NEEDED|JMPREL|PLTGOT' "$dynamic"; then
 		fail "${label} installed candidate selected dynamic runtime state"
 	fi
-	if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
+	if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
 		fail "${label} installed candidate has unresolved symbols"
 	fi
 	if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \
@@ -297,7 +297,7 @@ make_private_shell_root() {
 		copy_controlled_shell_dependency "$execution_root" "$dependency"
 	done < <(LC_ALL=C ldd "$controlled_shell_source" |
 		awk '$1 ~ /^\// { print $1; next } $2 == "=>" && $3 ~ /^\// { print $3 }')
-	if find "$execution_root" -type l -print -quit | grep -q .; then
+	if find "$execution_root" -type l -print -quit | grep . >/dev/null; then
 		fail "private shell root retains a symlink"
 	fi
 	sha256sum "$controlled_shell_source" "$execution_root/bin/sh" \
@@ -322,7 +322,7 @@ prepare_private_shell_case() {
 			;;
 		*) fail "unknown controlled shell case: $shell_case" ;;
 	esac
-	if find "$execution_root" -type l -print -quit | grep -q .; then
+	if find "$execution_root" -type l -print -quit | grep . >/dev/null; then
 		fail "private shell case retains a symlink"
 	fi
 }

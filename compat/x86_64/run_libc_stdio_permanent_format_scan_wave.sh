@@ -92,11 +92,11 @@ done
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     "$ROOT_DIR/$fixture" "$ROOT_DIR/$start" "$archive" -o "$work_dir/candidate"
 readelf --symbols --wide "$work_dir/candidate" >"$work_dir/candidate-symbols"
-if awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/candidate-symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/candidate-symbols" | grep . >/dev/null; then
     echo "candidate has unresolved symbols" >&2
     exit 1
 fi
-if readelf --dynamic --wide "$work_dir/candidate" | grep -Eq 'NEEDED|INTERP'; then
+if readelf --dynamic --wide "$work_dir/candidate" | grep -E 'NEEDED|INTERP' >/dev/null; then
     echo "candidate unexpectedly selected dynamic runtime" >&2
     exit 1
 fi

@@ -170,7 +170,7 @@ objdump -d --disassemble=rand_r "$candidate" >"$rand_r_disassembly"
 awk '$4 == "FUNC" && $5 == "GLOBAL" && $8 == "rand_r" { found = 1 }
      END { exit(found ? 0 : 1) }' "$candidate_symbols" ||
     fail "candidate lacks global rand_r"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

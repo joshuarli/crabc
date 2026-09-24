@@ -104,9 +104,9 @@ compile_profile() {
                     -U_DEFAULT_SOURCE "$@" -DCRABC_EXPECT_BASENAME -nostdinc++ \
                     "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]basename$' ||
+                grep -Eq '[[:space:]]basename$' <<<"$undefined" ||
                     fail "C++ probe does not retain C linkage for basename (${variant}/${label})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*basename'; then
+                if grep -Eq '_Z[0-9].*basename' <<<"$undefined"; then
                     fail "C++ probe retained a mangled basename reference (${variant}/${label})"
                 fi
             fi

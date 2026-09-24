@@ -65,9 +65,9 @@ done
     -c "$cxx_probe" -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]ctermid$' ||
+    grep -Eq '[[:space:]]ctermid$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for ctermid"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z7ctermidPc'; then
+    if grep -Eq '_Z7ctermidPc' <<<"$undefined"; then
         fail "C++ probe retained a mangled ctermid reference"
     fi
 done
@@ -142,9 +142,9 @@ done
     -I "$ROOT_DIR/include" -c "$cxx_probe" -o "$candidate_unistd_cxx_object"
 for object in "$oracle_unistd_cxx_object" "$candidate_unistd_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]ctermid$' ||
+    grep -Eq '[[:space:]]ctermid$' <<<"$undefined" ||
         fail "strict C++ unistd.h probe does not retain C linkage for ctermid"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z7ctermidPc'; then
+    if grep -Eq '_Z7ctermidPc' <<<"$undefined"; then
         fail "strict C++ unistd.h probe retained a mangled ctermid reference"
     fi
 done

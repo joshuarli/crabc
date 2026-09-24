@@ -74,9 +74,9 @@ done
     -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]bsearch$' ||
+    grep -Eq '[[:space:]]bsearch$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for bsearch"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*bsearch'; then
+    if grep -Eq '_Z[0-9].*bsearch' <<<"$undefined"; then
         fail "C++ probe retained a mangled bsearch reference"
     fi
 done

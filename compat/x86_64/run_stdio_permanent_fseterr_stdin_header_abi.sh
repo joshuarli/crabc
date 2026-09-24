@@ -131,9 +131,9 @@ assert_cxx_c_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
-    printf '%s\n' "$undefined" | grep -Fxq __fseterr ||
+    grep -Fxq __fseterr <<<"$undefined" ||
         fail "$tree C++ probe does not retain C spelling __fseterr"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*__fseterr'; then
+    if grep -Eq '_Z.*__fseterr' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled __fseterr reference"
     fi
 }

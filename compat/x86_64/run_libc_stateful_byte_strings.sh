@@ -71,9 +71,9 @@ case "$musl_archive" in /*) ;; *) fail "pinned musl compiler did not report an a
 for source_member in dirname.lo strcasestr.lo strtok_r.lo; do
     ar p "$musl_archive" "$source_member" >"$work_dir/$source_member"
 done
-readelf --symbols --wide "$work_dir/dirname.lo" | grep -Eq '[[:space:]]dirname$' || fail "pinned musl dirname source member drifted"
-readelf --symbols --wide "$work_dir/strcasestr.lo" | grep -Eq '[[:space:]]strcasestr$' || fail "pinned musl strcasestr source member drifted"
-readelf --symbols --wide "$work_dir/strtok_r.lo" | grep -Eq '[[:space:]]strtok_r$' || fail "pinned musl strtok_r source member drifted"
+readelf --symbols --wide "$work_dir/dirname.lo" | grep -E '[[:space:]]dirname$' >/dev/null || fail "pinned musl dirname source member drifted"
+readelf --symbols --wide "$work_dir/strcasestr.lo" | grep -E '[[:space:]]strcasestr$' >/dev/null || fail "pinned musl strcasestr source member drifted"
+readelf --symbols --wide "$work_dir/strtok_r.lo" | grep -E '[[:space:]]strtok_r$' >/dev/null || fail "pinned musl strtok_r source member drifted"
 nm --undefined-only --format=posix "$work_dir/dirname.lo" | awk '$1 != "_GLOBAL_OFFSET_TABLE_" { print $1 }' | sort -u >"$work_dir/dirname-undefined"
 cmp -s <(printf '%s\n' strlen) "$work_dir/dirname-undefined" || fail "dirname musl helper boundary drifted"
 nm --undefined-only --format=posix "$work_dir/strcasestr.lo" | awk '$1 != "_GLOBAL_OFFSET_TABLE_" { print $1 }' | sort -u >"$work_dir/strcasestr-undefined"
@@ -100,7 +100,7 @@ mkdir "$work_dir/owner"
 object="$work_dir/owner/$owner"
 exports="$(nm -g --defined-only --format=posix "$object" | awk '$2 ~ /^[TW]$/ { print $1 }' | sort -u)"
 [ "$exports" = "$(printf '%s\n' dirname strcasestr strtok_r)" ] || fail "stateful byte-string object export surface drifted"
-if nm -S --defined-only --format=posix "$object" | awk '$2 ~ /^[BD]$/ { print }' | grep -q .; then fail "object unexpectedly retains mutable static storage"; fi
+if nm -S --defined-only --format=posix "$object" | awk '$2 ~ /^[BD]$/ { print }' | grep . >/dev/null; then fail "object unexpectedly retains mutable static storage"; fi
 nm --undefined-only --format=posix "$object" | awk '$1 != "_GLOBAL_OFFSET_TABLE_" { print $1 }' | sort -u >"$object_undefined"
 [ ! -s "$object_undefined" ] || { cat "$object_undefined" >&2; fail "object unexpectedly depends on another symbol"; }
 readelf --relocs --wide "$object" >"$object_relocations"
@@ -115,7 +115,7 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in dirname strcasestr strtok_r; do awk -v symbol="$symbol" '$4 == "FUNC" && $5 == "GLOBAL" && $8 == symbol { found = 1 } END { exit(found ? 0 : 1) }' "$candidate_symbols" || fail "candidate lacks global $symbol"; done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then fail "candidate retains an unresolved symbol"; fi
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then fail "candidate retains an unresolved symbol"; fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$candidate_headers" "$candidate_dynamic"; then fail "candidate selects a dynamic dependency"; fi
 if grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_headers"; then fail "candidate unexpectedly selects TLS"; fi
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr|__errno_location|%fs:' "$object_relocations" "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then fail "candidate unexpectedly retains errno or TLS"; fi

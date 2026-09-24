@@ -131,9 +131,9 @@ assert_cxx_c_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
-    printf '%s\n' "$undefined" | grep -Fxq __fbufsize ||
+    grep -Fxq __fbufsize <<<"$undefined" ||
         fail "$tree C++ probe does not retain C spelling __fbufsize"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*__fbufsize'; then
+    if grep -Eq '_Z.*__fbufsize' <<<"$undefined"; then
         fail "$tree C++ probe retained a mangled __fbufsize reference"
     fi
 }

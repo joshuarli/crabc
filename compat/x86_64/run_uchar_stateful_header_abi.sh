@@ -89,9 +89,9 @@ check_cxx_c_linkage() {
 
     undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
     for symbol in "${CXX_SYMBOLS[@]}"; do
-        printf '%s\n' "$undefined" | grep -Fxq "$symbol" ||
+        grep -Fxq "$symbol" <<<"$undefined" ||
             fail "$label did not retain an unmangled $symbol reference"
-        if printf '%s\n' "$undefined" | grep -Eq "^_Z.*${symbol}"; then
+        if grep -Eq "^_Z.*${symbol}" <<<"$undefined"; then
             fail "$label retains a mangled $symbol reference"
         fi
     done

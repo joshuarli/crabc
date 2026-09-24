@@ -88,7 +88,7 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" getsubopt.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq '[[:space:]]getsubopt$' ||
+readelf --symbols --wide "$musl_object" | grep -E '[[:space:]]getsubopt$' >/dev/null ||
     fail "pinned musl archive lacks getsubopt.lo"
 
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -I"$ROOT_DIR/include" -E -H \
@@ -124,7 +124,7 @@ readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d --disassemble=getsubopt "$candidate" >"$candidate_disassembly"
 grep -Eq '[[:space:]]getsubopt$' "$candidate_symbols" ||
     fail "candidate does not define getsubopt"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

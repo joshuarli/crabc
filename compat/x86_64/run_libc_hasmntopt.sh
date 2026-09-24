@@ -71,7 +71,7 @@ extract_selected_member() {
         ar x "$archive_path" "${members[@]}"
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
-            if printf '%s\n' "$definitions" | grep -Eq '[[:space:]][TW][[:space:]]hasmntopt$'; then
+            if grep -Eq '[[:space:]][TW][[:space:]]hasmntopt$' <<<"$definitions"; then
                 printf '%s\n' "$member"
             fi
         done
@@ -94,7 +94,7 @@ assert_static_closure() {
     readelf --dynamic --wide "$candidate_path" >"$dynamic_path" || true
     readelf --relocs --wide "$candidate_path" >"$relocs_path"
     objdump -d --disassemble=hasmntopt "$candidate_path" >"$disassembly_path"
-    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep -q .; then
+    if awk '$7 == "UND" && NF >= 8 { print }' "$symbols_path" | grep . >/dev/null; then
         fail "candidate has unresolved symbols"
     fi
     if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers_path" "$dynamic_path"; then

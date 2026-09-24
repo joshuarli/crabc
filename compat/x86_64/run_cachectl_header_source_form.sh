@@ -164,9 +164,9 @@ check_cxx_linkage() {
     local tree="$1" profile="$2" object="$3" undefined symbol
     undefined="$(nm --undefined-only "$object")"
     for symbol in cachectl cacheflush _flush_cache; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$profile $tree C++ probe lost unmangled $symbol linkage"
-        if printf '%s\n' "$undefined" | grep -Eq "_Z.*${symbol}"; then
+        if grep -Eq "_Z.*${symbol}" <<<"$undefined"; then
             fail "$profile $tree C++ probe retained a mangled $symbol reference"
         fi
     done

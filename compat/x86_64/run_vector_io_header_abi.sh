@@ -245,15 +245,15 @@ check_cxx_symbols() {
     esac
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
-        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+        grep -Eq "[[:space:]]${symbol}$" <<<"$undefined" ||
             fail "$tree $profile C++ probe does not retain C linkage for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(readv|writev|preadv|pwritev)'; then
+    if grep -Eq '_Z.*(readv|writev|preadv|pwritev)' <<<"$undefined"; then
         fail "$tree $profile C++ probe retained a mangled vector-I/O reference"
     fi
     case "$profile" in
         cxx17-bsd-largefile64|cxx17-gnu-largefile64)
-            if printf '%s\n' "$undefined" | grep -Eq '[[:space:]](preadv64|pwritev64)$'; then
+            if grep -Eq '[[:space:]](preadv64|pwritev64)$' <<<"$undefined"; then
                 fail "$tree $profile did not macro-alias its large-file function spellings"
             fi
             ;;

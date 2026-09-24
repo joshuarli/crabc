@@ -82,9 +82,9 @@ done
     -I "$ROOT_DIR/include" -c "$cxx_probe" -o "$candidate_cxx_object"
 for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]__sched_cpucount$' ||
+    grep -Eq '[[:space:]]__sched_cpucount$' <<<"$undefined" ||
         fail "C++ probe does not retain C linkage for __sched_cpucount"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*sched_cpucount'; then
+    if grep -Eq '_Z.*sched_cpucount' <<<"$undefined"; then
         fail "C++ probe retained a mangled __sched_cpucount reference"
     fi
 done

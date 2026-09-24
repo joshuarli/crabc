@@ -105,7 +105,7 @@ for symbol in isalnum isalpha isblank iscntrl isdigit isgraph islower isprint \
     ispunct isspace isupper isxdigit tolower toupper isascii toascii; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"
 done
-awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q . && fail "candidate has unresolved symbols" || true
+awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null && fail "candidate has unresolved symbols" || true
 grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic" && fail "candidate is dynamic"
 grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
     "$headers" "$relocs" "$symbols" "$disassembly" && fail "candidate retains TLS" || true

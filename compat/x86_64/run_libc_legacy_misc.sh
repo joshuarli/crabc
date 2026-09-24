@@ -242,10 +242,10 @@ esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" fmtmsg.lo >"$musl_fmtmsg"
 ar p "$musl_archive" encrypt.lo >"$musl_encrypt"
-readelf --symbols --wide "$musl_fmtmsg" | grep -Eq '[[:space:]]fmtmsg$' ||
+readelf --symbols --wide "$musl_fmtmsg" | grep -E '[[:space:]]fmtmsg$' >/dev/null ||
     fail "pinned musl fmtmsg.lo lacks fmtmsg"
 for symbol in encrypt setkey; do
-    readelf --symbols --wide "$musl_encrypt" | grep -Eq "[[:space:]]${symbol}$" ||
+    readelf --symbols --wide "$musl_encrypt" | grep -E "[[:space:]]${symbol}$" >/dev/null ||
         fail "pinned musl encrypt.lo lacks ${symbol}"
 done
 grep -Eq '^fmtmsg[[:space:]]+fmtmsg\.lo[[:space:]]+T[[:space:]]+GLOBAL' \
@@ -405,7 +405,7 @@ for symbol in _start __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks required legacy.misc closure symbol ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

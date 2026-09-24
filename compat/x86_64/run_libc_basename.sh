@@ -119,9 +119,9 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" basename.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq '[[:space:]]basename$' ||
+readelf --symbols --wide "$musl_object" | grep -E '[[:space:]]basename$' >/dev/null ||
     fail "pinned musl basename.lo lacks basename"
-readelf --symbols --wide "$musl_object" | grep -Eq '[[:space:]]__xpg_basename$' ||
+readelf --symbols --wide "$musl_object" | grep -E '[[:space:]]__xpg_basename$' >/dev/null ||
     fail "pinned musl basename.lo lacks __xpg_basename"
 nm --undefined-only --format=posix "$musl_object" |
     awk '$1 != "_GLOBAL_OFFSET_TABLE_" { print $1 }' | sort -u >"$musl_undefined"
@@ -168,7 +168,7 @@ if [ "${exports[*]}" != "__xpg_basename basename" ]; then
     fail "basename object export surface drifted"
 fi
 if nm -S --defined-only --format=posix "$object" |
-    awk '$2 ~ /^[BD]$/ { print }' | grep -q .; then
+    awk '$2 ~ /^[BD]$/ { print }' | grep . >/dev/null; then
     fail "basename object unexpectedly retains mutable static storage"
 fi
 nm --undefined-only --format=posix "$object" |
@@ -205,7 +205,7 @@ basename_value="$(awk '$8 == "basename" { print $2; exit }' "$candidate_symbols"
 xpg_value="$(awk '$8 == "__xpg_basename" { print $2; exit }' "$candidate_symbols")"
 [ -n "$basename_value" ] && [ "$basename_value" = "$xpg_value" ] ||
     fail "__xpg_basename is not a same-address basename alias"
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \

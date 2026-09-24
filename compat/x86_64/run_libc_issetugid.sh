@@ -128,7 +128,7 @@ case "$musl_archive" in
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
 ar p "$musl_archive" issetugid.lo >"$musl_object"
-readelf --symbols --wide "$musl_object" | grep -Eq '[[:space:]]issetugid$' ||
+readelf --symbols --wide "$musl_object" | grep -E '[[:space:]]issetugid$' >/dev/null ||
     fail "pinned musl issetugid.lo lacks issetugid"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -176,7 +176,7 @@ for symbol in issetugid __crabc_x86_static_tls_bootstrap __libc_start_main main;
     grep -Eq "[[:space:]]$symbol$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep . >/dev/null; then
     fail "candidate retains an unresolved symbol"
 fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
