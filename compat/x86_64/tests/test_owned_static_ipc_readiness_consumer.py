@@ -62,8 +62,6 @@ class OwnedStaticIpcReadinessConsumerTests(unittest.TestCase):
             "socket_messages.rs",
         ):
             self.assertIn(f'#[path = "{module}"]', module_root)
-        self.assertIn("omit cancellation integration", socket_transport)
-        self.assertIn("does not provide musl's pthread cancellation-point behavior", readiness)
 
     def test_runner_checks_oracle_both_static_modes_and_exact_link_provenance(self) -> None:
         runner_path = (

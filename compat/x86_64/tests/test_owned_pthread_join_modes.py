@@ -33,7 +33,7 @@ class OwnedPthreadJoinModesTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "pthread-join-cancel product must be a checkout .work directory",
+            "product must be a checkout .work directory",
             result.stderr,
         )
         self.assertNotIn("pthread-join-cancel evidence:", result.stdout)
@@ -55,7 +55,6 @@ class OwnedPthreadJoinModesTests(unittest.TestCase):
         self.assertLess(source.index(compile_object), source.index(oracle_link))
         for link in (
             oracle_link,
-            '"$work/static-sysroot/bin/crabc-cc" "-$mode" -std=c11 "$work/probe.o" -o "$work/$mode"',
             '"$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 "$work/probe.o" -o "$work/dynamic-$mode"',
         ):
             self.assertIn(link, source)

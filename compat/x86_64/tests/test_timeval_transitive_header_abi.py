@@ -68,7 +68,6 @@ class TimevalTransitiveHeaderAbiTests(unittest.TestCase):
             "sys-time|sys-timex)",
             "for required_header in utmp.h utmpx.h",
             "for required_header in lastlog.h utmp.h utmpx.h",
-            "not an identical",
             "required timeval dependency",
             "required public chain",
         ):

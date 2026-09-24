@@ -18,6 +18,7 @@ facts = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = facts
 SPEC.loader.exec_module(facts)
 
+sys.path.insert(0, str(ROOT))
 from compat.x86_64.tests.test_native_abi_inventory import HEADER, SECTIONS, STATIC
 
 

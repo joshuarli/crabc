@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 
 
@@ -34,8 +35,20 @@ def load_auditor():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    sys.path.insert(0, str(AUDITOR.parent))
     spec.loader.exec_module(module)
     return module
+
+
+def enabled_features(features, name):
+    """Return every feature `name` enables, transitively."""
+    enabled, pending = set(), list(features[name])
+    while pending:
+        feature = pending.pop()
+        if feature in features and feature not in enabled:
+            enabled.add(feature)
+            pending.extend(features[feature])
+    return enabled
 
 
 class OwnedPosixFilesystemTests(unittest.TestCase):
@@ -293,7 +306,7 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
 
     def test_owned_runtime_selects_existing_file_handle_and_temporary_name_leaves(self) -> None:
         manifest = CARGO.read_text(encoding="utf-8")
-        aggregate = manifest.split("x86-owned-static-runtime = [", 1)[1].split("]", 1)[0]
+        aggregate = {f'"{name}",' for name in enabled_features(tomllib.loads(manifest)["features"], "x86-owned-static-runtime")}
         self.assertIn('"x86-file-handles",', aggregate)
         self.assertIn('"x86-temporary-names",', aggregate)
 

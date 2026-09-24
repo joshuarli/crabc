@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -10,11 +11,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def enabled_features(features, name):
+    """Return every feature `name` enables, transitively."""
+    enabled, pending = set(), list(features[name])
+    while pending:
+        feature = pending.pop()
+        if feature in features and feature not in enabled:
+            enabled.add(feature)
+            pending.extend(features[feature])
+    return enabled
+
+
 class OwnedStaticFilesystemConsumerTests(unittest.TestCase):
     def test_owned_aggregate_inherits_ready_directory_and_filesystem_extension_features(self) -> None:
         manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
-
-        aggregate = manifest.split("x86-owned-static-runtime = [", 1)[1].split("]", 1)[0]
+        features = tomllib.loads(manifest)["features"]
+        aggregate = {f'"{name}",' for name in enabled_features(features, "x86-owned-static-runtime")}
         self.assertIn('"x86-scandir",', aggregate)
         self.assertIn('"x86-filesystem-traversal",', aggregate)
         self.assertIn('"x86-file-handles",', aggregate)

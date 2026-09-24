@@ -130,7 +130,6 @@ GENERIC_REPORTS = (
 TRACKED_INPUTS = (
     "compat/x86_64/headers-layouts-foundation.toml",
     "compat/x86_64/headers-layouts.toml",
-    "compat/x86_64/parity.toml",
     "compat/x86_64/public_headers.txt",
     "compat/x86_64/static_c_abi_exports.txt",
     "compat/x86_64/header_callable_inventory.json",

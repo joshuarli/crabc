@@ -5,6 +5,10 @@ from __future__ import annotations
 import json
 import subprocess
 import unittest
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from compat.x86_64.tests import test_native_abi_inventory_dispatcher as base_dispatcher
 
 

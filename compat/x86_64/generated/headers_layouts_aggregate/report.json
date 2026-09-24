@@ -621,7 +621,7 @@
       "id": "callable-visibility",
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v2",
-      "sha256": "8b06b495f3da3d1a21f01a0d7a667c64f4bace475d4800ed30b535df3cb1238b",
+      "sha256": "87da306e95ad41407b8076cb7a775c48a05828677ee48145863ddb7d30a8d0ec",
       "summary": {
         "candidate_only_callable_count": 28,
         "candidate_public_header_count": 191,
@@ -731,7 +731,7 @@
       "id": "callable-disposition",
       "path": "compat/x86_64/header_callable_disposition.json",
       "schema": "crabc.x86_64-header-callable-disposition-report/v2",
-      "sha256": "8643475143faeed41e55820646e1cd5d23a087df181d436815a6b0314ca631c4",
+      "sha256": "a72f53791644868d2dc626862e4cc06aeec2a98093deabc0699c6e2369c33ac9",
       "summary": {
         "candidate_external_callable_count": 1526,
         "declared_unverified_feature_callable_count": 314,
@@ -816,10 +816,6 @@
       "sha256": "2717dfa53102dbf9eb0a1d7ebfe8278f37d07c2764e2161a7ad948a78cd9aa62"
     },
     {
-      "path": "compat/x86_64/parity.toml",
-      "sha256": "d81c479db0e3f1fa39f38cbb2ec8770f9822e82161107102c0ec60fc9224ae92"
-    },
-    {
       "path": "compat/x86_64/public_headers.txt",
       "sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
     },
@@ -829,7 +825,7 @@
     },
     {
       "path": "compat/x86_64/header_callable_inventory.json",
-      "sha256": "2d9c13768d3224758160e388f3e233a63305e9ac0045b7be26cad5ba96f47589"
+      "sha256": "62aead663d1de13f39bfb88287a4e4577b78ebc51499d97627ff5d1139471679"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.toml",
@@ -837,7 +833,7 @@
     },
     {
       "path": "compat/x86_64/header_callable_disposition.py",
-      "sha256": "c9279ceccd31a97e7425cd573552ab0ee4548c5d2e9988b802043337f34f38ca"
+      "sha256": "a010bf5cdecd728b56de418de8dbcd401c90ccafec915b7d05767c5098c47c03"
     },
     {
       "path": "compat/x86_64/header_callable_extension_contract.toml",
@@ -877,7 +873,7 @@
     },
     {
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
-      "sha256": "8b06b495f3da3d1a21f01a0d7a667c64f4bace475d4800ed30b535df3cb1238b"
+      "sha256": "87da306e95ad41407b8076cb7a775c48a05828677ee48145863ddb7d30a8d0ec"
     },
     {
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
@@ -889,11 +885,11 @@
     },
     {
       "path": "compat/x86_64/header_callable_disposition.json",
-      "sha256": "8643475143faeed41e55820646e1cd5d23a087df181d436815a6b0314ca631c4"
+      "sha256": "a72f53791644868d2dc626862e4cc06aeec2a98093deabc0699c6e2369c33ac9"
     },
     {
       "path": "compat/x86_64/headers_layouts_aggregate.py",
-      "sha256": "8dab24e73e5a8ee7253bbec61c29572195ef018684b97e97030e6fd81aa0e4ef"
+      "sha256": "b55d3aeda12fbdeda8570e33768e2297ab5677cfed23feb48125010ae3de99c8"
     },
     {
       "path": "compat/x86_64/run_headers_layouts_aggregate.sh",

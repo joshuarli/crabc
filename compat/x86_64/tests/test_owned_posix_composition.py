@@ -18,6 +18,17 @@ STATIC_EXPORTS = ROOT / "compat/x86_64/static_c_abi_exports.txt"
 PROBE = ROOT / "compat/x86_64/owned_posix_composition_probe.c"
 
 
+def enabled_features(features, name):
+    """Return every feature `name` enables, transitively."""
+    enabled, pending = set(), list(features[name])
+    while pending:
+        feature = pending.pop()
+        if feature in features and feature not in enabled:
+            enabled.add(feature)
+            pending.extend(features[feature])
+    return enabled
+
+
 class OwnedPosixCompositionTests(unittest.TestCase):
     def test_static_replay_parser_rejects_incomplete_or_ambiguous_arguments(
         self,
@@ -110,7 +121,7 @@ class OwnedPosixCompositionTests(unittest.TestCase):
 
     def test_existing_composition_object_keeps_scheduler_and_netdb_providers_selected(self) -> None:
         features = tomllib.loads(MANIFEST.read_text(encoding="utf-8"))["features"]
-        aggregate = features["x86-owned-static-runtime"]
+        aggregate = enabled_features(features, "x86-owned-static-runtime")
 
         self.assertEqual(features["default"], [])
         self.assertEqual(features["x86-owned-dynamic-runtime"], ["x86-owned-static-runtime"])

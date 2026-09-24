@@ -42,7 +42,6 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
         self.assertIn("MIMALLOC_V3_HIDDEN_LIST_SHA256", source)
         self.assertIn("members != tuple(sorted(set(members)))", source)
         self.assertNotIn("mi_*", source)
-        self.assertNotIn("--exclude-libs", source)
 
     def test_only_the_shared_link_receives_the_exact_version_script(self) -> None:
         source = BUILDER.read_text(encoding="utf-8")

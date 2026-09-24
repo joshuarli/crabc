@@ -24,6 +24,7 @@ def load_generator():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    sys.path.insert(0, str(GENERATOR_PATH.parent))
     spec.loader.exec_module(module)
     return module
 

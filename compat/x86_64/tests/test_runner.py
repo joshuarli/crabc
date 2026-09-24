@@ -7951,6 +7951,10 @@ esac
         self.assertNotEqual(missing.returncode, 0)
         self.assertIn("owned raw-syscall path", missing.stderr)
 
+    @unittest.skipUnless(
+        subprocess.run(["realpath", "-e", "/"], capture_output=True).returncode == 0,
+        "the runner needs GNU realpath -e, as in the pinned image",
+    )
     def test_system_information_tmpdir_must_be_a_physical_checkout_descendant(
         self,
     ) -> None:
