@@ -47,13 +47,23 @@ def reader(gate: str, command: str, kind: str = "report", result: str = "read", 
     return gates.EvidenceReader(gate, command, kind, "fixture", read)
 
 
+def rows(result: dict[str, object]) -> dict[str, dict[str, object]]:
+    return {row["id"]: row for row in result["conditions"]}
+
+
+CLEAN = {"revision": "a" * 40, "uncommitted": []}
+
+
 class GateConditionTests(unittest.TestCase):
     gate = gates.CHAIN[2]
 
-    def evaluate(self, families, readers, *, native=True, checks=None):
+    def evaluate(self, families, readers, *, native=True, checks=None, source=None):
+        states = iter(source or (CLEAN, CLEAN))
         with patch.object(gates, "load_families", return_value=families), patch.object(
             gates, "READERS", readers
-        ), patch.object(gates, "GATE_CHECKS", checks or {}):
+        ), patch.object(gates, "GATE_CHECKS", checks or {}), patch.object(
+            gates, "source_state", side_effect=lambda: next(states)
+        ):
             return gates.evaluate(self.gate, native=native)
 
     def test_prerequisites_name_dependency_and_chain_order_blockers(self):
@@ -64,7 +74,7 @@ class GateConditionTests(unittest.TestCase):
         result = self.evaluate(families, {(self.gate, command): reader(self.gate, command)})
         self.assertFalse(result["passed"])
         self.assertEqual(result["unmet"], ["prerequisite-families"])
-        self.assertEqual(result["conditions"][0]["detail"], [
+        self.assertEqual(rows(result)["prerequisite-families"]["detail"], [
             {"family": "foundation", "status": "planned", "required_by": "depends_on"},
             {"family": gates.CHAIN[0], "status": "planned", "required_by": "chain-order"},
         ])
@@ -77,7 +87,7 @@ class GateConditionTests(unittest.TestCase):
         )
         result = self.evaluate(families, {})
         self.assertEqual(result["unmet"], ["evidence[0]", "evidence[1]"])
-        details = [row["detail"] for row in result["conditions"][1:]]
+        details = [rows(result)[f"evidence[{index}]"]["detail"] for index in range(2)]
         self.assertIn("no qualification reader is registered", details[0])
         self.assertIn("prose placeholder", details[1])
 
@@ -87,7 +97,8 @@ class GateConditionTests(unittest.TestCase):
         result = self.evaluate(families, {(self.gate, command): reader(self.gate, command)}, native=False)
         self.assertFalse(result["passed"])
         self.assertEqual(result["unmet"], ["evidence[0]"])
-        self.assertIsNone(result["conditions"][1]["met"])
+        self.assertIsNone(rows(result)["evidence[0]"]["met"])
+        self.assertNotIn("clean-committed-source", rows(result))
 
     def test_native_pass_requires_every_reader_and_gate_check(self):
         families = complete_chain_families()
@@ -98,10 +109,10 @@ class GateConditionTests(unittest.TestCase):
         failing = {(self.gate, command): reader(self.gate, command, error=gates.EvidenceUnmet("receipt is stale"))}
         result = self.evaluate(families, failing)
         self.assertFalse(result["passed"])
-        self.assertEqual(result["conditions"][1]["detail"], "receipt is stale")
+        self.assertEqual(rows(result)["evidence[0]"]["detail"], "receipt is stale")
 
         crashing = {(self.gate, command): reader(self.gate, command, error=KeyError("coverage"))}
-        self.assertIn("KeyError", self.evaluate(families, crashing)["conditions"][1]["detail"])
+        self.assertIn("KeyError", rows(self.evaluate(families, crashing))["evidence[0]"]["detail"])
 
         check = lambda families: {"id": "completion", "met": False, "detail": "one capability remains"}  # noqa: E731
         result = self.evaluate(families, readers, checks={self.gate: (check,)})
@@ -127,15 +138,31 @@ class GateConditionTests(unittest.TestCase):
         }
         result = self.evaluate(families, readers)
         self.assertEqual(calls, [])
-        self.assertIsNone(result["conditions"][1]["met"])
-        self.assertIn("not executed", result["conditions"][1]["detail"])
+        self.assertIsNone(rows(result)["evidence[0]"]["met"])
+        self.assertIn("not executed", rows(result)["evidence[0]"]["detail"])
 
         readers[(self.gate, "./scripts/dev-x86_64.sh read")] = reader(self.gate, "./scripts/dev-x86_64.sh read")
         result = self.evaluate(families, readers)
         self.assertEqual(calls, ["execute"])
         self.assertTrue(result["passed"])
         self.assertEqual([row["id"] for row in result["conditions"]],
-                         ["prerequisite-families", "evidence[0]", "evidence[1]"])
+                         ["clean-committed-source", "prerequisite-families", "evidence[0]", "evidence[1]",
+                          "source-unchanged"])
+
+    def test_native_reads_require_clean_source_that_stays_unchanged(self):
+        families = complete_chain_families()
+        command = f"./scripts/dev-x86_64.sh {self.gate}"
+        readers = {(self.gate, command): reader(self.gate, command)}
+        dirty = {"revision": "a" * 40, "uncommitted": [" M compat/x86_64/parity.toml"]}
+        result = self.evaluate(families, readers, source=(dirty, dirty))
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["unmet"], ["clean-committed-source"])
+        self.assertEqual(rows(result)["clean-committed-source"]["detail"]["uncommitted"],
+                         [" M compat/x86_64/parity.toml"])
+
+        moved = {"revision": "b" * 40, "uncommitted": []}
+        result = self.evaluate(families, readers, source=(CLEAN, moved))
+        self.assertEqual(result["unmet"], ["source-unchanged"])
 
     def test_entry_prints_the_completion_marker_only_on_a_native_pass(self):
         for passed in (True, False):

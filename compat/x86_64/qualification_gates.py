@@ -587,11 +587,56 @@ def _evidence_condition(
     return condition
 
 
+def source_state() -> dict[str, Any]:
+    """Return the checkout's revision and every uncommitted path, if any."""
+    environment = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+
+    def git(*arguments: str) -> str:
+        try:
+            return subprocess.run(
+                ["git", "-c", f"safe.directory={ROOT}", *arguments],
+                cwd=ROOT, env=environment, stdin=subprocess.DEVNULL, capture_output=True,
+                check=True, text=True,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise GateError(f"cannot read checkout source state: {error}") from error
+
+    return {
+        "revision": git("rev-parse", "HEAD").strip(),
+        "uncommitted": git("status", "--porcelain", "--untracked-files=all").splitlines(),
+    }
+
+
+def _clean_source_condition(state: Mapping[str, Any]) -> dict[str, Any]:
+    uncommitted = list(state["uncommitted"])
+    return {
+        "id": "clean-committed-source",
+        "met": not uncommitted,
+        "detail": (
+            f"clean revision {state['revision']}"
+            if not uncommitted
+            else {"revision": state["revision"], "uncommitted": uncommitted[:20], "count": len(uncommitted)}
+        ),
+    }
+
+
+def _source_unchanged_condition(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
+    unchanged = dict(before) == dict(after)
+    return {
+        "id": "source-unchanged",
+        "met": unchanged,
+        "detail": "source state is identical after every read" if unchanged else {"before": before, "after": after},
+    }
+
+
 def evaluate(gate: str, *, native: bool) -> dict[str, Any]:
     """Return every condition of one gate; ``passed`` only after native reads.
 
-    Execution readers are costly and are attempted only after every other
-    condition of the gate is met. Their row names that deferral otherwise.
+    Native evaluation also requires clean committed source before any read
+    and the identical source state afterwards, so no reader can validate
+    evidence against uncommitted or concurrently edited bytes. Execution
+    readers are costly and are attempted only after every other condition of
+    the gate is met. Their row names that deferral otherwise.
     """
     if gate not in CHAIN:
         raise GateError(f"unknown qualification gate: {gate}")
@@ -601,7 +646,10 @@ def evaluate(gate: str, *, native: bool) -> dict[str, Any]:
     if not isinstance(evidence, list) or not evidence:
         raise GateError(f"gate family {gate} has no native evidence")
     evaluation = Evaluation() if native else None
+    source_before = source_state() if native else None
     conditions = [_prerequisite_condition(gate, families)]
+    if source_before is not None:
+        conditions.insert(0, _clean_source_condition(source_before))
     deferred: list[tuple[int, Mapping[str, Any]]] = []
     evidence_rows: dict[int, dict[str, Any]] = {}
     for index, entry in enumerate(evidence):
@@ -630,6 +678,8 @@ def evaluate(gate: str, *, native: bool) -> dict[str, Any]:
             evidence_rows[index] = _evidence_condition(gate, index, entry, evaluation)
     conditions.extend(evidence_rows[index] for index in sorted(evidence_rows))
     conditions.extend(checks)
+    if source_before is not None:
+        conditions.append(_source_unchanged_condition(source_before, source_state()))
     unmet = [row["id"] for row in conditions if row["met"] is not True]
     return {
         "schema": CONDITIONS_SCHEMA,
@@ -653,6 +703,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print("usage: run_qualification_gate.py GATE", file=sys.stderr)
         return 2
     gate = values[0]
+    # The case interpreter itself starts with PYTHONSAFEPATH=1. Leaf readers
+    # may start their own script entry points, which import script-directory
+    # siblings; do not impose this interpreter's import policy on them.
+    os.environ.pop("PYTHONSAFEPATH", None)
     try:
         result = evaluate(gate, native=True)
     except GateError as error:
