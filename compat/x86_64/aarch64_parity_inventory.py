@@ -524,7 +524,6 @@ def build_inventory() -> dict[str, Any]:
             "aarch64_abi_manifest": sha256(AARCH64_ABI_MANIFEST_PATH),
             "aarch64_headers": sha256(AARCH64_HEADERS_PATH),
             "aarch64_capability_ledger": sha256(BASELINE_CAPABILITIES_PATH),
-            "x86_parity_ledger": sha256(X86_LEDGER_PATH),
             "x86_public_headers": sha256(X86_PUBLIC_HEADERS_PATH),
             "x86_static_c_exports": sha256(X86_STATIC_EXPORTS_PATH),
         },

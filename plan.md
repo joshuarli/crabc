@@ -21,135 +21,42 @@ explicit, never be converted into a pass or a smaller completion claim.
 Update this section in place when the frontier changes. Recorded checkpoints
 are not transferable passes for a different revision.
 
-- **Runtime:** Frozen accounting validates. `campaign-status` has 9/26 families
-  `foundation-verified`, 180 implemented, 26 selected-private, and 17 missing
-  capabilities; all eight qualification gates remain incomplete. POSIX,
-  pthread, resolver, text, loader, and installed-product components passed on
-  frozen `3c47d990d` products, and current-source static/dynamic products
-  passed at `ed30f681b`. Integrated fixes now cover `dlinfo`, once
-  cancellation, worker self naming, `getopt`, CRT startup rejection, GNU-unique
-  scope, late ELF program headers, `fmtmsg`, `fgets`, and allocator-client
-  interposition. The BSD-random
-  quartet has a physical oracle-rebuilt receipt on its source branch; 497
-  unrelated ABI selection blockers remain. Requalify on a stable revision
-  before promoting any family; `libc.posix-runtime` is the next ready transition.
-- **Allocator:** M1 bounded foundations, M2 PageMap/scalar bitmaps, and a
-  metadata lifecycle differential passed at recorded revisions. The integrated
-  child metadata page session, source-once startup, arena NUMA order, abandoned
-  false collection, aligned realloc, VM warning order, and full-queue byte
-  accounting have focused native evidence. Full child Heap/page lifecycle,
-  M2 VM/arenas/init/fault/no-recursion, and M3-M7 aggregate gates remain open.
-  Source `generic_collect` policy and private zeroed realloc paths are now
-  integrated with focused native checks. C remains the selected backend. The
-  merged allocator suite passed 1,159 tests at `7d7ea272b` after two fixture
-  corrections; later M4 edits still need merged qualification.
-- **Integration and qualification:** `rust-toolchain.toml` selects
-  `nightly-2026-09-15`; explicit static/dynamic native-shadow products exist.
-  Accepted C stays default. Native OS/libc aggregation, installed-product
-  unwinder/std/LTO, ordered consumers, allocator M8-M11 and release performance
-  remain open. The clean `ad21441d6` Lua source-build admission passed; older
-  source-bound receipts do not qualify moving `main`. Hardware prerequisites
-  are recorded below.
-- **Preservation:** Pre-upgrade dirty worktree source is under
-  `refs/archive/pre-toolchain*`. AArch64 remains paused and frozen.
-- **Lanes settled (2026-09-24):** No lane agent or lane worktree remains.
-  `main` integrated the paused handoff, the `ed4db0ba6` identity fix, the M2
-  test-binary fix, the fail-closed `allocator-m6`, `consumer.source-build`,
-  and `compat.loader-corpus` gates, the ordered qualification-chain executor
-  (every gate `ready` with named unmet conditions), the executable release
-  scorecard, the owned static product suite, owned dynamic link inspection,
-  musl-exact search/gettext allocation, locale receipt and hidden-body ABI
-  selection, the offline mimalloc tag identity, the child fork repair port,
-  shared pthread product arguments, the resolver family coordinator, and
-  selected-private slices for `text.iconv`, `text.wide-multibyte`, four stdio
-  engine capabilities, `runtime.private-facades`, and `process.globals`
-  (`campaign-status`: 180 implemented, 34 selected-private, 9 missing).
-  Parked on their branches, each ending in a `WIP(lane <id>)` commit:
-  `posix` (a POSIX admission candidate to rerun on merged `main`, plus an
-  experimental registry lock), `pattern` (regex rework; musl transcript
-  differs), `math-time`, `loader`, `m3`, `m6`, `m7`, `alloc-perf` (conflict
-  with `main`), `m2-init-fault` and `m5-exit` (fail the Rust check),
-  `m5-remote` (fails a runner test), `crt-dynamic`, `dynamic-product`,
-  `std-lto`, `m2-vm-arenas`, `alloc-fork` (unfinished), `m5-stress` (an
-  untested arena singleton PageMap span fix), and `m4` (scratch probes only).
-  Keep `ed4db0ba6` out of `main`. No worktrees remain; every branch is kept,
-  and the unmerged commits of the removed pre-campaign worktrees were already
-  superseded on `main`. JSON/log receipts from the frozen POSIX, unwinder,
-  resolver, and product evidence worktrees are in
-  `.work/archive/*-receipts.tar.gz`; keep the allocator SIGSEGV core/log. Old
-  stash entries are under `refs/archive/stash/*`.
-- **Open cross-lane defects (one owner each):** 358 runner scripts still build
-  with plain `cargo rustc` and fail to link `rust_eh_personality` on the pinned
-  nightly (`libc-resolver-runtime` included); generalize `2261f8e20`.
-  `run_pthread_c11_header_abi.sh` and about 500 other `pipefail` sites lose
-  matches through `printf | grep -q`; use here-strings. Static and dynamic
-  products install different `usr/lib/crt1.o`; the combined sysroot needs one
-  entry valid for static `ET_EXEC` and dynamic non-PIE, keeping the
-  static/shared split in libc's `__libc_start_main` as the frozen AArch64
-  `crt/src/normal_entry.rs` did. Owned `sysconf` lacks
-  `_SC_NPROCESSORS_ONLN`/`_CONF` and `_SC_PHYS_PAGES`/`_SC_AVPHYS_PAGES`. Rust
-  page block pops clear `retire_expire`, which pinned `mi_page_malloc_zero`
-  never touches (`lane/m3`). Pre-existing host test failures:
-  `compat/x86_64/tests/test_runner.py` (8), `test_header_callable_inventory.py`
-  (the BSD random quartet awaits the `abi-bsd-receipt` integration),
-  `compat/x86_64/test_owned_dynamic_driver.py` outside the image, and the perf
-  descriptor-closure test. `scripts/check_structure.py` walks worktrees under
-  `.work/`.
+- **State:** `campaign-status` reports 9/26 families `foundation-verified` and
+  180 implemented, 34 selected-private, and 9 missing capabilities; all eight
+  ordered qualification gates are executable and fail closed on named unmet
+  conditions. `libc.posix-runtime` is the next ready family transition; rerun
+  its admission on merged `main`. C mimalloc remains the selected backend;
+  allocator M2–M11 remain open (M6 has a fail-closed gate). The merged
+  allocator unit suite last passed 1,159/1,159 at `f6c8da3c2`.
+- **Parked lanes:** `lane/<id>` branches ending in a `WIP(lane <id>)` commit
+  are the starting points for the next campaign: `posix`, `pattern`,
+  `math-time`, `loader`, `crt-dynamic`, `dynamic-product`, `std-lto`,
+  `m2-vm-arenas`, `m2-init-fault`, `m3`, `m5-remote`, `m5-exit`, `m5-stress`,
+  `m6`, `m7`, `alloc-fork`, `alloc-perf`. Older work is archived under
+  `refs/archive/`; evidence receipts are in `.work/archive/`.
+- **Open cross-cutting defects:** 358 runner scripts build with plain
+  `cargo rustc` and fail to link `rust_eh_personality` on the pinned nightly
+  (generalize `2261f8e20`); ~500 `pipefail` sites use `printf | grep -q` and
+  can lose matches (use here-strings); static and dynamic products install
+  different `crt1.o` (the combined sysroot needs one entry for static `ET_EXEC`
+  and dynamic non-PIE, as the frozen AArch64 `crt/src/normal_entry.rs` did);
+  owned `sysconf` lacks `_SC_NPROCESSORS_*` and `_SC_PHYS_PAGES`/`_AVPHYS_PAGES`;
+  Rust page block pops clear `retire_expire`, which pinned
+  `mi_page_malloc_zero` never touches (`lane/m3`).
 
 ## Parallel lanes
 
-Lanes are ownership boundaries, not schedules. Each runs in
-`.work/worktrees/lane-<id>` on branch `lane/<id>`, commits coherent verified
-increments, rebases on local `main`, and hands off. The integration owner alone
-merges to `main`, runs merged checks, edits this file and central ledgers, and
-removes a lane worktree once its work is merged. A lane touches shared files
-(`compat/x86_64/parity.toml`, `scripts/dev-x86_64.sh`, shared manifests) only
-for its own rows or commands. A failure in shared tooling or another lane's
-boundary is reported to the integration owner, which assigns exactly one fixer;
-lanes never fix it locally in parallel. Assignments are bounded, unique
-deliverables. Never use `git stash`: `refs/stash` is shared by every worktree.
-Implementation overlaps freely; family and milestone qualification still follows
-the dependency order below and in `campaign-status`. Run at most 16 lane agents
-at once (`.claude/settings.json`); builds inside a lane are not throttled, and
-qualifying performance measurements wait for an uncontended host. The
-`.claude/skills/lanes` skill, `.claude/agents/crabc-lane.md`, and
-`scripts/lanes/` hold the orchestration workflow and integration helpers.
+Use the `.claude/skills/lanes` skill and `.claude/agents/crabc-lane.md`: at
+most 16 concurrent lane agents, each with one bounded, unique deliverable and
+an exclusive write boundary in `.work/worktrees/lane-<id>`. The parent session
+alone integrates to `main`. A failure outside a lane's boundary goes to one
+owner. Nobody uses `git stash`. Qualifying performance measurements wait for an
+uncontended host.
 
-| Lane | Owns |
-| --- | --- |
-| `integrate` | Paused-handoff commits above; merged M4 and affected canonical reruns. |
-| `posix` | `libc.posix-runtime`: `process.control`, `system.kernel-admin`, its selected-private rows, source-sealed cohort, `owned-posix-native` admission. |
-| `pthread` | `libc.pthread-tls`: `thread.pthread-c11`, `time.posix-timer-thread-notify`, `process.atfork-exit-hooks`, TLS ownership model, family evidence. |
-| `stdio` | One stream engine: `stdio.stream-io`, `path-stream`, `position-buffering`, `format-scan`, `fopen64-alias`, wide orientation. |
-| `text` | `text.iconv`, `text.wide-multibyte`, `locale.core`, `numeric.parse-float-locale`. |
-| `pattern` | `pattern.regex`, `pattern.wordexp`. |
-| `math-time` | `math.complex`, `math.elementary-fenv-sensitive`, `math.elementary-long-double`, `math.special`, `time.clock-calendar`; text-family assembly. |
-| `resolver` | `libc.resolver` end-to-end owned-product evidence. |
-| `abi-globals` | `process.globals` and final callable/data provider closure. |
-| `abi-selection` | Native ABI selection blockers (`native-abi-selection require-closure`) not owned by a family lane; BSD-random receipt integration. |
-| `c-compat` | Remaining `libc.c-abi-compat` selected-private rows: gettext, crypt/helpers, error reporting, legacy misc, qsort helper, search tables, allocator basic/observability. |
-| `loader` | `loader.dlfcn-basic`, `loader.dlfcn-introspection`, `runtime.loader` general graphs, concurrency, rollback. |
-| `runtime-facades` | `runtime.private-facades` and remaining Rust-facade loader/runtime mappings. |
-| `crt-dynamic` | `crt.dynamic-startup`. |
-| `static-product` | `sysroot.static-tls` and the complete owned static product suite in all static modes. |
-| `dynamic-product` | `sysroot.owned-artifact` dynamic suite, reproducibility, package/extract. |
-| `unwinder` | Installed-product unwinder integration and the `ed4db0ba6` identity fix. |
-| `std-lto` | `consumer.rust-std-lto`. |
-| `source-build` | `consumer.source-build` (Lua) and `compat.loader-corpus` (the frozen 34-workload real-software roster). |
-| `qual-chain` | Fail-closed readiness of `compat.abi-differential`, `compat.posix-process`, `compat.resolver-network`, `capability.accounting`, and dispatch/reader wiring for the rest of the chain. |
-| `runtime-perf` | `performance.release` harness completeness; no qualifying measurements under contention. |
-| `m2-vm-arenas` | Allocator M2 VM and arenas. |
-| `m2-init-fault` | Allocator M2 metadata, initialization, fault injection, no recursion. |
-| `m3` | Allocator M3. |
-| `m4` | Allocator M4, including the aligned-realloc differential. |
-| `m5-remote` | M5 pointer dispatch, remote publication, Loom models. |
-| `m5-exit` | M5 owner-exit traversal, abandonment/reclaim/release, scaffolding removal and architecture ratchet. |
-| `m5-stress` | M5 state auditor, deterministic stress, seeded soak, upstream `test-stress`. |
-| `m6` | Allocator M6 APIs. |
-| `m7` | Allocator M7. |
-| `m8` | Allocator M8 owned-libc integration and native-shadow products. |
-| `alloc-fork` | Final allocator fork contract. |
-| `alloc-perf` | Architecture sanity gate, codegen audit, M9 harness; no qualifying measurements under contention. |
+Validators check structure, cross-references, and runtime receipts; they do not
+restate ledger prose, owner lists, or counts. Tests exercise behavior; they do
+not pin source text. Add neither per-artifact validator functions nor
+source-literal tests.
 
 ## Fixed contracts
 

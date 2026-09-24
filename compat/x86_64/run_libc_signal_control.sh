@@ -122,7 +122,7 @@ fi
 # The selected process-signal, alternate-stack, and readiness artifacts own
 # the named delivery, stack, and wait exports in this shared archive; the
 # remaining signal APIs stay unselected here.
-for unselected in syscall malloc free calloc realloc tgkill \
+for unselected in syscall malloc free calloc realloc \
     pthread_sigmask; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

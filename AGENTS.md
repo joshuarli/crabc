@@ -137,6 +137,10 @@ primitives remain in reviewed dependencies, including vectorized ones.
   fill slots or require a scheduling board, handoff schema, or wave ceremony.
   Run at most 16 concurrent lane agents; do not throttle builds within a lane;
   qualifying benchmarks need an uncontended host.
+- Validators check structure, cross-references, and runtime receipts, not
+  restated ledger prose, owner lists, or counts; tests exercise behavior,
+  not source text. Do not add per-artifact validator functions or
+  source-literal tests.
 - `plan.md` is the only implementation plan and repository-wide progress
   handoff. Update its small Progress status section in place when the frontier
   changes. Put required per-capability/source state in existing manifests and

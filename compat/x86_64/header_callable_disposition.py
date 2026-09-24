@@ -462,10 +462,6 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
         inputs.get("static_c_abi_exports_sha256") == sha256_file(contract.static_exports),
         "inventory was generated against a different static export ratchet",
     )
-    require(
-        inputs.get("parity_ledger_sha256") == sha256_file(contract.parity_ledger),
-        "inventory was generated against a different parity ledger",
-    )
     default_static = partition.get("default_static")
     require(isinstance(default_static, Mapping), "inventory default static provider is invalid")
     default_members = string_list(default_static.get("members"), "inventory default static members", allow_empty=True)
@@ -529,7 +525,6 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
             "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
             "callable_inventory_sha256": sha256_file(contract.callable_inventory),
             "candidate_external_callable_sha256": candidate_name_digest(external),
-            "parity_ledger_sha256": sha256_file(contract.parity_ledger),
             "static_c_abi_exports_sha256": sha256_file(contract.static_exports),
         },
         "scope": dict(contract.policy),

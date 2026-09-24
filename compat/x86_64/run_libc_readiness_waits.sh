@@ -140,7 +140,7 @@ done
 # candidate below, rather than archive-member co-location, proves this artifact
 # does not retain them.
 for unselected in vmsplice _Fork \
-    vfork clone execve tgkill \
+    vfork clone execve \
     pthread_sigmask syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

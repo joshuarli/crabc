@@ -653,23 +653,6 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         ):
             self.assertIn(symbol, default_static)
 
-    def test_inventory_must_be_bound_to_the_current_parity_ledger(self) -> None:
-        contract = DISPOSITION.load_contract()
-        inventory = json.loads(contract.callable_inventory.read_text(encoding="utf-8"))
-        inputs = inventory["inputs"]
-        assert isinstance(inputs, dict)
-        inputs["parity_ledger_sha256"] = "0" * 64
-
-        with TemporaryDirectory() as temporary:
-            fixture = Path(temporary) / "stale-inventory.json"
-            fixture.write_text(json.dumps(inventory), encoding="utf-8")
-            stale_contract = replace(contract, callable_inventory=fixture)
-            with self.assertRaisesRegex(
-                DISPOSITION.HeaderCallableDispositionError,
-                "different parity ledger",
-            ):
-                DISPOSITION.build_report(stale_contract)
-
     def test_zero_missing_reference_names_do_not_complete_header_declaration_parity(self) -> None:
         contract = DISPOSITION.load_contract()
         inventory = json.loads(contract.callable_inventory.read_text(encoding="utf-8"))

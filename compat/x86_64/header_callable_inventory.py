@@ -895,16 +895,9 @@ def refresh_provider_accounting(report: Mapping[str, Any], contract: InventoryCo
         "musl_version": MUSL_VERSION,
         "static_c_abi_exports_sha256": sha256_file(contract.static_exports),
     }
-    require(set(inputs) == {*expected_inputs, "parity_ledger_sha256"}, "checked compiler-derived callable facts have unexpected input bindings")
+    require(set(inputs) == set(expected_inputs), "checked compiler-derived callable facts have unexpected input bindings")
     for name, expected in expected_inputs.items():
         require(inputs.get(name) == expected, f"checked compiler-derived callable facts have stale {name}")
-    stale_ledger_digest = inputs.get("parity_ledger_sha256")
-    require(
-        isinstance(stale_ledger_digest, str)
-        and len(stale_ledger_digest) == 64
-        and all(character in "0123456789abcdef" for character in stale_ledger_digest),
-        "checked provider-accounting parity digest is invalid",
-    )
     candidate_external: list[str] = []
     for index, record in enumerate(records):
         if record.get("tree") == "candidate" and record.get("classification") == "external":
@@ -957,9 +950,6 @@ def refresh_provider_accounting(report: Mapping[str, Any], contract: InventoryCo
     except FeatureArchiveRosterError as error:
         raise InventoryError(f"feature archive provider roster is invalid: {error}") from error
     refreshed = copy.deepcopy(dict(report))
-    refreshed_inputs = dict(report["inputs"])
-    refreshed_inputs["parity_ledger_sha256"] = sha256_file(contract.parity_ledger)
-    refreshed["inputs"] = refreshed_inputs
     refreshed["callable_provider_partition"] = provider_partition.as_report()
     refreshed_summary = dict(summary)
     refreshed_summary["callable_provider_counts"] = provider_partition.counts()
@@ -1059,7 +1049,6 @@ def build_report(
             "linux_uapi_version": LINUX_UAPI_VERSION,
             "musl_source_sha256": MUSL_SOURCE_SHA256,
             "musl_version": MUSL_VERSION,
-            "parity_ledger_sha256": sha256_file(contract.parity_ledger),
             "static_c_abi_exports_sha256": sha256_file(contract.static_exports),
         },
         "scope": {

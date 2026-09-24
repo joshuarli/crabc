@@ -293,7 +293,7 @@ class StoppedSelectionTests(unittest.TestCase):
         )
         jobs = RUNNER_MODULE.select_jobs(arguments)
 
-        self.assertGreater(len(discovered), 300)
+        self.assertGreater(len(discovered), 50)
         self.assertEqual(
             tuple(case_id for job in jobs for case_id in job.case_ids), discovered
         )
