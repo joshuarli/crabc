@@ -12,7 +12,7 @@ not separate calls.
 same root, each with a baseline selector that opens no directory. It
 subtracts each baseline so startup (loader, TLS, allocator initialization)
 cancels, then requires the candidate's workload to make exactly musl's
-directory-stream, descriptor-flag and file-status calls, and no more memory
+directory-stream and file-status calls, and no more descriptor-flag or memory
 mapping calls than musl. musl's passwd lookup also probes nscd through
 `socket`/`connect`/`close`, which the owned runtime deliberately does not, so
 closes are compared net of sockets.
@@ -66,9 +66,14 @@ EQUAL_GROUPS = {
     "open": ("open", "openat"),
     "file-status": ("fstat", "newfstatat", "stat", "lstat", "statx"),
     "getdents64": ("getdents64",),
-    "fcntl": ("fcntl",),
 }
-MAPPING = ("mmap", "munmap", "mremap")
+# Upper bounds: the candidate may omit redundant calls musl makes. musl's
+# fopen("re") sets FD_CLOEXEC twice on the descriptor it opened with
+# O_CLOEXEC (fopen.c, then __fdopen), once per passwd lookup in the corpus.
+BOUNDED_GROUPS = {
+    "fcntl": ("fcntl",),
+    "mapping": ("mmap", "munmap", "mremap"),
+}
 
 
 def workload(counts: Counter, baseline: Counter) -> Counter:
@@ -81,7 +86,7 @@ def compare(oracle: Counter, candidate: Counter) -> dict[str, object]:
     def total(counts: Counter, names: tuple[str, ...]) -> int:
         return sum(counts[name] for name in names)
 
-    report: dict[str, object] = {"equal": {}, "mapping": {}, "close_net_of_socket": {}}
+    report: dict[str, object] = {"equal": {}, "bounded": {}, "close_net_of_socket": {}}
     failures = []
     for group, names in EQUAL_GROUPS.items():
         pair = {"musl": total(oracle, names), "candidate": total(candidate, names)}
@@ -93,10 +98,11 @@ def compare(oracle: Counter, candidate: Counter) -> dict[str, object]:
     report["close_net_of_socket"] = closes
     if closes["musl"] != closes["candidate"]:
         failures.append(f"close {closes}")
-    mapping = {"musl": total(oracle, MAPPING), "candidate": total(candidate, MAPPING)}
-    report["mapping"] = mapping
-    if mapping["candidate"] > mapping["musl"]:
-        failures.append(f"mapping {mapping}")
+    for group, names in BOUNDED_GROUPS.items():
+        pair = {"musl": total(oracle, names), "candidate": total(candidate, names)}
+        report["bounded"][group] = pair
+        if pair["candidate"] > pair["musl"]:
+            failures.append(f"{group} {pair}")
     report["failures"] = failures
     return report
 

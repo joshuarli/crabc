@@ -63,9 +63,11 @@ musl; the `-trace` selector spellings print each observation.
 Every candidate root also traces the `glob-corpus` workload and the
 directory-free `fnmatch-escaped` baseline with `strace -f`, for pinned musl
 and the candidate alike, and `owned_syscall_profile.py compare` subtracts each
-baseline. The candidate must then make exactly musl's opens, `getdents64`,
-`fcntl` and file-status calls and closes (net of musl's nscd sockets), and no
-more `mmap`/`munmap`/`mremap` calls. Musl's `opendir` makes one `open` plus
+baseline. The candidate must then make exactly musl's opens, `getdents64` and
+file-status calls and closes (net of musl's nscd sockets), and no more `fcntl`
+or `mmap`/`munmap`/`mremap` calls. musl's `fopen("re")` sets `FD_CLOEXEC`
+twice on a descriptor it opened with `O_CLOEXEC`; the owned `fopen` sets it
+once (one fewer `fcntl` per passwd lookup in the corpus). Musl's `opendir` makes one `open` plus
 `open`'s close-on-exec `fcntl` and allocates its `DIR` through `calloc`; the
 owned stream follows it (`directory_streams.rs`). Before that, each owned
 stream added an `fstat`, an `F_GETFL`, and an `mmap`/`munmap` pair: about
