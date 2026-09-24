@@ -171,7 +171,8 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         elif family == "dynamic":
             files = (
                 "bin/crabc-cc-dynamic", "share/crabc/crabc_cc_static.py",
-                "share/crabc/owned_dynamic_receipt.py", "share/crabc/dynamic-product-state.json",
+                "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py",
+                "share/crabc/dynamic-product-state.json",
                 "lib/ld-crabc-x86_64.so.1", "usr/lib/crt1.o", "usr/lib/Scrt1.o",
                 "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o",
                 "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a",

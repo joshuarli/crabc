@@ -636,7 +636,8 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     )
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
                          (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py"),
-                         (ROOT / "compat/x86_64/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_receipt.py")):
+                         (ROOT / "compat/x86_64/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_receipt.py"),
+                         (ROOT / "compat/x86_64/owned_dynamic_elf.py", "share/crabc/owned_dynamic_elf.py")):
         common.copy_artifact(source, output / name)
     (output / "bin/crabc-cc-dynamic").chmod(0o755)
     provenance = {"selected_members": {item: common.sha256_file(objects / item) for item in selected},

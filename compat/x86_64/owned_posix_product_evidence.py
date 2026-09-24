@@ -43,6 +43,7 @@ DYNAMIC_REQUIRED = (
     "bin/crabc-cc-dynamic",
     "share/crabc/crabc_cc_static.py",
     "share/crabc/owned_dynamic_receipt.py",
+    "share/crabc/owned_dynamic_elf.py",
     "lib/ld-crabc-x86_64.so.1",
     "usr/lib/crt1.o",
     "usr/lib/Scrt1.o",

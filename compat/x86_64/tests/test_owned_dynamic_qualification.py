@@ -24,6 +24,7 @@ import owned_dynamic_qualification as qualification
 import crabc_cc_owned_dynamic as driver
 
 REAL_PRODUCT_IDENTITY = qualification.product_identity
+REAL_VALIDATE_ELF_INSPECTION = qualification.elf_inspection.validate_record
 
 
 class OwnedDynamicQualificationTests(unittest.TestCase):
@@ -55,6 +56,11 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             # contract. Native component semantics have their own retained
             # report tests; the small catalog fixture is not a native run.
             mock.patch.object(qualification, "validate_loader_corpus_case"),
+            # Fixture executables are placeholder bytes. Real ELF replay is
+            # covered by the inspection module and native driver tests; here
+            # the sidecar's facts stand in for the replayed physical facts.
+            mock.patch.object(qualification.elf_inspection, "validate_record",
+                              side_effect=lambda value, path, **_: value["facts"]),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -69,6 +75,12 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             for name, output in ((f"{product}-consumer", expected), (f"non-pie-{product}", expected), (f"spawn-{product}", b"")):
                 self.put(name, b"owned ELF fixture")
                 self.put(name + ".stdout", output)
+                self.put(name + ".crabc-link.map", b"owned link map\n")
+                self.put(name + ".crabc-elf.json", {"facts": {
+                    "interpreter": "/lib/ld-crabc-x86_64.so.1",
+                    "elf_type": "ET_EXEC" if name.startswith("non-pie-") else "ET_DYN",
+                    "needed": ["libc.so"] if name.startswith("spawn-") else [f"lib{product}.so", "libc.so"],
+                }})
                 self.put(name + ".crabc-link.json", {
                     "schema": 1, "format": driver.FORMAT, "runtime_imports": [],
                     "application_runpath": "/usr/lib", "application_dsos": {},
@@ -520,6 +532,28 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                     qualification.base_evidence(
                         self.work, {product: self.manifest for product in qualification.PRODUCTS}
                     )
+
+    def test_base_evidence_requires_each_replayed_pre_execution_elf_inspection(self):
+        manifests = {product: self.manifest for product in qualification.PRODUCTS}
+        path = self.work / "non-pie-second.crabc-elf.json"
+        original = qualification.read(path)
+        result = qualification.base_evidence(self.work, manifests)
+        self.assertIn(qualification.relative(path), result)
+        self.assertIn(qualification.relative(self.work / "non-pie-second.crabc-link.map"), result)
+        for key, value in (("interpreter", "/lib/ld-musl-x86_64.so.1"), ("elf_type", "ET_DYN"),
+                           ("needed", ["libinstalled.so", "libc.so"]), ("needed", ["libc.so"])):
+            with self.subTest(key=key, value=value):
+                path.write_text(json.dumps({"facts": {**original["facts"], key: value}}))
+                with self.assertRaisesRegex(qualification.QualificationError, "declared product shape"):
+                    qualification.base_evidence(self.work, manifests)
+        path.unlink()
+        with self.assertRaisesRegex(qualification.QualificationError, "missing"):
+            qualification.base_evidence(self.work, manifests)
+        # Without the fixture stand-in, the placeholder bytes cannot replay.
+        path.write_text(json.dumps(original))
+        with mock.patch.object(qualification.elf_inspection, "validate_record", REAL_VALIDATE_ELF_INSPECTION):
+            with self.assertRaisesRegex(qualification.QualificationError, "base ELF inspection"):
+                qualification.base_evidence(self.work, manifests)
 
     def test_base_evidence_rejects_missing_or_hybrid_legacy_receipts(self):
         path = self.work / "installed-consumer.crabc-link.json"

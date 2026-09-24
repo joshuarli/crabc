@@ -87,6 +87,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             (Path(driver.__file__), "bin/crabc-cc-dynamic"),
             (Path(driver.shared.__file__), "share/crabc/crabc_cc_static.py"),
             (Path(driver.receipt_contract.__file__), "share/crabc/owned_dynamic_receipt.py"),
+            (Path(driver.elf_inspection.__file__), "share/crabc/owned_dynamic_elf.py"),
         ):
             destination = root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -232,6 +233,66 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                 fail=self._receipt_value_failure, allow_application_dso_closure=True,
             )
 
+    def test_every_link_output_is_inspected_before_its_receipt_and_rejections_remove_it(self):
+        """Real LLD outputs carry a replayable ELF inspection and retained map."""
+
+        root = self._installed_native_driver_fixture()
+        work = Path(self.temporary.name) / "inspection-work"
+        work.mkdir()
+        leaf_source, main_source = work / "leaf.c", work / "main.c"
+        leaf_source.write_text("int leaf(void) { return 7; }\n")
+        main_source.write_text("extern int leaf(void); int main(void) { return leaf(); }\n")
+        leaf = work / "libleaf.so"
+        outputs = {
+            leaf: ["--dynamic-shared-object", str(leaf_source), "-o", str(leaf)],
+            work / "pie": ["--dynamic-pie", "--application-dso", str(leaf), str(main_source),
+                           "-o", str(work / "pie")],
+            work / "non-pie": ["--dynamic-non-pie", "--application-dso", str(leaf), str(main_source),
+                               "-o", str(work / "non-pie")],
+        }
+        for output, arguments in outputs.items():
+            completed = subprocess.run([sys.executable, str(root / "bin/crabc-cc-dynamic"), *arguments],
+                                       capture_output=True, text=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            inspection_path, map_path = driver.elf_inspection.sidecar_paths(output)
+            link_map = map_path.read_text()
+            self.assertIn(str(root / "usr/lib/crti.o") + ":(.text)", link_map)
+            facts = driver.elf_inspection.validate_record(
+                json.loads(inspection_path.read_text()), output, output_format=driver.FORMAT,
+                fail=self._receipt_value_failure,
+            )
+            self.assertEqual((facts["runpath"], facts["rpath"], facts["gnu_stack_flags"], facts["relro_segments"]),
+                             ("/usr/lib", None, [6], 1))
+            self.assertTrue(facts["bind_now"] and facts["flags_1_now"] and not facts["textrel"])
+            if output == leaf:
+                self.assertEqual((facts["elf_type"], facts["interpreter"], facts["soname"], facts["needed"]),
+                                 ("ET_DYN", None, "libleaf.so", ["libc.so"]))
+            else:
+                self.assertEqual((facts["elf_type"], facts["interpreter"], facts["needed"]),
+                                 ("ET_DYN" if output.name == "pie" else "ET_EXEC", driver.INTERPRETER,
+                                  ["libleaf.so", "libc.so"]))
+                self.assertEqual(facts["undefined_symbols"], ["leaf"])
+
+        rejected = work / "rejected"
+        forced = driver.elf_inspection.InspectionError("forced drift")
+        with patch.object(driver.elf_inspection, "require_expected", side_effect=forced), \
+                self.assertRaisesRegex(driver.shared.DriverError, "final ELF inspection rejected.*forced drift"):
+            driver.execute(root, ["--dynamic-pie", "--application-dso", str(leaf), str(main_source),
+                                  "-o", str(rejected)])
+        for path in (rejected, Path(str(rejected) + ".crabc-link.json"),
+                     *driver.elf_inspection.sidecar_paths(rejected)):
+            self.assertFalse(path.exists(), path)
+
+        occupied = work / "occupied"
+        occupied_map = driver.elf_inspection.sidecar_paths(occupied)[1]
+        occupied_map.write_text("foreign map\n")
+        with patch.object(driver, "run") as run, \
+                self.assertRaisesRegex(driver.shared.DriverError, "crabc-link.map"):
+            driver.execute(root, ["--dynamic-pie", str(main_source), "--application-dso", str(leaf),
+                                  "-o", str(occupied)])
+        run.assert_not_called()
+        self.assertEqual(occupied_map.read_text(), "foreign map\n")
+
     def test_transitive_closure_preserves_exact_lazy_dso_runtime_import_exceptions(self):
         """A receipt-declared lazy import is allowed; an accidental one is not."""
 
@@ -308,9 +369,12 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             ]
             return "\n".join(str(path) for path in trace)
 
+        # The mocked link writes placeholder bytes; real LLD outputs are
+        # inspected by the native ELF-inspection test.
         with patch.object(driver.shared, "linker", return_value=str(linker)), \
              patch.object(driver.shared, "require_x86_64_relocatable_object", return_value=workload), \
              patch.object(driver, "dynamic_symbols", return_value=(set(), set())), \
+             patch.object(driver, "final_elf_inspection", return_value={}), \
              patch.object(driver, "run", side_effect=link):
             driver.execute(self.root, ["--dynamic-pie", *search_arguments, str(workload), "-o", str(output)])
         return workload, output, Path(str(output) + ".crabc-link.json")
@@ -355,6 +419,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                  patch.object(driver.shared, "linker", return_value=str(linker)), \
                  patch.object(driver.shared, "compiler", return_value="/owned/gcc"), \
                  patch.object(driver, "dynamic_symbols", return_value=(set(), set())), \
+                 patch.object(driver, "final_elf_inspection", return_value={}), \
                  patch.object(driver, "run", side_effect=run):
                 driver.execute(self.root, ["--dynamic-pie", str(source), "-o", str(output)])
             self.assertEqual(len(objects), 1)
@@ -596,7 +661,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
     def test_installed_driver_import_does_not_mutate_payload_without_python_environment(self):
         for relative, source in (("bin/crabc-cc-dynamic", Path(driver.__file__)),
                                  ("share/crabc/crabc_cc_static.py", Path(driver.shared.__file__)),
-                                 ("share/crabc/owned_dynamic_receipt.py", Path(driver.receipt_contract.__file__))):
+                                 ("share/crabc/owned_dynamic_receipt.py", Path(driver.receipt_contract.__file__)),
+                                 ("share/crabc/owned_dynamic_elf.py", Path(driver.elf_inspection.__file__))):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(source.read_bytes())

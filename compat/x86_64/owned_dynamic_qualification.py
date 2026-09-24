@@ -22,6 +22,7 @@ import tarfile
 import tempfile
 import tomllib
 
+import owned_dynamic_elf as elf_inspection
 import owned_dynamic_receipt as receipt_contract
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -574,7 +575,20 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
             require(receipt.get("mode") == ("exec" if name.startswith("non-pie-") else "pie"), "base executable mode mismatch")
             require(receipt.get("campaign_complete") is False and receipt.get("binding") == "now", "base driver purity receipt drifted")
             require(receipt.get("link_trace") and receipt.get("owned_runtime_inputs"), "base driver purity evidence missing")
-            for path in (binary, output, receipt_path):
+            # Replay the driver's pre-execution ELF inspection on this host:
+            # the retained bytes, not the sidecar's claims, must show the
+            # canonical interpreter, mode and exact dependency roots.
+            inspection_path, map_path = elf_inspection.sidecar_paths(binary)
+            facts = elf_inspection.validate_record(
+                read(inspection_path), binary, output_format="crabc-x86-64-owned-dynamic-sysroot-v1",
+                fail=lambda message: require(False, f"base ELF inspection: {message}"),
+                recorded_path=lambda local: source_mount.rstrip("/") + "/" + local.relative_to(ROOT).as_posix(),
+            )
+            needed = ["libc.so"] if name.startswith("spawn-") else [f"lib{product}.so", "libc.so"]
+            require(facts["interpreter"] == "/lib/ld-crabc-x86_64.so.1" and facts["needed"] == needed
+                    and facts["elf_type"] == ("ET_EXEC" if name.startswith("non-pie-") else "ET_DYN"),
+                    "base executable inspection does not show its declared product shape")
+            for path in (binary, output, receipt_path, inspection_path, map_path):
                 result[relative(path)] = digest(path)
     return result
 

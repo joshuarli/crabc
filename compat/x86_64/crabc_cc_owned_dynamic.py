@@ -25,6 +25,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "share/crabc"))
 import crabc_cc_static as shared
+import owned_dynamic_elf as elf_inspection
 import owned_dynamic_receipt as receipt_contract
 
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
@@ -32,7 +33,7 @@ INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
 REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
             "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1",
-            "share/crabc/owned_dynamic_receipt.py"}
+            "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py"}
 APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
 RECEIPT_V1_FIELDS = receipt_contract.V1_FIELDS
 RECEIPT_V2_FIELDS = receipt_contract.V2_FIELDS
@@ -90,6 +91,55 @@ def reserve_receipt(path: Path):
                         path.unlink()
                 except FileNotFoundError:
                     pass
+
+
+@contextmanager
+def reserve_link_map(path: Path):
+    """Claim LLD's map sidecar name before linking; drop it if the link fails.
+
+    LLD writes the map itself, so the claimed empty file is replaced in place
+    by the successful link. An existing path, symlink or hardlink is rejected
+    before any tool runs, exactly like the JSON sidecars.
+    """
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    except OSError as error:
+        raise shared.DriverError(f"cannot reserve dynamic link map: {path}: {error}") from error
+    os.close(descriptor)
+    complete = False
+
+    def accept() -> None:
+        nonlocal complete
+        shared.require_regular(path, "dynamic link map")
+        complete = True
+
+    try:
+        yield accept
+    finally:
+        if not complete:
+            try:
+                if path.is_file() and not path.is_symlink():
+                    path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def final_elf_inspection(output: Path, expected: elf_inspection.Expectation, link_map: Path) -> dict:
+    """Inspect one just-linked output before any caller can execute it.
+
+    A rejected output is removed: LLD has already replaced the requested path,
+    and a runnable artifact without a receipt must not survive the failure.
+    """
+    try:
+        facts = elf_inspection.inspect(output)
+        elf_inspection.require_expected(facts, expected)
+    except (elf_inspection.InspectionError, OSError) as error:
+        try:
+            output.unlink()
+        except FileNotFoundError:
+            pass
+        raise shared.DriverError(f"final ELF inspection rejected {output}: {error}") from error
+    return elf_inspection.record(output, facts, expected, output_format=FORMAT, link_map=link_map)
 
 
 def retain_link_evidence() -> bool:
@@ -634,13 +684,17 @@ def execute(root: Path, arguments: list[str]) -> None:
             dependency_output, invocation.sources + invocation.objects + (output,)
         )
     receipt = Path(str(output) + ".crabc-link.json")
-    shared.validate_application_output(root, receipt)
-    shared.validate_application_output_disjoint(
-        receipt, invocation.sources + invocation.objects + tuple(dsos)
-        + tuple(transitive_dsos) + (output,)
-    )
+    inspection_path, map_path = elf_inspection.sidecar_paths(output)
+    for sidecar in (receipt, inspection_path, map_path):
+        shared.validate_application_output(root, sidecar)
+        shared.validate_application_output_disjoint(
+            sidecar, invocation.sources + invocation.objects + tuple(dsos)
+            + tuple(transitive_dsos) + (output,)
+        )
     output.parent.mkdir(parents=True, exist_ok=True)
     with (nullcontext(None) if invocation.compile_only else reserve_receipt(receipt)) as receipt_stream, \
+         (nullcontext(None) if invocation.compile_only else reserve_receipt(inspection_path)) as inspection_stream, \
+         (nullcontext(None) if invocation.compile_only else reserve_link_map(map_path)) as accept_map, \
          link_evidence_workspace(output.parent, retain=retain_evidence) as temporary:
         objects = [shared.require_x86_64_relocatable_object(root, path) for path in invocation.objects]
         for index, source in enumerate(invocation.sources):
@@ -716,7 +770,7 @@ def execute(root: Path, arguments: list[str]) -> None:
         link += [str(library / "crti.o"), *(str(path) for path in objects),
                  *(str(path) for path in direct_dso_paths), str(library / "libc.so"),
                  str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(output)]
-        trace = run([*link[:-2], "--trace", *link[-2:]], temporary).splitlines()
+        trace = run([*link[:-2], "--trace", f"-Map={map_path}", *link[-2:]], temporary).splitlines()
         runtime = [library / name for name in ("crti.o", "libc.so", "crtn.o")]
         if mode != "shared": runtime += [library / entry_object, library / "crabc-dynamic-attach.o"]
         direct = [*runtime, *objects, *direct_dso_paths]
@@ -743,6 +797,17 @@ def execute(root: Path, arguments: list[str]) -> None:
             ] + ["libc.so"]
             if elf_needed(output, temporary) != expected_needed:
                 raise shared.DriverError("linked executable DT_NEEDED differs from declared direct DSO roots")
+        # Every direct application DSO owns exactly its basename SONAME, and
+        # this link never uses --as-needed: DT_NEEDED is their link order then
+        # libc.so. The inspection is complete before any receipt exists.
+        inspection = final_elf_inspection(output, elf_inspection.Expectation(
+            mode=mode, interpreter=INTERPRETER,
+            needed=(*(path.name for path in direct_dso_paths), "libc.so"),
+            soname=output.name if mode == "shared" else None,
+            search_kind=application_search_kind, search_path=application_search_path,
+            binding=binding, hash_style=application_hash_style,
+            runtime_imports=frozenset(runtime_imports), provided_symbols=frozenset(provided),
+        ), map_path)
         record = {"schema": 3 if closure_enabled else 2, "format": FORMAT, "mode": mode, "binding": binding,
                   "runtime_imports": sorted(runtime_imports), "application_runpath": application_runpath,
                   "application_rpath": application_rpath, "application_search_kind": application_search_kind,
@@ -784,6 +849,8 @@ def execute(root: Path, arguments: list[str]) -> None:
             record["application_dso_needed"] = {
                 name: list(node.needed) for name, node in closure_nodes.items()
             }
+        accept_map()
+        inspection_stream(json.dumps(inspection, indent=2, sort_keys=True) + "\n")
         receipt_stream(json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 

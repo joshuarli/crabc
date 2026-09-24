@@ -33,7 +33,8 @@ excluded, so there is no checked-in self-hash or commit cycle.
   observations, symlinks and fixture node types, without following symlinks.
 - `finish --work PATH` validates every registered case for `installed`,
   `second`, and `extracted`; exact manifests and payloads; base consumer,
-  spawn and non-PIE observations and owned-driver receipts; oracle evidence;
+  spawn and non-PIE observations and owned-driver receipts; each base
+  executable's replayed ELF inspection and link map; oracle evidence;
   identical independent archives and their exact installed payload contents.
   It writes `qualification.json` with status `qualified-pending-review`.
 - `validate --receipt PATH` revalidates that receipt against live source,
@@ -125,6 +126,22 @@ real child lifecycle checks, cancellation-point distinction, and stated
 process-control accounting remains a composite with separate trio, fork, and
 spawn/file-action evidence. Run the full focused matrix with
 `./scripts/dev-x86_64.sh owned-process-control`.
+
+Every installed-driver link also inspects its final ELF before any caller can
+execute it. `owned_dynamic_elf.py`, installed as
+`share/crabc/owned_dynamic_elf.py`, parses the output directly rather than
+reading `readelf` text. It requires the declared ELF type, the canonical
+`PT_INTERP` for executables and none for DSOs, and `DT_NEEDED` equal to the
+declared direct DSOs then `libc.so`. `DT_SONAME`, the declared RUNPATH or
+RPATH, NOW or declared lazy binding, and the hash style must also match. The
+output needs exactly one non-executable `PT_GNU_STACK` and one
+`PT_GNU_RELRO`, no writable executable load, and at most one `PT_TLS`. Text
+relocations, symbol versioning and IFUNC fail. Dynamic relocation kinds must
+be ones the owned loader applies, COPY stays out of DSOs, and every strong
+import resolves through declared providers or a declared lazy import. A
+rejected output is removed. An accepted one gets `<output>.crabc-elf.json`
+and LLD's `<output>.crabc-link.map` beside its receipt. The receipt schema is
+unchanged.
 
 The main thread keeps the initial wire DTV/count at FS+8/FS+16. The loader
 publishes current runtime TLS views at FS+24 and owns generation and module

@@ -46,6 +46,7 @@ class OwnedDynamicPackageTests(unittest.TestCase):
             "usr/lib/libcrabc-builtins.a": 0o644,
             "share/crabc/crabc_cc_static.py": 0o644,
             "share/crabc/owned_dynamic_receipt.py": 0o644,
+            "share/crabc/owned_dynamic_elf.py": 0o644,
         }
         self.assertTrue(package.driver.REQUIRED <= modes.keys())
         self.assertEqual(
