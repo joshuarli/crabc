@@ -128,14 +128,13 @@ Its source mapping, child-state contract, and static companion evidence are
 in [`owned-process-trio.md`](owned-process-trio.md). Run the focused full
 linkage matrix with `./scripts/dev-x86_64.sh owned-process-trio`.
 
-The `process-control` catalog case runs one installed-header workload for the
-residual exec, priority, group/session, wait, and spawn-attribute names in
-both dynamic forms and by direct interpreter entry. Its 31-name source mapping,
-real child lifecycle checks, cancellation-point distinction, and stated
-`fexecve` direct `execveat(2)` `ENOSYS` difference are in
-[`owned-process-control.md`](owned-process-control.md). The documented 44-name
-process-control accounting remains a composite with separate trio, fork, and
-spawn/file-action evidence. Run the full focused matrix with
+The `process-control` catalog case runs one installed-header workload for all
+44 frozen process-control names in both dynamic forms and by direct
+interpreter entry. Its source mapping, real child lifecycle checks,
+cancellation-point distinction, and stated `fexecve` direct `execveat(2)`
+`ENOSYS` difference are in
+[`owned-process-control.md`](owned-process-control.md). Run the full focused
+matrix with
 `./scripts/dev-x86_64.sh owned-process-control`.
 
 Every installed-driver link also inspects its final ELF before any caller can

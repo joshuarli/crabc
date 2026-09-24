@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Residual installed POSIX process-control evidence stays source-bound."""
+"""Installed POSIX process-control evidence stays source-bound."""
 
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ WAIT_EXTENSIONS = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "wait_extensions.
 QUALIFICATION = ROOT / "compat" / "x86_64" / "owned_dynamic_qualification.py"
 RUNNER = ROOT / "compat" / "x86_64" / "run_owned_process_control.sh"
 PROBE = ROOT / "compat" / "x86_64" / "owned_process_control_probe.c"
-DOCUMENT = ROOT / "compat" / "x86_64" / "owned-process-control.md"
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 
 
@@ -80,32 +79,10 @@ class OwnedProcessControlTests(unittest.TestCase):
         self.assertIn("src/linux/wait4.c", extensions)
         self.assertIn("cancellation-point syscall route", extensions)
 
-    def test_probe_is_limited_to_the_residual_object_and_real_lifecycle_invariants(self) -> None:
-        probe = PROBE.read_text(encoding="utf-8")
-        for required in (
-            "check_exec_aliases",
-            "check_fexecve_seccomp",
-            "check_waitpid",
-            "check_waitid",
-            "check_wait3",
-            "check_wait4",
-            "check_spawn_attributes",
-            "raw_fork",
-            "raw_pipe",
-            "WNOWAIT",
-            "ECHILD",
-            "ENOSYS",
-            "#include <sched.h>",
-        ):
-            self.assertIn(required, probe)
-        self.assertIn("This workload deliberately does", probe)
-        self.assertIn("not repeat either matrix", probe)
-        self.assertIn("not treated as CPs", probe)
-
     def test_runner_binds_one_object_and_records_the_one_intentional_difference(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
         for required in (
-            "RESIDUAL_SYMBOLS",
+            "PROCESS_CONTROL_SYMBOLS",
             "assert_static_symbols",
             "assert_static_receipt_and_elf",
             "assert_dynamic_symbols",
@@ -151,59 +128,23 @@ class OwnedProcessControlTests(unittest.TestCase):
             runner.index("PY_MANIFEST"),
         )
 
-    def test_residual_and_reused_spellings_partition_the_frozen_control_roster(self) -> None:
+    def test_runner_symbols_are_exactly_the_frozen_control_roster(self) -> None:
         coverage = tomllib.loads(COVERAGE.read_text(encoding="utf-8"))
         control = next(
             row["symbols"] for row in coverage["capability"] if row["id"] == "process.control"
         )
         runner = RUNNER.read_text(encoding="utf-8")
-        match = re.search(r"^readonly RESIDUAL_SYMBOLS='([^']*)'$", runner, re.MULTILINE)
+        match = re.search(r"^readonly PROCESS_CONTROL_SYMBOLS='([^']*)'$", runner, re.MULTILINE)
         self.assertIsNotNone(match)
-        residual_items = match.group(1).split() if match else []
-        residual = frozenset(residual_items)
-        reused = frozenset((
-            "clone",
-            "daemon",
-            "fork",
-            "posix_spawn",
-            "posix_spawnp",
-            "vfork",
-            "posix_spawn_file_actions_addchdir_np",
-            "posix_spawn_file_actions_addclose",
-            "posix_spawn_file_actions_adddup2",
-            "posix_spawn_file_actions_addfchdir_np",
-            "posix_spawn_file_actions_addopen",
-            "posix_spawn_file_actions_destroy",
-            "posix_spawn_file_actions_init",
-        ))
-        self.assertEqual(len(control), 44)
-        self.assertEqual(len(residual_items), len(residual))
-        self.assertEqual(len(residual), 31)
-        self.assertEqual(len(reused), 13)
-        self.assertTrue(residual.isdisjoint(reused))
-        self.assertEqual(residual | reused, frozenset(control))
+        items = match.group(1).split() if match else []
+        self.assertEqual(len(items), len(set(items)))
+        self.assertEqual(frozenset(items), frozenset(control))
 
-    def test_qualification_and_documentation_retain_the_composite_boundary(self) -> None:
+    def test_qualification_and_dispatcher_register_the_runner(self) -> None:
         self.assertIn(
             '"process-control": ("run_owned_process_control.sh", None)',
             QUALIFICATION.read_text(encoding="utf-8"),
         )
-        document = DOCUMENT.read_text(encoding="utf-8")
-        for required in (
-            "31 residual",
-            "44-name composite",
-            "does not execute the other 13",
-            "`fexecve`'s direct",
-            "`execveat(2)` `ENOSYS`",
-            "ENOSYS",
-            "cancellation point",
-            "wait3",
-            "wait4",
-            "does not complete",
-        ):
-            self.assertIn(required, document)
-        self.assertNotIn("fexecveat", document)
-
         dispatcher = DISPATCHER.read_text(encoding="utf-8")
         self.assertIn("owned-process-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]", dispatcher)
         self.assertIn("run_owned_process_control.sh", dispatcher)

@@ -509,11 +509,11 @@ and remaining scope.
 ## Installed residual POSIX process control
 
 `./scripts/dev-x86_64.sh owned-process-control [DYNAMIC_SYSROOT]` runs one
-installed-header object for the residual exec, priority, group/session, wait,
-and spawn-attribute providers through pinned musl, static/static-PIE, and
-dynamic PIE/non-PIE kernel and direct-interpreter products. The
-[component contract](owned-process-control.md) identifies its 31-name scope,
-the separate 44-name composite accounting, lifecycle invariants,
+installed-header object for all 44 frozen process-control providers through
+pinned musl, static/static-PIE, and dynamic PIE/non-PIE kernel and
+direct-interpreter products. The
+[component contract](owned-process-control.md) identifies its scope,
+lifecycle invariants,
 cancellation-point boundary, and explicit `fexecve` direct `execveat(2)`
 `ENOSYS` difference.
 

@@ -1,17 +1,20 @@
-/* Installed Linux/x86-64 residual process-control C workload.
+/* Installed Linux/x86-64 process-control C workload.
  *
- * Pinned musl 1.2.6 source mapping:
+ * This one object exercises the complete frozen 44-name `process.control`
+ * roster. Pinned musl 1.2.6 source mapping:
+ * - src/process/{fork,vfork}.c, src/linux/clone.c, and src/legacy/daemon.c;
  * - src/process/{execve,execv,execvp,execl,execle,execlp,fexecve}.c;
  * - src/unistd/{nice,setpgid,setpgrp,setsid}.c;
- * - src/process/{wait,waitpid,waitid}.c and src/linux/{wait3,wait4}.c; and
+ * - src/process/{wait,waitpid,waitid}.c and src/linux/{wait3,wait4}.c;
+ * - src/process/{posix_spawn,posix_spawnp}.c and
+ *   posix_spawn_file_actions_{init,destroy,addopen,addclose,adddup2,
+ *   addchdir,addfchdir}.c; and
  * - src/process/posix_spawnattr_{init,destroy,setflags,getflags,setpgroup,
  *   getpgroup,sched,setsigmask,getsigmask,setsigdefault,getsigdefault}.c.
  *
- * `owned_process_trio_probe.c` separately owns installed clone/vfork/daemon
- * behavior, and `owned_spawn_probe.c` separately owns posix_spawn/p plus its
- * seven file-action and child-execution matrix. This workload deliberately does
- * not repeat either matrix: its 31 names plus those 12 and the separate
- * dynamic-fork result partition the documented 44-name process-control roster.
+ * `owned_process_trio_probe.c` and `owned_spawn_probe.c` keep their deeper
+ * clone/vfork/daemon and spawn rollback matrices; the cases here make every
+ * roster name observable from the same installed object in every mode.
  *
  * Every process-state change and every blocking wait here lives in a raw
  * fixture child with a pipe handshake.  The raw plumbing is test control, not
@@ -23,8 +26,8 @@
  * The fexecve seccomp subcase records the project Linux-5.10 policy.  Musl
  * falls back from execveat(2) ENOSYS through /proc/self/fd and remaps a final
  * ENOENT to EBADF.  crabc deliberately exposes the direct ENOSYS without that
- * procfs fallback.  The runner compares that one stated difference explicitly
- * instead of weakening it into a generic oracle mismatch.
+ * pre-5.10 procfs fallback.  The runner compares that one stated difference
+ * explicitly instead of weakening it into a generic oracle mismatch.
  */
 
 #ifndef _GNU_SOURCE
@@ -45,6 +48,7 @@
 #include <spawn.h>
 #include <stddef.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -80,6 +84,21 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&execvpe),
     int (*)(const char *, char *const [], char *const [])), "execvpe declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&fexecve),
     int (*)(int, char *const [], char *const [])), "fexecve declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&fork), pid_t (*)(void)),
+    "fork declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&vfork), pid_t (*)(void)),
+    "vfork declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&clone),
+    int (*)(int (*)(void *), void *, int, void *, ...)), "clone declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&daemon), int (*)(int, int)),
+    "daemon declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&posix_spawn),
+    int (*)(pid_t *__restrict, const char *__restrict,
+        const posix_spawn_file_actions_t *, const posix_spawnattr_t *__restrict,
+        char *const [__restrict], char *const [__restrict])),
+    "posix_spawn declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&posix_spawnp),
+    __typeof__(&posix_spawn)), "posix_spawnp declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&nice), int (*)(int)),
     "nice declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&setpgid),
@@ -299,6 +318,36 @@ static int usage_is_canonical(const struct rusage *usage)
         usage->ru_majflt >= 0 && usage->ru_nvcsw >= 0 && usage->ru_nivcsw >= 0;
 }
 
+/* File-action descriptors and directories observed by a spawned child. */
+#define SPAWN_OPENED_FD 7
+#define SPAWN_REPORT_FD 8
+#define SPAWN_DIRECTORY "/process-control-spawn"
+
+/* A posix_spawn/posix_spawnp child: its file actions opened the executable
+ * read-only at SPAWN_OPENED_FD, duplicated the report pipe to
+ * SPAWN_REPORT_FD, closed the inherited pipe ends, and changed directory by
+ * pathname (spawn) or descriptor (spawnp). */
+static int spawned_child(const char *mode, const char *token)
+{
+    char directory[sizeof(SPAWN_DIRECTORY) + 1];
+    char report = same_string(mode, "spawn") ? 's' : 'p';
+    int flags;
+    if (token == NULL || !same_string(token, mode))
+        return 92;
+    flags = fcntl(SPAWN_OPENED_FD, F_GETFL);
+    if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY)
+        return 93;
+    if (fcntl(3, F_GETFD) != -1 || errno != EBADF || fcntl(4, F_GETFD) != -1 ||
+        errno != EBADF || fcntl(5, F_GETFD) != -1 || errno != EBADF)
+        return 94;
+    if (getcwd(directory, sizeof(directory)) == NULL ||
+        !same_string(directory, SPAWN_DIRECTORY))
+        return 95;
+    if (!raw_write_full(SPAWN_REPORT_FD, &report, 1))
+        return 96;
+    return 0;
+}
+
 static int exec_child(const char *mode, char *const environment[])
 {
     const char *token = environment_value(environment, "EXEC_TOKEN");
@@ -314,6 +363,10 @@ static int exec_child(const char *mode, char *const environment[])
         expected = "execvpe";
     else if (same_string(mode, "fexecve"))
         expected = "fexecve";
+    else if (same_string(mode, "vfork"))
+        expected = "vfork";
+    else if (same_string(mode, "spawn") || same_string(mode, "spawnp"))
+        return spawned_child(mode, token);
     else
         return 90;
     return token != NULL && same_string(token, expected) ? 0 : 91;
@@ -772,6 +825,211 @@ static int check_spawn_attributes(void)
     return 0;
 }
 
+static int fork_child_matches(pid_t parent, int report)
+{
+    pid_t observed[2] = { getpid(), getppid() };
+    return raw_write_full(report, observed, sizeof(observed)) &&
+        observed[0] != parent && observed[1] == parent;
+}
+
+static int check_fork(void)
+{
+    int report[2] = { -1, -1 };
+    pid_t parent = getpid();
+    pid_t observed[2] = { 0, 0 };
+    int status = 0;
+    pid_t child;
+    if (raw_pipe(report) != 0)
+        return 1;
+    child = fork();
+    if (child == 0) {
+        (void)raw_close(report[0]);
+        raw_exit(fork_child_matches(parent, report[1]) ? 47 : 1);
+    }
+    (void)raw_close(report[1]);
+    if (child <= 0 || !raw_read_full(report[0], observed, sizeof(observed)) ||
+        observed[0] != child || observed[1] != parent ||
+        raw_wait_for(child, &status) != child || !exited_with(status, 47)) {
+        (void)raw_close(report[0]);
+        return 2;
+    }
+    (void)raw_close(report[0]);
+    return 0;
+}
+
+static unsigned char clone_stack[65536] __attribute__((aligned(16)));
+
+static int clone_callback(void *argument)
+{
+    return *(int *)argument == 0x5eed ? 29 : 1;
+}
+
+static int check_clone(void)
+{
+    int argument = 0x5eed;
+    int status = 0;
+    int child;
+    errno = E2BIG;
+    if (clone(clone_callback, NULL, SIGCHLD, &argument) != -1 || errno != EINVAL)
+        return 1;
+    errno = E2BIG;
+    if (clone(clone_callback, clone_stack + sizeof(clone_stack), SIGCHLD | CLONE_THREAD,
+            &argument) != -1 || errno != EINVAL)
+        return 2;
+    errno = E2BIG;
+    child = clone(clone_callback, clone_stack + sizeof(clone_stack), SIGCHLD, &argument);
+    if (child <= 0 || errno != E2BIG || raw_wait_for(child, &status) != child ||
+        !exited_with(status, 29))
+        return 3;
+    return 0;
+}
+
+static int check_vfork(void)
+{
+    char *arguments[] = { "consumer", "--exec-child", "vfork", NULL };
+    char *environment[] = { "PATH=/", "EXEC_TOKEN=vfork", "LC_ALL=C", NULL };
+    int status = 0;
+    pid_t child = vfork();
+    if (child == 0) {
+        (void)execve(CRABC_PROCESS_CONTROL_EXECUTABLE, arguments, environment);
+        raw_exit(99);
+    }
+    if (child <= 0 || raw_wait_for(child, &status) != child || !exited_with(status, 0))
+        return 1;
+    return 0;
+}
+
+/* daemon(1, 1) keeps the directory and descriptors; the other arguments need
+ * /dev/null and a root change that owned_process_trio_probe.c covers. A
+ * subreaper supervisor makes both intermediate exits and the daemon reapable. */
+static int daemon_supervisor(void)
+{
+    int report[2] = { -1, -1 };
+    pid_t observed[3] = { 0, 0, 0 };
+    int status = 0;
+    int reaped = 0;
+    long child;
+    if (raw_syscall5(SYS_prctl, 36, 1, 0, 0, 0) != 0 || raw_pipe(report) != 0)
+        return 1;
+    child = fork();
+    if (child == 0) {
+        pid_t original = getpid();
+        (void)raw_close(report[0]);
+        if (daemon(1, 1) != 0)
+            raw_exit(2);
+        observed[0] = getpid() != original;
+        observed[1] = getsid(0) != getpid();
+        observed[2] = getpgrp() == getsid(0);
+        raw_exit(raw_write_full(report[1], observed, sizeof(observed)) ? 0 : 3);
+    }
+    (void)raw_close(report[1]);
+    if (child <= 0 || !raw_read_full(report[0], observed, sizeof(observed)) ||
+        observed[0] != 1 || observed[1] != 1 || observed[2] != 1)
+        return 4;
+    (void)raw_close(report[0]);
+    while (raw_wait_for(-1, &status) > 0) {
+        if (!exited_with(status, 0))
+            return 5;
+        ++reaped;
+    }
+    return reaped == 3 ? 0 : 6;
+}
+
+static int check_daemon(void)
+{
+    int status = 0;
+    /* The supervisor and daemon's first child come from public fork: libc
+     * fork is ordinary after libc fork, and check_fork already proved it. */
+    pid_t child = fork();
+    if (child == 0)
+        raw_exit(daemon_supervisor());
+    if (child <= 0 || raw_wait_for((pid_t)child, &status) != child)
+        return 10;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 11;
+}
+
+static int check_file_action_errors(void)
+{
+    posix_spawn_file_actions_t actions;
+    fill_bytes(&actions, 0xa5, sizeof(actions));
+    errno = E2BIG;
+    if (posix_spawn_file_actions_init(&actions) != 0 || errno != E2BIG)
+        return 1;
+    if (posix_spawn_file_actions_addclose(&actions, -1) != EBADF ||
+        posix_spawn_file_actions_adddup2(&actions, -1, 3) != EBADF ||
+        posix_spawn_file_actions_adddup2(&actions, 3, -1) != EBADF ||
+        posix_spawn_file_actions_addopen(&actions, -1, "/", O_RDONLY, 0) != EBADF ||
+        posix_spawn_file_actions_addfchdir_np(&actions, -1) != EBADF || errno != E2BIG)
+        return 2;
+    if (posix_spawn_file_actions_destroy(&actions) != 0 || errno != E2BIG)
+        return 3;
+    return 0;
+}
+
+/* Both spawn entries run the same consumer through all five file-action
+ * operations, then posix_spawn reports a missing image without a pid. */
+static int check_spawn(int search)
+{
+    const char *mode = search ? "spawnp" : "spawn";
+    char *arguments[] = { "consumer", "--exec-child", (char *)mode, NULL };
+    char *environment[] = { "PATH=/", search ? "EXEC_TOKEN=spawnp" : "EXEC_TOKEN=spawn",
+        "LC_ALL=C", NULL };
+    posix_spawn_file_actions_t actions;
+    int report[2] = { -1, -1 };
+    int directory = -1;
+    int result;
+    int status = 0;
+    char observed = 0;
+    pid_t child = -1;
+    if (mkdir(SPAWN_DIRECTORY, 0755) != 0 && errno != EEXIST)
+        return 1;
+    /* Descriptors 3/4 hold the pipe and 5 the directory, so the child can
+     * prove the addclose and CLOEXEC-free descriptor cleanup explicitly. */
+    if (raw_pipe(report) != 0 || report[0] != 3 || report[1] != 4)
+        return 2;
+    directory = open(SPAWN_DIRECTORY, O_RDONLY | O_DIRECTORY);
+    if (directory != 5 || posix_spawn_file_actions_init(&actions) != 0)
+        { result = 3; goto close; }
+    if (posix_spawn_file_actions_addopen(&actions, SPAWN_OPENED_FD,
+            CRABC_PROCESS_CONTROL_EXECUTABLE, O_RDONLY, 0) != 0 ||
+        posix_spawn_file_actions_adddup2(&actions, report[1], SPAWN_REPORT_FD) != 0 ||
+        posix_spawn_file_actions_addclose(&actions, report[0]) != 0 ||
+        posix_spawn_file_actions_addclose(&actions, report[1]) != 0 ||
+        (search ? posix_spawn_file_actions_addfchdir_np(&actions, directory) :
+            posix_spawn_file_actions_addchdir_np(&actions, SPAWN_DIRECTORY)) != 0 ||
+        posix_spawn_file_actions_addclose(&actions, directory) != 0)
+        { result = 4; goto destroy; }
+    /* Spawn results are returned codes. errno is unspecified afterwards:
+     * musl's shared-VM child writes it while posix_spawnp searches PATH. */
+    if ((search ? posix_spawnp(&child, "consumer", &actions, NULL, arguments, environment) :
+            posix_spawn(&child, CRABC_PROCESS_CONTROL_EXECUTABLE, &actions, NULL,
+                arguments, environment)) != 0 || child <= 0)
+        { result = 5; goto destroy; }
+    (void)raw_close(report[1]);
+    report[1] = -1;
+    if (!raw_read_full(report[0], &observed, 1) || observed != (search ? 'p' : 's') ||
+        raw_wait_for(child, &status) != child || !exited_with(status, 0))
+        { result = 6; goto destroy; }
+    child = -2;
+    if ((search ? posix_spawnp(&child, "process-control-missing", NULL, NULL, arguments,
+                environment) :
+            posix_spawn(&child, "/process-control-missing", NULL, NULL, arguments,
+                environment)) != ENOENT || child != -2)
+        { result = 7; goto destroy; }
+    result = 0;
+destroy:
+    if (posix_spawn_file_actions_destroy(&actions) != 0 && result == 0)
+        result = 9;
+close:
+    if (directory >= 0)
+        (void)raw_close(directory);
+    if (report[0] >= 0)
+        (void)raw_close(report[0]);
+    if (report[1] >= 0)
+        (void)raw_close(report[1]);
+    return result;
+}
+
 static void write_decimal(int value)
 {
     char digits[16];
@@ -820,6 +1078,23 @@ int main(int argc, char **argv)
         return 33;
     if (check_spawn_attributes() != 0)
         return 34;
+    if (check_fork() != 0)
+        return 35;
+    if (check_clone() != 0)
+        return 36;
+    if (check_vfork() != 0)
+        return 37;
+    result = check_daemon();
+    if (result != 0)
+        return 60 + result;
+    if (check_file_action_errors() != 0)
+        return 39;
+    result = check_spawn(0);
+    if (result != 0)
+        return 40 + result;
+    result = check_spawn(1);
+    if (result != 0)
+        return 50 + result;
     (void)raw_write_full(1, success, sizeof(success) - 1);
     write_decimal(fexecve_errno);
     (void)raw_write_full(1, newline, sizeof(newline) - 1);

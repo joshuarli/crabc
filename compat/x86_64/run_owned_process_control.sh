@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Installed residual POSIX process-control evidence.
+# Installed POSIX process-control evidence.
 #
 # One object compiled by the supplied owned dynamic driver is linked first to
 # pinned musl and then through each installed static and dynamic mode.  The
-# 31-name workload owns the residual exec/nice/group-session/wait/spawnattr
-# names;
-# `run_owned_process_trio.sh` and `run_owned_dynamic_spawn.sh` retain their
-# already-qualified clone/vfork/daemon and spawn/file-action matrices.  This
-# case is one contribution to `process.control`, never a family transition or
+# workload exercises every name in the frozen 44-name `process.control`
+# roster; `run_owned_process_trio.sh` and `run_owned_dynamic_spawn.sh` keep
+# their deeper clone/vfork/daemon and spawn rollback matrices.  This case is
+# one contribution to `libc.posix-runtime`, never a family transition or
 # public x86 support claim.
 set -euo pipefail
 ulimit -c 0
@@ -16,7 +15,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_process_control_probe.c"
 readonly CHROOT="$(command -v chroot)"
-readonly RESIDUAL_SYMBOLS='execl execle execlp execv execve execvp execvpe fexecve nice setpgid setpgrp setsid wait wait3 wait4 waitid waitpid posix_spawnattr_destroy posix_spawnattr_getflags posix_spawnattr_getpgroup posix_spawnattr_getschedparam posix_spawnattr_getschedpolicy posix_spawnattr_getsigdefault posix_spawnattr_getsigmask posix_spawnattr_init posix_spawnattr_setflags posix_spawnattr_setpgroup posix_spawnattr_setschedparam posix_spawnattr_setschedpolicy posix_spawnattr_setsigdefault posix_spawnattr_setsigmask'
+readonly PROCESS_CONTROL_SYMBOLS='clone daemon fork vfork posix_spawn posix_spawnp posix_spawn_file_actions_init posix_spawn_file_actions_destroy posix_spawn_file_actions_addopen posix_spawn_file_actions_addclose posix_spawn_file_actions_adddup2 posix_spawn_file_actions_addchdir_np posix_spawn_file_actions_addfchdir_np execl execle execlp execv execve execvp execvpe fexecve nice setpgid setpgrp setsid wait wait3 wait4 waitid waitpid posix_spawnattr_destroy posix_spawnattr_getflags posix_spawnattr_getpgroup posix_spawnattr_getschedparam posix_spawnattr_getschedpolicy posix_spawnattr_getsigdefault posix_spawnattr_getsigmask posix_spawnattr_init posix_spawnattr_setflags posix_spawnattr_setpgroup posix_spawnattr_setschedparam posix_spawnattr_setschedpolicy posix_spawnattr_setsigdefault posix_spawnattr_setsigmask'
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -107,7 +106,7 @@ run_in_root() {
 assert_static_symbols() {
     local archive="$1" symbols="$work/static-symbols.txt" symbol
     nm -g --defined-only "$archive" >"$symbols"
-    for symbol in $RESIDUAL_SYMBOLS; do
+    for symbol in $PROCESS_CONTROL_SYMBOLS; do
         [ "$(awk -v symbol="$symbol" '$2 ~ /^[TW]$/ && $3 == symbol { count++ } END { print count + 0 }' "$symbols")" -eq 1 ] || {
             printf 'process-control static provider missing or duplicate: %s\n' "$symbol" >&2
             return 1
@@ -385,7 +384,7 @@ PY_MANIFEST
 assert_dynamic_symbols() {
     local shared="$1" symbols="$work/dynamic-symbols.txt" symbol
     readelf --dyn-syms -W "$shared" >"$symbols"
-    for symbol in $RESIDUAL_SYMBOLS; do
+    for symbol in $PROCESS_CONTROL_SYMBOLS; do
         [ "$(awk -v symbol="$symbol" '$4 == "FUNC" && $5 ~ /^(GLOBAL|WEAK)$/ && $6 == "DEFAULT" && $7 != "UND" && $8 == symbol { count++ } END { print count + 0 }' "$symbols")" -eq 1 ] || {
             printf 'process-control dynamic provider missing or duplicate: %s\n' "$symbol" >&2
             return 1
@@ -541,4 +540,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf '%s\n' 'owned process-control: PASS (one installed object; musl/static/static-PIE/dynamic PIE/non-PIE kernel/direct; residual exec aliases, Linux-5.10 fexecve direct execveat ENOSYS distinction, child-contained nice/session mutations, deterministic waits, and complete spawnattr roundtrips)'
+printf '%s\n' 'owned process-control: PASS (one installed object; musl/static/static-PIE/dynamic PIE/non-PIE kernel/direct; all 44 frozen names: fork/clone/vfork/daemon, posix_spawn/p with every file action, exec aliases, Linux-5.10 fexecve direct execveat ENOSYS distinction, child-contained nice/session mutations, deterministic waits, and complete spawnattr roundtrips)'
