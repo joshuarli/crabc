@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect two bounded pinned-C/Rust initialization relations.
+"""Collect three bounded pinned-C/Rust initialization relations.
 
 The pinned C fixture explicitly initializes the process, then gives one native
 worker the sequence ``mi_thread_init`` -> repeated ``mi_thread_init`` ->
@@ -30,6 +30,17 @@ oversized-request refusal, 37-byte client survival, and ignored one-KiB
 reservation-failure scalars.
 They deliberately do not compare callback timing, Rust's nested-borrow refusal,
 or Rust's later 71-byte canonical-owner release.
+
+The third record is the startup-entry relation. With the loader constructor
+suppressed, one C process makes its first ``mi_malloc`` while its two startup
+``getrandom`` draws fail with EAGAIN at the source ``syscall`` seam, then
+calls ``_mi_auto_process_init``. The Rust half publishes raw startup facts,
+fails the same two draws at the engine's entropy primitive, allocates, then
+calls ``initialize_process``. Both record preloading, delayed-warning flush
+timing, weak/strong default and metadata random images, and the exact draw
+counts; every scalar is compared. The lifecycle batch adds the Rust-only
+first-allocation, concurrent-entry, missing-fact, PageMap-failure, and
+startup-output recursion rows for the same boundary.
 
 This is private native Linux/x86-64 evidence for the named source paths. It
 does not claim a public allocator API, general callback integration, automatic
@@ -68,6 +79,12 @@ STARTUP_CALLBACK_C_BEGIN = "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_BEGIN"
 STARTUP_CALLBACK_C_END = "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_END"
 STARTUP_CALLBACK_RUST_BEGIN = "CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_BEGIN"
 STARTUP_CALLBACK_RUST_END = "CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_END"
+STARTUP_ENTRY_RUST_SOURCE = ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs"
+STARTUP_ENTRY_FILTER = "runtime_lifecycle::tests::emit_x86_64_startup_entry_rust_trace"
+STARTUP_ENTRY_C_BEGIN = "CRABC_MI_STARTUP_ENTRY_TRACE_BEGIN"
+STARTUP_ENTRY_C_END = "CRABC_MI_STARTUP_ENTRY_TRACE_END"
+STARTUP_ENTRY_RUST_BEGIN = "CRABC_MI_STARTUP_ENTRY_RUST_TRACE_BEGIN"
+STARTUP_ENTRY_RUST_END = "CRABC_MI_STARTUP_ENTRY_RUST_TRACE_END"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
 NORMALIZED_PINNED_SOURCE = "<temporary-pinned-mimalloc-source>"
 EVIDENCE_LABEL = "init-recursion"
@@ -106,7 +123,7 @@ EXPECTED_SCOPE = {
     "general_allocator_or_api_claimed": False,
     "general_constructor_or_callback_integration_claimed": False,
     "general_process_shutdown_claimed": False,
-    "initial_thread_auto_init_claimed": False,
+    "initial_thread_auto_init_claimed": True,
     "metadata_completion_claimed": False,
     "native_linux_x86_64_required": True,
     "one_current_owner_on_recursive_entry": True,
@@ -117,6 +134,8 @@ EXPECTED_SCOPE = {
     "rust_failure_matrix_c_equivalence_claimed": False,
     "rust_direct_second_mutable_owner_refused": True,
     "source_startup_output_callback_common_scalars_recorded": True,
+    "startup_entry_first_allocation_and_runtime_tail_recorded": True,
+    "startup_entropy_fault_c_equivalence_recorded": True,
     "startup_output_callback_timing_equivalence_claimed": False,
     "startup_output_callback_general_completion_claimed": False,
     "thread_recovery_after_explicit_teardown_only": True,
@@ -177,6 +196,25 @@ EXPECTED_STARTUP_CALLBACK_RUST_TRACE_VALUES = {
     "trace.startup_output.later_owner_71_byte_client_released": 1,
     "trace.startup_output.valid": 1,
 }
+# One process: a first allocation whose two startup getrandom draws fail
+# (EAGAIN), then the runtime's `_mi_auto_process_init`. Both sides emit the
+# same normalized scalars; every key is compared.
+EXPECTED_STARTUP_ENTRY_TRACE_VALUES = {
+    "trace.startup_entry.first_allocation_succeeded": 1,
+    "trace.startup_entry.first_allocation_default_initialized": 1,
+    "trace.startup_entry.first_allocation_preloading": 1,
+    "trace.startup_entry.first_allocation_output_delayed": 1,
+    "trace.startup_entry.first_allocation_entropy_draws": 2,
+    "trace.startup_entry.first_allocation_default_random_weak": 1,
+    "trace.startup_entry.first_allocation_metadata_random_weak": 1,
+    "trace.startup_entry.runtime_startup_cleared_preloading": 1,
+    "trace.startup_entry.runtime_startup_flushed_delayed_warning": 1,
+    "trace.startup_entry.runtime_startup_entropy_draws": 2,
+    "trace.startup_entry.runtime_startup_default_random_strong": 1,
+    "trace.startup_entry.runtime_startup_metadata_random_strong": 1,
+    "trace.startup_entry.first_allocation_client_survived": 1,
+    "trace.startup_entry.valid": 1,
+}
 STARTUP_CALLBACK_COMMON_TRACE_KEYS = (
     "trace.startup_output.default_initialized_on_allocation",
     "trace.startup_output.oversized_request_refused",
@@ -216,6 +254,24 @@ EXPECTED_LIFECYCLE_CHECKS = (
         "filter": "main_heap_thread::tests::later_tld_metadata_failure_precedes_theap_allocation_and_root_publication",
         "source": "crabc-mimalloc/src/main_heap_thread.rs",
     },
+    *(
+        {"filter": f"runtime_lifecycle::tests::{name}", "source": "crabc-mimalloc/src/runtime_lifecycle.rs"}
+        for name in (
+            "cold_allocation_without_startup_facts_refuses_without_retaining_the_process",
+            "lazy_first_allocation_runs_the_published_source_startup_once",
+            "null_reallocation_is_a_lazy_first_allocation",
+            "concurrent_first_allocations_start_one_initial_owner",
+            "lazy_startup_observes_options_only_through_the_published_reader",
+            "first_allocation_start_defers_the_loader_tail_to_runtime_startup",
+            "runtime_startup_runs_the_loader_tail_once_before_activation",
+            "entropy_failure_at_runtime_startup_is_reseeded_before_activation",
+            "page_map_failure_at_first_allocation_start_is_retained_without_restart",
+            "output_recursion_in_the_runtime_startup_tail_allocates_through_the_initial_owner",
+            "output_recursion_in_the_deferred_loader_tail_allocates_through_the_initial_owner",
+            "runtime_process_once_waits_for_terminal_startup_and_refuses_owner_reentry",
+            "worker_attachment_recursive_entry_does_not_borrow_tls_and_recovers",
+        )
+    ),
 )
 
 
@@ -412,6 +468,148 @@ int main(void) {
 '''
 
 
+STARTUP_ENTRY_C_PROBE = r'''
+#define _POSIX_C_SOURCE 200809L
+#include "mimalloc.h"
+#include "mimalloc/internal.h"
+#include "mimalloc/prim-tls.h"
+
+#include <errno.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#if !defined(__linux__) || !defined(__x86_64__)
+#error this private startup-entry fixture requires native Linux/x86_64
+#endif
+#if MI_BUILD_RELEASE != 1 || MI_DEBUG != 0 || MI_STAT != 0 || MI_SECURE != 0 || MI_GUARDED != 0
+#error this private startup-entry fixture requires the fixed release profile
+#endif
+
+// `src/prim/unix/prim.c:_mi_prim_random_buf` reaches the kernel through the
+// public `syscall(SYS_getrandom, ...)`. This executable-local definition is
+// the fixture's primitive-boundary fault seam: it counts every getrandom and
+// fails it with EAGAIN (the GRND_NONBLOCK not-ready result) while selected.
+// Every other call is forwarded unchanged to the raw kernel entry.
+static bool fail_getrandom;
+static size_t getrandom_draws;
+
+static long raw_syscall6(long number, long a, long b, long c, long d, long e, long f) {
+  register long r10 __asm__("r10") = d;
+  register long r8 __asm__("r8") = e;
+  register long r9 __asm__("r9") = f;
+  long result;
+  __asm__ volatile ("syscall"
+                    : "=a"(result)
+                    : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
+                    : "rcx", "r11", "memory");
+  return result;
+}
+
+long syscall(long number, ...) {
+  va_list arguments;
+  va_start(arguments, number);
+  const long a = va_arg(arguments, long), b = va_arg(arguments, long), c = va_arg(arguments, long);
+  const long d = va_arg(arguments, long), e = va_arg(arguments, long), f = va_arg(arguments, long);
+  va_end(arguments);
+  if (number == SYS_getrandom) {
+    getrandom_draws++;
+    if (fail_getrandom) { errno = EAGAIN; return -1; }
+  }
+  const long result = raw_syscall6(number, a, b, c, d, e, f);
+  if (result < 0 && result > -4096) { errno = (int)-result; return -1; }
+  return result;
+}
+
+static bool captured_contains(FILE* capture, const char* needle) {
+  char buffer[4096];
+  fflush(capture);
+  const long length = ftell(capture);
+  if (length <= 0) return false;
+  rewind(capture);
+  const size_t count = fread(buffer, 1, sizeof(buffer) - 1, capture);
+  buffer[count] = 0;
+  fseek(capture, 0, SEEK_END);
+  return strstr(buffer, needle) != NULL;
+}
+
+static long captured_length(FILE* capture) {
+  fflush(capture);
+  fseek(capture, 0, SEEK_END);
+  return ftell(capture);
+}
+
+int main(void) {
+  // Invalid `show_errors` with verbose output: source options stage one
+  // warning in the delayed buffer before `_mi_options_post_init`.
+  if (setenv("MIMALLOC_SHOW_ERRORS", "bogus", 1) != 0) return 3;
+  if (setenv("MIMALLOC_VERBOSE", "1", 1) != 0) return 3;
+  FILE* const capture = tmpfile();
+  const int saved_stderr = dup(2);
+  if (capture == NULL || saved_stderr < 0 || dup2(fileno(capture), 2) < 0) return 3;
+
+  // `MI_PRIM_HAS_PROCESS_ATTACH` suppresses the loader constructor, so this
+  // first allocation reaches `_mi_thread_init` -> `mi_process_init` while
+  // `os_preloading` is still set.
+  fail_getrandom = true;
+  uint8_t* const block = (uint8_t*)mi_malloc(48);
+  fail_getrandom = false;
+  if (block != NULL) memset(block, 0x6b, 48);
+  mi_theap_t* const theap = _mi_theap_default();
+  const bool first_default_initialized = mi_theap_is_initialized(theap);
+  const bool first_preloading = _mi_preloading();
+  const bool first_output_delayed = captured_length(capture) == 0;
+  const size_t first_draws = getrandom_draws;
+  const bool first_default_weak = theap->random.weak;
+  const bool first_metadata_weak = _mi_subproc_main()->theap_meta->random.weak;
+
+  // The loader-time call: clear preloading, find `mi_process_init` done,
+  // then run the tail (post-init flush and weak-random reseeds).
+  _mi_auto_process_init();
+  const bool runtime_cleared_preloading = !_mi_preloading();
+  const bool runtime_flushed_warning =
+      captured_contains(capture, "environment option mimalloc_show_errors has an invalid value.");
+  const size_t runtime_draws = getrandom_draws - first_draws;
+  const bool runtime_default_strong = !_mi_theap_default()->random.weak;
+  const bool runtime_metadata_strong = !_mi_subproc_main()->theap_meta->random.weak;
+  bool client_survived = block != NULL;
+  for (size_t index = 0; client_survived && index < 48; index++) {
+    client_survived = block[index] == 0x6b;
+  }
+  mi_free(block);
+  fflush(stderr);
+  dup2(saved_stderr, 2);
+
+  const bool valid = block != NULL && first_default_initialized && first_preloading
+      && first_output_delayed && first_draws == 2 && first_default_weak && first_metadata_weak
+      && runtime_cleared_preloading && runtime_flushed_warning && runtime_draws == 2
+      && runtime_default_strong && runtime_metadata_strong && client_survived;
+  printf("CRABC_MI_STARTUP_ENTRY_TRACE_BEGIN\n");
+  printf("trace.startup_entry.first_allocation_succeeded=%d\n", block != NULL);
+  printf("trace.startup_entry.first_allocation_default_initialized=%d\n", first_default_initialized);
+  printf("trace.startup_entry.first_allocation_preloading=%d\n", first_preloading);
+  printf("trace.startup_entry.first_allocation_output_delayed=%d\n", first_output_delayed);
+  printf("trace.startup_entry.first_allocation_entropy_draws=%zu\n", first_draws);
+  printf("trace.startup_entry.first_allocation_default_random_weak=%d\n", first_default_weak);
+  printf("trace.startup_entry.first_allocation_metadata_random_weak=%d\n", first_metadata_weak);
+  printf("trace.startup_entry.runtime_startup_cleared_preloading=%d\n", runtime_cleared_preloading);
+  printf("trace.startup_entry.runtime_startup_flushed_delayed_warning=%d\n", runtime_flushed_warning);
+  printf("trace.startup_entry.runtime_startup_entropy_draws=%zu\n", runtime_draws);
+  printf("trace.startup_entry.runtime_startup_default_random_strong=%d\n", runtime_default_strong);
+  printf("trace.startup_entry.runtime_startup_metadata_random_strong=%d\n", runtime_metadata_strong);
+  printf("trace.startup_entry.first_allocation_client_survived=%d\n", client_survived);
+  printf("trace.startup_entry.valid=%d\n", valid);
+  printf("CRABC_MI_STARTUP_ENTRY_TRACE_END\n");
+  return valid ? 0 : 2;
+}
+'''
+
+
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -497,7 +695,7 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as error:
         raise EvidenceError("cannot read x86-64 init-recursion schema") from error
     expected_fields = {
-        "c_probe_sha256", "compile_definitions", "format", "profile", "release_flags",
+        "compile_definitions", "format", "profile", "release_flags",
         "release_source_set", "schema", "scope", "source_anchors", "startup_callback", "target",
         "trace", "upstream",
     }
@@ -533,7 +731,6 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
     }):
         raise EvidenceError("init-recursion trace contract drifted")
     if not exactly_matches(schema["startup_callback"], {
-        "c_probe_sha256": sha256_bytes(STARTUP_CALLBACK_C_PROBE.encode("utf-8")),
         "c_trace": {
             "begin": STARTUP_CALLBACK_C_BEGIN,
             "end": STARTUP_CALLBACK_C_END,
@@ -549,8 +746,6 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
         raise EvidenceError("startup-output callback trace contract drifted")
     validate_probe_source()
     validate_startup_callback_c_probe()
-    if schema["c_probe_sha256"] != sha256_bytes(C_TRACE_PROBE.encode("utf-8")):
-        raise EvidenceError("init-recursion C probe hash drifted")
     anchors = schema["source_anchors"]
     if not isinstance(anchors, list) or len(anchors) != len(EXPECTED_SOURCE_ANCHORS):
         raise EvidenceError("init-recursion source anchors drifted")
@@ -653,6 +848,22 @@ def compare_startup_callback_traces(
         "compared_value_count": len(STARTUP_CALLBACK_COMMON_TRACE_KEYS),
         "status": "matched",
     }
+
+
+def compare_startup_entry_traces(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int],
+) -> dict[str, Any]:
+    validate_startup_callback_trace(
+        c_trace, expected=EXPECTED_STARTUP_ENTRY_TRACE_VALUES,
+        description="pinned C startup-entry trace",
+    )
+    validate_startup_callback_trace(
+        rust_trace, expected=EXPECTED_STARTUP_ENTRY_TRACE_VALUES,
+        description="Rust startup-entry trace",
+    )
+    if dict(c_trace) != dict(rust_trace):
+        raise EvidenceError("C and Rust startup-entry traces differ")
+    return {"compared_value_count": len(EXPECTED_STARTUP_ENTRY_TRACE_VALUES), "status": "matched"}
 
 
 def normalize_command(command: Sequence[str], temporary: Path, source: Path | None) -> list[str]:
@@ -783,6 +994,46 @@ def build_startup_callback_c_trace(
     }
 
 
+def build_startup_entry_c_trace(
+    compiler: str, readelf: str, source: Path, temporary: Path, schema: Mapping[str, Any],
+) -> dict[str, Any]:
+    probe_source = temporary / "startup-entry.c"
+    binary = temporary / "startup-entry-c"
+    probe_source.write_text(STARTUP_ENTRY_C_PROBE, encoding="utf-8")
+    command = c_trace_command(compiler, source, probe_source, binary, schema)
+    validate_c_command(command, schema)
+    try:
+        run.require_success(
+            run.command_record(command, cwd=source), "pinned C startup-entry fixture build",
+        )
+        header = run.command_record((readelf, "-h", str(binary)), cwd=source)
+        run.require_success(header, "pinned C startup-entry ELF identity")
+        elf = run.parse_elf_identity(str(header["stdout"]), "x86_64")
+        execution = run.command_record((str(binary),), cwd=source)
+        if int(execution["status"]) != 0:
+            raise EvidenceError(
+                f"pinned C startup-entry fixture failed ({execution['status']}):\n"
+                f"{execution['stdout']}{execution['stderr']}"
+            )
+    except run.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+    trace = parse_marker_trace(
+        str(execution["stdout"]), begin=STARTUP_ENTRY_C_BEGIN, end=STARTUP_ENTRY_C_END,
+        description="pinned C startup-entry trace",
+    )
+    validate_startup_callback_trace(
+        trace, expected=EXPECTED_STARTUP_ENTRY_TRACE_VALUES,
+        description="pinned C startup-entry trace",
+    )
+    return {
+        "build_command": normalize_command(command, temporary, source),
+        "elf": elf,
+        "run_command": [f"{NORMALIZED_EVIDENCE_ROOT}/startup-entry-c"],
+        "source_sha256": sha256_bytes(STARTUP_ENTRY_C_PROBE.encode("utf-8")),
+        "trace": trace,
+    }
+
+
 def rust_test_command(cargo: str, target_dir: Path, test_filter: str) -> list[str]:
     return [
         cargo, "test", "--locked", "--target", TARGET, "--target-dir", str(target_dir),
@@ -863,6 +1114,32 @@ def build_startup_callback_rust_trace(cargo: str, temporary: Path) -> dict[str, 
     }
 
 
+def build_startup_entry_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
+    target_dir = temporary / "rust-target"
+    command, output = run_rust_test(cargo, target_dir, STARTUP_ENTRY_FILTER)
+    trace = parse_marker_trace(
+        output, begin=STARTUP_ENTRY_RUST_BEGIN, end=STARTUP_ENTRY_RUST_END,
+        description="Rust startup-entry trace",
+    )
+    validate_startup_callback_trace(
+        trace, expected=EXPECTED_STARTUP_ENTRY_TRACE_VALUES, description="Rust startup-entry trace",
+    )
+    return {
+        "cargo_command": normalize_command(command, temporary, None),
+        "lockfile": {"path": relative(LOCKFILE), "sha256": sha256_file(LOCKFILE)},
+        "passed_test_count": 1,
+        "source": {
+            "path": relative(STARTUP_ENTRY_RUST_SOURCE),
+            "sha256": sha256_file(STARTUP_ENTRY_RUST_SOURCE),
+        },
+        "target_dir": {
+            "isolated": True, "retained": False,
+            "value": f"{NORMALIZED_EVIDENCE_ROOT}/rust-target",
+        },
+        "trace": trace,
+    }
+
+
 def build_lifecycle_checks(cargo: str, temporary: Path) -> list[dict[str, Any]]:
     target_dir = temporary / "rust-target"
     records = []
@@ -886,7 +1163,8 @@ def report_from_results(
     *, schema: Mapping[str, Any], provenance: Mapping[str, str], archive_sha256: str,
     anchors: Sequence[Mapping[str, Any]], c_probe: Mapping[str, Any],
     rust_probe: Mapping[str, Any], startup_callback_c_probe: Mapping[str, Any],
-    startup_callback_rust_probe: Mapping[str, Any], lifecycle_checks: Sequence[Mapping[str, Any]],
+    startup_callback_rust_probe: Mapping[str, Any], startup_entry_c_probe: Mapping[str, Any],
+    startup_entry_rust_probe: Mapping[str, Any], lifecycle_checks: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     c_trace = c_probe.get("trace")
     rust_trace = rust_probe.get("trace")
@@ -896,6 +1174,10 @@ def report_from_results(
     startup_rust_trace = startup_callback_rust_probe.get("trace")
     if not isinstance(startup_c_trace, Mapping) or not isinstance(startup_rust_trace, Mapping):
         raise EvidenceError("startup-output evidence inputs lack trace records")
+    entry_c_trace = startup_entry_c_probe.get("trace")
+    entry_rust_trace = startup_entry_rust_probe.get("trace")
+    if not isinstance(entry_c_trace, Mapping) or not isinstance(entry_rust_trace, Mapping):
+        raise EvidenceError("startup-entry evidence inputs lack trace records")
     report = {
         "c_probe": dict(c_probe),
         "comparison": compare_traces(c_trace, rust_trace),
@@ -917,6 +1199,11 @@ def report_from_results(
             "c_probe": dict(startup_callback_c_probe),
             "comparison": compare_startup_callback_traces(startup_c_trace, startup_rust_trace),
             "rust_probe": dict(startup_callback_rust_probe),
+        },
+        "startup_entry": {
+            "c_probe": dict(startup_entry_c_probe),
+            "comparison": compare_startup_entry_traces(entry_c_trace, entry_rust_trace),
+            "rust_probe": dict(startup_entry_rust_probe),
         },
         "target": schema["target"],
         "trace": schema["trace"],
@@ -993,10 +1280,49 @@ def validate_startup_callback_report(record: object, schema: Mapping[str, Any]) 
         raise EvidenceError("startup-output callback comparison drifted")
 
 
+def validate_startup_entry_report(record: object, schema: Mapping[str, Any]) -> None:
+    if not isinstance(record, Mapping) or set(record) != {"c_probe", "comparison", "rust_probe"}:
+        raise EvidenceError("startup-entry report record drifted")
+    c_probe = record["c_probe"]
+    rust_probe = record["rust_probe"]
+    if not isinstance(c_probe, Mapping) or set(c_probe) != {
+        "build_command", "elf", "run_command", "source_sha256", "trace",
+    }:
+        raise EvidenceError("startup-entry C probe record drifted")
+    if not isinstance(rust_probe, Mapping) or set(rust_probe) != {
+        "cargo_command", "lockfile", "passed_test_count", "source", "target_dir", "trace",
+    }:
+        raise EvidenceError("startup-entry Rust probe record drifted")
+    if (
+        not exactly_matches(c_probe["elf"], EXPECTED_C_ELF)
+        or c_probe["run_command"] != [f"{NORMALIZED_EVIDENCE_ROOT}/startup-entry-c"]
+        or c_probe["source_sha256"] != sha256_bytes(STARTUP_ENTRY_C_PROBE.encode("utf-8"))
+    ):
+        raise EvidenceError("startup-entry C probe identity drifted")
+    validate_normalized_c_command_for(
+        c_probe["build_command"], schema, probe_name="startup-entry.c", binary_name="startup-entry-c",
+    )
+    if type(rust_probe["passed_test_count"]) is not int or rust_probe["passed_test_count"] != 1:
+        raise EvidenceError("startup-entry Rust trace selection drifted")
+    if not exactly_matches(rust_probe["lockfile"], {
+        "path": relative(LOCKFILE), "sha256": sha256_file(LOCKFILE),
+    }) or not exactly_matches(rust_probe["source"], {
+        "path": relative(STARTUP_ENTRY_RUST_SOURCE), "sha256": sha256_file(STARTUP_ENTRY_RUST_SOURCE),
+    }) or not exactly_matches(rust_probe["target_dir"], {
+        "isolated": True, "retained": False, "value": f"{NORMALIZED_EVIDENCE_ROOT}/rust-target",
+    }):
+        raise EvidenceError("startup-entry Rust probe inputs drifted")
+    validate_rust_command(rust_probe["cargo_command"], "rust-target", STARTUP_ENTRY_FILTER)
+    expected_comparison = compare_startup_entry_traces(c_probe["trace"], rust_probe["trace"])
+    if not exactly_matches(record["comparison"], expected_comparison):
+        raise EvidenceError("startup-entry comparison drifted")
+
+
 def validate_report(report: Mapping[str, Any]) -> None:
     required = {
         "c_probe", "comparison", "format", "kind", "lifecycle_checks", "profile", "provenance",
-        "rust_probe", "scope", "source", "startup_callback", "status", "target", "trace", "upstream",
+        "rust_probe", "scope", "source", "startup_callback", "startup_entry", "status", "target",
+        "trace", "upstream",
     }
     if not isinstance(report, dict) or set(report) != required:
         raise EvidenceError("init-recursion report schema drifted")
@@ -1054,6 +1380,7 @@ def validate_report(report: Mapping[str, Any]) -> None:
     }):
         raise EvidenceError("init-recursion report comparison drifted")
     validate_startup_callback_report(report["startup_callback"], schema)
+    validate_startup_entry_report(report["startup_entry"], schema)
     checks = report["lifecycle_checks"]
     if not isinstance(checks, list) or len(checks) != len(EXPECTED_LIFECYCLE_CHECKS):
         raise EvidenceError("init-recursion lifecycle batch drifted")
@@ -1111,12 +1438,18 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
             compiler, readelf, source, temporary, schema,
         )
         startup_callback_rust_probe = build_startup_callback_rust_trace(cargo, temporary)
+        startup_entry_c_probe = build_startup_entry_c_trace(
+            compiler, readelf, source, temporary, schema,
+        )
+        startup_entry_rust_probe = build_startup_entry_rust_trace(cargo, temporary)
         lifecycle_checks = build_lifecycle_checks(cargo, temporary)
         report = report_from_results(
             schema=schema, provenance=provenance, archive_sha256=pin["sha256"], anchors=anchors,
             c_probe=c_probe, rust_probe=rust_probe,
             startup_callback_c_probe=startup_callback_c_probe,
             startup_callback_rust_probe=startup_callback_rust_probe,
+            startup_entry_c_probe=startup_entry_c_probe,
+            startup_entry_rust_probe=startup_entry_rust_probe,
             lifecycle_checks=lifecycle_checks,
         )
     run.write_json(report_path, report)
@@ -1137,6 +1470,7 @@ def main() -> int:
         f"allocator x86-64 {EVIDENCE_LABEL} evidence: PASS "
         f"({report['comparison']['compared_value_count']} worker values; "
         f"{report['startup_callback']['comparison']['compared_value_count']} startup callback values; "
+        f"{report['startup_entry']['comparison']['compared_value_count']} startup-entry values; "
         f"report: {relative(arguments.report)})"
     )
     return 0

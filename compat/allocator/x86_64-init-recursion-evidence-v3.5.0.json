@@ -22,7 +22,7 @@
     "general_allocator_or_api_claimed": false,
     "general_constructor_or_callback_integration_claimed": false,
     "general_process_shutdown_claimed": false,
-    "initial_thread_auto_init_claimed": false,
+    "initial_thread_auto_init_claimed": true,
     "metadata_completion_claimed": false,
     "native_linux_x86_64_required": true,
     "one_current_owner_on_recursive_entry": true,
@@ -30,11 +30,13 @@
     "public_crabc_support": false,
     "public_x86_libc_or_ldso_support": false,
     "runtime_lifecycle_callback_parity_claimed": false,
-    "rust_failure_matrix_c_equivalence_claimed": false,
     "rust_direct_second_mutable_owner_refused": true,
+    "rust_failure_matrix_c_equivalence_claimed": false,
     "source_startup_output_callback_common_scalars_recorded": true,
-    "startup_output_callback_timing_equivalence_claimed": false,
+    "startup_entropy_fault_c_equivalence_recorded": true,
+    "startup_entry_first_allocation_and_runtime_tail_recorded": true,
     "startup_output_callback_general_completion_claimed": false,
+    "startup_output_callback_timing_equivalence_claimed": false,
     "thread_recovery_after_explicit_teardown_only": true
   },
   "compile_definitions": [
@@ -160,9 +162,7 @@
       "trace.init_recursion.valid": 1
     }
   },
-  "c_probe_sha256": "86af4227da81190ecb3c9edaf02542b8fb43b73392baf54773517d21f1b3d7de",
   "startup_callback": {
-    "c_probe_sha256": "3ec725d46c7c59a4acd27d6106b7e57528cdae4dd8037276a740d79562fc8dfc",
     "c_trace": {
       "begin": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_BEGIN",
       "end": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_END",

@@ -17827,7 +17827,7 @@ mod tests {
                 // Fail the first two raw getrandom draws: the metadata and
                 // default Theap `_mi_random_init` calls take the weak path.
                 let fault = fault::install(fault::Plan::at_pair(
-                    fault::Point::Entropy, 1, fault::Point::Entropy, 1, Errno::NOSYS,
+                    fault::Point::Entropy, 1, fault::Point::Entropy, 1, Errno::AGAIN,
                 ));
                 assert!(native_round_trip(48), "weak random state never fails startup");
                 // Exactly the two source draws ran, and both failed.
@@ -17844,6 +17844,82 @@ mod tests {
         );
     }
 
+    /// Rust half of the pinned-C startup-entry relation read by
+    /// `compat/allocator/x86_64_init_recursion_evidence.py`: a first
+    /// allocation whose two startup entropy draws fail, followed by the
+    /// runtime startup call. Every key is a normalized source-visible scalar.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_x86_64_startup_entry_rust_trace() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::emit_x86_64_startup_entry_rust_trace",
+            || {
+                assert!(publish_native_process_startup_facts(delayed_warning_startup_facts()));
+                // `_mi_prim_random_buf` fails with EAGAIN (GRND_NONBLOCK
+                // before the pool is ready): the source weak path.
+                let fault = fault::install(fault::Plan::at_pair(
+                    fault::Point::Entropy, 1, fault::Point::Entropy, 1, Errno::AGAIN,
+                ));
+                let block = match native_allocate_aligned(48, 16, false) {
+                    NativePageAllocationResult::Allocated(block) => Some(block),
+                    _ => None,
+                };
+                if let Some(block) = block {
+                    // SAFETY: the fresh client is exclusively owned.
+                    unsafe { block.as_ptr().write_bytes(0x6b, 48) };
+                }
+                // SAFETY: the initial thread owns its default Theap; no
+                // projection is live between these native operations.
+                let first_default_initialized =
+                    unsafe { crate::types::Theap::test_random_is_weak_at(default_theap()) }.is_some();
+                let first_preloading = block.is_some() && active_process_is_preloading();
+                let first_output_delayed = STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire) == 0;
+                let first_draws = fault.observed();
+                let (first_default_weak, first_metadata_weak) = startup_random_images_are_weak();
+                // Permit every later draw but keep counting them.
+                fault.set(fault::Plan::at(fault::Point::Entropy, usize::MAX, Errno::AGAIN));
+
+                let started = initialize_process();
+                let runtime_cleared_preloading = started && !active_process_is_preloading();
+                let runtime_flushed_warning = captured_startup_stderr_contains(
+                    b"environment option mimalloc_show_errors has an invalid value.");
+                let runtime_draws = fault.observed();
+                let (runtime_default_weak, runtime_metadata_weak) = startup_random_images_are_weak();
+                let client_survived = block.is_some_and(|block| {
+                    // SAFETY: the client remained exclusively owned.
+                    unsafe { core::slice::from_raw_parts(block.as_ptr(), 48) }.iter().all(|byte| *byte == 0x6b)
+                });
+                if let Some(block) = block {
+                    // SAFETY: `block` is this thread's exact live native client.
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                }
+                let values = [
+                    ("first_allocation_succeeded", usize::from(block.is_some())),
+                    ("first_allocation_default_initialized", usize::from(first_default_initialized)),
+                    ("first_allocation_preloading", usize::from(first_preloading)),
+                    ("first_allocation_output_delayed", usize::from(first_output_delayed)),
+                    ("first_allocation_entropy_draws", first_draws),
+                    ("first_allocation_default_random_weak", usize::from(first_default_weak)),
+                    ("first_allocation_metadata_random_weak", usize::from(first_metadata_weak)),
+                    ("runtime_startup_cleared_preloading", usize::from(runtime_cleared_preloading)),
+                    ("runtime_startup_flushed_delayed_warning", usize::from(runtime_flushed_warning)),
+                    ("runtime_startup_entropy_draws", runtime_draws),
+                    ("runtime_startup_default_random_strong", usize::from(!runtime_default_weak)),
+                    ("runtime_startup_metadata_random_strong", usize::from(!runtime_metadata_weak)),
+                    ("first_allocation_client_survived", usize::from(client_survived)),
+                ];
+                let valid = values.map(|(_, value)| value) == [1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1, 1];
+                std::println!("CRABC_MI_STARTUP_ENTRY_RUST_TRACE_BEGIN");
+                for (key, value) in values {
+                    std::println!("trace.startup_entry.{key}={value}");
+                }
+                std::println!("trace.startup_entry.valid={}", usize::from(valid));
+                std::println!("CRABC_MI_STARTUP_ENTRY_RUST_TRACE_END");
+                assert!(valid, "the first-allocation start and its runtime tail match the source relation");
+            },
+        );
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn entropy_failure_at_runtime_startup_is_reseeded_before_activation() {
@@ -17852,7 +17928,7 @@ mod tests {
             || {
                 assert!(publish_native_process_startup_facts(host_startup_facts()));
                 let fault = fault::install(fault::Plan::at_pair(
-                    fault::Point::Entropy, 1, fault::Point::Entropy, 1, Errno::NOSYS,
+                    fault::Point::Entropy, 1, fault::Point::Entropy, 1, Errno::AGAIN,
                 ));
                 assert!(initialize_process());
                 // Both source draws failed inside the once body, then the

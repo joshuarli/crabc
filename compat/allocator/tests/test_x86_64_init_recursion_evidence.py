@@ -60,6 +60,13 @@ class InitRecursionEvidenceTests(unittest.TestCase):
             "/usr/bin/cargo", temporary / "rust-startup-output-target",
             evidence.STARTUP_CALLBACK_FILTER,
         )
+        entry_c_command = evidence.c_trace_command(
+            "/usr/bin/musl-gcc", source, temporary / "startup-entry.c",
+            temporary / "startup-entry-c", schema,
+        )
+        entry_rust_command = evidence.rust_test_command(
+            "/usr/bin/cargo", temporary / "rust-target", evidence.STARTUP_ENTRY_FILTER,
+        )
         lifecycle_checks = []
         for check in evidence.EXPECTED_LIFECYCLE_CHECKS:
             command = evidence.rust_test_command(
@@ -134,6 +141,31 @@ class InitRecursionEvidenceTests(unittest.TestCase):
                 },
                 "trace": evidence.EXPECTED_STARTUP_CALLBACK_RUST_TRACE_VALUES,
             },
+            startup_entry_c_probe={
+                "build_command": evidence.normalize_command(entry_c_command, temporary, source),
+                "elf": evidence.EXPECTED_C_ELF,
+                "run_command": [f"{evidence.NORMALIZED_EVIDENCE_ROOT}/startup-entry-c"],
+                "source_sha256": evidence.sha256_bytes(evidence.STARTUP_ENTRY_C_PROBE.encode("utf-8")),
+                "trace": evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES,
+            },
+            startup_entry_rust_probe={
+                "cargo_command": evidence.normalize_command(entry_rust_command, temporary, None),
+                "lockfile": {
+                    "path": evidence.relative(evidence.LOCKFILE),
+                    "sha256": evidence.sha256_file(evidence.LOCKFILE),
+                },
+                "passed_test_count": 1,
+                "source": {
+                    "path": evidence.relative(evidence.STARTUP_ENTRY_RUST_SOURCE),
+                    "sha256": evidence.sha256_file(evidence.STARTUP_ENTRY_RUST_SOURCE),
+                },
+                "target_dir": {
+                    "isolated": True,
+                    "retained": False,
+                    "value": f"{evidence.NORMALIZED_EVIDENCE_ROOT}/rust-target",
+                },
+                "trace": evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES,
+            },
             lifecycle_checks=lifecycle_checks,
         )
 
@@ -147,7 +179,8 @@ class InitRecursionEvidenceTests(unittest.TestCase):
         self.assertTrue(schema["scope"]["source_startup_output_callback_common_scalars_recorded"])
         self.assertTrue(schema["scope"]["rust_direct_second_mutable_owner_refused"])
         self.assertFalse(schema["scope"]["automatic_pthread_destructor_claimed"])
-        self.assertFalse(schema["scope"]["initial_thread_auto_init_claimed"])
+        self.assertTrue(schema["scope"]["initial_thread_auto_init_claimed"])
+        self.assertTrue(schema["scope"]["startup_entry_first_allocation_and_runtime_tail_recorded"])
         self.assertFalse(schema["scope"]["rust_failure_matrix_c_equivalence_claimed"])
         self.assertFalse(schema["scope"]["metadata_completion_claimed"])
         self.assertFalse(schema["scope"]["startup_output_callback_timing_equivalence_claimed"])
@@ -208,6 +241,17 @@ class InitRecursionEvidenceTests(unittest.TestCase):
                 evidence.EXPECTED_STARTUP_CALLBACK_C_TRACE_VALUES, changed,
             )
 
+    def test_startup_entry_compares_every_scalar(self):
+        comparison = evidence.compare_startup_entry_traces(
+            evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES, evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES,
+        )
+        self.assertEqual(comparison["compared_value_count"], len(evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES))
+        for key in evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES:
+            changed = dict(evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES)
+            changed[key] += 1
+            with self.subTest(key=key), self.assertRaises(evidence.EvidenceError):
+                evidence.compare_startup_entry_traces(evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES, changed)
+
     def test_report_requires_native_provenance_and_the_complete_lifecycle_batch(self):
         report = self.complete_report()
         evidence.validate_report(report)
@@ -220,11 +264,22 @@ class InitRecursionEvidenceTests(unittest.TestCase):
             "compared_value_count": 4,
             "status": "matched",
         })
-        self.assertEqual(len(report["lifecycle_checks"]), 8)
+        self.assertEqual(report["startup_entry"]["comparison"], {
+            "compared_value_count": len(evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES),
+            "status": "matched",
+        })
         self.assertEqual(
-            report["lifecycle_checks"][-1]["filter"],
-            "main_heap_thread::tests::later_tld_metadata_failure_precedes_theap_allocation_and_root_publication",
+            [check["filter"] for check in report["lifecycle_checks"]],
+            [check["filter"] for check in evidence.EXPECTED_LIFECYCLE_CHECKS],
         )
+
+        report = self.complete_report()
+        report["startup_entry"]["rust_probe"]["trace"] = dict(
+            report["startup_entry"]["rust_probe"]["trace"],
+            **{"trace.startup_entry.runtime_startup_entropy_draws": 1},
+        )
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.validate_report(report)
 
         report = self.complete_report()
         report["provenance"] = {"execution_mode": "emulated", "host_architecture": "x86_64"}
