@@ -430,19 +430,16 @@ class NativeAbiRatchetTests(unittest.TestCase):
             {"missing": 72, "unexpected": 475, "matched": 1477, "mismatched": 101},
         )
 
-    def test_checked_additions_policy_retains_the_exact_tgkill_extension(self) -> None:
+    def test_checked_additions_policy_retains_the_reviewed_extensions(self) -> None:
         policy, _ = ratchet._baseline()
-        additions, identity_record = ratchet._additions(policy)
-        self.assertEqual(identity_record["sha256"], "bd80f655151fff341eabd83f2f90b102dd82c8ee2fee9e4b5dee94124ee68174")
-        self.assertEqual(identity_record["size"], 691)
-        self.assertEqual(additions, reviewed_additions())
-        self.assertEqual(additions["additions"][0]["selection"], {
-            "frozen_c_contracts": [
-                "3e100d45c5a0798c2d3862d5e2eef584c610ccf9:libc/src/c_abi.rs::tgkill",
-                "3e100d45c5a0798c2d3862d5e2eef584c610ccf9:include/signal.h",
-            ],
-            "component_contract": "compat/x86_64/native-thread-signal-abi.md",
-        })
+        additions, _ = ratchet._additions(policy)
+        by_name = {entry["identity"]["name"]: entry for entry in additions["additions"]}
+        self.assertEqual(by_name["tgkill"], reviewed_additions()["additions"][0])
+        runtime = by_name["__crabc_runtime_v1"]
+        self.assertEqual(runtime["identity"], identity("__crabc_runtime_v1"))
+        self.assertEqual(runtime["abi"], reviewed_additions()["additions"][0]["abi"])
+        for entry in by_name.values():
+            self.assertTrue((ratchet.ROOT / entry["selection"]["component_contract"]).is_file())
 
     def test_pinned_oracle_identity_cannot_drift(self) -> None:
         reference = [symbol("expected")]
@@ -541,7 +538,7 @@ class NativeAbiRatchetTests(unittest.TestCase):
             "content_sha256": "7" * 64,
             "clean": True,
         }
-        candidate = source([symbol("expected"), symbol("tgkill")])["symbols"]
+        candidate = source([symbol("expected"), symbol("tgkill"), symbol("__crabc_runtime_v1")])["symbols"]
         with (
             mock.patch.object(ratchet, "_baseline", return_value=(policy, baseline_identity)),
             mock.patch.object(

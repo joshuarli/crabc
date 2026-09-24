@@ -74,6 +74,16 @@ x86 extension, not a claim that musl exports `tgkill` or that the Rust
 `process.thread-kill` facade contract is the same C ABI. It does not complete a
 family, promote a product, or change public-support status.
 
+The second is the unversioned private `__crabc_runtime_v1` getter, also `FUNC
+GLOBAL DEFAULT` with `data_size: null`. Frozen crabc exports it from
+`3e100d45c5a0798c2d3862d5e2eef584c610ccf9:libc/src/c_abi.rs::__crabc_runtime_v1`
+over the `RuntimeV1` table in `crabc-core/src/runtime.rs`, and the crabc-rs
+`dl`, `runtime_thread`, and `cfile` facades import it. The x86 owned dynamic
+libc supplies it from `libc/src/c_abi/x86_64/runtime_facade_v1.rs`; the
+"Rust RuntimeV1 facades" section of [`README.md`](README.md) names its
+`runtime-private-facades` component evidence. It is a private crabc protocol,
+not a C interface, and the selection policy keeps its consumer parity open.
+
 The current musl pin, shared-library identity, and complete public symbol
 surface must exactly match the reviewed oracle floor.  A current candidate can
 have a different materialized build identity; the result records it separately
