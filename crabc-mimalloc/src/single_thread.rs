@@ -709,6 +709,9 @@ impl ProcessPostOwnerExitRemoteClaimFailure {
 pub(crate) enum ProcessPostOwnerExitPointerFreeDisposition {
     PublishedToOwner,
     StillLive,
+    /// `mi_abandoned_page_try_reclaim` moved the page into the freeing
+    /// thread's Theap.
+    ReclaimedOnFree,
     Released,
     Retained,
 }
@@ -897,6 +900,9 @@ impl ProcessPostOwnerExitRemoteClaimResult {
             Self::Regular(abandoned::ClaimedPostOwnerExitRegularFreeResult::StillLive) => {
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::StillLive)
             }
+            Self::Regular(abandoned::ClaimedPostOwnerExitRegularFreeResult::ReclaimedOnFree) => {
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::ReclaimedOnFree)
+            }
             Self::Regular(abandoned::ClaimedPostOwnerExitRegularFreeResult::Released)
             | Self::Singleton(abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released) => {
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Released)
@@ -1006,6 +1012,12 @@ fn terminalize_post_owner_exit_retained(
     core::mem::forget(owner);
 }
 
+/// A claimed, still-used abandoned process-arena page offered to the freeing
+/// thread by `mi_abandoned_page_try_reclaim`. Its bitmap capability is the
+/// static-main mapped-abandoned selection used by the rest of the W03 tail.
+pub(crate) type ProcessReclaimOnFreeCandidate<'a> =
+    abandoned::ReclaimOnFreeCandidate<'a, MainArenaMappedAbandonedPage<'static>>;
+
 /// A process-fact or source-continuation rejection that preserves its claim.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProcessPostOwnerExitRemoteClaimError {
@@ -1053,6 +1065,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
     claim: remote_free::ClaimedAbandonedRemoteFree,
     process: ProcessPageBackingLease,
     main_heap: MainStaticHeapLease<'static>,
+    reclaim_on_free: impl FnOnce(ProcessReclaimOnFreeCandidate<'_>) -> abandoned::ReclaimOnFreeOutcome,
 ) -> Result<ProcessPostOwnerExitRemoteClaimResult, ProcessPostOwnerExitRemoteClaimFailure> {
     // The exact W07 claim proves this page's range and lifetime. A PageMap
     // mutation lease is intentionally *not* acquired here: reabandon,
@@ -1109,6 +1122,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                     )
                 },
                 |page| abandoned::collect_post_owner_exit_local_free_false(page),
+                reclaim_on_free,
                 |release| {
                     let mutation = match process.begin_blocking_exact_post_owner_exit_mutation() {
                         Ok(mutation) => mutation,
@@ -1416,6 +1430,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
 pub(crate) unsafe fn continue_post_owner_exit_live_allocation_with_process_page_facts(
     allocation: LiveAllocationPointer,
     process_page_facts: impl FnOnce() -> Option<(ProcessPageBackingLease, MainStaticHeapLease<'static>)>,
+    reclaim_on_free: impl FnOnce(ProcessReclaimOnFreeCandidate<'_>) -> abandoned::ReclaimOnFreeOutcome,
 ) -> Result<
     ProcessPostOwnerExitPointerFreeDisposition,
     ProcessPostOwnerExitPointerFreeRejection,
@@ -1427,6 +1442,7 @@ pub(crate) unsafe fn continue_post_owner_exit_live_allocation_with_process_page_
             &PROCESS_POST_OWNER_EXIT_TERMINAL_MARKER,
             allocation,
             process_page_facts,
+            reclaim_on_free,
         )
     }
 }
@@ -1441,6 +1457,7 @@ unsafe fn continue_post_owner_exit_live_allocation_with_terminal_marker(
     marker: &ProcessPostOwnerExitTerminalMarker,
     allocation: LiveAllocationPointer,
     process_page_facts: impl FnOnce() -> Option<(ProcessPageBackingLease, MainStaticHeapLease<'static>)>,
+    reclaim_on_free: impl FnOnce(ProcessReclaimOnFreeCandidate<'_>) -> abandoned::ReclaimOnFreeOutcome,
 ) -> Result<
     ProcessPostOwnerExitPointerFreeDisposition,
     ProcessPostOwnerExitPointerFreeRejection,
@@ -1502,7 +1519,7 @@ unsafe fn continue_post_owner_exit_live_allocation_with_terminal_marker(
             // terminal PageMap/list release callback.
             let continuation = unsafe {
                 continue_post_owner_exit_remote_claim_with_process_page_facts(
-                    claim, process, main_heap,
+                    claim, process, main_heap, reclaim_on_free,
                 )
             };
             match continuation {
@@ -36132,6 +36149,79 @@ impl<'arena, 'map, Backing: crate::page_backing::PageBacking<'arena>>
 impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::PageBacking<'arena>>
     PageAllocatorEngine<'arena, 'map, Session, Backing> {
 
+    /// Pinned `free.c:mi_abandoned_page_try_reclaim` into this engine's Theap,
+    /// which belongs to the thread whose free claimed `candidate`.
+    ///
+    /// The caller has already checked `_mi_thread_is_initialized()` by
+    /// reaching this thread's persistent engine. The rest follows the source:
+    /// `_mi_page_associated_theap_peek` requires this Theap to serve the
+    /// page's Heap, with a TLD and `allow_page_reclaim`; the originating Theap
+    /// (the one `page->theap` still names) may hold up to `page_max_reclaim`
+    /// pages of the bin; any other Theap only `0` under the frozen
+    /// `page_reclaim_on_free = 0`, whose cross-thread branch requires `1`.
+    /// Reclaim then runs `_mi_arenas_page_unabandon` and
+    /// `_mi_theap_page_reclaim`, appending the page to its regular queue.
+    pub(crate) fn reclaim_abandoned_page_on_free<M: abandoned::MappedAbandonedPages>(
+        &mut self,
+        candidate: abandoned::ReclaimOnFreeCandidate<'_, M>,
+    ) -> abandoned::ReclaimOnFreeOutcome {
+        use abandoned::ReclaimOnFreeOutcome::{Declined, Failed, Reclaimed};
+        /// `options.c` defaults for `page_max_reclaim` (unlimited) and
+        /// `page_cross_thread_max_reclaim`.
+        const PAGE_MAX_RECLAIM: isize = -1;
+        const PAGE_CROSS_THREAD_MAX_RECLAIM: isize = 32;
+
+        if self.is_collection_poisoned()
+            || self.pending_os_release.is_some()
+            || !self.session.permits_ordinary_page_operations()
+        {
+            return Declined;
+        }
+        let Some(thread) = self.session.thread_id() else {
+            return Declined;
+        };
+        let theap = self.session.theap();
+        if theap.heap() != candidate.page_heap() || !theap.allows_page_reclaim() {
+            return Declined;
+        }
+        let Some(tld) = theap.deferred_free_tld() else {
+            return Declined;
+        };
+        // SAFETY: an initialized Theap keeps its owning TLD live.
+        let in_threadpool = unsafe { tld.as_ref() }.is_in_threadpool();
+        let max_reclaim = if core::ptr::eq(theap, candidate.originating_theap()) {
+            if in_threadpool { PAGE_CROSS_THREAD_MAX_RECLAIM } else { PAGE_MAX_RECLAIM }
+        } else {
+            0
+        };
+        let bin = candidate.bin();
+        let Some(queue) = self.session.queue(bin) else {
+            return Declined;
+        };
+        if let Ok(max_reclaim) = usize::try_from(max_reclaim) {
+            if queue.count() > max_reclaim {
+                return Declined;
+            }
+        }
+        let theap = NonNull::from(theap);
+        // SAFETY: `theap` is this engine's own Theap for the page's Heap and
+        // `thread` its owner; the page is appended to its queue immediately.
+        let page = match unsafe { candidate.reclaim_into(theap, thread) } {
+            Ok(page) => page,
+            Err(error) => return Failed(error),
+        };
+        let Some(queue) = self.session.queue_mut(bin) else {
+            return Failed(AbandonError::InvalidPageGeometry);
+        };
+        // SAFETY: the page was just reassociated with this engine's Theap and
+        // is in no queue; this engine is the sole mutator of that queue.
+        unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
+        self.session.note_page_added();
+        self.update_direct_cache(bin);
+        self.session.theap().record_page_reclaimed_on_free();
+        Reclaimed
+    }
+
     /// Copies this session's bounded deferred-free source identity without
     /// exposing the session itself. It is valid only for a caller-stack phase
     /// that releases this engine before it invokes user code.
@@ -42185,6 +42275,14 @@ mod tests {
     extern crate std;
 
     use super::*;
+
+    /// A freeing thread whose Theap declines `mi_abandoned_page_try_reclaim`,
+    /// as a thread without a Theap for the page's Heap does.
+    fn declined_reclaim_on_free(
+        _candidate: ProcessReclaimOnFreeCandidate<'_>,
+    ) -> abandoned::ReclaimOnFreeOutcome {
+        abandoned::ReclaimOnFreeOutcome::Declined
+    }
     use crate::arena::{ArenaRegistry, CommitHook, manage_external_in_place};
     use crate::dynamic_theap::{DynamicTheapAttachment, DynamicTheapBeginError};
     use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
@@ -42827,6 +42925,7 @@ mod tests {
                         &marker,
                         allocation,
                         move || Some((pair.into(), main_heap)),
+                        declined_reclaim_on_free,
                     )
                 };
                 assert_eq!(
@@ -42893,6 +42992,7 @@ mod tests {
             let result = unsafe {
                 continue_post_owner_exit_live_allocation_with_terminal_marker(
                     &marker, allocation, move || Some((pair.into(), main_heap)),
+                    declined_reclaim_on_free,
                 )
             };
             assert_eq!(
@@ -42954,6 +43054,7 @@ mod tests {
                     || -> Option<(ProcessPageBackingLease, MainStaticHeapLease<'static>)> {
                         panic!("a publication to a live owner needs only page atomics")
                     },
+                    declined_reclaim_on_free,
                 )
             };
             assert_eq!(result, Ok(ProcessPostOwnerExitPointerFreeDisposition::PublishedToOwner));
@@ -42993,6 +43094,7 @@ mod tests {
                     &marker,
                     allocation,
                     || None,
+                    declined_reclaim_on_free,
                 )
             };
             assert_eq!(result, Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained));
@@ -43060,6 +43162,7 @@ mod tests {
                 unsafe {
                     continue_post_owner_exit_live_allocation_with_terminal_marker(
                         &marker, allocation, move || Some((pair.into(), main_heap)),
+                        declined_reclaim_on_free,
                     )
                 },
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Released),
@@ -43125,6 +43228,7 @@ mod tests {
             let result = unsafe {
                 continue_post_owner_exit_live_allocation_with_terminal_marker(
                     &marker, allocation, move || Some((pair.into(), main_heap)),
+                    declined_reclaim_on_free,
                 )
             };
             assert_eq!(
@@ -43201,6 +43305,7 @@ mod tests {
                 unsafe {
                     continue_post_owner_exit_live_allocation_with_terminal_marker(
                         &marker, allocation, move || Some((pair.into(), main_heap)),
+                        declined_reclaim_on_free,
                     )
                 },
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
@@ -43293,6 +43398,7 @@ mod tests {
                 unsafe {
                     continue_post_owner_exit_live_allocation_with_terminal_marker(
                         &marker, allocation, move || Some((pair.into(), main_heap)),
+                        declined_reclaim_on_free,
                     )
                 },
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)

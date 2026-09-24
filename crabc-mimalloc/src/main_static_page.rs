@@ -2467,6 +2467,24 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
+    /// Offers a claimed abandoned page to the initial thread's Theap through
+    /// pinned `mi_abandoned_page_try_reclaim`. Only an active engine owns the
+    /// Theap queues; a dormant or awaiting owner declines.
+    #[inline]
+    pub(crate) fn reclaim_abandoned_page_on_free_current_initial_thread_local<
+        M: crate::abandoned::MappedAbandonedPages,
+    >(
+        &mut self,
+        candidate: crate::abandoned::ReclaimOnFreeCandidate<'_, M>,
+    ) -> crate::abandoned::ReclaimOnFreeOutcome {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                active.engine.reclaim_abandoned_page_on_free(candidate)
+            }
+            _ => crate::abandoned::ReclaimOnFreeOutcome::Declined,
+        }
+    }
+
     /// Gives the persistent initial owner a dormant process pair before a
     /// later worker starts. An all-free active engine force-collects exactly
     /// here; a live initial client never parks or transfers merely to make a

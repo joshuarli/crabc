@@ -27,7 +27,7 @@ use core::sync::atomic::Ordering;
 use crate::arena::ArenaAbandonedPages;
 use crate::atomic::{word_cas_weak_release, word_load_relaxed};
 use crate::bitmap::AbandonedBitmapClaim;
-use crate::config::{ARENA_BIN_COUNT, BIN_FULL, SMALL_SIZE_MAX};
+use crate::config::{ARENA_BIN_COUNT, BIN_FULL, MEDIUM_MAX_OBJ_SIZE, SMALL_SIZE_MAX};
 use crate::free_list::{self, FreeListError};
 use crate::process_page_map::LiveAllocationPageState;
 use crate::remote_free::{
@@ -35,7 +35,7 @@ use crate::remote_free::{
 };
 use crate::size_class;
 use crate::types::{
-    LiveThreadId, MemoryId, MemoryKind, Page, PageAbandonmentState, PageKind, Theap,
+    Heap, LiveThreadId, MemoryId, MemoryKind, Page, PageAbandonmentState, PageKind, Theap,
     PAGE_FLAG_MASK, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
 };
 
@@ -512,6 +512,9 @@ pub(crate) enum ClaimedPostOwnerExitRegularFreeResult {
     /// A racing producer became responsible after the continuation transferred
     /// the low bit through the source unown loop.
     PublishedToExistingOwner,
+    /// `mi_abandoned_page_try_reclaim` moved the still-used page into the
+    /// freeing thread's Theap, which now owns it as a live page.
+    ReclaimedOnFree,
     /// The continuation legally reabandoned or unowned a still-live page.
     StillLive,
     /// The supplied terminal owner completed PageMap/span/metadata release.
@@ -527,6 +530,98 @@ pub(crate) enum ClaimedPostOwnerExitRegularFreeResult {
 pub(crate) struct ClaimedPostOwnerExitRegularFreeFailure {
     owner: remote_free::ClaimedAbandonedRemoteFree,
     error: AbandonError,
+}
+
+/// One claimed, still-used abandoned arena page offered to the freeing
+/// thread's Theap by pinned `free.c:mi_abandoned_page_try_reclaim`.
+///
+/// `mi_free_try_collect_mt` makes this offer after its collection found the
+/// page still in use and before `mi_abandoned_page_try_reabandon_to_mapped`.
+/// The offer lends the claim's low-owner-bit authority for the duration of
+/// the decision only. [`Self::reclaim_into`] performs
+/// `_mi_arenas_page_unabandon` and the reassociation and collection half of
+/// `_mi_theap_page_reclaim`; the Theap's owner then appends the page to its
+/// queue. Declining leaves the page to the rest of the source tail.
+pub(crate) struct ReclaimOnFreeCandidate<'a, M: MappedAbandonedPages> {
+    page: NonNull<Page>,
+    state: &'a PageAbandonmentState,
+    map: &'a M,
+    bin: usize,
+}
+
+/// The freeing thread's answer to a [`ReclaimOnFreeCandidate`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReclaimOnFreeOutcome {
+    /// `mi_abandoned_page_try_reclaim` returned false; the claim continues.
+    Declined,
+    /// The page is reassociated, collected, and queued in the caller's Theap.
+    Reclaimed,
+    /// Reclaim began and stopped; the claim is the page's retained owner.
+    Failed(AbandonError),
+}
+
+impl<M: MappedAbandonedPages> ReclaimOnFreeCandidate<'_, M> {
+    /// `mi_page_heap(page)`: the Heap whose Theap may reclaim this page.
+    #[inline]
+    pub(crate) fn page_heap(&self) -> *mut Heap {
+        // SAFETY: the held low owner bit makes the ordinary page fields
+        // stable; producers touch only the atomic head while this short
+        // borrow copies one pointer.
+        unsafe { self.page.as_ref() }.heap()
+    }
+
+    /// `page->theap`, which `_mi_page_abandon` deliberately leaves naming the
+    /// originating Theap. It is compared by address only and never
+    /// dereferenced: that Theap may have been released with its thread.
+    #[inline]
+    pub(crate) fn originating_theap(&self) -> *mut Theap {
+        // SAFETY: the held low owner bit makes this ordinary field stable.
+        unsafe { ptr::read(self.state.theap.as_ptr()) }
+    }
+
+    /// The regular queue bin of the page's block size.
+    #[inline]
+    pub(crate) const fn bin(&self) -> usize { self.bin }
+
+    /// Completes the page-side half of a reclaim into `theap`, owned by
+    /// `thread`, and returns the page for the owner's queue append.
+    ///
+    /// This is `_mi_arenas_page_unabandon(page, theap)` followed by
+    /// `mi_page_set_theap(page, theap)` and `_mi_page_free_collect(page,
+    /// false)`. The claim's low owner bit becomes the live owner's bit.
+    ///
+    /// # Safety
+    ///
+    /// `theap` must be the caller's own initialized Theap for
+    /// [`Self::page_heap`], owned by `thread`, and the caller must append the
+    /// returned page at the end of that Theap's queue for [`Self::bin`]
+    /// before any other operation on the Theap.
+    pub(crate) unsafe fn reclaim_into(
+        self,
+        theap: NonNull<Theap>,
+        thread: LiveThreadId,
+    ) -> Result<NonNull<Page>, AbandonError> {
+        // The unmapped arena branch of `_mi_arenas_page_unabandon` changes no
+        // page or bitmap state; the mapped branch clears the bit once any
+        // concurrent arena reader has restored it.
+        unabandon_mapped(self.state, Some(self.map))?;
+        // SAFETY: the held low owner bit makes this ordinary field writable.
+        unsafe { ptr::write(self.state.theap.as_ptr(), theap.as_ptr()) };
+        set_thread_identity(self.state, thread.get());
+        // SAFETY: the page is now associated with its new live owner, which
+        // holds the low bit and every ordinary field through this collection.
+        let owner = unsafe { Page::remote_free_owner_state_at(self.page) }
+            .ok_or(AbandonError::NotAbandoned)?;
+        unsafe { remote_free::collect_live_page_false(owner) }.map_err(AbandonError::RemoteFree)?;
+        Ok(self.page)
+    }
+}
+
+/// The regular claim tail either reclaimed its page into the freeing thread
+/// or continued with the source try-free/reabandon/unown result.
+enum RegularClaimTail {
+    Reclaimed,
+    NotReclaimed(RegularAbandonedFreeAfterFailedReclaimResult),
 }
 
 /// Source backing selected for an all-free singleton's terminal tail.
@@ -1220,13 +1315,18 @@ where
     // into an owned head and retained the exact page/block lifetime. The
     // continuation begins after that publication and must not link `block`
     // into `xthread_free` a second time.
-    unsafe {
+    let tail = unsafe {
         finish_regular_after_remote_claim(
             page,
             block,
             select_map,
             collect_owner_deferred_frees,
+            |_candidate: ReclaimOnFreeCandidate<'_, M>| ReclaimOnFreeOutcome::Declined,
         )
+    }?;
+    match tail {
+        RegularClaimTail::NotReclaimed(result) => Ok(result),
+        RegularClaimTail::Reclaimed => unreachable!("a declined reclaim offer never reclaims"),
     }
 }
 
@@ -1245,16 +1345,18 @@ where
 /// this exact `block`, retain the complete initialized page/block area, and
 /// satisfy the bitmap and owner-local callback obligations documented by
 /// `free_regular_after_failed_reclaim_select_map_with_after_claim_and_owner_deferred_collection`.
-unsafe fn finish_regular_after_remote_claim<M, F, C>(
+unsafe fn finish_regular_after_remote_claim<M, F, C, T>(
     page: NonNull<Page>,
     block: NonNull<u8>,
     select_map: F,
     mut collect_owner_deferred_frees: C,
-) -> Result<RegularAbandonedFreeAfterFailedReclaimResult, AbandonError>
+    try_reclaim: T,
+) -> Result<RegularClaimTail, AbandonError>
 where
     M: MappedAbandonedPages,
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
     C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
+    T: FnOnce(ReclaimOnFreeCandidate<'_, M>) -> ReclaimOnFreeOutcome,
 {
     // A successful low-bit claim is the first legal point to inspect ordinary
     // page fields. Source collection must finish before this tail acquires a
@@ -1322,7 +1424,9 @@ where
             }
             unabandon_mapped(&state, Some(&map))?;
         }
-        return Ok(RegularAbandonedFreeAfterFailedReclaimResult::Empty);
+        return Ok(RegularClaimTail::NotReclaimed(
+            RegularAbandonedFreeAfterFailedReclaimResult::Empty,
+        ));
     }
 
     let map = select_map(state.memid, state.block_size)?;
@@ -1330,8 +1434,47 @@ where
         return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
     }
 
+    // `mi_free_try_collect_mt` offers a still-used page to the freeing
+    // thread's Theap before it may reabandon or unown it. The frozen default
+    // `page_reclaim_on_free = 0` keeps that offer enabled (`>= 0`).
+    if state.block_size <= MEDIUM_MAX_OBJ_SIZE {
+        let candidate = ReclaimOnFreeCandidate { page, state: &state, map: &map, bin };
+        match try_reclaim(candidate) {
+            ReclaimOnFreeOutcome::Declined => {}
+            ReclaimOnFreeOutcome::Reclaimed => return Ok(RegularClaimTail::Reclaimed),
+            ReclaimOnFreeOutcome::Failed(error) => return Err(error),
+        }
+    }
+
+    reabandon_or_unown_regular_after_declined_reclaim(
+        page,
+        &state,
+        &map,
+        source_identity,
+        expected_head,
+        &mut collect_owner_deferred_frees,
+    )
+    .map(RegularClaimTail::NotReclaimed)
+}
+
+/// The rest of `mi_free_try_collect_mt` after `mi_abandoned_page_try_free`
+/// and `mi_abandoned_page_try_reclaim` both declined a claimed regular page:
+/// `mi_abandoned_page_try_reabandon_to_mapped`, then
+/// `mi_abandoned_page_unown_from_free`.
+fn reabandon_or_unown_regular_after_declined_reclaim<M, C>(
+    page: NonNull<Page>,
+    state: &PageAbandonmentState,
+    map: &M,
+    source_identity: usize,
+    expected_head: usize,
+    collect_owner_deferred_frees: &mut C,
+) -> Result<RegularAbandonedFreeAfterFailedReclaimResult, AbandonError>
+where
+    M: MappedAbandonedPages,
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
+{
     if source_identity == THREAD_ID_ABANDONED {
-        if let Some(result) = terminal_or_reabandon_unmapped(page, &state, &map)? {
+        if let Some(result) = terminal_or_reabandon_unmapped(page, state, map)? {
             return Ok(match result {
                 UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
                     RegularAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner
@@ -1348,11 +1491,11 @@ where
         let mut no_test_hook: Option<fn()> = None;
         return match unown_unmapped_from_free_with_owner_deferred_collection(
             page,
-            &state,
-            &map,
+            state,
+            map,
             expected_head,
             &mut no_test_hook,
-            &mut collect_owner_deferred_frees,
+            collect_owner_deferred_frees,
         )? {
             UnmappedAbandonedFreeResult::PublishedToExistingOwner => Ok(
                 RegularAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner,
@@ -1369,10 +1512,10 @@ where
 
     match unown_mapped_from_free_with_owner_deferred_collection(
         page,
-        &state,
-        &map,
+        state,
+        map,
         expected_head,
-        &mut collect_owner_deferred_frees,
+        collect_owner_deferred_frees,
     )? {
         MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => Ok(
             RegularAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner,
@@ -1527,10 +1670,11 @@ where
 /// exact typed terminal owner and must return it intact on failure. On a
 /// `Released` result, it may have invalidated the page and block, and this
 /// function performs no later access.
-pub(crate) unsafe fn continue_post_owner_exit_remote_claim<M, F, C, R>(
+pub(crate) unsafe fn continue_post_owner_exit_remote_claim<M, F, C, T, R>(
     claim: remote_free::ClaimedAbandonedRemoteFree,
     select_map: F,
     collect_owner_deferred_frees: C,
+    try_reclaim: T,
     terminal_release: R,
 ) -> Result<
     ClaimedPostOwnerExitRegularFreeResult,
@@ -1540,6 +1684,7 @@ where
     M: MappedAbandonedPages,
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
     C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
+    T: FnOnce(ReclaimOnFreeCandidate<'_, M>) -> ReclaimOnFreeOutcome,
     R: FnOnce(ClaimedPostOwnerExitRegularRelease) -> ClaimedPostOwnerExitRegularTerminalRelease,
 {
     let page = claim.page();
@@ -1553,7 +1698,17 @@ where
             block,
             select_map,
             collect_owner_deferred_frees,
+            try_reclaim,
         )
+    };
+    let result = match result {
+        // The reclaiming Theap owns the page and its low bit as a live owner;
+        // the claim has no remaining source authority to retain.
+        Ok(RegularClaimTail::Reclaimed) => {
+            return Ok(ClaimedPostOwnerExitRegularFreeResult::ReclaimedOnFree);
+        }
+        Ok(RegularClaimTail::NotReclaimed(result)) => Ok(result),
+        Err(error) => Err(error),
     };
     match result {
         Err(error) => Err(ClaimedPostOwnerExitRegularFreeFailure {
@@ -4470,6 +4625,7 @@ mod tests {
                         owner_local_collections.set(owner_local_collections.get() + 1);
                         Ok(())
                     },
+                    |_candidate| ReclaimOnFreeOutcome::Declined,
                     |release| {
                         assert_eq!(release.page(), page);
                         assert_eq!(release.memory().kind(), MemoryKind::Arena);

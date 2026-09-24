@@ -169,12 +169,10 @@ fn native_aggregate_reclaims_its_final_mapped_regular_member_before_b_finishes()
         0,
         "the final source member releases every mapped-abandoned aggregate page"
     );
-    #[cfg(feature = "native-runtime-test-audit")]
-    assert!(
-        source_after_terminal_free.page_map_registered_entry_count
-            < source_after_owner_exit.page_map_registered_entry_count,
-        "the aggregate final free releases PageMap registrations before B finishes"
-    );
+    // B's first medium free claims the mapped page while B's own medium
+    // queue is empty, so pinned `mi_abandoned_page_try_reclaim` moves the
+    // page into B's Theap; the final member is then a local free and the
+    // page stays registered to B until B finishes.
     let while_b_attached = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
         TicketZeroPageAllocationResult::Unavailable => {
@@ -198,6 +196,14 @@ fn native_aggregate_reclaims_its_final_mapped_regular_member_before_b_finishes()
     releaser
         .join()
         .expect("B completes its independent post-exit lifecycle");
+    #[cfg(feature = "native-runtime-test-audit")]
+    assert!(
+        native_runtime_lifecycle_test_audit()
+            .expect("B's finish leaves an auditable PageMap state")
+            .page_map_registered_entry_count
+            < source_after_owner_exit.page_map_registered_entry_count,
+        "the aggregate's pages release their PageMap registrations by B's finish"
+    );
 
     let resumed = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,

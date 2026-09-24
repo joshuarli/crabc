@@ -684,6 +684,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/free.c"
+name = "claimed-abandoned-free-reclaim-on-free"
+source_region = "mimalloc v3.5.0 src/free.c:427-515 mi_abandoned_page_try_reclaim inside mi_free_try_collect_mt, with src/arena.c:1400-1424 _mi_arenas_page_unabandon and src/page.c:277-289 _mi_theap_page_reclaim"
+rust_module = "crabc_mimalloc::abandoned, crabc_mimalloc::single_thread, crabc_mimalloc::main_heap_page, crabc_mimalloc::main_static_page, crabc_mimalloc::runtime_lifecycle, and crabc_mimalloc::remote_free"
+rust_item = "ReclaimOnFreeCandidate::reclaim_into and ReclaimOnFreeOutcome in finish_regular_after_remote_claim; PageAllocatorEngine::reclaim_abandoned_page_on_free; remote_free::collect_live_page_false; native_free_reclaim_on_free_into_current_thread"
+intentional_difference = "After a nonlocal `native_free` claims a still-used regular arena page with block size at most MI_MEDIUM_MAX_OBJ_SIZE, the claim tail offers it to the freeing thread's persistent engine before reabandon/unown. The decision is the pinned one under the frozen options: the thread's Theap must serve the page's Heap with a TLD and allow_page_reclaim; the originating Theap (`page->theap`, compared by address) may hold up to page_max_reclaim (-1) or, in a thread pool, page_cross_thread_max_reclaim (32) pages of the bin; any other Theap may reclaim only into an empty bin queue because page_reclaim_on_free is 0. An attached worker without a page engine activates it as its first allocation would. The initial thread reclaims only while its engine is active; a dormant or awaiting initial owner, a finished or unattached thread, and an owner already borrowed by an enclosing operation decline."
+tests = ["crabc-mimalloc/tests/native_reclaim_on_free.rs", "compat/allocator/reclaim_on_free.c", "compat/allocator/reclaim_on_free.py", "crabc-mimalloc/tests/native_aggregate_post_exit_reclaim.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/arena.c"
 name = "dynamic-thread-exit-os-aligned-singleton-abandon-list-and-terminal-release"
 source_region = "dynamic post-TLS owner-exit ordering from src/threadlocal.c:205-214 and src/init.c:377-421,448-481; force collection and page abandonment from src/theap.c:89-152 and src/page.c:291-303; non-arena _mi_arenas_page_abandon list insertion and _mi_arenas_page_unabandon removal from src/arena.c:1304-1355,1383-1424; failed-reclaim empty tail from src/free.c:371-379; and clipped PageMap/alias/primary/mapping release from the OS-aligned page path"

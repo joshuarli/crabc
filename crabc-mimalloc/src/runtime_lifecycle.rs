@@ -11142,6 +11142,8 @@ fn native_free_pointer_first_local(
 /// facts only after that CAS claims an abandoned head, as pinned
 /// `mi_free_try_collect_mt` does. A publication to a live owner therefore
 /// never borrows that owner's TLD, Theap, or engine, nor any process lease.
+/// A claimed, still-used page is offered to the freeing thread's own engine
+/// by `mi_abandoned_page_try_reclaim` before it is reabandoned or unowned.
 /// W03 invokes W07's linear source claim internally and owns any post-CAS
 /// retained capability; this dispatcher receives only scalar
 /// disposition/rejection values.
@@ -11157,11 +11159,13 @@ fn native_free_pointer_first_nonlocal(
         crate::single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts(
             allocation,
             native_free_claimed_tail_process_page_facts,
+            native_free_reclaim_on_free_into_current_thread,
         )
     } {
         Ok(
             ProcessPostOwnerExitPointerFreeDisposition::PublishedToOwner
             | ProcessPostOwnerExitPointerFreeDisposition::StillLive
+            | ProcessPostOwnerExitPointerFreeDisposition::ReclaimedOnFree
             | ProcessPostOwnerExitPointerFreeDisposition::Released,
         ) => NativePageFreeResult::Freed,
         Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained) => {
@@ -11185,6 +11189,45 @@ fn native_free_pointer_first_nonlocal(
             NativePageFreeResult::Retained
         }
     }
+}
+
+/// Offers a claimed, still-used abandoned page to the freeing thread's Theap
+/// (`free.c:mi_abandoned_page_try_reclaim`).
+///
+/// `_mi_thread_is_initialized()` holds for an attached worker, whose page
+/// engine is activated here exactly as its first allocation would, and for
+/// the initial thread while its engine is active. A thread that is not
+/// attached, has finished, or is inside an operation that already borrows its
+/// owner declines, and the claim continues to reabandon or unown the page.
+fn native_free_reclaim_on_free_into_current_thread(
+    candidate: crate::single_thread::ProcessReclaimOnFreeCandidate<'_>,
+) -> crate::abandoned::ReclaimOnFreeOutcome {
+    use crate::abandoned::ReclaimOnFreeOutcome;
+    if RUNTIME_PROCESS.is_on_initial_allocation_thread() {
+        if !current_thread_native_owner_presence().initial_installed {
+            return ReclaimOnFreeOutcome::Declined;
+        }
+        return current_thread_native_initial_persistent_owner_cell()
+            .with_owner(|owner| {
+                let owner = owner.get_mut();
+                if owner.is_retained() {
+                    ReclaimOnFreeOutcome::Declined
+                } else {
+                    owner
+                        .allocator
+                        .reclaim_abandoned_page_on_free_current_initial_thread_local(candidate)
+                }
+            })
+            .unwrap_or(ReclaimOnFreeOutcome::Declined);
+    }
+    let mut candidate = Some(candidate);
+    with_current_thread_native_persistent_allocator(true, |allocator| {
+        match candidate.take() {
+            Some(candidate) => allocator.reclaim_abandoned_page_on_free(candidate),
+            None => ReclaimOnFreeOutcome::Declined,
+        }
+    })
+    .unwrap_or(ReclaimOnFreeOutcome::Declined)
 }
 
 /// Supplies the process facts that a claimed abandoned-page free tail needs.

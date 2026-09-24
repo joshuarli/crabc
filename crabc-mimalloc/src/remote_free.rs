@@ -870,6 +870,21 @@ pub(crate) unsafe fn collect_live_page(
     unsafe { collect(owner) }
 }
 
+/// Pinned `page.c:_mi_page_free_collect(page, false)` for a live page: the
+/// remote-list collection of [`collect_live_page`], then the non-force move
+/// of `local_free` into an empty `free` list.
+///
+/// # Safety
+///
+/// The same live-owner obligations as [`collect_live_page`].
+pub(crate) unsafe fn collect_live_page_false(
+    owner: PageRemoteFreeOwnerState,
+) -> Result<usize, RemoteFreeError> {
+    let collected = collect_state(owner)?;
+    move_local_to_free_if_empty(owner);
+    Ok(collected)
+}
+
 /// Test-only source owner drain with one hook after the relaxed head load and
 /// before the first source detach CAS. It intentionally reuses the production
 /// `collect_state_with_before_detach_cas` transition rather than reimplementing

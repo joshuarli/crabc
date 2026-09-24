@@ -2949,6 +2949,16 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
         unsafe { self.engine.free_captured_live_allocation(allocation) }
     }
 
+    /// Offers a claimed abandoned page to this worker's Theap through pinned
+    /// `mi_abandoned_page_try_reclaim`.
+    #[inline]
+    pub(crate) fn reclaim_abandoned_page_on_free<M: crate::abandoned::MappedAbandonedPages>(
+        &mut self,
+        candidate: crate::abandoned::ReclaimOnFreeCandidate<'_, M>,
+    ) -> crate::abandoned::ReclaimOnFreeOutcome {
+        self.engine.reclaim_abandoned_page_on_free(candidate)
+    }
+
     /// Injects one page-collection failure through the exact stored engine for
     /// the focused persistent-owner terminal-state regression.
     #[cfg(test)]

@@ -44,6 +44,15 @@ observed list/TLD/thread-count transition. Detached TLD backing, arena and
 PageMap release, Heap statistics and bookkeeping, and full subprocess
 destruction remain separate work.
 
+`./compat/allocator/run-x86_64.sh allocator-reclaim-on-free` compares pinned
+`mi_abandoned_page_try_reclaim` decisions ([`reclaim_on_free.c`](reclaim_on_free.c))
+with the Rust `native_reclaim_on_free` integration test: a worker freeing into
+its own full, abandoned page; a worker with an empty or a nonempty queue for
+the bin freeing into an exited owner's page; and a large page, which is never
+reclaimed on free. For each case both record whether the freeing thread owns
+the page afterwards, its `used` count, and the thread's queue length for the
+bin. Logs live under `x86_64/reclaim-on-free`.
+
 `./compat/allocator/run-x86_64.sh allocator-subprocess-lifecycle` compares
 pinned `mi_subproc_new`, `mi_subproc_add_current_thread`,
 `mi_subproc_visit_heaps`, and `mi_subproc_destroy`

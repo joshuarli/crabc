@@ -831,9 +831,12 @@ impl HeapTheapStatistics {
     }
 
     /// Records the source free-triggered abandoned-page reclaim after its
-    /// reassociation, false collection, and queue insertion have completed.
+    /// reassociation, false collection, and queue insertion have completed:
+    /// `_mi_arenas_page_unabandon`'s `pages_abandoned` decrease, then
+    /// `mi_abandoned_page_try_reclaim`'s `pages_reclaim_on_free` increase.
     #[inline]
     pub(crate) fn page_reclaimed_on_free(&self) {
+        self.pages_abandoned.update(-1);
         self.pages_reclaim_on_free.increase(1);
     }
 
@@ -1209,6 +1212,8 @@ mod tests {
         source.pages_searched(2);
         source.page_abandoned();
         source.mapped_page_reclaimed_on_alloc();
+        // Each source reclaim unabandons a page that an abandonment counted.
+        source.page_abandoned();
         source.page_reclaimed_on_free();
         source.page_reabandoned_from_full();
         source.page_abandoned();
@@ -1226,7 +1231,7 @@ mod tests {
                 threads_current: 0,
                 page_searches: 2,
                 page_searches_count: 1,
-                pages_abandoned_total: 1,
+                pages_abandoned_total: 2,
                 pages_abandoned_current: 0,
                 pages_reclaim_on_alloc: 1,
                 pages_reclaim_on_free: 1,
