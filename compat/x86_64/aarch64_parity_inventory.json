@@ -1347,8 +1347,7 @@
   ],
   "capability_state_counts": {
     "implemented-foundation": 180,
-    "missing": 2,
-    "selected-private": 41
+    "selected-private": 43
   },
   "families": [
     {
