@@ -576,19 +576,26 @@ impl LocalFreeList {
         Ok(unsafe { NonNull::new_unchecked(self.base.as_ptr().add(offset)) })
     }
 
+    /// Checks that `block` is a link-aligned word inside the initialized
+    /// `capacity * block_size` prefix of this page area.
+    ///
+    /// This bounds every allocator-owned link read or write to initialized
+    /// page memory. It deliberately does not test block-start divisibility:
+    /// pinned normal-release `mi_block_next`, `mi_page_malloc_zero`, and
+    /// `mi_free_block_local` validate nothing here, and even the
+    /// `MI_ENCODE_FREELIST` form checks only page containment. A division
+    /// per list node was the dominant arithmetic cost of the local path. A
+    /// link-aligned in-range interior word is still a writable link slot:
+    /// `block_size` is a nonzero multiple of `LINK_ALIGN`, so the aligned
+    /// offset leaves at least `LINK_SIZE` initialized bytes before the end.
     #[inline]
     fn validate_initialized_block(&self, block: NonNull<u8>) -> Result<(), FreeListError> {
-        let start = self.base.addr().get();
-        let end = start
-            .checked_add(self.bytes)
-            .ok_or(FreeListError::InvalidPage)?;
+        // Construction proved `reserved * block_size <= bytes`, and
+        // `capacity <= reserved`, so this product cannot overflow.
+        let initialized = self.capacity_value() as usize * self.block_size;
         let address = block.addr().get();
-        if address < start || address >= end {
-            return Err(FreeListError::InvalidBlock);
-        }
-        let offset = address - start;
-        if offset % self.block_size != 0
-            || offset / self.block_size >= self.capacity_value() as usize
+        if address.wrapping_sub(self.base.addr().get()) >= initialized
+            || address % LINK_ALIGN != 0
         {
             return Err(FreeListError::InvalidBlock);
         }
@@ -753,9 +760,9 @@ fn validate_raw_initialized_block(
         .checked_add(initialized_bytes)
         .ok_or(FreeListError::InvalidBlock)?;
     let address = block.as_ptr().addr();
+    // Same containment-only contract as `LocalFreeList::validate_initialized_block`.
     if address < base
         || address >= end
-        || (address - base) % state.block_size != 0
         || address % LINK_ALIGN != 0
     {
         return Err(FreeListError::InvalidBlock);
