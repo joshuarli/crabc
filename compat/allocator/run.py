@@ -17591,6 +17591,32 @@ def require_tool(name: str) -> str:
     return resolved
 
 
+def cargo_test_build_command(command: Sequence[str]) -> list[str] | None:
+    """Return the `--no-run` compile step of a `cargo [+toolchain] test` command.
+
+    Compiling a cold test target is build work whose duration depends on host
+    load, not on allocator behavior, so it must not share the test deadline.
+    Test-binary arguments after `--` belong to the timed run only.
+    """
+
+    argv = list(command)
+    for index, word in enumerate(argv):
+        if Path(word).name != "cargo":
+            continue
+        subcommand = index + 1
+        if subcommand < len(argv) and argv[subcommand].startswith("+"):
+            subcommand += 1
+        if subcommand >= len(argv) or argv[subcommand] != "test":
+            return None
+        options = argv[subcommand + 1:]
+        if "--" in options:
+            options = options[:options.index("--")]
+        if "--no-run" in options:
+            return None
+        return [*argv[:subcommand + 1], "--no-run", *options]
+    return None
+
+
 def command_record(
     command: Sequence[str],
     *,
@@ -17599,8 +17625,28 @@ def command_record(
     input_text: str | None = None,
     timeout_seconds: int = 300,
 ) -> dict[str, Any]:
+    """Run one command; a `cargo test` compiles untimed before its timed run."""
+
     if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
         raise HarnessError("oracle command timeout must be a positive integer number of seconds")
+    build = cargo_test_build_command(command)
+    if build is not None:
+        record = _run_command_record(build, cwd=cwd, env=env, input_text=None, timeout_seconds=None)
+        if record["status"] != 0:
+            return record
+    return _run_command_record(
+        command, cwd=cwd, env=env, input_text=input_text, timeout_seconds=timeout_seconds,
+    )
+
+
+def _run_command_record(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str] | None,
+    input_text: str | None,
+    timeout_seconds: int | None,
+) -> dict[str, Any]:
     try:
         completed = subprocess.run(
             list(command),

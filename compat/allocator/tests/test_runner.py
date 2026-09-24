@@ -221,6 +221,54 @@ class CommandRecordTests(unittest.TestCase):
         self.assertIn("test source_batch::fails ... FAILED", str(raised.exception))
         self.assertIn("native test process exited", str(raised.exception))
 
+    def test_cargo_test_build_is_untimed_and_only_the_test_run_has_the_deadline(self) -> None:
+        command = ["/opt/cargo/bin/cargo", "test", "--locked", "-p", "crabc-mimalloc", "filter", "--", "--exact"]
+        calls: list[tuple[list[str], object]] = []
+
+        def completed(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append((argv, kwargs["timeout"]))
+            return subprocess.CompletedProcess(argv, 0, "ran\n", "")
+
+        with mock.patch.object(RUNNER.subprocess, "run", side_effect=completed):
+            record = RUNNER.command_record(command, cwd=RUNNER.ROOT, timeout_seconds=17)
+
+        self.assertEqual(
+            calls,
+            [
+                (["/opt/cargo/bin/cargo", "test", "--no-run", "--locked", "-p", "crabc-mimalloc", "filter"], None),
+                (command, 17),
+            ],
+        )
+        self.assertEqual(record["command"], command)
+        self.assertEqual(record["stdout"], "ran\n")
+
+    def test_failed_cargo_test_build_is_reported_without_running_tests(self) -> None:
+        calls: list[list[str]] = []
+
+        def failed_build(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 101, "", "error[E0425]: cannot find value\n")
+
+        with mock.patch.object(RUNNER.subprocess, "run", side_effect=failed_build):
+            record = RUNNER.command_record(["cargo", "+nightly", "test", "--no-default-features"], cwd=RUNNER.ROOT)
+
+        self.assertEqual(calls, [["cargo", "+nightly", "test", "--no-run", "--no-default-features"]])
+        self.assertEqual(record["status"], 101)
+        self.assertIn("E0425", record["stderr"])
+
+    def test_non_test_commands_keep_their_single_timed_execution(self) -> None:
+        calls: list[tuple[list[str], object]] = []
+
+        def completed(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append((argv, kwargs["timeout"]))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with mock.patch.object(RUNNER.subprocess, "run", side_effect=completed):
+            RUNNER.command_record(["cargo", "test", "--no-run"], cwd=RUNNER.ROOT, timeout_seconds=9)
+            RUNNER.command_record(["/bin/true", "test"], cwd=RUNNER.ROOT, timeout_seconds=9)
+
+        self.assertEqual(calls, [(["cargo", "test", "--no-run"], 9), (["/bin/true", "test"], 9)])
+
 
 class WorkRootTests(unittest.TestCase):
     def test_relocating_cache_preserves_reviewed_source_contract_identity(self) -> None:
