@@ -31,9 +31,9 @@ use core::ops::{Deref, DerefMut};
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 use core::sync::atomic::{AtomicU8, Ordering};
 
-// The general graph names objects by unbounded graph index; only its initial
-// TLS generation keeps a fixed number of DTV slots.
-type GeneralInitialTlsRegistry = InitialTlsRegistry<{ usize::MAX }, MAX_INITIAL_TLS_MODULES>;
+// The general graph names objects by unbounded graph index, and its initial
+// DTV is sized from the planned module population.
+type GeneralInitialTlsRegistry = InitialTlsRegistry<{ usize::MAX }, { usize::MAX }>;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 type ConventionalStartupReservation = Option<super::x86_64_conventional_startup_v1::Reservation>;
 #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
@@ -607,7 +607,7 @@ impl GeneralInitialTlsState {
         }
 
         // One (object index, offset below TP) per planned module, by ID.
-        let mut planned = [(0usize, 0usize); MAX_INITIAL_TLS_MODULES];
+        let mut planned = super::x86_64_runtime_memory::LoaderVec::new();
         let mut offset_below_tp = 0usize;
         let mut registry = GeneralInitialTlsRegistry::new();
         let mut has_tls = false;
@@ -647,12 +647,12 @@ impl GeneralInitialTlsState {
             let module_id = registry
                 .assign_initial(index)
                 .map_err(|_| GeneralInitialTlsStateError::Registry)?;
-            if module_id.get() >= TLS_DTV_WORDS {
-                return Err(GeneralInitialTlsStateError::ModuleCapacity);
+            if module_id.get() != planned.len() + 1 {
+                return Err(GeneralInitialTlsStateError::Registry);
             }
-            *planned
-                .get_mut(module_id.get() - 1)
-                .ok_or(GeneralInitialTlsStateError::ModuleCapacity)? = (index, offset_below_tp);
+            planned
+                .push((index, offset_below_tp))
+                .ok_or(GeneralInitialTlsStateError::ModuleCapacity)?;
         }
         registry
             .seal()
@@ -670,7 +670,7 @@ impl GeneralInitialTlsState {
                 object.tls_offset_below_tp = 0;
                 object.tls_module_id = 0;
             }
-            for (module, &(index, offset)) in planned[..registry.module_count()].iter().enumerate() {
+            for (module, &(index, offset)) in planned.iter().enumerate() {
                 let object = objects.get_mut(index).ok_or(GeneralInitialTlsStateError::Registry)?;
                 object.tls_offset_below_tp = offset;
                 object.tls_module_id = module + 1;
@@ -960,8 +960,7 @@ impl GeneralInitialTlsState {
             expected_module = expected_module
                 .checked_add(1)
                 .ok_or(GeneralInitialTlsStateError::ModuleCapacity)?;
-            if expected_module >= TLS_DTV_WORDS
-                || registry_id.map(TlsModuleId::get) != Some(expected_module)
+            if registry_id.map(TlsModuleId::get) != Some(expected_module)
                 || object.tls_module_id != expected_module
                 || object.tls_offset_below_tp < object.tls_memsz
             {
@@ -995,11 +994,11 @@ impl GeneralInitialTlsState {
             return Err(GeneralInitialTlsStateError::GraphIncomplete);
         }
         let module_count = self.registry.module_count();
-        let required_dtv_words = module_count
+        // The initial DTV needs its count word beside one slot per module.
+        module_count
             .checked_add(1)
             .ok_or(GeneralInitialTlsStateError::ModuleCapacity)?;
         if module_count == 0
-            || required_dtv_words > TLS_DTV_WORDS
             || self.registry.generation() != InitialTlsGeneration::initial()
             || self
                 .registry
@@ -1078,7 +1077,7 @@ mod tests {
         let phase_before_growth_rejection = state.phase();
         let object_count_before_growth_rejection = state.object_count();
         assert_eq!(
-            state.reject_runtime_tls_growth(MAX_INITIAL_TLS_MODULES),
+            state.reject_runtime_tls_growth(64),
             Err(RuntimeTlsGrowthError::DtvGrowthProtocolUnavailable)
         );
         assert_eq!(state.phase(), phase_before_growth_rejection);

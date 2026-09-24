@@ -356,10 +356,6 @@ const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT + 1;
 #[cfg(not(crabc_general_initial_graph))]
 #[cfg(not(crabc_bounded_runtime_dlopen))]
 const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT;
-// Only the initial TLS generation remains fixed: its DTV geometry is sealed
-// before libc starts, and later modules use the runtime DTV-growth protocol.
-#[cfg(crabc_general_initial_graph)]
-const MAX_INITIAL_TLS_MODULES: usize = 32;
 const MAX_PHDRS: usize = 32;
 // The installed runtime reads DT_NEEDED names from the validated dynamic
 // table; the private source roots retain their small inline table.
@@ -420,10 +416,11 @@ const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 
 const TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET: usize = 32;
 #[cfg(not(crabc_general_initial_graph))]
 const TLS_DTV_WORDS: usize = MAX_OBJECTS + 1;
+// General graphs size each initial DTV from its module count (see
+// `materialize_initial_tls`). This fixed geometry remains only for the
+// fixed-graph helpers compiled beside them.
 #[cfg(crabc_general_initial_graph)]
-const TLS_DTV_WORDS: usize = MAX_INITIAL_TLS_MODULES + 1;
-const TLS_DTV_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
-const TLS_MODULE_SIZE_TABLE_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
+const TLS_DTV_WORDS: usize = 33;
 
 // The initial RuntimeV1 graph has the same fixed object and nonzero-DTV-slot
 // capacity. This state is private to the loader and remains separate from
@@ -2607,17 +2604,28 @@ unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -
         total_tls_size = total_tls_size.max(object.tls_offset_below_tp);
         tp_alignment = tp_alignment.max(object.tls_align);
         module_count = module_count.checked_add(1)?;
-        if object.tls_module_id != module_count || module_count >= TLS_DTV_WORDS {
+        #[cfg(not(crabc_general_initial_graph))]
+        if module_count >= TLS_DTV_WORDS {
+            return None;
+        }
+        if object.tls_module_id != module_count {
             return None;
         }
     }
     if total_tls_size == 0 || !tp_alignment.is_power_of_two() {
         return None;
     }
+    // The general graph sizes its initial DTV and module-size table from the
+    // planned population, as musl sizes its initial DTV from the module count.
+    #[cfg(crabc_general_initial_graph)]
+    let dtv_words = module_count.checked_add(1)?;
+    #[cfg(not(crabc_general_initial_graph))]
+    let dtv_words = TLS_DTV_WORDS;
+    let dtv_byte_len = dtv_words.checked_mul(core::mem::size_of::<usize>())?;
 
     let reserved_after_tp = TLS_TCB_PREFIX_SIZE
-        .checked_add(TLS_DTV_BYTE_LEN)?
-        .checked_add(TLS_MODULE_SIZE_TABLE_BYTE_LEN)?;
+        .checked_add(dtv_byte_len)?
+        .checked_add(dtv_byte_len)?;
     let raw_mapping_size = total_tls_size
         .checked_add(ownership_prefix)?
         .checked_add(reserved_after_tp)?
@@ -2649,7 +2657,7 @@ unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -
 
     let tcb = thread_pointer as *mut u8;
     let dtv = tcb.add(TLS_TCB_PREFIX_SIZE) as *mut usize;
-    let module_sizes = (dtv as *mut u8).add(TLS_DTV_BYTE_LEN) as *mut usize;
+    let module_sizes = (dtv as *mut u8).add(dtv_byte_len) as *mut usize;
     // SAFETY: the fresh anonymous mapping spans the checked TCB/DTV ranges;
     // no application code can observe it until startup installs FS or the
     // worker owner publishes the returned allocation to CLONE_SETTLS.
@@ -2660,7 +2668,7 @@ unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -
         module_sizes as usize,
     );
     core::ptr::write_unaligned(dtv, module_count);
-    for module_id in 1..TLS_DTV_WORDS {
+    for module_id in 1..dtv_words {
         core::ptr::write_unaligned(dtv.add(module_id), 0);
         core::ptr::write_unaligned(module_sizes.add(module_id), 0);
     }
@@ -2669,7 +2677,7 @@ unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -
         if object.tls_memsz == 0 {
             continue;
         }
-        if object.tls_module_id == 0 || object.tls_module_id >= TLS_DTV_WORDS {
+        if object.tls_module_id == 0 || object.tls_module_id >= dtv_words {
             let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
             return None;
         }
@@ -2692,7 +2700,7 @@ unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -
         mapping_byte_len: mapping_size,
         thread_pointer: tcb,
         dtv,
-        dtv_words: TLS_DTV_WORDS,
+        dtv_words,
         module_count,
     })
 }
@@ -2835,7 +2843,12 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
         return core::ptr::null_mut();
     }
     let module_count = core::ptr::read_unaligned(dtv);
-    if module_id == 0 || module_id > module_count || module_id >= TLS_DTV_WORDS {
+    // A general DTV holds exactly its count word plus one slot per module.
+    #[cfg(not(crabc_general_initial_graph))]
+    if module_id >= TLS_DTV_WORDS {
+        return core::ptr::null_mut();
+    }
+    if module_id == 0 || module_id > module_count {
         return core::ptr::null_mut();
     }
     let module_base = core::ptr::read_unaligned(dtv.add(module_id));

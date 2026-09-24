@@ -24,13 +24,6 @@ impl TlsModuleId {
         NonZeroUsize::new(value).map(Self)
     }
 
-    const fn from_one_based_const(value: usize) -> Option<Self> {
-        match NonZeroUsize::new(value) {
-            Some(value) => Some(Self(value)),
-            None => None,
-        }
-    }
-
     /// Returns the ELF one-based module number.
     pub(crate) const fn get(self) -> usize {
         self.0.get()
@@ -94,13 +87,18 @@ pub(crate) enum RuntimeTlsGrowthError {
 
 /// A typed, bounded initial TLS registry owned by the x86 loader.
 ///
-/// `OBJECT_CAPACITY` bounds the object indices a caller may name (the
-/// general graph passes `usize::MAX`: it has no object bound) and
+/// `OBJECT_CAPACITY` bounds the object indices a caller may name and
 /// `MODULE_CAPACITY` is the number of nonzero DTV slots available to its
-/// initial population. The registry records module-ID-to-object ownership,
+/// initial population. The general graph passes `usize::MAX` for both: its
+/// initial DTV is sized from the planned population. The registry records module-ID-to-object ownership,
 /// rather than assuming object indices are module IDs; TLS-free objects
 /// consume neither, so its storage grows only with TLS-bearing objects.
 pub(crate) struct InitialTlsRegistry<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize> {
+    // Object index of module `id - 1`. The general graph sizes this from its
+    // TLS-bearing objects; the fixed private roots keep inline slots.
+    #[cfg(crabc_general_initial_graph)]
+    module_objects: super::x86_64_runtime_memory::LoaderVec<usize>,
+    #[cfg(not(crabc_general_initial_graph))]
     module_objects: [usize; MODULE_CAPACITY],
     module_count: usize,
     generation: InitialTlsGeneration,
@@ -113,6 +111,9 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
     /// Starts an empty generation-one initial population.
     pub(crate) const fn new() -> Self {
         Self {
+            #[cfg(crabc_general_initial_graph)]
+            module_objects: super::x86_64_runtime_memory::LoaderVec::new(),
+            #[cfg(not(crabc_general_initial_graph))]
             module_objects: [0; MODULE_CAPACITY],
             module_count: 0,
             generation: InitialTlsGeneration::initial(),
@@ -146,7 +147,14 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
             .ok_or(InitialTlsRegistryError::InitialModuleCapacityExhausted)?;
         let module_id = TlsModuleId::from_one_based(next)
             .ok_or(InitialTlsRegistryError::InitialModuleCapacityExhausted)?;
-        self.module_objects[self.module_count] = object_index;
+        #[cfg(crabc_general_initial_graph)]
+        self.module_objects
+            .push(object_index)
+            .ok_or(InitialTlsRegistryError::InitialModuleCapacityExhausted)?;
+        #[cfg(not(crabc_general_initial_graph))]
+        {
+            self.module_objects[self.module_count] = object_index;
+        }
         self.module_count = next;
         Ok(module_id)
     }
@@ -161,18 +169,14 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
     }
 
     /// Returns this object's initial module ID, if it has `PT_TLS`.
-    pub(crate) const fn module_id(&self, object_index: usize) -> Option<TlsModuleId> {
+    pub(crate) fn module_id(&self, object_index: usize) -> Option<TlsModuleId> {
         if object_index >= OBJECT_CAPACITY {
             return None;
         }
-        let mut module = 0;
-        while module < self.module_count {
-            if self.module_objects[module] == object_index {
-                return TlsModuleId::from_one_based_const(module + 1);
-            }
-            module += 1;
-        }
-        None
+        let module = self.module_objects[..self.module_count]
+            .iter()
+            .position(|&object| object == object_index)?;
+        TlsModuleId::from_one_based(module + 1)
     }
 
     /// Returns the completed initial TLS module count.

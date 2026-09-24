@@ -135,7 +135,7 @@ mod tests {
     fn worker_materialization_preserves_fs_and_copies_initial_images_not_live_tls() {
         let image = [11u8, 12, 13, 14];
         let aligned_image = [21u8, 22, 23];
-        let mut objects = [EMPTY_OBJECT; MAX_INITIAL_TLS_MODULES];
+        let mut objects = [EMPTY_OBJECT; 32];
         objects[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
             tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 32,
             ..EMPTY_OBJECT };

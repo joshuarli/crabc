@@ -44,8 +44,10 @@ struct SymbolScope<'a> {
 
 impl InitialSymbolScope {
     fn view(&self) -> SymbolScope<'_> {
-        SymbolScope { indices: &self.indices, module_count: TLS_DTV_WORDS - 1,
-            static_tls_count: TLS_DTV_WORDS - 1, initial: true }
+        // Every initial module is static TLS; planning already assigned
+        // exactly consecutive IDs, so no fixed DTV size bounds them here.
+        SymbolScope { indices: &self.indices, module_count: usize::MAX,
+            static_tls_count: usize::MAX, initial: true }
     }
     fn from_graph(graph: &InitialGraphState) -> Option<Self> {
         let count = graph.object_count();

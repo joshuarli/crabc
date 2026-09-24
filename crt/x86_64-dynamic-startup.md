@@ -179,11 +179,13 @@ without `libcrabc-builtins.a` fails on `__udivti3`.
 A separate wide graph from `fixtures/owned_dynamic_startup_wide.c` gives the
 executable, one initial hub dependency and one runtime plugin 24 constructors
 and 24 destructors each, and gives each of them twenty leaf libraries: 43
-initial images, with 21 or 20 `DT_NEEDED` edges on three of them. Its complete
-construction/finalization transcript and exit status must equal pinned musl's
-in both modes and entries. The installed loader keeps graph objects, edges
-and copied callback arrays in loader mappings sized from the graph, not in
-fixed tables. The dynamic qualification
+initial images, with 21 or 20 `DT_NEEDED` edges on three of them. Every leaf
+keeps its value in dynamic TLS, so the initial generation has 40 TLS modules
+and the plugin adds 20 runtime modules; a worker created after `dlopen` sums
+every value again. Its complete construction/finalization transcript, sums
+and exit status must equal pinned musl's in both modes and entries. The
+installed loader keeps graph objects, edges, copied callback arrays and the
+initial DTV in loader mappings sized from the graph, not in fixed tables. The dynamic qualification
 case `crt-dynamic-startup` replays this leaf on the installed, second, and
 extracted products.
 

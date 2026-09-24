@@ -46,10 +46,13 @@ static void mark(char role, char value)
 	apply(11) apply(12) apply(13) apply(14) apply(15) apply(16) apply(17) apply(18) apply(19) apply(20)
 
 #if defined(WIDE_LEAF)
-/* A leaf reports its own construction and finalization once. */
+/* A leaf reports its own construction and finalization once. Its value is a
+ * dynamic TLS variable, so the initial graph carries more than 32 initial
+ * TLS modules and the plugin's leaves add runtime modules. */
+static __thread volatile int value = WIDE_ID;
 __attribute__((constructor)) static void construct(void) { mark(WIDE_TEXT(WIDE_GROUP)[0], 'A' + WIDE_ID); }
 __attribute__((destructor)) static void destruct(void) { mark(WIDE_TEXT(WIDE_GROUP)[0], 'a' + WIDE_ID); }
-int WIDE_NAME(WIDE_GROUP, WIDE_ID)(void) { return WIDE_ID; }
+int WIDE_NAME(WIDE_GROUP, WIDE_ID)(void) { return value; }
 
 #elif defined(WIDE_HUB)
 #define WIDE_DECLARE(id) int wide_d_##id##_value(void);
@@ -67,6 +70,7 @@ int wide_plugin_value(void) { return 2000 WIDE_EACH(WIDE_SUM); }
 
 #else
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdio.h>
 
 #define WIDE_DECLARE(id) int wide_w_##id##_value(void);
@@ -75,15 +79,27 @@ WIDE_EACH(WIDE_DECLARE)
 int wide_hub_value(void);
 WIDE_CALLBACK_ARRAYS('M')
 
+static int (*plugin_value)(void);
+
+/* A worker gets its own copy of every initial and runtime TLS module. */
+static void *worker(void *unused)
+{
+	(void)unused;
+	return (void *)(long)(wide_hub_value() WIDE_EACH(WIDE_SUM) + plugin_value());
+}
+
 int main(void)
 {
 	int initial = wide_hub_value() WIDE_EACH(WIDE_SUM);
 	void *plugin = dlopen("libowned-startup-wide-plugin.so", RTLD_NOW);
 	if (!plugin) return 40;
-	int (*value)(void) = (int (*)(void))dlsym(plugin, "wide_plugin_value");
-	if (!value) return 41;
-	char text[32];
-	int length = snprintf(text, sizeof text, "|%d,%d|", initial, value());
+	plugin_value = (int (*)(void))dlsym(plugin, "wide_plugin_value");
+	if (!plugin_value) return 41;
+	pthread_t thread;
+	void *result;
+	if (pthread_create(&thread, 0, worker, 0) || pthread_join(thread, &result)) return 42;
+	char text[48];
+	int length = snprintf(text, sizeof text, "|%d,%d,%ld|", initial, plugin_value(), (long)result);
 	(void)write(1, text, (size_t)length);
 	return 7;
 }
