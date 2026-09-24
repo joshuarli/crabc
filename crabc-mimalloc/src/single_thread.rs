@@ -44853,17 +44853,19 @@ mod tests {
 
         let calls_before_fresh = script.calls.load(Ordering::Relaxed);
         // First the claimed ordinary slice commits, then `page_metadata` tries
-        // the aligned metadata prefix. The public source allocation retries
-        // once after forced collection (`page.c:1048-1064`), so retain the
-        // hook failure from that second call through its one retry.
+        // the aligned metadata prefix. A small request searches its queue in
+        // `_mi_malloc_generic` (`page.c:1101-1116`), again in
+        // `mi_malloc_generic_fallback`'s `mi_find_page`, and once more after
+        // its forced collection (`page.c:1048-1064`), so retain the hook
+        // failure from that second call through both later attempts.
         script
             .fail_from_call
             .store(calls_before_fresh + 2, Ordering::Relaxed);
         assert!(allocator.allocate(37, false).is_none());
         assert_eq!(
             script.calls.load(Ordering::Relaxed),
-            calls_before_fresh + 3,
-            "the retry reuses the committed ordinary claim then reaches the same metadata hook"
+            calls_before_fresh + 4,
+            "each later attempt reuses the committed ordinary claim then reaches the same metadata hook"
         );
         let reused = allocator
             .arena

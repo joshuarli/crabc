@@ -21493,12 +21493,14 @@ mod tests {
             let mut page_map = PageMap::initialize(memory_config(), 0, true).expect("page map");
             let layout = ArenaPagesLayout::for_slice_count(arena.arena().slice_count)
                 .expect("source arena bitmap layout");
-            // `mi_malloc_generic_fallback` force-collects and retries the
-            // first source OOM result (`src/page.c:1048-1064`). Retain the
-            // exact pre-publication metadata fault for both fresh attempts
-            // so this public allocation can prove the retryable null-slot
-            // state before the explicit later retry below.
-            metadata.test_fail_aligned_zeroed_size_attempts(layout.byte_size(), 2);
+            // A small request searches its queue in `_mi_malloc_generic`
+            // (`src/page.c:1101-1116`), again in `mi_malloc_generic_fallback`,
+            // which then force-collects and retries once
+            // (`src/page.c:1048-1064`). Retain the exact pre-publication
+            // metadata fault for all three fresh attempts so this public
+            // allocation can prove the retryable null-slot state before the
+            // explicit later retry below.
+            metadata.test_fail_aligned_zeroed_size_attempts(layout.byte_size(), 3);
             let session = owner.page_session().expect("page session");
             let mut allocator = DynamicTheapAllocator::activate_dynamic(
                 session,
