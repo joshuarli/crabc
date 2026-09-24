@@ -128,6 +128,7 @@ readonly -a ROLE_SOURCES=(
     'long-double-completion|compat/x86_64/libc_math_long_double_completion_probe.c|CRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING'
     'special|compat/x86_64/libc_math_special_probe.c|CRABC_MATH_SPECIAL_FREESTANDING'
     'complex|compat/x86_64/libc_math_complex_complete_probe.c|CRABC_MATH_COMPLEX_COMPLETE_FREESTANDING'
+    'abi-boundary|compat/x86_64/libc_math_abi_boundary_probe.c|CRABC_MATH_ABI_BOUNDARY_FREESTANDING'
 )
 
 declare -a SOURCES=() OBJECTS=()

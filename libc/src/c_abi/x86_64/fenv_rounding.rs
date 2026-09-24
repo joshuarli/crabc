@@ -7,8 +7,8 @@
 //! - `src/math/rint.c` and `rintf.c` map to the SSE2 add/subtract-by-`toint`
 //!   sequences below, retaining default x86-64 `FLT_EVAL_METHOD == 0` and
 //!   MXCSR rounding/exception behavior;
-//! - `src/math/rintl.c` maps the same expression to x87 binary80 operations,
-//!   retaining its control-word rounding and status-word exception behavior;
+//! - `src/math/x86_64/rintl.c`, which replaces the generic `rintl.c` on this
+//!   target, maps to one `FRNDINT` under the caller's x87 control word;
 //! - `src/math/nearbyint.c`, `nearbyintf.c`, and `nearbyintl.c` map to the
 //!   wrappers which preserve an already-raised `FE_INEXACT` and otherwise
 //!   clear only the inexact raised by the paired `rint*` operation.
@@ -88,43 +88,17 @@ rintf:
     ret
     .size rintf, .-rintf
 
+    /* musl src/math/x86_64/rintl.c, which replaces the generic rintl.c on
+       this target: FRNDINT under the caller's x87 control word. It quiets a
+       signaling NaN and raises FE_INVALID for it and for unsupported binary80
+       encodings, which the generic add/subtract sequence does not. */
     .section .text.rintl, "ax", @progbits
     .p2align 4
     .global rintl
     .type rintl,@function
 rintl:
-    movzx eax, word ptr [rsp + 16]
-    and eax, 0x7fff
-    cmp eax, 0x403e
-    jae .Lcrabc_x86_rintl_load_return
-    test word ptr [rsp + 16], 0x8000
-    jnz .Lcrabc_x86_rintl_negative
     fld tbyte ptr [rsp + 8]
-    fld tbyte ptr [rip + .Lcrabc_x86_rintl_to_int]
-    faddp st(1), st(0)
-    fld tbyte ptr [rip + .Lcrabc_x86_rintl_to_int]
-    fsubp st(1), st(0)
-    jmp .Lcrabc_x86_rintl_zero
-.Lcrabc_x86_rintl_negative:
-    fld tbyte ptr [rsp + 8]
-    fld tbyte ptr [rip + .Lcrabc_x86_rintl_to_int]
-    fsubp st(1), st(0)
-    fld tbyte ptr [rip + .Lcrabc_x86_rintl_to_int]
-    faddp st(1), st(0)
-.Lcrabc_x86_rintl_zero:
-    ftst
-    fnstsw ax
-    sahf
-    jne .Lcrabc_x86_rintl_return
-    fstp st(0)
-    fldz
-    test word ptr [rsp + 16], 0x8000
-    jz .Lcrabc_x86_rintl_return
-    fchs
-.Lcrabc_x86_rintl_return:
-    ret
-.Lcrabc_x86_rintl_load_return:
-    fld tbyte ptr [rsp + 8]
+    frndint
     ret
     .size rintl, .-rintl
 
@@ -223,11 +197,6 @@ nearbyintl:
     .quad 0x4330000000000000
 .Lcrabc_x86_rintf_to_int:
     .long 0x4b000000
-    .p2align 4
-.Lcrabc_x86_rintl_to_int:
-    .quad 0x8000000000000000
-    .word 0x403e
-    .zero 6
 
     .section .note.GNU-stack, "", @progbits
 "#,

@@ -22,6 +22,7 @@ STAGES = (
     (7, "elementary-long-double", 2764 * 40),
     (8, "special", 5544 * 32),
     (9, "complex", 5712 * 64),
+    (10, "abi-boundary", 58984 * 64),
 )
 EXPECTED_SIZE = sum(2 * FRAME.size + body for _, _, body in STAGES)
 

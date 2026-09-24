@@ -33,6 +33,7 @@ int crabc_x86_64_math_exp10f_probe(void);
 int crabc_x86_64_math_long_double_completion_probe(void);
 int crabc_x86_64_math_special_probe(void);
 int crabc_x86_64_math_complex_complete_probe(void);
+int crabc_x86_64_math_abi_boundary_probe(void);
 
 /* The decimal probes retain ownership of their data and exact extents. */
 const uint64_t *crabc_x86_64_math_exp10_record_data(size_t *length);
@@ -50,6 +51,7 @@ enum stage_id {
 	STAGE_ELEMENTARY_LONG_DOUBLE,
 	STAGE_SPECIAL,
 	STAGE_COMPLEX,
+	STAGE_ABI_BOUNDARY,
 };
 
 enum stage_phase { STAGE_BEGIN = 1, STAGE_END = 2 };
@@ -189,6 +191,10 @@ int main(void)
 	if (status == 0)
 		status = invoke_stage(STAGE_COMPLEX,
 			crabc_x86_64_math_complex_complete_probe, (record_emitter)0,
+			&caller, caller_round, caller_exceptions);
+	if (status == 0)
+		status = invoke_stage(STAGE_ABI_BOUNDARY,
+			crabc_x86_64_math_abi_boundary_probe, (record_emitter)0,
 			&caller, caller_round, caller_exceptions);
 	if (fesetenv(&original) != 0 && status == 0)
 		status = 3;

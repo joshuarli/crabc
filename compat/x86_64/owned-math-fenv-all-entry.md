@@ -10,7 +10,17 @@ complex baseline by `owned_math_fenv_all_entry_contract.py`. It includes
 fenv probe.
 
 The component reuses the existing long-double, fenv, `fdim`, decimal-exponent,
-special, and complex C observations. The two decimal producers own their
+special, and complex C observations. `libc_math_abi_boundary_probe.c` adds the
+operands and machine state those probes do not compare: every one of the 206
+entries runs in all four rounding modes on signaling NaNs of each precision
+(alone and beside quiet NaNs), on the x87 pseudo-NaN, pseudo-infinity,
+unnormal, and pseudo-denormal binary80 encodings, and then on 64
+deterministic pseudo-random finite operands per shape. Each record retains the
+x87 control word, the x87 status word's exception/stack-fault/TOP fields, the
+x87 tag word, the whole MXCSR, errno, and signgam after the call, so a callee
+that leaves the x87 stack occupied, changes precision or rounding control,
+raises a flag in the other unit, or writes errno differs from pinned musl
+even when its result matches. The two decimal producers own their
 record pointers and byte extents; `owned_math_fenv_all_entry_driver.c` calls an
 accessor, retains its returned extent, and then emits that exact byte range.
 Before every probe,
@@ -22,7 +32,7 @@ order, body sizes, zero statuses, and caller restoration.
 Without a supplied pair, `./scripts/dev-x86_64.sh owned-math-fenv-all-entry`
 first builds current static and dynamic products inside its evidence
 directory, so the single command runs all six entry modes against the
-checkout's own source. The runner translates all ten object roles through
+checkout's own source. The runner translates all eleven object roles through
 the dynamic driver, combines their ET_REL objects, and requires every selected import to be
 defined by the supplied dynamic provider. When a static product is supplied it
 also requires every selected archive definition. Its retained header trace
@@ -49,7 +59,7 @@ comparisons. After authenticating the fixed retained command shapes, it also
 replays only the fixed `/usr/bin/nm` and `/usr/bin/readelf` provider inspections
 against the authenticated workload object, installed `libc.so`, and installed
 `libc.a`; their raw output must equal the retained provider views. It compares
-the ten role-object bytes across all pairs. A report from a different source
+the eleven role-object bytes across all pairs. A report from a different source
 transaction, or a single development product pair, cannot satisfy that
 three-pair receipt. Neither the runner nor the adapter completes a math family,
 qualifies a general libm, changes promotion state, or claims public support.

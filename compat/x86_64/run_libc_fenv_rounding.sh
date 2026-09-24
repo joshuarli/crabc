@@ -114,12 +114,12 @@ fi
 if grep -Eq 'crabc_core|mimalloc|sha_crypt|libm' "$candidate_symbols" "$disassembly"; then
 	fail "candidate selects an unowned math/runtime dependency"
 fi
-for instruction in addsd subsd addss subss fldt faddp; do
+# rint/rintf use musl's generic SSE add/subtract sequence; rintl is musl's
+# x86_64 FRNDINT override.
+for instruction in addsd subsd addss subss fldt frndint; do
 	grep -Eq "[[:space:]]${instruction}([[:space:]]|$)" "$disassembly" \
 		|| fail "candidate lacks ${instruction}"
 done
-grep -Eq '[[:space:]]fsubr?p([[:space:]]|$)' "$disassembly" \
-	|| fail "candidate lacks x87 subtract-and-pop"
 if "$candidate"; then
 	:
 else
