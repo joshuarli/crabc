@@ -1923,6 +1923,16 @@ impl PendingMainStaticThreadLocalData {
 }
 
 impl MainStaticThreadLocalData {
+    /// Projects the vanished initial TLD under sole-child source authority.
+    ///
+    /// # Safety
+    /// The initial thread cannot resume, every old TLD observation has ended,
+    /// and the exact static storage remains pinned. This does not claim the
+    /// caller has the initial thread's TLS identity or change survivor roots.
+    pub(crate) unsafe fn vanished_initial_mut(&mut self) -> &mut ThreadLocalData {
+        unsafe { self.pointer.as_mut() }
+    }
+
     #[inline]
     pub(crate) fn current_mut(&mut self) -> &mut ThreadLocalData {
         // SAFETY: only the ticket-zero owner constructs this projection. Its

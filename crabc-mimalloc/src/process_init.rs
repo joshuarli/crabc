@@ -1684,6 +1684,9 @@ impl ProcessMainReadyLease {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProcessMainThreadState {
     Attached,
+    /// Sole-child repair retired the vanished initial TLD/Theap. The process
+    /// coordinator and canonical main Heap still serve surviving workers.
+    MainThreadDetached,
     TornDown,
     Retained,
 }
@@ -1725,17 +1728,17 @@ pub(crate) enum ProcessMainReadySharedArenaError {
 }
 
 impl ProcessMainThread {
-    /// Returns the immutable process-ready witness only while the ticket-zero
-    /// attachment is still live and current.
+    /// Returns the immutable ready witness while the process coordinator is
+    /// live, including after child repair detached its vanished initial thread.
     pub(crate) fn ready(&self) -> Result<ProcessMainReadyLease, ProcessMainInitError> {
-        if self.state != ProcessMainThreadState::Attached {
+        if !matches!(self.state, ProcessMainThreadState::Attached | ProcessMainThreadState::MainThreadDetached) {
             return Err(ProcessMainInitError::Retained);
         }
         self.allocation.ready()
     }
 
     pub(crate) fn allocation(&self) -> Result<ProcessMainAllocationLease, ProcessMainInitError> {
-        if self.state != ProcessMainThreadState::Attached {
+        if !matches!(self.state, ProcessMainThreadState::Attached | ProcessMainThreadState::MainThreadDetached) {
             return Err(ProcessMainInitError::Retained);
         }
         self.allocation.ensure_valid()?;
@@ -1874,6 +1877,37 @@ impl ProcessMainThread {
             .map_err(ProcessMainInitError::InitialThread)
     }
 
+    /// Consumes only the vanished initial attachment under the allocator's
+    /// child-repair capability; the canonical ready process survives.
+    ///
+    /// # Safety
+    /// The child continuation retains all copied source lifetimes after libc
+    /// released its registry/outer locks. Signals and user hooks remain
+    /// excluded. Initial collect-abandon is complete, no initial session or
+    /// observation survives, and the caller is a later-worker survivor. Main
+    /// Heap leases remain valid; no initial-thread lease may be minted again.
+    pub(crate) unsafe fn detach_vanished_initial_thread_after_fork(
+        &mut self,
+        _child: &crate::runtime_lifecycle::NativeAllocatorForkChildContinuation,
+    ) -> Result<(), ProcessMainInitError> {
+        if self.state != ProcessMainThreadState::Attached {
+            return Err(ProcessMainInitError::Retained);
+        }
+        let attachment = self.attachment.as_mut().ok_or(ProcessMainInitError::Retained)?;
+        match unsafe { attachment.detach_vanished_initial_thread_after_fork() } {
+            Ok(()) => {
+                drop(self.attachment.take());
+                self.state = ProcessMainThreadState::MainThreadDetached;
+                Ok(())
+            }
+            Err(error) => {
+                self.state = ProcessMainThreadState::Retained;
+                self.storage.mark_retained();
+                Err(ProcessMainInitError::InitialThread(error))
+            }
+        }
+    }
+
     /// Performs the existing bounded main-thread TLD/Theap teardown. Process
     /// startup itself remains terminal afterward: the static source TLD slot
     /// is never reused and this coordinator deliberately has no process
@@ -1899,8 +1933,8 @@ impl ProcessMainThread {
 
 impl Drop for ProcessMainThread {
     fn drop(&mut self) {
-        if self.state == ProcessMainThreadState::Attached {
-            // A dropped ticket-zero owner can leave roots, TLD registration,
+        if matches!(self.state, ProcessMainThreadState::Attached | ProcessMainThreadState::MainThreadDetached) {
+            // A dropped process owner can leave roots, TLD registration,
             // or page state live. Retain the process rather than letting a
             // later caller receive a fresh-looking startup capability.
             self.storage.mark_retained();
@@ -2025,6 +2059,96 @@ mod tests {
         teardown_tx.send(()).unwrap();
         contender.join().unwrap();
         initializer.join().unwrap();
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn worker_child_detaches_empty_initial_owner_but_keeps_process_ready() {
+        use crate::runtime_lifecycle::{
+            NativeAllocatorPinnedThreadRegistry, NativeAllocatorThreadDescriptor,
+            begin_native_allocator_fork_quiescence,
+            current_native_allocator_thread_descriptor,
+            register_current_native_allocator_worker_descriptor,
+        };
+        struct Registry([NonNull<NativeAllocatorThreadDescriptor>; 2]);
+        // The scoped worker and its waiting parent keep both exact TLS images
+        // live. Their only source work is the explicitly sequenced fixture;
+        // no descriptor publication/removal occurs during the raw interval.
+        unsafe impl NativeAllocatorPinnedThreadRegistry for Registry {
+            fn visit_descriptors(&self, visitor: &mut dyn FnMut(NonNull<NativeAllocatorThreadDescriptor>)) {
+                for descriptor in self.0 { visitor(descriptor); }
+            }
+        }
+        thread::spawn(|| {
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let mut owner = unsafe {
+                storage.initialize_with_test_components(memory_config(), main_static,
+                    subprocess, metadata, page_map_storage)
+            }.expect("isolated initial source owner");
+            let initial = current_native_allocator_thread_descriptor();
+            assert!(unsafe { register_current_native_allocator_worker_descriptor(initial) });
+            let initial_address = initial.as_ptr() as usize;
+            // No parent projection survives the worker's fork. Only the
+            // separate child address space may access this owner while the
+            // parent waits; after join the original parent resumes ownership.
+            let owner_address = core::ptr::from_mut(&mut owner) as usize;
+            thread::scope(|scope| {
+                scope.spawn(move || {
+                    let survivor = current_native_allocator_thread_descriptor();
+                    assert!(unsafe { register_current_native_allocator_worker_descriptor(survivor) });
+                    let registry = Registry([
+                        NonNull::new(initial_address as *mut NativeAllocatorThreadDescriptor).unwrap(),
+                        survivor,
+                    ]);
+                    let blocked = u64::MAX;
+                    let mut previous_mask = 0u64;
+                    unsafe { crabc_core::signal::rt_sigprocmask_raw(0, &blocked, &mut previous_mask) }
+                        .expect("exclude signal reentry during child source repair");
+                    let interval = unsafe { begin_native_allocator_fork_quiescence(&registry) }
+                        .expect("empty source owners admit the copied interval");
+                    let child = crabc_core::process::fork_raw().expect("isolated worker-origin child");
+                    if child == 0 {
+                        let repair = unsafe { interval.into_child_repair() };
+                        let continuation = match unsafe { repair.into_unlocked_continuation() } {
+                            Ok(value) => value,
+                            Err(_) => crabc_core::process::exit_immediately(1),
+                        };
+                        // The fixture has no libc locks, handlers or source
+                        // pages. The sole child retains both inherited TLS
+                        // images and the empty initial queues need no drain.
+                        let copied_owner = unsafe { &mut *(owner_address as *mut ProcessMainThread) };
+                        // The direct prerequisite fixture supplies the same
+                        // init.c:471 prefix as the full child controller.
+                        subprocess.record_statistics_thread_detached();
+                        let detached = unsafe {
+                            copied_owner.detach_vanished_initial_thread_after_fork(&continuation)
+                        }.is_ok();
+                        let ready = copied_owner.ready().is_ok() && copied_owner.allocation().is_ok();
+                        let initial_denied = copied_owner.attachment_mut().is_err()
+                            && copied_owner.begin_process_lifetime_page_session().is_err()
+                            && copied_owner.shared_main_heap_lease().is_err();
+                        let counts = subprocess.live_thread_count() == 0
+                            && subprocess.statistics().source_snapshot().threads_current == 0;
+                        // This bounded prerequisite intentionally does not
+                        // reopen: full vanished-worker page repair owns that
+                        // successor. Dropping an unfinished continuation seals.
+                        drop(continuation);
+                        crabc_core::process::exit_immediately(
+                            if detached && ready && initial_denied && counts { 0 } else { 2 });
+                    }
+                    unsafe { interval.resume_parent() }.expect("parent retains exact source owner");
+                    unsafe { crabc_core::signal::rt_sigprocmask_raw(2, &previous_mask, core::ptr::null_mut()) }
+                        .expect("restore the original parent mask after epoch completion");
+                    let mut status = 0;
+                    assert_eq!(unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) }, Ok(child));
+                    assert_eq!(status, 0, "child detaches initial ownership without retiring the process");
+                }).join().expect("worker-origin source-state fixture");
+            });
+            assert!(owner.ready().is_ok());
+            assert!(owner.attachment_mut().is_ok(), "parent initial attachment is unchanged");
+            assert_eq!(subprocess.live_thread_count(), 1);
+            owner.teardown().expect("parent completes its original initial attachment");
+        }).join().expect("isolated source initialization thread");
     }
 
     #[test]

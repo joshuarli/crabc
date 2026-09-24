@@ -801,6 +801,41 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         self: Pin<&Self>,
         operation: impl for<'owner> FnOnce(Pin<&'owner T>) -> R,
     ) -> Result<R, PersistentCompilerTlsOwnerError> {
+        unsafe { self.with_quiescent_foreign_owner(operation) }
+    }
+
+    /// Observes a vanished source owner under the child lifetime continuation.
+    ///
+    /// # Safety
+    /// The sole child holds source entry closed, blocks signals/hooks and
+    /// retains this exact mapping. The owner is not the survivor and can never
+    /// resume; no old borrow exists. The closure invokes no foreign code and
+    /// touches no compiler-TLS globals or current-thread ownership state.
+    pub(crate) unsafe fn with_vanished_child_owner<R>(
+        self: Pin<&Self>, operation: impl for<'owner> FnOnce(Pin<&'owner T>) -> R,
+    ) -> Result<R, PersistentCompilerTlsOwnerError> {
+        unsafe { self.with_quiescent_foreign_owner(operation) }
+    }
+
+    /// Reads a pinned owner while the prepared fork epoch excludes entry.
+    ///
+    /// # Safety
+    /// Every ordinary operation and callback is excluded for this complete
+    /// synchronous observation. The exact registry pin retains the mapping;
+    /// no reference escapes the closure and no source mutation, lock, syscall
+    /// or foreign callback occurs. The parent may resume only after it returns.
+    pub(crate) unsafe fn with_fork_quiescent_owner<R>(
+        self: Pin<&Self>, operation: impl for<'owner> FnOnce(Pin<&'owner T>) -> R,
+    ) -> Result<R, PersistentCompilerTlsOwnerError> {
+        unsafe { self.with_quiescent_foreign_owner(operation) }
+    }
+
+    // Every caller excludes originating-thread access for the complete
+    // observation, retains its exact image and ends all projected references
+    // before releasing that authority.
+    unsafe fn with_quiescent_foreign_owner<R>(
+        self: Pin<&Self>, operation: impl for<'owner> FnOnce(Pin<&'owner T>) -> R,
+    ) -> Result<R, PersistentCompilerTlsOwnerError> {
         let cell = self.get_ref();
         if cell.state.get() != PersistentCompilerTlsOwnerState::Active {
             return Err(Self::access_error_for_state(cell.state.get()));
@@ -824,6 +859,30 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         self: Pin<&Self>,
         transfer: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> Result<(), E>,
     ) -> Result<(), PersistentCompilerTlsOwnerTeardownError<E>> {
+        unsafe { self.consume_quiescent_foreign_owner(transfer) }
+    }
+
+    /// Consumes a vanished owner's source rights before libc forgets its TLS.
+    ///
+    /// # Safety
+    /// `with_vanished_child_owner`'s closed-epoch/lifetime obligations apply,
+    /// and copied outer locks have been released. A successful closure proves
+    /// the payload is inert: its Drop cannot access retired backing, mutate
+    /// compiler TLS, acquire locks or invoke foreign code. Failure retains the
+    /// exact payload and requires child fail-stop without reopening admission.
+    pub(crate) unsafe fn retire_vanished_child_owner<E>(
+        self: Pin<&Self>,
+        retire: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> Result<(), E>,
+    ) -> Result<(), PersistentCompilerTlsOwnerTeardownError<E>> {
+        unsafe { self.consume_quiescent_foreign_owner(retire) }
+    }
+
+    // Terminal transfer and child retirement have the same linear cell state
+    // transition; only their external exclusion/lifetime proofs differ.
+    unsafe fn consume_quiescent_foreign_owner<E>(
+        self: Pin<&Self>,
+        transfer: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> Result<(), E>,
+    ) -> Result<(), PersistentCompilerTlsOwnerTeardownError<E>> {
         let cell = self.get_ref();
         if cell.state.get() != PersistentCompilerTlsOwnerState::Active {
             return Err(PersistentCompilerTlsOwnerTeardownError::State(
@@ -832,8 +891,9 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         cell.state.set(PersistentCompilerTlsOwnerState::Exiting);
         let mut transition = PersistentCompilerTlsOwnerTransition::new(
             cell, PersistentCompilerTlsOwnerState::Retained);
-        // SAFETY: the permanent epoch excludes the original thread and all
-        // callbacks. Exiting disallows every ordinary cell projection.
+        // SAFETY: either permanent terminal admission or the sole-child
+        // continuation excludes the original thread and all callbacks.
+        // Exiting disallows every ordinary cell projection.
         match transfer(unsafe { Pin::new_unchecked(&mut *cell.owner_pointer()) }) {
             Ok(()) => {
                 transition.disarm();

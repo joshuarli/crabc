@@ -719,12 +719,188 @@ impl<'registry> NativeAllocatorForkQuiescence<'registry> {
 }
 
 /// Exact copied registry/epoch ownership awaiting source-level child repair.
-/// The allocator must consume vanished owner capabilities and re-root the
-/// surviving source identity before this continuation can release its pin or
-/// reopen entry. No current public method claims that work is already done.
+/// This lock-scoped stage validates the surviving descriptor before it can
+/// become an owned `NativeAllocatorForkChildContinuation`. Releasing the
+/// copied lock does not reopen entry: source repair must finish first under
+/// the retained graph's sole-child lifetime contract.
 #[must_use = "copied native source owners still require allocator child repair"]
 pub struct NativeAllocatorForkChildRepair<'registry> {
     interval: NativeAllocatorForkQuiescence<'registry>,
+}
+
+/// Child-only access to the unchanged libc descriptor graph after its copied
+/// locks have been released. This is the existing registry, not a snapshot or
+/// a second ownership list.
+///
+/// # Safety
+/// The sole child keeps signals blocked and runs no user hooks, registry reset,
+/// caller adoption or thread creation. Every copied control/TLS mapping remains
+/// pinned until the child continuation is consumed. The visitor is synchronous,
+/// includes the initial descriptor and every worker exactly once, allocates
+/// nothing and invokes no user code. No borrowed source reference may escape a
+/// visit. The implementation must not reacquire the copied registry lock.
+pub unsafe trait NativeAllocatorChildRetainedThreadRegistry {
+    fn visit_descriptors(&self, visitor: &mut dyn FnMut(NonNull<NativeAllocatorThreadDescriptor>));
+}
+
+/// Owns the closed child generation independently of the ended registry-lock
+/// borrow. Its lifetime authority is the explicit sole-child contract below,
+/// not an invented reference to TLS or to an unlocked libc registry.
+#[must_use = "vanished source owners must be repaired before child entry reopens"]
+pub struct NativeAllocatorForkChildContinuation {
+    closed: usize,
+    survivor: NonNull<NativeAllocatorThreadDescriptor>,
+    armed: bool,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+impl Drop for NativeAllocatorForkChildContinuation {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = EPOCH.state.compare_exchange(self.closed,
+                (self.closed & !MODE_MASK) | TERMINAL, Ordering::SeqCst, Ordering::SeqCst);
+        }
+    }
+}
+
+impl NativeAllocatorForkChildRepair<'_> {
+    /// Ends the lock-scoped registry borrow while retaining the exact copied
+    /// epoch. No source owner is mutated and native entry remains closed.
+    ///
+    /// # Safety
+    /// Called only in the sole child before any registry reset or caller
+    /// adoption. After this returns, libc must release its copied registry and
+    /// other outer locks before source repair. Signals remain blocked and no
+    /// hooks, thread creation or descriptor/TLS retirement may occur until the
+    /// continuation completes. The unchanged registry graph must remain
+    /// available through `NativeAllocatorChildRetainedThreadRegistry`.
+    pub unsafe fn into_unlocked_continuation(mut self)
+        -> Result<NativeAllocatorForkChildContinuation, NativeAllocatorQuiescenceError> {
+        let survivor = current_native_allocator_thread_descriptor();
+        let mut matches = 0usize;
+        self.interval.registry.visit_descriptors(&mut |descriptor| {
+            if descriptor == survivor { matches = matches.saturating_add(1); }
+        });
+        if matches != 1 || EPOCH.state.load(Ordering::SeqCst) != self.interval.closed {
+            return Err(NativeAllocatorQuiescenceError::InvalidDescriptor);
+        }
+        let record = unsafe { survivor.as_ref() };
+        if record.registration.load(Ordering::Acquire) != REGISTERED
+            || record.entered.load(Ordering::SeqCst)
+            || record.callback.load(Ordering::SeqCst)
+        { return Err(NativeAllocatorQuiescenceError::InvalidDescriptor); }
+        self.interval.armed = false;
+        Ok(NativeAllocatorForkChildContinuation { closed: self.interval.closed,
+            survivor, armed: true, _not_send_sync: PhantomData })
+    }
+}
+
+impl NativeAllocatorForkChildContinuation {
+    /// Retires all vanished source owners through the unchanged child graph,
+    /// then reopens only this fully repaired generation.
+    ///
+    /// # Safety
+    /// The sole child retains every original descriptor/control/TLS mapping.
+    /// All copied libc outer locks are released; signals remain blocked and
+    /// no hooks, reset, adoption, creation, source entry or foreign callback
+    /// can run until this returns. `registry` visits the exact graph borrowed
+    /// before fork, including the same survivor once, with no escaping source
+    /// references. On error no graph storage may be retired or user code run:
+    /// fail-stop the child. This method's Drop preserves permanent exclusion.
+    pub unsafe fn repair_source_owners(mut self,
+        registry: &dyn NativeAllocatorChildRetainedThreadRegistry,
+    ) -> Result<(), NativeAllocatorQuiescenceError> {
+        if current_native_allocator_thread_descriptor() != self.survivor
+            || EPOCH.state.load(Ordering::SeqCst) != self.closed
+        { return Err(NativeAllocatorQuiescenceError::InvalidDescriptor); }
+        let mut survivor_count = 0usize;
+        let mut valid = true;
+        registry.visit_descriptors(&mut |descriptor| {
+            let record = unsafe { descriptor.as_ref() };
+            if descriptor == self.survivor { survivor_count = survivor_count.saturating_add(1); }
+            if record.entered.load(Ordering::SeqCst) || record.callback.load(Ordering::SeqCst) {
+                valid = false;
+                return;
+            }
+            match record.registration.load(Ordering::Acquire) {
+                REGISTERED => {
+                    valid &= NonNull::new(record.owner_slot.load(Ordering::Acquire))
+                        .is_some_and(|slot| unsafe { super::fork_slot_can_repair(slot) });
+                }
+                UNPUBLISHED | RETIRED | TRANSFERRED => {
+                    if descriptor == self.survivor { valid = false; }
+                }
+                _ => valid = false,
+            }
+        });
+        if !valid || survivor_count != 1 { return Err(NativeAllocatorQuiescenceError::RetainedDescriptor); }
+        // Invalidate copied callback tokens without resetting the legacy
+        // later-owner word: a worker-origin survivor still owns its one
+        // legitimate admission claim. No callback can run under this closed
+        // epoch, and failure below never restores callback permission.
+        unsafe { super::RUNTIME_FORK_ADMISSION.invalidate_callback_identity_for_source_child_repair(); }
+        registry.visit_descriptors(&mut |descriptor| {
+            if !valid || descriptor == self.survivor { return; }
+            let record = unsafe { descriptor.as_ref() };
+            if record.registration.load(Ordering::Acquire) != REGISTERED { return; }
+            let Some(slot) = NonNull::new(record.owner_slot.load(Ordering::Acquire)) else {
+                valid = false;
+                return;
+            };
+            if unsafe { super::retire_vanished_child_slot(slot, &self) } {
+                record.registration.store(TRANSFERRED, Ordering::Release);
+            } else {
+                record.registration.store(RETAINED, Ordering::Release);
+                valid = false;
+            }
+        });
+        if !valid { return Err(NativeAllocatorQuiescenceError::RetainedDescriptor); }
+        // Every vanished source owner has relinquished its claim; preserve
+        // the surviving worker's count while installing a distinct callback
+        // generation. This is the sole full-child success edge, before any
+        // source entry, signal or user hook can resume.
+        if !unsafe { super::RUNTIME_FORK_ADMISSION.rearm_deferred_free_callback_after_source_child_repair() } {
+            return Err(NativeAllocatorQuiescenceError::RetainedDescriptor);
+        }
+        EPOCH.reopen(self.closed)?;
+        self.armed = false;
+        Ok(())
+    }
+}
+
+/// Prepares the source-aware native fork interval using the same epoch and
+/// registry as terminal destruction. Unsupported or callback-pending source
+/// owners are refused before the raw copy, with the exact epoch reopened.
+///
+/// # Safety
+/// `begin_native_allocator_fork_quiescence`'s prepared lock/pin obligations
+/// apply. The second source observation is synchronous and read-only: no
+/// source locks, allocation, syscall or callback occurs. Parent completion or
+/// the child retained-graph continuation must consume the returned interval.
+pub unsafe fn begin_native_allocator_source_fork_quiescence(
+    registry: &dyn NativeAllocatorPinnedThreadRegistry,
+) -> Result<NativeAllocatorForkQuiescence<'_>, NativeAllocatorQuiescenceError> {
+    let interval = unsafe { begin_native_allocator_fork_quiescence(registry)? };
+    let mut valid = super::RUNTIME_PROCESS.is_active()
+        && super::RUNTIME_PROCESS.logical_process_done.load(Ordering::Acquire) == super::PROCESS_DONE_OPEN
+        && super::RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == super::PAGE_OWNER_INITIAL_PERSISTENT
+        && !super::RUNTIME_PROCESS.has_active_post_exit_route()
+        && !super::RUNTIME_PROCESS.has_pending_post_exit_completion()
+        && !super::RUNTIME_PROCESS.has_retained_post_exit_route()
+        && super::RUNTIME_FORK_ADMISSION.state.load(Ordering::Acquire) & super::FORK_GATE_HELD == 0;
+    registry.visit_descriptors(&mut |descriptor| {
+        if !valid { return; }
+        let record = unsafe { descriptor.as_ref() };
+        if record.registration.load(Ordering::Acquire) == REGISTERED {
+            valid &= NonNull::new(record.owner_slot.load(Ordering::Acquire))
+                .is_some_and(|slot| unsafe { super::fork_slot_can_repair(slot) });
+        }
+    });
+    if !valid {
+        unsafe { interval.resume_parent()?; }
+        return Err(NativeAllocatorQuiescenceError::RetainedDescriptor);
+    }
+    Ok(interval)
 }
 
 /// Drains native source entry under libc's already-prepared raw-fork registry
@@ -739,8 +915,10 @@ pub struct NativeAllocatorForkChildRepair<'registry> {
 /// registry (borrow its existing lock for fork; acquire that same lock for
 /// _Fork). Existing outer libc locks precede this close; no allocation or user
 /// callback runs while the pin is held. Call outside any current source entry.
-/// Keep the pin across raw fork and parent completion or child source repair;
-/// never relock it through the general scoped registry accessor. The raw fork
+/// Keep the pin across raw fork and parent completion, or until the child
+/// consumes `into_unlocked_continuation`. That child capability then retains
+/// the same graph while copied locks are released and source owners repaired;
+/// never relock through the general scoped registry accessor. The raw fork
 /// syscall is the sole syscall allowed within this prepared interval. Child
 /// repair must be implemented and preflighted before enabling a product caller.
 pub unsafe fn begin_native_allocator_fork_quiescence(

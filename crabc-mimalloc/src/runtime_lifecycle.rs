@@ -3671,7 +3671,9 @@ impl RuntimeProcessStorage {
     ///
     /// # Safety
     /// The receiver is process-static; publication writes the final owner
-    /// before admission and no subsequent transition overwrites or drops it.
+    /// before admission. Keep coordinator observations inside that admission:
+    /// child repair may detach the initial attachment only after closing entry
+    /// and ending every such view, while disjoint static backing stays live.
     unsafe fn allocation_owner(&'static self) -> Option<&'static ProcessMainThread> {
         if !self.allocation_is_ready() { return None; }
         Some(unsafe { (&*self.owner.get()).assume_init_ref() })
@@ -3774,15 +3776,18 @@ impl RuntimeProcessStorage {
     ///
     /// # Safety
     ///
-    /// The storage is process-static. This slice never calls `teardown` or
-    /// drops its stored owner, so a caller receiving this reference may retain
-    /// a borrow-tied main-Heap lease through a worker's complete lifecycle.
+    /// The storage is process-static and its backing is retained while native
+    /// entry is open. Scope observations of this coordinator to the admitted
+    /// operation: child repair may detach its initial attachment only after
+    /// every such observation has ended. Durable Heap/ready capabilities name
+    /// separate process-static backing and do not retain a coordinator view.
     unsafe fn active_owner(&'static self) -> Option<&'static ProcessMainThread> {
         if !self.is_active() {
             return None;
         }
         // SAFETY: PROCESS_ACTIVE is stored only after this exact static slot
-        // is initialized. No path overwrites or drops it thereafter.
+        // is initialized. Child-exclusive repair may update attachment state
+        // only after closing entry and ending every coordinator observation.
         Some(unsafe { (&*self.owner.get()).assume_init_ref() })
     }
 
@@ -7158,6 +7163,32 @@ enum NativeOwnerExitDeferredFreePhase {
 }
 
 impl NativePersistentThreadOwner {
+    unsafe fn permits_child_source_retirement(&self) -> bool {
+        if !unsafe { self.attachment.permits_child_source_retirement() } { return false; }
+        match &self.state {
+            NativePersistentThreadOwnerExitState::PreDrain(engine) => engine.permits_terminal_process_retirement(&self.attachment),
+            NativePersistentThreadOwnerExitState::AttachmentOnly => true,
+            NativePersistentThreadOwnerExitState::DeferredFreePending(_) => false,
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => false,
+        }
+    }
+
+    /// The child invokes this only for a vanished owner under its exclusive
+    /// retained-graph continuation, after all copied outer locks are released.
+    unsafe fn retire_vanished_child_owner(&mut self) -> Result<(), ()> {
+        if !unsafe { self.permits_child_source_retirement() } { return Err(()); }
+        match &mut self.state {
+            NativePersistentThreadOwnerExitState::PreDrain(engine) => {
+                if !unsafe { engine.collect_abandon_vanished_child(&mut self.attachment) } { return Err(()); }
+            }
+            NativePersistentThreadOwnerExitState::AttachmentOnly => {}
+            NativePersistentThreadOwnerExitState::DeferredFreePending(_) => return Err(()),
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => return Err(()),
+        }
+        self.state = NativePersistentThreadOwnerExitState::AttachmentOnly;
+        unsafe { self.attachment.retire_vanished_child_after_page_drain() }.map_err(|_| ())
+    }
+
     /// The terminal writer observes only this pinned owner's exact source
     /// capabilities. It never adopts originating-thread TLS identity.
     unsafe fn permits_terminal_transfer(&self) -> bool {
@@ -7615,6 +7646,13 @@ struct NativeInitialPersistentThreadOwner {
 }
 
 impl NativeInitialPersistentThreadOwner {
+    /// Only a worker-origin child may retire this initial session. The
+    /// process-owned static attachment is detached separately afterward.
+    unsafe fn retire_vanished_child_owner(&mut self) -> Result<(), ()> {
+        if !self.permits_terminal_transfer() { return Err(()); }
+        if unsafe { self.allocator.collect_abandon_vanished_initial_child() } { Ok(()) } else { Err(()) }
+    }
+
     fn permits_terminal_transfer(&self) -> bool {
         self.deferred_free_callback_active.load(Ordering::Acquire) == 0
             && self.allocator.permits_terminal_process_retirement()
@@ -7959,6 +7997,90 @@ unsafe fn terminal_slot_transfer(pointer: NonNull<ThreadLifecycleSlot>) -> bool 
             if unsafe { owner.transfer_source_state_terminal_quiescent() }.is_err() { return false; }
         }
         // Source capability transfer left only the inert attachment shell.
+        drop(attachment.take());
+    }
+    let admission = unsafe { &mut *core::ptr::addr_of_mut!((*slot).admission) };
+    if let Some(claim) = admission.take() {
+        if let Err(claim) = RUNTIME_FORK_ADMISSION.release_later_thread(claim) {
+            *admission = Some(claim);
+            return false;
+        }
+    }
+    unsafe { core::ptr::addr_of_mut!((*slot).state).write(ThreadLifecycleState::Finished); }
+    true
+}
+
+/// Read-only second-pass fork preflight after all ordinary entries drained.
+/// The prepared registry pin retains each exact TLS slot. References stay
+/// scoped to one field/owner observation and no source lock is acquired.
+unsafe fn fork_slot_can_repair(pointer: NonNull<ThreadLifecycleSlot>) -> bool {
+    let slot = pointer.as_ptr();
+    let state = unsafe { core::ptr::addr_of!((*slot).state).read() };
+    if matches!(state, ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained) { return false; }
+    #[cfg(test)]
+    if unsafe { (&*core::ptr::addr_of!((*slot).page_owner)).is_some() } { return false; }
+    let initial = unsafe { core::ptr::addr_of!((*slot).initial_native_persistent_owner_installed).read() };
+    let later = unsafe { core::ptr::addr_of!((*slot).native_persistent_owner_installed).read() };
+    let attachment = unsafe { &*core::ptr::addr_of!((*slot).attachment) };
+    if initial {
+        if later || attachment.is_some() { return false; }
+        let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).initial_native_persistent_owner)) };
+        return unsafe { cell.with_fork_quiescent_owner(|owner| owner.permits_terminal_transfer()) }.unwrap_or(false);
+    }
+    if later {
+        if attachment.is_some() { return false; }
+        let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).native_persistent_owner)) };
+        return unsafe { cell.with_fork_quiescent_owner(|owner| owner.permits_child_source_retirement()) }.unwrap_or(false);
+    }
+    match attachment {
+        Some(attachment) => unsafe { attachment.permits_child_source_retirement() },
+        None => matches!(state, ThreadLifecycleState::Fresh | ThreadLifecycleState::Finished)
+            && unsafe { (&*core::ptr::addr_of!((*slot).admission)).is_none() },
+    }
+}
+
+/// Retires one vanished TLS source payload under the unlocked child graph
+/// continuation. The survivor is filtered by its descriptor before this call.
+/// Failure leaves exact residual owners pinned and forbids child reopening.
+unsafe fn retire_vanished_child_slot(
+    pointer: NonNull<ThreadLifecycleSlot>,
+    child: &NativeAllocatorForkChildContinuation,
+) -> bool {
+    if !unsafe { fork_slot_can_repair(pointer) } { return false; }
+    let slot = pointer.as_ptr();
+    let initial = unsafe { core::ptr::addr_of!((*slot).initial_native_persistent_owner_installed).read() };
+    let later = unsafe { core::ptr::addr_of!((*slot).native_persistent_owner_installed).read() };
+    let has_attachment = unsafe { (&*core::ptr::addr_of!((*slot).attachment)).is_some() };
+    if initial || later || has_attachment {
+        let Some(process) = RUNTIME_PROCESS.active_vm_process() else { return false; };
+        // The vanished owner's TLS roots are permanently inaccessible in
+        // this sole child. Mirror init.c:471's thread-done accounting prefix
+        // before collect-abandon, never by clearing the survivor's fast root.
+        // Failure after this point retains the exact owner and cannot retry.
+        process.subprocess().record_statistics_thread_detached();
+    }
+    if initial {
+        let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).initial_native_persistent_owner)) };
+        if unsafe { cell.retire_vanished_child_owner(|owner| owner.get_mut().retire_vanished_child_owner()) }.is_err() {
+            return false;
+        }
+        // Every initial session/observation ended before this unique mutable
+        // process-owner projection. Worker Heap leases borrow disjoint static
+        // storage, not this coordinator value; their ready binding survives.
+        let process_owner = unsafe { (&mut *RUNTIME_PROCESS.owner.get()).assume_init_mut() };
+        if unsafe { process_owner.detach_vanished_initial_thread_after_fork(child) }.is_err() { return false; }
+        unsafe { core::ptr::addr_of_mut!((*slot).initial_native_persistent_owner_installed).write(false); }
+    } else if later {
+        let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).native_persistent_owner)) };
+        if unsafe { cell.retire_vanished_child_owner(|owner| owner.get_mut().retire_vanished_child_owner()) }.is_err() {
+            return false;
+        }
+        unsafe { core::ptr::addr_of_mut!((*slot).native_persistent_owner_installed).write(false); }
+    } else {
+        let attachment = unsafe { &mut *core::ptr::addr_of_mut!((*slot).attachment) };
+        if let Some(owner) = attachment.as_mut() {
+            if unsafe { owner.retire_vanished_child_after_page_drain() }.is_err() { return false; }
+        }
         drop(attachment.take());
     }
     let admission = unsafe { &mut *core::ptr::addr_of_mut!((*slot).admission) };
@@ -22065,16 +22187,21 @@ mod tests {
 
 #[path = "runtime_admission.rs"]
 mod admission;
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[path = "runtime_fork_repair_tests.rs"]
+mod fork_repair_tests;
 pub use admission::{
     NativeAllocatorThreadDescriptor, NativeAllocatorPinnedThreadRegistry,
     NativeAllocatorDescriptorRetirement, native_allocator_descriptor_retirement,
     NativeAllocatorCallbackBoundaryError, NativeAllocatorQuiescenceError,
         NativeAllocatorForkQuiescence, NativeAllocatorForkChildRepair,
+        NativeAllocatorForkChildContinuation, NativeAllocatorChildRetainedThreadRegistry,
         NativeAllocatorRawForkCopyGuard, NativeAllocatorRawForkCopyError,
     NativeAllocatorTerminalQuiescence, current_native_allocator_thread_descriptor,
     native_allocator_initial_thread_descriptor, register_current_native_allocator_worker_descriptor,
     with_native_allocator_callback_boundary, with_native_allocator_diagnostic_callback,
         begin_native_allocator_terminal_quiescence, begin_native_allocator_fork_quiescence,
+        begin_native_allocator_source_fork_quiescence,
         begin_native_allocator_raw_fork_copy,
 };
 

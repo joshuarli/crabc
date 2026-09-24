@@ -63,7 +63,7 @@ use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
 use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError, ThreadLocalDataOwner};
 use crate::types::{
-    MemoryId, Page, PageQueue, Theap, TheapDynamicInitError, TheapOwner,
+    LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapDynamicInitError, TheapOwner,
     TheapPageMode, ThreadLocalTheapListError,
 };
 
@@ -649,12 +649,97 @@ impl<'main> MainHeapThreadAttachment<'main> {
             && theap_matches
     }
 
+    /// Exact source image for a vanished worker's child-only page drain.
+    /// This never reads or rewrites the survivor's compiler-TLS roots.
+    ///
+    /// # Safety
+    /// The child continuation keeps native entry closed and retains this
+    /// copied owner, with no old observations or callbacks. The source thread
+    /// vanished, and all copied libc outer locks have been released.
+    pub(crate) unsafe fn vanished_child_source(
+        &mut self,
+    ) -> Result<(NonNull<Theap>, LiveThreadId, MainStaticHeapLease<'main>), MainHeapThreadAttachmentError> {
+        if self.state != MainHeapThreadAttachmentState::Attached
+            || self.has_active_deferred_free_callback()
+            || self.terminal_os_release.is_some() || self.page_engine_suspended
+            || !self.counted_in_main_heap
+            || !matches!(current_thread_identity(), Some(thread) if thread != self.thread)
+        { return Err(MainHeapThreadAttachmentError::PageDrainState); }
+        let allocation = self.theap.as_ref().ok_or(MainHeapThreadAttachmentError::TheapProjection)?;
+        let valid = allocation.dynamic_theap().is_some_and(|theap| {
+            theap.is_initialized() && theap.matches_thread(self.thread)
+                && theap.is_bound_to_main_subprocess(self.main_heap.subprocess())
+                && theap.refcount() == 1 && theap.allows_page_abandon()
+        });
+        if !valid { return Err(MainHeapThreadAttachmentError::ListOwnership); }
+        let pointer = allocation.pointer().cast::<Theap>();
+        let tld = unsafe {
+            self.tld.as_mut().ok_or(MainHeapThreadAttachmentError::Poisoned)?
+                .vanished_child_mut()
+        }.map_err(MainHeapThreadAttachmentError::ThreadLocalData)?;
+        if !unsafe { tld.has_exact_theap_member(pointer.as_ptr()) } {
+            return Err(MainHeapThreadAttachmentError::ListOwnership);
+        }
+        Ok((pointer, self.thread, self.main_heap))
+    }
+
+    /// Retires one vanished worker after its child-only source collect-abandon.
+    /// The remaining process graph owns every inherited live client page.
+    ///
+    /// # Safety
+    /// `vanished_child_source`'s obligations apply. The engine and all page
+    /// sessions have ended, every queue/direct entry is empty, and the earlier
+    /// child thread-done prefix accounted for thread statistics exactly once.
+    /// Failure retains this wrapper and requires child fail-stop; no retry or
+    /// survivor TLS publication is permitted.
+    pub(crate) unsafe fn retire_vanished_child_after_page_drain(&mut self)
+        -> Result<(), MainHeapThreadAttachmentError> {
+        let (pointer, _, main_heap) = unsafe { self.vanished_child_source()? };
+        if unsafe { pointer.as_ref().page_count() } != 0 {
+            return Err(MainHeapThreadAttachmentError::PageCountNonZero);
+        }
+        let result = (|| {
+            let mut heap = main_heap.lock_heap().map_err(MainHeapThreadAttachmentError::MainHeap)?;
+            // Source merge precedes the TLD-locked Heap unlink. The shared
+            // observation ends before either intrusive link can be changed.
+            heap.heap_mut().merge_detached_theap_statistics(unsafe { pointer.as_ref() });
+            let tld = unsafe { self.tld.as_mut().ok_or(MainHeapThreadAttachmentError::Poisoned)?
+                .vanished_child_mut() }.map_err(MainHeapThreadAttachmentError::ThreadLocalData)?;
+            let detach = tld.detach_one_theap_from_heap(heap.heap_mut(), pointer.as_ptr())
+                .map_err(MainHeapThreadAttachmentError::TheapList);
+            let unlock = heap.unlock().map_err(|error| MainHeapThreadAttachmentError::MainHeap(
+                MainStaticHeapLeaseError::Lock(error)));
+            detach.and(unlock)?;
+            tld.detach_one_theap_from_tld(pointer.as_ptr()).map_err(MainHeapThreadAttachmentError::TheapList)?;
+            if !self.theap.as_mut().and_then(MetaAllocation::dynamic_theap_mut)
+                .is_some_and(Theap::clear_dynamic_metadata_after_detach)
+            { return Err(MainHeapThreadAttachmentError::TheapClear); }
+            let mut allocation = self.theap.take().ok_or(MainHeapThreadAttachmentError::Poisoned)?;
+            if let Err(error) = self.metadata.free(&mut allocation) {
+                self.theap = Some(allocation);
+                return Err(MainHeapThreadAttachmentError::TheapMetadata(error));
+            }
+            unsafe { self.tld.as_mut().ok_or(MainHeapThreadAttachmentError::Poisoned)?
+                .retire_vanished_child_after_theap_detached() }
+                .map_err(MainHeapThreadAttachmentError::ThreadLocalData)?;
+            self.tld = None;
+            if !self.main_heap.note_later_theap_detached() {
+                return Err(MainHeapThreadAttachmentError::SharedCount);
+            }
+            self.counted_in_main_heap = false;
+            self.state = MainHeapThreadAttachmentState::TornDown;
+            Ok(())
+        })();
+        result.map_err(|error| self.poison(error))
+    }
+
     /// Validates a remote terminal transfer without treating the terminal
     /// writer as this source attachment's originating thread.
     ///
     /// # Safety
-    /// The permanent terminal capability excludes all source entries and
-    /// callbacks; this exact attachment/TLS mapping and metadata are pinned.
+    /// Native admission excludes all source entries and callbacks for this
+    /// read-only observation; this exact attachment/TLS mapping and metadata
+    /// are pinned. The actual consuming transfer requires permanent exclusion.
     pub(crate) unsafe fn permits_terminal_source_transfer(&self) -> bool {
         self.state == MainHeapThreadAttachmentState::Attached
             && !self.has_active_deferred_free_callback()
@@ -671,13 +756,26 @@ impl<'main> MainHeapThreadAttachment<'main> {
             })
     }
 
+    /// Read-only preflight before copying a source owner which child repair
+    /// may need to retire. No current-thread TLS identity is adopted.
+    ///
+    /// # Safety
+    /// The prepared fork epoch excludes every source entry/callback for this
+    /// scoped observation and its registry pins this exact owner/metadata.
+    pub(crate) unsafe fn permits_child_source_retirement(&self) -> bool {
+        (unsafe { self.permits_terminal_source_transfer() })
+            && self.theap.as_ref().and_then(MetaAllocation::dynamic_theap)
+                .is_some_and(|theap| theap.refcount() == 1 && theap.allows_page_abandon())
+    }
+
     /// Transfers both exact metadata capabilities after the terminal engine
     /// retirement. It changes no source list, page or refcount; the following
     /// force-destruction pass is the sole owner of those source transitions.
     ///
     /// # Safety
-    /// `permits_terminal_source_transfer`'s obligations apply. Every engine
-    /// borrowing this attachment has already been consumed, and this wrapper
+    /// `permits_terminal_source_transfer`'s obligations apply permanently:
+    /// originating-thread entry and every other observer can never resume.
+    /// Every engine borrowing this attachment has already been consumed, and this wrapper
     /// is made permanently inaccessible before any backing retirement.
     pub(crate) unsafe fn transfer_source_state_terminal_quiescent(
         &mut self,
@@ -1829,6 +1927,14 @@ impl MainHeapThreadOwnerLocalPageEngineLease {
     /// admission permanently forbids future source access, and the exact
     /// descriptor/TLS image remains pinned through this operation.
     pub(crate) unsafe fn finish_terminal_quiescent(&mut self) { self.finished = true; }
+
+    /// Disarms only the vanished thread's local-engine lease after child
+    /// collection consumed that engine. Survivor compiler TLS is untouched.
+    ///
+    /// # Safety
+    /// The sole-child continuation excludes source entry and retains this
+    /// vanished owner. Its engine/session has ended and it can never resume.
+    pub(crate) unsafe fn finish_vanished_child(&mut self) { self.finished = true; }
 
     /// Claims the current attachment's compiler-TLS owner after an ordinary
     /// empty page session has established its exact root/list/thread identity.

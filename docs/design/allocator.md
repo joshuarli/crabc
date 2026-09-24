@@ -103,6 +103,41 @@ attach a fresh pthread; any other child disables the bridge. This is not
 inherited-lock, root, pointer, or page-state repair, and it does not claim
 general fork recovery.
 
+The native x86 development fork transition is separate from that legacy
+preservation path. `begin_native_allocator_source_fork_quiescence` closes the
+shared native epoch under the existing libc thread-registry pin, drains source
+entries, and reads each pinned source owner before the raw process copy.
+Callback-pending, poisoned, or otherwise retained owners refuse before copying;
+that refusal reopens only the same precommit epoch. Registration alone never
+grants source access. A callback marker is published before ordinary entry can
+be suspended, and the writer checks markers throughout draining.
+
+In the child, `NativeAllocatorForkChildContinuation` retains authority over the
+same copied descriptor/control/TLS graph without pretending that the released
+registry lock still exists. Libc must keep signals and hooks excluded, release
+all copied outer locks, and postpone registry reset, caller adoption, unmapping,
+and thread creation until `repair_source_owners` returns. No source reference
+escapes a registry visit. The survivor is identified exactly once and is never
+retired. Each vanished owner runs the existing retired-page, remote-free,
+queue-detach and abandonment algorithms through the non-Copy, borrow-scoped
+`TheapCollectAbandonFieldAccess`, then retires its Theap/TLD capabilities and
+registration. No foreign deferred callback runs on behalf of a vanished thread.
+A vanished initial owner enters `ProcessMainThreadState::MainThreadDetached`:
+the canonical Heap and ready backing survive for the worker which called fork,
+but initial-thread projections cannot resume and the static TLD is not unmapped.
+
+Only complete repair reopens the exact copied epoch. Any partial failure keeps
+its exact residual owners and mappings, seals entry, and requires child
+fail-stop. This is crabc runtime integration around pinned source collection
+algorithms; mimalloc v3.5.0 has no Linux atfork owner-repair transition to port.
+The allocator-level worker-origin and initial-origin tests in
+`runtime_fork_repair_tests.rs` exercise inherited live clients, a new child
+worker, retaining process-done, and unchanged parent ownership. They are
+pending focused execution and do not establish installed libc fork support.
+The existing raw-copy guard remains an interim terminal-safety boundary until
+this continuation is wired and qualified across the actual libc lock/hook
+sequence. Neither path enables automatic physical process destruction.
+
 Worker attachment has a separate Rust borrow boundary in
 `runtime_lifecycle.rs::attach_current_thread`: a compiler-TLS entry claim
 refuses recursive attachment before borrowing the lifecycle slot or claiming

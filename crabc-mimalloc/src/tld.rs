@@ -558,6 +558,56 @@ pub(crate) struct DynamicAttachedThreadLocalData {
 }
 
 impl DynamicAttachedThreadLocalData {
+    /// Projects the exact copied TLD of a vanished thread during child repair.
+    ///
+    /// # Safety
+    /// The child continuation keeps source entry closed, excludes callbacks
+    /// and retains this TLS/metadata image. The originating thread vanished;
+    /// no observation survives and the survivor's compiler TLS is untouched.
+    pub(crate) unsafe fn vanished_child_mut(&mut self) -> Result<&mut ThreadLocalData, ThreadLocalDataError> {
+        if self.state != ThreadLocalDataState::Active
+            || !matches!(current_thread_identity(), Some(thread) if thread != self.thread)
+        { return Err(ThreadLocalDataError::WrongThread); }
+        let allocation = self.allocation.as_mut().ok_or(ThreadLocalDataError::Projection)?;
+        let tld = allocation.thread_local_data_mut().ok_or(ThreadLocalDataError::Projection)?;
+        if !tld.matches_subprocess_attached_lifecycle(self.thread, self.sequence, self.subprocess) {
+            return Err(ThreadLocalDataError::Projection);
+        }
+        Ok(tld)
+    }
+
+    /// Completes source TLD retirement after child repair detached its Theap.
+    /// A failed metadata release leaves the exact terminal capability stored
+    /// in this poisoned wrapper until the child fail-stop boundary.
+    ///
+    /// # Safety
+    /// `vanished_child_mut`'s obligations apply. All source list/page owners
+    /// formerly borrowing this TLD have ended or moved to process ownership.
+    pub(crate) unsafe fn retire_vanished_child_after_theap_detached(&mut self)
+        -> Result<(), ThreadLocalDataError> {
+        if !unsafe { self.vanished_child_mut()? }.is_subprocess_attached_no_theap() {
+            return Err(ThreadLocalDataError::Projection);
+        }
+        self.registration.take().ok_or(ThreadLocalDataError::Projection)?.release();
+        let quiesce = unsafe { self.vanished_child_mut() }.and_then(|tld| {
+            tld.invalidate_attached_theap_for_teardown();
+            tld.quiesce_theap_list_lock_for_teardown().map_err(ThreadLocalDataError::TheapListLock)
+        });
+        if let Err(error) = quiesce {
+            self.state = ThreadLocalDataState::Poisoned;
+            return Err(error);
+        }
+        let mut allocation = self.allocation.take().ok_or(ThreadLocalDataError::Projection)?;
+        match self.metadata.free(&mut allocation) {
+            Ok(()) => { self.state = ThreadLocalDataState::TornDown; Ok(()) }
+            Err(error) => {
+                self.allocation = Some(allocation);
+                self.state = ThreadLocalDataState::Poisoned;
+                Err(ThreadLocalDataError::Metadata(error))
+            }
+        }
+    }
+
     pub(crate) fn can_transfer_source_state_after_process_done(&mut self) -> bool {
         self.current_mut().is_ok()
             && self.registration.is_some()
@@ -568,8 +618,9 @@ impl DynamicAttachedThreadLocalData {
     /// the terminal writer as this TLD's originating thread.
     ///
     /// # Safety
-    /// Permanent terminal admission excludes the originating thread and all
-    /// observers; the exact TLD allocation and subprocess are still pinned.
+    /// Native admission excludes the originating thread and all observers for
+    /// this read-only operation; the exact TLD allocation and subprocess are
+    /// pinned. The consuming transfer separately requires permanent exclusion.
     pub(crate) unsafe fn can_transfer_source_state_terminal_quiescent(&self) -> bool {
         if self.state != ThreadLocalDataState::Active || self.registration.is_none() {
             return false;

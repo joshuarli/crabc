@@ -2268,6 +2268,37 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure<
 }
 
 impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
+    /// Drains a vanished worker using its retained canonical engine, then
+    /// consumes its borrows without touching the survivor's local-engine slot.
+    ///
+    /// # Safety
+    /// The sole-child continuation retains this exact engine/attachment and
+    /// all source backing with entry closed, signals/hooks excluded and copied
+    /// outer locks released. No producer or source observation survives. On
+    /// failure retain both values and fail-stop; do not retry or reopen entry.
+    pub(crate) unsafe fn collect_abandon_vanished_child(
+        &mut self, attachment: &mut MainHeapThreadAttachment<'main>,
+    ) -> bool {
+        if !self.permits_terminal_process_retirement(attachment) { return false; }
+        let (theap, thread, heap) = match unsafe { attachment.vanished_child_source() } {
+            Ok(source) => source,
+            Err(_) => return false,
+        };
+        let Some(engine) = self.engine.as_mut() else { return false; };
+        if !unsafe { engine.collect_abandon_vanished_child(theap, thread, heap) } {
+            return false;
+        }
+        let engine = self.engine.take().expect("child drain retains exact engine");
+        match unsafe { engine.retire_vanished_child_engine() } {
+            Ok(session) => {
+                drop(session);
+                unsafe { self.lifecycle.finish_vanished_child(); }
+                true
+            }
+            Err(engine) => { self.engine = Some(engine); false }
+        }
+    }
+
     /// Preflights exact engine/selector ownership without consulting foreign
     /// compiler-TLS state. The surrounding terminal capability supplies
     /// exclusive admission; this predicate itself releases nothing.

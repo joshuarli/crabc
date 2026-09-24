@@ -916,6 +916,60 @@ fn retain_runtime_resume_failure(
 }
 
 impl MainStaticRuntimeFirstArenaPageAllocator {
+    /// Collects the vanished initial owner's pages into process ownership and
+    /// ends its static page session without retiring the process main Heap.
+    ///
+    /// # Safety
+    /// The sole-child continuation holds native entry closed, excludes old
+    /// observations/producers and signals/hooks, and retains canonical source
+    /// backing after copied libc outer locks were released. Initial attachment
+    /// retirement follows before child reopening. Failure retains the exact
+    /// engine/state and requires fail-stop without retry.
+    pub(crate) unsafe fn collect_abandon_vanished_initial_child(&mut self) -> bool {
+        if !self.permits_terminal_process_retirement() { return false; }
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                if !unsafe { active.engine.collect_abandon_vanished_initial_child() } { return false; }
+            }
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { session, .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { session, .. } => {
+                let Some((theap, _, _)) = (unsafe { session.vanished_child_source() }) else { return false; };
+                if unsafe { theap.as_ref().page_count() } != 0 { return false; }
+            }
+            _ => return false,
+        }
+        let state = core::mem::replace(&mut self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Retained);
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
+                match unsafe { active.engine.retire_vanished_child_engine() } {
+                    Ok(session) => {
+                        drop(session);
+                        #[cfg(test)]
+                        if active
+                            .page_map_lifecycle
+                            .take()
+                            .is_some_and(|lease| lease.finish().is_err())
+                        {
+                            return false;
+                        }
+                        true
+                    }
+                    Err(engine) => {
+                        active.engine = engine;
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+                        false
+                    }
+                }
+            }
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { session, .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { session, .. } => {
+                drop(session);
+                true
+            }
+            other => { self.state = other; false }
+        }
+    }
+
     /// Checks the canonical native owner without consulting the originating
     /// thread. Legacy standalone sidecars cannot authorize process retirement.
     pub(crate) fn permits_terminal_process_retirement(&self) -> bool {

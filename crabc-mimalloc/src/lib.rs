@@ -130,11 +130,13 @@ pub mod __crabc_runtime {
         NativeAllocatorDescriptorRetirement, native_allocator_descriptor_retirement,
         NativeAllocatorCallbackBoundaryError, NativeAllocatorQuiescenceError,
         NativeAllocatorForkQuiescence, NativeAllocatorForkChildRepair,
+        NativeAllocatorForkChildContinuation, NativeAllocatorChildRetainedThreadRegistry,
         NativeAllocatorRawForkCopyGuard, NativeAllocatorRawForkCopyError,
         NativeAllocatorTerminalQuiescence, current_native_allocator_thread_descriptor,
         native_allocator_initial_thread_descriptor, register_current_native_allocator_worker_descriptor,
         with_native_allocator_callback_boundary, with_native_allocator_diagnostic_callback,
         begin_native_allocator_terminal_quiescence, begin_native_allocator_fork_quiescence,
+        begin_native_allocator_source_fork_quiescence,
         begin_native_allocator_raw_fork_copy,
     };
 

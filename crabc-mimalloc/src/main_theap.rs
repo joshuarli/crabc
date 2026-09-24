@@ -1511,6 +1511,69 @@ impl MainStaticTheapAttachment {
         Ok(())
     }
 
+    /// Retires only a vanished initial thread after child collect-abandon.
+    /// The process main Heap and its worker leases remain live. Static Theap
+    /// decref/free is a source no-op; only its list relations change here.
+    ///
+    /// # Safety
+    /// Sole-child source authority excludes all previous initial/worker
+    /// observations, signals and user hooks. The initial thread is not the
+    /// survivor and can never resume. Its page engine/session has ended and
+    /// source collect-abandon emptied all queues; source thread statistics
+    /// were decremented at the earlier thread-done prefix. The copied libc
+    /// registry and outer locks have been released under the child lifetime
+    /// continuation, while all source/static storage remains pinned.
+    pub(crate) unsafe fn detach_vanished_initial_thread_after_fork(
+        &mut self,
+    ) -> Result<(), MainStaticTheapError> {
+        if self.state != AttachmentState::Attached
+            || self.storage.state.load(Ordering::Acquire) != THREAD_READY
+            || self.storage.process_page_session.load(Ordering::Acquire) == PROCESS_PAGE_SESSION_ACTIVE
+            || self.terminal_os_release.is_some()
+            || self.registration.is_none()
+        { return Err(MainStaticTheapError::Poisoned); }
+        if !matches!(current_thread_identity(), Some(thread) if thread != self.thread) {
+            return Err(MainStaticTheapError::InvalidCurrentThread);
+        }
+        let guard = self.storage.shared_heap_projection_lock.try_lock()
+            .ok_or(MainStaticTheapError::SharedTheapsLive)?;
+        // There is no live initial session after the exclusive child
+        // transition. The aliasing lock remains the authority for Heap and
+        // its shared source link image; it does not retire that Heap.
+        let heap = unsafe { &mut *self.storage.heap.image.get() };
+        let theap = unsafe { &mut *self.storage.theap.image.get() };
+        if theap.page_count() != 0 { return Err(MainStaticTheapError::PageCountNonZero); }
+        if !theap.matches_thread(self.thread) || !theap.is_bound_to_main_subprocess(self.subprocess) {
+            return Err(MainStaticTheapError::TldOwnership);
+        }
+        let tld = unsafe { self.tld.as_mut().ok_or(MainStaticTheapError::TldOwnership)?.vanished_initial_mut() };
+        if !tld.is_attached_to_main_subprocess(self.subprocess) {
+            return Err(MainStaticTheapError::TldOwnership);
+        }
+        let pointer = core::ptr::from_mut(theap);
+        // `_mi_tld_detach_theaps` merges before unlinking; static decref does
+        // not clear cookie/random/subproc or release its source-static image.
+        heap.merge_detached_theap_statistics(theap);
+        // Sole-child authority means no source list lock can still have a
+        // live holder. The nonblocking variant performs the identical list
+        // surgery but refuses a copied busy lock instead of spinning forever.
+        tld.detach_one_theap_from_heap(heap, pointer).map_err(MainStaticTheapError::TheapList)?;
+        tld.detach_one_theap_from_tld(pointer).map_err(MainStaticTheapError::TheapList)?;
+        // Exact mi_tld_free order: live count, invalid identity, lock done,
+        // then static metadata free (no unmap). A later failure cannot restore
+        // the consumed registration or reopen this partially retired owner.
+        self.registration.take().ok_or(MainStaticTheapError::Poisoned)?.release();
+        tld.invalidate_attached_theap_for_teardown();
+        tld.quiesce_theap_list_lock_for_teardown().map_err(MainStaticTheapError::TldQuiesce)?;
+        self.tld.take().ok_or(MainStaticTheapError::Poisoned)?.retire();
+        self.state = AttachmentState::TornDown;
+        // Deliberately preserve storage THREAD_READY: it also publishes the
+        // canonical Heap used by surviving worker leases. Initial projection
+        // is denied by this attachment state and the consumed process owner.
+        guard.unlock().map_err(|error| MainStaticTheapError::TheapList(
+            ThreadLocalTheapListError::Lock(error)))
+    }
+
     #[inline]
     fn ensure_current(&self) -> Result<(), MainStaticTheapError> {
         match self.state {
@@ -2819,6 +2882,24 @@ pub(crate) struct MainStaticProcessPageSession {
     /// It never selects another arena or scans dynamic Heap ownership.
     static_main_mapped_regular_claim: StaticMainMappedRegularClaimSlot,
     _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl MainStaticProcessPageSession {
+    /// Copies only the vanished initial session's source identities.
+    ///
+    /// # Safety
+    /// Sole-child closed admission excludes all old source observations and
+    /// callbacks. The initial thread is not the survivor, source/static
+    /// backing remains pinned and no copied outer libc lock is held.
+    pub(crate) unsafe fn vanished_child_source(&self)
+        -> Option<(NonNull<Theap>, crate::types::LiveThreadId, MainStaticHeapLease<'static>)> {
+        use crate::bootstrap::TheapPageSession;
+        if !self.permits_terminal_process_retirement()
+            || !matches!(current_thread_identity(), Some(thread) if thread != self.thread)
+        { return None; }
+        Some((unsafe { NonNull::new_unchecked(self.storage.theap.image.get()) },
+            self.thread, self.shared_main_heap_lease()))
+    }
 }
 
 /// Persistent storage state for the initial owner's selected mapped-regular

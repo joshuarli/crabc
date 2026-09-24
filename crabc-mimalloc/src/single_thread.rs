@@ -36027,6 +36027,18 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+impl<'arena, 'map, Backing: crate::page_backing::PageBacking<'arena>>
+    PageAllocatorEngine<'arena, 'map, MainStaticProcessPageSession, Backing> {
+    /// # Safety
+    /// The caller provides the exact sole-child vanished-initial authority
+    /// required by `collect_abandon_vanished_child`; its source session and
+    /// backing remain inaccessible to every other operation.
+    pub(crate) unsafe fn collect_abandon_vanished_initial_child(&mut self) -> bool {
+        let Some((theap, thread, heap)) = (unsafe { self.session.vanished_child_source() }) else { return false; };
+        unsafe { self.collect_abandon_vanished_child(theap, thread, heap) }
+    }
+}
+
 impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::PageBacking<'arena>>
     PageAllocatorEngine<'arena, 'map, Session, Backing> {
 
@@ -36043,6 +36055,84 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     pub(crate) fn permits_terminal_process_retirement(&self) -> bool {
         self.pending_os_release.is_none() && self.collection_poison.is_none()
             && !self.page_commit_poison && self.session.permits_terminal_process_retirement()
+    }
+
+    /// Reuses the source retired/queue/remote-free/abandon algorithms for a
+    /// vanished child owner. Fork repair is a crabc integration transition,
+    /// not a deferred callback on behalf of a thread which no longer exists.
+    /// No foreign callback or fresh application allocation occurs here.
+    ///
+    /// # Safety
+    /// The child continuation holds source entry closed with signals/hooks
+    /// excluded and copied libc outer locks released. `theap`, `thread` and
+    /// `main_heap` identify this exact engine's vanished owner and canonical
+    /// backing. No whole-Theap observation, page owner operation or producer
+    /// can overlap this sole-child traversal. All source storage remains
+    /// pinned. A false result retains this exact engine and requires child
+    /// fail-stop; it never authorizes a retry or source reopening.
+    pub(crate) unsafe fn collect_abandon_vanished_child(
+        &mut self,
+        theap: NonNull<Theap>,
+        thread: LiveThreadId,
+        main_heap: MainStaticHeapLease<'_>,
+    ) -> bool {
+        if !self.permits_terminal_process_retirement() { return false; }
+        let heap = match NonNull::new(unsafe { theap.as_ref().heap() }) {
+            Some(heap) => heap,
+            None => return false,
+        };
+        if !unsafe { theap.as_ref().matches_thread(thread) && theap.as_ref().allows_page_abandon() } {
+            return false;
+        }
+        let result = {
+            let mut callbacks = ProductionOwnerExitCallbacks {
+                thread, arena: &self.arena, arena_lifetime: PhantomData,
+                page_map: self.page_map, main_heap, heap,
+                pending_os_release: &mut self.pending_os_release,
+                collection_poison: &mut self.collection_poison,
+                page_commit_poison: self.page_commit_poison,
+                #[cfg(test)]
+                page_free_collect_failure_once: &mut self.page_free_collect_failure_once,
+            };
+            let prepass = TheapCollectAbandonFieldPrepass::new(
+                |_theap: &mut TheapCollectAbandonFieldAccess,
+                 _callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, Backing>| Ok(()),
+                |theap: &mut TheapCollectAbandonFieldAccess,
+                 callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, Backing>| {
+                    callbacks.collect_retired_prepass(theap)
+                },
+            );
+            // Reuse the scoped source collector while retaining the stronger
+            // sole-child authority; no whole-Theap mutable view is needed.
+            unsafe { theap_collect_abandon_queues_at(theap, prepass, &mut callbacks) }
+        };
+        if result.is_err() { return false; }
+        let empty = unsafe {
+            let image = theap.as_ref();
+            image.page_count() == 0
+                && (0..=BIN_FULL).all(|bin| image.queue(bin).is_some_and(|queue| queue.is_empty()))
+                && (0..PAGES_DIRECT).all(|index| image.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
+        };
+        if !empty || !self.permits_terminal_process_retirement() { return false; }
+        self.shutdown_complete = true;
+        true
+    }
+
+    /// Ends a successfully drained vanished engine without reopening its
+    /// originating session or touching survivor TLS.
+    ///
+    /// # Safety
+    /// The exact successful `collect_abandon_vanished_child` authority remains
+    /// live. Its source owner can never resume; consume the returned session
+    /// and retire that attachment before reopening child source entry. Backing
+    /// witnesses must release no mappings or originating-thread state on Drop.
+    pub(crate) unsafe fn retire_vanished_child_engine(self) -> Result<Session, Self> {
+        if !self.shutdown_complete || !self.permits_terminal_process_retirement() {
+            return Err(self);
+        }
+        let (session, state) = self.into_session_and_state();
+        drop(state);
+        Ok(session)
     }
 
     /// Ends this engine's PageMap/backing borrows without the unfinished-engine
