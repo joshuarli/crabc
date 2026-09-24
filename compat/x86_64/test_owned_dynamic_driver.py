@@ -293,6 +293,49 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(occupied_map.read_text(), "foreign map\n")
 
+    def test_installed_driver_rejects_real_nonconforming_outputs_before_they_exist(self):
+        """Ordinary sources whose LLD output the owned loader cannot run fail the link.
+
+        Each source is admitted by the driver's argument, trace and receipt
+        checks; only the final-ELF reader sees the defect. The command fails,
+        and neither the output nor any sidecar survives for a caller to run.
+        """
+
+        root = self._installed_native_driver_fixture()
+        work = Path(self.temporary.name) / "nonconforming-work"
+        work.mkdir()
+        # A global GNU indirect function is exported through .dynsym and, when
+        # the PIE calls it locally, bound by R_X86_64_IRELATIVE. The owned
+        # loader applies neither. A writable+executable section yields an RWX
+        # PT_LOAD even though the driver still passes -z noexecstack.
+        ifunc = (
+            "static int chosen(void) { return 7; }\n"
+            "__attribute__((used)) static void *pick(void) { return (void *)chosen; }\n"
+            "__asm__(\".globl leaf\\n.type leaf, %gnu_indirect_function\\n.set leaf, pick\\n\");\n"
+        )
+        cases = {
+            "libifunc.so": ("--dynamic-shared-object", ifunc, "symbol versioning and IFUNC are not admitted"),
+            "irelative-pie": ("--dynamic-pie", ifunc + "extern int leaf(void);\n"
+                              "int main(void) { return leaf(); }\n", "unadmitted dynamic relocation kind 37"),
+            "rwx-non-pie": ("--dynamic-non-pie",
+                            "__asm__(\".section .crabc_rwx,\\\"awx\\\",@progbits\\n.byte 0xc3\\n.text\\n\");\n"
+                            "int main(void) { return 0; }\n", "writable executable PT_LOAD"),
+        }
+        for name, (mode, text, diagnostic) in cases.items():
+            with self.subTest(name=name):
+                source, output = work / f"{name}.c", work / name
+                source.write_text(text)
+                completed = subprocess.run(
+                    [sys.executable, str(root / "bin/crabc-cc-dynamic"), mode, str(source), "-o", str(output)],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(completed.returncode, 1, completed.stderr)
+                self.assertIn(f"final ELF inspection rejected {output}", completed.stderr)
+                self.assertIn(diagnostic, completed.stderr)
+                for path in (output, Path(str(output) + ".crabc-link.json"),
+                             *driver.elf_inspection.sidecar_paths(output)):
+                    self.assertFalse(path.exists(), path)
+
     def test_transitive_closure_preserves_exact_lazy_dso_runtime_import_exceptions(self):
         """A receipt-declared lazy import is allowed; an accidental one is not."""
 
