@@ -1991,6 +1991,25 @@ Dynamic modes also run the same client with the allocator built alone as an
 initial DSO that preempts libc.so. The contract and its one difference from
 musl are in `known-differences.md`.
 
+Allocation across images is checked through the installed dynamic product by:
+
+```sh
+./scripts/dev-x86_64.sh owned-native-allocator-dso [DYNAMIC_SYSROOT]
+```
+
+`compat/x86_64/owned_native_allocator_dso_probe.c` is an executable with an
+initial DSO and a `dlopen` plugin, both built from
+`owned_native_allocator_dso_library.c`. Every block class is allocated in one
+image, grown in a second and freed in a third, for all 27 orderings,
+including zeroed, aligned and worker-thread blocks. Every image must resolve
+one `malloc`/`free` and keep musl's errno contract. musl's `dlclose` retains
+the plugin, so its blocks and code stay valid afterwards, a second `dlopen`
+returns the same handle without rerunning its constructor, and destructors
+run at exit. The runner also requires libc.so to bind the malloc family
+exactly as musl's libc.so does (weak `malloc`, strong others). PIE and
+non-PIE executables run through kernel and direct-loader entry and must
+reproduce the musl transcript.
+
 A separate dynamic OS-aligned singleton owner-exit route is available on native
 x86-64:
 
