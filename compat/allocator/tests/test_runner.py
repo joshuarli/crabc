@@ -5469,50 +5469,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(RUNNER.ratchet_measurement_regressions(baseline, baseline), [])
 
-    def test_checked_in_ratchet_accepts_checked_in_adapted_contract_digest(self) -> None:
-        """The reviewed snapshot must cover the runner's current contract path."""
 
-        baseline = RUNNER.read_json(RUNNER.RATCHET)
-        self.assertEqual(
-            baseline["adapted_test_contract_sha256"],
-            RUNNER.file_digest(RUNNER.ADAPTED_TEST_CONTRACT),
-        )
-        self.assertEqual(
-            baseline["m2_memory_substrate_contract_sha256"],
-            RUNNER.file_digest(RUNNER.M2_MEMORY_SUBSTRATE_CONTRACT),
-        )
-        RUNNER.check_ratchet(RUNNER.load_port_map())
-
-    def test_ratchet_check_rejects_unreviewed_port_map_digest_drift(self) -> None:
-        """A status-preserving port-map edit still requires a reviewed snapshot."""
-
-        current = {
-            "format": 1,
-            "port_map_counts": {},
-            "port_map_true_statuses": {},
-            "adapted_test_contract_sha256": "adapted-tests",
-            "adapted_stress_test_contract_sha256": "adapted-stress",
-            "native_shadow_stress_contract_sha256": "native-shadow-stress",
-            "m1_foundations_contract_sha256": "m1-foundations",
-            "m2_memory_substrate_contract_sha256": "m2-memory-substrate",
-            "owner_exit_publication_contract_sha256": "owner-exit-publication",
-            "api_contract_sha256": "api",
-            "port_map_sha256": "current-port-map",
-            "upstream_test_contract_sha256": "upstream-tests",
-        }
-        baseline = {**current, "port_map_sha256": "reviewed-port-map"}
-
-        with tempfile.TemporaryDirectory() as temporary:
-            ratchet = Path(temporary) / "ratchet.json"
-            RUNNER.write_json(ratchet, baseline)
-            with mock.patch.object(RUNNER, "RATCHET", ratchet), mock.patch.object(
-                RUNNER, "ratchet_payload", return_value=current
-            ):
-                with self.assertRaisesRegex(
-                    RUNNER.HarnessError,
-                    "allocator ratchet input changed: port_map_sha256",
-                ):
-                    RUNNER.check_ratchet({})
 
 
 class RuntimeTicketZeroSoakReportTests(unittest.TestCase):

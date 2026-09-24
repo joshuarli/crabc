@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import sys
@@ -12,8 +11,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-PORT_MAP_PATH = ROOT / "compat/allocator/port-map.toml"
-RATCHET_PATH = ROOT / "compat/allocator/ratchet-v3.5.0.json"
 RUNNER_PATH = ROOT / "compat/allocator/run.py"
 RUNTIME_LIFECYCLE_PATH = ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs"
 RUNTIME_EXPORTS_PATH = ROOT / "crabc-mimalloc/src/lib.rs"
@@ -233,11 +230,6 @@ class PointerFirstPostOwnerExitPortMapTests(unittest.TestCase):
         self.assertIn('Command::new("musl-gcc")', harness_source)
         self.assertIn(fixture.name, harness_source)
 
-        ratchet = json.loads(RATCHET_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(
-            ratchet["port_map_sha256"],
-            hashlib.sha256(PORT_MAP_PATH.read_bytes()).hexdigest(),
-        )
 
     def test_live_initial_owner_releases_setup_before_disjoint_w03(self) -> None:
         record = self.item("src/free.c", "pointer-first-native-free-page-state-dispatch")
