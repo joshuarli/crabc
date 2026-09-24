@@ -7,7 +7,9 @@
  * general_dynamic_dlfcn_contract_rollback.c; CC_OK with INDEX is one of the
  * concurrent successes of general_dynamic_dlfcn_contract_concurrent.c.
  * RE_ROOT -> RE_DEP, RE_PLAIN and RE_SHARED_FAIL -> {RE_DEP, missing} are
- * general_dynamic_dlfcn_contract_reentrant.c constructor reentry objects. */
+ * general_dynamic_dlfcn_contract_reentrant.c constructor reentry objects.
+ * FK_CTOR forks from its constructor for general_dynamic_dlfcn_contract_fork.c.
+ * RELR_DSO carries packed-relative relocations for ..._relr.py. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <link.h>
@@ -94,6 +96,36 @@ int CC_NAME(cc_ok_value, INDEX) = 900 + INDEX;
 __thread int CC_NAME(cc_ok_tls, INDEX) = 800 + INDEX;
 int CC_NAME(cc_ok_tls_read, INDEX)(void) { return CC_NAME(cc_ok_tls, INDEX); }
 #endif
+#elif defined(FK_CTOR)
+/* Forks from its own constructor; the child loads, fails and reopens. */
+#include <sys/wait.h>
+#include <unistd.h>
+#include "general_dynamic_dlfcn_contract.h"
+int fk_ctor_value = 61;
+__attribute__((constructor)) static void fk_ctor_construct(void)
+{
+    printf("fork constructor begin\n");
+    fflush(stdout);
+    pid_t child = fork();
+    if (child == 0) {
+        printf("child failed open: %s\n", result(dlopen("libfr_root.so", RTLD_NOW | RTLD_GLOBAL)));
+        show_error("child failed open");
+        printf("child NOLOAD rolled-back tls: %s\n", result(dlopen("libfr_tls.so", RTLD_NOW | RTLD_NOLOAD)));
+        show_error("child NOLOAD rolled-back tls");
+        void *self = dlopen("libfk_ctor.so", RTLD_NOW | RTLD_NOLOAD);
+        printf("child NOLOAD constructing self: %s\n", result(self));
+        int *value = self ? dlsym(self, "fk_ctor_value") : 0;
+        printf("child self value=%d\n", value ? *value : -1);
+        void *success = dlopen("libcc_ok3.so", RTLD_NOW);
+        int (*read)(void) = success ? (int (*)(void))dlsym(success, "cc_ok_tls_read3") : 0;
+        printf("child new load: %s tls=%d\n", result(success), read ? read() : -1);
+        fflush(stdout);
+        _exit(0);
+    }
+    int status = -1;
+    waitpid(child, &status, 0);
+    printf("fork constructor end: child exited=%d status=%d\n", WIFEXITED(status), WEXITSTATUS(status));
+}
 #elif defined(RE_DEP)
 /* Reentrant constructors: libre_root.so needs this object, whose constructor
  * reopens the root while the root itself is still unconstructed. */
@@ -156,6 +188,27 @@ int dc_plain_value = 81;
 __attribute__((constructor)) static void re_plain_construct(void)
 {
     printf("plain constructor; pending: %s\n", dlerror() ? "yes" : "(none)");
+}
+#elif defined(RELR_DSO)
+/* Seventy pointers into this object (crossing one 63-word RELR bitmap),
+ * a separated cluster, and one symbolic data import that stays in RELA. */
+extern char **environ;
+static int relr_targets[80];
+int *relr_table[70] = {
+#define RELR_TEN(base) &relr_targets[base], &relr_targets[base + 1], &relr_targets[base + 2], \
+    &relr_targets[base + 3], &relr_targets[base + 4], &relr_targets[base + 5], &relr_targets[base + 6], \
+    &relr_targets[base + 7], &relr_targets[base + 8], &relr_targets[base + 9]
+    RELR_TEN(0), RELR_TEN(10), RELR_TEN(20), RELR_TEN(30), RELR_TEN(40), RELR_TEN(50), RELR_TEN(60),
+};
+static char relr_gap[4096] = {1};
+int *relr_far[3] = { &relr_targets[70], &relr_targets[75], &relr_targets[79] };
+char ***relr_environ = &environ;
+int relr_matches(void)
+{
+    int matches = relr_gap[0] - 1;
+    for (int index = 0; index < 70; ++index) matches += relr_table[index] == &relr_targets[index];
+    matches += relr_far[0] == &relr_targets[70] && relr_far[1] == &relr_targets[75] && relr_far[2] == &relr_targets[79];
+    return matches;
 }
 #elif defined(PLAIN)
 int dc_plain_value = 80;

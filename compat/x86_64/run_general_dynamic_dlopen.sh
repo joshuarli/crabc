@@ -419,6 +419,111 @@ grep -Fxq 'malformed contract: complete' "$work/malformed-candidate.stdout"
 printf 'general malformed input: PASS (musl differential, %s map_library rejections, one as a dependency, and a later valid load); evidence: %s\n' \
     "${#malformed_cases[@]}" "$work"
 
+# Fork against runtime-load transactions: repeated forks while another thread
+# fails and commits loads, and a constructor that forks, using the rollback
+# and concurrent objects above.
+fork_consumer="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_fork.c"
+"$driver" --dynamic-shared-object -DFK_CTOR "$rollback_source" -o "$work/execution-root/concurrent-missing/libfk_ctor.so"
+"$oracle_cc" -fPIC -shared -DFK_CTOR "$rollback_source" -Wl,-z,now,-soname,libfk_ctor.so \
+    -o "$work/oracle/concurrent-missing/libfk_ctor.so"
+"$driver" "$entry_mode" "$fork_consumer" -o "$work/execution-root/fork-consumer"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$fork_consumer" -pthread -o "$work/oracle/fork-consumer"
+for mode in threaded constructor; do
+    status=0
+    LD_LIBRARY_PATH=/concurrent-missing timeout 60 chroot "$work/execution-root" /fork-consumer "$mode" \
+        >"$work/fork-$mode-candidate.stdout" 2>"$work/fork-$mode-candidate.stderr" || status=$?
+    LD_LIBRARY_PATH="$work/oracle/concurrent-missing" timeout 60 "$work/oracle/fork-consumer" "$mode" \
+        >"$work/fork-$mode-oracle.stdout" 2>"$work/fork-$mode-oracle.stderr"
+    if [ "$status" -ne 0 ] || ! cmp -s "$work/fork-$mode-oracle.stdout" "$work/fork-$mode-candidate.stdout"; then
+        printf 'general load fork (%s): FAIL status=%s; evidence: %s\n' "$mode" "$status" "$work" >&2
+        diff -u "$work/fork-$mode-oracle.stdout" "$work/fork-$mode-candidate.stdout" >&2 || true
+        exit 1
+    fi
+    grep -Fxq 'fork contract: complete' "$work/fork-$mode-candidate.stdout"
+done
+printf 'general load fork: PASS (musl differential, forks beside failing/committing loads and from a constructor); evidence: %s\n' "$work"
+
+# dlfcn reentry from dl_iterate_phdr callbacks while another thread loads.
+iterate_contract="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_iterate.c"
+"$driver" "$entry_mode" "$iterate_contract" -o "$work/execution-root/iterate-contract"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$iterate_contract" -pthread -o "$work/oracle/iterate-contract"
+for round in 1 2 3; do
+    status=0
+    LD_LIBRARY_PATH=/concurrent-missing timeout 60 chroot "$work/execution-root" /iterate-contract \
+        >"$work/iterate-contract-candidate.stdout" 2>"$work/iterate-contract-candidate.stderr" || status=$?
+    LD_LIBRARY_PATH="$work/oracle/concurrent-missing" timeout 60 "$work/oracle/iterate-contract" \
+        >"$work/iterate-contract-oracle.stdout" 2>"$work/iterate-contract-oracle.stderr"
+    if [ "$status" -ne 0 ] || ! cmp -s "$work/iterate-contract-oracle.stdout" "$work/iterate-contract-candidate.stdout"; then
+        printf 'general iterate reentry (round %s): FAIL status=%s; evidence: %s\n' "$round" "$status" "$work" >&2
+        diff -u "$work/iterate-contract-oracle.stdout" "$work/iterate-contract-candidate.stdout" >&2 || true
+        exit 1
+    fi
+done
+grep -Fxq 'iterate contract: complete' "$work/iterate-contract-candidate.stdout"
+printf 'general iterate reentry: PASS (musl differential, callback dlopen/dlclose/failed load beside a loading thread); evidence: %s\n' "$work"
+
+# DTV growth racing thread creation/exit, plus a pre-existing worker.
+tls_contract="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_tls.c"
+"$driver" "$entry_mode" "$tls_contract" -o "$work/execution-root/tls-contract"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$tls_contract" -pthread -o "$work/oracle/tls-contract"
+for round in 1 2 3; do
+    status=0
+    LD_LIBRARY_PATH=/concurrent-missing timeout 60 chroot "$work/execution-root" /tls-contract \
+        >"$work/tls-contract-candidate.stdout" 2>"$work/tls-contract-candidate.stderr" || status=$?
+    LD_LIBRARY_PATH="$work/oracle/concurrent-missing" timeout 60 "$work/oracle/tls-contract" \
+        >"$work/tls-contract-oracle.stdout" 2>"$work/tls-contract-oracle.stderr"
+    if [ "$status" -ne 0 ] || ! cmp -s "$work/tls-contract-oracle.stdout" "$work/tls-contract-candidate.stdout"; then
+        printf 'general DTV growth race (round %s): FAIL status=%s; evidence: %s\n' "$round" "$status" "$work" >&2
+        diff -u "$work/tls-contract-oracle.stdout" "$work/tls-contract-candidate.stdout" >&2 || true
+        exit 1
+    fi
+done
+grep -Fxq 'tls contract: complete' "$work/tls-contract-candidate.stdout"
+printf 'general DTV growth race: PASS (musl differential, TLS loads beside thread creation/exit and an early worker); evidence: %s\n' "$work"
+
+# Packed relative relocations in a runtime-loaded object. The oracle object
+# is GNU ld's own -z pack-relative-relocs output; the installed driver has no
+# such option, so the candidate object is its driver-built RELA form packed
+# by general_dynamic_dlfcn_contract_relr.py. Musl also runs an oracle RELA
+# object packed by that rewrite, so the rewrite cannot hide a defect.
+relr_consumer="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_relr.c"
+mkdir "$work/execution-root/relr" "$work/oracle/relr"
+"$driver" --dynamic-shared-object -DRELR_DSO "$rollback_source" -o "$work/relr-rela.so"
+python3 -B "$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_relr.py" "$work/relr-rela.so" \
+    "$work/execution-root/relr/librelr.so" >"$work/relr-pack.txt"
+"$oracle_cc" -fPIC -shared -DRELR_DSO "$rollback_source" -Wl,-z,now,-z,pack-relative-relocs,-soname,librelr.so \
+    -o "$work/oracle/relr/librelr.so"
+# Pinned musl must accept the rewrite too: pack an oracle RELA build the same way.
+mkdir "$work/oracle/relr-rewritten"
+"$oracle_cc" -fPIC -shared -DRELR_DSO "$rollback_source" -Wl,-z,now,--enable-new-dtags,-rpath,/unused,-soname,librelr.so \
+    -o "$work/oracle/relr-rela.so"
+python3 -B "$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_relr.py" "$work/oracle/relr-rela.so" \
+    "$work/oracle/relr-rewritten/librelr.so" >>"$work/relr-pack.txt"
+for object in "$work/execution-root/relr/librelr.so" "$work/oracle/relr/librelr.so" "$work/oracle/relr-rewritten/librelr.so"; do
+    readelf -dW "$object" >"$object.dynamic"
+    grep -F '(RELR)' "$object.dynamic" >/dev/null
+    ! readelf -rW "$object" | grep -F R_X86_64_RELATIVE >/dev/null
+done
+"$driver" "$entry_mode" "$relr_consumer" -o "$work/execution-root/relr-consumer"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$relr_consumer" -o "$work/oracle/relr-consumer"
+status=0
+LD_LIBRARY_PATH=/relr timeout 20 chroot "$work/execution-root" /relr-consumer \
+    >"$work/relr-candidate.stdout" 2>"$work/relr-candidate.stderr" || status=$?
+LD_LIBRARY_PATH="$work/oracle/relr" timeout 20 "$work/oracle/relr-consumer" \
+    >"$work/relr-oracle.stdout" 2>"$work/relr-oracle.stderr"
+LD_LIBRARY_PATH="$work/oracle/relr-rewritten" timeout 20 "$work/oracle/relr-consumer" \
+    >"$work/relr-oracle-rewritten.stdout" 2>"$work/relr-oracle-rewritten.stderr"
+if [ "$status" -ne 0 ] || ! cmp -s "$work/relr-oracle.stdout" "$work/relr-candidate.stdout" \
+    || ! cmp -s "$work/relr-oracle.stdout" "$work/relr-oracle-rewritten.stdout"; then
+    printf 'general runtime RELR: FAIL status=%s; evidence: %s\n' "$status" "$work" >&2
+    diff -u "$work/relr-oracle.stdout" "$work/relr-candidate.stdout" >&2 || true
+    diff -u "$work/relr-oracle.stdout" "$work/relr-oracle-rewritten.stdout" >&2 || true
+    exit 1
+fi
+grep -Fxq 'relr matches=71 of 71' "$work/relr-candidate.stdout"
+grep -Fxq 'relr symbolic import intact=1' "$work/relr-candidate.stdout"
+printf 'general runtime RELR: PASS (musl differential, bitmap boundary and separated cluster; rewrite also accepted by musl); evidence: %s\n' "$work"
+
 if [ "$skip_search" = 0 ]; then
     bash "$ROOT/compat/x86_64/run_general_dynamic_search.sh" "$installed"
 else

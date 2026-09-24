@@ -331,6 +331,24 @@ relocatable dependency; none publishes an image and a valid load follows.
 Musl does not validate the ELF identity or machine before mapping, so those
 owned rejections stay outside the differential.
 
+Four more share those objects. `..._fork.c` forks 24 times while another
+thread alternates the failing graph with sixteen global loads (musl's
+`__ldso_atfork` takes the loader and init/fini locks, so each child sees a
+committed graph, the same failure text, working new loads and TLS in a new
+child thread), and forks from a runtime constructor whose child fails a load,
+reopens its still-constructing object and loads a TLS module.
+`..._iterate.c` reopens and closes each visited image, runs the failing graph
+and loads a new object from `dl_iterate_phdr` callbacks while another thread
+loads. `..._tls.c` races eight TLS module loads against continuous thread
+creation and exit plus a worker created before any load; every reader sees
+the template and a private copy. `..._relr.c` loads a DSO whose 73 relative
+relocations are a `DT_RELR` stream across a bitmap boundary. The installed
+driver has no packed-relocation option, so `..._relr.py` packs its RELA form
+in GNU ld's `-z pack-relative-relocs` shape; musl runs both its own linker's
+output and an oracle object packed by the same rewrite. The owned mapper
+still requires `DT_RELRENT` and rejects `DT_TEXTREL`, which musl accepts;
+real linkers emit the former and the product links with `-z text`.
+
 `run_general_dynamic_constructor_exit.sh` separately compares the same exiting
 constructor as a runtime-new DSO and an initial dependency. Both retain the
 completed earlier dependency's destructor but skip the incomplete object's
