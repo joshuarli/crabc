@@ -28,6 +28,7 @@
 
 use super::*;
 use super::x86_64_initial_graph_state::{InitialGraphState, ObjectIdentity, ObjectState};
+use super::x86_64_runtime_memory::LoaderVec;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU8, Ordering};
 #[cfg(test)]
@@ -84,6 +85,49 @@ pub(crate) enum GeneralInitialPreparationStage {
     TlsMaterialization,
 }
 
+/// Complete [`Object`] records in graph-index order, main first.
+///
+/// The table grows in loader mappings with the graph; discovery stores each
+/// newly admitted object at the graph index it was given. Readers see a
+/// slice exactly as long as the objects stored so far.
+pub(super) struct ObjectTable(LoaderVec<Object>);
+
+impl ObjectTable {
+    fn with_main(main: Object) -> Option<Self> {
+        let mut objects = LoaderVec::new();
+        objects.push(main)?;
+        Some(Self(objects))
+    }
+
+    /// Store `object` at graph index `index`, extending the table with empty
+    /// records if earlier indices were never stored. Fails only when the
+    /// kernel refuses a larger loader mapping.
+    pub(crate) fn set(&mut self, index: usize, object: Object) -> Option<()> {
+        if let Some(slot) = self.0.get_mut(index) {
+            *slot = object;
+            return Some(());
+        }
+        self.0.reserve(index + 1 - self.0.len())?;
+        while self.0.len() < index {
+            self.0.push(EMPTY_OBJECT)?;
+        }
+        self.0.push(object)
+    }
+
+    fn truncate_to_main(&mut self) {
+        self.0.truncate(1);
+    }
+}
+
+impl core::ops::Deref for ObjectTable {
+    type Target = [Object];
+    fn deref(&self) -> &[Object] { &self.0 }
+}
+
+impl core::ops::DerefMut for ObjectTable {
+    fn deref_mut(&mut self) -> &mut [Object] { &mut self.0 }
+}
+
 /// The canonical graph/object store for a successful general initial load.
 ///
 /// Slot zero is the main image: borrowed for kernel entry, owned for direct
@@ -95,7 +139,7 @@ pub(crate) enum GeneralInitialPreparationStage {
 pub(crate) struct GeneralInitialLoaderState {
     phase: GeneralInitialLoaderPhase,
     graph: InitialGraphState,
-    objects: [Object; MAX_OBJECTS],
+    objects: ObjectTable,
     initial_tls_attached: bool,
     #[cfg(crabc_general_initial_lifecycle)]
     lifecycle: Option<super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle>,
@@ -133,40 +177,41 @@ impl Drop for GeneralInitialLoaderTestPublicationGuard {
 
 impl GeneralInitialLoaderState {
     /// Starts one initial transaction in ordinary caller-owned storage.
-    pub(crate) fn new(main_identity: ObjectIdentity, main: Object) -> Self {
+    /// Returns `None` only if the kernel refuses the object-table mapping.
+    pub(crate) fn new(main_identity: ObjectIdentity, main: Object) -> Option<Self> {
         let mut state = MaybeUninit::<Self>::uninit();
-        // SAFETY: `state` provides writable, properly aligned storage. The
-        // initializer writes every field before `assume_init` below.
+        // SAFETY: `state` provides writable, properly aligned storage. A
+        // successful initializer writes every field before `assume_init`.
         unsafe {
-            Self::initialize_at(state.as_mut_ptr(), main_identity, main);
-            state.assume_init()
+            Self::initialize_at(state.as_mut_ptr(), main_identity, main)?;
+            Some(state.assume_init())
         }
     }
 
     /// Initializes one transaction directly in caller-owned storage.
     ///
     /// The dynamic interpreter uses an anonymous loader mapping for this
-    /// object: Linux may enter it with the libc-test 100 KiB stack limit, and
-    /// this bounded graph owner is too large to materialize there. The
-    /// ordinary constructor remains for source-root tests and private callers
-    /// that deliberately own normal stack storage.
+    /// object: Linux may enter it with the libc-test 100 KiB stack limit.
+    /// The ordinary constructor remains for source-root tests and private
+    /// callers that deliberately own normal stack storage.
     ///
     /// # Safety
     ///
     /// `destination` must point to writable, aligned storage for exactly one
-    /// uninitialized `GeneralInitialLoaderState`. It becomes initialized on
-    /// return and must not be read through another alias while the caller
-    /// mutates the transaction.
+    /// uninitialized `GeneralInitialLoaderState`. On `Some` it becomes
+    /// initialized and must not be read through another alias while the
+    /// caller mutates the transaction; on `None` it remains uninitialized.
     pub(crate) unsafe fn initialize_at(
         destination: *mut Self,
         main_identity: ObjectIdentity,
         mut main: Object,
-    ) {
+    ) -> Option<()> {
         if main.map_provenance != ObjectMapProvenance::Transaction {
             main.map_provenance = ObjectMapProvenance::KernelMain;
             main.map_span_start = 0;
             main.map_span_byte_len = 0;
         }
+        let objects = ObjectTable::with_main(main)?;
         // Do not form a reference to the uninitialized enclosing struct. Raw
         // field writes keep this path valid for the mmap-backed transaction.
         unsafe {
@@ -178,11 +223,7 @@ impl GeneralInitialLoaderState {
                 core::ptr::addr_of_mut!((*destination).graph),
                 InitialGraphState::new(main_identity),
             );
-            let objects = core::ptr::addr_of_mut!((*destination).objects).cast::<Object>();
-            for index in 0..MAX_OBJECTS {
-                core::ptr::write(objects.add(index), EMPTY_OBJECT);
-            }
-            core::ptr::write(objects, main);
+            core::ptr::write(core::ptr::addr_of_mut!((*destination).objects), objects);
             core::ptr::write(
                 core::ptr::addr_of_mut!((*destination).initial_tls_attached),
                 false,
@@ -190,6 +231,7 @@ impl GeneralInitialLoaderState {
             #[cfg(crabc_general_initial_lifecycle)]
             core::ptr::write(core::ptr::addr_of_mut!((*destination).lifecycle), None);
         }
+        Some(())
     }
 
     pub(crate) const fn phase(&self) -> GeneralInitialLoaderPhase {
@@ -226,7 +268,7 @@ impl GeneralInitialLoaderState {
     /// finish before `Prepared`; no caller receives a mutable view afterward.
     pub(crate) fn discovery_mut(
         &mut self,
-    ) -> Result<(&mut InitialGraphState, &mut [Object; MAX_OBJECTS]), GeneralInitialLoaderStateError>
+    ) -> Result<(&mut InitialGraphState, &mut ObjectTable), GeneralInitialLoaderStateError>
     {
         if self.phase != GeneralInitialLoaderPhase::Discovering {
             return Err(GeneralInitialLoaderStateError::InvalidPhase);
@@ -264,7 +306,7 @@ impl GeneralInitialLoaderState {
     /// outside [`discovery_mut`].
     pub(crate) fn objects_during_transaction(
         &self,
-    ) -> Result<&[Object; MAX_OBJECTS], GeneralInitialLoaderStateError> {
+    ) -> Result<&[Object], GeneralInitialLoaderStateError> {
         if self.phase == GeneralInitialLoaderPhase::Vacant {
             return Err(GeneralInitialLoaderStateError::InvalidPhase);
         }
@@ -352,14 +394,14 @@ impl GeneralInitialLoaderState {
                 .store(GENERAL_INITIAL_LOADER_VACANT, Ordering::Release);
         }
         let (graph, objects) = (&mut self.graph, &mut self.objects);
-        graph.rollback_to_main(|index| unmap(&objects[index]));
+        // An admitted identity whose record could not be stored has no
+        // retained mapping here: its admitter already released it.
+        graph.rollback_to_main(|index| if let Some(object) = objects.get(index) { unmap(object) });
         if objects[0].map_provenance == ObjectMapProvenance::Transaction {
             unmap(&objects[0]);
             objects[0] = EMPTY_OBJECT;
         }
-        for object in objects.iter_mut().skip(1) {
-            *object = EMPTY_OBJECT;
-        }
+        objects.truncate_to_main();
         self.initial_tls_attached = false;
         #[cfg(crabc_general_initial_lifecycle)]
         { self.lifecycle = None; }
@@ -414,7 +456,7 @@ impl GeneralInitialLoaderState {
     }
 
     /// Reads complete object/provenance metadata only after `Ready`.
-    pub(crate) fn ready_objects(&self) -> Option<&[Object; MAX_OBJECTS]> {
+    pub(crate) fn ready_objects(&self) -> Option<&[Object]> {
         (self.phase == GeneralInitialLoaderPhase::Ready).then_some(&self.objects)
     }
 
@@ -435,9 +477,9 @@ impl GeneralInitialLoaderState {
 
     #[cfg(test)]
     pub(super) unsafe fn reset_publication_for_test() {
-        // SAFETY: the test guard excludes all readers/reservers. The stored
-        // types have no drop ownership; this only restores the empty process
-        // image model for the next isolated unit test.
+        // SAFETY: the test guard excludes all readers/reservers. Forgetting
+        // the stored owner only leaks its loader mappings; this restores the
+        // empty process image model for the next isolated unit test.
         unsafe {
             core::ptr::write(
                 core::ptr::addr_of_mut!(GENERAL_INITIAL_LOADER_STATE),
@@ -469,21 +511,21 @@ mod tests {
     }
 
     fn diamond_state() -> (GeneralInitialLoaderState, usize, usize, usize) {
-        let mut state = GeneralInitialLoaderState::new(MAIN, EMPTY_OBJECT);
+        let mut state = GeneralInitialLoaderState::new(MAIN, EMPTY_OBJECT).unwrap();
         let (left, right, shared) = {
             let (graph, objects) = state.discovery_mut().unwrap();
             let left = match graph.admit_mapped(LEFT).unwrap() {
                 ObjectAdmission::New { index } => index,
                 other => panic!("unexpected admission: {other:?}"),
             };
-            objects[left] = transaction_object(0x1000, 0x2000);
+            objects.set(left, transaction_object(0x1000, 0x2000)).unwrap();
             graph.attach_needed(0, left).unwrap();
 
             let shared = match graph.admit_mapped(SHARED).unwrap() {
                 ObjectAdmission::New { index } => index,
                 other => panic!("unexpected admission: {other:?}"),
             };
-            objects[shared] = transaction_object(0x3000, 0x2000);
+            objects.set(shared, transaction_object(0x3000, 0x2000)).unwrap();
             graph.attach_needed(left, shared).unwrap();
             graph.finish_discovery(shared).unwrap();
             graph.finish_discovery(left).unwrap();
@@ -492,7 +534,7 @@ mod tests {
                 ObjectAdmission::New { index } => index,
                 other => panic!("unexpected admission: {other:?}"),
             };
-            objects[right] = transaction_object(0x5000, 0x2000);
+            objects.set(right, transaction_object(0x5000, 0x2000)).unwrap();
             graph.attach_needed(0, right).unwrap();
             assert_eq!(
                 graph.admit_mapped(SHARED).unwrap(),
@@ -539,7 +581,7 @@ mod tests {
 
     #[test]
     fn cycle_retains_identity_and_transaction_rollback_under_selected_contract() {
-        let mut state = GeneralInitialLoaderState::new(MAIN, EMPTY_OBJECT);
+        let mut state = GeneralInitialLoaderState::new(MAIN, EMPTY_OBJECT).unwrap();
         let (left, right) = {
             let (graph, objects) = state.discovery_mut().unwrap();
             let left = match graph.admit_mapped(LEFT).unwrap() {
@@ -550,8 +592,8 @@ mod tests {
                 ObjectAdmission::New { index } => index,
                 other => panic!("unexpected admission: {other:?}"),
             };
-            objects[left] = transaction_object(0x1000, 0x1000);
-            objects[right] = transaction_object(0x2000, 0x1000);
+            objects.set(left, transaction_object(0x1000, 0x1000)).unwrap();
+            objects.set(right, transaction_object(0x2000, 0x1000)).unwrap();
             graph.attach_needed(0, left).unwrap();
             graph.attach_needed(left, right).unwrap();
             graph.attach_needed(right, left).unwrap();
@@ -621,10 +663,10 @@ mod tests {
     fn directly_mapped_main_is_rolled_back_after_its_dependencies() {
         let mut main = transaction_object(0x400000, 0x4000);
         main.role = ObjectRole::Main;
-        let mut state = GeneralInitialLoaderState::new(MAIN, main);
+        let mut state = GeneralInitialLoaderState::new(MAIN, main).unwrap();
         let (graph, objects) = state.discovery_mut().unwrap();
         let ObjectAdmission::New { index } = graph.admit_mapped(LEFT).unwrap() else { panic!() };
-        objects[index] = transaction_object(0x800000, 0x1000);
+        objects.set(index, transaction_object(0x800000, 0x1000)).unwrap();
         let mut spans = [0; 2];
         let mut count = 0;
         state.rollback(|object| { spans[count] = object.map_span_start; count += 1; });

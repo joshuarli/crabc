@@ -58,14 +58,11 @@ fn runtime_scope_and_constructor_queue_are_resource_sized_and_cycle_safe() {
         }
         // Main globally sees its first dependency; the remaining runtime
         // chain is a local closure ending in a harmless dependency cycle.
-        (*pointers[0]).needed[0] = pointers[1];
-        (*pointers[0]).needed_count = 1;
+        (*pointers[0]).needed.push(pointers[1]).unwrap();
         for index in 2..64 {
-            (*pointers[index]).needed[0] = pointers[index + 1];
-            (*pointers[index]).needed_count = 1;
+            (*pointers[index]).needed.push(pointers[index + 1]).unwrap();
         }
-        (*pointers[64]).needed[0] = pointers[2];
-        (*pointers[64]).needed_count = 1;
+        (*pointers[64]).needed.push(pointers[2]).unwrap();
         let mut registry = RuntimeRegistry::empty();
         registry.head = nodes.head;
         registry.tail = nodes.tail;
@@ -140,10 +137,8 @@ fn completed_cycle_root_skips_an_inherited_abandoned_constructor_queue() {
         let dependency = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(502), 1, b"cycle-dependency", true).unwrap();
         nodes.append(root).unwrap();
         nodes.append(dependency).unwrap();
-        (*root).needed[0] = dependency;
-        (*root).needed_count = 1;
-        (*dependency).needed[0] = root;
-        (*dependency).needed_count = 1;
+        (*root).needed.push(dependency).unwrap();
+        (*dependency).needed.push(root).unwrap();
         // Recursive loading can complete one cycle member while its caller's
         // constructor is still active. Fork invalidates the vanished caller;
         // musl dlopen still bypasses queue_ctors for the constructed member.

@@ -178,11 +178,12 @@ without `libcrabc-builtins.a` fails on `__udivti3`.
 
 A separate wide graph from `fixtures/owned_dynamic_startup_wide.c` gives the
 executable, one initial hub dependency and one runtime plugin 24 constructors
-and 24 destructors each, beside groups of leaf libraries under the executable,
-the hub and the plugin. Its complete construction/finalization transcript and
-exit status must equal pinned musl's in both modes and entries: the loader
-copies each ELF callback array into a mapping sized from the object instead of
-a fixed per-array table. The dynamic qualification
+and 24 destructors each, and gives each of them twenty leaf libraries: 43
+initial images, with 21 or 20 `DT_NEEDED` edges on three of them. Its complete
+construction/finalization transcript and exit status must equal pinned musl's
+in both modes and entries. The installed loader keeps graph objects, edges
+and copied callback arrays in loader mappings sized from the graph, not in
+fixed tables. The dynamic qualification
 case `crt-dynamic-startup` replays this leaf on the installed, second, and
 extracted products.
 

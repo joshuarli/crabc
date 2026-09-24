@@ -73,9 +73,9 @@ checks the program-header fields against `dl_iterate_phdr`, validates the
 entry against the main executable's executable LOAD, and checks the executable
 pathname independently of `--argv0`.
 
-Existing initial graph limits, 512-byte admitted pathname storage, and
-4096-byte option/search/preload bounds remain explicit selected limits;
-this slice does not claim to remove them.
+The initial graph has no object or `DT_NEEDED` bound; 512-byte admitted
+pathname storage and 4096-byte option/search/preload bounds remain explicit
+selected limits.
 
 Evidence uses separate installed candidate and pinned-musl roots. Candidate
 execution contains only the materialized owned runtime and explicitly built

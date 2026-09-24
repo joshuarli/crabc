@@ -12,6 +12,7 @@
 //! existing fixed/private relocation paths retain their historical contracts.
 
 use super::*;
+use super::x86_64_runtime_memory::LoaderVec;
 use super::x86_64_initial_graph_state::{InitialGraphState, ObjectState};
 
 #[cfg(test)]
@@ -29,8 +30,7 @@ pub(super) const STB_GNU_UNIQUE: u8 = 10;
 /// A transient breadth-first lookup view of the canonical graph, not a
 /// second object store. Mapping and TLS module identities remain unchanged.
 struct InitialSymbolScope {
-    indices: [usize; MAX_OBJECTS],
-    count: usize,
+    indices: LoaderVec<usize>,
 }
 
 /// A borrowed lookup order over one transaction's metadata snapshot. Runtime
@@ -44,24 +44,31 @@ struct SymbolScope<'a> {
 
 impl InitialSymbolScope {
     fn view(&self) -> SymbolScope<'_> {
-        SymbolScope { indices: &self.indices[..self.count], module_count: TLS_DTV_WORDS - 1,
+        SymbolScope { indices: &self.indices, module_count: TLS_DTV_WORDS - 1,
             static_tls_count: TLS_DTV_WORDS - 1, initial: true }
     }
     fn from_graph(graph: &InitialGraphState) -> Option<Self> {
-        let mut scope = Self { indices: [0; MAX_OBJECTS], count: 1 };
+        let count = graph.object_count();
+        let mut scope = Self { indices: LoaderVec::new() };
+        let mut seen = LoaderVec::new();
+        seen.reserve(count)?;
+        for _ in 0..count { seen.push(false)?; }
+        scope.indices.reserve(count)?;
+        scope.indices.push(0)?;
+        seen[0] = true;
         let mut next = 0;
-        while next < scope.count {
+        while next < scope.indices.len() {
             let index = scope.indices[next];
             if graph.state(index) != Some(ObjectState::Ready) { return None; }
             for &child in graph.edges(index)? {
-                if !scope.indices[..scope.count].contains(&child) {
-                    *scope.indices.get_mut(scope.count)? = child;
-                    scope.count += 1;
+                if !*seen.get(child)? {
+                    seen[child] = true;
+                    scope.indices.push(child)?;
                 }
             }
             next += 1;
         }
-        (scope.count == graph.object_count()).then_some(scope)
+        (scope.indices.len() == count).then_some(scope)
     }
 }
 
@@ -725,20 +732,20 @@ unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], ow
 /// Objects and graph must be the same sealed-discovery transaction. All ELF
 /// table ranges were validated by parsing, destinations remain writable, and
 /// the caller exclusively owns mappings and metadata until this returns.
-pub(super) unsafe fn relocate_initial_graph(graph: &InitialGraphState, objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+pub(super) unsafe fn relocate_initial_graph(graph: &InitialGraphState, objects: &[Object]) -> Option<()> {
     unsafe { relocate_initial_graph_inner(graph, objects, #[cfg(feature = "x86_64-owned-dynamic-runtime")] None) }
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 pub(super) unsafe fn relocate_initial_graph_with_debugger(
-    graph: &InitialGraphState, objects: &[Object; MAX_OBJECTS],
+    graph: &InitialGraphState, objects: &[Object],
     debugger: &super::x86_64_debugger::PreparedInitialDebugger,
 ) -> Option<()> {
     unsafe { relocate_initial_graph_inner(graph, objects, Some(debugger)) }
 }
 
 unsafe fn relocate_initial_graph_inner(
-    graph: &InitialGraphState, objects: &[Object; MAX_OBJECTS],
+    graph: &InitialGraphState, objects: &[Object],
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     debugger: Option<&super::x86_64_debugger::PreparedInitialDebugger>,
 ) -> Option<()> {
@@ -834,7 +841,7 @@ unsafe fn preflight_debugger_destinations(
 /// proofs of CRT ownership. A note without the exact relocation (or that
 /// relocation without the note) is rejected before any relocation writes.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-unsafe fn validate_main_crt_mode(objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+unsafe fn validate_main_crt_mode(objects: &[Object]) -> Option<()> {
     let main = objects.first()?;
     let mut handoffs = 0usize;
     for (table, bytes) in [(main.rela, main.relasz), (main.jmprel, main.pltrelsz)] {
@@ -883,7 +890,7 @@ unsafe fn validate_main_crt_mode(objects: &[Object; MAX_OBJECTS]) -> Option<()> 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn validate_canonical_libc_startup_import(
     graph: &InitialGraphState,
-    objects: &[Object; MAX_OBJECTS],
+    objects: &[Object],
 ) -> Option<()> {
     let mut canonical = None;
     for index in 0..graph.object_count() {

@@ -24,6 +24,13 @@ impl TlsModuleId {
         NonZeroUsize::new(value).map(Self)
     }
 
+    const fn from_one_based_const(value: usize) -> Option<Self> {
+        match NonZeroUsize::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
     /// Returns the ELF one-based module number.
     pub(crate) const fn get(self) -> usize {
         self.0.get()
@@ -87,12 +94,14 @@ pub(crate) enum RuntimeTlsGrowthError {
 
 /// A typed, bounded initial TLS registry owned by the x86 loader.
 ///
-/// `OBJECT_CAPACITY` is the known initial graph bound and `MODULE_CAPACITY`
-/// is the number of nonzero DTV slots available to its initial population.
-/// The registry records object-index-to-module-ID ownership, rather than
-/// assuming object indices are module IDs; TLS-free objects consume neither.
+/// `OBJECT_CAPACITY` bounds the object indices a caller may name (the
+/// general graph passes `usize::MAX`: it has no object bound) and
+/// `MODULE_CAPACITY` is the number of nonzero DTV slots available to its
+/// initial population. The registry records module-ID-to-object ownership,
+/// rather than assuming object indices are module IDs; TLS-free objects
+/// consume neither, so its storage grows only with TLS-bearing objects.
 pub(crate) struct InitialTlsRegistry<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize> {
-    module_ids: [Option<TlsModuleId>; OBJECT_CAPACITY],
+    module_objects: [usize; MODULE_CAPACITY],
     module_count: usize,
     generation: InitialTlsGeneration,
     phase: RegistryPhase,
@@ -104,7 +113,7 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
     /// Starts an empty generation-one initial population.
     pub(crate) const fn new() -> Self {
         Self {
-            module_ids: [None; OBJECT_CAPACITY],
+            module_objects: [0; MODULE_CAPACITY],
             module_count: 0,
             generation: InitialTlsGeneration::initial(),
             phase: RegistryPhase::Planning,
@@ -122,11 +131,10 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
         if self.phase != RegistryPhase::Planning {
             return Err(InitialTlsRegistryError::RegistrySealed);
         }
-        let slot = self
-            .module_ids
-            .get_mut(object_index)
-            .ok_or(InitialTlsRegistryError::ObjectIndexOutOfRange)?;
-        if slot.is_some() {
+        if object_index >= OBJECT_CAPACITY {
+            return Err(InitialTlsRegistryError::ObjectIndexOutOfRange);
+        }
+        if self.module_id(object_index).is_some() {
             return Err(InitialTlsRegistryError::ObjectAlreadyAssigned);
         }
         if self.module_count == MODULE_CAPACITY {
@@ -138,8 +146,8 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
             .ok_or(InitialTlsRegistryError::InitialModuleCapacityExhausted)?;
         let module_id = TlsModuleId::from_one_based(next)
             .ok_or(InitialTlsRegistryError::InitialModuleCapacityExhausted)?;
+        self.module_objects[self.module_count] = object_index;
         self.module_count = next;
-        *slot = Some(module_id);
         Ok(module_id)
     }
 
@@ -157,7 +165,14 @@ impl<const OBJECT_CAPACITY: usize, const MODULE_CAPACITY: usize>
         if object_index >= OBJECT_CAPACITY {
             return None;
         }
-        self.module_ids[object_index]
+        let mut module = 0;
+        while module < self.module_count {
+            if self.module_objects[module] == object_index {
+                return TlsModuleId::from_one_based_const(module + 1);
+            }
+            module += 1;
+        }
+        None
     }
 
     /// Returns the completed initial TLS module count.

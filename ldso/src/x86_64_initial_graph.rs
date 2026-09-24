@@ -81,7 +81,7 @@ mod x86_64_initial_worker_tls;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_runtime_tls_view.rs"]
 mod x86_64_runtime_tls_view;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_runtime_memory.rs"]
 mod x86_64_runtime_memory;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -346,17 +346,25 @@ const X86_64_STAT_BYTE_LEN: usize = 144;
 const X86_64_STAT_SIZE_OFFSET: usize = 48;
 
 const INITIAL_OBJECT_COUNT: usize = 3;
-#[cfg(crabc_general_initial_graph)]
-const MAX_OBJECTS: usize = x86_64_initial_graph_state::MAX_INITIAL_GRAPH_OBJECTS;
+// The fixed-graph roots own exactly their fixture graph. General graph
+// objects and edges live in loader mappings sized from the admitted graph
+// (see `x86_64_initial_graph_state`): the installed runtime has no object or
+// DT_NEEDED bound, and the private source roots keep their frozen ceilings.
 #[cfg(not(crabc_general_initial_graph))]
 #[cfg(crabc_bounded_runtime_dlopen)]
 const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT + 1;
 #[cfg(not(crabc_general_initial_graph))]
 #[cfg(not(crabc_bounded_runtime_dlopen))]
 const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT;
-const MAX_PHDRS: usize = 32;
+// Only the initial TLS generation remains fixed: its DTV geometry is sealed
+// before libc starts, and later modules use the runtime DTV-growth protocol.
 #[cfg(crabc_general_initial_graph)]
-const MAX_NEEDED: usize = x86_64_initial_graph_state::MAX_INITIAL_GRAPH_NEEDED;
+const MAX_INITIAL_TLS_MODULES: usize = 32;
+const MAX_PHDRS: usize = 32;
+// The installed runtime reads DT_NEEDED names from the validated dynamic
+// table; the private source roots retain their small inline table.
+#[cfg(all(crabc_general_initial_graph, not(feature = "x86_64-owned-dynamic-runtime")))]
+const MAX_NEEDED: usize = 16;
 #[cfg(not(crabc_general_initial_graph))]
 const MAX_NEEDED: usize = 2;
 const MAX_PATH: usize = 512;
@@ -410,7 +418,10 @@ const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 
 // never dereferences, copies from another thread, or rewrites it during growth.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET: usize = 32;
+#[cfg(not(crabc_general_initial_graph))]
 const TLS_DTV_WORDS: usize = MAX_OBJECTS + 1;
+#[cfg(crabc_general_initial_graph)]
+const TLS_DTV_WORDS: usize = MAX_INITIAL_TLS_MODULES + 1;
 const TLS_DTV_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
 const TLS_MODULE_SIZE_TABLE_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
 
@@ -922,6 +933,9 @@ struct Object {
     canonical_libc_identity: Option<ObjectIdentity>,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: Option<usize>,
+    // The installed runtime reads DT_NEEDED name offsets from `dynamic`
+    // through `needed_name_offset`, so an object has no DT_NEEDED bound.
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     needed: [usize; MAX_NEEDED],
     needed_count: usize,
     role: ObjectRole,
@@ -992,6 +1006,7 @@ const EMPTY_OBJECT: Object = Object {
     canonical_libc_identity: None,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: None,
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     needed: [0; MAX_NEEDED],
     needed_count: 0,
     role: ObjectRole::Main,
@@ -1493,6 +1508,7 @@ unsafe fn parse_mapped(
             object.tls_image = runtime_address(base, virtual_address)? as *const u8;
         }
     }
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     let mut needed_offsets = [0usize; MAX_NEEDED];
     let mut runpath_offset = None;
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -1582,9 +1598,15 @@ unsafe fn parse_mapped(
         match tag {
             DT_NULL => { terminated = true; break; }
             DT_NEEDED => {
-                if object.needed_count == MAX_NEEDED { return None; }
-                needed_offsets[object.needed_count] = usize::try_from(value).ok()?;
-                object.needed_count += 1;
+                let offset = usize::try_from(value).ok()?;
+                #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+                {
+                    if object.needed_count == MAX_NEEDED { return None; }
+                    needed_offsets[object.needed_count] = offset;
+                }
+                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+                let _ = offset;
+                object.needed_count = object.needed_count.checked_add(1)?;
             }
             DT_STRTAB => { if strtab_virtual_address.replace(value).is_some() { return None; } }
             DT_STRSZ => { if strtab_byte_len.replace(value).is_some() { return None; } }
@@ -2101,19 +2123,47 @@ unsafe fn parse_mapped(
             return None;
         }
     }
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+    object.needed[..object.needed_count].copy_from_slice(&needed_offsets[..object.needed_count]);
     for slot in 0..object.needed_count {
-        if needed_offsets[slot] >= object.strsz { return None; }
-        let name = object.strtab.add(needed_offsets[slot]);
-        if bounded_nul(name, object.strsz - needed_offsets[slot]).is_none() { return None; }
-        object.needed[slot] = needed_offsets[slot];
+        let offset = needed_name_offset(&object, slot)?;
+        if offset >= object.strsz { return None; }
+        let name = object.strtab.add(offset);
+        if bounded_nul(name, object.strsz - offset).is_none() { return None; }
     }
     Some(object)
 }
 
+/// The string-table offset of `object`'s `slot`th DT_NEEDED name.
+///
+/// The installed runtime reads the parser-validated, DT_NULL-terminated
+/// dynamic table in place, as musl does; private roots use their inline copy.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn needed_name_offset(object: &Object, slot: usize) -> Option<usize> {
+    if slot >= object.needed_count || object.dynamic.is_null() { return None; }
+    let mut seen = 0;
+    let mut entry = object.dynamic;
+    loop {
+        match unsafe { read_i64(entry) } {
+            DT_NULL => return None,
+            DT_NEEDED if seen == slot => return usize::try_from(unsafe { read_u64(entry.add(8)) }).ok(),
+            DT_NEEDED => seen += 1,
+            _ => {}
+        }
+        entry = unsafe { entry.add(16) };
+    }
+}
+
+#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+unsafe fn needed_name_offset(object: &Object, slot: usize) -> Option<usize> {
+    (slot < object.needed_count).then(|| object.needed[slot])
+}
+
 unsafe fn load_needed(parent: &Object, needed_index: usize) -> Option<Object> {
     if needed_index >= parent.needed_count || parent.runpath.is_null() { return None; }
-    let name = parent.strtab.add(parent.needed[needed_index]);
-    let name_len = bounded_nul(name, parent.strsz - parent.needed[needed_index])?;
+    let offset = needed_name_offset(parent, needed_index)?;
+    let name = parent.strtab.add(offset);
+    let name_len = bounded_nul(name, parent.strsz - offset)?;
     let fd = open_from_runpath(parent.runpath, parent.runpath_len, name, name_len)?;
     let result = map_elf(fd, false, false);
     let _ = syscall1(SYS_CLOSE, fd);
@@ -2420,7 +2470,7 @@ unsafe fn map_elf_reporting_error(
 /// `align_up(p_memsz)` block. The fixture fixes loader order to main, mid,
 /// leaf; as in musl, only TLS-bearing images receive one-based module IDs, so
 /// the TLS-free main image consumes neither an ID nor a DTV slot.
-unsafe fn plan_initial_tls(objects: &mut [Object; MAX_OBJECTS]) -> Option<bool> {
+unsafe fn plan_initial_tls(objects: &mut [Object]) -> Option<bool> {
     let mut offset_below_tp = 0usize;
     let mut module_count = 0usize;
     let mut has_tls = false;
@@ -2482,7 +2532,7 @@ unsafe fn plan_initial_tls(objects: &mut [Object; MAX_OBJECTS]) -> Option<bool> 
 /// libc or fixed-DTV fallback.
 #[cfg(crabc_loader_libc_tls_runtime_v1)]
 unsafe fn initial_tls_runtime_v1_registry(
-    objects: &[Object; MAX_OBJECTS],
+    objects: &[Object],
 ) -> Option<&'static LoaderInitialTlsRegistry> {
     // SAFETY: `plan_initial_tls` sealed this one startup-owned static before
     // this accessor runs; the fixed graph exposes no later mutation path.
@@ -2528,7 +2578,7 @@ unsafe fn initial_tls_runtime_v1_registry(
 /// per TLS-bearing object. The prefix intentionally does not claim a full musl pthread
 /// TCB, a DTV growth protocol, or a worker allocation interface.
 unsafe fn install_initial_tls(
-    objects: &[Object; MAX_OBJECTS],
+    objects: &[Object],
 ) -> Option<InstalledInitialTls> {
     let installed = unsafe { materialize_initial_tls(objects, 0) }?;
     if syscall2(SYS_ARCH_PRCTL, ARCH_SET_FS, installed.thread_pointer as i64) < 0 {
@@ -2540,7 +2590,7 @@ unsafe fn install_initial_tls(
 
 /// Materialize a checked initial module layout without changing the caller's
 /// FS. Startup and worker construction use this same template/DTV owner.
-unsafe fn materialize_initial_tls(objects: &[Object; MAX_OBJECTS], ownership_prefix: usize) -> Option<InstalledInitialTls> {
+unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -> Option<InstalledInitialTls> {
     let mut total_tls_size = 0usize;
     let mut tp_alignment = core::mem::align_of::<usize>();
     let mut module_count = 0usize;
@@ -2799,7 +2849,7 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
     }
 }
 
-unsafe fn relocate(object: &Object, objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+unsafe fn relocate(object: &Object, objects: &[Object]) -> Option<()> {
     // Do not let a malformed table change an earlier target before the graph
     // discovers that another table or packed bitmap is invalid. The fixed
     // stack block records every target in this bounded fixture, rejects table
@@ -2871,7 +2921,7 @@ fn preflight_relocation_table_layout(object: &Object) -> Option<()> {
 
 unsafe fn preflight_rela_table(
     object: &Object,
-    objects: &[Object; MAX_OBJECTS],
+    objects: &[Object],
     table: *const u8,
     length: usize,
     targets: &mut [u64; MAX_RELOCATION_TARGETS],
@@ -2985,7 +3035,7 @@ fn record_relocation_target(
 
 unsafe fn apply_rela_table(
     object: &Object,
-    objects: &[Object; MAX_OBJECTS],
+    objects: &[Object],
     table: *const u8,
     length: usize,
 ) -> Option<()> {
@@ -3052,7 +3102,7 @@ unsafe fn apply_relr_target(object: &Object, virtual_address: u64) -> Option<()>
 unsafe fn relocation_value(
     kind: u32,
     requestor: &Object,
-    objects: &[Object; MAX_OBJECTS],
+    objects: &[Object],
     symbol: usize,
     addend: i64,
 ) -> Option<u64> {
@@ -3262,7 +3312,7 @@ unsafe fn relocation_symbol_name_is(requestor: &Object, index: usize, wanted: &[
     )
 }
 
-unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], index: usize) -> Option<u64> {
+unsafe fn resolve_symbol(requestor: &Object, objects: &[Object], index: usize) -> Option<u64> {
     if index >= requestor.symcount { return None; }
     let symbol = requestor.symtab.add(index * 24);
     let name_offset = read_u32(symbol) as usize;
@@ -3434,7 +3484,7 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
 ))]
 unsafe fn resolve_tls_symbol(
     requestor: &Object,
-    objects: &[Object; MAX_OBJECTS],
+    objects: &[Object],
     index: usize,
 ) -> Option<(usize, u64, usize)> {
     if index == 0 {
@@ -3626,7 +3676,7 @@ unsafe fn fixed_graph_store_name(index: usize, source: *const u8, maximum: usize
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
 unsafe fn publish_fixed_graph_runtime(
     sp: usize,
-    objects: &[Object; MAX_OBJECTS],
+    objects: &[Object],
 ) -> Option<()> {
     if FIXED_GRAPH_RUNTIME_PUBLISHED.load(Ordering::Relaxed) {
         return None;
@@ -4457,7 +4507,7 @@ unsafe fn invoke_initializer_range(
 /// RELRO sealed, but before the interpreter seals its own record and jumps to
 /// the Rust-produced main image.
 #[cfg(crabc_owned_crt_handoff)]
-unsafe fn publish_owned_crt_handoff(objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+unsafe fn publish_owned_crt_handoff(objects: &[Object]) -> Option<()> {
     if core::ptr::read(core::ptr::addr_of!(OWNED_CRT_HANDOFF_STATE))
         != OWNED_CRT_STATE_UNPUBLISHED
     {

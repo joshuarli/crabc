@@ -1,11 +1,12 @@
 /* One source for every image of the installed dynamic startup "wide" graph.
  *
- * The executable names WIDE_FANOUT direct libraries plus a hub, the hub
- * names WIDE_FANOUT more, and a runtime plugin names WIDE_FANOUT of its own.
- * The executable, the hub and the plugin each carry WIDE_CALLBACKS
- * constructors and destructors, more than a small fixed callback table. Pinned musl 1.2.6 has no such bound, so the
- * candidate must reproduce its exact construction order, finalization order,
- * symbol binding and exit status.
+ * The graph is deliberately larger than any small fixed loader table: the
+ * executable names WIDE_FANOUT direct libraries plus a hub, the hub names
+ * WIDE_FANOUT more, and a runtime plugin names WIDE_FANOUT of its own, so
+ * the initial graph holds 43 images. The executable, the hub and the plugin
+ * each carry WIDE_CALLBACKS constructors and destructors. Pinned musl 1.2.6
+ * has no such bound, so the candidate must reproduce its exact construction
+ * order, finalization order, symbol binding and exit status.
  *
  * Roles: WIDE_LEAF with WIDE_ID and the WIDE_GROUP token (w: executable
  * dependency, d: hub dependency, p: plugin dependency); WIDE_HUB;
@@ -14,7 +15,7 @@
  */
 #include <unistd.h>
 
-#define WIDE_FANOUT 4
+#define WIDE_FANOUT 20
 #define WIDE_CALLBACKS 24
 
 static void mark(char role, char value)
@@ -40,7 +41,9 @@ static void mark(char role, char value)
 #define WIDE_NAME(group, id) WIDE_NAME_(group, id)
 #define WIDE_TEXT_(token) #token
 #define WIDE_TEXT(token) WIDE_TEXT_(token)
-#define WIDE_EACH(apply) apply(1) apply(2) apply(3) apply(4)
+#define WIDE_EACH(apply) \
+	apply(1) apply(2) apply(3) apply(4) apply(5) apply(6) apply(7) apply(8) apply(9) apply(10) \
+	apply(11) apply(12) apply(13) apply(14) apply(15) apply(16) apply(17) apply(18) apply(19) apply(20)
 
 #if defined(WIDE_LEAF)
 /* A leaf reports its own construction and finalization once. */

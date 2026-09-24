@@ -18,7 +18,7 @@
 
 use super::*;
 use super::x86_64_general_initial_loader_state::{
-    GeneralInitialLoaderState, GeneralInitialPreparationStage,
+    GeneralInitialLoaderState, GeneralInitialPreparationStage, ObjectTable,
 };
 use super::x86_64_initial_graph_state::{InitialGraphState, ObjectAdmission, ObjectIdentity};
 #[cfg(crabc_general_initial_tls_materialization_v1)]
@@ -85,7 +85,7 @@ unsafe fn run_without_tls(main: Object, main_entry: u64, sp: usize, ldso_base: u
     let mut state = GeneralInitialLoaderState::new(ObjectIdentity {
         device: u64::MAX,
         inode: u64::MAX,
-    }, main);
+    }, main).unwrap_or_else(|| fail(b"state\n"));
     let discovered = {
         let (graph, objects) = state
             .discovery_mut()
@@ -437,9 +437,7 @@ unsafe fn run_with_initial_tls(
 /// avoiding further fallible ELF reads after TLS installation.
 struct DependencyInitializerPlan {
     #[cfg(not(crabc_general_initial_lifecycle))]
-    callbacks: [usize; MAX_OBJECTS * MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES],
-    #[cfg(not(crabc_general_initial_lifecycle))]
-    count: usize,
+    callbacks: super::x86_64_runtime_memory::LoaderVec<usize>,
     #[cfg(crabc_general_initial_lifecycle)]
     lifecycle: Option<super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle>,
 }
@@ -448,9 +446,7 @@ impl DependencyInitializerPlan {
     const fn empty() -> Self {
         Self {
             #[cfg(not(crabc_general_initial_lifecycle))]
-            callbacks: [0; MAX_OBJECTS * MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES],
-            #[cfg(not(crabc_general_initial_lifecycle))]
-            count: 0,
+            callbacks: super::x86_64_runtime_memory::LoaderVec::new(),
             #[cfg(crabc_general_initial_lifecycle)]
             lifecycle: None,
         }
@@ -458,10 +454,7 @@ impl DependencyInitializerPlan {
 
     #[cfg(not(crabc_general_initial_lifecycle))]
     fn push(&mut self, callback: usize) -> Option<()> {
-        let destination = self.callbacks.get_mut(self.count)?;
-        *destination = callback;
-        self.count += 1;
-        Some(())
+        self.callbacks.push(callback)
     }
 }
 
@@ -475,7 +468,7 @@ impl DependencyInitializerPlan {
 /// No constructor is called until the entire plan succeeds.
 unsafe fn preflight_dependency_initializers(
     graph: &InitialGraphState,
-    objects: &[Object; MAX_OBJECTS],
+    objects: &[Object],
 ) -> Option<DependencyInitializerPlan> {
     #[cfg(not(crabc_general_initial_lifecycle))]
     let graph_plan = graph.dependency_first_plan().ok()?;
@@ -528,7 +521,7 @@ unsafe fn dispatch_dependency_initializers(plan: &DependencyInitializerPlan) {
         unsafe { GeneralInitialLoaderState::retained().unwrap().lifecycle().unwrap().initialize() };
     }
     #[cfg(not(crabc_general_initial_lifecycle))]
-    for &callback in &plan.callbacks[..plan.count] {
+    for &callback in plan.callbacks.iter() {
         let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(callback) };
         unsafe { callback() };
     }
@@ -573,7 +566,7 @@ struct CanonicalInitialLibc {
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn select_canonical_initial_libc(
     graph: &InitialGraphState,
-    objects: &mut [Object; MAX_OBJECTS],
+    objects: &mut ObjectTable,
 ) -> Option<CanonicalInitialLibc> {
     let invocation_prefix = unsafe { x86_64_library_search::installation_prefix() };
     let mut aliases = [None; 2 * CANONICAL_LIBC_ALIAS_SUFFIXES.len()];
@@ -664,7 +657,7 @@ fn canonical_initial_libc_from_aliases(
 /// must win first-load identity before any grandchild with the same name.
 unsafe fn discover_needed(
     graph: &mut InitialGraphState,
-    objects: &mut [Object; MAX_OBJECTS],
+    objects: &mut ObjectTable,
     parent_index: usize,
 ) -> Option<()> {
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -696,12 +689,12 @@ unsafe fn discover_needed(
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn discover_object_needed(
     graph: &mut InitialGraphState,
-    objects: &mut [Object; MAX_OBJECTS],
+    objects: &mut ObjectTable,
     parent_index: usize,
 ) -> Option<()> {
     let parent = *objects.get(parent_index)?;
     for needed_index in 0..parent.needed_count {
-        let offset = parent.needed[needed_index];
+        let offset = needed_name_offset(&parent, needed_index)?;
         let name = parent.strtab.add(offset);
         let length = bounded_nul(name, parent.strsz.checked_sub(offset)?)?;
         let child = load_initial_library(graph, objects, Some(parent_index),
@@ -717,7 +710,7 @@ unsafe fn discover_object_needed(
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn load_initial_library(
     graph: &mut InitialGraphState,
-    objects: &mut [Object; MAX_OBJECTS],
+    objects: &mut ObjectTable,
     requester: Option<usize>,
     name: &[u8],
 ) -> Result<Option<usize>, ()> {
@@ -764,7 +757,10 @@ unsafe fn load_initial_library(
     object.search_short_name = short_name;
     object.initial_load_name_is_short = short_name;
     object.needed_by = requester;
-    objects[index] = object;
+    if objects.set(index, object).is_none() {
+        unmap_object(&object);
+        return Err(());
+    }
     Ok(Some(index))
 }
 
@@ -773,7 +769,7 @@ unsafe fn load_initial_library(
 #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
 unsafe fn discover_object_needed(
     graph: &mut InitialGraphState,
-    objects: &mut [Object; MAX_OBJECTS],
+    objects: &mut ObjectTable,
     parent_index: usize,
 ) -> Option<()> {
     let parent = *objects.get(parent_index)?;
@@ -781,7 +777,7 @@ unsafe fn discover_object_needed(
         return None;
     }
     for needed_index in 0..parent.needed_count {
-        let name_offset = parent.needed[needed_index];
+        let name_offset = needed_name_offset(&parent, needed_index)?;
         if name_offset >= parent.strsz {
             return None;
         }
@@ -817,7 +813,10 @@ unsafe fn discover_object_needed(
                 return None;
             }
         };
-        objects[child_index] = child;
+        if objects.set(child_index, child).is_none() {
+            unmap_object(&child);
+            return None;
+        }
         graph.attach_needed(parent_index, child_index).ok()?;
         discover_needed(graph, objects, child_index)?;
         graph.finish_discovery(child_index).ok()?;

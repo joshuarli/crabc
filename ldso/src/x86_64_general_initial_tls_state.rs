@@ -20,7 +20,7 @@
 use super::*;
 use super::x86_64_general_initial_loader_state::{
     GeneralInitialLoaderPhase, GeneralInitialLoaderState, GeneralInitialLoaderStateError,
-    GeneralInitialPreparationStage,
+    GeneralInitialPreparationStage, ObjectTable,
 };
 use super::x86_64_initial_graph_state::ObjectIdentity;
 use super::x86_64_initial_tls_registry::{
@@ -31,7 +31,9 @@ use core::ops::{Deref, DerefMut};
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 use core::sync::atomic::{AtomicU8, Ordering};
 
-type GeneralInitialTlsRegistry = InitialTlsRegistry<MAX_OBJECTS, MAX_OBJECTS>;
+// The general graph names objects by unbounded graph index; only its initial
+// TLS generation keeps a fixed number of DTV slots.
+type GeneralInitialTlsRegistry = InitialTlsRegistry<{ usize::MAX }, MAX_INITIAL_TLS_MODULES>;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 type ConventionalStartupReservation = Option<super::x86_64_conventional_startup_v1::Reservation>;
 #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
@@ -164,9 +166,14 @@ impl GeneralInitialTlsTransaction {
         };
         // SAFETY: mmap returned writable, page-aligned storage large enough
         // for one state. `transaction` owns it exclusively until commit/drop.
-        unsafe {
+        if unsafe {
             GeneralInitialTlsState::initialize_at(transaction.state, main_identity, main)
-        };
+        }.is_none() {
+            // Nothing was initialized; release only the raw storage.
+            let mut transaction = transaction;
+            transaction.release();
+            return None;
+        }
         Some(transaction)
     }
 
@@ -233,6 +240,11 @@ impl DerefMut for GeneralInitialTlsTransaction {
 
 impl Drop for GeneralInitialTlsTransaction {
     fn drop(&mut self) {
+        // An uncommitted state still owns its graph/object mappings. Commit
+        // moves the state out and nulls the pointer before this can run.
+        if !self.state.is_null() {
+            unsafe { core::ptr::drop_in_place(self.state) };
+        }
         self.release();
     }
 }
@@ -469,13 +481,13 @@ unsafe fn publish_reserved_loader_tls_runtime_v1(installed: InstalledInitialTls)
 
 impl GeneralInitialTlsState {
     /// Begins a TLS planner against the canonical general loader transaction.
-    pub(crate) fn new(main_identity: ObjectIdentity, main: Object) -> Self {
+    pub(crate) fn new(main_identity: ObjectIdentity, main: Object) -> Option<Self> {
         let mut state = MaybeUninit::<Self>::uninit();
-        // SAFETY: the local storage is aligned and writable; the initializer
-        // writes every field before the completed value is returned.
+        // SAFETY: the local storage is aligned and writable; a successful
+        // initializer writes every field before the value is returned.
         unsafe {
-            Self::initialize_at(state.as_mut_ptr(), main_identity, main);
-            state.assume_init()
+            Self::initialize_at(state.as_mut_ptr(), main_identity, main)?;
+            Some(state.assume_init())
         }
     }
 
@@ -485,21 +497,22 @@ impl GeneralInitialTlsState {
     ///
     /// `destination` must identify writable, aligned storage for one
     /// uninitialized `GeneralInitialTlsState`. The caller owns its lifetime
-    /// and must not read it before this function returns.
+    /// and must not read it before this function returns `Some`; on `None`
+    /// (the kernel refused a loader mapping) it remains uninitialized.
     pub(crate) unsafe fn initialize_at(
         destination: *mut Self,
         main_identity: ObjectIdentity,
         main: Object,
-    ) {
+    ) -> Option<()> {
         unsafe {
-            core::ptr::write(
-                core::ptr::addr_of_mut!((*destination).phase),
-                GeneralInitialTlsPhase::Discovery,
-            );
             GeneralInitialLoaderState::initialize_at(
                 core::ptr::addr_of_mut!((*destination).loader),
                 main_identity,
                 main,
+            )?;
+            core::ptr::write(
+                core::ptr::addr_of_mut!((*destination).phase),
+                GeneralInitialTlsPhase::Discovery,
             );
             core::ptr::write(
                 core::ptr::addr_of_mut!((*destination).registry),
@@ -511,6 +524,7 @@ impl GeneralInitialTlsState {
                 None,
             );
         }
+        Some(())
     }
 
     pub(crate) const fn phase(&self) -> GeneralInitialTlsPhase {
@@ -524,7 +538,7 @@ impl GeneralInitialTlsState {
     pub(crate) fn graph_and_objects_mut(
         &mut self,
     ) -> Result<
-        (&mut super::x86_64_initial_graph_state::InitialGraphState, &mut [Object; MAX_OBJECTS]),
+        (&mut super::x86_64_initial_graph_state::InitialGraphState, &mut ObjectTable),
         GeneralInitialTlsStateError,
     > {
         if self.phase != GeneralInitialTlsPhase::Discovery {
@@ -546,7 +560,7 @@ impl GeneralInitialTlsState {
             .map_err(map_loader_state_error)
     }
 
-    pub(crate) fn objects(&self) -> Result<&[Object; MAX_OBJECTS], GeneralInitialTlsStateError> {
+    pub(crate) fn objects(&self) -> Result<&[Object], GeneralInitialTlsStateError> {
         self.loader
             .objects_during_transaction()
             .map_err(map_loader_state_error)
@@ -592,8 +606,8 @@ impl GeneralInitialTlsState {
             return Err(GeneralInitialTlsStateError::GraphIncomplete);
         }
 
-        let mut planned_offsets = [0usize; MAX_OBJECTS];
-        let mut planned_ids = [0usize; MAX_OBJECTS];
+        // One (object index, offset below TP) per planned module, by ID.
+        let mut planned = [(0usize, 0usize); MAX_INITIAL_TLS_MODULES];
         let mut offset_below_tp = 0usize;
         let mut registry = GeneralInitialTlsRegistry::new();
         let mut has_tls = false;
@@ -636,8 +650,9 @@ impl GeneralInitialTlsState {
             if module_id.get() >= TLS_DTV_WORDS {
                 return Err(GeneralInitialTlsStateError::ModuleCapacity);
             }
-            planned_offsets[index] = offset_below_tp;
-            planned_ids[index] = module_id.get();
+            *planned
+                .get_mut(module_id.get() - 1)
+                .ok_or(GeneralInitialTlsStateError::ModuleCapacity)? = (index, offset_below_tp);
         }
         registry
             .seal()
@@ -651,9 +666,14 @@ impl GeneralInitialTlsState {
                 .loader
                 .discovery_mut()
                 .map_err(map_loader_state_error)?;
-            for index in 0..object_count {
-                objects[index].tls_offset_below_tp = planned_offsets[index];
-                objects[index].tls_module_id = planned_ids[index];
+            for object in objects[..object_count].iter_mut() {
+                object.tls_offset_below_tp = 0;
+                object.tls_module_id = 0;
+            }
+            for (module, &(index, offset)) in planned[..registry.module_count()].iter().enumerate() {
+                let object = objects.get_mut(index).ok_or(GeneralInitialTlsStateError::Registry)?;
+                object.tls_offset_below_tp = offset;
+                object.tls_module_id = module + 1;
             }
         }
         self.loader.attach_initial_tls().map_err(map_loader_state_error)?;
@@ -1009,7 +1029,7 @@ mod tests {
     }
 
     fn relocated_single_tls_state(image: &[u8]) -> GeneralInitialTlsState {
-        let mut state = GeneralInitialTlsState::new(MAIN, tls_object(image, image.len(), 4));
+        let mut state = GeneralInitialTlsState::new(MAIN, tls_object(image, image.len(), 4)).unwrap();
         state.finish_discovery().unwrap();
         assert!(state.plan_initial_tls().unwrap());
         state.mark_relocated().unwrap();
@@ -1027,7 +1047,7 @@ mod tests {
     fn planning_attaches_tls_to_the_canonical_loader_objects() {
         let main_image = [1u8, 2, 3, 4];
         let dso_image = [5u8, 6, 7, 8];
-        let mut state = GeneralInitialTlsState::new(MAIN, tls_object(&main_image, 16, 8));
+        let mut state = GeneralInitialTlsState::new(MAIN, tls_object(&main_image, 16, 8)).unwrap();
         let (graph, objects) = state.graph_and_objects_mut().unwrap();
         let tls_free = match graph.admit_mapped(ObjectIdentity { device: 1, inode: 2 }).unwrap() {
             super::super::x86_64_initial_graph_state::ObjectAdmission::New { index } => index,
@@ -1040,7 +1060,7 @@ mod tests {
             other => panic!("unexpected admission: {other:?}"),
         };
         graph.attach_needed(0, dso).unwrap();
-        objects[dso] = tls_object(&dso_image, 32, 16);
+        objects.set(dso, tls_object(&dso_image, 32, 16)).unwrap();
         graph.finish_discovery(dso).unwrap();
         state.finish_discovery().unwrap();
 
@@ -1058,7 +1078,7 @@ mod tests {
         let phase_before_growth_rejection = state.phase();
         let object_count_before_growth_rejection = state.object_count();
         assert_eq!(
-            state.reject_runtime_tls_growth(MAX_OBJECTS),
+            state.reject_runtime_tls_growth(MAX_INITIAL_TLS_MODULES),
             Err(RuntimeTlsGrowthError::DtvGrowthProtocolUnavailable)
         );
         assert_eq!(state.phase(), phase_before_growth_rejection);
@@ -1074,14 +1094,14 @@ mod tests {
         let malformed_image = [8u8; 4];
         let mut malformed = tls_object(&malformed_image, 4, 3);
         malformed.tls_align = 3;
-        let mut state = GeneralInitialTlsState::new(MAIN, tls_object(&main_image, 4, 4));
+        let mut state = GeneralInitialTlsState::new(MAIN, tls_object(&main_image, 4, 4)).unwrap();
         let (graph, objects) = state.graph_and_objects_mut().unwrap();
         let malformed_child = match graph.admit_mapped(ObjectIdentity { device: 1, inode: 2 }).unwrap() {
             super::super::x86_64_initial_graph_state::ObjectAdmission::New { index } => index,
             other => panic!("unexpected admission: {other:?}"),
         };
         graph.attach_needed(0, malformed_child).unwrap();
-        objects[malformed_child] = malformed;
+        objects.set(malformed_child, malformed).unwrap();
         graph.finish_discovery(malformed_child).unwrap();
         state.finish_discovery().unwrap();
 

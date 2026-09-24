@@ -23,6 +23,7 @@ use super::*;
 #[cfg(any(test, not(feature = "x86_64-owned-dynamic-runtime")))]
 use super::x86_64_general_initial_loader_state::GeneralInitialLoaderState;
 use super::x86_64_initial_graph_state::InitialGraphState;
+use super::x86_64_runtime_memory::LoaderVec;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 const QUEUED: u8 = 0;
@@ -30,8 +31,6 @@ const INITIALIZING: u8 = 1;
 const INITIALIZED: u8 = 2;
 const FINALIZING: u8 = 3;
 const FINALIZED: u8 = 4;
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-const CALLBACK_CAPACITY: usize = MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES + 1;
 
 // The existing 32-byte owned CRT record carries the dependency callback; TLS
 // coordinates remain in the separate, unchanged 72-byte RuntimeV1 record.
@@ -82,76 +81,19 @@ struct ObjectLifecycle {
     state: AtomicU8,
 }
 
-impl ObjectLifecycle {
-    const fn empty() -> Self {
-        Self {
-            object_index: 0,
-            first: 0,
-            initializer_count: 0,
-            finalizer_count: 0,
-            state: AtomicU8::new(QUEUED),
-        }
-    }
-}
 
-/// Copied callback addresses for a whole plan.
-///
-/// The installed runtime admits ELF arrays of any valid length, as pinned
-/// musl does, so it sizes one loader mapping from the preflighted counts.
-/// Legacy private roots keep their bounded parser shape and inline storage.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-struct CallbackStore(Option<super::x86_64_runtime_memory::LoaderBuffer<usize>>);
-#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-struct CallbackStore([usize; MAX_OBJECTS * 2 * CALLBACK_CAPACITY]);
-
-// SAFETY: the mapping is exclusively owned by one plan and written only by
-// `preflight` through `&mut self`; after that the addresses are immutable and
-// shared readers only copy them, exactly like the legacy inline array.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-unsafe impl Sync for CallbackStore {}
-
-impl CallbackStore {
-    const fn empty() -> Self {
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        { Self(None) }
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        { Self([0; MAX_OBJECTS * 2 * CALLBACK_CAPACITY]) }
-    }
-
-    fn with_len(length: usize) -> Option<Self> {
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        {
-            if length == 0 { return Some(Self(None)); }
-            Some(Self(Some(super::x86_64_runtime_memory::LoaderBuffer::new(length, 0)?)))
-        }
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        {
-            (length <= MAX_OBJECTS * 2 * CALLBACK_CAPACITY).then(Self::empty)
-        }
-    }
-
-    fn as_slice(&self) -> &[usize] {
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        { self.0.as_ref().map_or(&[], |buffer| buffer.as_slice()) }
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        { &self.0 }
-    }
-
-    fn as_mut_slice(&mut self) -> &mut [usize] {
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        { self.0.as_mut().map_or(&mut [], |buffer| buffer.as_mut_slice()) }
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        { &mut self.0 }
-    }
-}
+/// Copied callback addresses for a whole plan, in one loader mapping sized
+/// from the preflighted counts. The installed runtime admits ELF arrays of
+/// any valid length, as pinned musl does; legacy private roots keep their
+/// bounded parser shape (see `object_callback_counts`).
+type CallbackStore = LoaderVec<usize>;
 
 /// The sole execution owner for every selected initial process lifecycle.
 /// Atomic claims permit recursive finalizer calls without borrowing mutable
 /// graph state or redispatching a callback already on the stack.
 pub(super) struct GeneralInitialLifecycle {
-    objects: [ObjectLifecycle; MAX_OBJECTS],
+    objects: LoaderVec<ObjectLifecycle>,
     callbacks: CallbackStore,
-    count: usize,
     state: AtomicU8,
 }
 
@@ -163,24 +105,24 @@ impl GeneralInitialLifecycle {
     // the two cfg-disjoint dispatchers never execute the same callback twice.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     pub(super) fn callback_plan(&self, index: usize) -> Option<(&[usize], &[usize])> {
-        let object = self.objects[..self.count].iter().find(|object| object.object_index == index)?;
+        let object = self.objects.iter().find(|object| object.object_index == index)?;
         Some((self.initializers(object), self.finalizers(object)))
     }
 
     fn initializers(&self, object: &ObjectLifecycle) -> &[usize] {
-        &self.callbacks.as_slice()[object.first..object.first + object.initializer_count]
+        &self.callbacks[object.first..object.first + object.initializer_count]
     }
 
     fn finalizers(&self, object: &ObjectLifecycle) -> &[usize] {
         let start = object.first + object.initializer_count;
-        &self.callbacks.as_slice()[start..start + object.finalizer_count]
+        &self.callbacks[start..start + object.finalizer_count]
     }
     /// # Safety
     /// Every object must remain mapped and fully relocated with protections
     /// and RELRO sealed. Its array storage must have been parser-validated.
     pub(super) unsafe fn preflight(
         graph: &InitialGraphState,
-        objects: &[Object; MAX_OBJECTS],
+        objects: &[Object],
     ) -> Option<Self> {
         let order = graph.dependency_first_plan().ok()?;
         // The installed runtime owns main DT_INIT/DT_INIT_ARRAY/DT_FINI_ARRAY
@@ -197,11 +139,14 @@ impl GeneralInitialLifecycle {
             length = length.checked_add(initializers)?.checked_add(finalizers)?;
         }
         let mut plan = Self {
-            objects: [const { ObjectLifecycle::empty() }; MAX_OBJECTS],
-            callbacks: CallbackStore::with_len(length)?,
-            count: 0,
+            objects: LoaderVec::new(),
+            callbacks: CallbackStore::new(),
             state: AtomicU8::new(QUEUED),
         };
+        plan.callbacks.reserve(length)?;
+        for _ in 0..length {
+            plan.callbacks.push(0)?;
+        }
         let mut first = 0;
         for (index, _) in planned() {
             first = unsafe { append_object_lifecycle(&mut plan, objects.get(index)?, index, first) }?;
@@ -221,7 +166,7 @@ impl GeneralInitialLifecycle {
         if self.state.compare_exchange(QUEUED, INITIALIZING, Ordering::AcqRel, Ordering::Acquire).is_err() {
             return;
         }
-        for object in &self.objects[..self.count] {
+        for object in self.objects.iter() {
             object.state.store(INITIALIZING, Ordering::Release);
             for &address in self.initializers(object) {
                 invoke(address);
@@ -235,7 +180,7 @@ impl GeneralInitialLifecycle {
         if self.state.compare_exchange(INITIALIZED, FINALIZING, Ordering::AcqRel, Ordering::Acquire).is_err() {
             return;
         }
-        for object in self.objects[..self.count].iter().rev() {
+        for object in self.objects.iter().rev() {
             // The global initialization publication makes all object states
             // visible. Claim before calling foreign code: recursive process
             // finalization can never reenter this object's destructor list.
@@ -295,7 +240,7 @@ unsafe fn append_object_lifecycle(
     index: usize,
     first: usize,
 ) -> Option<usize> {
-    let store = plan.callbacks.as_mut_slice();
+    let store = &mut plan.callbacks[..];
     let mut next = first;
     let mut push = |next: &mut usize, address: usize| -> Option<()> {
         *store.get_mut(*next)? = address;
@@ -316,15 +261,13 @@ unsafe fn append_object_lifecycle(
     if object.general_fini != 0 {
         push(&mut next, object.general_fini)?;
     }
-    let lifecycle = plan.objects.get_mut(plan.count)?;
-    *lifecycle = ObjectLifecycle {
+    plan.objects.push(ObjectLifecycle {
         object_index: index,
         first,
         initializer_count,
         finalizer_count: next - first - initializer_count,
         state: AtomicU8::new(QUEUED),
-    };
-    plan.count += 1;
+    })?;
     Some(next)
 }
 
@@ -368,18 +311,20 @@ mod tests {
 
     fn plan() -> GeneralInitialLifecycle {
         let mut plan = GeneralInitialLifecycle {
-            objects: [const { ObjectLifecycle::empty() }; MAX_OBJECTS],
-            callbacks: CallbackStore::with_len(6).unwrap(),
-            count: 3,
+            objects: LoaderVec::new(),
+            callbacks: CallbackStore::new(),
             state: AtomicU8::new(QUEUED),
         };
         for index in 0..3 {
-            plan.objects[index].object_index = index + 1;
-            plan.objects[index].first = index * 2;
-            plan.objects[index].initializer_count = 1;
-            plan.objects[index].finalizer_count = 1;
-            plan.callbacks.as_mut_slice()[index * 2] = index + 10;
-            plan.callbacks.as_mut_slice()[index * 2 + 1] = index + 20;
+            plan.objects.push(ObjectLifecycle {
+                object_index: index + 1,
+                first: index * 2,
+                initializer_count: 1,
+                finalizer_count: 1,
+                state: AtomicU8::new(QUEUED),
+            }).unwrap();
+            plan.callbacks.push(index + 10).unwrap();
+            plan.callbacks.push(index + 20).unwrap();
         }
         plan
     }
@@ -448,14 +393,14 @@ mod tests {
             main_crt_mode: MainCrtMode::Owned,
             ..EMPTY_OBJECT
         };
-        let mut state = GeneralInitialLoaderState::new(ObjectIdentity { device: 1, inode: 1 }, main);
+        let mut state = GeneralInitialLoaderState::new(ObjectIdentity { device: 1, inode: 1 }, main).unwrap();
         {
             let (graph, objects) = state.discovery_mut().unwrap();
             let ObjectAdmission::New { index } = graph.admit_mapped(
                 ObjectIdentity { device: 1, inode: 2 },
             ).unwrap() else { panic!("new object required") };
             graph.attach_needed(0, index).unwrap();
-            objects[index] = Object {
+            objects.set(index, Object {
                 role: ObjectRole::Library,
                 phdr: phdr.as_ptr().cast(),
                 phnum: 1,
@@ -466,7 +411,7 @@ mod tests {
                 general_fini_count: fini.len(),
                 general_fini: 0x1050,
                 ..EMPTY_OBJECT
-            };
+            }).unwrap();
             graph.finish_discovery(index).unwrap();
         }
         state.finish_discovery().unwrap();
@@ -477,10 +422,10 @@ mod tests {
         ) }.unwrap();
         assert_eq!(plan.objects[0].object_index, 1);
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        assert_eq!(plan.count, 1);
+        assert_eq!(plan.objects.len(), 1);
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         {
-            assert_eq!(plan.count, 2);
+            assert_eq!(plan.objects.len(), 2);
             assert_eq!(plan.objects[1].object_index, 0);
             main_init.fill(0);
             main_fini.fill(0);

@@ -204,7 +204,7 @@ mod tests {
     fn abandoning_partial_all_thread_preparation_preserves_every_live_view() {
         unsafe fn probe(guard: &RuntimeGuard) -> bool { (|| -> Option<bool> {
         let image = [31u8];
-        let mut initial = [EMPTY_OBJECT; MAX_OBJECTS];
+        let mut initial = [EMPTY_OBJECT; MAX_INITIAL_TLS_MODULES];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
             tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
         let first = unsafe { materialize_initial_tls(&initial, 0) }?;
@@ -238,7 +238,7 @@ mod tests {
     fn acquire_readers_keep_valid_old_generations_during_repeated_publication() {
         use core::sync::atomic::{AtomicBool, AtomicUsize};
         let image = [23u8, 29];
-        let mut modules = [EMPTY_OBJECT; MAX_OBJECTS];
+        let mut modules = [EMPTY_OBJECT; MAX_INITIAL_TLS_MODULES];
         modules[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2, tls_memsz: 16,
             tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&modules, 0) }.unwrap();
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn malformed_new_population_fails_without_replacing_the_live_view() {
         let image = [1u8];
-        let mut initial = [EMPTY_OBJECT; MAX_OBJECTS];
+        let mut initial = [EMPTY_OBJECT; MAX_INITIAL_TLS_MODULES];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
             tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn generations_preserve_live_addresses_and_publish_dtv_sizes_together() {
         let image = [17u8, 19];
-        let mut initial = [EMPTY_OBJECT; MAX_OBJECTS];
+        let mut initial = [EMPTY_OBJECT; MAX_INITIAL_TLS_MODULES];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2, tls_memsz: 16,
             tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
@@ -370,7 +370,7 @@ mod timer_reset_tests {
     fn timer_reset_restores_initial_and_runtime_images_without_replacing_tcb_or_dtv() {
         let first_image = [11u8, 13];
         let later_image = [17u8, 19, 23];
-        let mut initial = [EMPTY_OBJECT; MAX_OBJECTS];
+        let mut initial = [EMPTY_OBJECT; MAX_INITIAL_TLS_MODULES];
         initial[0] = Object { tls_image: first_image.as_ptr(), tls_filesz: 2,
             tls_memsz: 32, tls_align: 16, tls_module_id: 1,
             tls_offset_below_tp: 32, ..EMPTY_OBJECT };

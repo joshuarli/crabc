@@ -20,7 +20,7 @@ use super::*;
 use super::x86_64_general_initial_loader_state::GeneralInitialLoaderState;
 use super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle;
 use super::x86_64_initial_graph_state::InitialGraphState;
-use super::x86_64_runtime_memory::LoaderBuffer;
+use super::x86_64_runtime_memory::{LoaderBuffer, LoaderVec};
 use super::x86_64_runtime_lock::{RuntimeGuard, CallbackGuard, wait_initialization, wake_initialization};
 use super::x86_64_general_relocation::deferred::{self, PendingRelocations, PreparedRetry};
 use core::cell::UnsafeCell;
@@ -86,8 +86,8 @@ struct RuntimeObject {
     needed_by: *mut RuntimeObject,
     global: bool,
     short_name: bool,
-    needed: [*mut RuntimeObject; MAX_NEEDED],
-    needed_count: usize,
+    // Ordered DT_NEEDED nodes, in a loader mapping sized to the object.
+    needed: LoaderVec<*mut RuntimeObject>,
     name: [u8; MAX_PATH],
     // Initializers then finalizers, copied once before the node can run
     // either. Musl's ELF arrays have no length bound, so this is sized to the
@@ -109,7 +109,7 @@ impl RuntimeObject {
         let node = address as *mut Self;
         unsafe { core::ptr::write(node, Self { link_map: LinkMap { address: 0, name: core::ptr::null(), dynamic: core::ptr::null(), next: core::ptr::null_mut(), previous: core::ptr::null_mut() }, storage, identity, index,
             next: core::ptr::null_mut(), previous: core::ptr::null_mut(), symbol_next: core::ptr::null_mut(), fini_next: core::ptr::null_mut(), needed_by: core::ptr::null_mut(), global: false, short_name,
-            needed: [core::ptr::null_mut(); MAX_NEEDED], needed_count: 0, name: [0; MAX_PATH],
+            needed: LoaderVec::new(), name: [0; MAX_PATH],
             callbacks: None, initializer_count: 0, finalizer_count: 0,
             callback_state: AtomicI32::new(0) });
             core::ptr::copy_nonoverlapping(name.as_ptr(), (*node).name.as_mut_ptr(), name.len());
@@ -194,6 +194,7 @@ impl Drop for UnpublishedObjects {
                 // The node is raw loader memory, never dropped as a whole;
                 // release its one owned callback mapping explicitly.
                 core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).callbacks));
+                core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).needed));
                 syscall2(SYS_MUNMAP, node as i64, core::mem::size_of::<RuntimeObject>() as i64);
                 node = previous;
             }
@@ -233,7 +234,7 @@ impl PreparedInitialRegistry {
     /// The canonical initial transaction exclusively owns these already
     /// relocated/preflighted records. Preparation precedes ARCH_SET_FS and
     /// every application callback; no pointer to stack records is retained.
-    pub(super) unsafe fn prepare(graph: &InitialGraphState, objects: &[Object; MAX_OBJECTS], lifecycle: &GeneralInitialLifecycle) -> Option<Self> {
+    pub(super) unsafe fn prepare(graph: &InitialGraphState, objects: &[Object], lifecycle: &GeneralInitialLifecycle) -> Option<Self> {
         let mut nodes = UnpublishedObjects::new();
         let mut by_index = LoaderBuffer::new(graph.object_count(), core::ptr::null_mut::<RuntimeObject>())?;
         for index in 0..graph.object_count() {
@@ -263,10 +264,10 @@ impl PreparedInitialRegistry {
             let length = unsafe { bounded_nul(objects[index].search_name.as_ptr(), MAX_PATH) }?;
             unsafe { (&mut (*node).name)[..length].copy_from_slice(&objects[index].search_name[..length]); }
             let edges = graph.edges(index)?;
-            for (slot, child) in edges.iter().enumerate() {
-                unsafe { (*node).needed[slot] = by_index.as_slice()[*child]; }
+            unsafe { (*node).needed.reserve(edges.len()) }?;
+            for child in edges {
+                unsafe { (*node).needed.push(by_index.as_slice()[*child]) }?;
             }
-            unsafe { (*node).needed_count = edges.len(); }
         }
         let mut registry = RuntimeRegistry::empty();
         registry.head = nodes.head;
@@ -291,7 +292,7 @@ impl PreparedInitialRegistry {
         let mut next = 0;
         while next < count {
             let node = order.as_slice()[next];
-            for &child in unsafe { &(&(*node).needed)[..(*node).needed_count] } {
+            for &child in unsafe { &(&(*node).needed)[..] } {
                 if !order.as_slice()[..count].contains(&child) {
                     *order.as_mut_slice().get_mut(count)? = child;
                     count += 1;
@@ -374,7 +375,7 @@ unsafe fn breadth_first_scope(snapshot: &ObjectSnapshot, registry: &RuntimeRegis
     let mut cursor = 0;
     while cursor < order.count {
         let node = snapshot.nodes.as_slice()[order.indices.as_slice()[cursor]];
-        for &child in unsafe { &(&(*node).needed)[..(*node).needed_count] } {
+        for &child in unsafe { &(&(*node).needed)[..] } {
             let index = unsafe { (*child).index };
             if *snapshot.nodes.as_slice().get(index)? != child { return None; }
             if !seen.as_slice()[index] {
@@ -404,13 +405,13 @@ unsafe fn constructor_order(snapshot: &ObjectSnapshot, root: *mut RuntimeObject)
     while depth != 0 {
         let (index, next) = stack.as_slice()[depth - 1];
         let node = snapshot.nodes.as_slice()[index];
-        if next == unsafe { (*node).needed_count } {
+        if next == unsafe { (*node).needed.len() } {
             *order.indices.as_mut_slice().get_mut(order.count)? = index;
             order.count += 1;
             depth -= 1;
         } else {
             stack.as_mut_slice()[depth - 1].1 += 1;
-            let child = unsafe { (*node).needed[next] };
+            let child = unsafe { (&(*node).needed)[next] };
             let child_index = unsafe { (*child).index };
             if !*marked.as_slice().get(child_index)? {
                 marked.as_mut_slice()[child_index] = true;
@@ -750,8 +751,12 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32, di
     let mut node = new.head;
     while !node.is_null() {
         let Some(object) = (unsafe { (*node).object() }).copied() else { load_failure(diagnostic, ENOEXEC); return Err(()); };
+        if unsafe { (*node).needed.reserve(object.needed_count) }.is_none() { load_failure(diagnostic, ENOMEM); return Err(()); }
         for index in 0..object.needed_count {
-            let offset = object.needed[index];
+            let Some(offset) = (unsafe { needed_name_offset(&object, index) }) else {
+                load_failure(diagnostic, ENOEXEC);
+                return Err(());
+            };
             let name = unsafe { object.strtab.add(offset) };
             let Some(length) = object.strsz.checked_sub(offset).and_then(|limit| unsafe { bounded_nul(name, limit) }) else {
                 load_failure(diagnostic, ENOEXEC);
@@ -765,9 +770,9 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32, di
                     return Err(());
                 }
             };
-            unsafe { (*node).needed[index] = child; }
+            // Reserved above for exactly this object's DT_NEEDED count.
+            if unsafe { (*node).needed.push(child) }.is_none() { load_failure(diagnostic, ENOMEM); return Err(()); }
         }
-        unsafe { (*node).needed_count = object.needed_count; }
         node = unsafe { (*node).next };
     }
     let memory = |diagnostic: &mut RuntimeDiagnostic| load_failure(diagnostic, ENOMEM);

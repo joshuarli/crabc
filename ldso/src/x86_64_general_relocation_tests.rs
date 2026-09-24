@@ -3,6 +3,8 @@ use super::*;
 use core::ops::{Deref, DerefMut};
 use super::super::x86_64_initial_graph_state::{ObjectAdmission, ObjectIdentity};
 
+// Relocation tests build small fixed graphs in local arrays.
+const TEST_OBJECTS: usize = 32;
 const IMAGE_BYTES: usize = 0x2000;
 const IMAGE_SYMTAB: usize = 0x200;
 const IMAGE_STRTAB: usize = 0x300;
@@ -280,7 +282,7 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
     owned.exact_owned_crt_note();
     owned.symbol(1, b"__crabc_x86_64_owned_crt_handoff", 1, 2, 0, 0);
     owned.rela(R_X86_64_GLOB_DAT, 1, 0);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = owned.object(false);
     objects[0].main_crt_mode = unsafe {
         owned_crt_note_mode(objects[0].phdr, objects[0].phnum, objects[0].base)
@@ -293,7 +295,7 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
     let mut import_only = MappedImage::new();
     import_only.symbol(1, b"__crabc_x86_64_owned_crt_handoff", 1, 2, 0, 0);
     import_only.rela(R_X86_64_GLOB_DAT, 1, 0);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = import_only.object(false);
     objects[0].main_crt_mode = unsafe {
         owned_crt_note_mode(objects[0].phdr, objects[0].phnum, objects[0].base)
@@ -305,7 +307,7 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
     // private relocation is missing or if its relocation form drifts.
     let mut note_only = MappedImage::new();
     note_only.exact_owned_crt_note();
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = note_only.object(false);
     objects[0].main_crt_mode = MainCrtMode::Owned;
     assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
@@ -314,7 +316,7 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
     wrong_form.exact_owned_crt_note();
     wrong_form.symbol(1, b"__crabc_x86_64_owned_crt_handoff", 1, 1, 0, 0);
     wrong_form.rela(R_X86_64_GLOB_DAT, 1, 0);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = wrong_form.object(false);
     objects[0].main_crt_mode = MainCrtMode::Owned;
     assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
@@ -339,7 +341,7 @@ fn general_runtime_v1_descriptor_request_is_one_exact_main_data_wire() {
         requestor.set_destination(0xfeed);
         requestor.symbol(1, DESCRIPTOR, symbol_type, binding, visibility, 0);
         requestor.rela(kind, 1, addend);
-        let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+        let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
         objects[0] = requestor.object(mapped);
         objects[0].symcount = 2;
         let graph = graph(1);
@@ -384,7 +386,7 @@ fn conventional_startup_import_requires_canonical_libc_and_keeps_owned_mode_null
 
     let main = conventional_main();
     let libc = imported_libc();
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false);
     objects[1] = libc.object(true);
     objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
@@ -397,7 +399,7 @@ fn conventional_startup_import_requires_canonical_libc_and_keeps_owned_mode_null
     let main = conventional_main();
     let mut duplicate = imported_libc();
     duplicate.rela_at(MappedImage::DESTINATION + 8, R_X86_64_GLOB_DAT, 1, 0);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false);
     objects[1] = duplicate.object(true);
     objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
@@ -409,7 +411,7 @@ fn conventional_startup_import_requires_canonical_libc_and_keeps_owned_mode_null
     // into private startup authority.
     let main = conventional_main();
     let libc = imported_libc();
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false);
     objects[1] = libc.object(true);
     assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none());
@@ -422,7 +424,7 @@ fn conventional_startup_import_requires_canonical_libc_and_keeps_owned_mode_null
     owned_main.symbol(1, b"__crabc_x86_64_owned_crt_handoff", 1, 2, 0, 0);
     owned_main.rela(R_X86_64_GLOB_DAT, 1, 0);
     let libc = imported_libc();
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = owned_main.object(false);
     objects[0].main_crt_mode = unsafe {
         owned_crt_note_mode(objects[0].phdr, objects[0].phnum, objects[0].base)
@@ -435,7 +437,7 @@ fn conventional_startup_import_requires_canonical_libc_and_keeps_owned_mode_null
     let main = conventional_main();
     let mut wrong_form = imported_libc();
     wrong_form.symbol(1, STARTUP, 1, 1, 0, 0);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false);
     objects[1] = wrong_form.object(true);
     objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
@@ -458,7 +460,7 @@ fn relocation_cannot_mutate_a_later_private_import_record_before_admission() {
     libc.rela_at(MappedImage::SYMTAB + 24, R_64, 0, 0);
     libc.rela(R_X86_64_GLOB_DAT, 1, 0);
     let symbol_before = libc.word_at(MappedImage::SYMTAB + 24);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false);
     objects[1] = libc.object(true);
     objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
@@ -486,7 +488,7 @@ fn general_relocation_scratch_tracks_elf_size_and_rejects_late_overlap_before_wr
         .map(|index| [0x1000 + index as u64 * 8, R_X86_64_RELATIVE as u64, 0x1000])
         .collect();
     let phdr = [1u64 | (7 << 32), 0, 0x1000, 0, count as u64 * 8, count as u64 * 8, 4096];
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = Object { base: data.as_ptr() as u64 - 0x1000,
         phdr: phdr.as_ptr().cast(), phnum: 1,
         rela: relocations.as_ptr().cast(), relasz: relocations.len() * 24, ..EMPTY_OBJECT };
@@ -504,7 +506,7 @@ fn general_relr_scratch_exceeds_legacy_table_and_target_limits_without_weakening
     let mut data = self::std::vec![0u64; count];
     let mut relr: self::std::vec::Vec<u64> = (0..count).map(|index| 0x1000 + index as u64 * 8).collect();
     let phdr = [1u64 | (7 << 32), 0, 0x1000, 0, count as u64 * 8, count as u64 * 8, 4096];
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = Object { base: data.as_ptr() as u64 - 0x1000,
         phdr: phdr.as_ptr().cast(), phnum: 1,
         relr: relr.as_ptr().cast(), relrsz: relr.len() * 8, ..EMPTY_OBJECT };
@@ -596,7 +598,7 @@ fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
             main.rela(R_X86_64_RELATIVE, 0, 0);
             library.symbol(1, &name[1..name.len() - 1], kind, binding, visibility, section);
             library.rela(relocation, 1, addend);
-            let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+            let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
             objects[0] = main.object(false);
             objects[1] = library.object(true);
             assert_eq!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some(), admitted);
@@ -620,7 +622,7 @@ fn copy_runs_after_provider_fixups_and_preserves_main_interposition_addresses() 
     main.rela(0x1000, R_COPY, 1, 0);
     provider.rela(0x1000, R_64, 1, 0);
     provider.data[1] = 0xface;
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false);
     objects[1] = provider.object(true);
     assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some());
@@ -639,7 +641,7 @@ fn copy_uses_executable_size_with_byte_alignment_and_readable_extent_not_provide
         main.symbol(1, 1, 1, 0, 1, 0x1003, length);
         provider.symbol(1, 1, 1, 0, 1, 0x1000, 16);
         main.rela(0x1003, R_COPY, 1, 0);
-        let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+        let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
         objects[0] = main.object(false); objects[1] = provider.object(true);
         assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some());
         let actual = unsafe { core::slice::from_raw_parts(main.data.as_ptr().cast::<u8>(), 512) };
@@ -673,7 +675,7 @@ fn malformed_copy_ranges_scope_and_metadata_fail_before_any_graph_write() {
             11 | 12 => {},
             _ => unreachable!(),
         }
-        let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+        let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
         objects[0] = main.object(false); objects[1] = provider.object(true);
         if case == 11 { objects[0].role = ObjectRole::Library; }
         if case == 12 { objects[0].phdr = main.data.as_ptr().cast(); main.data[..7].copy_from_slice(&main.phdr); }
@@ -691,7 +693,7 @@ fn invalid_later_object_relocation_cannot_commit_earlier_main_or_dependency_writ
     main.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1010);
     provider.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1010);
     provider.rela(0x1010, 0xffff, 0, 0);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false); objects[1] = provider.object(true);
     assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none());
     assert_eq!(main.data[0], 0xaaaa); assert_eq!(provider.data[0], 0xbbbb);
@@ -702,7 +704,7 @@ fn none_relocation_has_no_destination_or_symbol_access() {
     let mut main = Image::new();
     main.data[0] = 0xaaaa;
     main.rela(u64::MAX, R_NONE, u32::MAX as usize, i64::MIN);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS]; objects[0] = main.object(false);
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS]; objects[0] = main.object(false);
     assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_some());
     assert_eq!(main.data[0], 0xaaaa);
 }
@@ -713,7 +715,7 @@ fn ordinary_symbol_type_and_full_definition_extent_are_checked_before_write() {
     main.data[0] = 0xaaaa;
     main.symbol(1, 1, 1, 0, 0, 0, 8);
     main.rela(0x1000, R_64, 1, 0);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false); objects[1] = provider.object(true);
     for (kind, address, size) in [(2, 0x1000, 8), (1, 0x11f8, 16), (1, 0x1000, u64::MAX)] {
         provider.symbol(1, kind, 1, 0, 1, address, size);
@@ -739,7 +741,7 @@ fn symbol_scope_is_breadth_first_and_first_weak_definition_wins() {
     main.symbol(1, 1, 1, 0, 0, 0, 8);
     shared.symbol(1, 1, 1, 0, 1, 0x1000, 8);
     right.symbol(1, 1, 1, 0, 1, 0x1000, 8);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false); objects[1] = left.object(true);
     objects[2] = shared.object(true); objects[3] = right.object(true);
     assert_eq!(unsafe { lookup(&scope, &objects, 0, 1, false, false) }.unwrap().unwrap().owner, 3);
@@ -753,7 +755,7 @@ fn local_protected_hidden_and_undefined_weak_references_keep_distinct_scopes() {
     main.symbol(1, 1, 1, 0, 1, 0x1000, 8);
     let initial_scope = InitialSymbolScope::from_graph(&graph(2)).unwrap();
     let scope = initial_scope.view();
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false); objects[1] = provider.object(true);
     for (binding, visibility) in [(0, 0), (1, 2), (1, 3)] {
         provider.symbol(1, 1, binding, visibility, 1, 0x1000, 8);
@@ -773,7 +775,7 @@ fn initial_exec_and_dynamic_offsets_share_retained_module_coordinates_and_checke
     let mut main = Image::new(); let mut provider = Image::new();
     main.symbol(1, 6, 1, 0, 0, 0, 8);
     provider.symbol(1, 6, 1, 0, 1, 8, 8);
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false); objects[1] = provider.object(true);
     objects[1].tls_module_id = 2; objects[1].tls_memsz = 64;
     objects[1].tls_offset_below_tp = 8192; objects[1].tls_align = 4096;

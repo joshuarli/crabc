@@ -5,9 +5,10 @@ This is the executing gate for the `crt.dynamic-startup` family obligation:
 installed dynamic-PIE `Scrt1.o` and dynamic non-PIE `crt1.o` entry, the
 libc `__libc_start_main` handoff, main-image preinit/init/fini lifecycle and
 process finalization, the compiler-helper archive, and the deterministic link
-interface of the installed driver. A separate wide graph (24-entry init/fini
-arrays in the executable, a dependency and a runtime plugin) checks that
-startup and finalization are not bounded by a small fixed callback table. It consumes a
+interface of the installed driver. A separate wide graph (43 initial images,
+more than twenty DT_NEEDED edges per image and 24-entry init/fini arrays in
+the executable, a dependency and a runtime plugin) checks that startup and
+finalization are not bounded by a small fixed loader table. It consumes a
 supplied materialized product and never builds, repairs, or substitutes a
 runtime.
 
@@ -89,13 +90,13 @@ OWNED_PREINIT = "P"
 
 # The wide graph (see WIDE_SOURCE) has no admitted difference and no preinit.
 # Its executable names the hub plus one group of leaves, the hub another group
-# and the runtime plugin a third.
-WIDE_FANOUT = 4
+# and the runtime plugin a third, so the initial graph holds 43 images.
+WIDE_FANOUT = 20
 WIDE_CALLBACKS = 24
 WIDE_HUB = "libowned-startup-wide-hub.so"
 WIDE_PLUGIN = "libowned-startup-wide-plugin.so"
 WIDE_STATUS = 7
-WIDE_VALUES = "|1020,2010|"
+WIDE_VALUES = "|1420,2210|"
 
 
 def wide_leaf(group: str, index: int) -> str:
