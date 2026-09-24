@@ -59,46 +59,14 @@ assert_selected_c_abi_surface() {
     fi
 }
 
-# Rust codegen may keep the selected raw leaf out of line. Prove the exact
-# sigaltstack-to-syscall2 edge and the provider's instruction rather than
-# requiring an implementation-detail inline copy.
-assert_sigaltstack_raw_syscall() {
-    local sigaltstack_disassembly="$work_dir/sigaltstack-disassembly"
-    local raw_syscall_addresses
-    local raw_syscall_address
-    local raw_syscall_symbols
-    local raw_syscall_symbol
-    local raw_syscall_disassembly
-
-    objdump -d --disassemble=sigaltstack "$candidate" >"$sigaltstack_disassembly"
-    grep -Eq "\\\$0x83(,|[[:space:]]|\\\$)" "$sigaltstack_disassembly" ||
-        fail "sigaltstack lacks Linux syscall 83"
-
-    raw_syscall_addresses="$(
-        nm -C --defined-only --format=posix "$candidate" |
-            awk '$1 == "c::x86_64_static_c_abi::raw_syscall::syscall2" { print $3 }'
-    )"
-    [ "$(printf '%s\n' "$raw_syscall_addresses" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
-        fail "candidate does not select exactly one raw_syscall::syscall2 provider"
-    raw_syscall_address="$raw_syscall_addresses"
-    raw_syscall_symbols="$(
-        nm --defined-only --format=posix "$candidate" |
-            awk -v address="$raw_syscall_address" '$3 == address { print $1 }'
-    )"
-    [ "$(printf '%s\n' "$raw_syscall_symbols" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
-        fail "cannot resolve exactly one selected raw_syscall::syscall2 symbol"
-    raw_syscall_symbol="$raw_syscall_symbols"
-
-    if ! awk -v target="<${raw_syscall_symbol}>" '
-        $0 ~ /[[:space:]](call|jmp[a-z]*)[[:space:]]/ && index($0, target) { found = 1 }
-        END { exit !found }
-    ' "$sigaltstack_disassembly"; then
-        fail "sigaltstack does not call the selected raw_syscall::syscall2 provider"
-    fi
-    raw_syscall_disassembly="$work_dir/${raw_syscall_symbol}-disassembly"
-    objdump -d --disassemble="$raw_syscall_symbol" "$candidate" >"$raw_syscall_disassembly"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$raw_syscall_disassembly" ||
-        fail "selected raw_syscall::syscall2 lacks its Linux syscall instruction"
+# Prove sigaltstack reaches exactly the Linux sigaltstack syscall with the
+# caller's new and old stack records unchanged, whether Rust inlines the raw
+# syscall leaf or keeps it out of line.
+assert_sigaltstack_syscall() {
+    python3 "$ROOT_DIR/compat/x86_64/elf_call_closure.py" check "$candidate" \
+        --label 'x86 static libc signal altstack' --root sigaltstack \
+        --syscall 'nr=131,a1=arg:rdi,a2=arg:rsi' --syscalls-only 131 ||
+        fail "sigaltstack does not reach its Linux sigaltstack syscall"
 }
 
 assert_fixture_tls_capacity() {
@@ -239,7 +207,7 @@ grep -Eq '\$0xf,%rax|\$0x0*15,%rax' "$restorer_disassembly" ||
     fail "candidate restorer lacks rt_sigreturn syscall number 15"
 grep -Eq '\bsyscall\b' "$restorer_disassembly" ||
     fail "candidate restorer lacks x86 syscall instruction"
-assert_sigaltstack_raw_syscall
+assert_sigaltstack_syscall
 
 if "$candidate"; then
     :

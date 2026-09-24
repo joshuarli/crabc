@@ -13,7 +13,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
-readonly REACHABLE_SYSCALL_CHECK="$ROOT_DIR/compat/x86_64/check_reachable_syscall.py"
+readonly ELF_CALL_CLOSURE="$ROOT_DIR/compat/x86_64/elf_call_closure.py"
 
 fail() {
     printf 'ERROR: x86 static libc process context: %s\n' "$*" >&2
@@ -86,18 +86,17 @@ candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
 
+# Each wrapper's call closure reaches exactly its Linux syscall, with each
+# named register carrying the stated argument (a caller argument or constant),
+# whether Rust inlines the raw syscall leaf or keeps it out of line.
 assert_named_syscall() {
-    local symbol="$1"
-    local syscall_word="$2"
-    local syscall_arity="$3"
-    local proof="$work_dir/${symbol}-syscall-proof"
+    local symbol="$1" syscall_number="$2" arguments="${3:-}"
 
-    python3 "$REACHABLE_SYSCALL_CHECK" \
-        --objdump "$(command -v objdump)" \
-        --candidate "$candidate" \
-        --symbol "$symbol" \
-        --syscall "$syscall_word" \
-        --arity "$syscall_arity" >"$proof"
+    python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+        --label 'x86 static libc process context' --root "$symbol" \
+        --syscall "nr=${syscall_number}${arguments:+,$arguments}" \
+        --syscalls-only "$syscall_number" ||
+        fail "${symbol} does not reach Linux syscall ${syscall_number}${arguments:+ with $arguments}"
 }
 
 cd "$ROOT_DIR"
@@ -180,23 +179,20 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
 # The C fixture differentially proves identity, group/session, and mask
 # behavior. These named emitted-code gates additionally pin every selected
 # Linux syscall word instead of inferring the boundary from a successful run.
-assert_named_syscall getpid 27 0
-assert_named_syscall getppid 6e 0
-assert_named_syscall getuid 66 0
-assert_named_syscall getgid 68 0
-assert_named_syscall geteuid 6b 0
-assert_named_syscall getegid 6c 0
-assert_named_syscall umask 5f 1
-assert_named_syscall setsid 70 0
-assert_named_syscall setpgid 6d 2
-assert_named_syscall getpgid 79 1
-assert_named_syscall getsid 7c 1
-assert_named_syscall getpgrp 79 1
-
-setpgrp_disassembly="$work_dir/setpgrp-disassembly"
-objdump -d --disassemble=setpgrp "$candidate" >"$setpgrp_disassembly"
-grep -Eq '<setpgid>|\$0x6d' "$setpgrp_disassembly" \
-    || fail "setpgrp does not derive its legacy alias from setpgid(0, 0)"
+assert_named_syscall getpid 0x27
+assert_named_syscall getppid 0x6e
+assert_named_syscall getuid 0x66
+assert_named_syscall getgid 0x68
+assert_named_syscall geteuid 0x6b
+assert_named_syscall getegid 0x6c
+assert_named_syscall umask 0x5f a1=arg:rdi
+assert_named_syscall setsid 0x70
+assert_named_syscall setpgid 0x6d a1=arg:rdi,a2=arg:rsi
+assert_named_syscall getpgid 0x79 a1=arg:rdi
+assert_named_syscall getsid 0x7c a1=arg:rdi
+assert_named_syscall getpgrp 0x79 a1=0
+# The legacy alias is setpgid(0, 0).
+assert_named_syscall setpgrp 0x6d a1=0,a2=0
 
 "$candidate"
 

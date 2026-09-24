@@ -112,9 +112,6 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
-tryread_disassembly="$work_dir/rwlock-tryread-disassembly"
-unlock_disassembly="$work_dir/rwlock-unlock-disassembly"
-timedwait_disassembly="$work_dir/rwlock-timedwait-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -238,27 +235,25 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     compat/x86_64/libc_pthread_rwlock_start.S; then
     fail "fixture start must not install a private FS base"
 fi
-objdump -d --disassemble=__pthread_rwlock_tryrdlock "$candidate" \
-    >"$tryread_disassembly"
-grep -Eq 'lock[[:space:]]+cmpxchg' "$tryread_disassembly" ||
-    fail "pthread_rwlock_tryrdlock lacks its x86 atomic compare-exchange"
-objdump -d --disassemble=__pthread_rwlock_unlock "$candidate" \
-    >"$unlock_disassembly"
-grep -Eq 'lock[[:space:]]+cmpxchg' "$unlock_disassembly" ||
-    fail "pthread_rwlock_unlock lacks its x86 atomic compare-exchange"
-grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-    "$unlock_disassembly" ||
-    fail "pthread_rwlock_unlock lacks futex syscall number 202"
-timedwait_symbol="$(nm -g --defined-only "$candidate" |
-    awk '$3 ~ /pthread_rwlock16timed_futex_wait$/ { print $3; exit }')"
-[ -n "$timedwait_symbol" ] || fail "candidate lacks the private timed-futex helper"
-objdump -d --disassemble="$timedwait_symbol" "$candidate" >"$timedwait_disassembly"
-grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-    "$timedwait_disassembly" ||
-    fail "rwlock timed wait lacks futex syscall number 202"
-grep -Eq '\$0xe4,%eax|\$0xe4,%rax|\$0x00000000000000e4,%rax' \
-    "$timedwait_disassembly" ||
-    fail "rwlock timed wait lacks clock_gettime syscall number 228"
+# Check each entry's call closure, whichever private Rust helpers the
+# optimizer keeps out of line: try-locking is one compare-exchange that never
+# enters Linux; unlocking releases by compare-exchange and wakes by futex; the
+# timed acquisitions read CLOCK_REALTIME for their absolute deadline and sleep
+# on the lock word with futex=202.
+rwlock_check() {
+    python3 "$ROOT_DIR/compat/x86_64/elf_call_closure.py" check "$candidate" \
+        --label 'x86 static libc pthread rwlock' "$@"
+}
+rwlock_check --root pthread_rwlock_tryrdlock --instruction '^lock cmpxchg' --no-syscall 'nr=*' ||
+    fail "pthread_rwlock_tryrdlock lacks its compare-exchange or enters Linux"
+rwlock_check --root pthread_rwlock_unlock --instruction '^lock cmpxchg' \
+    --syscall 'nr=202,a1=arg:rdi' --syscalls-only 202 ||
+    fail "pthread_rwlock_unlock lacks its compare-exchange release or futex wake"
+for timed in pthread_rwlock_timedrdlock pthread_rwlock_timedwrlock; do
+    rwlock_check --root "$timed" --syscall 'nr=228,a1=0' --syscall 'nr=202,a1=arg:rdi' \
+        --syscalls-only 202,228 ||
+        fail "${timed} lacks its CLOCK_REALTIME deadline read or futex wait"
+done
 
 if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
     :

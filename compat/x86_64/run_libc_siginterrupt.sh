@@ -4,9 +4,8 @@
 # One public XSI wrapper first runs through pinned musl 1.2.6, then through a
 # true -nostdlib -static candidate. It toggles only SA_RESTART on an existing
 # action; fixture-local raw queries are containment, not public sigaction or a
-# general signal runtime. Its raw-syscall provider shares an archive member
-# with the separately qualified `sigpending` leaf, so section garbage
-# collection keeps that member co-residence from widening this candidate.
+# general signal runtime. Section garbage collection keeps archive-member
+# co-residence with other signal leaves from widening this candidate.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -64,46 +63,19 @@ assert_fixture_tls_capacity() {
         fail "fixture TLS alignment is incompatible"
 }
 
-# Rust codegen may keep the selected raw leaf out of line. Prove the exact
-# siginterrupt-to-syscall4 edge and the provider's instruction rather than
-# requiring an implementation-detail inline copy.
-assert_siginterrupt_raw_syscall() {
-    local siginterrupt_disassembly="$work_dir/siginterrupt-syscall-disassembly"
-    local raw_syscall_addresses
-    local raw_syscall_address
-    local raw_syscall_symbols
-    local raw_syscall_symbol
-    local raw_syscall_disassembly
-
-    objdump -d --disassemble=siginterrupt "$candidate" >"$siginterrupt_disassembly"
-    grep -Eq "\\\$0xd(,|[[:space:]]|\\\$)" "$siginterrupt_disassembly" ||
-        fail "siginterrupt lacks Linux syscall 0xd"
-
-    raw_syscall_addresses="$(
-        nm -C --defined-only --format=posix "$candidate" |
-            awk '$1 == "c::x86_64_static_c_abi::raw_syscall::syscall4" { print $3 }'
-    )"
-    [ "$(printf '%s\n' "$raw_syscall_addresses" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
-        fail "candidate does not select exactly one raw_syscall::syscall4 provider"
-    raw_syscall_address="$raw_syscall_addresses"
-    raw_syscall_symbols="$(
-        nm --defined-only --format=posix "$candidate" |
-            awk -v address="$raw_syscall_address" '$3 == address { print $1 }'
-    )"
-    [ "$(printf '%s\n' "$raw_syscall_symbols" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
-        fail "cannot resolve exactly one selected raw_syscall::syscall4 symbol"
-    raw_syscall_symbol="$raw_syscall_symbols"
-
-    if ! awk -v target="<${raw_syscall_symbol}>" '
-        $0 ~ /[[:space:]](call|jmp[a-z]*)[[:space:]]/ && index($0, target) { found = 1 }
-        END { exit !found }
-    ' "$siginterrupt_disassembly"; then
-        fail "siginterrupt does not call the selected raw_syscall::syscall4 provider"
-    fi
-    raw_syscall_disassembly="$work_dir/${raw_syscall_symbol}-disassembly"
-    objdump -d --disassemble="$raw_syscall_symbol" "$candidate" >"$raw_syscall_disassembly"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$raw_syscall_disassembly" ||
-        fail "selected raw_syscall::syscall4 lacks its Linux syscall instruction"
+# Prove the rt_sigaction calls siginterrupt reaches, whether Rust inlines the
+# raw syscall leaf or keeps it out of line: a query (null new action) and an
+# update (null old action) of the caller's signal, each with the kernel
+# sigset size in r10, and no other syscall. The SA_RESTART set/clear mask
+# must appear on that path; the executed fixture checks its effect.
+assert_siginterrupt_syscalls() {
+    python3 "$ROOT_DIR/compat/x86_64/elf_call_closure.py" check "$candidate" \
+        --label 'x86 static libc siginterrupt' --root siginterrupt \
+        --syscall 'nr=13,a1=arg:rdi,a2=0,a4=8' \
+        --syscall 'nr=13,a1=arg:rdi,a3=0,a4=8' \
+        --syscalls-only 13 \
+        --instruction '0x10000000|0xebffffff|0xffffffffefffffff' ||
+        fail "siginterrupt does not reach its selected rt_sigaction query and update"
 }
 
 require_native_linux_x86_64
@@ -224,12 +196,7 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     fail "fixture start must not install a private FS base"
 fi
 
-assert_siginterrupt_raw_syscall
-siginterrupt_disassembly="$work_dir/siginterrupt-disassembly"
-objdump -d --disassemble=siginterrupt "$candidate" >"$siginterrupt_disassembly"
-grep -Eq '0x10000000|0xebffffff|0xffffffffefffffff' \
-    "$siginterrupt_disassembly" ||
-    fail "siginterrupt lacks its SA_RESTART set/clear bit path"
+assert_siginterrupt_syscalls
 
 "$candidate"
 printf 'x86 static crabc-libc siginterrupt: PASS\n'

@@ -64,60 +64,17 @@ assert_fixture_tls_capacity() {
         fail "fixture TLS alignment is incompatible"
 }
 
-# Rust codegen may keep the selected raw leaves out of line. Prove each
-# sigpause-to-provider edge and the provider instruction, rather than
-# requiring implementation-detail inline copies.
-assert_selected_raw_syscall_edge() {
-    local symbol="$1"
-    local syscall_word="$2"
-    local raw_syscall_provider="$3"
-    local disassembly="$work_dir/${symbol}-${syscall_word}-syscall-disassembly"
-    local raw_syscall_addresses
-    local raw_syscall_address
-    local raw_syscall_symbols
-    local raw_syscall_symbol
-    local raw_syscall_disassembly
-
-    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|\\\$)" "$disassembly" ||
-        fail "${symbol} lacks Linux syscall 0x${syscall_word}"
-
-    raw_syscall_addresses="$(
-        nm -C --defined-only --format=posix "$candidate" |
-            awk -v provider="$raw_syscall_provider" '$1 == provider { print $3 }'
-    )"
-    [ "$(printf '%s\n' "$raw_syscall_addresses" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
-        fail "candidate does not select exactly one ${raw_syscall_provider} provider"
-    raw_syscall_address="$raw_syscall_addresses"
-    raw_syscall_symbols="$(
-        nm --defined-only --format=posix "$candidate" |
-            awk -v address="$raw_syscall_address" '$3 == address { print $1 }'
-    )"
-    [ "$(printf '%s\n' "$raw_syscall_symbols" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
-        fail "cannot resolve exactly one selected ${raw_syscall_provider} symbol"
-    raw_syscall_symbol="$raw_syscall_symbols"
-
-    if ! awk -v target="<${raw_syscall_symbol}>" '
-        $0 ~ /[[:space:]](call|jmp[a-z]*)[[:space:]]/ && index($0, target) { found = 1 }
-        END { exit !found }
-    ' "$disassembly"; then
-        fail "${symbol} does not call selected ${raw_syscall_provider}"
-    fi
-    raw_syscall_disassembly="$work_dir/${raw_syscall_symbol}-disassembly"
-    objdump -d --disassemble="$raw_syscall_symbol" "$candidate" >"$raw_syscall_disassembly"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$raw_syscall_disassembly" ||
-        fail "selected ${raw_syscall_provider} lacks its Linux syscall instruction"
-    if [ "$raw_syscall_provider" = "c::x86_64_static_c_abi::raw_syscall::syscall4" ]; then
-        grep -Fq '%r10' "$raw_syscall_disassembly" ||
-            fail "selected raw_syscall::syscall4 lacks fourth-argument r10 path"
-    fi
-}
-
-assert_sigpause_raw_syscalls() {
-    assert_selected_raw_syscall_edge sigpause e \
-        c::x86_64_static_c_abi::raw_syscall::syscall4
-    assert_selected_raw_syscall_edge sigpause 82 \
-        c::x86_64_static_c_abi::raw_syscall::syscall2
+# Prove the two syscalls sigpause reaches, whether Rust inlines the raw
+# syscall leaves or keeps them out of line: an rt_sigprocmask query of the
+# current mask (null new set) and the rt_sigsuspend wait, each carrying the
+# kernel sigset size, and no other syscall.
+assert_sigpause_syscalls() {
+    python3 "$ROOT_DIR/compat/x86_64/elf_call_closure.py" check "$candidate" \
+        --label 'x86 static libc sigpause' --root sigpause \
+        --syscall 'nr=14,a2=0,a4=8' \
+        --syscall 'nr=130,a2=8' \
+        --syscalls-only 14,130 ||
+        fail "sigpause does not reach its rt_sigprocmask query and rt_sigsuspend wait"
 }
 
 run_interrupted_wait() {
@@ -284,7 +241,7 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     fail "fixture start must not install a private FS base"
 fi
 
-assert_sigpause_raw_syscalls
+assert_sigpause_syscalls
 
 run_interrupted_wait "$candidate" "freestanding-candidate"
 printf 'x86 static crabc-libc sigpause: PASS\n'

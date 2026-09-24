@@ -84,8 +84,6 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
-mutex_lock_disassembly="$work_dir/pthread-mutex-lock-disassembly"
-mutex_unlock_disassembly="$work_dir/pthread-mutex-unlock-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -185,23 +183,18 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     compat/x86_64/libc_pthread_mutex_normal_start.S; then
     fail "fixture start must not install a private FS base"
 fi
-objdump -d --disassemble=pthread_mutex_lock "$candidate" >"$mutex_lock_disassembly"
-grep -Eq 'lock[[:space:]]+cmpxchg' "$mutex_lock_disassembly" ||
-    fail "pthread_mutex_lock lacks its x86 atomic compare-exchange"
-grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-    "$mutex_lock_disassembly" ||
-    fail "pthread_mutex_lock lacks futex syscall number 202"
-grep -Eq '\$0x80,%esi|\$0x80,%rsi' "$mutex_lock_disassembly" ||
-    fail "pthread_mutex_lock lacks FUTEX_WAIT_PRIVATE"
-objdump -d --disassemble=pthread_mutex_unlock "$candidate" \
-    >"$mutex_unlock_disassembly"
-grep -Eq 'xchg[[:space:]].*\(%r' "$mutex_unlock_disassembly" ||
-    fail "pthread_mutex_unlock lacks its atomic exchange release"
-grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-    "$mutex_unlock_disassembly" ||
-    fail "pthread_mutex_unlock lacks futex syscall number 202"
-grep -Eq '\$0x81,%esi|\$0x81,%rsi' "$mutex_unlock_disassembly" ||
-    fail "pthread_mutex_unlock lacks FUTEX_WAKE_PRIVATE"
+# Check each entry's call closure, whichever private Rust helpers the
+# optimizer keeps out of line: the lock acquires by compare-exchange and a
+# private contended lock sleeps with FUTEX_WAIT_PRIVATE; the unlock releases by
+# atomic exchange and wakes with FUTEX_WAKE_PRIVATE.
+python3 "$ROOT_DIR/compat/x86_64/elf_call_closure.py" check "$candidate" \
+    --label 'x86 static libc normal pthread mutex' --root pthread_mutex_lock \
+    --instruction '^lock cmpxchg' --syscall 'nr=202,a2=0x80' ||
+    fail "pthread_mutex_lock lacks its compare-exchange acquire or private futex wait"
+python3 "$ROOT_DIR/compat/x86_64/elf_call_closure.py" check "$candidate" \
+    --label 'x86 static libc normal pthread mutex' --root pthread_mutex_unlock \
+    --instruction '^xchg .*\(%r' --syscall 'nr=202,a2=0x81' ||
+    fail "pthread_mutex_unlock lacks its exchange release or private futex wake"
 
 if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
     :

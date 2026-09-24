@@ -26,6 +26,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ELF_CALL_CLOSURE="$ROOT_DIR/compat/x86_64/elf_call_closure.py"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly FEATURE=x86-process-exec
 readonly DEFAULT_PATH='/usr/local/bin:/bin:/usr/bin'
@@ -183,94 +184,22 @@ assert_direct_member_undefined_closure() {
     fi
 }
 
-raw_syscall_helper_symbol() {
-    local candidate_path="$1"
-    local helper_leaf="$2"
-    local -a symbols
-
-    mapfile -t symbols < <(
-        nm --defined-only --format=posix "$candidate_path" |
-            awk -v helper_leaf="$helper_leaf" \
-                '$1 ~ ("raw_syscall8" helper_leaf) && $2 ~ /^[Tt]$/ { print $1 }'
-    )
-    [ "${#symbols[@]}" -eq 1 ] ||
-        fail "expected one selected raw syscall helper for $helper_leaf"
-    printf '%s\n' "${symbols[0]}"
-}
-
-execve_result_symbol() {
-    local candidate_path="$1"
-    local -a symbols
-
-    mapfile -t symbols < <(
-        nm --defined-only --format=posix "$candidate_path" |
-            awk '$1 ~ /process_exec.*execve_result/ && $2 ~ /^[Tt]$/ { print $1 }'
-    )
-    [ "${#symbols[@]}" -eq 1 ] ||
-        fail "expected one selected direct execve_result helper"
-    printf '%s\n' "${symbols[0]}"
-}
-
-assert_named_transfer() {
-    local disassembly="$1"
-    local caller="$2"
-    local callee="$3"
-
-    awk -v callee="$callee" '
-        index($0, "<" callee ">") && $0 ~ /(call|jmp)/ { found = 1 }
-        END { exit(found ? 0 : 1) }
-    ' "$disassembly" || fail "$caller does not transfer to $callee"
-}
-
-assert_direct_or_bound_syscall_path() {
-    local executable="$1"
-    local entry_symbol="$2"
-    local syscall_name="$3"
-    local syscall_word="$4"
-    local helper_leaf="$5"
-    local entry_disassembly="$work_dir/${entry_symbol}-${syscall_name}.disassembly"
-    local helper_symbol
-    local helper_disassembly
-
-    objdump -d --disassemble="$entry_symbol" "$executable" >"$entry_disassembly"
-    if grep -Eq '\$'"${syscall_word}"',%[er]?ax' "$entry_disassembly" && \
-        grep -Eq '\<syscall\>' "$entry_disassembly"; then
-        return
-    fi
-    grep -Eq '\$'"${syscall_word}"',%[er]?di' "$entry_disassembly" ||
-        fail "$entry_symbol lacks Linux x86-64 $syscall_name"
-    helper_symbol="$(raw_syscall_helper_symbol "$executable" "$helper_leaf")"
-    assert_named_transfer "$entry_disassembly" "$entry_symbol" "$helper_symbol"
-    helper_disassembly="$work_dir/${entry_symbol}-${syscall_name}-${helper_leaf}.disassembly"
-    objdump -d --disassemble="$helper_symbol" "$executable" >"$helper_disassembly"
-    grep -Eq '\<syscall\>' "$helper_disassembly" ||
-        fail "$entry_symbol's selected $syscall_name helper lacks syscall"
-}
-
+# The linked candidate's call closures carry the exec syscalls, whether Rust
+# inlines the raw syscall leaf into the direct exec member or keeps it out of
+# line. execve forwards its three caller words to execve=59 unchanged and
+# issues no other syscall. fexecve passes the caller's descriptor, argv, and
+# envp to execveat=322 with an empty path and AT_EMPTY_PATH=0x1000, and never
+# falls back to a /proc/self/fd path.
 assert_execve_syscall_path() {
-    local executable="$1"
-    local entry_disassembly="$work_dir/execve-entry.disassembly"
-    local result_symbol
-
-    objdump -d --disassemble=execve "$executable" >"$entry_disassembly"
-    if grep -Eq '\$0x3b,%[er]?(ax|di)' "$entry_disassembly"; then
-        assert_direct_or_bound_syscall_path "$executable" execve execve=59 0x3b syscall3
-        return
-    fi
-    result_symbol="$(execve_result_symbol "$executable")"
-    assert_named_transfer "$entry_disassembly" execve "$result_symbol"
-    assert_direct_or_bound_syscall_path "$executable" "$result_symbol" execve=59 \
-        0x3b syscall3
+    python3 "$ELF_CALL_CLOSURE" check "$1" --label 'x86 libc process exec' --root execve \
+        --syscall 'nr=59,a1=arg:rdi,a2=arg:rsi,a3=arg:rdx' --syscalls-only 59 ||
+        fail "execve does not forward its arguments to Linux execve=59"
 }
 
 assert_fexecve_syscall_path() {
-    local executable="$1"
-    local disassembly="$work_dir/fexecve-entry.disassembly"
-
-    assert_direct_or_bound_syscall_path "$executable" fexecve execveat=322 0x142 syscall5
-    objdump -d --disassemble=fexecve "$executable" >"$disassembly"
-    grep -Eq '\$0x1000' "$disassembly" ||
-        fail "fexecve does not materialize AT_EMPTY_PATH=0x1000"
+    python3 "$ELF_CALL_CLOSURE" check "$1" --label 'x86 libc process exec' --root fexecve \
+        --syscall 'nr=322,a1=arg:rdi,a3=arg:rsi,a4=arg:rdx,a5=0x1000' --syscalls-only 322 ||
+        fail "fexecve does not reach execveat=322 with AT_EMPTY_PATH"
 }
 
 symbol_value() {
@@ -457,14 +386,6 @@ mapfile -t getenv_members < <(archive_member_for_symbol "$archive" getenv)
 getenv_member="$(require_one_member 'getenv' "${getenv_members[@]}")"
 mapfile -t errno_members < <(archive_member_for_symbol "$archive" __errno_location)
 errno_member="$(require_one_member 'errno' "${errno_members[@]}")"
-mapfile -t raw3_members < <(
-    archive_member_for_fragment "$archive" 'raw_syscall8syscall3'
-)
-raw3_member="$(require_one_member 'raw syscall3' "${raw3_members[@]}")"
-mapfile -t raw5_members < <(
-    archive_member_for_fragment "$archive" 'raw_syscall8syscall5'
-)
-raw5_member="$(require_one_member 'raw syscall5' "${raw5_members[@]}")"
 
 [ "$direct_member" = "$fexecve_member" ] ||
     fail "execve and fexecve must share direct process_exec"
@@ -473,11 +394,9 @@ raw5_member="$(require_one_member 'raw syscall5' "${raw5_members[@]}")"
     fail "execvp, __execvpe, and weak execvpe must share process_exec_path"
 [ "$environment_member" = "$getenv_member" ] ||
     fail "default environment global and getenv must share one owner"
-[ "$raw3_member" = "$raw5_member" ] ||
-    fail "direct exec raw syscall helpers must share one owner"
 for separate_member in "$env_wrapper_member" "$path_member" "$variadic_member" \
     "$execl_member" "$execle_member" "$execlp_member" "$environment_member" \
-    "$errno_member" "$raw3_member"; do
+    "$errno_member"; do
     [ "$direct_member" != "$separate_member" ] ||
         fail "direct process_exec unexpectedly merged with $separate_member"
 done

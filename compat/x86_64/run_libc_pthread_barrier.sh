@@ -12,6 +12,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ELF_CALL_CLOSURE="$ROOT_DIR/compat/x86_64/elf_call_closure.py"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly EXECUTION_TIMEOUT=30s
@@ -85,8 +86,6 @@ candidate_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
-barrier_disassembly="$work_dir/pthread-barrier-wait-disassembly"
-init_disassembly="$work_dir/pthread-barrier-init-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
@@ -148,13 +147,20 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap pthread_create p
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
+# The barrier is its own futex state machine: nothing the fixture runs,
+# including its thread start routines, reaches a mutex, condition, or rwlock
+# entry. Archive members that merely share an object file with the barrier are
+# not run and do not count.
+unselected_arguments=()
 for unselected in pthread_mutex_init pthread_mutex_destroy pthread_mutex_lock \
     pthread_cond_init pthread_cond_destroy pthread_cond_wait pthread_rwlock_init \
     pthread_rwlock_destroy pthread_rwlock_rdlock; do
-    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
-        fail "candidate pulled unselected ${unselected}"
-    fi
+    unselected_arguments+=(--not-reaches "$unselected")
 done
+python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+    --label 'x86 static libc pthread barrier' --root _start --follow-addresses \
+    "${unselected_arguments[@]}" ||
+    fail "fixture reaches an unselected mutex, condition, or rwlock entry"
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
@@ -184,18 +190,16 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     compat/x86_64/libc_pthread_barrier_start.S; then
     fail "fixture start must not install a private FS base"
 fi
-objdump -d --disassemble=pthread_barrier_wait "$candidate" >"$barrier_disassembly"
-grep -Eq '\bsyscall\b' "$barrier_disassembly" ||
-    fail "pthread_barrier_wait lacks its futex syscall"
-grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-    "$barrier_disassembly" ||
-    fail "pthread_barrier_wait lacks futex=202"
-grep -Eq 'lock[[:space:]]+(xadd|cmpxchg)' "$barrier_disassembly" ||
-    fail "pthread_barrier_wait lacks x86 atomic handoff"
-objdump -d --disassemble=pthread_barrier_init "$candidate" >"$init_disassembly"
-if grep -Eq '[[:space:]]syscall([[:space:]]|$)|%fs:' "$init_disassembly"; then
+# pthread_barrier_wait hands off with an atomic read-modify-write and sleeps
+# or wakes only through futex=202; initialization is pure record setup.
+python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+    --label 'x86 static libc pthread barrier' --root pthread_barrier_wait \
+    --syscall 'nr=202' --syscalls-only 202 --instruction '^lock (xadd|cmpxchg)' ||
+    fail "pthread_barrier_wait lacks its atomic handoff or futex-only wait"
+python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+    --label 'x86 static libc pthread barrier' --root pthread_barrier_init \
+    --no-syscall 'nr=*' --no-instruction '%fs:' ||
     fail "pthread_barrier_init must not select a syscall or TLS seam"
-fi
 
 if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
     :

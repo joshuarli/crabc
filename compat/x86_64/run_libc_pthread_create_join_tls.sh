@@ -10,6 +10,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ELF_CALL_CLOSURE="$ROOT_DIR/compat/x86_64/elf_call_closure.py"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
@@ -110,11 +111,8 @@ candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
-bootstrap_disassembly="$work_dir/static-tls-bootstrap-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
 clone_disassembly="$work_dir/pthread-clone-disassembly"
-join_disassembly="$work_dir/pthread-join-disassembly"
-exit_disassembly="$work_dir/pthread-exit-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -196,7 +194,9 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
 done
 grep -Eq 'FUNC +WEAK +DEFAULT +.*__membarrier_init$' "$candidate_symbols" \
     || fail 'candidate lost musl weak __membarrier_init binding'
-awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "pthread_create" { found=1 } END { exit found ? 0 : 1 }' \
+# musl spells pthread_create as a weak alias of __pthread_create, so either
+# binding shows the archive member was extracted.
+awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") && $6 == "DEFAULT" && $7 != "UND" && $8 == "pthread_create" { found=1 } END { exit found ? 0 : 1 }' \
     "$candidate_membarrier_override_symbols" ||
     fail 'caller override did not extract the archive pthread-create member'
 grep -Eq 'FUNC +GLOBAL +DEFAULT +.*__membarrier_init$' "$candidate_membarrier_override_symbols" ||
@@ -232,7 +232,6 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
     || fail "candidate errno does not use direct fs initial TLS"
-objdump -d --disassemble=__crabc_x86_static_tls_bootstrap "$candidate" >"$bootstrap_disassembly"
 grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
     compat/x86_64/libc_pthread_create_join_tls_start.S \
     || fail "fixture start does not delegate first-thread TLS to libc"
@@ -240,14 +239,13 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     compat/x86_64/libc_pthread_create_join_tls_start.S; then
     fail "fixture start must not install a private FS base"
 fi
-# The public hidden hook is deliberately thin; inspect the fully linked
-# candidate for its raw x86 bootstrap path rather than requiring inlining.
-grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$candidate_disassembly" \
-    || fail "candidate lacks raw Static Initial TLS v1 syscalls"
-grep -Eq '\$0x9e(,|[[:space:]]|$)' "$candidate_disassembly" \
-    || fail "candidate lacks arch_prctl syscall 158 for Static Initial TLS v1"
-grep -Eq '\$0x9(,|[[:space:]]|$)' "$candidate_disassembly" \
-    || fail "candidate lacks mmap syscall 9 for Static Initial TLS v1"
+# The hidden bootstrap's call closure maps the initial TLS block anonymously
+# (PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, no file) and installs it
+# with arch_prctl(ARCH_SET_FS), wherever Rust places those helpers.
+python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+    --label 'x86 static libc pthread create/exit/join TLS' --root __crabc_x86_static_tls_bootstrap \
+    --syscall 'nr=9,a1=0,a3=3,a4=0x22,a5=-1,a6=0' --syscall 'nr=0x9e,a1=0x1002' ||
+    fail "Static Initial TLS v1 bootstrap lacks its anonymous mapping or ARCH_SET_FS install"
 objdump -d --disassemble=__crabc_x86_pthread_clone "$candidate" >"$clone_disassembly"
 grep -Eq '\bsyscall\b' "$clone_disassembly" \
     || fail "pthread clone boundary lacks an x86 syscall instruction"
@@ -257,23 +255,18 @@ grep -Eq '0x8\(%rsp\),%r10' "$clone_disassembly" \
     || fail "pthread clone boundary lacks the seventh-argument child-tid shuffle"
 grep -Eq '\$0x3c,%al|\$0x000000000000003c,%rax|\$0x3c,%rax' "$clone_disassembly" \
     || fail "pthread clone boundary lacks child exit syscall number 60"
-objdump -d --disassemble=pthread_exit "$candidate" >"$exit_disassembly"
-grep -Eq '\bsyscall\b' "$exit_disassembly" \
-    || fail "pthread_exit lacks an x86 thread-exit syscall instruction"
-# The bounded scan is an internal helper called by pthread_exit, so inspect
-# the closed candidate rather than requiring the compiler to inline it into
-# the public noreturn boundary.
-grep -Eq '\$0xba,%al|\$0xba,%eax|\$0xba,%rax|\$0x00000000000000ba,%rax' "$candidate_disassembly" \
-    || fail "candidate lacks gettid syscall number 186 identity validation"
-grep -Eq '\$0x3c,%eax|\$0x3c,%rax|\$0x000000000000003c,%rax' "$exit_disassembly" \
-    || fail "pthread_exit lacks thread exit syscall number 60"
-objdump -d --disassemble=pthread_join "$candidate" >"$join_disassembly"
-grep -Eq '\bsyscall\b' "$join_disassembly" \
-    || fail "pthread_join lacks an x86 futex/munmap syscall instruction"
-grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' "$join_disassembly" \
-    || fail "pthread_join lacks futex syscall number 202"
-grep -Eq '\$0xb,%eax|\$0xb,%rax|\$0x000000000000000b,%rax' "$join_disassembly" \
-    || fail "pthread_join lacks munmap syscall number 11"
+# Apart from delegating a last-thread exit to the separately qualified
+# process `exit`, pthread_exit validates the worker identity with gettid=186
+# and ends only the thread with exit=60, never exit_group. pthread_join waits
+# on the worker's futex word and releases its mapping, and does nothing else.
+python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+    --label 'x86 static libc pthread create/exit/join TLS' --root pthread_exit --exclude exit \
+    --syscall 'nr=186' --syscall 'nr=60' --no-syscall 'nr=231' ||
+    fail "pthread_exit no longer validates its identity and exits only the thread"
+python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+    --label 'x86 static libc pthread create/exit/join TLS' --root pthread_join \
+    --syscall 'nr=202' --syscall 'nr=11' --syscalls-only 202,11 ||
+    fail "pthread_join lacks its futex wait and munmap release"
 
 if "$candidate"; then
     :

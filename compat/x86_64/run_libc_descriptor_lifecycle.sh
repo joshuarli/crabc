@@ -13,6 +13,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ELF_CALL_CLOSURE="$ROOT_DIR/compat/x86_64/elf_call_closure.py"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly INITIAL_TLS_BYTES=4096
@@ -59,158 +60,31 @@ assert_selected_c_abi_surface() {
     fi
 }
 
-helper_symbol() {
-    local fragment="$1"
-    local symbols="$work_dir/${fragment}-symbols"
-
-    nm --defined-only --format=posix "$candidate" |
-        awk -v fragment="$fragment" 'index($1, fragment) && $2 ~ /^[Tt]$/ { print $1 }' \
-        >"$symbols"
-    [ "$(wc -l <"$symbols")" -eq 1 ] || {
-        cat "$symbols" >&2
-        fail "expected exactly one ${fragment} helper symbol"
-    }
-    cat "$symbols"
-}
-
-assert_fcntl_no_argument_path() {
-    local dispatcher="$work_dir/fcntl-disassembly"
-    local helper
-    local helper_disassembly="$work_dir/fcntl-no-argument-disassembly"
-
-    objdump -d --disassemble=fcntl "$candidate" >"$dispatcher"
-    grep -Eq '\$0x1,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_GETFD no-vararg dispatch"
-    grep -Eq '\$0x3,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_GETFL no-vararg dispatch"
-    grep -Fq 'fcntl_no_argument' "$dispatcher" ||
-        fail "fcntl lacks its two-word helper tail path"
-    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$dispatcher"; then
-        fail "fcntl dispatcher must not enter Linux before command dispatch"
-    fi
-    helper="$(helper_symbol fcntl_no_argument)"
-    objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
-    grep -Eq '\$0x48,%(e|r)(ax|di)' "$helper_disassembly" ||
-        fail "F_GETFD/F_GETFL helper lacks Linux fcntl=72"
-    # `syscall3` receives its third Linux word as its fourth SysV argument;
-    # the raw helper owns the rcx-to-rdx kernel-ABI move.
-    grep -Eq 'xor[[:space:]].*%(e|r)cx' "$helper_disassembly" ||
-        fail "F_GETFD/F_GETFL helper does not supply its zero third syscall word"
-    assert_direct_raw_syscall_path "$helper" "$helper_disassembly"
-}
-
-assert_fcntl_scalar_path() {
-    local dispatcher="$work_dir/fcntl-disassembly"
-    local helper
-    local helper_disassembly="$work_dir/fcntl-scalar-disassembly"
-
-    objdump -d --disassemble=fcntl "$candidate" >"$dispatcher"
-    grep -Eq '\$0x2,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_SETFD scalar dispatch"
-    grep -Eq '\$0x4,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_SETFL scalar dispatch"
-    grep -Fq 'fcntl_scalar' "$dispatcher" ||
-        fail "fcntl lacks its scalar helper tail path"
-    helper="$(helper_symbol fcntl_scalar)"
-    objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
-    awk '
-        /\$0x4,%esi/ { setfl_dispatch_seen = 1 }
-        setfl_dispatch_seen && /or.*\$0x8000,%edx/ { setfl_largefile_rule_seen = 1 }
-        END { exit setfl_largefile_rule_seen ? 0 : 1 }
-    ' "$helper_disassembly" ||
-        fail "F_SETFL helper lacks musl's command-path O_LARGEFILE rule"
-    grep -Eq '\$0x48,%(e|r)(ax|di)' "$helper_disassembly" ||
-        fail "F_SETFD/F_SETFL helper lacks Linux fcntl=72"
-    assert_direct_raw_syscall_path "$helper" "$helper_disassembly"
-}
-
-assert_direct_raw_syscall_path() {
-    local symbol="$1"
-    local disassembly="$2"
-    local helper
-    local helper_disassembly
-    local index=0
-    local -a helpers
-
-    mapfile -t helpers < <(
-        awk '
-            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
-                helper = $0
-                sub(/^.*</, "", helper)
-                sub(/>.*/, "", helper)
-                if (!seen[helper]++) {
-                    print helper
-                }
-            }
-        ' "$disassembly"
-    )
-    for helper in "${helpers[@]}"; do
-        helper_disassembly="$work_dir/${symbol}-raw-syscall-${index}-disassembly"
-        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
-        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
-            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
-        index=$((index + 1))
-    done
-    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        [ "${#helpers[@]}" -gt 0 ]; then
-        return
-    fi
-    fail "${symbol} lacks a direct raw-syscall helper edge"
-}
-
-assert_fourth_syscall_argument_path() {
-    local symbol="$1"
-    local disassembly="$2"
-    local helper
-    local helper_disassembly
-    local index=0
-    local -a helpers
-
-    if grep -Fq '%r10' "$disassembly"; then
-        assert_direct_raw_syscall_path "$symbol" "$disassembly"
-        return
-    fi
-    mapfile -t helpers < <(
-        awk '
-            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
-                helper = $0
-                sub(/^.*</, "", helper)
-                sub(/>.*/, "", helper)
-                if (!seen[helper]++) {
-                    print helper
-                }
-            }
-        ' "$disassembly"
-    )
-    [ "${#helpers[@]}" -gt 0 ] ||
-        fail "${symbol} lacks a direct raw-syscall fourth-argument edge"
-    for helper in "${helpers[@]}"; do
-        helper_disassembly="$work_dir/${symbol}-fourth-argument-${index}-disassembly"
-        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
-        grep -Fq '%r10' "$helper_disassembly" ||
-            fail "${symbol} direct raw-syscall helper lacks the x86 r10 fourth-argument path"
-        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
-            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
-        index=$((index + 1))
-    done
-}
-
+# Each selected entry's call closure reaches its Linux syscall with the
+# caller's first argument, and no syscall outside the stated numbers, whether
+# Rust inlines the raw syscall leaf or keeps it out of line.
 assert_named_syscall() {
-    local symbol="$1"
-    local syscall_word="$2"
-    local disassembly="$work_dir/${symbol}-disassembly"
+    local symbol="$1" syscall_number="$2" allowed="${3:-}"
 
-    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    if [ "$syscall_word" = 0 ]; then
-        # An inline syscall takes its number in rax; the outlined raw helper
-        # takes it as its first SysV argument in rdi.
-        grep -Eq 'xor[[:space:]]+%eax,%eax|xor[[:space:]]+%rax,%rax|xor[[:space:]]+%edi,%edi|xor[[:space:]]+%rdi,%rdi|mov[[:space:]]+\$0x0,%(e|r)(ax|di)' "$disassembly" ||
-            fail "${symbol} lacks fixed syscall zero setup"
-    else
-        grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|$)" "$disassembly" ||
-            fail "${symbol} lacks fixed syscall ${syscall_word}"
-    fi
-    assert_direct_raw_syscall_path "$symbol" "$disassembly"
+    python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+        --label 'x86 static libc descriptor lifecycle' --root "$symbol" \
+        --syscall "nr=${syscall_number},a1=arg:rdi" \
+        --syscalls-only "${syscall_number}${allowed:+,$allowed}" ||
+        fail "${symbol} does not reach Linux syscall ${syscall_number}"
+}
+
+# fcntl dispatches on the command before entering Linux: every fcntl=72 it
+# reaches passes the caller's descriptor and command. F_GETFD/F_GETFL supply
+# a zero third word instead of reading a vararg; F_SETFD/F_SETFL pass the
+# caller's scalar, with musl's command-path O_LARGEFILE rule for F_SETFL.
+assert_fcntl_paths() {
+    python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+        --label 'x86 static libc descriptor lifecycle' --root fcntl \
+        --every-syscall 'nr=72,a1=arg:rdi,a2=arg:rsi' \
+        --syscall 'nr=72,a3=0' \
+        --syscall 'nr=72,a3=arg:rdx' \
+        --instruction 'or[lq]? \$0x8000,' ||
+        fail "fcntl does not reach its selected command paths"
 }
 
 assert_fixture_tls_capacity() {
@@ -334,30 +208,29 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 
 # Keep this one composed proof tied to the selected Linux entry points.
-assert_named_syscall openat 101
-assert_named_syscall __fstat 5
-assert_named_syscall __fstatat 106
-assert_fcntl_no_argument_path
-assert_fcntl_scalar_path
-assert_named_syscall close 3
-assert_named_syscall read 0
-assert_named_syscall write 1
-assert_named_syscall pread 11
-assert_named_syscall __lseek 8
-assert_named_syscall ftruncate 4d
-assert_named_syscall fsync 4a
-assert_named_syscall fdatasync 4b
-assert_named_syscall dup 20
-assert_named_syscall dup2 21
-assert_named_syscall __dup3 124
-
-open_disassembly="$work_dir/open-disassembly"
-objdump -d --disassemble=open "$candidate" >"$open_disassembly"
-grep -Eq '\$0x2,%(e|r)(ax|di)' "$open_disassembly" || fail "open lacks Linux open=2"
-assert_direct_raw_syscall_path open "$open_disassembly"
-openat_disassembly="$work_dir/openat-disassembly"
-objdump -d --disassemble=openat "$candidate" >"$openat_disassembly"
-assert_fourth_syscall_argument_path openat "$openat_disassembly"
+assert_named_syscall openat 0x101
+assert_named_syscall __fstat 0x5
+assert_named_syscall __fstatat 0x106
+assert_fcntl_paths
+assert_named_syscall close 0x3
+assert_named_syscall read 0x0
+assert_named_syscall write 0x1
+assert_named_syscall pread 0x11
+assert_named_syscall __lseek 0x8
+assert_named_syscall ftruncate 0x4d
+assert_named_syscall fsync 0x4a
+assert_named_syscall fdatasync 0x4b
+assert_named_syscall dup 0x20
+assert_named_syscall dup2 0x21
+# musl's dup3 falls back to dup2 when the kernel lacks dup3.
+assert_named_syscall __dup3 0x124 0x21
+# open applies FD_CLOEXEC through fcntl when the kernel ignores O_CLOEXEC.
+assert_named_syscall open 0x2 0x48
+# openat's optional mode is the fourth Linux word, carried in r10.
+python3 "$ELF_CALL_CLOSURE" check "$candidate" \
+    --label 'x86 static libc descriptor lifecycle' --root openat \
+    --syscall 'nr=0x101,a1=arg:rdi,a2=arg:rsi' --instruction ',%r10d?$' ||
+    fail "openat does not carry its mode in the fourth syscall word"
 
 if "$candidate"; then :; else
     status=$?
