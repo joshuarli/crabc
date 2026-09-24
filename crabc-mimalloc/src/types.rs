@@ -3989,10 +3989,10 @@ impl Page {
         owner: TheapOwner,
     ) {
         // SAFETY: this existing reference-based path inherits the exact
-        // address-stable Heap lifetime obligations of its callers.
+        // address-stable Theap/Heap lifetime obligations of its callers.
         unsafe {
             self.associate_exclusive_owner_with_heap_pointer(
-                theap,
+                NonNull::from(theap),
                 NonNull::from(heap),
                 owner,
             );
@@ -4008,14 +4008,20 @@ impl Page {
     /// `heap` is the exact address-stable Heap retained for this page's full
     /// lifecycle; callers must not use this identity pointer to form an
     /// overlapping Rust reference.
+    ///
+    /// `theap` is likewise stored as the page's owner pointer exactly as
+    /// supplied, so its provenance is the caller's: a session that projects
+    /// its pinned Theap from one raw capability passes that capability rather
+    /// than a fresh `&mut Theap` whose tag a later projection would retire.
     unsafe fn associate_exclusive_owner_with_heap_pointer(
         &mut self,
-        theap: &mut Theap,
+        theap: NonNull<Theap>,
         heap: NonNull<Heap>,
         owner: TheapOwner,
     ) {
-        debug_assert!(theap.matches_owner(owner));
-        self.theap = core::ptr::from_mut(theap);
+        // SAFETY: the caller supplies a live, address-stable Theap.
+        debug_assert!(unsafe { theap.as_ref() }.matches_owner(owner));
+        self.theap = theap.as_ptr();
         // A fresh page records this address but does not mutate its Heap.
         // Heap-list and arena-pages changes retain their own synchronized
         // source boundaries, so this association must not manufacture an
@@ -4087,7 +4093,7 @@ impl Page {
         // the Page lifetime under the existing page-owner contract.
         unsafe {
             self.publish_fresh_exclusive_owner_with_heap_pointer(
-                theap,
+                NonNull::from(theap),
                 NonNull::from(heap),
                 owner,
                 block_size,
@@ -4106,7 +4112,7 @@ impl Page {
     /// overlapping Rust reference.
     unsafe fn publish_fresh_exclusive_owner_with_heap_pointer(
         &mut self,
-        theap: &mut Theap,
+        theap: NonNull<Theap>,
         heap: NonNull<Heap>,
         owner: TheapOwner,
         block_size: usize,
@@ -4159,8 +4165,45 @@ impl Page {
     /// throughout that interval and must not form an overlapping Rust
     /// reference to the Heap from this raw identity projection.
     pub(crate) unsafe fn publish_fresh_exclusive_owner_at_with_heap_pointer(
-        mut metadata: NonNull<Self>,
+        metadata: NonNull<Self>,
         theap: &mut Theap,
+        heap: NonNull<Heap>,
+        owner: TheapOwner,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> Option<NonNull<Self>> {
+        // SAFETY: forwarded unchanged; the reference supplies a live Theap.
+        unsafe {
+            Self::publish_fresh_exclusive_owner_at_with_pointers(
+                metadata,
+                NonNull::from(theap),
+                heap,
+                owner,
+                block_size,
+                page_offset,
+                reserved,
+                slice_pcommitted,
+                free_is_zero,
+                memid,
+            )
+        }
+    }
+
+    /// Raw publication whose Page owner record keeps the caller's exact
+    /// Theap and Heap pointers, provenance included.
+    ///
+    /// # Safety
+    /// All obligations of [`Self::publish_fresh_exclusive_owner_at_with_heap_pointer`]
+    /// apply. `theap` must be the live, pinned, initialized Theap owning
+    /// this page, exclusively controlled by the caller for this call, and it
+    /// must stay address-stable through page retirement.
+    pub(crate) unsafe fn publish_fresh_exclusive_owner_at_with_pointers(
+        mut metadata: NonNull<Self>,
+        theap: NonNull<Theap>,
         heap: NonNull<Heap>,
         owner: TheapOwner,
         block_size: usize,

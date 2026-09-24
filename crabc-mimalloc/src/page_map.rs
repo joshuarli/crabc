@@ -416,7 +416,7 @@ impl PageMap {
         unsafe { &*header.as_ptr() }
             .committed_count
             .store(committed_count, Ordering::Release);
-        unsafe { atomic_submap_slot(header.as_ref(), 0) }.store(sub0, Ordering::Release);
+        unsafe { atomic_submap_slot(header, 0) }.store(sub0, Ordering::Release);
 
         Ok(Self {
             mapping,
@@ -545,7 +545,7 @@ impl PageMap {
         // SAFETY: the Acquire count proves the raw pointer word is committed;
         // its atomic view is aligned and pairs with submap publication.
         Ok(NonNull::new(
-            unsafe { atomic_submap_slot(header, index) }.load(Ordering::Acquire),
+            unsafe { atomic_submap_slot(self.header, index) }.load(Ordering::Acquire),
         ))
     }
 
@@ -573,7 +573,8 @@ impl PageMap {
             unsafe { initialize_submap(candidate_base) };
             // SAFETY: ensure_committed proved this raw pointer word committed
             // before the source page-map lock was acquired.
-            let slot = unsafe { atomic_submap_slot(self.header()?, index) };
+            self.header()?;
+            let slot = unsafe { atomic_submap_slot(self.header, index) };
             // The pinned source retains this defensive CAS even under its
             // page-map lock. In this Rust port, `PageMapHeader::submaps` and
             // `atomic_submap_slot` are private to this module, and every
@@ -718,7 +719,8 @@ impl PageMap {
         for index in 1..count {
             // SAFETY: the committed count proves this aligned raw pointer word
             // is accessible through its atomic view.
-            let slot = unsafe { atomic_submap_slot(self.header()?, index) };
+            self.header()?;
+            let slot = unsafe { atomic_submap_slot(self.header, index) };
             let submap = slot.load(Ordering::Acquire);
             if !submap.is_null() {
                 // SAFETY: exclusive `&mut self` plus documented quiescence owns
@@ -767,14 +769,20 @@ fn divide_up(value: usize, divisor: usize) -> Option<usize> {
 ///
 /// # Safety
 ///
-/// `header` must identify a live mapped `PageMapHeader`, and `index` must be
-/// within its currently committed top-level extent. The raw pointer word must
-/// not be accessed non-atomically for the duration of this reference.
+/// `header` must identify a live mapped `PageMapHeader` with the provenance
+/// of its whole mapping, and `index` must be within its currently committed
+/// top-level extent. The raw pointer word must not be accessed
+/// non-atomically for the duration of the returned reference.
+///
+/// A `&PageMapHeader` covers only the declared one-element `submaps` array,
+/// so the committed flexible tail is projected from the raw mapping pointer.
 unsafe fn atomic_submap_slot<'a>(
-    header: &'a PageMapHeader,
+    header: NonNull<PageMapHeader>,
     index: usize,
 ) -> &'a AtomicPtr<PageEntry> {
-    let first = core::ptr::addr_of!(header.submaps)
+    // SAFETY: the caller supplies a live mapped header; this only computes
+    // the flexible array's address.
+    let first = unsafe { core::ptr::addr_of!((*header.as_ptr()).submaps) }
         .cast::<UnsafeCell<*mut PageEntry>>();
     let raw_word = unsafe { UnsafeCell::raw_get(first.add(index)) };
     unsafe { AtomicPtr::from_ptr(raw_word) }

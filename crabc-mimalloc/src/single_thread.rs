@@ -33336,7 +33336,9 @@ impl<'heap, 'arena, 'map>
         }
         let page_map_size = arena_page_map_size(self.page, slice_start, size)?;
         for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
-            let address = slice_start.addr().checked_add(offset)? as *const u8;
+            slice_start.addr().checked_add(offset)?;
+            // A PageMap lookup key keeps the slice provenance.
+            let address = slice_start.cast_const().wrapping_add(offset);
             // SAFETY: the caller's join/quiescence proof serializes the plain
             // PageMap observations for this linear post-exit route.
             if unsafe { self.page_map.checked_lookup(address) } != self.page.as_ptr() {
@@ -41353,7 +41355,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // proves that terminal unregistration targets the published usable
         // page area, while `size` remains the complete arena-release span.
         for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
-            let address = slice_start.addr().checked_add(offset)? as *const u8;
+            slice_start.addr().checked_add(offset)?;
+            // A PageMap lookup key keeps the slice provenance.
+            let address = slice_start.cast_const().wrapping_add(offset);
             if unsafe { page_map.checked_lookup(address) } != page.as_ptr() {
                 return None;
             }
@@ -41837,7 +41841,9 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         }
         let page_map_size = arena_page_map_size(page, slice_start, size)?;
         for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
-            let address = slice_start.addr().checked_add(offset)? as *const u8;
+            slice_start.addr().checked_add(offset)?;
+            // A PageMap lookup key keeps the slice provenance.
+            let address = slice_start.cast_const().wrapping_add(offset);
             // SAFETY: this terminal owner serializes its explicit PageMap
             // range; checking precedes one exact unregister below.
             if unsafe { self.page_map.checked_lookup(address) } != page.as_ptr() {

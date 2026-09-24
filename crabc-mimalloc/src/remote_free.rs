@@ -1430,7 +1430,14 @@ fn thread_free_block(thread_free: ThreadFree) -> *mut Block {
     // `mi_thread_free_t` stores a pointer in all bits except the low owner
     // bit. `expose_provenance` recorded that provenance when publishing; this
     // restores it after atomically loading the exact C word representation.
-    core::ptr::with_exposed_provenance_mut(thread_free_block_address(thread_free))
+    // An empty list (`mi_tf_block == NULL`) carries no block provenance, so
+    // it stays an integer-free null: owner-local collection of a page that
+    // never received a remote free then needs no exposed provenance.
+    let address = thread_free_block_address(thread_free);
+    if address == 0 {
+        return ptr::null_mut();
+    }
+    core::ptr::with_exposed_provenance_mut(address)
 }
 
 #[inline]

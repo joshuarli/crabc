@@ -338,11 +338,11 @@ impl ExclusiveTheapBootstrap {
         }
         state.session_issued = true;
         Ok(ExclusiveTheapSession {
-            // SAFETY: `state` came from the pinned receiver and remains in
-            // place for the session lifetime. Reborrowing it restores the
-            // pin rather than moving the bootstrap image.
-            state: unsafe { Pin::new_unchecked(state) },
+            // `state` came from the pinned receiver and remains in place for
+            // the session lifetime; the session never moves the image.
+            state: NonNull::from(state),
             owner,
+            _pinned: PhantomData,
         })
     }
 
@@ -362,8 +362,15 @@ impl ExclusiveTheapBootstrap {
 /// anything; live-thread teardown and lock-free remote-free protocols remain
 /// later work.
 pub(crate) struct ExclusiveTheapSession<'a> {
-    state: Pin<&'a mut ExclusiveTheapBootstrap>,
+    /// Address of the pinned bootstrap, derived once from its exclusive
+    /// pinned borrow. Every access projects from this one raw capability:
+    /// re-deriving a whole `&mut ExclusiveTheapBootstrap` or `&mut Theap` per
+    /// queue access would retag the complete image and invalidate a disjoint
+    /// queue projection that the page engine still holds (for example the
+    /// source and destination of `mi_page_queue_enqueue_from`).
+    state: NonNull<ExclusiveTheapBootstrap>,
     owner: TheapOwner,
+    _pinned: PhantomData<Pin<&'a mut ExclusiveTheapBootstrap>>,
 }
 
 /// Narrow private page-owner interface shared by the static bootstrap and the
@@ -560,9 +567,19 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
 impl ExclusiveTheapSession<'_> {
     #[inline]
     fn state_mut(&mut self) -> &mut ExclusiveTheapBootstrap {
-        // SAFETY: session construction holds the sole mutable borrow of the
-        // pinned bootstrap. This helper does not move any pinned field.
-        unsafe { self.state.as_mut().get_unchecked_mut() }
+        // SAFETY: session construction consumed the sole mutable pinned
+        // borrow for `'a`, and `&mut self` excludes every other projection
+        // made through this session. Callers never move a pinned field.
+        unsafe { &mut *self.state.as_ptr() }
+    }
+
+    /// The pinned Theap address, projected without forming a whole-image
+    /// reference.
+    #[inline]
+    fn theap_pointer(&self) -> NonNull<Theap> {
+        // SAFETY: `state` is the live pinned bootstrap for `'a`; this only
+        // computes a field address.
+        unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*self.state.as_ptr()).theap)) }
     }
 
     /// Initializes one child metadata Theap against this session's actual
@@ -632,7 +649,9 @@ impl ExclusiveTheapSession<'_> {
     /// of its address-stable backing field.
     #[inline]
     pub(crate) fn theap(&self) -> &Theap {
-        &self.state.as_ref().get_ref().theap
+        // SAFETY: the session exclusively owns the pinned image for `'a`;
+        // `&self` excludes a concurrent mutable projection through it.
+        unsafe { self.theap_pointer().as_ref() }
     }
 
     #[inline]
@@ -646,7 +665,9 @@ impl ExclusiveTheapSession<'_> {
     /// Returns one source `mi_page_queue_t` under the exclusive session.
     #[inline]
     pub(crate) fn queue(&self, bin: usize) -> Option<&PageQueue> {
-        self.theap().queue(bin)
+        // SAFETY: `&self` excludes a mutable projection of this queue made
+        // through the session for the returned lifetime.
+        unsafe { Theap::local_queue_at(self.theap_pointer(), bin) }
     }
 
     /// Grants local lifecycle code one queue record while retaining ownership
@@ -654,7 +675,11 @@ impl ExclusiveTheapSession<'_> {
     /// respective page-count method below.
     #[inline]
     pub(crate) fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
-        self.state_mut().theap.queue_mut(bin)
+        // SAFETY: `&mut self` makes this the only live projection of the
+        // selected queue made through the session. It retags only that
+        // queue, so a raw pointer the engine retains to another queue stays
+        // valid across this call.
+        unsafe { Theap::local_queue_mut_at(self.theap_pointer(), bin) }
     }
 
     #[inline]
@@ -664,22 +689,26 @@ impl ExclusiveTheapSession<'_> {
 
     #[inline]
     pub(crate) fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
-        self.state_mut().theap.set_direct_page(index, page)
+        // SAFETY: this exclusive session owns the direct slot.
+        unsafe { Theap::set_local_direct_page_at(self.theap_pointer(), index, page) }
     }
 
     #[inline]
     pub(crate) fn clear_direct_page(&mut self, index: usize) -> bool {
-        self.state_mut().theap.clear_direct_page(index)
+        // SAFETY: this exclusive session owns the direct slot.
+        unsafe { Theap::set_local_direct_page_at(self.theap_pointer(), index, crate::types::EMPTY_PAGE.as_ptr()) }
     }
 
     #[inline]
     pub(crate) fn note_page_added(&mut self) {
-        self.state_mut().theap.note_page_added();
+        // SAFETY: this exclusive session owns the source page count.
+        unsafe { Theap::note_local_page_added_at(self.theap_pointer()) }
     }
 
     #[inline]
     pub(crate) fn note_page_removed(&mut self) -> bool {
-        self.state_mut().theap.note_page_removed()
+        // SAFETY: this exclusive session owns the source page count.
+        unsafe { Theap::note_local_page_removed_at(self.theap_pointer()) }
     }
 
     /// Initializes raw, potentially nonzero arena metadata as a fresh page.
@@ -713,14 +742,20 @@ impl ExclusiveTheapSession<'_> {
         memid: MemoryId,
     ) -> Option<NonNull<Page>> {
         let owner = self.owner;
-        let state = self.state_mut();
+        let theap = self.theap_pointer();
+        // SAFETY: `state` is the live pinned bootstrap; this only computes
+        // the Heap field address.
+        let heap = unsafe {
+            NonNull::new_unchecked(core::ptr::addr_of_mut!((*self.state.as_ptr()).heap))
+        };
         // SAFETY: this method forwards its raw-metadata and live-area
-        // obligations unchanged; `state` owns the stable pinned theap/heap.
+        // obligations unchanged; the session owns the stable pinned
+        // Theap/Heap, whose raw projections the page records as its owner.
         unsafe {
-            Page::publish_fresh_exclusive_owner_at(
+            Page::publish_fresh_exclusive_owner_at_with_pointers(
                 metadata,
-                &mut state.theap,
-                &state.heap,
+                theap,
+                heap,
                 owner,
                 block_size,
                 page_offset,
@@ -774,13 +809,15 @@ impl ExclusiveTheapSession<'_> {
     /// range. Full and huge bins are rejected, matching the source contract.
     #[inline]
     pub(crate) fn note_retired_bin(&mut self, bin: usize) -> bool {
-        self.state_mut().theap.note_retired_bin(bin)
+        // SAFETY: this exclusive session owns the retired bounds.
+        unsafe { Theap::note_local_retired_bin_at(self.theap_pointer(), bin) }
     }
 
     /// Resets retirement bounds after a local collection pass empties them.
     #[inline]
     pub(crate) fn reset_retired_bounds(&mut self) {
-        self.state_mut().theap.reset_retired_bounds();
+        // SAFETY: this exclusive session owns the retired bounds.
+        unsafe { Theap::reset_local_retired_bounds_at(self.theap_pointer()) }
     }
 }
 
@@ -940,7 +977,8 @@ mod tests {
             .as_mut()
             .activate_live(thread_id)
             .expect("first pinned activation succeeds");
-        let state = session.state.as_ref().get_ref();
+        // SAFETY: the live session keeps its pinned image for this read.
+        let state = unsafe { session.state.as_ref() };
         let theap = session.theap();
 
         assert_eq!(state.active_thread(), Some(thread_id));
@@ -975,7 +1013,8 @@ mod tests {
             .as_mut()
             .activate_detached_for_main_subprocess(subprocess)
             .expect("a detached source bootstrap activates once");
-        let state = session.state.as_ref().get_ref();
+        // SAFETY: the live session keeps its pinned image for this read.
+        let state = unsafe { session.state.as_ref() };
         let theap = session.theap();
 
         assert_eq!(session.thread_id(), None);
