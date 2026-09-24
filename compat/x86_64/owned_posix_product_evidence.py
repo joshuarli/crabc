@@ -26,6 +26,15 @@ TARGET = "x86_64-unknown-linux-musl"
 STATIC_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
 STATIC_PRODUCT_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 DYNAMIC_PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+# A combined four-mode sysroot (scripts/build_x86_64_owned_combined_sysroot.py)
+# embeds each product manifest at share/crabc/<product>/manifest.json. Product
+# metadata may move only within share/crabc/; the static product's unlinked
+# Scrt1.o yields to the dynamic PIE entry. The installed drivers apply the same
+# rules before they run.
+COMBINED_SYSROOT_FORMAT = "crabc-x86-64-owned-sysroot-v1"
+PRODUCT_MANIFEST = "share/crabc/manifest.json"
+PRODUCT_METADATA_PREFIX = "share/crabc/"
+COMBINED_UNINSTALLED_PAYLOAD = {"static": frozenset({"usr/lib/Scrt1.o"}), "dynamic": frozenset()}
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 STATIC_DRIVER_STATUS = "planned-owned-static-product-seed-not-family-completion-not-public-support"
 STATIC_CRT_OBJECTS = ("crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o")
@@ -418,9 +427,59 @@ def link_input_mode_projection() -> dict[str, dict[str, int]]:
     return {"static": dict(STATIC_LINK_INPUT_MODES), "dynamic": dict(DYNAMIC_LINK_INPUT_MODES)}
 
 
+def _product_manifest(root: Path, product: str, product_format: str) -> tuple[Path, dict[str, Any], dict | None]:
+    """Return the tree manifest path, this product's manifest, and any combined record.
+
+    For a combined tree the returned path is the combined manifest, which the
+    installed drivers bind into every link receipt.
+    """
+
+    manifest_path = _physical_regular(root / PRODUCT_MANIFEST, f"{product} product manifest")
+    manifest = _json_object(manifest_path, f"{product} product manifest")
+    if manifest.get("format") != COMBINED_SYSROOT_FORMAT:
+        return manifest_path, manifest, None
+    products = manifest.get("products")
+    record = products.get(product) if isinstance(products, dict) else None
+    embedded = f"share/crabc/{product}/manifest.json"
+    if (manifest.get("schema"), manifest.get("target")) != (1, TARGET) or not isinstance(record, dict) or (
+        record.get("format"), record.get("manifest")
+    ) != (product_format, embedded) or not isinstance(record.get("placements"), dict):
+        _fail(f"combined sysroot does not embed the {product} product")
+    return manifest_path, _json_object(root / embedded, f"embedded {product} product manifest"), manifest
+
+
+def _validate_product_tree(root: Path, product: str, files: dict[str, str], aliases: Mapping[str, str],
+                           combined: dict | None) -> dict[str, str]:
+    """Require the exact installed tree and return its regular-file payload hashes.
+
+    For a combined tree that is the whole combined roster, and each file of
+    this product must also be installed unchanged at its own path.
+    """
+
+    if combined is None:
+        _validate_payload_tree(root, files, aliases=aliases)
+        return files
+    installed = _payload_files(combined.get("files"), "combined sysroot manifest")
+    links = combined.get("symlinks")
+    if not isinstance(links, dict) or not set(aliases.items()) <= set(links.items()):
+        _fail(f"combined sysroot aliases omit the {product} product aliases")
+    _validate_payload_tree(root, installed, aliases=links)
+    placements = combined["products"][product]["placements"]
+    for relative, expected in files.items():
+        placed = placements.get(relative)
+        if placed is None and relative in COMBINED_UNINSTALLED_PAYLOAD[product] and relative in placements:
+            continue
+        movable = (relative.startswith(PRODUCT_METADATA_PREFIX) and isinstance(placed, str)
+                   and placed.startswith(PRODUCT_METADATA_PREFIX))
+        if placed != relative and not movable:
+            _fail(f"combined sysroot moved {product} payload: {relative}")
+        if installed.get(placed) != expected:
+            _fail(f"combined sysroot does not install {product} payload unchanged: {relative}")
+    return installed
+
+
 def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
-    manifest_path = _physical_regular(root / "share/crabc/manifest.json", "static product manifest")
-    manifest = _json_object(manifest_path, "static product manifest")
+    manifest_path, manifest, combined = _product_manifest(root, "static", STATIC_PRODUCT_FORMAT)
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target")) != (1, STATIC_PRODUCT_FORMAT, TARGET):
         _fail("static product manifest has the wrong product identity")
     installed = manifest.get("installed")
@@ -451,14 +510,13 @@ def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
         _fail(f"static product manifest omits required runtime payload: {missing[0]}")
     _physical_executable(root / "bin/crabc-cc", "static product sealed driver")
     _physical_directory(root / "usr/include", "static product headers")
-    _validate_payload_tree(root, files, aliases={})
+    files = _validate_product_tree(root, "static", files, {}, combined)
     _validate_link_input_modes(root, STATIC_LINK_INPUT_MODES, "static link input")
     return manifest_path, files
 
 
 def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
-    manifest_path = _physical_regular(root / "share/crabc/manifest.json", "dynamic product manifest")
-    manifest = _json_object(manifest_path, "dynamic product manifest")
+    manifest_path, manifest, combined = _product_manifest(root, "dynamic", DYNAMIC_PRODUCT_FORMAT)
     aliases = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target"), manifest.get("symlinks")) != (
         1, DYNAMIC_PRODUCT_FORMAT, TARGET, aliases
@@ -473,7 +531,7 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
         root / "share/crabc/crabc_cc_static.py", "dynamic product shared static helper"
     )
     _physical_directory(root / "usr/include", "dynamic product headers")
-    _validate_payload_tree(root, files, aliases=aliases)
+    files = _validate_product_tree(root, "dynamic", files, aliases, combined)
     _validate_link_input_modes(root, DYNAMIC_LINK_INPUT_MODES, "dynamic link input")
     return manifest_path, files
 

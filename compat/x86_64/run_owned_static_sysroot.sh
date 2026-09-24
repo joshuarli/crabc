@@ -11,6 +11,13 @@
 # source-bound receipt through static_product_contract.py.
 # A receipt qualifies only the static product: no loader, libc.so, dynamic
 # mode, family completion, x86 promotion, or public-support claim.
+#
+# `--supplied-sysroots PRIMARY REPRODUCTION EXTRACTED` runs the same suite
+# against trees another gate built, packaged and extracted, such as the
+# combined four-mode sysroot. It builds nothing, requires the three trees to be
+# byte-identical, runs the consumer matrix from PRIMARY and EXTRACTED, and
+# retains its work tree as evidence instead of writing the static product
+# receipt, which describes only this runner's own clean builds.
 set -euo pipefail
 # The stack-protector negative child deliberately faults; do not leave cores
 # in the checkout or make parallel test runs compete for a core filename.
@@ -107,7 +114,9 @@ finish_owned_work_dir() {
     local status=$?
 
     trap - EXIT
-    if [ "$status" -eq 0 ]; then
+    if [ "$status" -eq 0 ] && [ "$supplied" -eq 1 ]; then
+        printf 'x86 owned static sysroot: supplied-tree evidence: %s\n' "$work_dir"
+    elif [ "$status" -eq 0 ]; then
         if owned_work_dir_is_safe "$work_dir"; then
             rm -rf -- "$work_dir"
         else
@@ -149,22 +158,45 @@ write_tree_manifest() {
     ) >"$destination"
 }
 
+# A combined four-mode sysroot legitimately installs the dynamic product's
+# libc.so, loader and alias. It keeps this product's manifest at a fixed
+# placement; the installed driver's plan audit validates the exact tree.
+installed_static_manifest() {
+    local root="$1"
+
+    python3 - "$root/share/crabc/manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = Path(sys.argv[1])
+record = json.loads(manifest.read_text(encoding="utf-8"))
+if record.get("format") == "crabc-x86-64-owned-sysroot-v1":
+    manifest = manifest.parent / "static" / "manifest.json"
+print(manifest)
+PY
+}
+
 audit_installed_tree() {
     local root="$1"
     local path
+    local manifest
 
     [ -f "$root/share/crabc/manifest.json" ] || fail "installed manifest is missing"
+    manifest="$(installed_static_manifest "$root")"
     [ -f "$root/usr/lib/crt1.o" ] || fail "installed crt1.o is missing"
     [ -f "$root/usr/lib/libc.a" ] || fail "installed libc.a is missing"
     [ -f "$root/usr/lib/libcrabc-builtins.a" ] || fail "installed builtins are missing"
-    [ ! -e "$root/usr/lib/libc.so" ] || fail "private static slice installed libc.so"
-    [ ! -e "$root/lib" ] || fail "private static slice installed a loader directory"
     [ -f "$root/bin/crabc-cc" ] || fail "installed static slice lacks crabc-cc"
     [ -x "$root/bin/crabc-cc" ] || fail "installed crabc-cc is not executable"
-    while IFS= read -r path; do
-        fail "installed tree contains a symlink: ${path#"$root"/}"
-    done < <(find "$root" -type l -print)
-    python3 - "$root/share/crabc/manifest.json" <<'PY'
+    if [ "$manifest" = "$root/share/crabc/manifest.json" ]; then
+        [ ! -e "$root/usr/lib/libc.so" ] || fail "private static slice installed libc.so"
+        [ ! -e "$root/lib" ] || fail "private static slice installed a loader directory"
+        while IFS= read -r path; do
+            fail "installed tree contains a symlink: ${path#"$root"/}"
+        done < <(find "$root" -type l -print)
+    fi
+    python3 - "$manifest" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1495,7 +1527,29 @@ if [ "${1:-}" = "--consumer-job" ]; then
     exit
 fi
 
-[ "$#" -eq 0 ] || fail "usage: $0"
+supplied=0
+case "$#" in
+    0) ;;
+    4)
+        [ "$1" = --supplied-sysroots ] || fail "usage: $0 [--supplied-sysroots PRIMARY REPRODUCTION EXTRACTED]"
+        supplied=1
+        supplied_trees=("$2" "$3" "$4")
+        ;;
+    *) fail "usage: $0 [--supplied-sysroots PRIMARY REPRODUCTION EXTRACTED]" ;;
+esac
+readonly supplied
+if [ "$supplied" -eq 1 ]; then
+    python3 -B - "$ROOT_DIR" "${supplied_trees[@]}" <<'PY' || fail "supplied sysroots must be three distinct physical checkout .work directories"
+from pathlib import Path
+import sys
+root, *trees = map(Path, sys.argv[1:])
+for tree in trees:
+    if not tree.is_absolute() or not tree.is_dir() or tree.resolve() != tree or not tree.is_relative_to(root / ".work"):
+        raise SystemExit(1)
+if len(set(trees)) != 3:
+    raise SystemExit(1)
+PY
+fi
 require_native_linux_x86_64
 consumer_workers="$(selected_consumer_workers)"
 consumer_benchmark="$(selected_consumer_benchmark "$consumer_workers")"
@@ -1534,10 +1588,16 @@ chmod 2770 "$work_dir"
 trap finish_owned_work_dir EXIT
 trap 'interrupt_consumer_matrix INT 130' INT
 trap 'interrupt_consumer_matrix TERM 143' TERM
-primary="$work_dir/primary"
-reproduction="$work_dir/reproduction"
-python3 "$BUILDER" --output "$primary" >"$work_dir/primary-build.json"
-python3 "$BUILDER" --output "$reproduction" >"$work_dir/reproduction-build.json"
+if [ "$supplied" -eq 1 ]; then
+    primary="${supplied_trees[0]}"
+    reproduction="${supplied_trees[1]}"
+    extracted="${supplied_trees[2]}"
+else
+    primary="$work_dir/primary"
+    reproduction="$work_dir/reproduction"
+    python3 "$BUILDER" --output "$primary" >"$work_dir/primary-build.json"
+    python3 "$BUILDER" --output "$reproduction" >"$work_dir/reproduction-build.json"
+fi
 audit_installed_tree "$primary"
 audit_installed_tree "$reproduction"
 audit_static_driver_plan "$primary" -static "$work_dir/primary-et-exec-plan.json"
@@ -1546,13 +1606,18 @@ write_tree_manifest "$primary" "$work_dir/primary-tree.sha256"
 write_tree_manifest "$reproduction" "$work_dir/reproduction-tree.sha256"
 cmp "$work_dir/primary-tree.sha256" "$work_dir/reproduction-tree.sha256" ||
     fail "two clean installed trees are not byte-identical"
-python3 "$PACKAGE" create --source "$primary" --archive "$work_dir/primary.tar.xz"
-python3 "$PACKAGE" create --source "$reproduction" --archive "$work_dir/reproduction.tar.xz"
-cmp "$work_dir/primary.tar.xz" "$work_dir/reproduction.tar.xz" ||
-    fail "two clean owned-static packages are not byte-identical"
-python3 "$PACKAGE" extract --archive "$work_dir/primary.tar.xz" \
-    --destination "$work_dir/extracted-tree" >/dev/null
-extracted="$work_dir/extracted-tree/crabc-x86_64-owned-static-sysroot"
+if [ "$supplied" -eq 0 ]; then
+    python3 "$PACKAGE" create --source "$primary" --archive "$work_dir/primary.tar.xz"
+    python3 "$PACKAGE" create --source "$reproduction" --archive "$work_dir/reproduction.tar.xz"
+    cmp "$work_dir/primary.tar.xz" "$work_dir/reproduction.tar.xz" ||
+        fail "two clean owned-static packages are not byte-identical"
+    python3 "$PACKAGE" extract --archive "$work_dir/primary.tar.xz" \
+        --destination "$work_dir/extracted-tree" >/dev/null
+    extracted="$work_dir/extracted-tree/crabc-x86_64-owned-static-sysroot"
+fi
+write_tree_manifest "$extracted" "$work_dir/extracted-tree.sha256"
+cmp "$work_dir/primary-tree.sha256" "$work_dir/extracted-tree.sha256" ||
+    fail "extracted installed tree is not byte-identical to the primary tree"
 audit_installed_tree "$extracted"
 audit_static_driver_plan "$extracted" -static "$work_dir/extracted-et-exec-plan.json"
 audit_static_driver_plan "$extracted" -static-pie "$work_dir/extracted-static-pie-plan.json"
@@ -2001,6 +2066,13 @@ for mode_root in "${suite_paths[@]}"; do
     assert_mode_evidence_reproducible "$primary" "$primary_consumer/$mode_root" \
         "$extracted" "$extracted_consumer/$mode_root" "$mode_root"
 done
+if [ "$supplied" -eq 1 ]; then
+    [ "$(python3 -B "$STATIC_PRODUCT_CONTRACT" --source-digest)" = "$started_source_sha256" ] ||
+        fail "source changed during the supplied-tree static product run"
+    printf 'x86 owned static product: declared %s-path suite in ET_EXEC and static-PIE from supplied primary and extracted trees: PASS\n' \
+        "${#suite_paths[@]}"
+    exit 0
+fi
 python3 -B "$STATIC_PRODUCT_CONTRACT" collect --work-dir "$work_dir" \
     --source-sha256 "$started_source_sha256"
 

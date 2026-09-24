@@ -4,11 +4,11 @@
 # Two independent clean composed builds must match byte-for-byte over the
 # declared regular-file set. Both are packaged, the packages must be
 # identical, and one is extracted to a fresh location that must match again.
+# Then the static product suite runs from each clean tree with the extracted
+# tree, and the dynamic product suite and qualification run from all three.
 # Composition fails closed while the static and dynamic products install
-# different bytes at a shared runtime path such as usr/lib/crt1.o. The static
-# and dynamic product suites do not yet accept a supplied combined tree, so
-# after the reproducibility checks the gate names that unmet condition and
-# fails. A composed tree alone is never qualification.
+# different bytes at a shared runtime path such as usr/lib/crt1.o. A composed
+# tree alone is never qualification.
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -31,11 +31,16 @@ for label in installed second; do
     python3 -B "$builder" build "$work/$label"
 done
 python3 -B "$builder" compare "$work/installed" "$work/second"
-python3 -B "$builder" package "$work/installed" "$work/sysroot.tar"
-python3 -B "$builder" package "$work/second" "$work/second-sysroot.tar"
-cmp "$work/sysroot.tar" "$work/second-sysroot.tar"
-python3 -B "$builder" extract "$work/sysroot.tar" "$work/extracted"
+python3 -B "$builder" package "$work/installed" "$work/runtime.tar"
+python3 -B "$builder" package "$work/second" "$work/second-runtime.tar"
+cmp "$work/runtime.tar" "$work/second-runtime.tar"
+python3 -B "$builder" extract "$work/runtime.tar" "$work/extracted"
 python3 -B "$builder" compare "$work/installed" "$work/extracted"
 printf 'owned combined sysroot: two clean builds, identical packages and extraction; evidence: %s\n' "$work"
-printf 'owned combined sysroot: INCOMPLETE: the static and dynamic product suites do not yet accept a supplied combined sysroot; evidence: %s\n' "$work" >&2
-exit 1
+# The static suite's consumer matrix pairs one clean tree with the extracted
+# tree; run it once per clean tree so every combined tree executes it.
+readonly static_suite="$ROOT/compat/x86_64/run_owned_static_sysroot.sh"
+bash "$static_suite" --supplied-sysroots "$work/installed" "$work/second" "$work/extracted"
+bash "$static_suite" --supplied-sysroots "$work/second" "$work/installed" "$work/extracted"
+bash "$ROOT/compat/x86_64/run_materialized_dynamic_sysroot.sh" --supplied-work "$work"
+printf 'owned combined sysroot: PASS (static and dynamic product suites from installed, second and extracted combined trees); evidence: %s\n' "$work"

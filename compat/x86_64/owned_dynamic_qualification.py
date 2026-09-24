@@ -218,9 +218,13 @@ def read(path: Path) -> dict:
 def product_identity(product: Path) -> str:
     import crabc_cc_owned_dynamic as driver
     try:
-        manifest = driver.validate(product)
+        manifest = driver.validate_installation(product)
     except driver.shared.DriverError as error:
         raise QualificationError(f"installed product invalid: {error}") from error
+    # A combined four-mode sysroot embeds the dynamic product manifest that
+    # the builder's state binds; the driver has checked it against the tree.
+    if manifest.get("format") == driver.COMBINED_FORMAT:
+        manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
     state = read(product / "share/crabc/dynamic-product-state.json")
     require(set(state) == MATERIALIZATION_STATE_FIELDS, "materialization fields drifted")
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1", "wrong materialization schema")

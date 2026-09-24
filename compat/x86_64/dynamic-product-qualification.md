@@ -200,7 +200,17 @@ installed unchanged at its own path; only product metadata may move within
 `usr/lib/Scrt1.o` yields to the dynamic PIE entry.
 Links from a combined tree otherwise follow the same inspection and receipt
 contract; the receipt's `manifest_sha256` names the combined manifest.
+`owned_posix_product_evidence._validate_static_product` and
+`_validate_dynamic_product` accept the same combined trees and return the
+combined manifest and the tree's whole installed roster.
+
 `./scripts/dev-x86_64.sh owned-combined-sysroot` builds two clean combined
 trees, compares them byte-for-byte, requires identical packages and compares a
-fresh extraction. It fails closed until both products install one shared
-`usr/lib/crt1.o` and both product suites run from all three combined trees.
+fresh extraction. It then runs `run_owned_static_sysroot.sh --supplied-sysroots`
+once per clean tree with the extracted tree, and
+`run_materialized_dynamic_sysroot.sh --supplied-work` over the installed,
+second and extracted trees, so this qualification's `finish` binds the combined
+packages. The supplied static run retains its evidence instead of writing the
+static product receipt. The gate fails closed until both products install one
+shared `usr/lib/crt1.o`, and until every dynamic-suite leaf that re-validates
+its product accepts a combined tree.

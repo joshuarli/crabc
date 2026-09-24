@@ -269,6 +269,35 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                     with self.assertRaises(qualification.QualificationError):
                         REAL_PRODUCT_IDENTITY(product)
 
+    def test_combined_sysroot_binds_materialization_to_its_embedded_dynamic_manifest(self):
+        """The state binds the dynamic product, not the combined roster around it."""
+
+        product = self.work / "installed"
+        payloads = {"payload": qualification.digest(product / "payload")}
+        state = {
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+            "status": "materialized-unqualified", "source_sha256": self.source,
+            "contracts": {"contracts": "c" * 64}, "payload_files": payloads,
+            "allocator_backend": qualification.MATERIALIZATION_ALLOCATOR_BACKEND,
+            "allocator_lifecycle_test_audit": qualification.MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT,
+            "allocator_promoted": qualification.MATERIALIZATION_ALLOCATOR_PROMOTED,
+            "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
+            "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+            "runtime_profile": qualification.MATERIALIZATION_PROFILE,
+            "qualification": qualification.MATERIALIZATION_QUALIFICATION,
+        }
+        path = self.put("installed/share/crabc/dynamic-product-state.json", state)
+        embedded = {"files": {**payloads, "share/crabc/dynamic-product-state.json": qualification.digest(path)}}
+        self.put("installed/" + driver.COMBINED_PRODUCT_MANIFEST, embedded)
+        # The combined roster also names the static product's files.
+        combined = {"format": driver.COMBINED_FORMAT,
+                    "files": {**embedded["files"], "usr/lib/libc.a": "a" * 64}}
+        with mock.patch.object(driver, "validate_installation", return_value=combined):
+            self.assertEqual(REAL_PRODUCT_IDENTITY(product), qualification.digest(product / "share/crabc/manifest.json"))
+            self.put("installed/" + driver.COMBINED_PRODUCT_MANIFEST, {"files": {"payload": "0" * 64}})
+            with self.assertRaisesRegex(qualification.QualificationError, "payload binding"):
+                REAL_PRODUCT_IDENTITY(product)
+
     def test_complete_receipt_requires_explicit_clean_reviewed_publication(self):
         receipt = qualification.collect(self.work)
         self.assertEqual(receipt["status"], "qualified-pending-review")

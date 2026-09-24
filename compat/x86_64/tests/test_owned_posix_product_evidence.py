@@ -770,6 +770,71 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "runtime roster"):
             self.validate("pie", receipt)
 
+    def combined_product(self, name: str = "combined") -> Path:
+        """Compose the two fixture products the way the combined builder does."""
+
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import build_x86_64_owned_combined_sysroot as combined
+
+        # The static product's own Scrt1.o is never linked by a static mode.
+        (self.static / "usr/lib/Scrt1.o").write_bytes(b"static unlinked Scrt1\n")
+        for product in (self.static, self.dynamic):
+            path = product / "share/crabc/manifest.json"
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            manifest["toolchain"] = "pinned"
+            if "installed" in manifest:
+                manifest["installed"]["files"]["usr/lib/Scrt1.o"] = digest(self.static / "usr/lib/Scrt1.o")
+            self.write_json(path, manifest)
+        output = self.root / name
+        combined.compose({"static": self.static, "dynamic": self.dynamic}, output)
+        return output
+
+    def test_combined_sysroot_embeds_each_product_at_its_own_paths(self) -> None:
+        root = self.combined_product()
+        for validate in (evidence._validate_static_product, evidence._validate_dynamic_product):
+            with self.subTest(validate=validate.__name__):
+                manifest, files = validate(root)
+                self.assertEqual(manifest, root / "share/crabc/manifest.json")
+                # The installed roster is the whole combined tree.
+                self.assertEqual(files, json.loads(manifest.read_text(encoding="utf-8"))["files"])
+
+    def test_combined_sysroot_rejects_substituted_or_moved_product_payload(self) -> None:
+        root = self.combined_product()
+        path = root / "share/crabc/manifest.json"
+        original = path.read_text(encoding="utf-8")
+
+        def substitute(record: dict) -> None:
+            (root / "usr/lib/libc.a").write_bytes(b"foreign\n")
+            record["files"]["usr/lib/libc.a"] = digest(root / "usr/lib/libc.a")
+
+        def move(record: dict) -> None:
+            record["products"]["dynamic"]["placements"]["usr/lib/libc.so"] = "usr/lib/libc.a"
+
+        def drop(record: dict) -> None:
+            record["products"]["static"]["placements"]["usr/lib/crt1.o"] = None
+
+        def forget_alias(record: dict) -> None:
+            (root / "lib/ld-musl-x86_64.so.1").unlink()
+            record["symlinks"] = {}
+
+        for validate, edit, message in (
+            (evidence._validate_static_product, substitute, "static payload unchanged: usr/lib/libc.a"),
+            (evidence._validate_dynamic_product, move, "moved dynamic payload: usr/lib/libc.so"),
+            (evidence._validate_static_product, drop, "moved static payload: usr/lib/crt1.o"),
+            (evidence._validate_dynamic_product, forget_alias, "aliases omit the dynamic product"),
+        ):
+            with self.subTest(message=message):
+                record = json.loads(original)
+                edit(record)
+                self.write_json(path, record)
+                with self.assertRaisesRegex(evidence.ProductEvidenceError, message):
+                    validate(root)
+                path.write_text(original, encoding="utf-8")
+                (root / "usr/lib/libc.a").write_bytes((self.static / "usr/lib/libc.a").read_bytes())
+                if not (root / "lib/ld-musl-x86_64.so.1").is_symlink():
+                    (root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+                validate(root)
+
     def test_dynamic_product_requires_its_sealed_driver(self) -> None:
         receipt = self.dynamic_receipt()
         (self.dynamic / "bin/crabc-cc-dynamic").unlink()
