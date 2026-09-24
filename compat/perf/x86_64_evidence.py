@@ -85,6 +85,17 @@ PERFORMANCE_GATE = "performance.release"
 
 IDENTITY_FIELDS = frozenset({"path", "sha256", "mode", "bytes"})
 
+# Lane-private staged file inputs.  The descriptor/stdio rows read (and
+# idempotently rewrite) the intact 4-KiB ``0..255`` pattern; the format/parse
+# row recreates its file with ``w+``.  Separate paths keep every row's input
+# independent of which rows or observers ran before it.
+IO_FIXTURE_FILE = "/app/input/io-fixture.bin"
+FORMAT_PARSE_FILE = "/app/input/format-parse.txt"
+
+
+def legacy_io_file(workload_name: str) -> str:
+    return FORMAT_PARSE_FILE if workload_name == "stdio_format_parse" else IO_FIXTURE_FILE
+
 # An attempt report is one retained measurement, never a release result.
 RELEASE_QUALIFICATION_REASON = "one attempt is not a three-attempt admitted collection"
 
@@ -1018,7 +1029,7 @@ def canonical_workload_invocations(checkout: Path) -> dict[str, dict[str, Any]]:
                 Path("/app/lib/libsymbols_128.so"),
                 Path("/app/lib/libsymbols_1024.so"),
                 Path("/app/lib/libbench_graph_root.so"),
-                Path("/app/input/io-fixture.bin"),
+                Path(legacy_io_file(workload.name)),
                 Path("/app/input/span-aligned.bin"),
                 Path("/app/input/span-unaligned.bin"),
                 Path("/app/input/span-destination.bin"),

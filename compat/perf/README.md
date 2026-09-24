@@ -218,7 +218,8 @@ an `ungetc` round trip. These checks make the measured paths observable without
 sharing a mutable file between the reference and candidate processes.
 
 `stdio_format_parse` recreates its formatted input for each operation with a
-`w+` stream. It checks `fprintf`/`fflush`/`fseek`/`fscanf` for signed, unsigned,
+`w+` stream at its own lane-private path, never the 4-KiB read fixture, so no
+row's input depends on which rows or memory observers ran before it. It checks `fprintf`/`fflush`/`fseek`/`fscanf` for signed, unsigned,
 hexadecimal, and bounded string fields; then consumes the preserved literal tail
 with `fgetc` and independently checks bounded `snprintf`/`sscanf`. The direct
 musl differential uses the same contract, exercises the scalar scanner with a

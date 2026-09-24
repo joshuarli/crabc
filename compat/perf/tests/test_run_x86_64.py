@@ -455,6 +455,21 @@ class PerformanceRowContractTests(unittest.TestCase):
         self.assertEqual(primitive.memory_phases, ("main-initial", "primitive-guard-window-live", "main-final"))
 
 
+class StagedInputTests(unittest.TestCase):
+    def test_staged_lane_arguments_match_the_replayed_file_contract(self) -> None:
+        """The adapter's staged argv is the reader's canonical argv for file rows."""
+
+        rows = {row.name: row for row in runner.performance_rows(ROOT)}
+        lane = runner.Lane(
+            name="musl", root=WORK_ROOT, binaries={"workload": "/app/bin/workload"}, dsos={},
+            io_file=runner.evidence.IO_FIXTURE_FILE, span_inputs={}, environment={},
+        )
+        canonical = runner.evidence.canonical_workload_invocations(ROOT)
+        for name in ("fd_file_4k", "stdio_file_4k", "stdio_format_parse"):
+            with self.subTest(name):
+                self.assertEqual(runner.virtual_arguments(rows[name], lane), canonical[name]["arguments"])
+
+
 class RosterBoundaryTests(unittest.TestCase):
     def test_unbound_smoke_does_not_claim_a_three_run_roster(self) -> None:
         args = type("Args", (), {"attempt_roster": None, "implementation_smoke": True})()

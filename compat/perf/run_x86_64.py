@@ -1350,7 +1350,7 @@ def stage_lane(
             virtual = f"/app/lib/{key}"
             copy_file(artifact.output, lane_root / virtual.lstrip("/"))
             dsos[key] = virtual
-    io_file = "/app/input/io-fixture.bin"
+    io_file = evidence.IO_FIXTURE_FILE
     io_bytes = bytes(range(256)) * 16
     destination = lane_root / io_file.lstrip("/")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1391,7 +1391,8 @@ def virtual_arguments(row: performance_profile.PerformanceRow, lane: Lane) -> li
     return aarch64_contract.workload_arguments(
         workload,
         dso("libsymbols_1.so"), dso("libsymbols_128.so"), dso("libsymbols_1024.so"),
-        Path(lane.dsos.get("libbench_graph_root.so", "/missing")), Path(lane.io_file),
+        Path(lane.dsos.get("libbench_graph_root.so", "/missing")),
+        Path(evidence.legacy_io_file(workload.name)),
         Path(lane.span_inputs.get("span-aligned.bin", "/missing")),
         Path(lane.span_inputs.get("span-unaligned.bin", "/missing")),
         Path(lane.span_inputs.get("span-destination.bin", "/missing")),

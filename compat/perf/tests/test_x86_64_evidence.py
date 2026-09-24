@@ -62,6 +62,22 @@ class CanonicalProfileInvocationTests(unittest.TestCase):
             "/app/bin/x86_64_primitive_boundary_workload",
         )
 
+    def test_rewriting_file_row_does_not_share_the_read_fixture(self) -> None:
+        """No row's input may depend on whether a rewriting row ran first.
+
+        ``stdio_format_parse`` recreates its file with ``w+``; the 4-KiB
+        descriptor/stdio rows require the intact ``0..255`` pattern.  Observers
+        run every row before the timed samples, so a shared path made those
+        rows fail by order alone.
+        """
+
+        invocations = evidence.canonical_workload_invocations(ROOT)
+        read_rows = ("fd_file_4k", "stdio_file_4k")
+        read_paths = {invocations[name]["arguments"][-1] for name in read_rows}
+        self.assertEqual(read_paths, {evidence.IO_FIXTURE_FILE})
+        self.assertEqual(invocations["stdio_format_parse"]["arguments"][-1], evidence.FORMAT_PARSE_FILE)
+        self.assertNotEqual(evidence.FORMAT_PARSE_FILE, evidence.IO_FIXTURE_FILE)
+
     def test_full_build_roster_keeps_timed_and_memory_artifacts_distinct(self) -> None:
         """All 114 rows use 28 fixed provider outputs, never 114 rebuilds."""
 
