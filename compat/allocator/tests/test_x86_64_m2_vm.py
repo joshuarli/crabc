@@ -769,6 +769,15 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "target": metadata_check["target"],
             }
         ]
+        arena_lifecycle_check = next(
+            check
+            for component in summary["components"]
+            if component["id"] == "arenas"
+            for check in component["checks"]
+            if check["id"] == "arena-reservation-lifecycle-c-rust-differential"
+        )
+        arena_lifecycle_record = {"id": arena_lifecycle_check["id"]}
+        arena_lifecycle_producer = mock.Mock(return_value={})
         vm_check_records_producer = mock.Mock(return_value=vm_records)
         arena_records_producer = mock.Mock(return_value=arena_records)
         metadata_records_producer = mock.Mock(return_value=metadata_records)
@@ -820,6 +829,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 RUNNER,
                 _m2_x86_64_vm_check_records=vm_check_records_producer,
                 _m2_x86_64_process_arena_collect_check_records=arena_records_producer,
+                _run_m2_x86_64_arena_lifecycle_evidence=arena_lifecycle_producer,
+                _m2_x86_64_arena_lifecycle_check_record=mock.Mock(
+                    return_value=arena_lifecycle_record
+                ),
                 _m2_x86_64_metadata_check_records=metadata_records_producer,
                 run_m2_x86_64_metadata_lifecycle_differential=metadata_lifecycle_producer,
             ),
@@ -849,6 +862,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
         vm_check_records_producer.assert_called_once_with(summary, {}, {})
         arena_records_producer.assert_called_once_with(summary, {})
+        arena_lifecycle_producer.assert_called_once_with(
+            offline=True, test_program={}, check=arena_lifecycle_check
+        )
+        self.assertIn(arena_lifecycle_check["id"], observed["ids"])
         metadata_lifecycle_producer.assert_called_once()
         metadata_records_producer.assert_called_once_with(summary, {})
         runtime_thp_producer.assert_called_once_with()

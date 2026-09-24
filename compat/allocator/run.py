@@ -485,6 +485,12 @@ M2_X86_64_ARENA_CHECKS = (
         "kind": "c-rust-process-arena-purge-differential",
         "target": "arena::owned::tests::emit_native_owned_arena_purge_trace",
     },
+    {
+        "expected_passed_test_count": 1,
+        "id": "arena-reservation-lifecycle-c-rust-differential",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "arena::owned::tests::emit_native_arena_lifecycle_trace",
+    },
 )
 # This direct C/Rust record covers only src/init.c's detached static-preimage
 # substep: the original MI_MEMID_STATIC image, its kind-only memid
@@ -12658,6 +12664,40 @@ def _m2_x86_64_vm_producer() -> Any:
     return producer
 
 
+def _m2_x86_64_arena_lifecycle_producer() -> Any:
+    """Load the pinned C/Rust arena reservation and slice-lifecycle producer."""
+
+    path = ALLOCATOR_ROOT / "m2_arena_lifecycle_x86_64.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_arena_lifecycle", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 arena lifecycle producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _m2_x86_64_arena_lifecycle_check_record(
+    check: Mapping[str, Any], evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Record the executed arena reservation/slice-lifecycle differential."""
+
+    if (
+        evidence.get("status") != "passed"
+        or evidence.get("comparison", {}).get("status") != "matched"
+        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+    ):
+        raise HarnessError("native x86 M2 arena lifecycle receipt is invalid")
+    return {
+        "comparison_status": "matched",
+        "component": "arenas",
+        "command": list(evidence["rust_command"]),
+        "evidence_scope": "pinned-c-rust-arena-reservation-registry-search-and-slice-lifecycle",
+        "id": check["id"],
+        "passed_test_count": evidence["rust_passed_test_count"],
+        "target": check["target"],
+    }
+
+
 def _m2_x86_64_runtime_thp_configuration_producer() -> Any:
     """Load the focused lifecycle owner for the retained THP admission receipt."""
 
@@ -12920,6 +12960,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-vm-primitives-source-profile-matrix",
                     "c-rust-aligned-overmap-cleanup-boundary-matrix",
                     "c-rust-process-arena-purge-differential",
+                    "c-rust-arena-lifecycle-differential",
                     "c-rust-runtime-thp-source-environment-admission",
                     "c-rust-initialization-tld-source-matrix",
                     "c-rust-init-recursion-lifecycle",
@@ -12987,6 +13028,11 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or "fn emit_native_owned_arena_purge_trace()" not in source.read_text(encoding="utf-8")
                 ):
                     raise HarnessError("native x86 M2 process-arena evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-arena-lifecycle-differential":
+                if component_id != "arenas" or raw_check.get("target") != (
+                    _m2_x86_64_arena_lifecycle_producer().TARGET
+                ):
+                    raise HarnessError("native x86 M2 arena lifecycle evidence target is absent")
             elif raw_check.get("kind") == "c-rust-metadata-lifecycle-differential":
                 rust_source = ROOT / "crabc-mimalloc/src/meta.rs"
                 fixture_text = (
@@ -13254,6 +13300,16 @@ def _run_m2_x86_64_vm_evidence(
         test_program=test_program,
         contract_fragment=M2_X86_64_VM_FRAGMENT,
         arena_owned_check=arena_owned_check,
+    )
+
+
+def _run_m2_x86_64_arena_lifecycle_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the arena lifecycle producer against the aggregate's native binary."""
+
+    return _m2_x86_64_arena_lifecycle_producer().run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program, check=check,
     )
 
 
@@ -14385,6 +14441,18 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         summary, vm_evidence, runtime_thp_evidence
     )
     arena_owned_checks = _m2_x86_64_process_arena_collect_check_records(summary, vm_evidence)
+    _, arena_lifecycle_check = _m2_x86_64_check_by_id(
+        summary, "arena-reservation-lifecycle-c-rust-differential"
+    )
+    arena_owned_checks = [
+        *arena_owned_checks,
+        _m2_x86_64_arena_lifecycle_check_record(
+            arena_lifecycle_check,
+            _run_m2_x86_64_arena_lifecycle_evidence(
+                offline=offline, test_program=test_program, check=arena_lifecycle_check
+            ),
+        ),
+    ]
     initialization_checks = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence
     )

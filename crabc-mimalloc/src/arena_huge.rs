@@ -242,7 +242,7 @@ impl ProcessArenaBacking {
             let size = (regular_kib as usize).wrapping_mul(crate::config::KIB);
             match unsafe {
                 self.reserve_os_memory_for_process(process, config, size,
-                    crate::os::MapAccess::Committed, true, random.as_deref_mut())
+                    crate::os::MapAccess::Committed, true, false, random.as_deref_mut())
             } {
                 Ok(arena) => {
                     results.regular = Some(Ok(()));
@@ -287,7 +287,7 @@ impl ProcessArenaBacking {
             let size = (regular_kib as usize).wrapping_mul(crate::config::KIB);
             match unsafe {
                 self.reserve_os_memory_for_process(process, config, size,
-                    crate::os::MapAccess::Committed, true, random.as_deref_mut())
+                    crate::os::MapAccess::Committed, true, false, random.as_deref_mut())
             } {
                 Ok(arena) => {
                     results.regular = Some(Ok(()));

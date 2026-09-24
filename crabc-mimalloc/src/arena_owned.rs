@@ -1207,7 +1207,8 @@ impl ProcessArenaBacking {
         for size in [Some(plan.primary_size), plan.fallback_size].into_iter().flatten() {
             let stats = process.subprocess().vm_statistics();
             if plan.adjust_committed { stats.committed_adjust_decrease(size); }
-            let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large, random.as_deref_mut()) };
+            // Pinned `mi_arena_reserve` always reserves a shared arena.
+            let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large, false, random.as_deref_mut()) };
             if let Some(id) = result { return Some(id); }
             if plan.adjust_committed { stats.committed_adjust_increase(size); }
             if self.retained_release_error().is_some() { return None; }
@@ -1215,9 +1216,12 @@ impl ProcessArenaBacking {
         None
     }
 
-    /// Explicit source regular reservation used after huge startup options.
-    /// It may span multiple source arenas; the allocation owner retains any
-    /// suffix after partial registry publication.
+    /// Explicit source regular reservation (`mi_reserve_os_memory_ex2`), used
+    /// after huge startup options. It may span multiple source arenas; the
+    /// allocation owner retains any suffix after partial registry publication.
+    /// An `exclusive` parent is suitable only for requests naming it (source
+    /// `mi_arena_is_suitable`); the automatic `mi_arena_reserve` path never
+    /// asks for one.
     ///
     /// # Safety
     /// This is the process's sole arena group with immutable configuration.
@@ -1225,9 +1229,10 @@ impl ProcessArenaBacking {
     /// published ranges, callbacks, and retained failures are retired by
     /// `destroy_all`; no teardown overlaps. Any random image is exclusively
     /// borrowed from the current default Theap.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) unsafe fn reserve_os_memory_for_process(
         &'static self, process: VmProcess<'static>, config: MemoryConfig, size: usize,
-        access: MapAccess, allow_large: bool, random: crate::os::OsRandom<'_>,
+        access: MapAccess, allow_large: bool, exclusive: bool, random: crate::os::OsRandom<'_>,
     ) -> Result<ArenaId, Errno> {
         if size > crate::config::MAX_ALLOC_SIZE { return Err(Errno::NOMEM); }
         let size = size.checked_add(crate::config::ARENA_SLICE_SIZE - 1)
@@ -1235,7 +1240,7 @@ impl ProcessArenaBacking {
             .filter(|size| *size <= crate::config::MAX_ALLOC_SIZE).ok_or(Errno::NOMEM)?;
         let _guard = self.reserve_lock.lock()?;
         if self.retained_release_error().is_some() { return Err(Errno::NOMEM); }
-        unsafe { self.reserve_one_locked(process, config, size, access, allow_large, random) }.ok_or(Errno::NOMEM)
+        unsafe { self.reserve_one_locked(process, config, size, access, allow_large, exclusive, random) }.ok_or(Errno::NOMEM)
     }
 
     /// Source `mi_reserve_os_memory_ex2` regular aligned map/manage/free.
@@ -1245,9 +1250,11 @@ impl ProcessArenaBacking {
     /// # Safety
     /// The caller holds `reserve_lock` and satisfies `reserve_locked`'s
     /// process/backing lifetime and random-access obligations.
+    #[allow(clippy::too_many_arguments)]
     unsafe fn reserve_one_locked(
         &self, process: VmProcess<'_>, config: MemoryConfig,
-        size: usize, access: MapAccess, allow_large: bool, random: crate::os::OsRandom<'_>,
+        size: usize, access: MapAccess, allow_large: bool, exclusive: bool,
+        random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaId> {
         // Reserve a cleanup slot before acquiring any new OS ownership.
         let slot = self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY)?;
@@ -1257,7 +1264,7 @@ impl ProcessArenaBacking {
             Ok(allocation) => {
                 let (mapping, memory) = allocation.into_mapping_and_memory();
                 match unsafe { self.install_owned_os_mapping_locked(process,
-                    StoredVmProcess::from_retained_process(process), config, size, mapping, memory, -1, false) } {
+                    StoredVmProcess::from_retained_process(process), config, size, mapping, memory, -1, exclusive) } {
                     Ok(managed) => return Some(managed.arena_id()),
                     Err(failure) => { let (mapping, memory, _) = failure.into_parts(); (mapping, memory, None) }
                 }
@@ -1431,7 +1438,7 @@ mod tests {
         let backing = self::backing();
         let size = ARENA_MAX_SIZE + ARENA_MIN_SIZE;
         unsafe { backing.reserve_os_memory_for_process(process, config(), size,
-            MapAccess::Reserved, false, None) }.unwrap();
+            MapAccess::Reserved, false, false, None) }.unwrap();
         assert_eq!(backing.registry.count(), 2);
         fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
         let mut destroyed = unsafe { backing.destroy_all(&mut []) }.unwrap();
@@ -2489,7 +2496,7 @@ mod tests {
         let backing = backing();
         let process = process();
         let arena = unsafe { backing.reserve_os_memory_for_process(process, config(),
-            17 * crate::config::GIB, MapAccess::Committed, false, None) }.unwrap();
+            17 * crate::config::GIB, MapAccess::Committed, false, false, None) }.unwrap();
         assert_eq!(backing.registry.count(), 2);
         let parent = unsafe { &*arena.as_ptr() };
         let child = unsafe { backing.registry.arena_at(1) }.unwrap();
@@ -3448,6 +3455,394 @@ mod tests {
         assert_eq!(unsafe { view.slices_committed() }.unwrap().popcount_range(slice_index, 2), Some(0));
         assert!(claim.release());
         assert_eq!(index, 20);
+    }
+
+    // ---- Native arena lifecycle differential -------------------------------
+    //
+    // Field-for-field Rust receiver of `compat/allocator/m2_arena_lifecycle_x86_64.c`.
+    // Every scenario owns a fresh process arena group and subprocess image,
+    // matching the C fixture's zeroed per-scenario `mi_subproc_t`, and drives
+    // the production `try_allocate_slices` (`mi_arenas_try_alloc`) and
+    // `ArenaSliceClaim::release` (`_mi_arenas_free`) entries. Values are
+    // address-free source relations; `mmap_calls` is omitted because kernel
+    // alignment luck legitimately changes the aligned-map attempt count.
+
+    struct LifecycleTrace {
+        field: usize,
+    }
+
+    impl LifecycleTrace {
+        fn emit(&mut self, value: i64) {
+            std::println!("m2.arena.lifecycle.{}={value}", self.field);
+            self.field += 1;
+        }
+
+        fn emit_bool(&mut self, value: bool) {
+            self.emit(i64::from(value));
+        }
+
+        fn marker(&mut self, scenario: i64) {
+            self.emit(-1000 - scenario);
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct LifecycleOwner {
+        process: VmProcess<'static>,
+        config: MemoryConfig,
+        backing: &'static ProcessArenaBacking,
+    }
+
+    fn lifecycle_options(reserve_kib: i64, eager: i64, disallow_os: bool, numa_local: bool) -> VmOptions {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaReserve, reserve_kib);
+        options.set(VmOption::ArenaEagerCommit, eager);
+        options.set(VmOption::DisallowOsAlloc, i64::from(disallow_os));
+        options.set(VmOption::DisallowArenaAlloc, 0);
+        options.set(VmOption::ArenaIsNumaLocal, i64::from(numa_local));
+        options.set(VmOption::AllowLargeOsPages, 0);
+        options.set(VmOption::PurgeDelay, -1);
+        options
+    }
+
+    fn lifecycle_owner(overcommit: bool, reserve_kib: i64, eager: i64, numa_local: bool) -> LifecycleOwner {
+        LifecycleOwner {
+            process: process_with_options(lifecycle_options(reserve_kib, eager, false, numa_local)),
+            config: MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, overcommit, false),
+            backing: backing(),
+        }
+    }
+
+    /// The same subprocess registry observed through `disallow_os_alloc`.
+    /// The C fixture flips the ambient option between two calls; Rust keeps
+    /// each resolved option image immutable and presents the second image.
+    fn lifecycle_disallowing(owner: LifecycleOwner, reserve_kib: i64, eager: i64) -> VmProcess<'static> {
+        let policy = Box::leak(Box::new(
+            VmPolicy::new(lifecycle_options(reserve_kib, eager, true, false)).unwrap(),
+        ));
+        policy.finish_preloading();
+        VmProcess::new(policy, owner.process.subprocess())
+    }
+
+    #[derive(Clone, Copy)]
+    struct LifecycleStats {
+        reserved: i64,
+        committed: i64,
+        commit_calls: i64,
+        arena_count: i64,
+    }
+
+    fn lifecycle_stats(owner: LifecycleOwner) -> LifecycleStats {
+        let vm = owner.process.subprocess().vm_statistics().snapshot();
+        let arena = owner.process.subprocess().arena_statistics().snapshot();
+        LifecycleStats {
+            reserved: vm.reserved_current,
+            committed: vm.committed_current,
+            commit_calls: vm.commit_calls,
+            arena_count: arena.arena_count,
+        }
+    }
+
+    fn emit_lifecycle_stats_delta(trace: &mut LifecycleTrace, owner: LifecycleOwner, before: LifecycleStats) {
+        let after = lifecycle_stats(owner);
+        trace.emit(after.reserved - before.reserved);
+        trace.emit(after.committed - before.committed);
+        trace.emit(after.commit_calls - before.commit_calls);
+        trace.emit(after.arena_count - before.arena_count);
+    }
+
+    fn emit_lifecycle_arenas_from(trace: &mut LifecycleTrace, owner: LifecycleOwner, first: usize) {
+        let count = owner.backing.registry().count();
+        for index in first..count {
+            // SAFETY: fixture arena groups are never destroyed.
+            let arena = unsafe { owner.backing.registry().arena_at(index) }.expect("published arena");
+            let view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }.unwrap();
+            let free = unsafe { view.slices_free() }.unwrap();
+            let free_count = (0..arena.slice_count)
+                .filter(|&slice| free.is_set_range(slice, 1) == Some(true))
+                .count();
+            let committed = unsafe { view.slices_committed() }.unwrap();
+            let dirty = unsafe { view.slices_dirty() }.unwrap();
+            trace.emit(index as i64);
+            trace.emit(arena.arena_index as i64);
+            trace.emit(arena.slice_count as i64);
+            trace.emit(arena.info_slices as i64);
+            trace.emit((arena.total_size / ARENA_SLICE_SIZE) as i64);
+            trace.emit_bool(arena.parent.is_null());
+            trace.emit_bool(arena.memid.kind() == MemoryKind::Os);
+            trace.emit_bool(arena.memid.initially_committed());
+            trace.emit_bool(arena.memid.initially_zero());
+            trace.emit_bool(arena.memid.is_pinned());
+            trace.emit_bool(arena.is_exclusive);
+            trace.emit(i64::from(arena.numa_node));
+            trace.emit_bool(arena.start.addr() % ARENA_ALIGNMENT == 0);
+            trace.emit(free_count as i64);
+            trace.emit(committed.popcount_range(0, arena.slice_count).unwrap() as i64);
+            trace.emit(dirty.popcount_range(0, arena.slice_count).unwrap() as i64);
+        }
+    }
+
+    struct LifecycleClaim {
+        claim: Option<ArenaSliceClaim<'static>>,
+        slices: usize,
+    }
+
+    impl LifecycleClaim {
+        fn is_some(&self) -> bool {
+            self.claim.is_some()
+        }
+
+        fn arena(&self) -> ArenaId {
+            let memory = self.claim.as_ref().unwrap().memory_id().arena_memory().unwrap();
+            unsafe { ArenaId::from_arena(memory.arena) }.unwrap()
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lifecycle_claim(
+        trace: &mut LifecycleTrace, owner: LifecycleOwner, process: VmProcess<'static>,
+        slices: usize, commit: bool, requested: ArenaId, numa_node: i32,
+    ) -> LifecycleClaim {
+        let before = lifecycle_stats(owner);
+        let arenas_before = owner.backing.registry().count();
+        let search = ArenaSearch {
+            heap_sequence: 0,
+            heap_count: 1,
+            thread_sequence: 0,
+            numa_node,
+            requested,
+            allow_pinned: true,
+        };
+        // SAFETY: each fixture group, its process pair, and every requested
+        // parent remain live for the whole test; claims are released below.
+        let claim = unsafe {
+            owner.backing.try_allocate_slices(process, owner.config, search, slices,
+                ARENA_SLICE_SIZE, commit)
+        };
+        trace.emit_bool(claim.is_some());
+        trace.emit(owner.backing.registry().count() as i64);
+        match &claim {
+            Some(claim) => {
+                let memory = claim.memory_id();
+                let arena_memory = memory.arena_memory().unwrap();
+                let arena = unsafe { &*arena_memory.arena };
+                let view = unsafe { ArenaView::from_ptr(arena_memory.arena) }.unwrap();
+                let slice_index = arena_memory.slice_index as usize;
+                assert_eq!(view.slice_start(slice_index), Some(claim.start()));
+                trace.emit(arena.arena_index as i64);
+                trace.emit(slice_index as i64);
+                trace.emit(i64::from(arena_memory.slice_count));
+                trace.emit_bool(memory.initially_committed());
+                trace.emit_bool(memory.initially_zero());
+                trace.emit_bool(memory.is_pinned());
+                trace.emit_bool(unsafe { view.slices_committed() }.unwrap()
+                    .is_set_range(slice_index, slices) == Some(true));
+            }
+            None => for _ in 0..7 { trace.emit(-1); },
+        }
+        emit_lifecycle_stats_delta(trace, owner, before);
+        emit_lifecycle_arenas_from(trace, owner, arenas_before);
+        LifecycleClaim { claim, slices }
+    }
+
+    fn lifecycle_release(trace: &mut LifecycleTrace, owner: LifecycleOwner, item: &mut LifecycleClaim) {
+        let claim = item.claim.take().expect("live lifecycle claim");
+        let before = lifecycle_stats(owner);
+        let arena_memory = claim.memory_id().arena_memory().unwrap();
+        let view = unsafe { ArenaView::from_ptr(arena_memory.arena) }.unwrap();
+        let index = arena_memory.slice_index as usize;
+        assert!(claim.release());
+        trace.emit_bool(unsafe { view.slices_free() }.unwrap().is_set_range(index, item.slices) == Some(true));
+        trace.emit_bool(unsafe { view.slices_purge() }.unwrap().is_set_range(index, item.slices) == Some(true));
+        emit_lifecycle_stats_delta(trace, owner, before);
+    }
+
+    #[test]
+    fn emit_native_arena_lifecycle_trace() {
+        let fault = fault::install(fault::Plan::disabled());
+        let mut trace = LifecycleTrace { field: 0 };
+        let chunk = crate::config::BCHUNK_BITS;
+        let none = ArenaId::none();
+
+        // 1. Reserved-growth and arena-count scaling after eight arenas.
+        trace.marker(1);
+        {
+            let owner = lifecycle_owner(true, 128 * 1024, 0, false);
+            let mut claims = std::vec::Vec::new();
+            while claims.len() < 40 && owner.backing.registry().count() < 10 {
+                let claim = lifecycle_claim(&mut trace, owner, owner.process, chunk, false, none, -1);
+                assert!(claim.is_some());
+                claims.push(claim);
+            }
+            trace.emit(claims.len() as i64);
+            for claim in &mut claims { lifecycle_release(&mut trace, owner, claim); }
+        }
+
+        // 2. Commit transitions and same-span reclaim.
+        trace.marker(2);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let p = owner.process;
+            let mut first = lifecycle_claim(&mut trace, owner, p, 1, true, none, -1);
+            let mut second = lifecycle_claim(&mut trace, owner, p, 2, false, none, -1);
+            let mut third = lifecycle_claim(&mut trace, owner, p, 4, true, none, -1);
+            lifecycle_release(&mut trace, owner, &mut first);
+            let mut again = lifecycle_claim(&mut trace, owner, p, 1, true, none, -1);
+            let mut again_uncommitted = lifecycle_claim(&mut trace, owner, p, 1, false, none, -1);
+            lifecycle_release(&mut trace, owner, &mut second);
+            let mut mixed = lifecycle_claim(&mut trace, owner, p, 3, false, none, -1);
+            lifecycle_release(&mut trace, owner, &mut third);
+            lifecycle_release(&mut trace, owner, &mut again);
+            lifecycle_release(&mut trace, owner, &mut again_uncommitted);
+            lifecycle_release(&mut trace, owner, &mut mixed);
+        }
+
+        // 3. Eager-commit option matrix under both overcommit observations.
+        for (variant, (overcommit, eager)) in
+            [(true, 1), (true, 2), (false, 2), (false, 1), (true, 0)].into_iter().enumerate()
+        {
+            trace.marker(3);
+            trace.emit(variant as i64);
+            let owner = lifecycle_owner(overcommit, 32 * 1024, eager, false);
+            let p = owner.process;
+            let mut committed = lifecycle_claim(&mut trace, owner, p, 2, true, none, -1);
+            let mut uncommitted = lifecycle_claim(&mut trace, owner, p, 2, false, none, -1);
+            lifecycle_release(&mut trace, owner, &mut committed);
+            let mut reused = lifecycle_claim(&mut trace, owner, p, 2, true, none, -1);
+            lifecycle_release(&mut trace, owner, &mut uncommitted);
+            lifecycle_release(&mut trace, owner, &mut reused);
+        }
+
+        // 4. disallow_os_alloc refuses only the fresh reservation.
+        trace.marker(4);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let disallowing = lifecycle_disallowing(owner, 32 * 1024, 0);
+            let mut first = lifecycle_claim(&mut trace, owner, owner.process, chunk, false, none, -1);
+            let refused = lifecycle_claim(&mut trace, owner, disallowing, chunk, false, none, -1);
+            assert!(!refused.is_some());
+            let mut second = lifecycle_claim(&mut trace, owner, owner.process, chunk, false, none, -1);
+            assert!(second.is_some());
+            lifecycle_release(&mut trace, owner, &mut first);
+            lifecycle_release(&mut trace, owner, &mut second);
+        }
+
+        // 5. Requested and exclusive arenas.
+        trace.marker(5);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let p = owner.process;
+            let mut full = lifecycle_claim(&mut trace, owner, p, chunk, false, none, -1);
+            let first = full.arena();
+            let requested_full = lifecycle_claim(&mut trace, owner, p, chunk, false, first, -1);
+            assert!(!requested_full.is_some());
+            let mut requested_small = lifecycle_claim(&mut trace, owner, p, 1, false, first, -1);
+
+            let before = lifecycle_stats(owner);
+            let arenas_before = owner.backing.registry().count();
+            let exclusive = unsafe {
+                owner.backing.reserve_os_memory_for_process(p, owner.config, ARENA_MIN_SIZE,
+                    MapAccess::Reserved, false, true, None)
+            };
+            trace.emit(match exclusive { Ok(_) => 0, Err(error) => i64::from(error.raw()) });
+            trace.emit_bool(exclusive.is_ok());
+            emit_lifecycle_stats_delta(&mut trace, owner, before);
+            emit_lifecycle_arenas_from(&mut trace, owner, arenas_before);
+            let exclusive = exclusive.unwrap();
+            let mut unrequested = lifecycle_claim(&mut trace, owner, p, chunk, false, none, -1);
+            assert!(!unrequested.is_some() || unrequested.arena() != exclusive);
+            let mut in_exclusive = lifecycle_claim(&mut trace, owner, p, 2, true, exclusive, -1);
+            assert!(in_exclusive.is_some() && in_exclusive.arena() == exclusive);
+            lifecycle_release(&mut trace, owner, &mut in_exclusive);
+            if unrequested.is_some() { lifecycle_release(&mut trace, owner, &mut unrequested); }
+            lifecycle_release(&mut trace, owner, &mut requested_small);
+            lifecycle_release(&mut trace, owner, &mut full);
+        }
+
+        // 6. Requests too large for the bounded reservation or arena.
+        trace.marker(6);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let p = owner.process;
+            let mut spanning = lifecycle_claim(&mut trace, owner, p, 1500, false, none, -1);
+            let oversized = lifecycle_claim(&mut trace, owner, p,
+                ARENA_MAX_SIZE / ARENA_SLICE_SIZE - 64, false, none, -1);
+            assert!(!oversized.is_some());
+            let impossible = lifecycle_claim(&mut trace, owner, p,
+                ARENA_MAX_SIZE / ARENA_SLICE_SIZE + 1, false, none, -1);
+            assert!(!impossible.is_some());
+            if spanning.is_some() { lifecycle_release(&mut trace, owner, &mut spanning); }
+        }
+
+        // 7. Clean primary reservation failure with and without the source
+        //    128-MiB fallback. The C seam fails every regular map at or above
+        //    a byte threshold; here exactly the primary's direct and
+        //    over-allocated source attempts fail.
+        for (variant, eager) in [0, 1].into_iter().enumerate() {
+            trace.marker(7);
+            trace.emit(variant as i64);
+            let owner = lifecycle_owner(true, 1024 * 1024, eager, false);
+            fault.set(fault::Plan::at_pair(fault::Point::Map, 1, fault::Point::Map, 1, Errno::NOMEM));
+            let mut fallback = lifecycle_claim(&mut trace, owner, owner.process, 1, true, none, -1);
+            assert!(fallback.is_some());
+            trace.emit_bool(fault.observed() > 0 && fault.secondary_observed() > 0);
+            fault.set(fault::Plan::disabled());
+            lifecycle_release(&mut trace, owner, &mut fallback);
+
+            let bounded = lifecycle_owner(true, 128 * 1024, eager, false);
+            fault.set(fault::Plan::at_pair(fault::Point::Map, 1, fault::Point::Map, 1, Errno::NOMEM));
+            let refused = lifecycle_claim(&mut trace, bounded, bounded.process, 1, true, none, -1);
+            assert!(!refused.is_some());
+            trace.emit_bool(fault.observed() > 0 && fault.secondary_observed() > 0);
+            fault.set(fault::Plan::disabled());
+            let mut retried = lifecycle_claim(&mut trace, bounded, bounded.process, 1, true, none, -1);
+            assert!(retried.is_some());
+            lifecycle_release(&mut trace, bounded, &mut retried);
+        }
+
+        // 8. NUMA-local reservation and the second, nonmatching source pass.
+        trace.marker(8);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, true);
+            let p = owner.process;
+            let mut local = lifecycle_claim(&mut trace, owner, p, 1, false, none, 0);
+            let arena = local.arena();
+            let node = unsafe { (*arena.as_ptr()).numa_node };
+            trace.emit_bool(node >= 0);
+            let mut remote = lifecycle_claim(&mut trace, owner, p, 1, false, none, node + 5);
+            assert!(remote.is_some() && remote.arena() == arena);
+            lifecycle_release(&mut trace, owner, &mut remote);
+            lifecycle_release(&mut trace, owner, &mut local);
+        }
+
+        // 9. Exclusive explicit reservation spanning a parent and sub-arena.
+        trace.marker(9);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let p = owner.process;
+            let before = lifecycle_stats(owner);
+            let parent = unsafe {
+                owner.backing.reserve_os_memory_for_process(p, owner.config,
+                    ARENA_MAX_SIZE + crate::config::GIB, MapAccess::Reserved, false, true, None)
+            };
+            trace.emit(match parent { Ok(_) => 0, Err(error) => i64::from(error.raw()) });
+            trace.emit_bool(parent.is_ok());
+            emit_lifecycle_stats_delta(&mut trace, owner, before);
+            emit_lifecycle_arenas_from(&mut trace, owner, 0);
+            let parent = parent.unwrap();
+            assert_eq!(owner.backing.registry().count(), 2);
+            let child = unsafe { owner.backing.registry().arena_at(1) }.unwrap();
+            assert_eq!(child.parent, parent.as_ptr());
+            let mut in_parent = lifecycle_claim(&mut trace, owner, p, 1, false, parent, -1);
+            assert!(in_parent.is_some() && in_parent.arena() == parent);
+            let mut shared = lifecycle_claim(&mut trace, owner, p, 1, false, none, -1);
+            assert!(shared.is_some() && shared.arena() != parent);
+            lifecycle_release(&mut trace, owner, &mut shared);
+            lifecycle_release(&mut trace, owner, &mut in_parent);
+        }
+
+        trace.marker(10);
     }
 }
 
