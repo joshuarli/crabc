@@ -9,6 +9,7 @@
 # is not a new ABI export, general stdio/path-stream completion, CRT, loader,
 # sysroot, family promotion, or public x86 support.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -144,9 +145,7 @@ if awk '$NF == "fopen64" { found = 1 } END { exit(found ? 0 : 1) }' \
     fail "pinned-musl archive contradicts its header-only fopen64 alias"
 fi
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"

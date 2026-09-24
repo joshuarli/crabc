@@ -15,6 +15,7 @@
 # allocation, usable-size observation, CRT/startup/TLS, pthread lifecycle,
 # mapping, time observation, or child reaping.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -167,12 +168,17 @@ for object in crt1 crti crtn; do
         "crt/src/x86_64_${object}.rs" -o "$crt_dir/${object}.o"
 done
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --release --locked \
-    -p crabc-libc --lib --features x86-allocator-observability \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort -C lto=off \
-    -C codegen-units=256
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/release/libc.a" \
+    --features x86-allocator-observability --release -- \
+    -C lto=off -C codegen-units=256
 [ -f "$archive" ] || fail "cargo did not emit the feature-built x86 libc archive"
+# The bundled C backend calls libgcc-style helpers such as __popcountdi2.
+# Source-built compiler_builtins has no compiler-rt C objects; the owned
+# helper archive supplies them, as in the installed static product.
+builtins_archive="$work_dir/libcrabc-builtins.a"
+python3 "$ROOT_DIR/builtins/build_x86_64.py" --output "$builtins_archive" \
+    >"$work_dir/builtins-build.log"
+[ -f "$builtins_archive" ] || fail "owned compiler helper builder did not emit an archive"
 
 mapfile -t observability_members < <(
     archive_member_for_symbol "$archive" __crabc_x86_allocator_observability_v1
@@ -256,8 +262,10 @@ mkdir "$musl_patch_dir"
 "$link_editor" -static --no-dynamic-linker --no-undefined \
     -z relro -z now -e _start -Map="$link_map" \
     "$crt_dir/crt1.o" "$crt_dir/crti.o" "$probe_object" \
-    --start-group "$archive" "$backend_musl_libc" --end-group \
+    --start-group "$archive" "$backend_musl_libc" "$builtins_archive" --end-group \
     "$crt_dir/crtn.o" -o "$candidate"
+grep -F "$builtins_archive(crabc-builtins.o)" "$link_map" | grep -F __popcountdi2 >/dev/null ||
+    fail "candidate did not select __popcountdi2 from the owned compiler helper archive"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_headers"

@@ -7,6 +7,7 @@
 # __libc_start_main lifecycle and PT_TLS materialization, then retains the
 # selected worker template.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -229,9 +230,8 @@ if grep -Eq 'x86_64_static_tls|install_initial_static_tls|arch_set_fs' "$rcrt_sy
     fail "rcrt1.o retains a duplicate TLS materializer"
 fi
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=pic -C code-model=small -C panic=abort -Ztls-model=initial-exec
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --relocation-model pic
 [ -f "$archive" ] || fail "cargo did not emit the PIC x86 libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"

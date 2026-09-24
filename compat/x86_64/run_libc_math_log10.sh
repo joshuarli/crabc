@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Pinned-musl differential for the private x86 scalar log10/log10f artifact.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -76,9 +77,7 @@ record_count="$((reference_bytes / RECORD_SIZE))"
 [ "$record_count" -eq "$EXPECTED_RECORDS" ] ||
 	fail "pinned-musl fixture did not produce ${EXPECTED_RECORDS} complete records"
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-	--target x86_64-unknown-linux-musl -- \
-	-C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 nm -A -g --defined-only "$archive" >"$archive_globals"

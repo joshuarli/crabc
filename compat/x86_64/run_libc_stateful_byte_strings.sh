@@ -5,6 +5,7 @@
 # through a true one-member -nostdlib static candidate. The member exports only
 # dirname, strcasestr, and strtok_r and closes every musl helper locally.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "$BASH_SOURCE")/../.." && pwd)"
@@ -86,7 +87,7 @@ for header in libgen.h string.h features.h bits/alltypes.h errno.h; do grep -Fq 
 "$reference" || fail "pinned-musl stateful byte-string fixture failed"
 
 cd "$ROOT_DIR"
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"

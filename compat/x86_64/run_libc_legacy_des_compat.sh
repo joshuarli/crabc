@@ -6,6 +6,7 @@
 # cipher implementation, cryptographic service, aggregate legacy runtime, or
 # public x86 support claim.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -179,15 +180,11 @@ candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
-CARGO_TARGET_DIR="$baseline_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
-CARGO_TARGET_DIR="$feature_target" cargo rustc --locked -p crabc-libc --lib \
-    --features "$FEATURE" --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
-CARGO_TARGET_DIR="$both_target" cargo rustc --locked -p crabc-libc --lib \
-    --features "$FEATURE x86-legacy-misc" --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
+build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features "$FEATURE"
+build_source_runtime_libc "$both_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features "$FEATURE x86-legacy-misc"
 for archive in "$baseline_archive" "$feature_archive" "$both_archive"; do
     [ -f "$archive" ] || fail "cargo did not emit expected static archive"
 done

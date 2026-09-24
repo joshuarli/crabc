@@ -9,6 +9,7 @@
 # non-promoting evidence rather than a general C runtime, dynamic libc, loader,
 # sysroot, or public-x86 claim.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -154,9 +155,8 @@ for object in rcrt1 crti crtn; do
         --crate-name "crabc_x86_64_${object}" "$source_path" -o "$crt_dir/${object}.o"
 done
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=pic -C code-model=small -C panic=abort -Ztls-model=initial-exec
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --relocation-model pic
 [ -f "$archive" ] || fail "cargo did not emit the PIC x86 libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"

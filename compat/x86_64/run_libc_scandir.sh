@@ -7,6 +7,7 @@
 # process prerequisites outside the staged x86 runtime, but none of its
 # scandir, directory, sort, or allocator objects may enter the candidate.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -98,11 +99,9 @@ else
     fail "pinned-musl scandir reference exited $reference_status"
 fi
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-scandir --target x86_64-unknown-linux-musl -- \
-    -C force-unwind-tables=no -C debuginfo=0 -C opt-level=2 \
-    -C overflow-checks=off -C debug-assertions=off \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-scandir -- \
+    -C debuginfo=0 -C opt-level=2 -C overflow-checks=off -C debug-assertions=off
 [ -f "$archive" ] || fail "cargo did not emit the opt-in x86 libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"

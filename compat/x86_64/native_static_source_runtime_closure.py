@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Produce and audit the private source-built runtime for one native C fixture.
+"""Produce and audit the private source-built runtime for native C fixtures.
 
-This is deliberately tied to the selected-native pthread teardown and
-allocator-basic runners. It is not an installed sysroot builder: the output
-never leaves the runner's private `.work` directory and each C link remains
-the closure authority.
+The stock prebuilt target `core` unwinds and references `rust_eh_personality`,
+which the C runtime deliberately leaves to Rust std. Every private runner that
+links `crabc-libc` into a freestanding C program therefore builds it here, with
+source-built `core`/`alloc`/`compiler_builtins` in immediate-abort mode;
+`source_runtime_libc.sh` is the shell entry point. It is not an installed
+sysroot builder: the output never leaves the runner's private `.work`
+directory and each C link remains the closure authority.
 """
 
 from __future__ import annotations
@@ -44,14 +47,31 @@ RUNTIME_SOURCES = {
     "alloc": pathlib.PurePosixPath("alloc/src/lib.rs"),
     "compiler_builtins": pathlib.PurePosixPath("compiler-builtins/compiler-builtins/src/lib.rs"),
 }
-RUNTIME_FLAGS = (
-    "-Ztls-model=initial-exec",
-    "-Zunstable-options",
-    "-Cpanic=immediate-abort",
-    "-Cforce-unwind-tables=no",
-    "-Crelocation-model=static",
-    "-Ccode-model=small",
-)
+RELOCATION_MODELS = ("static", "pic")
+# Target-wide options every crate in the graph must share. Libc-only rustc
+# arguments may not restate or override them.
+RUNTIME_OWNED_CODEGEN_OPTIONS = frozenset({
+    "panic", "force-unwind-tables", "relocation-model", "code-model", "tls-model",
+})
+
+
+def runtime_flags(relocation_model: str) -> tuple[str, ...]:
+    """Return the encoded Rust flags shared by the source runtime and libc."""
+
+    if relocation_model not in RELOCATION_MODELS:
+        fail(f"unsupported relocation model for the source runtime: {relocation_model!r}")
+    return (
+        "-Ztls-model=initial-exec",
+        "-Zunstable-options",
+        "-Cpanic=immediate-abort",
+        "-Cforce-unwind-tables=no",
+        f"-Crelocation-model={relocation_model}",
+        "-Ccode-model=small",
+    )
+
+
+RUNTIME_FLAGS = runtime_flags("static")
+FEATURE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 FORBIDDEN_RUNTIME_NAMES = re.compile(r"(?:^|[-_])(std|panic_abort|panic_unwind|unwind|libunwind)(?:[-_.]|$)")
 FORBIDDEN_FINAL_SYMBOL = re.compile(r"(?:rust_eh_personality|_Unwind_|panic_(?:abort|unwind))")
 # `cargo -vv` prints its process display as an indented `Running `...`` record.
@@ -133,7 +153,20 @@ SOURCE_RUNTIME_PROFILES: dict[str, dict[str, object]] = {
         },
     },
 }
+# Feature sets without a named profile derive their closure from the Cargo
+# stream: source-runtime externs keep Cargo's build-std modifiers, every other
+# extern is a plain dependency emitted in the private target, crabc-mimalloc is
+# audited whenever Cargo builds it, and `alloc` is wholly present in the
+# staticlib or wholly absent.
+DERIVED_PROFILE: dict[str, object] = {
+    "name": "derived-static-c-abi",
+    "builds_crabc_mimalloc": None,
+    "staticlib_runtime_names": None,
+    "libc_externs": None,
+}
 SUPPORTED_EXTERN_MODIFIERS = {(), ("priv",), ("noprelude", "nounused")}
+# Unmerged codegen-unit ceiling for the dev profile; see build().
+DEV_CODEGEN_UNITS = 65536
 
 
 class ClosureError(RuntimeError):
@@ -153,13 +186,41 @@ def fail(message: str) -> None:
     raise ClosureError(message)
 
 
-def source_runtime_profile(features: str) -> dict[str, object]:
-    """Select one explicit source-runtime Cargo/extern closure profile."""
+def normalized_features(features: str) -> str:
+    """Spell a Cargo comma/space-separated crabc-libc feature list with commas."""
 
-    profile = SOURCE_RUNTIME_PROFILES.get(features)
-    if profile is None:
-        fail(f"unsupported source-runtime feature profile: {features!r}")
-    return profile
+    names = [name for name in re.split(r"[\s,]+", features) if name]
+    if any(not FEATURE_NAME.fullmatch(name) for name in names):
+        fail(f"malformed source-runtime feature list: {features!r}")
+    return ",".join(names)
+
+
+def source_runtime_profile(features: str) -> dict[str, object]:
+    """Select a named source-runtime closure profile, else the derived one."""
+
+    return SOURCE_RUNTIME_PROFILES.get(normalized_features(features), DERIVED_PROFILE)
+
+
+def libc_rustc_arguments(arguments: Sequence[str]) -> list[str]:
+    """Accept libc-only rustc arguments that leave the shared runtime profile intact."""
+
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ("-C", "-Z"):
+            if index + 1 >= len(arguments):
+                fail(f"libc rustc argument {argument} lacks its value")
+            option = arguments[index + 1]
+            index += 2
+        elif argument.startswith(("-C", "-Z")):
+            option = argument[2:]
+            index += 1
+        else:
+            index += 1
+            continue
+        if option.partition("=")[0] in RUNTIME_OWNED_CODEGEN_OPTIONS:
+            fail(f"libc rustc argument overrides the shared source-runtime profile: {option!r}")
+    return list(arguments)
 
 
 def digest(path: pathlib.Path) -> str:
@@ -591,14 +652,25 @@ def require_extern_modifier_matrix(crate: str, crate_externs: dict[str, CargoExt
                  f"expected={list(modifiers)!r} actual={list(actual.modifiers)!r}")
 
 
+def derived_libc_externs(command: Sequence[str], description: str) -> dict[str, tuple[str, ...]]:
+    """Expect build-std modifiers on runtime externs and plain dependency externs otherwise."""
+
+    return {
+        name: SELECTED_STATIC_LIBC_EXTERNS.get(name, ())
+        for name in sorted({*externs(command, description), *SELECTED_STATIC_LIBC_EXTERNS})
+    }
+
+
 def command_record(command: Sequence[str], target: pathlib.Path, expected_runtime_sources: dict[str, pathlib.Path],
                    emitted: dict[pathlib.Path, dict[str, object]], crate: str, source: pathlib.Path,
-                   *, extern_matrix: dict[str, tuple[str, ...]] | None = None) -> dict[str, object]:
+                   *, extern_matrix: dict[str, tuple[str, ...]] | None = None,
+                   flags: Sequence[str] | None = None) -> dict[str, object]:
     """Bind one target rustc command to source and Cargo-declared artifacts."""
 
     source_identity = command_source_identity(command, source, f"Cargo {crate} rustc")
     values = [*option_values(command, "-C"), *option_values(command, "-Z")]
-    missing = [flag for flag in RUNTIME_FLAGS if flag.removeprefix("-C").removeprefix("-Z") not in values]
+    required_flags = RUNTIME_FLAGS if flags is None else flags
+    missing = [flag for flag in required_flags if flag.removeprefix("-C").removeprefix("-Z") not in values]
     if missing:
         fail(f"Cargo {crate} rustc invocation omits source-runtime flags: {missing!r}")
     crate_externs = externs(command, f"Cargo {crate} rustc")
@@ -770,17 +842,22 @@ def undefined_symbols(nm: pathlib.Path, archive: pathlib.Path, output: pathlib.P
 
 def staticlib_closure(ar: pathlib.Path, nm: pathlib.Path, archive: pathlib.Path,
                       source_rlibs: dict[str, pathlib.Path], work: pathlib.Path,
-                      required_runtime_names: Sequence[str]) -> dict[str, object]:
+                      required_runtime_names: Sequence[str] | None) -> dict[str, object]:
     all_runtime_members = runtime_members(ar, source_rlibs, work)
     known_runtime_names = {entry["runtime"] for entry in all_runtime_members.values()}
+    members = archive_members(ar, archive, work_child(work, pathlib.Path("staticlib-members"), "selected staticlib members"),
+                              "selected source-runtime staticlib")
+    if required_runtime_names is None:
+        # A derived profile always carries core and compiler_builtins; alloc
+        # is selected exactly when some graph member uses it.
+        present = {all_runtime_members[name]["runtime"] for name in members if name in all_runtime_members}
+        required_runtime_names = ("core", "compiler_builtins", *sorted(present & {"alloc"}))
     required = set(required_runtime_names)
     if not required or len(required) != len(required_runtime_names) or required - known_runtime_names:
         fail(f"source-runtime profile has invalid required member set: {required_runtime_names!r}")
     expected = {
         name: entry for name, entry in all_runtime_members.items() if entry["runtime"] in required
     }
-    members = archive_members(ar, archive, work_child(work, pathlib.Path("staticlib-members"), "selected staticlib members"),
-                              "selected source-runtime staticlib")
     selected: list[dict[str, object]] = []
     for name, path in sorted(members.items()):
         if FORBIDDEN_RUNTIME_NAMES.search(name):
@@ -809,7 +886,10 @@ def staticlib_closure(ar: pathlib.Path, nm: pathlib.Path, archive: pathlib.Path,
 
 
 def build(arguments: argparse.Namespace) -> pathlib.Path:
+    arguments.features = normalized_features(arguments.features)
     profile = source_runtime_profile(arguments.features)
+    flags = runtime_flags(arguments.relocation_model)
+    libc_arguments = libc_rustc_arguments(arguments.rustc_arguments)
     work_root = ROOT / ".work" / "x86_64"
     work = work_child(work_root, pathlib.Path(arguments.work), "source-runtime closure work")
     work.mkdir(mode=0o755)
@@ -842,10 +922,16 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         "CARGO_HOME": str(work / "cargo-home"),
         "CARGO_NET_OFFLINE": "true",
         "CARGO_INCREMENTAL": "0",
+        # Runner assertions treat each libc module's archive member as its
+        # owner. Cargo's 256-unit default is below libc's module count, so
+        # rustc would merge modules into shared members in an order that any
+        # codegen change reshuffles. A count above the module count keeps one
+        # member per module; rustc never splits a module to reach it.
+        "CARGO_PROFILE_DEV_CODEGEN_UNITS": str(DEV_CODEGEN_UNITS),
         "CARGO_PROFILE_DEV_DEBUG": "0",
         "CARGO_TARGET_DIR": str(target),
         "CARGO_TERM_COLOR": "never",
-        "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(RUNTIME_FLAGS),
+        "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(flags),
         "TMPDIR": str(temporary),
     }
     command = [
@@ -853,8 +939,12 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         "--locked", "--offline", "-vv", "--message-format=json-render-diagnostics", "-p", "crabc-libc", "--lib",
         "--target", TARGET,
     ]
+    if arguments.release:
+        command.append("--release")
     if arguments.features:
         command.extend(("--features", arguments.features))
+    if libc_arguments:
+        command.extend(("--", *libc_arguments))
     stdout_path, stderr_path = work / "cargo.stdout.jsonl", work / "cargo.stderr.log"
     run(command, environment, stdout_path, stderr_path, "source-built native static runtime Cargo graph")
     records = cargo_records(stdout_path)
@@ -873,21 +963,29 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     expected_runtime_sources = dict(runtime_sources)
     source_runtime_rustc = {
         name: command_record(
-            invocation_for(commands, name), target, {}, emitted, name, source,
+            invocation_for(commands, name), target, {}, emitted, name, source, flags=flags,
         )
         for name, source in runtime_sources.items()
     }
+    libc_command = invocation_for(commands, "c")
+    libc_externs = profile["libc_externs"]
+    if libc_externs is None:
+        libc_externs = derived_libc_externs(libc_command, "Cargo crabc-libc rustc")
     primary = command_record(
-        invocation_for(commands, "c"), target, expected_runtime_sources, emitted, "crabc-libc", libc_source,
-        extern_matrix=profile["libc_externs"],
+        libc_command, target, expected_runtime_sources, emitted, "crabc-libc", libc_source,
+        extern_matrix=libc_externs, flags=flags,
     )
+    emits_crabc_mimalloc = any(identity.get("target_name") == "crabc_mimalloc" for identity in emitted.values())
+    builds_crabc_mimalloc = profile["builds_crabc_mimalloc"]
+    if builds_crabc_mimalloc is None:
+        builds_crabc_mimalloc = emits_crabc_mimalloc
     allocator = None
-    if profile["builds_crabc_mimalloc"]:
+    if builds_crabc_mimalloc:
         allocator = command_record(
             invocation_for(commands, "crabc_mimalloc"), target, expected_runtime_sources, emitted, "crabc-mimalloc",
-            physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source"),
+            physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source"), flags=flags,
         )
-    elif any(identity.get("target_name") == "crabc-mimalloc" for identity in emitted.values()):
+    elif emits_crabc_mimalloc:
         fail("C allocator source-runtime profile unexpectedly emitted crabc-mimalloc")
     ar, nm = required_tool(sysroot, "llvm-ar"), required_tool(sysroot, "llvm-nm")
     closure = staticlib_closure(
@@ -896,6 +994,9 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     receipt = {
         "schema": 1,
         "profile": profile["name"],
+        "features": arguments.features,
+        "cargo_profile": "release" if arguments.release else "dev",
+        "libc_rustc_arguments": libc_arguments,
         "scope": "private-native-static-source-runtime-closure-not-product-or-dynamic-qualification",
         "target": TARGET,
         "toolchain": TOOLCHAIN,
@@ -903,7 +1004,8 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         "immediate_abort_semantics": "development-only Rust panics abort immediately instead of using static_c_abi.rs's nonreturning spin panic handler",
         "cargo_command": command,
         "cargo_profile_dev_debug": 0,
-        "runtime_flags": list(RUNTIME_FLAGS),
+        "cargo_profile_dev_codegen_units": DEV_CODEGEN_UNITS,
+        "runtime_flags": list(flags),
         "cargo_stdout": file_record(stdout_path, "source-runtime Cargo JSON stream"),
         "cargo_stderr": file_record(stderr_path, "source-runtime Cargo diagnostics"),
         "rust_source": str(rust_source),
@@ -968,8 +1070,11 @@ def parser() -> argparse.ArgumentParser:
     commands = result.add_subparsers(dest="command", required=True)
     build_command = commands.add_parser("build", help="build and audit a source-runtime staticlib")
     build_command.add_argument("--work", required=True, help="new child of .work/x86_64")
-    build_command.add_argument("--features", required=True)
+    build_command.add_argument("--features", default="")
+    build_command.add_argument("--release", action="store_true", help="build Cargo's release profile")
+    build_command.add_argument("--relocation-model", choices=RELOCATION_MODELS, default="static")
     build_command.add_argument("--print-archive", action="store_true")
+    build_command.epilog = "Arguments after `--` are passed to the crabc-libc rustc invocation only."
     final_link = commands.add_parser("audit-final-link", help="bind one C link to a source-runtime receipt")
     final_link.add_argument("--receipt", required=True)
     final_link.add_argument("--candidate", required=True)
@@ -980,7 +1085,16 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    arguments = parser().parse_args()
+    argv = sys.argv[1:]
+    rustc_arguments: list[str] = []
+    if "--" in argv:
+        separator = argv.index("--")
+        argv, rustc_arguments = argv[:separator], argv[separator + 1:]
+    arguments = parser().parse_args(argv)
+    arguments.rustc_arguments = rustc_arguments
+    if rustc_arguments and arguments.command != "build":
+        print("ERROR: native static source runtime closure: only build accepts libc rustc arguments", file=sys.stderr)
+        return 2
     try:
         if arguments.command == "build":
             archive = build(arguments)

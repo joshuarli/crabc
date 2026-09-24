@@ -7,6 +7,7 @@
 # existing selected-worker TLS seam, not general C11 threads, pthread/TLS,
 # CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly EXECUTION_TIMEOUT=20s
@@ -101,9 +102,7 @@ done
     -I"$ROOT_DIR/include" compat/x86_64/libc_c11_lifecycle_probe.c -o "$reference"
 timeout "$EXECUTION_TIMEOUT" "$reference"
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"

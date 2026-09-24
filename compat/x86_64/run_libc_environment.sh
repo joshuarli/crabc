@@ -21,6 +21,7 @@
 # dynamic libc, async-signal-safe/fork-recovering lifecycle, exec/spawn policy,
 # loader, sysroot, or public x86 support.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -200,13 +201,18 @@ for object in crt1 crti crtn; do
         "crt/src/x86_64_${object}.rs" -o "$crt_dir/${object}.o"
 done
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --release --locked -p crabc-libc --lib \
-    --features x86-environment-runtime --target x86_64-unknown-linux-musl -- \
-    -C force-unwind-tables=no -C debuginfo=0 -C opt-level=2 \
-    -C overflow-checks=off -C debug-assertions=off \
-    -C relocation-model=static -C code-model=small -C panic=abort \
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/release/libc.a" \
+    --features x86-environment-runtime --release -- \
+    -C debuginfo=0 -C opt-level=2 -C overflow-checks=off -C debug-assertions=off \
     -C link-dead-code=no -C lto=off -C codegen-units=256
 [ -f "$archive" ] || fail "cargo did not emit the environment runtime archive"
+# The bundled C backend calls libgcc-style helpers such as __popcountdi2.
+# Source-built compiler_builtins has no compiler-rt C objects; the owned
+# helper archive supplies them, as in the installed static product.
+builtins_archive="$work_dir/libcrabc-builtins.a"
+python3 "$ROOT_DIR/builtins/build_x86_64.py" --output "$builtins_archive" \
+    >"$work_dir/builtins-build.log"
+[ -f "$builtins_archive" ] || fail "owned compiler helper builder did not emit an archive"
 
 mapfile -t environment_members < <(
     archive_member_for_symbol "$archive" __crabc_x86_environment_runtime_v1
@@ -350,8 +356,10 @@ fi
 "$link_editor" -static --no-dynamic-linker --no-undefined \
     --wrap=malloc --wrap=realloc -z relro -z now -e _start -Map="$link_map" \
     "$crt_dir/crt1.o" "$crt_dir/crti.o" "$probe_object" \
-    --start-group "$archive" "$backend_musl_libc" --end-group \
+    --start-group "$archive" "$backend_musl_libc" "$builtins_archive" --end-group \
     "$crt_dir/crtn.o" -o "$candidate"
+grep -F "$builtins_archive(crabc-builtins.o)" "$link_map" | grep -F __popcountdi2 >/dev/null ||
+    fail "candidate did not select __popcountdi2 from the owned compiler helper archive"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --sections --wide "$candidate" >"$candidate_sections"

@@ -10,6 +10,7 @@
 # secure-execution policy, environment storage, libc.so, CRT completion, C ABI
 # closure, family promotion, or public x86 support.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -127,9 +128,7 @@ assert_weak_same_address_alias "$reference_symbols" getauxval __getauxval \
     "pinned-musl static reference"
 "$reference" || fail "pinned-musl auxv-observation fixture failed"
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"

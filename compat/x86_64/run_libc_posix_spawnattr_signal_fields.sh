@@ -6,6 +6,7 @@
 # field validation/copying and a closed ET_EXEC link; it does not select spawn,
 # file actions, or signal delivery.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -37,7 +38,7 @@ target_dir="$work_dir/cargo-target"; archive="$target_dir/x86_64-unknown-linux-m
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H compat/x86_64/libc_posix_spawnattr_signal_fields_probe.c >/dev/null 2>"$header_trace"
 for header in spawn.h features.h bits/alltypes.h errno.h; do grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || fail "fixture did not use project $header"; done
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" compat/x86_64/libc_posix_spawnattr_signal_fields_probe.c -o "$reference"; "$reference" || fail "pinned-musl signal-field fixture failed"
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"; nm -A --defined-only "$archive" >"$archive_symbols"; assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 declare -a owners=()
 for symbol in "${SYMBOLS[@]}"; do

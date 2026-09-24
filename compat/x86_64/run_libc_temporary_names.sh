@@ -9,6 +9,7 @@
 # temporary-name implementation, strdup/strndup, or allocator object to the
 # candidate link.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -311,12 +312,10 @@ done
 env -i LC_ALL=C TZ=UTC TMPDIR="$TMPDIR_PROBE" "$reference" ||
     fail "pinned-musl temporary-name reference failed"
 
-CARGO_TARGET_DIR="$baseline_target" cargo rustc --locked -p crabc-libc --lib \
-    --features "$BASELINE_FEATURES" --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
-CARGO_TARGET_DIR="$featured_target" cargo rustc --locked -p crabc-libc --lib \
-    --features "$FEATURE" --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features "$BASELINE_FEATURES"
+build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features "$FEATURE"
 for archive in "$baseline_archive" "$featured_archive"; do
     [ -f "$archive" ] || fail "cargo did not emit a temporary-name archive"
 done
@@ -376,10 +375,12 @@ mapfile -t backend_members < <(ar t "$featured_archive" | grep -- '-static\.o$')
 [ "${temporary_name_members[0]}" = "${tmpnam_members[0]}" ] && \
     [ "${temporary_name_members[0]}" = "${tempnam_members[0]}" ] ||
     fail "temporary-name witness, tmpnam, and tempnam must share one owner"
-[ "${#temp_name_random_members[@]}" -eq 1 ] ||
-    fail "temporary-name suffix helper must have exactly one crate object owner"
-[ "${#raw_syscall_members[@]}" -eq 1 ] ||
-    fail "temporary-name raw readlink helper must have exactly one crate object owner"
+# The optimizer may inline these private helpers into every caller; an
+# out-of-line copy must still have exactly one crate object owner.
+[ "${#temp_name_random_members[@]}" -le 1 ] ||
+    fail "temporary-name suffix helper has more than one crate object owner"
+[ "${#raw_syscall_members[@]}" -le 1 ] ||
+    fail "temporary-name raw readlink helper has more than one crate object owner"
 [ "${#duplication_members[@]}" -eq 1 ] && [ "${#strdup_members[@]}" -eq 1 ] && \
     [ "${#strndup_members[@]}" -eq 1 ] ||
     fail "allocator string-duplication closure has ambiguous ownership"
@@ -398,8 +399,8 @@ mapfile -t backend_members < <(ar t "$featured_archive" | grep -- '-static\.o$')
     fail "temporary-name string-length dependency must have one crate object owner"
 [ "${#backend_members[@]}" -eq 1 ] ||
     fail "allocator backend must have exactly one bundled static object"
-for dependency_member in "${temp_name_random_members[0]}" \
-    "${raw_syscall_members[0]}" "${duplication_members[0]}" \
+for dependency_member in "${temp_name_random_members[@]}" \
+    "${raw_syscall_members[@]}" "${duplication_members[0]}" \
     "${allocator_members[0]}" "${errno_members[0]}"; do
     [ "${temporary_name_members[0]}" != "$dependency_member" ] ||
         fail "temporary-name owner unexpectedly shares a closure dependency object"
@@ -409,12 +410,12 @@ mkdir "$work_dir/selected-members"
 (
     cd "$work_dir/selected-members"
     ar x "$featured_archive" "${temporary_name_members[0]}" \
-        "${temp_name_random_members[0]}" "${raw_syscall_members[0]}" \
+        "${temp_name_random_members[@]}" "${raw_syscall_members[@]}" \
         "${duplication_members[0]}" "${allocator_members[0]}" \
         "${errno_members[0]}" "${memcpy_members[0]}" \
         "${strlen_members[0]}" "${backend_members[0]}"
     ar crs "$selected_archive" "${temporary_name_members[0]}" \
-        "${temp_name_random_members[0]}" "${raw_syscall_members[0]}" \
+        "${temp_name_random_members[@]}" "${raw_syscall_members[@]}" \
         "${duplication_members[0]}" "${allocator_members[0]}" \
         "${errno_members[0]}" "${memcpy_members[0]}" \
         "${strlen_members[0]}" "${backend_members[0]}"
@@ -443,7 +444,7 @@ for symbol in tmpnam tempnam; do
     ' "$candidate_symbols" ||
         fail "candidate $symbol is not a strong global function"
 done
-for member in "${temporary_name_members[0]}" "${raw_syscall_members[0]}" \
+for member in "${temporary_name_members[0]}" "${raw_syscall_members[@]}" \
     "${duplication_members[0]}" \
     "${allocator_members[0]}" "${errno_members[0]}" "${memcpy_members[0]}" \
     "${strlen_members[0]}" "${backend_members[0]}"; do

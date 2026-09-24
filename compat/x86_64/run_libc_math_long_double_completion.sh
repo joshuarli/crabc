@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Pinned-musl x87 binary80 fdiml/exp10l/pow10l differential.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -138,9 +139,7 @@ python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "
 
 # The unfeatured archive remains the frozen selected-static surface.  The
 # opt-in archive is allowed to add exactly this private binary80 closure.
-CARGO_TARGET_DIR="$base_target" cargo rustc --locked -p crabc-libc --lib \
-	--target x86_64-unknown-linux-musl -- \
-	-C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$base_archive" ] || fail "cargo did not emit the unfeatured x86 archive"
 collect_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
 collect_global_bindings "$base_archive" "$base_bindings" "$work_dir/base-binding-members"
@@ -150,9 +149,8 @@ if ! cmp -s "$expected_surface" "$base_surface"; then
 	fail "unfeatured selected-static C ABI export surface drifted"
 fi
 
-CARGO_TARGET_DIR="$feature_target" cargo rustc --locked -p crabc-libc --lib \
-	--features "$FEATURE" --target x86_64-unknown-linux-musl -- \
-	-C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features "$FEATURE"
 [ -f "$archive" ] || fail "cargo did not emit the opt-in binary80 archive"
 collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
 collect_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"

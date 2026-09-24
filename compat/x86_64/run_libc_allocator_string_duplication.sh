@@ -7,6 +7,7 @@
 # outside the staged x86 runtime, but its duplicate and allocator objects must
 # never enter the candidate link.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -79,9 +80,8 @@ done
 env -i LC_ALL=C TZ=UTC "$reference" \
     || fail "pinned-musl string-duplication reference failed"
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-allocator-string-duplication --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-allocator-string-duplication
 [ -f "$full_archive" ] || fail "cargo did not emit the opt-in x86 libc archive"
 
 mapfile -t duplication_members < <(

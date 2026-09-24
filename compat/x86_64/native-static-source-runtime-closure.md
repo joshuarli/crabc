@@ -1,15 +1,26 @@
-# Native static source-runtime closure experiment
+# Native static source-runtime closure
 
 ## Purpose and boundary
 
-`native_static_source_runtime_closure.py` builds private x86 `crabc-libc`
-static archives for the selected-static C fixtures and the selected-native
-pthread teardown and allocator-basic fixtures. The default selected-static
-profile serves the `issetugid` and pthread task-name probes; the legacy.misc
-profile serves its composite probe. These archives are not installed sysroots,
-public allocator selections, dynamic-product proofs, or
-terminal/fork-quiescence claims.
+`native_static_source_runtime_closure.py` builds every private x86
+`crabc-libc` static archive that a native runner links into a freestanding C
+program. Runners call it through `build_source_runtime_libc` in
+`source_runtime_libc.sh`, which accepts a feature list, Cargo's release
+profile, the `static` or `pic` relocation model, and libc-only rustc
+arguments; the graph-wide panic, unwind-table, relocation, code-model, and TLS
+flags are not overridable. Named profiles pin the exact extern graph of their
+established consumers: the default selected-static profile (`issetugid`,
+pthread task name), legacy.misc, the native-mimalloc shadow pthread teardown
+fixtures, and the allocator-basic C-backend core. Every other feature set uses
+the derived profile below. These archives are not installed sysroots, public
+allocator selections, dynamic-product proofs, or terminal/fork-quiescence
+claims.
 
+A plain `cargo rustc -p crabc-libc` archive is not a valid closed input for
+these fixtures. The pinned toolchain's prebuilt `core` is compiled for
+unwinding, and its bundled object carries `DW.ref.rust_eh_personality`; the
+C runtime deliberately leaves that personality to Rust std, so the
+freestanding final link fails with an undefined `rust_eh_personality`.
 The existing target-runtime archive is not a valid closed input for that
 fixture.  The retained `da2` diagnosis records one `alloc` object, one `core`
 object, and seventeen `compiler_builtins` objects with an undefined
@@ -49,7 +60,12 @@ vendor; Cargo runs `--locked --offline` with a private `CARGO_HOME`, target,
 and `TMPDIR`.
 The private development graph sets `CARGO_PROFILE_DEV_DEBUG=0`; no debug
 sections are needed for the executable fixture, and the pinned Rust LLD does
-not support compressed debug sections emitted by the image C toolchain.
+not support compressed debug sections emitted by the image C toolchain. It
+also sets `CARGO_PROFILE_DEV_CODEGEN_UNITS=65536`. Runner assertions treat
+each libc module's archive member as its owner, but libc has more modules than
+Cargo's 256-unit default, so rustc would merge modules into shared members in
+an order that any codegen change reshuffles. A ceiling above the module count
+keeps one member per module; rustc never splits a module to reach it.
 
 The selected-native shadow target graph is:
 
@@ -85,6 +101,16 @@ runtime set, and does not emit `crabc-mimalloc`. Although the source-built
 `alloc` artifact is authenticated, the C backend must leave all of its object
 members out of `libc.a`.
 
+The derived profile takes its closure from the Cargo stream instead of a
+pinned extern list. The `crabc-libc` rustc command must carry `core`, `alloc`,
+and `compiler_builtins` with Cargo's build-std `noprelude,nounused` modifiers,
+and every other extern must be a plain dependency emitted in the private
+target. Whenever Cargo emits `crabc-mimalloc`, its rustc command is audited as
+in the native shadow profile. The staticlib must contain every source-built
+`core` and `compiler_builtins` member; `alloc` members are wholly present,
+when some crate in the graph uses `alloc`, or wholly absent. Feature lists use
+Cargo's comma or space separators and are recorded comma-joined.
+
 The selected-static C profiles use either no feature or `x86-legacy-misc`.
 Their Cargo graph has no optional production dependency, and the emitted
 archive contains source-built `core` and `compiler_builtins` members, with no
@@ -94,7 +120,7 @@ audited against the same source-runtime receipt.
 `builtins/build.py` supplies the nearest pinned `rust-src` and
 `compiler_builtins` source-build mechanics.  `unwinder/owned_cleanup.py`
 supplies the nearest private-vendor, compiler-artifact, and primary-rustc
-`--extern` closure checks.  This experiment reuses their evidence shape; it
+`--extern` closure checks.  This builder reuses their evidence shape; it
 does not repurpose either builder's product or unwinder-provider contract.
 
 ## Evidence required before the C probe is accepted

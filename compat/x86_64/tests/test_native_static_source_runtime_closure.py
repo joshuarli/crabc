@@ -68,8 +68,134 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
         self.assertNotIn("base64ct", record["all_externs"])
         self.assertNotIn("sha_crypt", record["all_externs"])
         self.assertNotIn("crabc_mimalloc", record["all_externs"])
-        with self.assertRaisesRegex(CLOSURE.ClosureError, "unsupported source-runtime feature profile"):
-            CLOSURE.source_runtime_profile("x86-owned-static-runtime-core,x86-crypt")
+
+    def test_unnamed_feature_sets_derive_their_closure_from_cargo(self) -> None:
+        profile = CLOSURE.source_runtime_profile("x86-owned-static-runtime-core,x86-crypt")
+
+        self.assertEqual(profile["name"], "derived-static-c-abi")
+        self.assertIsNone(profile["builds_crabc_mimalloc"])
+        self.assertIsNone(profile["staticlib_runtime_names"])
+        self.assertIsNone(profile["libc_externs"])
+        self.assertEqual(CLOSURE.normalized_features(" x86-a64l  x86-crypt,x86-scandir "),
+                         "x86-a64l,x86-crypt,x86-scandir")
+        self.assertEqual(CLOSURE.source_runtime_profile("x86-legacy-misc ")["name"], "selected-static-legacy-misc")
+        for malformed in ("--all-features", "crabc-libc/x86-crypt", "dep:rand_pcg", "X86-crypt"):
+            with self.subTest(features=malformed):
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "malformed source-runtime feature list"):
+                    CLOSURE.source_runtime_profile(malformed)
+
+    def test_derived_libc_externs_require_source_runtime_and_plain_dependencies(self) -> None:
+        matrix = {
+            "alloc": ("noprelude", "nounused"),
+            "compiler_builtins": ("noprelude", "nounused"),
+            "core": ("noprelude", "nounused"),
+            "crabc_core": (),
+            "libmimalloc_sys": (),
+        }
+        command, target, runtime, artifacts, source = self._command(immediate_abort=True, extern_matrix=matrix)
+
+        self.assertEqual(CLOSURE.derived_libc_externs(command, "Cargo crabc-libc rustc"), matrix)
+        record = CLOSURE.command_record(
+            command, target, runtime, self._emitted(artifacts), "crabc-libc", source,
+            extern_matrix=CLOSURE.derived_libc_externs(command, "Cargo crabc-libc rustc"),
+        )
+        self.assertEqual(set(record["all_externs"]), set(matrix))
+
+        marker = f"crabc_core={artifacts['crabc_core']}"
+        privileged = [*command]
+        privileged[privileged.index(marker)] = f"priv:crabc_core={artifacts['crabc_core']}"
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "modifier sequence differs"):
+            CLOSURE.command_record(
+                privileged, target, runtime, self._emitted(artifacts), "crabc-libc", source,
+                extern_matrix=CLOSURE.derived_libc_externs(privileged, "Cargo crabc-libc rustc"),
+            )
+
+        index = command.index(f"noprelude,nounused:alloc={artifacts['alloc']}")
+        without_alloc = [*command[:index - 1], *command[index + 1:]]
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "missing=\\['alloc'\\]"):
+            CLOSURE.command_record(
+                without_alloc, target, runtime, self._emitted(artifacts), "crabc-libc", source,
+                extern_matrix=CLOSURE.derived_libc_externs(without_alloc, "Cargo crabc-libc rustc"),
+            )
+
+    def test_runtime_flags_follow_the_selected_relocation_model(self) -> None:
+        self.assertEqual(CLOSURE.runtime_flags("static"), CLOSURE.RUNTIME_FLAGS)
+        pic = CLOSURE.runtime_flags("pic")
+        self.assertIn("-Crelocation-model=pic", pic)
+        self.assertNotIn("-Crelocation-model=static", pic)
+        self.assertIn("-Cpanic=immediate-abort", pic)
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "unsupported relocation model"):
+            CLOSURE.runtime_flags("dynamic-no-pic")
+
+        command, target, runtime, artifacts, source = self._command(immediate_abort=True)
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "relocation-model=pic"):
+            CLOSURE.command_record(
+                command, target, runtime, self._emitted(artifacts), "crabc-libc", source, flags=pic,
+            )
+
+    def test_libc_rustc_arguments_cannot_override_the_shared_runtime_profile(self) -> None:
+        accepted = ["-C", "codegen-units=1", "-Clto=off", "--cfg", "crabc_owned_static_sysroot"]
+        self.assertEqual(CLOSURE.libc_rustc_arguments(accepted), accepted)
+        for rejected in (
+            ["-C", "panic=abort"],
+            ["-Cpanic=unwind"],
+            ["-C", "relocation-model=pic"],
+            ["-Ccode-model=large"],
+            ["-Ztls-model=global-dynamic"],
+            ["-Z", "tls-model=local-exec"],
+            ["-C", "force-unwind-tables=yes"],
+            ["-C"],
+        ):
+            with self.subTest(arguments=rejected):
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "libc rustc argument"):
+                    CLOSURE.libc_rustc_arguments(rejected)
+
+    def test_derived_staticlib_closure_takes_alloc_all_or_nothing(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            work = Path(temporary)
+            archive = work / "libc.a"
+            archive.write_bytes(b"synthetic archive identity")
+            runtime_paths = {
+                "core": work / "core.o",
+                "alloc": work / "alloc.o",
+                "alloc-second": work / "alloc-second.o",
+                "compiler_builtins": work / "compiler_builtins.o",
+            }
+            for name, path in runtime_paths.items():
+                path.write_bytes(name.encode("ascii"))
+            expected = {
+                path.name: {"runtime": name.removesuffix("-second"), "sha256": CLOSURE.digest(path)}
+                for name, path in runtime_paths.items()
+            }
+
+            def no_undefined_symbols(_nm: Path, _archive: Path, output: Path) -> list[str]:
+                output.write_text("", encoding="utf-8")
+                return []
+
+            def closure(selected: dict[str, Path]) -> dict[str, object]:
+                with (
+                    patch.object(CLOSURE, "runtime_members", return_value=expected),
+                    patch.object(CLOSURE, "archive_members", return_value=selected),
+                    patch.object(CLOSURE, "undefined_symbols", side_effect=no_undefined_symbols),
+                ):
+                    return CLOSURE.staticlib_closure(
+                        Path("llvm-ar"), Path("llvm-nm"), archive, {}, work, required_runtime_names=None,
+                    )
+
+            base = {runtime_paths[name].name: runtime_paths[name] for name in ("core", "compiler_builtins")}
+            self.assertEqual(
+                {member["runtime"] for member in closure(base)["source_runtime_members"]},
+                {"core", "compiler_builtins"},
+            )
+            every = {path.name: path for path in runtime_paths.values()}
+            self.assertEqual(
+                {member["runtime"] for member in closure(every)["source_runtime_members"]},
+                {"core", "alloc", "compiler_builtins"},
+            )
+            with self.assertRaisesRegex(CLOSURE.ClosureError, "omits source-built runtime members"):
+                closure({**base, runtime_paths["alloc"].name: runtime_paths["alloc"]})
+            with self.assertRaisesRegex(CLOSURE.ClosureError, "omits source-built runtime members"):
+                closure({runtime_paths["core"].name: runtime_paths["core"]})
 
     def test_c_allocator_staticlib_selects_core_without_alloc_members(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:

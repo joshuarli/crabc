@@ -8,6 +8,7 @@
 # root-owned record and contain a real-versus-effective UID transition; they
 # do not select C descriptor, credential, process, or pathname-policy APIs.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -181,9 +182,7 @@ done
     compat/x86_64/libc_access_probe.c -o "$reference"
 "$reference" || fail "pinned-musl access fixture failed"
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \

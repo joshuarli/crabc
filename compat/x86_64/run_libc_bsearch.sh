@@ -6,6 +6,7 @@
 # The candidate must extract only bsearch, not qsort/qsort_r/__qsort_r or a
 # search-container/runtime dependency.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -119,9 +120,7 @@ done
     -I "$ROOT_DIR/include" compat/x86_64/libc_bsearch_probe.c -o "$reference"
 "$reference" || fail "pinned-musl bsearch fixture failed"
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"

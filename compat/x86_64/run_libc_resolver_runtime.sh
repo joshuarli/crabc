@@ -8,6 +8,7 @@
 # root with only fixture /etc/hosts and /etc/resolv.conf, so neither arm can
 # read ambient resolver configuration or contact an external nameserver.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -210,9 +211,8 @@ done
 run_fixture "$reference" "pinned-musl resolver runtime"
 python3 -B "$ROOT_DIR/compat/x86_64/check_resolver_fixture_isolation.py" "$reference"
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl --features x86-resolver-runtime -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-resolver-runtime
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"

@@ -6,6 +6,7 @@
 # objects. The feature remains opt-in and the default archive must retain its
 # frozen export surface.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -86,9 +87,7 @@ env -i LC_ALL=C TZ=UTC timeout "$EXECUTION_TIMEOUT" "$reference" ||
     fail "pinned-musl pthread spin-operation fixture failed"
 
 # The feature must not widen the frozen default archive.
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 nm -A --defined-only "$archive" >"$default_archive_symbols"
 nm -g --defined-only "$archive" |
     awk '$2 ~ /^[TWDVBR]$/ && $3 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ { print $3 }' |
@@ -99,10 +98,8 @@ for symbol in pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
     fi
 done
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-pthread-spin-operations \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-pthread-spin-operations
 [ -f "$archive" ] || fail "cargo did not emit the feature archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 nm -g --defined-only "$archive" |

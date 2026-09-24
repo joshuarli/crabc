@@ -13,6 +13,7 @@
 # libc, CRT/sysroot product, public support claim, capability completion, or
 # family promotion.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -270,9 +271,7 @@ env -i LC_ALL=C "$reference" || fail "pinned-musl legacy.misc fixture failed"
 # The default, narrow inert-DES, and composite archives have exact C global
 # symbol/binding maps. The narrow map is the frozen default plus encrypt and
 # setkey; the composite map is that narrow map plus fmtmsg.
-CARGO_TARGET_DIR="$base_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$base_archive" ] || fail "cargo did not emit the unfeatured x86 archive"
 collect_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
 collect_global_bindings "$base_archive" "$base_bindings" "$work_dir/base-binding-members"
@@ -287,9 +286,8 @@ for symbol in "${FEATURE_EXPORTS[@]}"; do
     fi
 done
 
-CARGO_TARGET_DIR="$narrow_target" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-legacy-des-compat --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$narrow_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-legacy-des-compat
 [ -f "$narrow_archive" ] || fail "cargo did not emit the narrow inert-DES archive"
 collect_global_surface "$narrow_archive" "$narrow_surface" "$work_dir/narrow-members"
 collect_global_bindings "$narrow_archive" "$narrow_bindings" "$work_dir/narrow-binding-members"

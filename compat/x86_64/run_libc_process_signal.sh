@@ -6,6 +6,7 @@
 # archive as the complete historical C signal surface: the combined archive
 # may add only the two signal.c aliases, four SysV helpers, and psignal pair.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
@@ -62,9 +63,7 @@ assert_combined_feature_closure() {
     local additions="$work_dir/feature-additions"
     local expected_additions="$work_dir/expected-additions"
 
-    CARGO_TARGET_DIR="$baseline_target" cargo rustc --locked -p crabc-libc --lib \
-        --target x86_64-unknown-linux-musl -- \
-        -C relocation-model=static -C code-model=small -C panic=abort
+    build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
     [ -f "$baseline_archive" ] || fail "cargo did not emit the frozen baseline archive"
     collect_global_surface "$baseline_archive" "$baseline_surface" "$work_dir/baseline-members"
     grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_surface"
@@ -73,9 +72,8 @@ assert_combined_feature_closure() {
         fail "default selected-static C ABI surface drifted"
     fi
 
-    CARGO_TARGET_DIR="$featured_target" cargo rustc --locked -p crabc-libc --lib \
-        --features "$FEATURES" --target x86_64-unknown-linux-musl -- \
-        -C relocation-model=static -C code-model=small -C panic=abort
+    build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
+        --features "$FEATURES"
     [ -f "$featured_archive" ] || fail "cargo did not emit the combined signal archive"
     collect_global_surface "$featured_archive" "$featured_surface" "$work_dir/featured-members"
 

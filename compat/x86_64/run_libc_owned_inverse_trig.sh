@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Pinned-musl differential and installed-link gate for owned x86 inverse trig.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -108,8 +109,7 @@ done
 
 # The default archive remains frozen: the owned-only entry block must not be
 # present without its aggregate feature.
-CARGO_TARGET_DIR="$default_target_dir" cargo rustc --locked -p crabc-libc --lib \
-	--target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$default_target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$default_archive" ] || fail "cargo did not emit default x86 static libc archive"
 nm -A -g --defined-only "$default_archive" >"$default_symbols"
 for symbol in "${SYMBOLS[@]}"; do
@@ -118,9 +118,8 @@ for symbol in "${SYMBOLS[@]}"; do
 	fi
 done
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-	--features x86-owned-static-runtime --target x86_64-unknown-linux-musl -- \
-	-C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-owned-static-runtime
 [ -f "$archive" ] || fail "cargo did not emit feature-selected x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 for symbol in "${SYMBOLS[@]}" "${FENV_SIBLINGS[@]}" "${SHARED_NUMERIC_PROVIDERS[@]}"; do

@@ -9,6 +9,7 @@
 # file-handle semantics safe, reserve a temporary pathname, or promote the
 # still-planned libc.posix-runtime family.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
@@ -79,16 +80,11 @@ expected_additions="$work_dir/expected-additions"
 combined_symbols="$work_dir/combined-symbols"
 
 cd "$ROOT_DIR"
-CARGO_TARGET_DIR="$default_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
-CARGO_TARGET_DIR="$temporary_names_target" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-temporary-names --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
-CARGO_TARGET_DIR="$combined_target" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-temporary-names,x86-file-handles \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$default_target/x86_64-unknown-linux-musl/debug/libc.a"
+build_source_runtime_libc "$temporary_names_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-temporary-names
+build_source_runtime_libc "$combined_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-temporary-names,x86-file-handles
 for archive in "$default_archive" "$temporary_names_archive" "$combined_archive"; do
     [ -f "$archive" ] || fail "cargo did not emit one aggregate archive"
 done

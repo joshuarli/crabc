@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Native public-C bridge evidence over the loader-owned immutable x86 graph.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly SOURCE="$ROOT_DIR/ldso/src/x86_64_initial_graph_source_root.rs"
@@ -99,9 +100,7 @@ for symbol in dl_iterate_phdr dladdr dlclose dlerror dlinfo dlopen dlsym; do
 done
 
 cd "$ROOT_DIR"
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$static_archive" ] || fail 'cargo did not emit staged static x86 libc.a'
 
 members_dir="$work_dir/members"

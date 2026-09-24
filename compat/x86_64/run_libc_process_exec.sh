@@ -23,6 +23,7 @@
 # bound, reports EACCES precedence, and proves ENOEXEC is terminal (no shell
 # fallback).
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -413,11 +414,9 @@ for target_dir in "$baseline_target" "$featured_target"; do
     if [ "$target_dir" = "$featured_target" ]; then
         feature_args=(--features "$FEATURE")
     fi
-    CARGO_TARGET_DIR="$target_dir" cargo rustc --release --locked -p crabc-libc --lib \
-        "${feature_args[@]}" --target x86_64-unknown-linux-musl -- \
-        -C force-unwind-tables=no -C debuginfo=0 -C opt-level=2 \
-        -C overflow-checks=off -C debug-assertions=off \
-        -C relocation-model=static -C code-model=small -C panic=abort \
+    build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/release/libc.a" \
+        "${feature_args[@]}" --release -- \
+        -C debuginfo=0 -C opt-level=2 -C overflow-checks=off -C debug-assertions=off \
         -C link-dead-code=no -C lto=off -C codegen-units=256
 done
 [ -f "$baseline_archive" ] || fail "cargo did not emit baseline archive"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Pinned-musl/x86 true-static legacy rand48 provider evidence.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; oracle=/usr/local/bin/crabc-x86_64-musl-gcc
 fail(){ printf 'ERROR: x86 lrand48: %s\n' "$*" >&2; exit 1; }
@@ -27,7 +28,7 @@ for header_root in "$root/include" /opt/musl-1.2.6/include; do
  done
 done
 "$oracle" -std=c11 -I"$root/include" "$root/compat/x86_64/libc_lrand48_probe.c" -o "$work/reference"; "$work/reference" || { status=$?; fail "pinned-musl differential failed at probe $status"; }
-target="$work/target"; CARGO_TARGET_DIR="$target" cargo rustc --locked -p crabc-libc --lib --target x86_64-unknown-linux-musl -- -C relocation-model=static -C panic=abort
+target="$work/target"; build_source_runtime_libc "$target/x86_64-unknown-linux-musl/debug/libc.a"
 archive="$target/x86_64-unknown-linux-musl/debug/libc.a"; [ -f "$archive" ] || fail "missing archive"
 for s in "${symbols[@]}"; do grep -Fqx "$s" "$root/compat/x86_64/static_c_abi_exports.txt" || fail "export list omits $s"; done
 mapfile -t owner < <(nm -A --defined-only "$archive" | awk '$NF=="lrand48" {x=$1;sub(/^.*\.a:/,"",x);sub(/:.*$/,"",x);print x}' | sort -u); [ "${#owner[@]}" = 1 ] || fail "lrand48 needs one owner"

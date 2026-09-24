@@ -7,6 +7,7 @@
 # pthread boundary. Resolver configuration, DNS, sockets, network databases,
 # and the wider resolver-runtime profile remain outside this artifact.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -195,12 +196,9 @@ done
     -I "$ROOT_DIR/include" "$PROBE" -o "$reference"
 run_fixture "$reference" "pinned-musl h_errno"
 
-CARGO_TARGET_DIR="$baseline_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
-CARGO_TARGET_DIR="$featured_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl --features "$FEATURE" -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
+build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features "$FEATURE"
 [ -f "$baseline_archive" ] || fail "baseline cargo build did not emit libc.a"
 [ -f "$featured_archive" ] || fail "feature cargo build did not emit libc.a"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
@@ -228,9 +226,8 @@ assert_no_resolver_runtime "feature owner" "$owner_symbols" "$owner_runtime_relo
 
 # The planned resolver feature must compose this one owner rather than revive
 # a duplicate object/accessor definition when its wider package is enabled.
-CARGO_TARGET_DIR="$resolver_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl --features x86-resolver-runtime -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$resolver_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-resolver-runtime
 [ -f "$resolver_archive" ] || fail "resolver cargo build did not emit libc.a"
 mapfile -t resolver_accessor_members < <(archive_members_for_symbol "$resolver_archive" __h_errno_location)
 mapfile -t resolver_data_members < <(archive_members_for_symbol "$resolver_archive" h_errno)

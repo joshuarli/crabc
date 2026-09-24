@@ -6,6 +6,7 @@
 # allocator wrapper/backend. This is a mixed static candidate, not allocator
 # lifecycle, public x86 runtime, or capability-promotion evidence.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -114,9 +115,8 @@ fi
 grep -Fq 'x86-crypt and x86-allocator-runtime must be enabled through x86-crypt-allocator-composition' \
     "$combined_feature_log" || fail "manual crypt/allocator feature rejection drifted"
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-crypt-allocator-composition --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-crypt-allocator-composition
 [ -f "$full_archive" ] || fail "cargo did not emit the composition libc archive"
 
 mapfile -t crypt_members < <(archive_member_for_symbol "$full_archive" crypt)

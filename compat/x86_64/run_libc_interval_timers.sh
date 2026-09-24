@@ -6,6 +6,7 @@
 # interval-timer control pair; raw syscalls in the fixture provide setup and
 # output comparison, while alarm/ualarm and signal policy remain separate.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -137,12 +138,9 @@ done
     compat/x86_64/libc_interval_timers_probe.c -o "$reference"
 "$reference" || fail "pinned-musl interval-timers fixture failed"
 
-CARGO_TARGET_DIR="$baseline_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
-CARGO_TARGET_DIR="$featured_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl --features "$FEATURE" -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
+build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features "$FEATURE"
 [ -f "$baseline_archive" ] || fail "baseline cargo build did not emit libc.a"
 [ -f "$featured_archive" ] || fail "feature cargo build did not emit libc.a"
 collect_global_surface "$baseline_archive" "$baseline_symbols" \

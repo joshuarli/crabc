@@ -6,6 +6,7 @@
 # existing Rust global_asm! in math_x87_extended.rs. Pinned musl C is an oracle
 # only; this runner never introduces a target C or standalone assembly provider.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -132,9 +133,8 @@ for output in "$reference_installed_output" "$reference_raw_output"; do
 		fail "reference emitted ${bytes} bytes, expected $((RECORD_SIZE * EXPECTED_RECORDS))"
 done
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-	--features x86-owned-static-runtime --target x86_64-unknown-linux-musl -- \
-	-C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-owned-static-runtime
 [ -f "$archive" ] || fail "cargo did not emit feature-selected x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 for symbol in "${SYMBOLS[@]}" "${FENV_SIBLINGS[@]}" "${SPECIAL_SIBLINGS[@]}" "${ROOT_SIBLINGS[@]}"; do

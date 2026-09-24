@@ -9,6 +9,7 @@
 # compares musl and an extracted provider object in a true -nostdlib static
 # executable.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -43,9 +44,8 @@ candidate="$work_dir/crabc-candidate"
     -I"$ROOT_DIR/include" "$PROBE" -o "$reference"
 timeout 10s "$reference" >"$work_dir/reference.trace" || fail 'pinned-musl fixture failed'
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-owned-static-runtime --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-owned-static-runtime
 [ -f "$archive" ] || fail 'cargo did not emit feature-selected x86 archive'
 
 nm -A --defined-only "$archive" >"$work_dir/archive.symbols"
@@ -74,13 +74,14 @@ fi
 owner="$(awk '$NF == "random" { member = $1; sub(/^.*\.a:/, "", member); sub(/:.*$/, "", member); print member }' "$work_dir/archive.symbols" | sort -u)"
 [ "$(printf '%s\n' "$owner" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || fail 'random must have one archive owner'
 raw_owner="$(awk '$NF ~ /raw_syscall.*syscall3/ { member = $1; sub(/^.*\.a:/, "", member); sub(/:.*$/, "", member); print member }' "$work_dir/archive.symbols" | sort -u)"
-[ "$(printf '%s\n' "$raw_owner" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || fail 'private raw-syscall closure must have one archive owner'
+# The optimizer may inline the private raw-syscall closure into its caller;
+# otherwise the closure has exactly one out-of-line archive owner.
+[ "$(printf '%s\n' "$raw_owner" | awk 'NF { count++ } END { print count + 0 }')" -le 1 ] || fail 'private raw-syscall closure has more than one archive owner'
 mkdir "$work_dir/owner"
 (
     cd "$work_dir/owner"
-    ar x "$archive" "$owner"
-    ar x "$archive" "$raw_owner"
-    ar crs "$work_dir/provider.a" "$owner" "$raw_owner"
+    ar x "$archive" "$owner" ${raw_owner:+"$raw_owner"}
+    ar crs "$work_dir/provider.a" "$owner" ${raw_owner:+"$raw_owner"}
 )
 object="$work_dir/owner/$owner"
 for symbol in "${SYMBOLS[@]}"; do

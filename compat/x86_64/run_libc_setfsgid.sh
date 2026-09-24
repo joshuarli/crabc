@@ -12,6 +12,7 @@
 # proves the isolated archive-member topology for the selected one-symbol direct-syscall closure
 # rather than arbitrary release-profile builds.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -120,9 +121,7 @@ fi
     -I"$ROOT_DIR/include" compat/x86_64/libc_setfsgid_probe.c -o "$reference"
 "$reference"
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort \
+build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a" -- \
     -C codegen-units=512
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 

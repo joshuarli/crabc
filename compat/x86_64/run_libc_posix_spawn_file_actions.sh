@@ -9,6 +9,7 @@
 # runtime. No spawn execution path or pinned-musl action/allocator object is
 # selected.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -51,10 +52,8 @@ cd "$ROOT_DIR"
     -o "$reference"
 env -i LC_ALL=C TZ=UTC "$reference" || fail "pinned-musl reference failed"
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-posix-spawn-file-actions \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-posix-spawn-file-actions
 [ -f "$full_archive" ] || fail "cargo did not emit the feature archive"
 
 mapfile -t action_members < <(

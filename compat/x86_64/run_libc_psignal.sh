@@ -8,6 +8,7 @@
 # not promote general diagnostics, formatted stdio, locale translation, or a
 # signal-management runtime.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -146,9 +147,7 @@ fi
 [ ! -s "$reference_stdout" ] || fail "pinned-musl fixture wrote stdout"
 [ ! -s "$reference_stderr" ] || fail "pinned-musl fixture wrote stderr"
 
-CARGO_TARGET_DIR="$baseline_target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$baseline_target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$baseline_archive" ] || fail "cargo did not emit the baseline x86 static libc archive"
 nm -A --defined-only "$baseline_archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$baseline_archive" "$selected_symbols" "$expected_symbols"
@@ -158,9 +157,8 @@ for unfeatured in psignal psiginfo; do
     fi
 done
 
-CARGO_TARGET_DIR="$featured_target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --features x86-signal-reporting --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$featured_target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features x86-signal-reporting
 [ -f "$featured_archive" ] || fail "cargo did not emit the featured x86 static libc archive"
 archive_c_abi_symbols "$featured_archive" "$featured_symbols" "$work_dir/featured-c-abi-members"
 assert_reporting_feature_delta "$selected_symbols" "$featured_symbols" "$feature_delta" "$feature_removed"

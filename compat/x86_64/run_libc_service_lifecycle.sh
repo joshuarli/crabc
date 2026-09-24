@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 source-closed static musl service lifecycle evidence.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
@@ -23,7 +24,7 @@ for symbol in getservent setservent; do
 done
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector -I "$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_service_lifecycle_probe.c" -o "$reference"
 env -i LC_ALL=C TZ=UTC "$reference" || fail "pinned-musl lifecycle fixture failed"
-CARGO_TARGET_DIR="$target" cargo rustc --locked -p crabc-libc --lib --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit static archive"
 (cd "$members" && ar x "$archive" $(ar t "$archive" | grep -E '^c\\..+\\.rcgu\\.o$'))
 mapfile -t selected < <(for obj in "$members"/*; do names="$(nm -g --defined-only "$obj")"; if printf '%s\n' "$names" | grep -Eq '[[:space:]]T[[:space:]]getservent$'; then printf '%s\n' "$obj"; fi; done)

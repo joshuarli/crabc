@@ -6,6 +6,7 @@
 # disjoint pair swaps; a separate O3 dead-local witness audits that
 # explicit_bzero remains an observable wipe even without a later C read.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -158,9 +159,7 @@ done
     -I "$ROOT_DIR/include" "$PROBE" -o "$reference"
 "$reference" || fail "pinned-musl explicit_bzero/swab fixture failed"
 
-CARGO_TARGET_DIR="$baseline_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$baseline_archive" ] || fail "cargo did not emit the baseline x86 static libc archive"
 collect_global_surface "$baseline_archive" "$baseline_symbols" "$work_dir/baseline-members"
 grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_symbols"
@@ -174,9 +173,8 @@ for symbol in explicit_bzero swab; do
     fi
 done
 
-CARGO_TARGET_DIR="$featured_target" cargo rustc --locked -p crabc-libc --lib \
-    --features "$FEATURE" --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
+    --features "$FEATURE"
 [ -f "$SOURCE" ] || fail "missing explicit_bzero/swab source"
 [ -f "$featured_archive" ] || fail "cargo did not emit the featured x86 static libc archive"
 collect_global_surface "$featured_archive" "$featured_symbols" "$work_dir/featured-members"
