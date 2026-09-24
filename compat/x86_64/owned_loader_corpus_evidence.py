@@ -1290,8 +1290,10 @@ def _validate_corpus_inputs(value: object, manifest: Any) -> None:
     identity = _keys(before["identity"], {"directory", "index", "archives"}, "package-corpus input identity")
     _require(isinstance(identity["directory"], str) and Path(identity["directory"]).is_absolute(), "package-corpus input directory differs")
     index = _keys(identity["index"], {"path", "sha256"}, "package-corpus index")
-    _require(isinstance(index["path"], str) and Path(index["path"]).is_absolute() and index["sha256"] == manifest.index_sha256,
-             "package-corpus index differs from frozen manifest")
+    # The mutable upstream index is identified by its observed digest; the
+    # `after` equality below binds it to the bytes whose signature was verified.
+    _require(isinstance(index["path"], str) and Path(index["path"]).is_absolute(), "package-corpus index path differs")
+    _digest(index["sha256"], "package-corpus index")
     _require(isinstance(identity["archives"], dict) and set(identity["archives"]) == set(manifest.archive_roster),
              "package-corpus archive roster differs")
     for name, digest in manifest.archive_roster.items():

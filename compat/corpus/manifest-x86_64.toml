@@ -14,10 +14,11 @@ apk_tools_version = "3.0.6-r0"
 [repository]
 base_url = "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64"
 index_filename = "APKINDEX.tar.gz"
-# Re-pinned 2026-09-23 after Alpine regenerated the mutable v3.24 index.
-# Prior signed index SHA-256: 1a66c389ffa52b213474fb345577f3cd8716b98249fb5a21cce283d6e2566f2c.
-# The current index is signature-verified; the exact 59 APK payload hashes below are unchanged.
-index_sha256 = "2331ad1c0df007c2da75983e14948919068e3b50336a6e2d14ffbb158c911c31"
+# Alpine regenerates this mutable index, so earlier snapshots cannot be
+# fetched again (two pinned digests were lost that way).  The index is not
+# pinned: each run verifies the supplied snapshot's signature under the key
+# below and retains its observed SHA-256.  The 59 APK payload digests in
+# `archive_roster` are the pinned input identity.
 index_signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub"
 
 [workload]

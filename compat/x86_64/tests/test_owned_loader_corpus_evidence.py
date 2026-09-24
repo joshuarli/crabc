@@ -635,7 +635,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
                             argv=(f"case-{index:02d}",), setup=(), cwd="/tmp", stateful=False, requires_dt_relr=False)
             for index in range(34)
         )
-        manifest = SimpleNamespace(cases=cases, archive_roster={"fixture-1.apk": "c" * 64}, index_sha256="d" * 64,
+        manifest = SimpleNamespace(cases=cases, archive_roster={"fixture-1.apk": "c" * 64},
                                    package_library_dirs=("/usr/lib",), base_image_files={})
         corpus = FixtureCorpus(manifest, self.product)
         root = self.work / "corpus"
@@ -700,11 +700,11 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
                             "environment": corpus.CASE_ENVIRONMENT, "stateful": False, "requires_dt_relr": False,
                             "roots": {"oracle": runtime_root(case, "oracle"), "candidate": runtime_root(case, "candidate")},
                             "comparison": comparison})
-        inputs = {"verification_before": {"identity": {"directory": "/workspace/.work/input", "index": {"path": "/workspace/.work/index", "sha256": manifest.index_sha256},
+        inputs = {"verification_before": {"identity": {"directory": "/workspace/.work/input", "index": {"path": "/workspace/.work/index", "sha256": "d" * 64},
                                                          "archives": {"fixture-1.apk": {"sha256": "c" * 64}}},
                                             "index_signature": {"stdout": "verified", "stderr": ""},
                                             "archive_signatures": {"fixture-1.apk": {"metadata": {"pkgname": "fixture", "pkgver": "1", "arch": "x86_64"}, "signature_stdout": "verified", "signature_stderr": ""}}},
-                  "after": {"directory": "/workspace/.work/input", "index": {"path": "/workspace/.work/index", "sha256": manifest.index_sha256},
+                  "after": {"directory": "/workspace/.work/input", "index": {"path": "/workspace/.work/index", "sha256": "d" * 64},
                             "archives": {"fixture-1.apk": {"sha256": "c" * 64}}}}
         source = corpus.source_identity(manifest)
         tools = {"path": "/sbin/apk", "sha256": "a" * 64, "version": "apk-tools 3.0.6-r0, compiled for x86_64.",

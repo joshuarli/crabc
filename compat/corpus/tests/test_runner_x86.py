@@ -2,6 +2,8 @@
 """Observable contract tests for the finite native package corpus."""
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import importlib.util
 import io
 import os
@@ -55,11 +57,27 @@ class NativeManifestTests(unittest.TestCase):
             {"gzip", "sqlite", "curl", "openssl", "openssh-client-default"},
         )
 
-    def test_signed_index_repin_keeps_the_exact_archive_and_signature_boundary(self) -> None:
-        self.assertEqual(
-            self.manifest.index_sha256,
-            "2331ad1c0df007c2da75983e14948919068e3b50336a6e2d14ffbb158c911c31",
-        )
+    def test_any_signed_index_snapshot_is_retained_by_its_observed_digest(self) -> None:
+        # Alpine regenerates the mutable v3.24 index; an earlier snapshot can
+        # never be fetched again. The APK payload digests stay pinned, while
+        # the index is identified by the bytes actually verified in this run.
+        with tempfile.TemporaryDirectory() as temporary:
+            archive_dir = Path(temporary) / "apks"
+            archive_dir.mkdir()
+            payload = b"exact archive bytes"
+            (archive_dir / "fixture-1.apk").write_bytes(payload)
+            manifest = dataclasses.replace(
+                self.manifest, archive_roster={"fixture-1.apk": hashlib.sha256(payload).hexdigest()})
+            index = Path(temporary) / "APKINDEX.tar.gz"
+            for snapshot in (b"first regenerated index", b"second regenerated index"):
+                index.write_bytes(snapshot)
+                identity = RUNNER.input_identity(manifest, archive_dir, index)
+                self.assertEqual(identity["index"], {"path": str(index), "sha256": hashlib.sha256(snapshot).hexdigest()})
+            (archive_dir / "fixture-1.apk").write_bytes(b"substituted archive")
+            with self.assertRaisesRegex(RUNNER.CorpusError, "APK archive digest differs"):
+                RUNNER.input_identity(manifest, archive_dir, index)
+
+    def test_signed_index_keeps_the_exact_archive_and_signature_boundary(self) -> None:
         self.assertEqual(len(self.manifest.archive_roster), 59)
         archive_dir = Path("/workspace/.work/owned-package-corpus/apks")
         index = Path("/workspace/.work/owned-package-corpus/index/APKINDEX.tar.gz")

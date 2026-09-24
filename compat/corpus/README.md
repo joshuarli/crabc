@@ -79,6 +79,16 @@ not extracted; the candidate and musl roots receive separate sealed loader and
 libc bytes at `/lib/ld-musl-x86_64.so.1` and
 `/lib/libc.musl-x86_64.so.1`.
 
+The APK archive digests are pinned; the repository index is not. Alpine
+regenerates the mutable v3.24 index, so an earlier snapshot can never be
+fetched again. Each run verifies the supplied index's signature and retains
+its observed SHA-256, and the post-execution identity must repeat it. Fetch
+the inputs on the host (the runner's container has no network) with
+`python3 -B compat/corpus/fetch_x86.py`; it keeps only archives that match
+their pins and writes them to `.work/x86_64/owned-package-corpus-input`, the
+runner's default `--archive-dir`/`--index` location. An existing index
+snapshot is kept unless `--refresh-index` is given.
+
 The package closure includes third-party application DSOs such as `libgcc_s`
 and `libstdc++`; those archives and bytes are shared by both roots. They are
 consumer payload, never candidate libc, loader, CRT, compiler input, or an

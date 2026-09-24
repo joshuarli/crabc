@@ -88,7 +88,6 @@ class ManifestSpec:
     cases: tuple[CaseSpec, ...]
     direct_packages: Mapping[str, str]
     source_manifest: Path
-    index_sha256: str
     image: str
 
 
@@ -378,7 +377,7 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
         if not all(isinstance(identity.get(key), int) and identity[key] >= 0 for key in ("mode", "uid", "gid")):
             fail("native corpus base image metadata is malformed")
         checked_base_files[base_path] = dict(identity)
-    return ManifestSpec(raw_bytes, archive_roster, frozenset(excluded_values), libraries, required, base_fixtures, checked_base_files, cases, dict(direct), source_manifest, require_sha256(repository.get("index_sha256"), "repository index digest"), raw["image"])
+    return ManifestSpec(raw_bytes, archive_roster, frozenset(excluded_values), libraries, required, base_fixtures, checked_base_files, cases, dict(direct), source_manifest, raw["image"])
 
 
 def select_cases(manifest: ManifestSpec, tiers: Sequence[str], case_ids: Sequence[str] = ()) -> tuple[CaseSpec, ...]:
@@ -723,10 +722,15 @@ def require_exact_archive_roster(received: Iterable[str], expected: Iterable[str
 
 
 def input_identity(manifest: ManifestSpec, archive_dir: Path, index: Path) -> dict[str, object]:
-    """Hash the exact finite APK/index source without invoking the verifier."""
+    """Hash the exact finite APK/index source without invoking the verifier.
+
+    Archive digests are pinned by the manifest. The repository index is a
+    mutable upstream snapshot that Alpine regenerates, so a pinned index digest
+    could never be fetched again; it is identified by the observed bytes that
+    this run verifies, and the post-execution identity must repeat them.
+    """
     archive_dir = require_physical_directory(archive_dir, "APK archive directory")
-    if sha256_file(index, "signed APK index") != manifest.index_sha256:
-        fail("signed APK index digest differs from native manifest")
+    index_sha256 = sha256_file(index, "signed APK index")
     entries = list(archive_dir.iterdir())
     if any(entry.is_symlink() or not stat.S_ISREG(entry.lstat().st_mode) for entry in entries):
         fail("APK archive directory contains a non-regular or linked entry")
@@ -740,7 +744,7 @@ def input_identity(manifest: ManifestSpec, archive_dir: Path, index: Path) -> di
         archives[name] = {"sha256": observed}
     return {
         "directory": str(archive_dir),
-        "index": {"path": str(index), "sha256": manifest.index_sha256},
+        "index": {"path": str(index), "sha256": index_sha256},
         "archives": archives,
     }
 
