@@ -8,6 +8,8 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <poll.h>
+#include <pthread.h>
 #include <sched.h>
 #include <signal.h>
 #include <stddef.h>
@@ -21,6 +23,7 @@
 #include <sys/syscall.h>
 #include <sys/sysinfo.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <ulimit.h>
 #include <unistd.h>
 
@@ -506,6 +509,140 @@ static int uts_seccomp_case(void)
     return child_result(uts_seccomp_child);
 }
 
+/* Musl 1.2.6 `__membarrier` emulates MEMBARRIER_CMD_PRIVATE_EXPEDITED when
+ * the kernel refuses it, which Linux 5.10 does for any process that has not
+ * registered: it catches every other thread with SIGSYNCCALL and succeeds.
+ * `__pthread_create` registers the process before its first thread. The raw
+ * SIGSYNCCALL (34) disposition exposes the emulation's final SIG_IGN reset. */
+#define SIGSYNCCALL_NUMBER 34
+
+static long synccall_disposition(void)
+{
+    unsigned long action[4] = { 0 };
+    long result = raw6(SYS_rt_sigaction, SIGSYNCCALL_NUMBER, 0, (long)action, 8, 0, 0);
+
+    return result ? result : (long)action[0];
+}
+
+/* An exec preserves an inherited SIG_IGN, so start from the default. */
+static long reset_synccall_disposition(void)
+{
+    unsigned long action[4] = { (unsigned long)SIG_DFL, 0, 0, 0 };
+
+    return raw6(SYS_rt_sigaction, SIGSYNCCALL_NUMBER, (long)action, 0, 8, 0, 0);
+}
+
+static long raw_private_expedited(void)
+{
+    return raw6(SYS_membarrier, MEMBARRIER_CMD_PRIVATE_EXPEDITED, 0, 0, 0, 0, 0);
+}
+
+static void *membarrier_idle_thread(void *argument)
+{
+    (void)argument;
+    return 0;
+}
+
+static int membarrier_unregistered_child(void)
+{
+    pthread_t thread;
+
+    CHECK(reset_synccall_disposition() == 0);
+    CHECK(synccall_disposition() == (long)SIG_DFL);
+    CHECK(raw_private_expedited() == -EPERM);
+    errno = E2BIG;
+    CHECK(membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED, 0) == 0 && errno == E2BIG);
+    CHECK(synccall_disposition() == (long)SIG_IGN);
+    /* The emulation neither registers nor covers flagged requests. */
+    CHECK(raw_private_expedited() == -EPERM);
+    ERROR_MATCH("membarrier-expedited-flagged",
+        membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED, 1), SYS_membarrier,
+        MEMBARRIER_CMD_PRIVATE_EXPEDITED, 1, 0, 0, 0, 0);
+    CHECK(pthread_create(&thread, 0, membarrier_idle_thread, 0) == 0);
+    CHECK(pthread_join(thread, 0) == 0);
+    CHECK(raw_private_expedited() == 0);
+    errno = E2BIG;
+    CHECK(membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED, 0) == 0 && errno == E2BIG);
+    puts("membarrier first-thread registration");
+    return 0;
+}
+
+#define MEMBARRIER_EMULATED_THREADS 4
+
+static volatile int membarrier_interrupted[MEMBARRIER_EMULATED_THREADS];
+
+/* ppoll is never restarted after a handler, so only the emulation's
+ * SIGSYNCCALL can end this wait early. */
+static void *membarrier_waiting_thread(void *argument)
+{
+    volatile int *interrupted = argument;
+    struct timespec second = { 1, 0 };
+    int round;
+
+    for (round = 0; round < 20; round++) {
+        if (ppoll(0, 0, &second, 0) == -1 && errno == EINTR) {
+            *interrupted = 1;
+            return 0;
+        }
+    }
+    return argument;
+}
+
+static int membarrier_emulated_child(void)
+{
+    struct sock_filter instructions[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_membarrier, 0, 3),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 16),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog program = {
+        .length = sizeof instructions / sizeof instructions[0],
+        .filter = instructions,
+    };
+    pthread_t threads[MEMBARRIER_EMULATED_THREADS];
+    int index;
+    int attempt;
+    int caught;
+
+    CHECK(reset_synccall_disposition() == 0);
+    CHECK(prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL) == 0);
+    CHECK(prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, (unsigned long)&program, 0UL, 0UL) == 0);
+    for (index = 0; index < MEMBARRIER_EMULATED_THREADS; index++) {
+        CHECK(pthread_create(&threads[index], 0, membarrier_waiting_thread,
+            (void *)&membarrier_interrupted[index]) == 0);
+    }
+    /* Registration was refused, so the multi-threaded call is emulated. */
+    CHECK(raw_private_expedited() == -EPERM);
+    for (attempt = 0, caught = 0; attempt < 2000 && caught < MEMBARRIER_EMULATED_THREADS; attempt++) {
+        struct timespec delay = { 0, 1000000 };
+
+        /* Musl's semaphore wait may leave EAGAIN from its sem_trywait fast
+         * path, depending on timing; success leaves errno unspecified. */
+        CHECK(membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED, 0) == 0);
+        for (index = 0, caught = 0; index < MEMBARRIER_EMULATED_THREADS; index++) {
+            caught += membarrier_interrupted[index];
+        }
+        nanosleep(&delay, 0);
+    }
+    for (index = 0; index < MEMBARRIER_EMULATED_THREADS; index++) {
+        void *result;
+
+        CHECK(pthread_join(threads[index], &result) == 0 && result == 0);
+    }
+    CHECK(synccall_disposition() == (long)SIG_IGN);
+    puts("membarrier emulated all-thread barrier");
+    return 0;
+}
+
+static int membarrier_expedited_case(void)
+{
+    return child_result(membarrier_unregistered_child)
+        || child_result(membarrier_emulated_child);
+}
+
 static int run_selected(const char *selector)
 {
     if (!strcmp(selector, "cpucount")) return cpucount_case();
@@ -513,6 +650,7 @@ static int run_selected(const char *selector)
     if (!strcmp(selector, "sysconf-signal-stack")) return sysconf_signal_stack_case();
     if (!strcmp(selector, "sysconf-table")) return sysconf_table_case();
     if (!strcmp(selector, "hostid-membarrier")) return hostid_and_membarrier_case();
+    if (!strcmp(selector, "membarrier-expedited")) return membarrier_expedited_case();
     if (!strcmp(selector, "personality")) return personality_case();
     if (!strcmp(selector, "prctl")) return prctl_case();
     if (!strcmp(selector, "scheduler")) return scheduler_case();
@@ -529,6 +667,7 @@ static int run_selected(const char *selector)
         || sysconf_signal_stack_case()
         || sysconf_table_case()
         || hostid_and_membarrier_case()
+        || membarrier_expedited_case()
         || personality_case()
         || prctl_case()
         || scheduler_case()

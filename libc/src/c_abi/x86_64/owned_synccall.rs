@@ -16,6 +16,10 @@
 //!   owner-TID futex lock that makes the thread set stable for the whole
 //!   rendezvous; `src/process/_Fork.c::__post_Fork` clears it in the child.
 //!
+//! - `src/linux/membarrier.c::{__membarrier,bcast_barrier}` supplies the
+//!   `MEMBARRIER_CMD_PRIVATE_EXPEDITED` emulation that shares this signal
+//!   and lock: [`emulate_private_expedited_membarrier`].
+//!
 //! Musl's exiting thread keeps the thread-list lock until the kernel clears
 //! it through its clear-child-TID address, so a listed thread is always
 //! alive. Here the clear-child-TID word belongs to join/detached
@@ -224,7 +228,7 @@ unsafe extern "C" fn handler(_signal: c_int) {
     CALLER_SEM.post();
 }
 
-unsafe fn set_synccall_disposition(handler: usize) {
+unsafe fn set_synccall_disposition(handler: usize) -> i64 {
     let action = signal_foundation::KernelSigAction {
         handler,
         flags: SA_RESTART | SA_ONSTACK | signal_foundation::SA_RESTORER,
@@ -242,7 +246,7 @@ unsafe fn set_synccall_disposition(handler: usize) {
             (&action as *const signal_foundation::KernelSigAction) as i64,
             0,
             8,
-        );
+        )
     }
 }
 
@@ -337,7 +341,7 @@ pub(super) unsafe fn synccall(callback: SynccallCallback, context: *mut c_void) 
     if pthread_create_join::current_runtime_task_linux_id() == Some(self_tid) {
         CALLBACK.store(callback as *mut (), Ordering::Release);
         CONTEXT.store(context, Ordering::Release);
-        unsafe { set_synccall_disposition(handler as *const () as usize) };
+        let _ = unsafe { set_synccall_disposition(handler as *const () as usize) };
         let mut inline_targets = [0 as c_int; INLINE_TARGETS];
         let targets = TargetList::collect(self_tid, &mut inline_targets);
         let targets_ok = targets.is_some();
@@ -377,7 +381,7 @@ pub(super) unsafe fn synccall(callback: SynccallCallback, context: *mut c_void) 
             TARGET_SEM.post();
             CALLER_SEM.wait();
         }
-        unsafe { set_synccall_disposition(SIG_IGN) };
+        let _ = unsafe { set_synccall_disposition(SIG_IGN) };
     }
 
     // SAFETY: the caller's obligations cover this final invocation.
@@ -397,6 +401,86 @@ pub(super) unsafe fn synccall(callback: SynccallCallback, context: *mut c_void) 
         unlock_thread_list();
         signal_execution::restore_application_signals(&old_mask);
     }
+}
+
+// Musl's `barrier_sem` in `membarrier.c`, owned by the thread-list lock holder.
+static BARRIER_SEM: RendezvousSemaphore = RendezvousSemaphore::new();
+
+/// Musl's `bcast_barrier`: receiving the signal is the barrier; the post
+/// tells the caller this thread has passed it.
+unsafe extern "C" fn broadcast_barrier(_signal: c_int) {
+    BARRIER_SEM.post();
+}
+
+/// Musl `__membarrier`'s emulation of an unregistered or refused
+/// `MEMBARRIER_CMD_PRIVATE_EXPEDITED`: interrupt every other thread of the
+/// process with `SIGSYNCCALL` and wait until each has taken it. A signal
+/// delivery is a full barrier on the receiving thread, so on return every
+/// other thread has executed one since the call began. Unlike the syscall it
+/// does not reach other processes that share the address space, which musl
+/// also does not support.
+///
+/// Returns whether the barrier was established; it fails only when the
+/// handler cannot be installed or a large target list cannot be mapped.
+///
+/// Two deliberate differences from musl, neither visible to a valid program:
+/// the caller blocks every signal after taking the lock, as `__synccall`
+/// does, so asynchronous cancellation cannot unwind it while it holds that
+/// lock (musl's `sem_wait` here is even a cancellation point); and it waits
+/// only for threads the kernel accepted a signal for, retrying a full signal
+/// queue as `synccall` does, where musl would wait forever for a thread
+/// whose `tkill` failed (the locked list makes any other failure
+/// impossible). It sets no `errno`.
+pub(super) fn emulate_private_expedited_membarrier() -> bool {
+    let mut old_mask = 0_u64;
+    let mut all_blocked = 0_u64;
+    // SAFETY: the same lock admission order as `synccall`.
+    unsafe {
+        signal_execution::block_application_signals(&mut old_mask);
+        lock_thread_list();
+        signal_execution::block_all_signals(&mut all_blocked);
+    }
+    BARRIER_SEM.reset();
+    let mut established = false;
+    // SAFETY: the handler is a process-lifetime async-signal-safe function.
+    if unsafe { set_synccall_disposition(broadcast_barrier as *const () as usize) } == 0 {
+        let self_tid = current_linux_thread_id();
+        let mut inline_targets = [0 as c_int; INLINE_TARGETS];
+        // Musl walks `self->next` back to itself; a caller outside the owned
+        // registry (a raw-fork or vfork image) is alone in its list.
+        let targets = if pthread_create_join::current_runtime_task_linux_id() == Some(self_tid) {
+            TargetList::collect(self_tid, &mut inline_targets)
+        } else {
+            Some(TargetList { targets: inline_targets.as_ptr(), count: 0, mapping: 0, _inline: core::marker::PhantomData })
+        };
+        if let Some(targets) = targets {
+            let mut signaled = 0_usize;
+            for &tid in targets.as_slice() {
+                let result = loop {
+                    // SAFETY: the thread-list lock keeps `tid` a live task.
+                    let result = unsafe {
+                        raw_syscall::syscall2(raw_syscall::SYS_TKILL, i64::from(tid), i64::from(SIGSYNCCALL))
+                    };
+                    if result != -EAGAIN {
+                        break result;
+                    }
+                };
+                if result == 0 {
+                    signaled += 1;
+                }
+            }
+            for _ in 0..signaled {
+                BARRIER_SEM.wait();
+            }
+            established = true;
+        }
+        let _ = unsafe { set_synccall_disposition(SIG_IGN) };
+    }
+    unsafe {
+        unlock_thread_list();
+        signal_execution::restore_application_signals(&old_mask);
+    }
+    established
 }
 
 /// Kill the whole process after a partial credential transition.

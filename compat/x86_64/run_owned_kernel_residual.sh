@@ -20,6 +20,7 @@ readonly CASES=(
     sysconf-signal-stack
     sysconf-table
     hostid-membarrier
+    membarrier-expedited
     personality
     prctl
     scheduler
@@ -370,4 +371,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned kernel residual: PASS (same project-header object with pinned musl; configuration, scheduler ENOSYS/output preservation, host identity, membarrier, personality, variadic prctl/syscall/ulimit, and private UTS/seccomp negatives; %s); evidence: %s\n' "$matrix" "$work"
+printf 'owned kernel residual: PASS (same project-header object with pinned musl; configuration, scheduler ENOSYS/output preservation, host identity, membarrier with its unregistered expedited emulation and first-thread registration, personality, variadic prctl/syscall/ulimit, and private UTS/seccomp negatives; %s); evidence: %s\n' "$matrix" "$work"

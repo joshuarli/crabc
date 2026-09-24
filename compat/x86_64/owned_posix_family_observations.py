@@ -45,7 +45,7 @@ LAYOUTS = {
     'credentials-profile': Layout('credentials_profile', ('direct', 'aliases', 'transitions', 'threads'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.stdout.status'),
     'environment-lifecycle': Layout('environment_lifecycle', ('normal', 'allocation-failure'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', '.stdout.stderr', '.stdout.status'),
     'signal-full': Layout('posix_signals', ('sets', 'actions-masks', 'queue-delivery', 'suspend-delivery', 'sigpause-cancellation', 'sigsuspend-cancellation', 'interrupt-bookkeeping', 'alternate-stack', 'alternate-minimum', 'signalfd', 'waits'), '{mode}-{scenario}', '{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.status.json'),
-    'kernel-residual': Layout('kernel_residual', ('cpucount', 'configuration', 'sysconf-signal-stack', 'hostid-membarrier', 'personality', 'prctl', 'scheduler', 'syscall', 'ulimit', 'uts-namespace', 'uts-seccomp', 'all'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
+    'kernel-residual': Layout('kernel_residual', ('cpucount', 'configuration', 'sysconf-signal-stack', 'hostid-membarrier', 'membarrier-expedited', 'personality', 'prctl', 'scheduler', 'syscall', 'ulimit', 'uts-namespace', 'uts-seccomp', 'all'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
     'global-state-composition': Layout('posix_composition'),
     'linux-control': Layout('linux_control', stderr_suffix='.stdout.stderr', status_suffix='.stdout.status', dynamic='dynamic-{mode}'),
     'syslog': Layout('syslog', ('normal', 'worker', 'fork', 'cancellation'), 'static-{mode}-kernel-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-kernel-{scenario}'),

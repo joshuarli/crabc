@@ -785,6 +785,13 @@ fn current_linux_thread_group_id() -> Option<c_int> {
     Some(result as c_int)
 }
 
+/// Musl's `libc.threaded`, reduced to the one first-thread duty owned here:
+/// registering for expedited private membarriers. As in musl it is never
+/// cleared, so a fork child of a threaded process does not register again
+/// (Linux copies the registration into the child's address space).
+#[cfg(crabc_x86_owned_runtime)]
+static PROCESS_BECAME_THREADED: AtomicU8 = AtomicU8::new(0);
+
 /// Acquire the bounded registry lock exclusively, for any mutation or
 /// scan-to-publish decision, without entering a broader pthread lock.
 ///
@@ -2774,6 +2781,12 @@ unsafe fn create_selected_worker_with_attributes(
     }
     if !static_tls::is_ready() {
         return ENOTSUP;
+    }
+    // Musl `__pthread_create`'s first-thread setup (`!libc.threaded`) calls
+    // `__membarrier_init` before the process can become multi-threaded.
+    #[cfg(crabc_x86_owned_runtime)]
+    if PROCESS_BECAME_THREADED.swap(1, Ordering::Relaxed) == 0 {
+        super::membarrier::register_private_expedited();
     }
     // A detached child cannot release its active stack/TLS mappings itself.
     // Reap only here at a later lifecycle boundary, after the kernel's

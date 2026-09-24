@@ -18,11 +18,15 @@ remaining 18 names:
 The implementations retain their musl 1.2.6 source maps above the relevant
 C ABI definitions. The workload exercises bytewise CPU-mask population;
 configuration tables and the `RLIMIT_NOFILE` query; fixed-zero `gethostid`;
-the direct Linux `membarrier` branch; `personality`; four-word `prctl` and
+the direct Linux `membarrier` branch, musl's emulation of a refused
+`MEMBARRIER_CMD_PRIVATE_EXPEDITED` (reachable on Linux 5.10 for an
+unregistered process, and exercised with threads by a seccomp filter that
+refuses registration), and first-thread registration in `pthread_create`;
+`personality`; four-word `prctl` and
 six-word `syscall` register forwarding; the scheduler source's intentional
 `ENOSYS` result without touching caller output; `RLIMIT_FSIZE` `ulimit`
 query/set behavior; and Linux UTS setter argument order. It does not select
-musl's old-kernel membarrier fallback, scheduler policy, host identity policy,
+scheduler policy, host identity policy,
 or a Rust administration facade.
 
 `owned_system_configuration.rs` is selected only by the owned runtime
