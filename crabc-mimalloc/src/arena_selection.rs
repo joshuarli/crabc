@@ -1,6 +1,6 @@
 // Copyright (c) 2019-2026, Microsoft Research, Daan Leijen
 // SPDX-License-Identifier: MIT
-// Source: pinned mimalloc v3.5.0 src/arena.c:341-406,417-569.
+// Source: pinned mimalloc v3.5.0 src/arena.c:106-128,341-406,417-569.
 //
 //! Arena reservation geometry and source-order registry search. Option values
 //! are snapshots read by the process VM owner, not a second option store.
@@ -13,7 +13,28 @@ use crate::config::{
     ARENA_SLICE_SIZE, MAX_ARENAS,
 };
 use crate::invariants;
-use crate::os::{MapAccess, MemoryConfig};
+use crate::os::{MapAccess, MemoryConfig, VmPolicy};
+
+/// Source `mi_arena_max_object_size` for the default aligned page-metadata
+/// layout (`MI_PAGE_META_IS_ALIGNED`): the slice-rounded
+/// `arena_max_object_size` option, clamped between one minimum object slice
+/// and `mi_arena_max_fixed_object_size`.
+pub(crate) fn arena_max_object_size(policy: &VmPolicy) -> usize {
+    use crate::config::{ARENA_MIN_OBJ_SIZE, PAGE_META_ALIGNED_COUNT, PAGE_META_ALIGNMENT};
+    let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<crate::types::Page>())
+        .next_multiple_of(ARENA_SLICE_SIZE);
+    let fixed = PAGE_META_ALIGNMENT - metadata;
+    // Source `_mi_align_up` wraps like this on an out-of-range option.
+    let requested = policy.arena_max_object_size_bytes()
+        .wrapping_add(ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
+    if requested <= ARENA_MIN_OBJ_SIZE {
+        ARENA_MIN_OBJ_SIZE
+    } else if requested >= fixed {
+        fixed
+    } else {
+        requested
+    }
+}
 
 /// The two possible source reservation attempts, before any mapping or stats
 /// mutation. A fallback is permitted only after clean failure of the primary;

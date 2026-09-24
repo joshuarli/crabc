@@ -55,6 +55,20 @@ void* __wrap_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t 
   return __real_mmap(addr, length, prot, flags, fd, offset);
 }
 
+/* Deterministic commit failure: the Nth `mprotect` after arming fails, which
+   is exactly one source `_mi_prim_commit` on Linux. */
+int __real_mprotect(void* addr, size_t length, int prot);
+static size_t fail_mprotect_ordinal;  // 0 disables the seam
+static size_t mprotect_calls;
+
+int __wrap_mprotect(void* addr, size_t length, int prot) {
+  if (fail_mprotect_ordinal != 0 && ++mprotect_calls == fail_mprotect_ordinal) {
+    errno = ENOMEM;
+    return -1;
+  }
+  return __real_mprotect(addr, length, prot);
+}
+
 /* ------------------------------------------------------------------------ */
 /* Isolated source subprocess registries.                                    */
 
@@ -176,6 +190,40 @@ static lifecycle_claim_t claim(lifecycle_owner_t* owner, size_t slices, bool com
   }
   else {
     for (int i = 0; i < 7; i++) emit(-1);
+  }
+  emit_stats_delta(owner, before);
+  emit_arenas_from(owner, arenas_before);
+  return result;
+}
+
+/* Source `_mi_arenas_alloc_aligned` in a requested arena: the result, the
+   source errno on refusal, and the same claim/registry record as `claim`. */
+static lifecycle_claim_t object(lifecycle_owner_t* owner, size_t size, size_t alignment, size_t align_offset,
+                                mi_arena_t* requested, int numa_node) {
+  const lifecycle_stats_t before = stats_of(owner);
+  const size_t arenas_before = mi_arenas_get_count(&owner->subproc);
+  lifecycle_claim_t result = { NULL, _mi_memid_none(), 0 };
+  errno = 0;
+  result.start = _mi_arenas_alloc_aligned(&owner->heap, size, alignment, align_offset, true /* commit */,
+                                          true /* allow_large */, requested, 0 /* tseq */, numa_node,
+                                          &result.memid);
+  emit(result.start != NULL);
+  emit(result.start != NULL ? 0 : errno);
+  emit((int64_t)mi_arenas_get_count(&owner->subproc));
+  if (result.start != NULL) {
+    mi_arena_t* const arena = result.memid.mem.arena.arena;
+    require(result.memid.memkind == MI_MEM_ARENA);
+    require(result.start == mi_arena_slice_start(arena, result.memid.mem.arena.slice_index));
+    result.slices = result.memid.mem.arena.slice_count;
+    emit((int64_t)arena->arena_idx);
+    emit((int64_t)result.memid.mem.arena.slice_index);
+    emit((int64_t)result.memid.mem.arena.slice_count);
+    emit(result.memid.initially_committed);
+    emit(result.memid.initially_zero);
+    emit(mi_bitmap_is_setN(arena->slices_committed, result.memid.mem.arena.slice_index, result.slices));
+  }
+  else {
+    for (int i = 0; i < 6; i++) emit(-1);
   }
   emit_stats_delta(owner, before);
   emit_arenas_from(owner, arenas_before);
@@ -426,6 +474,101 @@ int main(void) {
     release(owner, &fits);
   }
 
+  /* 11. Sub-arena publication failure after a published parent: with
+         MI_MAX_ARENAS - 1 entries taken, a spanning reservation publishes
+         its parent in the last entry, the sub-arena's mi_arenas_add fails,
+         and the reservation still succeeds with the parent's total_size
+         reduced to the managed prefix. */
   emit_marker(11);
+  {
+    configure(true, 32 * 1024, 0, false);
+    lifecycle_owner_t* const owner = fresh_owner();
+    for (size_t i = 0; i < MI_MAX_ARENAS - 1; i++) {
+      require(mi_reserve_os_memory_ex2(&owner->subproc, MI_ARENA_MIN_SIZE, false, false, false, NULL) == 0);
+    }
+    const lifecycle_stats_t before = stats_of(owner);
+    mi_arena_id_t parent_id = _mi_arena_id_none();
+    const int err = mi_reserve_os_memory_ex2(&owner->subproc, MI_ARENA_MAX_SIZE + MI_GiB, false,
+                                             false, false, &parent_id);
+    emit(err);
+    emit(parent_id != _mi_arena_id_none());
+    emit_stats_delta(owner, before);
+    emit_arenas_from(owner, MI_MAX_ARENAS - 1);
+    mi_arena_t* const parent = _mi_arena_from_id(parent_id);
+    require(parent != NULL);
+    lifecycle_claim_t in_parent = claim(owner, 2, true, parent, -1);
+    require(in_parent.start != NULL && in_parent.memid.mem.arena.arena == parent);
+    release(owner, &in_parent);
+  }
+
+  /* 12. Sub-arena metadata commit failure after a published parent: the
+         second source commit of a reserved spanning reservation fails in
+         mi_arena_initialize, and the reservation succeeds with only the
+         parent published. */
+  emit_marker(12);
+  {
+    configure(true, 32 * 1024, 0, false);
+    lifecycle_owner_t* const owner = fresh_owner();
+    const lifecycle_stats_t before = stats_of(owner);
+    mi_arena_id_t parent_id = _mi_arena_id_none();
+    mprotect_calls = 0;
+    fail_mprotect_ordinal = 2;
+    const int err = mi_reserve_os_memory_ex2(&owner->subproc, MI_ARENA_MAX_SIZE + MI_GiB, false,
+                                             false, false, &parent_id);
+    emit(mprotect_calls >= 2);
+    fail_mprotect_ordinal = 0;
+    emit(err);
+    emit(parent_id != _mi_arena_id_none());
+    emit_stats_delta(owner, before);
+    emit_arenas_from(owner, 0);
+    mi_arena_t* const parent = _mi_arena_from_id(parent_id);
+    require(parent != NULL && mi_arenas_get_count(&owner->subproc) == 1);
+    lifecycle_claim_t in_parent = claim(owner, 2, true, parent, -1);
+    require(in_parent.start != NULL && in_parent.memid.mem.arena.arena == parent);
+    lifecycle_claim_t shared = claim(owner, 1, false, NULL, -1);
+    require(shared.start != NULL);
+    release(owner, &shared);
+    release(owner, &in_parent);
+  }
+
+  /* 13. `_mi_arenas_alloc(_aligned)` for a requested (exclusive) arena, the
+         shape of its sole caller `_mi_theap_alloc`: the arena arm and each
+         gate that skips it, exhaustion without reservation, the NUMA second
+         pass, and the OS fallback that refuses every requested-arena miss. */
+  emit_marker(13);
+  {
+    configure(true, 32 * 1024, 0, false);
+    lifecycle_owner_t* const owner = fresh_owner();
+    mi_arena_id_t exclusive_id = _mi_arena_id_none();
+    require(mi_reserve_os_memory_ex2(&owner->subproc, MI_ARENA_MIN_SIZE, false, false, true, &exclusive_id) == 0);
+    mi_arena_t* const exclusive = _mi_arena_from_id(exclusive_id);
+    lifecycle_claim_t theap = object(owner, MI_ARENA_MIN_OBJ_SIZE, MI_ARENA_SLICE_SIZE, 0, exclusive, -1);
+    require(theap.start != NULL);
+    lifecycle_claim_t largest = object(owner, 2 * MI_MiB, MI_ARENA_SLICE_SIZE, 0, exclusive, 2);
+    require(largest.start != NULL);
+    emit((int64_t)(mi_arena_max_object_size() / MI_ARENA_SLICE_SIZE));
+    lifecycle_claim_t at_max = object(owner, mi_arena_max_object_size(), MI_ARENA_SLICE_SIZE, 0, exclusive, -1);
+    if (at_max.start != NULL) release(owner, &at_max);
+    require(object(owner, MI_ARENA_MIN_OBJ_SIZE - 1, MI_ARENA_SLICE_SIZE, 0, exclusive, -1).start == NULL);
+    require(object(owner, mi_arena_max_object_size() + 1, MI_ARENA_SLICE_SIZE, 0, exclusive, -1).start == NULL);
+    require(object(owner, MI_ARENA_MIN_OBJ_SIZE, 2 * MI_ARENA_SLICE_SIZE, 0, exclusive, -1).start == NULL);
+    require(object(owner, MI_ARENA_MIN_OBJ_SIZE, MI_ARENA_SLICE_SIZE, 16, exclusive, -1).start == NULL);
+    mi_option_set(mi_option_disallow_arena_alloc, 1);
+    require(object(owner, MI_ARENA_MIN_OBJ_SIZE, MI_ARENA_SLICE_SIZE, 0, exclusive, -1).start == NULL);
+    mi_option_set(mi_option_disallow_arena_alloc, 0);
+    lifecycle_claim_t fill[16];
+    size_t filled = 0;
+    while (filled < 16) {
+      fill[filled] = object(owner, 2 * MI_MiB, MI_ARENA_SLICE_SIZE, 0, exclusive, -1);
+      if (fill[filled].start == NULL) break;
+      filled++;
+    }
+    emit((int64_t)filled);
+    for (size_t i = 0; i < filled; i++) release(owner, &fill[i]);
+    release(owner, &largest);
+    release(owner, &theap);
+  }
+
+  emit_marker(14);
   return 0;
 }
