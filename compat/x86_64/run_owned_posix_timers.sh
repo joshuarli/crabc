@@ -81,17 +81,30 @@ fail() {
 # Retain the exact process result.  The runner intentionally keeps the prior
 # ordinary and dynamic differential boundaries; failure reclamation remains
 # candidate-only evidence with its own raw result.
-run_capture() {
+run_recorded() {
     local output="$1"
     shift
     local status
 
     set +e
-    timeout 20 "$@" >"$output" 2>"${output}.stderr"
+    "$@" >"$output" 2>"${output}.stderr"
     status=$?
     set -e
     printf '%s\n' "$status" >"${output}.status"
     [ "$status" -eq 0 ] || fail "expected success, got ${status}: $*"
+}
+
+# A measured case runs under the workload's 20-second deadline.
+run_capture() {
+    local output="$1"
+    shift
+    run_recorded "$output" timeout 20 "$@"
+}
+
+# Product builds, compiles and links have no execution deadline: their
+# duration measures host load, not the timer behavior under test.
+run_build() {
+    run_recorded "$@"
 }
 
 compare_oracle() {
@@ -207,7 +220,7 @@ validate_timer_tls_dso() {
 }
 
 if [ "$dynamic_was_supplied" -eq 0 ]; then
-    run_capture "$work/dynamic-build.stdout" \
+    run_build "$work/dynamic-build.stdout" \
         python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic-sysroot"
     provided_dynamic="$work/dynamic-sysroot"
 fi
@@ -216,18 +229,18 @@ readonly installed="$(python3 -B -c 'import pathlib, sys; print(pathlib.Path(sys
 # product. The evidence helper invokes the installed driver's own source
 # compiler and clean environment with its exact flags in dependency-only mode;
 # it admits no compiler builtin or ambient header root.
-run_capture "$work/probe-compile.stdout" \
+run_build "$work/probe-compile.stdout" \
     "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -c "$probe" -o "$work/probe.o"
 record_compile_audit application "$probe" "$work/probe.o" \
     "$work/probe.compile-audit.json" "$installed/bin/crabc-cc-dynamic"
 
-run_capture "$work/tls-compile.stdout" \
+run_build "$work/tls-compile.stdout" \
     "$installed/bin/crabc-cc-dynamic" -shared -std=c11 -c "$tls_source" -o "$work/tls.o"
 record_compile_audit timer-tls-dso "$tls_source" "$work/tls.o" \
     "$work/tls.compile-audit.json" "$installed/bin/crabc-cc-dynamic"
 
-run_capture "$work/oracle-link.stdout" "$oracle_cc" -pthread "$work/probe.o" -o "$work/oracle"
-run_capture "$work/oracle-tls-link.stdout" "$oracle_cc" -shared "$work/tls.o" -o "$work/oracle-tls.so"
+run_build "$work/oracle-link.stdout" "$oracle_cc" -pthread "$work/probe.o" -o "$work/oracle"
+run_build "$work/oracle-tls-link.stdout" "$oracle_cc" -shared "$work/tls.o" -o "$work/oracle-tls.so"
 run_capture "$work/oracle-ordinary.stdout" "$work/oracle" ordinary
 run_capture "$work/oracle-dynamic.stdout" "$work/oracle" dynamic "$work/oracle-tls.so"
 
@@ -275,7 +288,7 @@ for attempt in range(1, 17):
                 status_file.write_text(f'{status}\n', encoding='utf-8')
 PYTRACE
 
-run_capture "$work/tls-reset-build.stdout" rustc --edition=2021 --test \
+run_build "$work/tls-reset-build.stdout" rustc --edition=2021 --test \
     --cfg 'feature="x86_64-owned-dynamic-runtime"' \
     --cfg crabc_general_initial_graph --cfg crabc_general_initial_lifecycle \
     --cfg crabc_general_initial_tls_materialization_v1 --cfg crabc_general_loader_libc_tls_runtime_v1 \
@@ -288,7 +301,7 @@ static_product=''
 if [ "$static_was_supplied" -eq 1 ]; then
     static_product="$provided_static"
 elif [ "$dynamic_was_supplied" -eq 0 ]; then
-    run_capture "$work/static-build.stdout" \
+    run_build "$work/static-build.stdout" \
         python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-sysroot"
     static_product="$work/static-sysroot"
 fi
@@ -297,7 +310,7 @@ if [ -n "$static_product" ]; then
         receipt="$work/$mode.receipt.json"
         (
             cd "$work"
-            run_capture "$work/$mode-link.stdout" "$static_product/bin/crabc-cc" "-$mode" --link-receipt \
+            run_build "$work/$mode-link.stdout" "$static_product/bin/crabc-cc" "-$mode" --link-receipt \
                 "$(basename "$receipt")" -std=c11 "$work/probe.o" -o "$work/$mode"
         )
         validate_sealed_link "$static_product" "$work/probe.o" "$work/$mode" "$receipt" "$mode"
@@ -308,12 +321,12 @@ if [ -n "$static_product" ]; then
 fi
 
 cp -a "$installed" "$work/execution-root"
-run_capture "$work/tls-link.stdout" \
+run_build "$work/tls-link.stdout" \
     "$installed/bin/crabc-cc-dynamic" -shared "$work/tls.o" -o "$work/libtimer-tls.so"
 validate_timer_tls_dso
 cp "$work/libtimer-tls.so" "$work/execution-root/libtimer-tls.so"
 for mode in pie non-pie; do
-    run_capture "$work/dynamic-$mode-link.stdout" \
+    run_build "$work/dynamic-$mode-link.stdout" \
         "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 "$work/probe.o" -o "$work/dynamic-$mode"
     validate_sealed_link "$installed" "$work/probe.o" "$work/dynamic-$mode" \
         "$work/dynamic-$mode.crabc-link.json" "$mode"
