@@ -20991,10 +20991,10 @@ depends_on = ["oracle.musl-toolchain", "sysroot.owned-artifact", "compat.loader-
 category = "consumer-gate"
 description = "Stock Rust std, dependent fixture, build-std, and LTO/native-facade behavior through the x86 runtime and owned sysroot."
 aarch64_gates = ["rust-std", "rust-std-dependent", "lto", "lto-native-facade"]
-source_owners = ["compat/rust-std", "compat/lto", "compat/lto/native-facade-lto-fixture", "crabc-rs"]
+source_owners = ["compat/rust-std", "compat/lto", "compat/lto/native-facade-lto-fixture", "crabc-rs", "compat/x86_64/consumer_rust_std_lto.py", "compat/x86_64/tests/test_consumer_rust_std_lto.py", "unwinder"]
 x86_abi_prerequisites = ["Rust target ABI", "x86 CRT/loader handoff", "static and dynamic link/LTO resolution", "no_std facade boundary"]
 x86_header_prerequisites = ["Owned x86 sysroot driver and headers must satisfy Rust/C build inputs without host-target leakage."]
-native_evidence = [{ state = "required", command = "Define native x86 Rust-std, dependent, LTO, and native-facade-LTO gates", scope = "Build through the owned x86 CRT, loader, libc, and helper artifacts." }]
+native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh consumer-rust-std-lto run --static-preparation PREP.json --dynamic-qualification QUAL.json --provider-vendor VENDOR --dependency-vendor VENDOR --output NEW_DIR", scope = "Qualification reads one published consumer receipt (`qualification-manifest --publish consumer.rust-std-lto rust-std-lto RECEIPT`). On one current-source cohort (`owned-posix-static-products` plus a passing `materialized-dynamic-sysroot` qualification) it reproduces the frozen `rust-std`, `rust-std-dependent`, `lto`, and `lto-native-facade` gates with their unchanged fixtures and `panic = \"abort\"` profile, linking every candidate from the installed CRT, libc, builtins, and loader plus one fresh standalone unwinder provider; lanes the frozen gates compared against pinned musl compare raw status/stdout/stderr. The unwind matrix runs the owned cleanup and cross-DSO consumers on the installed and extracted pairs, then the standalone provider bounds regressions. The reader rehashes every retained file against current source and the same cohort; `--development-*` products never qualify." }]
 oracle = [{ kind = "consumer-build", source = "Pinned Rust toolchain and stock Rust sources", role = "Consumer compatibility contract." }, { kind = "c-posix", source = "Pinned musl 1.2.6", role = "Separately labeled runtime comparison oracle." }]
 capabilities = []
 status = "planned"

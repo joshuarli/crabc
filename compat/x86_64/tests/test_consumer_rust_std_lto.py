@@ -175,6 +175,11 @@ class ReceiptReaderTests(unittest.TestCase):
             with self.subTest(description), self.assertRaises(GATE.GateError):
                 self.validate({**self.record, **change})
 
+    def test_failed_receipt_names_its_unmet_conditions(self) -> None:
+        failed = {**self.record, "passed": False, "unmet_conditions": ["lto/D: build-failed"]}
+        with self.assertRaisesRegex(GATE.GateError, "did not pass: lto/D: build-failed"):
+            self.validate(failed)
+
     def test_changed_retained_bytes_or_cohort_fail_closed(self) -> None:
         self.evidence.write_bytes(b"changed\n")
         with self.assertRaisesRegex(GATE.GateError, "evidence changed"):

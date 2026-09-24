@@ -166,6 +166,16 @@ def _validate_abi_evidence(path: Path) -> Mapping[str, Any]:
     return _import_compat("abi_differential_evidence").validate_receipt(ROOT, path)
 
 
+def _validate_rust_std_lto(path: Path) -> Mapping[str, Any]:
+    return _import_compat("consumer_rust_std_lto").validate_receipt(ROOT, path)
+
+
+RUST_STD_LTO_COMMAND = (
+    "./scripts/dev-x86_64.sh consumer-rust-std-lto run --static-preparation PREP.json "
+    "--dynamic-qualification QUAL.json --provider-vendor VENDOR --dependency-vendor VENDOR --output NEW_DIR"
+)
+
+
 PUBLICATIONS: dict[str, Publication] = {
     publication.id: publication
     for publication in (
@@ -182,6 +192,13 @@ PUBLICATIONS: dict[str, Publication] = {
             "abi-evidence.json",
             "./scripts/dev-x86_64.sh abi-differential-evidence assemble ... --output .work/x86_64/abi-differential/NAME",
             _validate_abi_evidence,
+        ),
+        Publication(
+            "rust-std-lto",
+            "consumer.rust-std-lto",
+            "receipt.json",
+            RUST_STD_LTO_COMMAND,
+            _validate_rust_std_lto,
         ),
         Publication(
             "loader-family",
@@ -404,6 +421,14 @@ def _read_loader_family(evaluation: Evaluation) -> str:
     return "published loader-family receipt: complete three-product component"
 
 
+def _read_rust_std_lto(evaluation: Evaluation) -> str:
+    # The leaf reader already requires every frozen gate, both unwind pairs
+    # and the provider regressions to pass on the current-source cohort.
+    record = evaluation.published("consumer.rust-std-lto", "rust-std-lto")
+    return ("published consumer receipt: " + ", ".join(record["frozen_gates"])
+            + "; unwind on " + "/".join(sorted(record["unwind"])) + "; provider regressions")
+
+
 STATIC_C_ABI_DIFFERENTIAL_RUNNER = "compat/x86_64/run_libc_static_c_abi_differential.sh"
 STATIC_C_ABI_DIFFERENTIAL_MARKER = b"x86 static C ABI differential bootstrap: PASS (libc.a; pinned musl 1.2.6)"
 EXECUTION_TIMEOUT_SECONDS = 3600
@@ -527,6 +552,13 @@ READERS: dict[tuple[str, str], EvidenceReader] = {
             "publication",
             "loader-family",
             _read_loader_family,
+        ),
+        EvidenceReader(
+            "consumer.rust-std-lto",
+            RUST_STD_LTO_COMMAND,
+            "publication",
+            "rust-std-lto",
+            _read_rust_std_lto,
         ),
         EvidenceReader(
             "consumer.source-build",

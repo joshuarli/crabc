@@ -988,7 +988,9 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
                 for origin in ("stock-std", "build-std")
             }
             unwind[label]["unmet"] += [item for lane in unwind[label]["cross_dso"].values() for item in lane["unmet"]]
-    regressions = provider_regressions(context) if "provider-regressions" in selected else {"lanes": {}}
+    regressions = (provider_regressions(context, {"cargo_home": provider_sources["cargo_home"],
+                                                  "registry_source": registry_source["registry_source"]})
+                   if "provider-regressions" in selected else {"lanes": {}})
 
     unmet = [f"{section} was not selected" for section in SECTIONS if section not in selected]
     unmet += [item for report in gates.values() for item in lane_unmet(report)]
@@ -1066,10 +1068,12 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     unwind = record.get("unwind")
     require(isinstance(unwind, dict) and set(unwind) == set(UNWIND_PRODUCTS),
             "consumer gate receipt lacks the installed/extracted unwind matrix")
-    require(record.get("passed") is True and record.get("unmet_conditions") == []
+    unmet = record.get("unmet_conditions")
+    named = [str(item) for item in unmet[:8]] if isinstance(unmet, list) and unmet else ["a lane is unmet"]
+    require(record.get("passed") is True and unmet == []
             and not any(lane_unmet(gate) for gate in gates.values())
             and not any(item["unmet"] for item in unwind.values()),
-            "consumer gate receipt did not pass")
+            "consumer gate receipt did not pass: " + "; ".join(named))
     regressions = record.get("provider_regressions")
     require(isinstance(regressions, dict) and set(regressions.get("lanes", ())) == set(PROVIDER_REGRESSIONS)
             and not lane_unmet(regressions), "consumer gate receipt lacks the provider regressions")
