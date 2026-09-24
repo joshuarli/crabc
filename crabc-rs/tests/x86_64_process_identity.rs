@@ -59,3 +59,43 @@ fn x86_64_scalar_and_saved_identity_queries_match_proc_status() {
     assert_eq!(group.effective.as_raw(), gid[1]);
     assert_eq!(group.saved.as_raw(), gid[2]);
 }
+
+const EXIT_CHILD: &str = "CRABC_X86_64_EXIT_IMMEDIATELY_CHILD";
+
+/// Re-executed child body: buffered output, a live `Drop` guard and a
+/// sleeping worker thread are all outstanding when the thread group exits.
+fn exit_immediately_child() -> ! {
+    use std::io::Write;
+
+    struct Marker;
+    impl Drop for Marker {
+        fn drop(&mut self) {
+            let _ = std::io::stderr().write_all(b"destructor ran\n");
+        }
+    }
+    let _marker = Marker;
+    let mut stdout = std::io::BufWriter::new(std::io::stdout());
+    stdout.write_all(b"buffered bytes must not be flushed\n").expect("buffer child output");
+    std::thread::spawn(|| std::thread::sleep(std::time::Duration::from_secs(600)));
+    process::exit_immediately(23)
+}
+
+#[test]
+fn x86_64_exit_immediately_ends_the_thread_group_without_destructors() {
+    if std::env::var_os(EXIT_CHILD).is_some() {
+        exit_immediately_child();
+    }
+    let started = std::time::Instant::now();
+    let output = std::process::Command::new(std::env::current_exe().expect("locate this test binary"))
+        .args(["--exact", "x86_64_exit_immediately_ends_the_thread_group_without_destructors", "--nocapture"])
+        .env(EXIT_CHILD, "1")
+        .output()
+        .expect("re-execute the exit child");
+    // exit_group, not a single-thread exit: the sleeping worker cannot keep
+    // the process alive, and no Rust or C exit path flushes or drops state.
+    assert_eq!(output.status.code(), Some(23));
+    assert!(started.elapsed() < std::time::Duration::from_secs(60));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("buffered bytes"), "BufWriter was flushed: {stdout:?}");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("destructor ran"));
+}

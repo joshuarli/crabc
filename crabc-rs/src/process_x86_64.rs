@@ -13,7 +13,8 @@
 //! initialized kernel prefix, typed read-only process accounting,
 //! scheduling-priority observations, bounds, and bounded target mutation, and
 //! the read-only typed
-//! fcntl(F_GETLK) record-lock query, plus the process-global umask exchange.
+//! fcntl(F_GETLK) record-lock query, the process-global umask exchange, and
+//! the direct `exit_group` termination `exit_immediately`.
 //! Generic raw fork/exec/wait control and the larger process facade remain
 //! AArch64-only until each of their target-sized records and state transitions
 //! has an independent x86-64 contract.
@@ -595,7 +596,18 @@ fn write_child_exec_error_and_exit(writer: RawFd, error: crate::Errno) -> ! {
         }
     }
     let _ = crabc_core::io::close(writer);
-    crabc_core::process::exit_immediately(127)
+    exit_immediately(127)
+}
+
+/// Immediately exits the current Linux thread group without destructors or a C ABI
+/// transition. This is the only general-purpose post-fork child failure path.
+///
+/// It is the direct x86 `exit_group` syscall (231): no Rust destructor, stdio
+/// flush, `atexit`/`.fini_array` handler, or C `_exit`/errno path runs, and
+/// every other thread of the process ends with the caller.
+#[inline]
+pub fn exit_immediately(status: i32) -> ! {
+    crabc_core::process::exit_immediately(status)
 }
 
 /// A Linux resource whose current and maximum limits can be queried.
