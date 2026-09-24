@@ -3557,6 +3557,11 @@ def collect(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     root = repository_root()
     require(git_clean(root), "three-run collector requires a clean source revision")
     output = fresh_work_directory(root, args.work_dir)
+    # The container runs under umask 077 and the directory is created 0700.
+    # Make it traversable now, not only when collector.json is written, so a
+    # host-side `check` of a refused collection reports the missing report
+    # rather than EACCES on the directory.
+    normalize_retained_path(root, output)
     product_path = physical_path(args.dynamic_product, "supplied dynamic product", directory=True)
     product = record_product(root, product_path)
     roster_path, roster = load_attempt_roster(root, args.attempt_roster, product)
