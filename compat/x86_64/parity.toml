@@ -16863,6 +16863,54 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-pow", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 40-byte records across all four rounding directions: binary32/binary64 signed-zero parity, signed integral and nonintegral exponents, zero/pole/domain inputs, finite logarithm/exponential paths, raw subnormal and normal bounds, overflow/underflow, finite extrema, infinities, quiet/signaling NaNs, raw result bits, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned pow/powf definitions, exact archive surface, local exp/pow/exp2f/powf data plus typed helper/fabs providers, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtsd2ss/cvtss2sd source arithmetic; it rejects weak compiler-builtins fallback, powl, public exp/log/exp2/fabs, fma/fmod/remainder/modf, fenv API/policy, special/complex, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Arm and musl MIT source, exact raw-classification/signed-integer-exponent/zero-pole/table/NaN/IEEE payload-exception-directed-rounding behavior, and public C ABI oracle for exactly src/math/pow.c and src/math/powf.c plus their private table, typed-helper, and fabs closure." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0/xmm1 binary32/binary64 base/exponent argument and xmm0 return ABI, and caller-visible MXCSR directed-SSE arithmetic boundary for the selected static C entries." }]
 
+[[family.verified_slice]]
+id = "owned-c-time-clock-calendar"
+description = "Complete private native x86 `time.clock-calendar` capability inside still-planned `libc.text-math-locale-stdio`. The installed static and dynamic runtime products own all eighteen frozen symbols: `adjtime`, `adjtimex`, `asctime`, `asctime_r`, `clock_adjtime`, `ctime`, `ctime_r`, `getdate`, `getdate_err`, `localtime`, `localtime_r`, `mktime`, `settimeofday`, `stime`, `strftime`, `strftime_l`, `strptime`, and `tzset`. One installed calendar component runs eight installed-header objects through pinned musl and static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry, and admits exactly five rows: POSIX TZ and named-zone conversion/formatting, TZif specification, strptime, DATEMSK getdate with shared `getdate_err`, and safe clock adjustment. Timezone state consumes `TZ`, POSIX TZ syntax, and conventional zoneinfo or `/etc/localtime` TZif files; no timezone database is bundled, and the real-zone fixtures are test-only derivations of the hash-pinned IANA 2025b archives. The documented RFC 9636 TZif corrections and the bounded unknown-`%Z` strptime fallback remain explicit oracle defects rather than parity claims, and the POSIX lane's two fixed libc-test strptime glibc-extension diagnostics are unchanged. This selects exactly `time.clock-calendar`; it is not a clock-discipline authority claim, family completion, promotion, full x86-64 parity, or public x86 support."
+capabilities = ["time.clock-calendar"]
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/timegm.rs",
+  "libc/src/c_abi/x86_64/gmtime_r.rs",
+  "libc/src/c_abi/x86_64/owned_timezone.rs",
+  "libc/src/c_abi/x86_64/owned_calendar.rs",
+  "libc/src/c_abi/x86_64/owned_strftime.rs",
+  "libc/src/c_abi/x86_64/owned_strptime.rs",
+  "libc/src/c_abi/x86_64/owned_getdate.rs",
+  "libc/src/c_abi/x86_64/owned_legacy_time.rs",
+  "libc/src/c_abi/x86_64/clock_adjtime.rs",
+  "include/time.h",
+  "include/sys/time.h",
+  "include/sys/timex.h",
+  "compat/x86_64/owned_calendar_probe.c",
+  "compat/x86_64/owned_calendar_real_zone_probe.c",
+  "compat/x86_64/owned_timezone_tzif_probe.c",
+  "compat/x86_64/owned_strptime_probe.c",
+  "compat/x86_64/owned_getdate_probe.c",
+  "compat/x86_64/owned_legacy_time_probe.c",
+  "compat/x86_64/libc_clock_adjtime_probe.c",
+  "compat/x86_64/run_owned_calendar_component.py",
+  "compat/x86_64/run_owned_calendar_component.sh",
+  "compat/x86_64/owned_calendar_component_receipt.py",
+  "compat/x86_64/owned-calendar-component.md",
+  "compat/x86_64/owned-strptime.md",
+  "compat/x86_64/native-strptime-reference/README.md",
+  "compat/x86_64/tests/test_owned_calendar_component_receipt.py",
+  "compat/x86_64/tests/test_owned_calendar_component_dispatch.py",
+]
+x86_abi_prerequisites = [
+  "The closed capability surface is exactly the eighteen symbols recorded by `compat/crabc-rs/coverage.toml` under `time.clock-calendar`. System V AMD64 LP64 makes `time_t` and `long` eight bytes; the 56-byte align-8 `struct tm` carries nine int fields, `tm_gmtoff` at byte 40, and `tm_zone` at byte 48. `asctime_r`/`ctime_r` fill caller-owned 26-byte text; `localtime`/`gmtime` and `asctime`/`ctime` keep musl's separate static result objects and shared text buffer.",
+  "Pinned musl 1.2.6 src/time/{__tz.c,__map_file.c,localtime.c,localtime_r.c,mktime.c,gmtime.c,asctime.c,asctime_r.c,ctime.c,ctime_r.c,strftime.c,strptime.c,getdate.c} and src/linux/{adjtime.c,adjtimex.c,clock_adjtime.c,settimeofday.c,stime.c} are the source algorithms. Musl's weak `localtime_r`, `asctime_r`, `strftime_l`, `tzset`, `timezone`, `daylight`, and `tzname` bindings keep their strong internal owners.",
+  "Linux x86-64 `adjtimex` and `adjtime` reach clock_adjtime syscall 305 through the single `clock_adjtime` owner, and `settimeofday`/`stime` use their direct syscalls. The component never holds CAP_SYS_TIME: it exercises query-only and zero-mode requests, local invalid-input validation, null `settimeofday`, rejected clock IDs, and nonnull attempts only behind an in-process EPERM seccomp filter.",
+]
+x86_header_prerequisites = [
+  "Each installed-header object preprocesses time.h, sys/time.h, sys/timex.h, locale.h, errno.h, pthread.h, stdio.h, stdlib.h, string.h, unistd.h, features.h, and bits/alltypes.h from the supplied product's include tree under -fno-builtin; the public reader rejects any traced header outside that tree.",
+  "The same relocatable objects link against pinned musl and every installed product mode, so header declarations of calendar functions are consumed only through those executed C ABI calls.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh owned-calendar-component", scope = "With no supplied pair the launcher builds current static and dynamic owned products, derives a fresh TZif input in the observed pinned image from the hash-pinned IANA 2025b archives, and runs the installed calendar component. Eight installed-header objects link through pinned musl plus static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry in fresh chroot roots; fifteen candidate actions per cell cover POSIX and named-zone local conversion, normalization, gap/fold, overflow, concurrent `_r` calls, direct and shared-buffer `asctime`/`ctime`, locale-object `strftime_l`, TZif specification checks, strptime ordinary and guard-page cases, DATEMSK getdate/getdate_err, and safe clock-control rows. The public reader reconstructs every command, header trace, link receipt, root audit, raw stream, and source/product/tool seal before admitting the five rows. This completes only time.clock-calendar inside still-planned libc.text-math-locale-stdio; family completion, x86 promotion, full parity, and public support remain false." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for calendar conversion, TZ state, formatting, parsing, getdate, and legacy clock-control entry points, excluding the documented TZif and strptime oracle defects." }, { kind = "timezone-data", source = "IANA tzcode/tzdata 2025b (hash-pinned archives)", role = "Test-only real-zone TZif fixtures; never bundled into a product." }]
+
 [[family]]
 id = "libc.resolver"
 order = 100

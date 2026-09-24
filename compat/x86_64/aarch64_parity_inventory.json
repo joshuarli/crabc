@@ -1226,7 +1226,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "time.clock-calendar",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1347,8 +1347,8 @@
   ],
   "capability_state_counts": {
     "implemented-foundation": 180,
-    "missing": 9,
-    "selected-private": 34
+    "missing": 8,
+    "selected-private": 35
   },
   "families": [
     {
@@ -1461,7 +1461,7 @@
       "contract_state": "selected-private",
       "id": "libc.text-math-locale-stdio",
       "verified_artifact_count": 77,
-      "verified_slice_count": 10
+      "verified_slice_count": 11
     },
     {
       "aarch64_gates": [
