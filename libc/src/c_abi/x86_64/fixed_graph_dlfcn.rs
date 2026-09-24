@@ -5,7 +5,9 @@
 //! imports only its exact weak `RuntimeV1` loader prefix. It deliberately does
 //! not fall back to an ambient loader when that record is absent or malformed.
 //! The owned-static feature separately selects the main-executable
-//! `dl_iterate_phdr` source contract, using only its CRT and TLS owners.
+//! `dl_iterate_phdr` source contract, using only its CRT and TLS owners. The
+//! installed static product does not use this bridge; it selects musl's
+//! loaderless stubs in `static_dlfcn.rs`.
 //!
 //! The graph has no loader TLS. C `dlerror` and the borrowed names
 //! returned by `dladdr` therefore live in a 32-entry process table keyed by
@@ -76,27 +78,9 @@ unsafe impl Sync for RuntimeRecordV1 {}
 // `global_asm!` inherits the assembler's current section.  The canonical
 // archive can otherwise place this callable trampoline after the non-allocating
 // GNU-stack marker, which static LLD correctly discards despite the public
-// dlfcn entries referring to it. Give both variants one explicit allocated
-// executable section.
-//
-// The installed static product has no interpreter, so retaining the dynamic
-// loader record as an undefined weak symbol would violate its closed ELF
-// boundary. Its trampoline therefore returns null directly, preserving this
-// bridge's existing unavailable-record behavior. The staged dynamic graph
-// artifacts keep their weak RuntimeV1 import unchanged.
-#[cfg(crabc_owned_static_sysroot)]
-core::arch::global_asm!(
-    ".section .text.__crabc_x86_fixed_graph_dlfcn_record,\"ax\",@progbits",
-    ".hidden __crabc_x86_fixed_graph_dlfcn_record",
-    ".global __crabc_x86_fixed_graph_dlfcn_record",
-    ".type __crabc_x86_fixed_graph_dlfcn_record,@function",
-    "__crabc_x86_fixed_graph_dlfcn_record:",
-    "xor eax, eax",
-    "ret",
-    ".size __crabc_x86_fixed_graph_dlfcn_record, .-__crabc_x86_fixed_graph_dlfcn_record",
-);
-
-#[cfg(not(crabc_owned_static_sysroot))]
+// dlfcn entries referring to it. Give it one explicit allocated executable
+// section. The installed static product selects `static_dlfcn.rs` instead,
+// so this weak loader-record import never enters a closed ET_EXEC image.
 core::arch::global_asm!(
     ".section .text.__crabc_x86_fixed_graph_dlfcn_record,\"ax\",@progbits",
     ".weak __crabc_x86_64_fixed_graph_dlfcn_v1",

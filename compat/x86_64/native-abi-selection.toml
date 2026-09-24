@@ -876,22 +876,6 @@ reason = "Hidden C-compatibility bodies: the pinned-musl-shaped tsearch rebalanc
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
-id = "private-static-fixed-graph-dlfcn-record"
-selector = "explicit"
-disposition = "private-provider"
-owner = "x86-static-dlfcn-private-bodies"
-family = "ldso.dynamic-runtime"
-artifacts = ["candidate-static"]
-sources = ["libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs"]
-members = ["__crabc_x86_fixed_graph_dlfcn_record"]
-members_file = ""
-expected_type = "FUNC"
-delegated_members = []
-placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}}
-reason = "Hidden static-product trampoline returning the unavailable fixed-graph dlfcn record. The shared libc defines no such spelling; its loader-backed dlfcn route is separate."
-static_metadata_rule = "explicit"
-
-[[owner_groups]]
 id = "private-stack-check-fail-local-alias"
 selector = "explicit"
 disposition = "private-provider"

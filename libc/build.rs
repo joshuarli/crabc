@@ -40,9 +40,9 @@ fn x86_runtime_capabilities() {
 
 fn main() {
     x86_runtime_capabilities();
-    // The installed static product compiles its dlfcn bridge with a local
-    // unavailable-record trampoline, rather than carrying a dynamic-loader
-    // weak import into a closed ET_EXEC image.
+    // The installed static product selects musl's loaderless dlfcn stubs
+    // (`static_dlfcn.rs`) rather than carrying a dynamic-loader weak import
+    // into a closed ET_EXEC image.
     println!("cargo::rustc-check-cfg=cfg(crabc_owned_static_sysroot)");
     // Only installed-product builders select the paired C/Rust lifecycle.
     println!("cargo::rustc-check-cfg=cfg(crabc_owned_mimalloc_lifecycle)");

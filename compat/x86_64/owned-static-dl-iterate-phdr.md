@@ -34,10 +34,13 @@ thread's TLS to a worker nor creates another TLS layout. Startup already
 validates these immutable ELF/TLS inputs. Missing startup publication returns
 `-1`; it is not an alternate loader discovery path.
 
-`fixed_graph_dlfcn.rs` keeps the public weak function and selects this body
-only with `x86-owned-static-runtime`. Its private fixed-graph build retains the
-existing runtime-record/snapshot behavior. The dynamic feature selects
-`general_dlfcn.rs` at the target root and does not compile this static body.
+The installed static product (`crabc_owned_static_sysroot`) selects
+`static_dlfcn.rs`, which keeps musl's weak public `dl_iterate_phdr` over this
+body beside musl's other loaderless libc.a stubs. `fixed_graph_dlfcn.rs` also
+selects this body with `x86-owned-static-runtime` outside the installed
+product; its private fixed-graph build retains the runtime-record/snapshot
+behavior. The dynamic feature selects `general_dlfcn.rs` at the target root
+and does not compile this static body.
 The existing null-callback behavior remains unchanged. AArch64 is unchanged.
 
 ## Focused evidence

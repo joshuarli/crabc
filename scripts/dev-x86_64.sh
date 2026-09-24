@@ -977,6 +977,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ldso-fixed-graph-dlfcn  run handle/symbol operations over the fixed x86 loader graph
   ldso-public-dlfcn  run the public C bridge over the fixed x86 loader graph
   ldso-dladdr-symbol-bounds  run finite-symbol dladdr evidence over the fixed x86 loader graph
+  ldso-static-dlfcn [STATIC_SYSROOT]  compare the installed static product's loaderless dlfcn surface with musl libc.a
   ldso-bounded-dlopen  run the one-slot x86 runtime DSO mapping/search artifact
   ldso-dynamic-admission  run the bounded x86 dynamic-loader admission inventory
 
@@ -7202,6 +7203,7 @@ case "$command" in
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
     ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
+    ldso-static-dlfcn) ;;
     ldso-bounded-dlopen) ;;
     loader-libc-tls-runtime-v1) ;;
     loader-libc-tls-runtime-v1-registry) ;;
@@ -7513,6 +7515,13 @@ case "$command" in
     general-dynamic-dlopen)
         prepare_general_dynamic_dlopen_arguments "$@"
         set -- "${GENERAL_DYNAMIC_DLOPEN_ARGUMENTS[@]}"
+        ;;
+    ldso-static-dlfcn)
+        [ "$#" -le 1 ] || fail "usage: ./scripts/dev-x86_64.sh ldso-static-dlfcn [STATIC_SYSROOT]"
+        if [ "$#" -eq 1 ]; then
+            static_dlfcn_product="$(translate_owned_posix_product "$1")" || exit 2
+            set -- "$static_dlfcn_product"
+        fi
         ;;
 esac
 
@@ -11707,6 +11716,10 @@ PY
         [ "$#" -eq 0 ] || fail "ldso-dladdr-symbol-bounds takes no arguments"
         ensure_image
         run_ldso_dladdr_symbol_bounds_tests
+        ;;
+    ldso-static-dlfcn)
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_ldso_static_dlfcn.sh "$@"
         ;;
     ldso-bounded-dlopen)
         [ "$#" -eq 0 ] || fail "ldso-bounded-dlopen takes no arguments"

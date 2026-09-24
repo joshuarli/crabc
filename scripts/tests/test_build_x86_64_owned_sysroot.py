@@ -181,17 +181,6 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             dlfcn_source,
         )
 
-    def test_owned_static_sysroot_uses_a_closed_dlfcn_absence_stub(self) -> None:
-        """The static product cannot retain a dynamic-loader weak undefined symbol."""
-
-        dlfcn_source = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fixed_graph_dlfcn.rs"
-        ).read_text(encoding="utf-8")
-        builder_source = SCRIPT.read_text(encoding="utf-8")
-        self.assertIn("#[cfg(crabc_owned_static_sysroot)]", dlfcn_source)
-        self.assertIn('"xor eax, eax",', dlfcn_source)
-        self.assertIn('"--cfg",\n        "crabc_owned_static_sysroot",', builder_source)
-
     def test_libc_member_classification_separates_owned_and_stock_runtime_members(self) -> None:
         selected, excluded = builder.classify_libc_members(
             (

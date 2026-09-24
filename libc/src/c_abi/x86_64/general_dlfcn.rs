@@ -36,86 +36,9 @@ extern "C" {
     fn __crabc_x86_64_runtime_iterate(callback: unsafe extern "C" fn(*mut c_void, usize, *mut c_void) -> c_int, data: *mut c_void) -> c_int;
 }
 
-#[thread_local]
-static mut ERROR_TEXT: [u8; 1024] = [0; 1024];
-#[thread_local]
-static mut ERROR_PENDING: bool = false;
-
-/// One formatted pinned-musl loader diagnostic. Musl allocates an exact
-/// buffer; this fixed copy truncates only beyond 1023 message bytes. The C
-/// entry points publish it as this thread's `dlerror`; the private RuntimeV1
-/// facade copies the same bytes into caller-owned wire storage.
-pub(super) struct Diagnostic { text: [u8; 1024], count: usize }
-impl Diagnostic {
-    fn new() -> Self { Self { text: [0; 1024], count: 0 } }
-    fn bytes(mut self, bytes: &[u8]) -> Self {
-        let room = 1023 - self.count;
-        let length = bytes.len().min(room);
-        self.text[self.count..self.count + length].copy_from_slice(&bytes[..length]);
-        self.count += length;
-        self
-    }
-    /// # Safety
-    /// `text` is null or a readable NUL-terminated C string.
-    unsafe fn text(mut self, text: *const u8) -> Self {
-        if text.is_null() { return self; }
-        let mut index = 0;
-        while self.count < 1023 {
-            let byte = unsafe { *text.add(index) };
-            if byte == 0 { break; }
-            self.text[self.count] = byte;
-            self.count += 1;
-            index += 1;
-        }
-        self
-    }
-    /// Musl `%m` after the loader left `error` in errno.
-    fn errno(self, error: c_int) -> Self {
-        let message = super::error_strings::error_message(error);
-        self.bytes(&message[..message.len() - 1])
-    }
-    fn decimal(self, value: c_int) -> Self {
-        let mut digits = [0u8; 12];
-        let mut index = digits.len();
-        let mut magnitude = value.unsigned_abs();
-        loop { index -= 1; digits[index] = b'0' + (magnitude % 10) as u8; magnitude /= 10; if magnitude == 0 { break; } }
-        if value < 0 { index -= 1; digits[index] = b'-'; }
-        self.bytes(&digits[index..])
-    }
-    /// Musl `%p`: lowercase hexadecimal with `0x`, and a bare `0` for null.
-    fn pointer(self, value: usize) -> Self {
-        if value == 0 { return self.bytes(b"0"); }
-        let mut digits = [0u8; 16];
-        let mut index = digits.len();
-        let mut rest = value;
-        while rest != 0 { index -= 1; digits[index] = b"0123456789abcdef"[rest & 15]; rest >>= 4; }
-        self.bytes(b"0x").bytes(&digits[index..])
-    }
-    /// The formatted message without a terminator.
-    pub(super) fn as_bytes(&self) -> &[u8] { &self.text[..self.count] }
-    /// Replace this thread's pending `dlerror` text.
-    fn publish(self) {
-        unsafe {
-            let output = ptr::addr_of_mut!(ERROR_TEXT).cast::<u8>();
-            ptr::copy_nonoverlapping(self.text.as_ptr(), output, self.count);
-            *output.add(self.count) = 0;
-            ERROR_PENDING = true;
-        }
-    }
-}
-
-/// musl `__dl_invalid_handle`: `Invalid library handle %p`.
-pub(super) fn invalid_handle(handle: *mut c_void) -> Diagnostic {
-    Diagnostic::new().bytes(b"Invalid library handle ").pointer(handle as usize)
-}
-
-/// musl `do_dlsym`: `Symbol not found: %s`.
-///
-/// # Safety
-/// `name` is a readable NUL-terminated C symbol name.
-pub(super) unsafe fn symbol_not_found(name: *const c_char) -> Diagnostic {
-    unsafe { Diagnostic::new().bytes(b"Symbol not found: ").text(name.cast()) }
-}
+#[path = "dlfcn_diagnostic.rs"]
+mod diagnostic;
+pub(super) use diagnostic::{invalid_handle, symbol_not_found, Diagnostic};
 
 /// Format pinned musl 1.2.6 `ldso/dynlink.c` dlopen diagnostics (MIT,
 /// 9fa28ece75d8a2191de7c5bb53bed224c5947417) from the loader's record.
@@ -238,13 +161,7 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
 /// Consume this thread's pending diagnostic. Storage remains valid until the
 /// next loader error in this thread or until this thread exits.
 #[no_mangle]
-pub extern "C" fn dlerror() -> *mut c_char {
-    unsafe {
-        if !ERROR_PENDING { return ptr::null_mut(); }
-        ERROR_PENDING = false;
-        ptr::addr_of_mut!(ERROR_TEXT).cast()
-    }
-}
+pub extern "C" fn dlerror() -> *mut c_char { diagnostic::take() }
 
 /// # Safety
 /// `output` is writable storage for the installed header's `Dl_info` layout.

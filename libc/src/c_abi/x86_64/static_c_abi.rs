@@ -1054,8 +1054,12 @@ mod posix_semaphore;
 mod owned_named_ipc;
 #[path = "sysv_message_shared_memory.rs"]
 mod sysv_message_shared_memory;
+// Installed dynamic product: the general runtime loader bridge. Installed
+// static product: musl's loaderless libc.a stubs. Otherwise the staged
+// fixed-graph bridge of the private ldso-* artifacts.
 #[cfg_attr(crabc_x86_dynamic_runtime, path = "general_dlfcn.rs")]
-#[cfg_attr(not(crabc_x86_dynamic_runtime), path = "fixed_graph_dlfcn.rs")]
+#[cfg_attr(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime)), path = "static_dlfcn.rs")]
+#[cfg_attr(not(any(crabc_x86_dynamic_runtime, crabc_owned_static_sysroot)), path = "fixed_graph_dlfcn.rs")]
 mod fixed_graph_dlfcn;
 // The private `__crabc_runtime_v1` table for crabc-rs's loader, thread, and
 // memory-stream facades composes the installed dynamic owners above.

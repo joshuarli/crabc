@@ -472,7 +472,7 @@ __crabc_x86_regex_cabi_free __crabc_x86_regex_cabi_malloc __crabc_x86_regex_cabi
 __stpcpy __stpncpy __strchrnul __memrchr __memcpy_fwd
 __dn_expand __inet_aton __crabc_x86_host_cache_cabi_free __crabc_x86_host_cache_cabi_malloc
 __tsearch_balance __crabc_x86_passwd_cabi_free __crabc_x86_shadow_cabi_malloc
-__crabc_x86_fixed_graph_dlfcn_record __stack_chk_fail_local
+__stack_chk_fail_local
 '''.split())
 PRIVATE_NOTYPE_LABELS = frozenset({'__crabc_x86_cp_begin', '__crabc_x86_cp_cancel', '__crabc_x86_cp_end', '__memcpy_fwd'})
 
@@ -508,10 +508,7 @@ class PrivateImplementationBodyPolicyTests(unittest.TestCase):
             placements = {row['artifact_key']: row['metadata'] for row in record['expected_placements']}
             binding = 'WEAK' if name == '__stack_chk_fail_local' else 'GLOBAL'
             self.assertEqual(placements['candidate-static'], {'type': kind, 'binding': binding, 'visibility': 'HIDDEN'}, name)
-            if name == '__crabc_x86_fixed_graph_dlfcn_record':
-                self.assertEqual(set(placements), {'candidate-static'})
-            else:
-                self.assertEqual(placements['candidate-shared'], {'type': kind, 'binding': 'LOCAL', 'visibility': 'HIDDEN'}, name)
+            self.assertEqual(placements['candidate-shared'], {'type': kind, 'binding': 'LOCAL', 'visibility': 'HIDDEN'}, name)
 
     def test_selected_private_body_cannot_hide_a_shared_dynsym_export(self):
         def facts_with(shared_rows):

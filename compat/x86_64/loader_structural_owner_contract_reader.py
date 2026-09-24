@@ -514,7 +514,10 @@ def validate_feature_routes(ldso_cargo: str, libc_cargo: str, graph: str, static
     require(graph_code.count('#[cfg(feature = "x86_64-owned-dynamic-runtime")]') >= 1,
             "selected ldso graph is not gated by its crate feature")
     static_code = _rust_without_comments(static_c_abi)
-    module = '#[cfg_attr(crabc_x86_dynamic_runtime, path = "general_dlfcn.rs")]\n#[cfg_attr(not(crabc_x86_dynamic_runtime), path = "fixed_graph_dlfcn.rs")]\nmod fixed_graph_dlfcn;'
+    module = ('#[cfg_attr(crabc_x86_dynamic_runtime, path = "general_dlfcn.rs")]\n'
+              '#[cfg_attr(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime)), path = "static_dlfcn.rs")]\n'
+              '#[cfg_attr(not(any(crabc_x86_dynamic_runtime, crabc_owned_static_sysroot)), path = "fixed_graph_dlfcn.rs")]\n'
+              'mod fixed_graph_dlfcn;')
     require(static_code.count(module) == 1, "selected libc dlfcn module route differs")
     native_dynamic_guard = (
         '#[cfg(all(\n'

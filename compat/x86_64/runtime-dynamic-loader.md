@@ -262,6 +262,18 @@ original C return address for `RTLD_NEXT`. Names, program headers and link-map
 records borrow retained objects; `dl_iterate_phdr` drops the lock around user
 callbacks and reads the successor afterward, admitting nested loading.
 
+The installed static product has no loader. Its `static_dlfcn.rs` leaf is
+musl 1.2.6's loaderless `libc.a` surface: every `dlopen` fails with
+`Dynamic loading not supported`, `dlsym` reports `Symbol not found: %s`,
+`dlclose` and `dlinfo` reject every handle as `Invalid library handle %p`,
+`dladdr` returns 0, and `dl_iterate_phdr` reports only the executable.
+`dlopen`, `dladdr` and `dl_iterate_phdr` keep musl's archive `STB_WEAK`
+bindings. Both leaves share `dlfcn_diagnostic.rs` for per-thread `dlerror`
+state and musl's `%s`/`%p`/`%d`/`%m` spellings. `run_ldso_static_dlfcn.sh`
+(`ldso-static-dlfcn`) compares archive bindings, static ET_EXEC and static
+PIE output, and weak overrides with musl `libc.a`; the dynamic runner
+compares the seven `libc.so` exports with musl's.
+
 `dlerror` text is pinned musl's. `runtime_open` fills a private 1032-byte
 `RuntimeDiagnostic` (message kind, errno or relocation type, and up to three
 copied names) before rollback unmaps the failed suffix; `general_dlfcn`

@@ -194,6 +194,16 @@ LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/scope" >"$work/oracle-sc
 cmp "$work/scope.stdout" "$work/oracle-scope.stdout"
 printf 'general runtime scope: PASS (musl differential, caller RTLD_NEXT and promotion); evidence: %s\n' "$work"
 
+# The installed libc.so exports the seven public dlfcn functions with pinned
+# musl libc.so's dynamic symbol type, binding and visibility.
+dlfcn_exports() {
+    readelf --dyn-syms -W "$1" | awk '$7 != "UND" && $8 ~ /^(dlopen|dlsym|dlclose|dlerror|dladdr|dlinfo|dl_iterate_phdr)$/ { print $8, $4, $5, $6 }' | sort
+}
+dlfcn_exports "$("$oracle_cc" -print-file-name=libc.so)" >"$work/dlfcn-exports-oracle.txt"
+dlfcn_exports "$installed/usr/lib/libc.so" >"$work/dlfcn-exports-candidate.txt"
+[ "$(wc -l <"$work/dlfcn-exports-oracle.txt")" -eq 7 ]
+cmp "$work/dlfcn-exports-oracle.txt" "$work/dlfcn-exports-candidate.txt"
+
 # Exact public dlfcn contract over an initial dependency plus a runtime-new
 # closure: dlerror text, handle scope, mode bits, dladdr, dlinfo link maps,
 # dl_iterate_phdr naming and exit-time dlopen. Absolute paths are reduced to
