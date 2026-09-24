@@ -66,6 +66,14 @@ are not transferable passes for a different revision.
   at `7d7ea272b`. Preserve the frozen POSIX (`posix-runtime-f5904a276`) and
   active-source unwinder (`unwinder-products-b1a84d8a9`) worktree evidence and
   the allocator SIGSEGV core/log; merged, clean worktrees are removed.
+- **Landed during the campaign:** the `ed4db0ba6` compiler_builtins identity
+  gap is closed (`55126b9e5`); `unwinder-owned-cleanup` passed all four modes
+  on the b1a84 products, not yet on current-main products. `consumer.source-build`
+  is `ready` and fails closed until its transitive families verify; Lua static,
+  dynamic, and admission passed at `df3afdbed`, and the corpus diagnostic passed
+  34/34 there. Lua admission binds revision and content digest, so each new
+  commit needs both Lua lanes rerun. The fail-closed allocator M6 gate
+  (`allocator-m6`) exists with 10/10 gates blocked.
 
 ## Parallel lanes
 
@@ -101,8 +109,8 @@ host.
 | `dynamic-product` | `sysroot.owned-artifact` dynamic suite, reproducibility, package/extract. |
 | `unwinder` | Installed-product unwinder integration and the `ed4db0ba6` identity fix. |
 | `std-lto` | `consumer.rust-std-lto`. |
-| `source-build` | `consumer.source-build`: Lua and the frozen real-software roster. |
-| `qual-chain` | Fail-closed readiness of the ordered qualification runners and `capability.accounting`. |
+| `source-build` | `consumer.source-build` (Lua) and `compat.loader-corpus` (the frozen 34-workload real-software roster). |
+| `qual-chain` | Fail-closed readiness of `compat.abi-differential`, `compat.posix-process`, `compat.resolver-network`, `capability.accounting`, and dispatch/reader wiring for the rest of the chain. |
 | `runtime-perf` | `performance.release` harness completeness; no qualifying measurements under contention. |
 | `m2-vm-arenas` | Allocator M2 VM and arenas. |
 | `m2-init-fault` | Allocator M2 metadata, initialization, fault injection, no recursion. |
