@@ -22,7 +22,7 @@ REPORT = ROOT / 'compat/x86_64/generated/headers_layouts_aggregate/report.json'
 # its ledger and generator inputs changed. Keep the fixture pin exact; the
 # adapter still reconstructs its inputs and rejects stale or modified reports
 # below.
-REPORT_SHA256 = '420ffbc5094e5db89f5e7424c32fa63d4823a7b51d84c9fe34a33db7d52dfdc8'
+REPORT_SHA256 = 'a011be20750c4a25c7ff1bcc264fbd5390595b39e71e0861e6db8f6bc9e35e45'
 FAMILY = 'libc.headers-layouts'
 BASE_REPORT = (ROOT.parent / 'resolver_alias_selector_integration/.work/x86_64/native-abi-selection/'
                'clean-36642df1/report.json')
