@@ -14052,7 +14052,7 @@ def _m2_x86_64_initialization_check_records(
             "comparison_status": "matched",
             "component": "initialization",
             "command": list(recursion["rust_probe"]["cargo_command"]),
-            "evidence_scope": "embedded-current-native-explicit-worker-recovery-and-seven-lifecycle-filters",
+            "evidence_scope": "embedded-current-native-worker-recovery-startup-entry-and-lifecycle-batch",
             "id": worker["id"],
             "passed_test_count": worker["expected_passed_test_count"],
             "target": worker["target"],

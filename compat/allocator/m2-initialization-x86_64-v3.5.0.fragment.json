@@ -305,11 +305,6 @@
         "id": "automatic-thread-and-process-teardown",
         "source_scope": "src/init.c automatic thread setup/destructor and process shutdown routes.",
         "required_evidence": ["runtime callback/destructor ownership", "native automatic teardown and shutdown lifecycle evidence"]
-      },
-      {
-        "id": "allocator-recursion-beyond-explicit-worker-recovery",
-        "source_scope": "src/init.c recursive initialization and later thread-local recovery beyond the retained explicit worker receipt.",
-        "required_evidence": ["reentrant allocation and thread-local recovery matrix", "native C/Rust recursion fault equivalence where source faults are selected"]
       }
     ],
     "checks": [
@@ -329,7 +324,7 @@
     "remaining_conditions": [
       "The selected ordinary later-main rows compare the direct pinned-C `_mi_thread_init_with_heap(mi_heap_main())` caller's Malloc TLD/Theap, dual list, default/fixed-TLS root, counter, and explicit-finish post-state with Rust's `MainHeapThreadAttachment`. The C fixtures separately verify source order. Rust does not alias that order or infer allocation attempts from tickets. The paired Theap-failure row compares only retained failure post-state under source-specific C and typed Rust faults.",
       "Automatic pthread-destructor, process-shutdown, and fork routes remain unqualified.",
-      "The retained explicit worker recovery receipt does not complete allocator-recursion or make Rust-only failure checks C fault equivalence."
+      "The embedded receipt's Rust-only startup rows (missing facts, concurrent entry, PageMap-failure retention, startup-output recursion) are ownership evidence; only the first-allocation entropy fault and loader tail are compared with pinned C."
     ]
   }
 }

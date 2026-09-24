@@ -163,18 +163,18 @@
       "id": "allocator-recursion",
       "native_status": "partial",
       "remaining_conditions": [
-        "Qualify recursion guards, reentrant initialization, and thread-local recovery under native allocator lifecycle scenarios."
+        "Qualify recursive diagnostic output: pinned `_mi_fputs`/`_mi_warning_message` reentry from a delivery callback or the default FILE primitive, which the private staged warning owner excludes. Once, process-start, thread-init/done, compiler-TLS, metadata-entry, deferred-free, and startup-output allocation recursion are covered by the initialization receipt and focused Rust rows."
       ],
       "source_map_records": [
         { "required_status": "partial", "unit_id": "process-and-thread-initialization" },
         { "required_status": "partial", "unit_id": "thread-local-heap-lifecycle" }
       ],
-      "source_units": ["src/init.c", "src/prim/prim.c"],
+      "source_units": ["src/init.c", "src/prim/prim.c", "src/options.c"],
       "unqualified_failure_matrix": [
         {
-          "id": "reentrant-init-and-thread-local-recovery",
-          "required_evidence": ["native recursion lifecycle traces", "reentrant allocation failure and recovery tests"],
-          "source_scope": "src/init.c recursion state and thread-local initialization/recovery routes"
+          "id": "recursive-diagnostic-output",
+          "required_evidence": ["source-order recursive-output owner", "native C/Rust recursive-output differential"],
+          "source_scope": "src/options.c `_mi_fputs`, `mi_vfprintf`, and `_mi_warning_message` reentry from output callbacks and the default FILE primitive"
         }
       ]
     }
