@@ -337,6 +337,50 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                              *driver.elf_inspection.sidecar_paths(output)):
                     self.assertFalse(path.exists(), path)
 
+    def test_relinking_a_moved_output_names_the_stale_sidecar_not_an_unsafe_alias(self):
+        """A prospective output never aliases an existing sidecar.
+
+        The loader-synthetic search-path case links libsearch.so, moves it and
+        its link receipt away, then links the same path again while the ELF
+        inspection and map sidecars remain. The sidecar alias check compared
+        each existing sidecar with the not-yet-created output through
+        samefile(), which raised and was reported as an unsafe alias.
+        """
+
+        root = self._installed_native_driver_fixture()
+        work = Path(self.temporary.name) / "relink-work"
+        work.mkdir()
+        source = work / "search.c"
+        source.write_text("int search(void) { return 11; }\n")
+        output = work / "libsearch.so"
+        command = [sys.executable, str(root / "bin/crabc-cc-dynamic"), "--dynamic-shared-object",
+                   "--application-runpath", "/usr/lib", str(source), "-o", str(output)]
+        first = subprocess.run(command, capture_output=True, text=True, check=False)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        moved = work / "environment"
+        moved.mkdir()
+        for path in (output, Path(str(output) + ".crabc-link.json")):
+            path.replace(moved / path.name)
+        second = subprocess.run(command, capture_output=True, text=True, check=False)
+        self.assertEqual(second.returncode, 1)
+        self.assertNotIn("alias check is unsafe", second.stderr)
+        inspection, _ = driver.elf_inspection.sidecar_paths(output)
+        self.assertIn(f"cannot reserve dynamic link receipt: {inspection}", second.stderr)
+        self.assertFalse(output.exists())
+        # With every sidecar moved, the same path links again.
+        for path in driver.elf_inspection.sidecar_paths(output):
+            path.replace(moved / (path.name + ".first"))
+        third = subprocess.run(command, capture_output=True, text=True, check=False)
+        self.assertEqual(third.returncode, 0, third.stderr)
+
+    def test_output_alias_check_ignores_prospective_inputs(self):
+        work = Path(self.temporary.name)
+        existing, prospective = work / "existing.json", work / "not-yet-linked"
+        existing.write_text("{}\n")
+        driver.shared.validate_application_output_disjoint(existing, (prospective,))
+        with self.assertRaisesRegex(driver.shared.DriverError, "collides"):
+            driver.shared.validate_application_output_disjoint(prospective, (prospective,))
+
     def _combined_native_fixture(self) -> Path:
         """Compose the native dynamic fixture with a small static product."""
 

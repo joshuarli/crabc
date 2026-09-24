@@ -671,9 +671,13 @@ def validate_application_output_disjoint(
     normalized_output = resolved_path(output, "application output")
     for application_input in application_inputs:
         normalized_input = resolved_path(application_input, "admitted application input")
+        # An input may be prospective, such as the link output a sidecar is
+        # checked against. A path that does not exist cannot share an inode;
+        # only its resolved spelling can collide.
         try:
             aliases_input = normalized_output == normalized_input or (
-                normalized_output.exists() and normalized_output.samefile(normalized_input)
+                normalized_output.exists() and normalized_input.exists()
+                and normalized_output.samefile(normalized_input)
             )
         except OSError as error:
             raise DriverError(
