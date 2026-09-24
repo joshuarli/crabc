@@ -49301,4 +49301,55 @@ mod tests {
             std::println!("CRABC_MI_FUNDAMENTAL_TRACE_END");
         });
     }
+
+    /// Drives one phased aligned allocation to completion, standing in for
+    /// the runtime's phase B with the source no-callback heartbeat.
+    fn allocate_aligned_phased(
+        allocator: &mut SingleThreadAllocator<'_, '_, '_>,
+        size: usize,
+        alignment: usize,
+    ) -> NonNull<u8> {
+        let mut phase = allocator.begin_deferred_free_aligned_allocation(size, alignment, false);
+        loop {
+            match phase {
+                DeferredFreeAllocationPhase::Complete(block) => {
+                    return block.expect("the phased aligned allocation succeeds");
+                }
+                DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                    let force = matches!(collection, GenericAllocationCollection::Force);
+                    allocator.session.test_run_empty_deferred_free_phase(force);
+                    phase = allocator.resume_deferred_free_allocation(collection, continuation);
+                }
+            }
+        }
+    }
+
+    /// Pinned `mi_theap_malloc_zero_aligned_at_generic` reaches
+    /// `_mi_malloc_generic` for its natural and overallocated fallbacks only
+    /// through `_mi_theap_malloc_zero`, whose small path first pops the
+    /// direct page. A request below its alignment (overallocated to 31
+    /// bytes) and a non-power-of-two block (148 overallocated to 163 bytes)
+    /// must therefore reuse the direct page their first call created without
+    /// another `generic_count` administration step.
+    #[test]
+    fn deferred_aligned_small_fallbacks_pop_the_direct_page_before_generic_administration() {
+        with_allocator(|allocator| {
+            for size in [8usize, 148] {
+                let first = allocate_aligned_phased(allocator, size, 16);
+                let (_, before, _) = allocator.session.theap().test_generic_administration_image();
+                let second = allocate_aligned_phased(allocator, size, 16);
+                let (_, after, _) = allocator.session.theap().test_generic_administration_image();
+                assert_eq!(
+                    after, before,
+                    "the {size}-byte aligned fallback pops the existing direct page"
+                );
+                assert_eq!(second.as_ptr().addr() % 16, 0);
+                // SAFETY: both blocks are this engine's current allocations.
+                unsafe {
+                    allocator.free(second).unwrap();
+                    allocator.free(first).unwrap();
+                }
+            }
+        });
+    }
 }
