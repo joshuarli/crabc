@@ -203,7 +203,7 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             f"{product_root}/usr/lib/libc.so", f"{product_root}/usr/lib/crtn.o",
         ]
         command = [
-            "/tools/ld.lld", "-pie", "--hash-style=sysv", "-z", "relro", "-z", "now",
+            "/tools/ld.lld", "-pie", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now",
             "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined",
             "--enable-new-dtags", "-rpath", "/usr/lib", "--export-dynamic", "--dynamic-linker",
             "/lib/ld-crabc-x86_64.so.1", *trace[:3], f"{work_path}/contract.o",

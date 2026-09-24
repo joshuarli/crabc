@@ -576,7 +576,7 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         require(isinstance(linker['path'], str) and Path(linker['path']).is_absolute() and
                 re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None, 'libc-test sealed linker identity is malformed')
         same(phase['receipt']['linker'], linker, 'libc-test retained linker identity')
-        sealed = [linker['path'], '-shared' if shared else '-pie', '--hash-style=sysv', '-z', 'relro', '-z', 'now',
+        sealed = [linker['path'], '-shared' if shared else '-pie', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
                   '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
                   '-rpath', roles['runpath']]
         if roles['export_dynamic']:
@@ -1119,7 +1119,7 @@ def _os_sealed_link(reader, *, binary, receipt_path, shared, output, workload_pa
     keys(linker, ('path', 'sha256'), 'os-test sealed linker identity')
     require(isinstance(linker['path'], str) and Path(linker['path']).is_absolute() and
             re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None, 'os-test sealed linker identity is malformed')
-    command = [linker['path'], '-shared' if shared else '-pie', '--hash-style=sysv', '-z', 'relro', '-z', 'now',
+    command = [linker['path'], '-shared' if shared else '-pie', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
                '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags', '-rpath', '/usr/lib']
     if shared:
         command += ['-soname', Path(output).name]

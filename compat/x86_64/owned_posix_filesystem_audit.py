@@ -387,7 +387,7 @@ def audit_static_receipt(
     require_record(receipt, "input_receipts", expected_records, "static receipt")
     expected_contract = [
         "ld.lld", "-static", *(["-pie"] if pie else []), "--no-dynamic-linker",
-        "--no-undefined", "--gc-sections", "-z", "relro", "-z", "now", "-e",
+        "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now", "-e",
         "_start", str(library / crt_name), str(library / "crti.o"),
         "<application-objects>", str(library / "libc.a"),
         str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", "<output>",
@@ -463,7 +463,7 @@ def audit_dynamic_receipt(
     require_record(receipt, "output_path", str(candidate), "dynamic receipt")
     require_record(receipt, "output_sha256", digest(candidate), "dynamic receipt")
     expected_command = [
-        str(linker), *(["-pie"] if mode == "pie" else []), "--hash-style=sysv", "-z",
+        str(linker), *(["-pie"] if mode == "pie" else []), "--hash-style=sysv", "--eh-frame-hdr", "-z",
         "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
         "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
         "--dynamic-linker", DYNAMIC_INTERPRETER, str(entry), str(attach), str(prologue),

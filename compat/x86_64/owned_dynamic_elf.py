@@ -14,6 +14,10 @@ graph applies (``ldso/src/x86_64_general_relocation.rs``, after musl 1.2.6
 ``arch/x86_64/reloc.h``): NONE, 64, COPY, GLOB_DAT, JUMP_SLOT, RELATIVE,
 DTPMOD64, DTPOFF64 and TPOFF64, plus packed DT_RELR relative entries. A kind
 outside that set, such as TLSDESC or IRELATIVE, is not an owned-runtime input.
+
+An output with a non-empty ``.eh_frame`` must carry exactly one
+``PT_GNU_EH_FRAME``: unwinders, including Rust's, find a module's frame
+descriptors only through that segment reported by ``dl_iterate_phdr``.
 """
 from __future__ import annotations
 
@@ -23,12 +27,13 @@ from pathlib import Path
 import struct
 from typing import Any, Callable, Mapping
 
-SCHEMA = "crabc.x86_64-owned-dynamic-elf-inspection/v1"
+SCHEMA = "crabc.x86_64-owned-dynamic-elf-inspection/v2"
 
 ET_EXEC, ET_DYN = 2, 3
 EM_X86_64 = 62
 PT_LOAD, PT_DYNAMIC, PT_INTERP, PT_TLS = 1, 2, 3, 7
-PT_GNU_STACK, PT_GNU_RELRO = 0x6474E551, 0x6474E552
+PT_GNU_EH_FRAME, PT_GNU_STACK, PT_GNU_RELRO = 0x6474E550, 0x6474E551, 0x6474E552
+SHT_NOBITS = 8
 PF_X, PF_W, PF_R = 1, 2, 4
 DT_NULL, DT_NEEDED, DT_PLTRELSZ, DT_HASH, DT_STRTAB, DT_SYMTAB = 0, 1, 2, 4, 5, 6
 DT_RELA, DT_RELASZ, DT_RELAENT, DT_STRSZ, DT_SYMENT = 7, 8, 9, 10, 11
@@ -158,6 +163,45 @@ def _relocations(image: _Image, loads, tags: Mapping[int, list[int]], address_ta
     return kinds
 
 
+def _has_eh_frame(image: _Image, shoff: int, shentsize: int, shnum: int, shstrndx: int) -> bool:
+    """Whether the section table names a non-empty, file-backed ``.eh_frame``."""
+
+    if shnum == 0:
+        return False
+    _require(shentsize == 64 and shstrndx < shnum, "section header table is invalid")
+    names_offset, names_size = image.unpack("<QQ", shoff + 64 * shstrndx + 24)
+    found = False
+    for index in range(shnum):
+        name, kind, _, _, _, size = image.unpack("<IIQQQQ", shoff + 64 * index)
+        if image.string(names_offset + name, names_offset + names_size) == ".eh_frame":
+            _require(not found, "output has more than one .eh_frame section")
+            found = kind != SHT_NOBITS and size > 0
+    return found
+
+
+def unwind_table_facts(path: Path) -> dict[str, Any]:
+    """Return whether an ELF64 image has ``.eh_frame`` and its PT_GNU_EH_FRAME count."""
+
+    data = Path(path).read_bytes()
+    image = _Image(data)
+    _require(len(data) >= 64 and data[:4] == b"\x7fELF" and data[4:7] == b"\x02\x01\x01",
+             "image is not ELF64 little-endian version 1")
+    phoff, shoff = image.unpack("<QQ", 32)
+    phentsize, phnum, shentsize, shnum, shstrndx = image.unpack("<HHHHH", 54)
+    _require(phentsize == 56, "program header table is invalid")
+    headers = sum(image.unpack("<I", phoff + index * phentsize)[0] == PT_GNU_EH_FRAME for index in range(phnum))
+    return {"eh_frame": _has_eh_frame(image, shoff, shentsize, shnum, shstrndx),
+            "eh_frame_hdr_segments": headers}
+
+
+def require_unwind_table_header(facts: Mapping[str, Any]) -> None:
+    """Require one PT_GNU_EH_FRAME exactly when the image has ``.eh_frame``."""
+
+    _require(facts["eh_frame_hdr_segments"] == (1 if facts["eh_frame"] else 0),
+             "output with .eh_frame lacks exactly one PT_GNU_EH_FRAME (link with --eh-frame-hdr)"
+             if facts["eh_frame"] else "output without .eh_frame has a PT_GNU_EH_FRAME")
+
+
 def inspect(path: Path) -> dict[str, Any]:
     """Return the canonical structural facts of one final ELF64 x86-64 image."""
 
@@ -277,6 +321,7 @@ def inspect(path: Path) -> dict[str, Any]:
         "weak_undefined_symbols": sorted(weak_undefined),
         "defined_symbol_count": len(defined),
         "ifunc_symbols": sorted(ifunc),
+        **unwind_table_facts(path),
     }
 
 
@@ -313,6 +358,7 @@ def require_expected(facts: Mapping[str, Any], expected: Expectation) -> None:
     _require(facts["gnu_stack_flags"] == [PF_R | PF_W], "output stack is not exactly one non-executable GNU_STACK")
     _require(facts["relro_segments"] == 1, "output lacks exactly one PT_GNU_RELRO")
     _require(facts["writable_executable_loads"] == 0, "output has a writable executable PT_LOAD")
+    require_unwind_table_header(facts)
     if expected.mode == "shared":
         _require(not EXECUTABLE_ONLY_RELOCATIONS & set(facts["relocations"]),
                  "shared object has an executable-only COPY relocation")

@@ -416,6 +416,7 @@ expected_contract = [
     *( ["-pie"] if expected[3] else [] ),
     "--no-dynamic-linker",
     "--no-undefined",
+    "--eh-frame-hdr",
     "--gc-sections",
     "-z",
     "relro",
@@ -570,6 +571,19 @@ assert_final_static_image() {
     fi
     awk '$1 == "GNU_RELRO" { count += 1 } END { exit count != 1 }' "$program_headers" ||
         fail "${mode} candidate must have exactly one GNU_RELRO segment"
+    # The same rule as the dynamic product's final-ELF inspection: a static
+    # image's unwinder also finds its frames only through PT_GNU_EH_FRAME.
+    python3 -B - "$ROOT_DIR/compat/x86_64" "$candidate" <<'PY' || fail "${mode} candidate unwind table header is unusable"
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import owned_dynamic_elf as elf
+
+try:
+    elf.require_unwind_table_header(elf.unwind_table_facts(sys.argv[2]))
+except elf.InspectionError as error:
+    raise SystemExit(str(error))
+PY
     awk '$1 == "GNU_STACK" { count += 1; if ($7 ~ /E/) executable = 1 }
         END { exit count != 1 || executable }' "$program_headers" ||
         fail "${mode} candidate must have one non-executable GNU_STACK segment"

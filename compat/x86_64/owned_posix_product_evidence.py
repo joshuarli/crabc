@@ -570,7 +570,7 @@ def _static_link_plan(root: Path, linkage: str) -> list[str]:
     library = root / "usr/lib"
     return [
         "ld.lld", "-static", *(["-pie"] if linkage == "static-pie" else []),
-        "--no-dynamic-linker", "--no-undefined", "--gc-sections", "-z", "relro", "-z", "now",
+        "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now",
         "-e", "_start", str(library / mode["crt"]), str(library / "crti.o"),
         "<application-objects>", str(library / "libc.a"), str(library / "libcrabc-builtins.a"),
         str(library / "crtn.o"), "-o", "<output>",
@@ -678,7 +678,7 @@ def _dynamic_link_command(root: Path, workload: Path, executable: Path, linkage:
     library = root / "usr/lib"
     entry = str(LINKAGES[linkage]["crt"])
     command = [
-        linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "-z", "relro",
+        linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro",
         "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
         "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
     ]
@@ -900,7 +900,7 @@ def _retained_static_plan(root: Path, source_mount: str, product: Path, linkage:
     library = product / "usr/lib"
     return [
         "ld.lld", "-static", *(["-pie"] if linkage == "static-pie" else []),
-        "--no-dynamic-linker", "--no-undefined", "--gc-sections", "-z", "relro", "-z", "now",
+        "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now",
         "-e", "_start", _retained_recorded(root, source_mount, library / mode["crt"], "static CRT"),
         _retained_recorded(root, source_mount, library / "crti.o", "static CRT"),
         "<application-objects>", _retained_recorded(root, source_mount, library / "libc.a", "static libc"),
@@ -969,7 +969,7 @@ def _retained_dynamic_command(root: Path, source_mount: str, product: Path, work
     entry = str(LINKAGES[linkage]["crt"])
     recorded = lambda path, description: _retained_recorded(root, source_mount, path, description)
     command = [
-        linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "-z", "relro", "-z", "now",
+        linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now",
         "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags",
         "-rpath", "/usr/lib",
     ]

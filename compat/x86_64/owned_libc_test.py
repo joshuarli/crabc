@@ -884,7 +884,7 @@ def verify_candidate_receipt(
         fail("candidate dynamic link receipt linker hash drifted")
     library = product / "usr/lib"
     link = [str(linker_path), *( ["-shared"] if shared_object else ["-pie"]), "--hash-style=sysv",
-            "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+            "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
             "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", runpath]
     if export_dynamic:
         link.append("--export-dynamic")

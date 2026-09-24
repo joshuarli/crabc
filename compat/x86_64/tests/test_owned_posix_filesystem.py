@@ -151,7 +151,7 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             },
             "resolved_linker": {"path": str(linker), "sha256": auditor.digest(linker)},
             "owned_link_contract": [
-                "ld.lld", "-static", "--no-dynamic-linker", "--no-undefined", "--gc-sections",
+                "ld.lld", "-static", "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections",
                 "-z", "relro", "-z", "now", "-e", "_start", str(library / "crt1.o"),
                 str(library / "crti.o"), "<application-objects>", str(library / "libc.a"),
                 str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", "<output>",
@@ -200,7 +200,7 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             "output_path": str(candidate),
             "output_sha256": auditor.digest(candidate),
             "link_command": [
-                str(linker), "-pie", "--hash-style=sysv", "-z", "relro", "-z", "now", "-z",
+                str(linker), "-pie", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z",
                 "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined",
                 "--enable-new-dtags", "-rpath", "/usr/lib", "--dynamic-linker",
                 auditor.DYNAMIC_INTERPRETER, str(entry), str(attach), str(prologue),

@@ -412,7 +412,7 @@ def expected_base(product: Path, output: Path, mode: str, object_path: Path, dso
         command.append("-pie")
     elif mode != "exec":
         fail("unsupported receipt mode")
-    command += ["--hash-style=sysv", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+    command += ["--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
                 "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib"]
     if mode != "shared":
         entry = library / ("Scrt1.o" if mode == "pie" else "crt1.o")

@@ -26,7 +26,8 @@ def build_image(*, elf_type: int = elf.ET_DYN, interpreter: str | None = INTERPR
                 runpath: str | None = "/usr/lib", rpath: str | None = None,
                 flags: int = elf.DF_BIND_NOW, flags_1: int = elf.DF_1_NOW | elf.DF_1_PIE,
                 stack_flags=(elf.PF_R | elf.PF_W,), relro: int = 1, load_flags: int = elf.PF_R,
-                relocations=(8, 6), plt=(7,), extra_tags=(), tls: bool = False) -> bytes:
+                relocations=(8, 6), plt=(7,), extra_tags=(), tls: bool = False,
+                eh_frame: bool = False, eh_frame_hdr: int = 0) -> bytes:
     """Lay out one PT_LOAD image whose virtual addresses equal file offsets."""
 
     strings = bytearray(b"\0")
@@ -44,7 +45,7 @@ def build_image(*, elf_type: int = elf.ET_DYN, interpreter: str | None = INTERPR
     symbols = [(0, 0, 0), (string("puts"), 0x12, 0), (string("weak_hook"), 0x22, 0),
                (string("exported"), 0x12, 5)]
 
-    phnum = 3 + (interpreter is not None) + len(stack_flags) + relro + tls
+    phnum = 3 + (interpreter is not None) + len(stack_flags) + relro + tls + eh_frame_hdr
     cursor = 64 + 56 * phnum
     layout = {}
 
@@ -84,11 +85,20 @@ def build_image(*, elf_type: int = elf.ET_DYN, interpreter: str | None = INTERPR
     tags += list(extra_tags) + [(elf.DT_NULL, 0)]
     dynamic = place("dynamic", 16 * len(tags))
     tbss = place("tls", 16) if tls else None
+    # Section names and headers: NULL, .shstrtab and, when requested, .eh_frame.
+    section_names = b"\0.shstrtab\0.eh_frame\0"
+    shstrtab = place("shstrtab", len(section_names))
+    frames = place("eh_frame", 8)
+    sections = place("sections", 64 * 3) if eh_frame else None
     image = bytearray(cursor)
 
     image[0:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16, elf_type, elf.EM_X86_64, 1, 0x1000 if interpreter else 0,
-                     64, 0, 0, 64, 56, phnum, 64, 0, 0)
+                     64, sections or 0, 0, 64, 56, phnum, 64, 3 if eh_frame else 0, 1 if eh_frame else 0)
+    if eh_frame:
+        image[shstrtab:shstrtab + len(section_names)] = section_names
+        struct.pack_into("<IIQQQQIIQQ", image, sections + 64, 1, 3, 0, 0, shstrtab, len(section_names), 0, 0, 1, 0)
+        struct.pack_into("<IIQQQQIIQQ", image, sections + 128, 11, 1, 2, frames, frames, 8, 0, 0, 8, 0)
     headers = [(elf.PT_LOAD, load_flags, 0, 0, len(image), len(image), 0x1000),
                (elf.PT_DYNAMIC, elf.PF_R | elf.PF_W, dynamic, dynamic, 16 * len(tags), 16 * len(tags), 8)]
     if interpreter is not None:
@@ -98,6 +108,7 @@ def build_image(*, elf_type: int = elf.ET_DYN, interpreter: str | None = INTERPR
     headers += [(elf.PT_GNU_RELRO, elf.PF_R, dynamic, dynamic, 16 * len(tags), 16 * len(tags), 1)] * relro
     if tls:
         headers.append((elf.PT_TLS, elf.PF_R, tbss, tbss, 8, 16, 8))
+    headers += [(elf.PT_GNU_EH_FRAME, elf.PF_R, frames, frames, 8, 8, 4)] * eh_frame_hdr
     headers.append((0, 0, 0, 0, 0, 0, 0))  # PT_NULL keeps phnum stable for optional rows.
     for index, (kind, flag, offset, vaddr, filesz, memsz, align) in enumerate(headers[:phnum]):
         struct.pack_into("<IIQQQQQQ", image, 64 + 56 * index, kind, flag, offset, vaddr, vaddr,
@@ -182,6 +193,21 @@ class FinalElfInspectionTests(unittest.TestCase):
             (build_image(load_flags=elf.PF_R | elf.PF_W | elf.PF_X), "writable executable"),
         )
         for data, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(elf.InspectionError, message):
+                self.check(data, expectation())
+
+    def test_eh_frame_requires_exactly_one_eh_frame_header_segment(self):
+        """dl_iterate_phdr unwinders find a module's FDEs only through PT_GNU_EH_FRAME."""
+
+        facts = self.check(build_image(eh_frame=True, eh_frame_hdr=1), expectation())
+        self.assertEqual((facts["eh_frame"], facts["eh_frame_hdr_segments"]), (True, 1))
+        facts = self.check(build_image(), expectation())
+        self.assertEqual((facts["eh_frame"], facts["eh_frame_hdr_segments"]), (False, 0))
+        for data, message in (
+            (build_image(eh_frame=True), "lacks exactly one PT_GNU_EH_FRAME"),
+            (build_image(eh_frame=True, eh_frame_hdr=2), "lacks exactly one PT_GNU_EH_FRAME"),
+            (build_image(eh_frame_hdr=1), "without .eh_frame has a PT_GNU_EH_FRAME"),
+        ):
             with self.subTest(message=message), self.assertRaisesRegex(elf.InspectionError, message):
                 self.check(data, expectation())
 

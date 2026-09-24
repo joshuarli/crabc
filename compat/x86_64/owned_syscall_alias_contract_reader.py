@@ -493,7 +493,7 @@ def validate_dynamic_link_receipts(output, runner, inputs, command_runner):
             input_rows += [{"path": obj, "sha256": digest(runner / (probe + ".o"))},
                            {"path": original("libcrabc-builtins.a"), "sha256": digest(retained_product / "usr/lib/libcrabc-builtins.a")}]
             command = [linker["path"], *(["-pie"] if mode == "pie" else []), "--hash-style=sysv",
-                       "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+                       "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
                        "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
                        *(["--export-dynamic"] if probe == "override" else []), "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1",
                        original(crt), original("crabc-dynamic-attach.o"), original("crti.o"), obj,

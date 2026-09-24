@@ -376,6 +376,9 @@ def owned_link_plan(root: Path, mode: StaticMode) -> list[str]:
         *mode.linker_flags,
         "--no-dynamic-linker",
         "--no-undefined",
+        # Publish .eh_frame through PT_GNU_EH_FRAME for dl_iterate_phdr
+        # unwinders, as GCC's driver does for every ordinary link.
+        "--eh-frame-hdr",
         "--gc-sections",
         "-z",
         "relro",

@@ -265,6 +265,9 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             self.assertEqual((facts["runpath"], facts["rpath"], facts["gnu_stack_flags"], facts["relro_segments"]),
                              ("/usr/lib", None, [6], 1))
             self.assertTrue(facts["bind_now"] and facts["flags_1_now"] and not facts["textrel"])
+            # GCC emits .eh_frame for every C translation unit; the output
+            # must publish it to dl_iterate_phdr unwinders.
+            self.assertEqual((facts["eh_frame"], facts["eh_frame_hdr_segments"]), (True, 1))
             if output == leaf:
                 self.assertEqual((facts["elf_type"], facts["interpreter"], facts["soname"], facts["needed"]),
                                  ("ET_DYN", None, "libleaf.so", ["libc.so"]))
@@ -1261,7 +1264,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             ("one.o", "two.o"), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
         self.assertEqual(command, [
-            "/pinned/ld.lld", "-shared", "--hash-style=sysv", "-soname", "libc.so",
+            "/pinned/ld.lld", "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so",
             "--dynamic-list=" + str(producer.SHARED_LIBC_DYNAMIC_LIST),
             "--version-script=/private/mimalloc-hidden.exports",
             "--version-script=/private/errno-private.exports",

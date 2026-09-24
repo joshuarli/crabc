@@ -43,7 +43,7 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
             digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
             inputs = [runtime / name for name in ('crti.o', 'libc.so', 'crtn.o', 'Scrt1.o', 'crabc-dynamic-attach.o')]
             inputs += [object_path, runtime / 'libcrabc-builtins.a']
-            command = [str(replay.tool_path('linker')), '-pie', '--hash-style=sysv', '-z', 'relro', '-z', 'now',
+            command = [str(replay.tool_path('linker')), '-pie', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
                        '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
                        '-rpath', '/usr/lib', '--dynamic-linker', EVIDENCE.fork_evidence.INTERPRETER,
                        replay.recorded(runtime / 'Scrt1.o'), replay.recorded(runtime / 'crabc-dynamic-attach.o'),

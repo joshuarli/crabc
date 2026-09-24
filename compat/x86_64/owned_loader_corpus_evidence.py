@@ -737,7 +737,7 @@ def _loader_sidecar_command(linker: str, root: Path, source_mount: str, product:
     library = product / "usr/lib"
     recorded = lambda path: recorded_path(root, source_mount, path)
     command = [linker, "-shared" if kind == "shared" else "-pie", "--hash-style=" + hash_style,
-               "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+               "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
                "--allow-shlib-undefined", "--disable-new-dtags" if search_kind == "rpath" else "--enable-new-dtags",
                "-rpath", search_path]
     if kind == "shared":

@@ -85,6 +85,7 @@ MUSL_1_2_6_DYNAMIC_LIST_DATA_SYMBOLS = tuple(
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import crabc_cc_owned_dynamic as installed_driver
 import owned_static_sysroot_package as shared_package
+import owned_dynamic_elf as elf_inspection
 import owned_dynamic_qualification as qualification
 
 
@@ -99,6 +100,12 @@ def audit_shared_elf(path: Path) -> dict[str, str]:
         raise common.BuildError(f"owned shared ELF retains an absolute 32-bit relocation: {path}")
     if "GNU_RELRO" not in segments or not re.search(r"GNU_STACK.* RW +", segments):
         raise common.BuildError(f"owned shared ELF lacks RELRO or non-executable stack: {path}")
+    # Unwinders reach an object's frames only through PT_GNU_EH_FRAME; this is
+    # the same rule the installed driver applies to every application link.
+    try:
+        elf_inspection.require_unwind_table_header(elf_inspection.unwind_table_facts(path))
+    except elf_inspection.InspectionError as error:
+        raise common.BuildError(f"owned shared ELF unwind tables are unreachable: {path}: {error}") from error
     return {"dynamic": dynamic, "relocations": relocations, "segments": segments}
 
 
@@ -282,7 +289,7 @@ def shared_libc_link_command(
         raise common.BuildError("shared libc must consume the exact compiler-helper archive name")
 
     return [
-        str(lld), "-shared", "--hash-style=sysv", "-soname", "libc.so",
+        str(lld), "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so",
         f"--dynamic-list={dynamic_list}",
         *([f"--version-script={mimalloc_hidden_exports}"] if mimalloc_hidden_exports is not None else []),
         f"--version-script={errno_private_aliases}",

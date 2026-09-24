@@ -1009,7 +1009,7 @@ def descriptor_receipt(root,work,inputs,tools,label,mode,workload,output,applica
             'descriptor '+label+' linker identity differs')
     mounted=lambda path:ordinary.mounted(root,path)
     common=[linker['path'],*(['-shared'] if mode=='shared' else ['-pie']),'--hash-style=sysv',
-            '-z','relro','-z','now','-z','noexecstack','-z','text','--no-undefined',
+            '--eh-frame-hdr','-z','relro','-z','now','-z','noexecstack','-z','text','--no-undefined',
             '--allow-shlib-undefined','--enable-new-dtags','-rpath','/usr/lib']
     if mode=='shared':common+=['-soname',output.name]
     else:common+=['--dynamic-linker','/lib/ld-crabc-x86_64.so.1',mounted(library/'Scrt1.o'),

@@ -209,7 +209,7 @@ if (linker_path.name != "ld.lld" or not linker_path.is_file() or
     fail("resolved linker identity drifted")
 expected_contract = [
     "ld.lld", "-static", *(["-pie"] if expected[4] else []),
-    "--no-dynamic-linker", "--no-undefined", "--gc-sections", "-z", "relro",
+    "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro",
     "-z", "now", "-e", "_start", str(library / expected[3]),
     str(library / "crti.o"), "<application-objects>", str(library / "libc.a"),
     str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", "<output>",

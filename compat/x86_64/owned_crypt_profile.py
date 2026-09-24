@@ -171,7 +171,7 @@ def link_command(reader, obj, binary, mode, linker):
     library = reader.product / 'usr/lib'
     paths = [library / ('Scrt1.o' if mode == 'pie' else 'crt1.o'), library / 'crabc-dynamic-attach.o',
              library / 'crti.o', obj, library / 'libc.so', library / 'libcrabc-builtins.a', library / 'crtn.o']
-    return [linker, *(['-pie'] if mode == 'pie' else []), '--hash-style=sysv', '-z', 'relro', '-z', 'now',
+    return [linker, *(['-pie'] if mode == 'pie' else []), '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro', '-z', 'now',
             '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
             '-rpath', '/usr/lib', '--dynamic-linker', INTERPRETER, *map(reader.recorded, paths), '-o', reader.recorded(binary)]
 

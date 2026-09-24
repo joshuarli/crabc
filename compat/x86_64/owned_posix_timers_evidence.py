@@ -358,7 +358,7 @@ def _readelf(path: Path, option: str) -> str:
 def _shared_link_command(root: Path, object_path: Path, output: Path, linker: Path, *, replay: RetainedRuntimeInputs | None = None) -> list[str]:
     library = root / "usr/lib"
     return [
-        str(linker), "-shared", "--hash-style=sysv", "-z", "relro", "-z", "now",
+        str(linker), "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now",
         "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined",
         "--enable-new-dtags", "-rpath", "/usr/lib", "-soname", output.name,
         recorded(library / "crti.o", replay), recorded(object_path, replay), recorded(library / "libc.so", replay),

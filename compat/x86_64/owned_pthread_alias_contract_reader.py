@@ -1257,7 +1257,7 @@ def _validate_dynamic_link_receipt(
     if expected_mode == "pie":
         expected_link.append("-pie")
     expected_link += [
-        "--hash-style=sysv", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+        "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
         "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
         "--export-dynamic", "--dynamic-linker", INTERPRETER,
         f"{root}/usr/lib/{crt}", f"{root}/usr/lib/crabc-dynamic-attach.o",
@@ -1340,7 +1340,7 @@ def _validate_static_link_receipt(
     if binary == "static-pie-contract":
         contract.append("-pie")
     contract += [
-        "--no-dynamic-linker", "--no-undefined", "--gc-sections", "-z", "relro", "-z", "now",
+        "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now",
         "-e", "_start", f"{root}/usr/lib/{crt}", f"{root}/usr/lib/crti.o",
         "<application-objects>", f"{root}/usr/lib/libc.a", f"{root}/usr/lib/libcrabc-builtins.a",
         f"{root}/usr/lib/crtn.o", "-o", "<output>",

@@ -319,7 +319,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
             "/opt/toolchain/ld.lld", ROOT, "/workspace", self.product, link,
             search_kind, search_path, hash_style, export_dynamic,
         )
-        self.assertEqual(command[16:18], ["-soname", "libnested_leaf.so"])
+        self.assertEqual(command[17:19], ["-soname", "libnested_leaf.so"])
 
     def test_loader_pie_sidecar_command_binds_the_owned_interpreter(self) -> None:
         report = self._loader_report()
@@ -332,7 +332,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
             "/opt/toolchain/ld.lld", ROOT, "/workspace", self.product, link,
             search_kind, search_path, hash_style, export_dynamic,
         )
-        self.assertEqual(command[16:18], ["--dynamic-linker", "/lib/ld-crabc-x86_64.so.1"])
+        self.assertEqual(command[17:19], ["--dynamic-linker", "/lib/ld-crabc-x86_64.so.1"])
 
     def test_loader_reader_binds_every_sidecar_to_the_sealed_producer_linker(self) -> None:
         report = self._loader_report()

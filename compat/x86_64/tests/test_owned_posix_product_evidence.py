@@ -455,7 +455,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         library = self.static / "usr/lib"
         return [
             "ld.lld", "-static", *( ["-pie"] if pie else []), "--no-dynamic-linker",
-            "--no-undefined", "--gc-sections", "-z", "relro", "-z", "now", "-e", "_start",
+            "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now", "-e", "_start",
             str(library / crt), str(library / "crti.o"), "<application-objects>",
             str(library / "libc.a"), str(library / "libcrabc-builtins.a"),
             str(library / "crtn.o"), "-o", "<output>",
@@ -473,7 +473,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         inputs = [*direct, self.workload, runtime / "libcrabc-builtins.a"]
         link = [
             str(self.linker), *( ["-pie"] if linkage == "pie" else []), "--hash-style=sysv",
-            "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+            "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
             "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
             *(["--export-dynamic"] if export_dynamic else []),
             "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", str(runtime / entry),
