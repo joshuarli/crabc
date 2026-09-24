@@ -3,9 +3,10 @@
 
 The coordinator consumes only explicitly named retained component reports.  It
 does not build products, run DNS fixtures, discover report directories, or turn
-a component pass into `libc.resolver` completion.  Its useful result today is a
-source-checked capability-to-proof map and an explicit failure for behavior
-that has no public retained reader.
+a component pass into `libc.resolver` completion by itself.  `plan` fixes the
+paths that `./scripts/dev-x86_64.sh owned-resolver-family` executes for one
+validated cohort; the ledger admits the family only from the complete retained
+assessment through `admission_facts`.
 """
 
 from __future__ import annotations
@@ -751,9 +752,218 @@ def validate_assessment(root: Path, assessment_path: Path) -> dict[str, object]:
     return reconstructed
 
 
+PLAN_SCHEMA = "crabc.x86_64-owned-resolver-family-plan/v1"
+EXECUTION_WORK = Path(".work/x86_64")
+NETWORK_REPORT_DIRECTORY = Path("compat/reports/resolver-network/x86_64")
+
+
+def execution_layout(output: Path) -> dict[str, str]:
+    """Return the fixed checkout-relative inputs and outputs of one family run.
+
+    The dispatcher executes each component into exactly these names and never
+    chooses a report path itself, so the request written before execution is
+    the request the retained assessment later reconstructs. The network
+    reader admits a public report only below its established report directory;
+    that one file is named after this execution instead of `latest.json`.
+    """
+
+    base = output.as_posix()
+    return {
+        "plan": f"{base}/plan.json",
+        "request": f"{base}/request.json",
+        "assessment": f"{base}/assessment.json",
+        "network_work_root": f"{base}/network",
+        "network_report": (NETWORK_REPORT_DIRECTORY / f"family-{output.name}.json").as_posix(),
+        "classic_work": f"{base}/classic-netdb",
+        "classic_report": f"{base}/classic-netdb/classic-netdb-products.json",
+        "cancellation_work": f"{base}/cancellation",
+        "protocol_work": f"{base}/protocol-database",
+        "protocol_report": f"{base}/protocol-database/owned-protocol-database-products.json",
+        "loader_debug": f"{base}/loader-debug",
+        "loader_debug_report": f"{base}/loader-debug/report.json",
+        "inventory": f"{base}/native-abi-inventory",
+        "inventory_report": f"{base}/native-abi-inventory/report.json",
+        "elf_facts": f"{base}/native-abi-elf-facts",
+        "elf_facts_report": f"{base}/native-abi-elf-facts/report.json",
+        "alias": f"{base}/alias",
+        "alias_report": f"{base}/alias/report.json",
+    }
+
+
+def execution_request(layout: Mapping[str, str], static_preparation: str, dynamic_qualification: str,
+                      products: Mapping[str, Mapping[str, Mapping[str, object]]]) -> dict[str, object]:
+    """Name every component receipt of one run against its canonical cohort.
+
+    Single-pair components use the primary pair. The network receipt uses
+    primary plus extracted, and the protocol table all three pairs, exactly
+    as `owned_resolver_family_cohort.EXPECTED_COMPONENT_ROOTS` binds them.
+    """
+
+    primary = products["primary"]
+    return {
+        "schema": REQUEST_SCHEMA,
+        "components": {
+            "resolver-network-physical": {"report": layout["network_report"]},
+            "classic-netdb": {"report": layout["classic_report"]},
+            "resolver-alias-private-bodies": {
+                "report": layout["alias_report"],
+                "static_product": primary["static"]["path"],
+                "dynamic_product": primary["dynamic"]["path"],
+                "product_report": layout["loader_debug_report"],
+                "static_preparation": static_preparation,
+                "elf_facts": layout["elf_facts_report"],
+                "base_inventory": layout["inventory_report"],
+            },
+            "resolver-cancellation": {
+                "work": layout["cancellation_work"],
+                "static_product": primary["static"]["path"],
+                "dynamic_product": primary["dynamic"]["path"],
+            },
+            "protocol-database-product": {"report": layout["protocol_report"]},
+            "resolver-family-cohort": {
+                "static_preparation": static_preparation,
+                "dynamic_qualification": dynamic_qualification,
+            },
+        },
+    }
+
+
+def _write_new_json(path: Path, value: object) -> None:
+    try:
+        with path.open("x", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n")
+        path.chmod(0o444)
+    except OSError as error:
+        raise ResolverFamilyError(f"cannot write resolver family execution input: {path}") from error
+
+
+def plan_execution(root: Path, static_preparation: Path, dynamic_qualification: Path, output: Path) -> Path:
+    """Validate one current cohort and fix a family execution in `output`.
+
+    `output` is an existing empty directory: the dispatcher creates it as the
+    invoking user so user-mapped collectors (native ABI inventory and ELF
+    facts) can create their own fresh outputs beside root-run components. The
+    canonical static-preparation and dynamic-qualification owners are replayed
+    before anything is written into it. The plan only fixes paths; each
+    component's own runner and public reader remain its behavior authority.
+    """
+
+    import owned_resolver_family_cohort as cohort
+
+    root = _physical(root, "checkout root", directory=True)
+    static_preparation = _request_file(root, static_preparation, "static preparation receipt")
+    dynamic_qualification = _request_file(root, dynamic_qualification, "dynamic qualification receipt")
+    if output.is_absolute():
+        try:
+            output = output.relative_to(root)
+        except ValueError as error:
+            raise ResolverFamilyError("resolver family output escapes the checkout") from error
+    require(output.parts and all(part not in {"", ".", ".."} for part in output.parts),
+            "resolver family output path is malformed")
+    physical_output = root / output
+    require(physical_output.is_relative_to(root / EXECUTION_WORK) and physical_output != root / EXECUTION_WORK,
+            "resolver family output must be below checkout .work/x86_64")
+    _physical(physical_output, "resolver family output", directory=True)
+    require(not any(physical_output.iterdir()), "resolver family output must be fresh and empty")
+    layout = execution_layout(output)
+    network_report = root / layout["network_report"]
+    require(not network_report.exists() and not network_report.is_symlink(),
+            "resolver family public network report must be fresh")
+
+    try:
+        source, products = cohort.canonical_products(root, static_preparation, dynamic_qualification)
+    except cohort.ResolverFamilyCohortError as error:
+        raise ResolverFamilyError(str(error)) from error
+    preparation = static_preparation.relative_to(root).as_posix()
+    qualification = dynamic_qualification.relative_to(root).as_posix()
+    request = execution_request(layout, preparation, qualification, products)
+    plan = {
+        "schema": PLAN_SCHEMA,
+        "family": "libc.resolver",
+        "source": source,
+        "products": {label: {kind: pair[kind]["path"] for kind in ("static", "dynamic")}
+                     for label, pair in products.items()},
+        "static_preparation": preparation,
+        "dynamic_qualification": qualification,
+        "layout": layout,
+    }
+    try:
+        # The ignored public report directory may not exist in a fresh checkout.
+        network_report.parent.mkdir(parents=True, exist_ok=True)
+        _physical(network_report.parent, "public resolver-network report directory", directory=True)
+        # Classic netdb and cancellation runners require an existing private
+        # directory. Other runners create their own fresh output.
+        for name in ("classic_work", "cancellation_work"):
+            (root / layout[name]).mkdir()
+    except OSError as error:
+        raise ResolverFamilyError(f"cannot create resolver family output: {error}") from error
+    _write_new_json(root / layout["request"], request)
+    _write_new_json(root / layout["plan"], plan)
+    return root / layout["plan"]
+
+
+def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
+    """Check one retained complete assessment against current checkout bytes.
+
+    Full reconstruction needs the pinned `/workspace` container, so the host
+    ledger cannot replay component behavior. It can and does reject an
+    assessment whose contract, request, cohort receipts, or selected source
+    no longer match this checkout, and returns the cohort identities that the
+    ledger joins to the admitted POSIX family.
+    """
+
+    import owned_posix_static_products as static
+
+    root = _physical(root, "checkout root", directory=True)
+    assessment = _request_file(root, assessment_path, "resolver family assessment")
+    retained = _read_json(assessment, "resolver family assessment")
+    require(retained.get("schema") == SCHEMA and retained.get("family") == "libc.resolver",
+            "resolver family assessment identity differs")
+    require(retained.get("family_complete") is True and retained.get("gaps") == []
+            and retained.get("promotion_ready") is False and retained.get("public_support") is False,
+            "resolver family assessment completion boundary differs")
+    require(retained.get("contract") == _identity(root, root / "compat/x86_64/resolver-family.toml"),
+            "resolver family assessment contract changed")
+    request_record = retained.get("request")
+    require(isinstance(request_record, dict), "resolver family assessment request identity differs")
+    request = _relative_file(root, request_record.get("path"), "resolver family assessment request", below_work=True)
+    require(_identity(root, request) == request_record, "resolver family assessment request changed")
+    components = retained.get("components")
+    require(isinstance(components, dict) and set(components) == set(EXPECTED_COMPONENTS)
+            and all(isinstance(value, dict) and value.get("admitted") is True for value in components.values()),
+            "resolver family assessment component admission differs")
+    capabilities = retained.get("capabilities")
+    require(isinstance(capabilities, dict) and set(capabilities) == set(FROZEN_CAPABILITIES)
+            and all(isinstance(value, dict) and value.get("admitted") is True for value in capabilities.values()),
+            "resolver family assessment capability admission differs")
+    cohort = components["resolver-family-cohort"].get("result")
+    require(isinstance(cohort, dict) and isinstance(cohort.get("source"), dict),
+            "resolver family assessment cohort result differs")
+    seal = cohort["source"]
+    current = static.source_identity(root)
+    require(seal.get("revision") == current["revision"] and seal.get("content_sha256") == current["content_sha256"],
+            "resolver family assessment is not bound to current source")
+    receipts: dict[str, dict[str, object]] = {}
+    for name in ("static_preparation", "dynamic_qualification"):
+        record = seal.get(name)
+        require(isinstance(record, dict), f"resolver family assessment {name} identity differs")
+        path = _relative_file(root, record.get("path"), f"resolver family {name}", below_work=True)
+        require(_identity(root, path) == record, f"resolver family {name} receipt changed")
+        receipts[name] = record
+    return {
+        "assessment": _identity(root, assessment),
+        "source": current,
+        **receipts,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    plan = commands.add_parser("plan", help="validate one current cohort and fix a fresh execution layout")
+    plan.add_argument("--static-preparation", type=Path, required=True)
+    plan.add_argument("--dynamic-qualification", type=Path, required=True)
+    plan.add_argument("--output", type=Path, required=True)
     assess = commands.add_parser("assess", help="reconstruct explicit component inputs without native execution")
     assess.add_argument("--request", type=Path, required=True)
     write = commands.add_parser("write-assessment", help="write one immutable non-promoting assessment")
@@ -763,6 +973,9 @@ def main() -> int:
     validate.add_argument("--assessment", type=Path, required=True)
     values = parser.parse_args()
     try:
+        if values.command == "plan":
+            print(plan_execution(ROOT, values.static_preparation, values.dynamic_qualification, values.output))
+            return 0
         if values.command == "assess":
             print(json.dumps(collect(ROOT, values.request), sort_keys=True))
             return 0

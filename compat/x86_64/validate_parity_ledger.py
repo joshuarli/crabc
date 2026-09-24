@@ -8547,6 +8547,110 @@ def pthread_runtime_private_artifact_view(
     return view
 
 
+RESOLVER_FAMILY_COMMANDS = (
+    "./scripts/dev-x86_64.sh owned-resolver-network",
+    "./scripts/dev-x86_64.sh owned-resolver-cancellation",
+    "./scripts/dev-x86_64.sh owned-resolver-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR",
+)
+RESOLVER_FAMILY_SCOPE = (
+    "One supplied current static-preparation/dynamic-qualification cohort executes every libc.resolver "
+    "behavior component: controlled-network A/AAAA/CNAME, negative and malformed replies, search, "
+    "timeout/retry/server failover and UDP/TCP fallback; classic and modern host/service lookup, errors, "
+    "result lifetime, threads and fork; public resolver state and alias bodies; cancellation and descriptor "
+    "retirement; and the fixed musl protocol table, through static ET_EXEC/static PIE and dynamic PIE/non-PIE "
+    "kernel/direct entry. The retained assessment replays every public reader and joins their product roots "
+    "to that one cohort. It admits family evidence only: promotion and public x86 support remain separate."
+)
+
+
+def require_resolver_family_admission(
+    family: Mapping[str, Any],
+    posix_family: Mapping[str, Any],
+    posix_admission: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Admit libc.resolver only from a complete assessment on the POSIX cohort.
+
+    The component commands remain development and qualification-chain entry
+    points. Only the family command's retained assessment names one current
+    product cohort for every reader; the admitted POSIX matrix must have used
+    exactly the same static-preparation and dynamic-qualification receipts.
+    """
+    require(family.get("id") == "libc.resolver", "wrong family for resolver admission")
+    status = family.get("status")
+    require(status in ALLOWED_STATUSES, "resolver admission family status is invalid")
+    evidence, _ = evidence_records(
+        family.get("native_evidence"), "family[libc.resolver].native_evidence",
+        unique_commands=True,
+    )
+    require(tuple(entry["command"] for entry in evidence) == RESOLVER_FAMILY_COMMANDS,
+            "resolver native evidence command roster differs")
+    require(evidence[2]["scope"] == RESOLVER_FAMILY_SCOPE, "resolver family evidence scope differs")
+
+    if status == "planned":
+        require("receipt" not in evidence[2], "planned libc.resolver must not attach a family assessment")
+        return None
+
+    require(posix_family.get("status") == "foundation-verified" and posix_admission is not None,
+            "resolver foundation requires admitted libc.posix-runtime")
+    require(all(entry.get("state") == "verified" for entry in evidence),
+            "foundation-verified libc.resolver requires every native evidence gate")
+    receipt_value = evidence[2].get("receipt")
+    require(isinstance(receipt_value, str) and receipt_value,
+            "foundation-verified libc.resolver needs its family assessment")
+    receipt_path = Path(receipt_value)
+    require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
+            "resolver family assessment must be checkout-relative")
+    physical = ROOT / receipt_path
+    require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
+            and physical.is_relative_to(ROOT / ".work"),
+            "resolver family assessment must be a physical checkout .work file")
+    try:
+        import owned_resolver_family as resolver_family
+
+        admission = resolver_family.admission_facts(ROOT, physical)
+    except (RuntimeError, OSError, ValueError, TypeError) as error:
+        raise LedgerError(f"resolver family assessment rejected: {error}") from error
+
+    inputs = posix_admission.get("inputs")
+    require(isinstance(inputs, Mapping) and inputs.get("source") == admission.get("source"),
+            "resolver family and POSIX admission must share current source")
+    matrix_identity = inputs.get("family_execution")
+    require(isinstance(matrix_identity, Mapping) and isinstance(matrix_identity.get("path"), str),
+            "POSIX admission family matrix identity differs")
+    matrix_path = ROOT / matrix_identity["path"]
+    try:
+        matrix_bytes = matrix_path.read_bytes()
+        matrix = json.loads(matrix_bytes)
+    except (OSError, ValueError) as error:
+        raise LedgerError(f"POSIX family matrix is unreadable for resolver admission: {error}") from error
+    require(hashlib.sha256(matrix_bytes).hexdigest() == matrix_identity.get("sha256"),
+            "POSIX family matrix changed after admission")
+    matrix_inputs = matrix.get("inputs") if isinstance(matrix, Mapping) else None
+    require(isinstance(matrix_inputs, Mapping), "POSIX family matrix inputs differ")
+    for name in ("static_preparation", "dynamic_qualification"):
+        resolver_record, posix_record = admission.get(name), matrix_inputs.get(name)
+        require(isinstance(resolver_record, Mapping) and isinstance(posix_record, Mapping)
+                and resolver_record.get("path") == posix_record.get("path")
+                and resolver_record.get("sha256") == posix_record.get("sha256"),
+                f"resolver family and POSIX matrix must share the {name} receipt")
+    return admission
+
+
+def resolver_private_artifact_view(
+    family: Mapping[str, Any], admission: Mapping[str, Any] | None
+) -> Mapping[str, Any]:
+    """Keep verified resolver leaves private after family admission."""
+    if family.get("status") == "planned":
+        require(admission is None, "planned libc.resolver cannot have family admission")
+        return family
+    require(admission is not None, "resolver leaf ratchets need actual family admission")
+    # Each static C leaf stays narrower than the admitted family. Its local
+    # planned-status guard rejects leaf promotion, not the family receipt.
+    view = dict(family)
+    view["status"] = "planned"
+    return view
+
+
 def require_uio_cxx_archive_linkage_artifact(family: Mapping[str, Any]) -> None:
     """Keep one real C++ consumer-to-archive seam below broad C++ claims."""
 
@@ -80795,15 +80899,20 @@ def _validate_ledger(
     require_filesystem_extensions_slice(posix_runtime_leaf)
     require_filesystem_directory_slice(posix_runtime_leaf)
     require_extended_attributes_artifact(posix_runtime_leaf)
-    require_inet_address_artifact(by_id["libc.resolver"])
-    require_inet_ntoa_artifact(by_id["libc.resolver"])
-    require_inet_classful_artifact(by_id["libc.resolver"])
-    require_inet_netof_artifact(by_id["libc.resolver"])
-    require_inet_network_artifact(by_id["libc.resolver"])
-    require_numeric_netdb_artifact(by_id["libc.resolver"])
-    require_hstrerror_artifact(by_id["libc.resolver"])
-    require_h_errno_artifact(by_id["libc.resolver"])
-    require_resolver_runtime_artifact(by_id["libc.resolver"])
+    resolver_family = by_id["libc.resolver"]
+    resolver_admission = require_resolver_family_admission(
+        resolver_family, posix_runtime, posix_runtime_admission
+    )
+    resolver_leaf = resolver_private_artifact_view(resolver_family, resolver_admission)
+    require_inet_address_artifact(resolver_leaf)
+    require_inet_ntoa_artifact(resolver_leaf)
+    require_inet_classful_artifact(resolver_leaf)
+    require_inet_netof_artifact(resolver_leaf)
+    require_inet_network_artifact(resolver_leaf)
+    require_numeric_netdb_artifact(resolver_leaf)
+    require_hstrerror_artifact(resolver_leaf)
+    require_h_errno_artifact(resolver_leaf)
+    require_resolver_runtime_artifact(resolver_leaf)
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
     require_issetugid_artifact(by_id["libc.c-abi-compat"])
     require_legacy_misc_slice(by_id["libc.c-abi-compat"])
@@ -80815,17 +80924,17 @@ def _validate_ledger(
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])
     require_intrusive_queue_artifact(by_id["libc.c-abi-compat"])
-    require_dn_skipname_artifact(by_id["libc.resolver"])
-    require_dn_expand_artifact(by_id["libc.resolver"])
-    require_ns_flagdata_artifact(by_id["libc.resolver"])
-    require_ns_get16_artifact(by_id["libc.resolver"])
-    require_ns_get32_artifact(by_id["libc.resolver"])
-    require_ns_put16_artifact(by_id["libc.resolver"])
-    require_ns_put32_artifact(by_id["libc.resolver"])
-    require_ns_skiprr_artifact(by_id["libc.resolver"])
-    require_nameser_wire_aggregate_artifact(by_id["libc.resolver"])
+    require_dn_skipname_artifact(resolver_leaf)
+    require_dn_expand_artifact(resolver_leaf)
+    require_ns_flagdata_artifact(resolver_leaf)
+    require_ns_get16_artifact(resolver_leaf)
+    require_ns_get32_artifact(resolver_leaf)
+    require_ns_put16_artifact(resolver_leaf)
+    require_ns_put32_artifact(resolver_leaf)
+    require_ns_skiprr_artifact(resolver_leaf)
+    require_nameser_wire_aggregate_artifact(resolver_leaf)
     require_closed_static_leaf_artifacts(
-        by_id["libc.resolver"],
+        resolver_leaf,
         (
             (
                 "static-c-nameser-message-parser",

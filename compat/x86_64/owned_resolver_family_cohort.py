@@ -146,6 +146,17 @@ def _canonical_products(root: Path, static_preparation: Path, dynamic_qualificat
     }, products
 
 
+def canonical_products(root: Path, static_preparation: Path, dynamic_qualification: Path) -> tuple[
+        dict[str, object], dict[str, dict[str, dict[str, object]]]]:
+    """Return the validated current source seal and its three product pairs.
+
+    A family execution plan uses exactly these roots before any component
+    runs, so the later cohort replay binds the same pairs it was given.
+    """
+
+    return _canonical_products(root, static_preparation, dynamic_qualification)
+
+
 def _match_component_products(root: Path, identifier: str, value: object,
                               products: Mapping[str, Mapping[str, Mapping[str, object]]]) -> dict[str, object]:
     """Match one reader's declared roots to the canonical pair identities."""

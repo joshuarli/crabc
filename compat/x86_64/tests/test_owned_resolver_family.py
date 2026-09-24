@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -209,6 +210,136 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         request.write_text(json.dumps({"schema": family.REQUEST_SCHEMA, "components": {"unknown": {}}}), encoding="utf-8")
         with self.assertRaisesRegex(family.ResolverFamilyError, "request changed"):
             family.validate_assessment(ROOT, written.relative_to(ROOT))
+
+    def _cohort(self) -> tuple[dict[str, object], dict[str, dict[str, dict[str, object]]]]:
+        source = {"revision": "r" * 40, "content_sha256": "c" * 64}
+        products = {
+            label: {kind: {"path": f".work/x86_64/cohort/{label}-{kind}", "manifest": {}}
+                    for kind in ("static", "dynamic")}
+            for label in ("primary", "reproduction", "extracted")
+        }
+        return source, products
+
+    def test_plan_fixes_a_fresh_layout_and_request_for_the_supplied_cohort(self) -> None:
+        import owned_resolver_family_cohort as cohort
+
+        (ROOT / ".work/x86_64/tmp").mkdir(parents=True, exist_ok=True)
+        parent = Path(tempfile.mkdtemp(prefix="resolver-family-plan.", dir=ROOT / ".work/x86_64/tmp"))
+        self.addCleanup(shutil.rmtree, parent)
+        preparation = self._file("preparation.json")
+        qualification = self._file("qualification.json")
+        output = parent / "run"
+        output.mkdir()
+        layout = family.execution_layout(output.relative_to(ROOT))
+        network_report = ROOT / layout["network_report"]
+        self.addCleanup(lambda: network_report.unlink(missing_ok=True))
+        with mock.patch.object(cohort, "canonical_products", return_value=self._cohort()) as canonical:
+            plan_path = family.plan_execution(ROOT, preparation, qualification, output)
+            canonical.assert_called_once_with(ROOT, preparation, qualification)
+            with self.assertRaisesRegex(family.ResolverFamilyError, "must be fresh"):
+                family.plan_execution(ROOT, preparation, qualification, output)
+            with self.assertRaisesRegex(family.ResolverFamilyError, "cannot read resolver family output"):
+                family.plan_execution(ROOT, preparation, qualification, parent / "absent")
+            elsewhere = self.work / "elsewhere"
+            elsewhere.mkdir()
+            with self.assertRaisesRegex(family.ResolverFamilyError, r"below checkout \.work/x86_64"):
+                family.plan_execution(ROOT, preparation, qualification, elsewhere)
+            self.assertEqual(canonical.call_count, 1, "invalid outputs must fail before cohort replay")
+
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(plan["schema"], family.PLAN_SCHEMA)
+        self.assertEqual(plan["layout"], layout)
+        self.assertEqual(plan["products"]["extracted"]["dynamic"], ".work/x86_64/cohort/extracted-dynamic")
+        request = json.loads((ROOT / layout["request"]).read_text(encoding="utf-8"))
+        self.assertEqual(request["schema"], family.REQUEST_SCHEMA)
+        components, _proofs = family._roster(ROOT)
+        self.assertEqual(set(request["components"]), set(components))
+        for identifier, component in components.items():
+            self.assertEqual(set(request["components"][identifier]), set(component.request_fields), identifier)
+        alias = request["components"]["resolver-alias-private-bodies"]
+        self.assertEqual((alias["static_product"], alias["dynamic_product"]),
+                         (".work/x86_64/cohort/primary-static", ".work/x86_64/cohort/primary-dynamic"))
+        self.assertEqual(request["components"]["resolver-cancellation"]["static_product"],
+                         alias["static_product"])
+        self.assertEqual(request["components"]["resolver-family-cohort"], {
+            "static_preparation": self._relative(preparation),
+            "dynamic_qualification": self._relative(qualification),
+        })
+        self.assertTrue(layout["network_report"].startswith("compat/reports/resolver-network/x86_64/"))
+        self.assertTrue(network_report.parent.is_dir() and not network_report.exists())
+        for name in ("classic_work", "cancellation_work"):
+            self.assertTrue((ROOT / layout[name]).is_dir(), name)
+        for name in ("network_work_root", "protocol_work", "loader_debug", "inventory", "elf_facts", "alias"):
+            self.assertFalse((ROOT / layout[name]).exists(), name)
+
+    def _complete_assessment(self) -> tuple[Path, dict[str, object]]:
+        preparation = self._file("preparation.json")
+        qualification = self._file("qualification.json")
+        request = self._request({})
+        source = {"revision": "r" * 40, "content_sha256": "c" * 64}
+        assessment = {
+            "schema": family.SCHEMA,
+            "family": "libc.resolver",
+            "contract": family._identity(ROOT, ROOT / "compat/x86_64/resolver-family.toml"),
+            "request": family._identity(ROOT, request),
+            "capabilities": {name: {"admitted": True} for name in family.FROZEN_CAPABILITIES},
+            "components": {name: {"admitted": True} for name in family.EXPECTED_COMPONENTS},
+            "proofs": {},
+            "gaps": [],
+            "family_complete": True,
+            "promotion_ready": False,
+            "public_support": False,
+        }
+        assessment["components"]["resolver-family-cohort"]["result"] = {"source": {
+            **source,
+            "static_preparation": family._identity(ROOT, preparation),
+            "dynamic_qualification": family._identity(ROOT, qualification),
+        }}
+        path = self._file("assessment.json", json.dumps(assessment))
+        return path, source
+
+    def test_admission_facts_bind_a_complete_assessment_to_current_bytes(self) -> None:
+        import owned_posix_static_products as static
+
+        path, source = self._complete_assessment()
+        with mock.patch.object(static, "source_identity", return_value=source):
+            facts = family.admission_facts(ROOT, path.relative_to(ROOT))
+        self.assertEqual(facts["source"], source)
+        self.assertEqual(facts["static_preparation"]["path"], self._relative(self.work / "preparation.json"))
+        self.assertEqual(facts["assessment"], family._identity(ROOT, path))
+
+        with mock.patch.object(static, "source_identity", return_value={**source, "revision": "o" * 40}):
+            with self.assertRaisesRegex(family.ResolverFamilyError, "not bound to current source"):
+                family.admission_facts(ROOT, path.relative_to(ROOT))
+        with mock.patch.object(static, "source_identity", return_value=source):
+            (self.work / "qualification.json").write_text("changed\n", encoding="utf-8")
+            with self.assertRaisesRegex(family.ResolverFamilyError, "dynamic_qualification receipt changed"):
+                family.admission_facts(ROOT, path.relative_to(ROOT))
+
+    def test_admission_facts_reject_incomplete_or_changed_assessments(self) -> None:
+        import owned_posix_static_products as static
+
+        path, source = self._complete_assessment()
+        original = json.loads(path.read_text(encoding="utf-8"))
+        mutations = {
+            "completion boundary": lambda value: value.update(family_complete=False),
+            "completion boundary ": lambda value: value.update(promotion_ready=True),
+            "component admission": lambda value: value["components"]["classic-netdb"].update(admitted=False),
+            "capability admission": lambda value: value["capabilities"].pop("network.netdb"),
+            "contract changed": lambda value: value["contract"].update(sha256="0" * 64),
+        }
+        with mock.patch.object(static, "source_identity", return_value=source):
+            for message, mutate in mutations.items():
+                changed = json.loads(json.dumps(original))
+                mutate(changed)
+                path.write_text(json.dumps(changed), encoding="utf-8")
+                with self.subTest(message=message):
+                    with self.assertRaisesRegex(family.ResolverFamilyError, message.strip()):
+                        family.admission_facts(ROOT, path.relative_to(ROOT))
+            path.write_text(json.dumps(original), encoding="utf-8")
+            (self.work / "request.json").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(family.ResolverFamilyError, "request changed"):
+                family.admission_facts(ROOT, path.relative_to(ROOT))
 
 
 if __name__ == "__main__":

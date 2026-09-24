@@ -18910,6 +18910,119 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(admitted["status"], "planned")
         self.assertEqual(family["status"], "foundation-verified")
 
+    def _admitted_resolver(self, data: dict) -> tuple[dict, dict]:
+        resolver = self.family(data, "libc.resolver")
+        posix = self.family(data, "libc.posix-runtime")
+        resolver["status"] = "foundation-verified"
+        posix["status"] = "foundation-verified"
+        for entry in resolver["native_evidence"]:
+            entry["state"] = "verified"
+        resolver["native_evidence"][2]["receipt"] = ".work/x86_64/resolver-family/assessment.json"
+        return resolver, posix
+
+    def _resolver_admission_fixture(self, root: Path) -> tuple[dict, dict]:
+        """Write one POSIX matrix whose cohort receipts the resolver must share."""
+        import hashlib
+        import json
+
+        (root / ".work/x86_64/resolver-family").mkdir(parents=True)
+        (root / ".work/x86_64/resolver-family/assessment.json").write_text("{}", encoding="utf-8")
+        cohort = {
+            "static_preparation": {"path": ".work/x86_64/static/preparation.json", "sha256": "1" * 64},
+            "dynamic_qualification": {"path": ".work/x86_64/dynamic/qualification.json", "sha256": "2" * 64},
+        }
+        matrix = root / ".work/x86_64/posix-matrix/execution.json"
+        matrix.parent.mkdir(parents=True)
+        matrix.write_text(json.dumps({"inputs": {
+            name: {**record, "size": 1} for name, record in cohort.items()
+        }}), encoding="utf-8")
+        posix_admission = {"inputs": {
+            "source": {"revision": "r", "content_sha256": "c"},
+            "family_execution": {
+                "path": ".work/x86_64/posix-matrix/execution.json",
+                "sha256": hashlib.sha256(matrix.read_bytes()).hexdigest(),
+                "size": matrix.stat().st_size,
+            },
+        }}
+        facts = {"assessment": "assessment-seal", "source": {"revision": "r", "content_sha256": "c"},
+                 **{name: {**record, "byte_length": 1, "mode": 0o444} for name, record in cohort.items()}}
+        return posix_admission, facts
+
+    def test_resolver_family_admission_requires_the_posix_cohort_assessment(self) -> None:
+        resolver, posix = self._admitted_resolver(self.data())
+        resolver_family = importlib.import_module("owned_resolver_family")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            posix_admission, facts = self._resolver_admission_fixture(root)
+            assessment = root / resolver["native_evidence"][2]["receipt"]
+            with mock.patch.object(ledger, "ROOT", root), mock.patch.object(
+                resolver_family, "admission_facts", return_value=facts,
+            ) as admission_facts:
+                admitted = ledger.require_resolver_family_admission(resolver, posix, posix_admission)
+            self.assertIs(admitted, facts)
+            admission_facts.assert_called_once_with(root, assessment)
+
+    def test_resolver_family_admission_rejects_other_cohort_or_incomplete_evidence(self) -> None:
+        resolver, posix = self._admitted_resolver(self.data())
+        resolver_family = importlib.import_module("owned_resolver_family")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            posix_admission, facts = self._resolver_admission_fixture(root)
+            with mock.patch.object(ledger, "ROOT", root):
+                with mock.patch.object(resolver_family, "admission_facts", return_value=facts):
+                    for mutate in (
+                        lambda family: family["native_evidence"].pop(),
+                        lambda family: family["native_evidence"][0].update(state="required"),
+                        lambda family: family["native_evidence"][2].update(receipt=".work/missing.json"),
+                        lambda family: family["native_evidence"][2].update(scope="narrower claim"),
+                    ):
+                        candidate = copy.deepcopy(resolver)
+                        mutate(candidate)
+                        with self.subTest(evidence=candidate["native_evidence"]):
+                            with self.assertRaises(ledger.LedgerError):
+                                ledger.require_resolver_family_admission(candidate, posix, posix_admission)
+                    with self.assertRaises(ledger.LedgerError):
+                        ledger.require_resolver_family_admission(resolver, posix, None)
+                    planned_posix = copy.deepcopy(posix)
+                    planned_posix["status"] = "planned"
+                    with self.assertRaises(ledger.LedgerError):
+                        ledger.require_resolver_family_admission(resolver, planned_posix, posix_admission)
+                for name in ("static_preparation", "dynamic_qualification", "source"):
+                    changed = copy.deepcopy(facts)
+                    if name == "source":
+                        changed["source"]["revision"] = "other"
+                    else:
+                        changed[name]["sha256"] = "3" * 64
+                    with self.subTest(changed=name), mock.patch.object(
+                        resolver_family, "admission_facts", return_value=changed,
+                    ):
+                        with self.assertRaises(ledger.LedgerError):
+                            ledger.require_resolver_family_admission(resolver, posix, posix_admission)
+                with mock.patch.object(
+                    resolver_family, "admission_facts",
+                    side_effect=resolver_family.ResolverFamilyError("assessment is not bound to current source"),
+                ):
+                    with self.assertRaises(ledger.LedgerError):
+                        ledger.require_resolver_family_admission(resolver, posix, posix_admission)
+
+    def test_planned_resolver_family_keeps_strict_leaf_view_without_assessment(self) -> None:
+        data = self.data()
+        resolver = self.family(data, "libc.resolver")
+        posix = self.family(data, "libc.posix-runtime")
+        self.assertIsNone(ledger.require_resolver_family_admission(resolver, posix, None))
+        self.assertIs(ledger.resolver_private_artifact_view(resolver, None), resolver)
+        attached = copy.deepcopy(resolver)
+        attached["native_evidence"][2]["receipt"] = ".work/x86_64/resolver-family/assessment.json"
+        with self.assertRaises(ledger.LedgerError):
+            ledger.require_resolver_family_admission(attached, posix, None)
+        admitted = copy.deepcopy(resolver)
+        admitted["status"] = "foundation-verified"
+        with self.assertRaises(ledger.LedgerError):
+            ledger.resolver_private_artifact_view(admitted, None)
+        view = ledger.resolver_private_artifact_view(admitted, {"source": "admitted"})
+        self.assertEqual(view["status"], "planned")
+        self.assertEqual(admitted["status"], "foundation-verified")
+
     def test_pthread_artifacts_accept_hidden_alias_providers(self) -> None:
         family = self.family(self.data(), "libc.pthread-tls")
         for validate in (

@@ -566,6 +566,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-classic-netdb [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  compare installed host/service C APIs in isolated loopback DNS fixtures
   owned-resolver-cancellation [DYNAMIC_SYSROOT]  compare installed DNS cancellation and descriptor cleanup
   owned-protocol-database --installed-static-sysroot STATIC --installed-dynamic-sysroot DYNAMIC --reproduction-static-sysroot STATIC --reproduction-dynamic-sysroot DYNAMIC --extracted-static-sysroot STATIC --extracted-dynamic-sysroot DYNAMIC  retain a non-promoting fixed protocol-table receipt from three supplied product pairs
+  owned-resolver-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  run every libc.resolver component against one current product cohort and retain its non-promoting family assessment
   owned-dynamic-io-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify shared-runtime cancellation through kernel and direct entry
 
   owned-crypt-runtime [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  prove bounded SHA-crypt through installed owned products
@@ -6258,6 +6259,187 @@ run_owned_protocol_database_probe() {
         --work "$container_state" "${OWNED_PROTOCOL_DATABASE_ARGUMENTS[@]}"
 }
 
+prepare_owned_resolver_family_arguments() {
+    local static_preparation='' dynamic_qualification='' output=''
+    local expected='usage: ./scripts/dev-x86_64.sh owned-resolver-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR'
+    while [ "$#" -gt 0 ]; do
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
+        case "$1" in
+            --static-preparation)
+                [ -z "$static_preparation" ] || fail "$expected"
+                static_preparation="$2"
+                ;;
+            --dynamic-qualification)
+                [ -z "$dynamic_qualification" ] || fail "$expected"
+                dynamic_qualification="$2"
+                ;;
+            --output)
+                [ -z "$output" ] || fail "$expected"
+                output="$2"
+                ;;
+            *) fail "$expected" ;;
+        esac
+        shift 2
+    done
+    [ -n "$static_preparation" ] && [ -n "$dynamic_qualification" ] && [ -n "$output" ] || fail "$expected"
+    RESOLVER_FAMILY_STATIC_PREPARATION="$(translate_owned_posix_product "$static_preparation" receipt-file)" || exit 2
+    RESOLVER_FAMILY_DYNAMIC_QUALIFICATION="$(translate_owned_posix_product "$dynamic_qualification" receipt-file)" || exit 2
+    RESOLVER_FAMILY_OUTPUT="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
+    # The network reader admits only execution roots below the work mount.
+    case "$RESOLVER_FAMILY_OUTPUT" in
+        /workspace/.work/x86_64/*) ;;
+        *) fail "resolver family output must be below this checkout's .work/x86_64" ;;
+    esac
+}
+
+# The loader-debug and resolver-alias collectors bind their raw evidence to
+# the actual image identity. Both need only chroot authority and loopback.
+run_in_resolver_family_image_container() {
+    local marker="$1" image_id
+    shift
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve resolver family image identity"
+    prepare_work_dir
+    docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" \
+        --cap-add=SYS_CHROOT \
+        --network none \
+        --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --env "$marker=crabc-core-evidence@$image_id" \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$image_id" "$@"
+}
+
+run_in_loader_debug_image_container() {
+    run_in_resolver_family_image_container CRABC_LOADER_DEBUG_IMAGE_ID "$@"
+}
+
+run_in_resolver_alias_image_container() {
+    run_in_resolver_family_image_container CRABC_RESOLVER_ALIAS_IMAGE_ID "$@"
+}
+
+resolver_family_step() {
+    local label="$1" runner="$2"
+    shift 2
+    printf 'owned resolver family %s: running\n' "$label"
+    "$runner" bash -c 'ulimit -c 0 && exec "$@"' resolver-family-step "$@" ||
+        fail "owned resolver family $label failed"
+    printf 'owned resolver family %s: PASS\n' "$label"
+}
+
+# Execute every libc.resolver component against one supplied current cohort.
+# The coordinator's plan fixes every input and output path before execution;
+# each component then runs under its established isolation, and the final
+# assessment replays all public readers plus the common-cohort reader.
+run_owned_resolver_family() {
+    local output="$RESOLVER_FAMILY_OUTPUT" host_output
+    prepare_work_dir
+    host_output="$WORK_DIR/${output#/workspace/.work/x86_64/}"
+    # Create the output as the invoking user: the user-mapped native ABI
+    # collectors below must create their fresh outputs inside it.
+    mkdir "$host_output" || fail "cannot create resolver family output: $host_output"
+    run_in_container python3 -B /workspace/compat/x86_64/owned_resolver_family.py plan \
+        --static-preparation "$RESOLVER_FAMILY_STATIC_PREPARATION" \
+        --dynamic-qualification "$RESOLVER_FAMILY_DYNAMIC_QUALIFICATION" \
+        --output "$output"
+    # `path` names container paths; `host` names the same files for nested
+    # dispatcher commands, which translate host paths themselves.
+    local -A path=() host=()
+    local key value
+    while IFS='=' read -r key value; do
+        [ -n "$key" ] && [ -n "$value" ] || fail "resolver family plan is malformed"
+        path[$key]="/workspace/$value"
+        case "$value" in
+            .work/x86_64/*) host[$key]="$WORK_DIR/${value#.work/x86_64/}" ;;
+            *) host[$key]="$ROOT_DIR/$value" ;;
+        esac
+    done < <(python3 -B - "$host_output/plan.json" <<'PY_RESOLVER_FAMILY_PLAN'
+import json
+from pathlib import PurePosixPath
+import sys
+
+with open(sys.argv[1], encoding='utf-8') as stream:
+    plan = json.load(stream)
+if plan.get('schema') != 'crabc.x86_64-owned-resolver-family-plan/v1':
+    raise SystemExit('ERROR: resolver family plan schema differs')
+values = dict(plan['layout'])
+for label, pair in plan['products'].items():
+    for kind, value in pair.items():
+        values[f'{label}_{kind}'] = value
+values['static_preparation'] = plan['static_preparation']
+values['dynamic_qualification'] = plan['dynamic_qualification']
+for key, value in values.items():
+    relative = PurePosixPath(value)
+    if (not isinstance(value, str) or relative.is_absolute() or '..' in relative.parts
+            or any(character in value for character in '=\n\r')):
+        raise SystemExit(f'ERROR: resolver family plan path is malformed: {key}')
+    print(f'{key}={value}')
+PY_RESOLVER_FAMILY_PLAN
+    )
+    [ -n "${path[request]:-}" ] || fail "resolver family plan did not name its request"
+
+    resolver_family_step resolver-network-physical run_in_resolver_network_container \
+        python3 -B /workspace/compat/resolver-network/run_x86_64.py \
+        --static-sysroot "${path[primary_static]}" --dynamic-sysroot "${path[primary_dynamic]}" \
+        --extracted-static-sysroot "${path[extracted_static]}" \
+        --extracted-dynamic-sysroot "${path[extracted_dynamic]}" \
+        --work-root "${path[network_work_root]}" --report "${path[network_report]}"
+    resolver_family_step classic-netdb run_in_resolver_network_container \
+        python3 -B /workspace/compat/x86_64/owned_classic_netdb.py run --work "${path[classic_work]}" \
+        --static-sysroot "${path[primary_static]}" --dynamic-sysroot "${path[primary_dynamic]}"
+    resolver_family_step resolver-cancellation run_in_resolver_network_container \
+        python3 -B /workspace/compat/x86_64/owned_resolver_cancellation.py run --work "${path[cancellation_work]}" \
+        --static-sysroot "${path[primary_static]}" --dynamic-sysroot "${path[primary_dynamic]}"
+    resolver_family_step protocol-database-product run_in_resolver_network_container \
+        python3 -B /workspace/compat/x86_64/owned_protocol_database.py --work "${path[protocol_work]}" \
+        --installed-static-sysroot "${path[primary_static]}" --installed-dynamic-sysroot "${path[primary_dynamic]}" \
+        --reproduction-static-sysroot "${path[reproduction_static]}" \
+        --reproduction-dynamic-sysroot "${path[reproduction_dynamic]}" \
+        --extracted-static-sysroot "${path[extracted_static]}" --extracted-dynamic-sysroot "${path[extracted_dynamic]}"
+
+    # The alias receipt authenticates its loader-debug product report and the
+    # complete ELF facts/inventory for the same selected pair.
+    resolver_family_step loader-debug-product-report \
+        run_in_loader_debug_image_container \
+        bash /workspace/compat/x86_64/run_loader_debug_abi.sh collect --output "${path[loader_debug]}" \
+        --static-product "${path[primary_static]}" --dynamic-product "${path[primary_dynamic]}"
+    printf 'owned resolver family native-abi-inventory: running\n'
+    "$ROOT_DIR/scripts/dev-x86_64.sh" native-abi-inventory collect \
+        --static-product "${host[primary_static]}" --dynamic-product "${host[primary_dynamic]}" \
+        --static-preparation "${host[static_preparation]}" --output "${host[inventory]}" ||
+        fail "owned resolver family native-abi-inventory failed"
+    printf 'owned resolver family native-abi-elf-facts: running\n'
+    "$ROOT_DIR/scripts/dev-x86_64.sh" native-abi-elf-facts collect \
+        --base-inventory "${host[inventory_report]}" \
+        --static-product "${host[primary_static]}" --dynamic-product "${host[primary_dynamic]}" \
+        --static-preparation "${host[static_preparation]}" --output "${host[elf_facts]}" ||
+        fail "owned resolver family native-abi-elf-facts failed"
+    resolver_family_step resolver-alias-private-bodies \
+        run_in_resolver_alias_image_container \
+        bash /workspace/compat/x86_64/run_owned_resolver_alias_contract.sh \
+        --static-product "${path[primary_static]}" --dynamic-product "${path[primary_dynamic]}" \
+        --static-preparation "${path[static_preparation]}" --product-report "${path[loader_debug_report]}" \
+        --elf-facts "${path[elf_facts_report]}" --base-inventory "${path[inventory_report]}" \
+        --receipt-dir "${path[alias]}"
+
+    run_in_container python3 -B /workspace/compat/x86_64/owned_resolver_family.py write-assessment \
+        --request "${path[request]#/workspace/}" --output "${path[assessment]#/workspace/}"
+    run_in_container python3 -B /workspace/compat/x86_64/owned_resolver_family.py validate \
+        --assessment "${path[assessment]#/workspace/}"
+}
+
 run_lua_dynamic_source_build_probe() {
     # The dynamic candidate enters its copied product root through the kernel
     # interpreter and needs only chroot authority for that private execution.
@@ -6983,7 +7165,7 @@ case "$command" in
     owned-syslog) ;;
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
     owned-io-cancellation) ;;
-    owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation|owned-protocol-database) ;;
+    owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation|owned-protocol-database|owned-resolver-family) ;;
     owned-package-corpus|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family) ;;
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-static-dl-iterate-phdr|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
@@ -7197,6 +7379,10 @@ case "$command" in
     owned-pthread-family)
         prepare_owned_pthread_family_arguments "$@"
         set -- "${PTHREAD_FAMILY_ARGUMENTS[@]}"
+        ;;
+    owned-resolver-family)
+        prepare_owned_resolver_family_arguments "$@"
+        set --
         ;;
     owned-pthread-family-composition)
         prepare_owned_pthread_family_composition_arguments "$@"
@@ -9267,6 +9453,10 @@ case "$command" in
         prepare_owned_protocol_database_arguments "$@"
         ensure_image
         run_owned_protocol_database_probe
+        ;;
+    owned-resolver-family)
+        ensure_image
+        run_owned_resolver_family
         ;;
     owned-dynamic-io-cancellation)
         ensure_image

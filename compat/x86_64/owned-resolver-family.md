@@ -93,9 +93,49 @@ The second command is read-only. It replays the pinned object and provider
 ELF observations, validates the three source/product seals, validates every
 isolated root, and compares the retained raw oracle/candidate observations.
 
+## Family execution and ledger admission
+
+One dispatcher command runs the complete family against one current cohort:
+
+```sh
+./scripts/dev-x86_64.sh owned-resolver-family \
+  --static-preparation .work/x86_64/STATIC/preparation.json \
+  --dynamic-qualification .work/x86_64/tmp/materialized-dynamic.XXXXXX/qualification.json \
+  --output .work/x86_64/resolver-family/NEW_DIR
+```
+
+The static preparation comes from `owned-posix-static-products` and the
+dynamic qualification from `materialized-dynamic-sysroot`, both on the same
+clean committed source. `owned_resolver_family.py plan` first replays both
+owners through the cohort reader, then writes a fixed `plan.json` and
+`request.json` into the dispatcher-created output (see `execution_layout`).
+The dispatcher runs each component under its established isolation—the
+network, classic-netdb, cancellation, and protocol-table collectors with
+chroot authority and `--network none`; loader-debug and alias collectors bound
+to the actual image identity; native ABI inventory and ELF facts through their
+own commands—and writes nothing else. Single-pair components use the primary
+pair, the network receipt uses primary plus extracted, and the protocol table
+uses all three. The public network report is
+`compat/reports/resolver-network/x86_64/family-NEW_DIR.json`. The run ends with
+`write-assessment` and `validate`, so a successful command leaves a complete
+read-only `assessment.json`.
+
+`libc.resolver` becomes `foundation-verified` only through
+`require_resolver_family_admission` in `validate_parity_ledger.py`: every
+native evidence row must be verified, and the family command row names the
+`assessment.json` as its `receipt`. The host ledger cannot replay component
+behavior outside the pinned `/workspace` container, so `admission_facts` checks
+the retained completion boundary, current contract and request bytes, current
+source, and both cohort receipts. The ledger then requires the admitted
+`libc.posix-runtime` matrix to have used exactly those static-preparation and
+dynamic-qualification receipts. Resolver leaf ratchets keep their private
+non-promoting view after admission.
+
 ## Assessing explicit evidence
 
-The coordinator never searches report directories. Create a request below
+The dispatcher command above writes its request automatically. The
+coordinator itself never searches report directories. For a manual replay,
+create a request below
 `.work` that names every available reader input. An alias receipt additionally
 names the exact static/dynamic products and its product, preparation, ELF-fact,
 and inventory inputs because its public reader authenticates that cohort.
