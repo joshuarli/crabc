@@ -105,15 +105,16 @@ RELEASE_QUALIFICATION_REASON = "one attempt is not a three-attempt admitted coll
 # computed by the unchanged 0.90 rules.
 ACCEPTANCE_POLICY_BLOCKERS = {
     "peak-memory-payload-lower-bound": (
-        "allocator_live_32m must keep 32 MiB of written payload resident, but pinned musl's "
-        "whole-process PSS and cgroup memory.peak are about 33 MiB, so no candidate "
-        "can be <= 0.90 of the reference; the same bound applies to any row whose mandated resident "
-        "data exceeds 90% of the musl process total"
+        "a row's mandated resident data bounds every candidate from below: allocator_live_32m keeps "
+        "32 MiB of written payload against about 33 MiB of musl PSS and memory.peak, and each 128-MiB "
+        "span row keeps a mapped 128-MiB input (plus a written 128-MiB destination for memcpy/memset) "
+        "resident at its checkpoint; these exceed 90% of the musl process total, so PSS <= 0.90 is "
+        "infeasible for all of them and memory.peak <= 0.90 for allocator_live_32m and the "
+        "memcpy/memset span rows"
     ),
     "memory-peak-charge-granularity": (
-        "cgroup-v2 memory.peak rises in 64-page (256-KiB) per-CPU charge batches, so a fresh leaf "
-        "records at least 256 KiB for any process; rows whose musl memory.peak is one batch "
-        "cannot reach <= 0.90"
+        "cgroup-v2 charges a fresh leaf in 64-page (256-KiB) per-CPU batches, so memory.peak is never "
+        "below 256 KiB; rows whose musl memory.peak is one batch cannot reach <= 0.90"
     ),
 }
 

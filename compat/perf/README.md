@@ -148,9 +148,12 @@ clean Docker invocations must pass one immutable roster on an uncontended host.
 
 Two measured acceptance-policy conflicts are retained as named blockers until
 the user decides them; neither hides a row nor changes a metric.
-`allocator_live_32m` must keep 32 MiB of written payload resident, while
-pinned musl's whole process is about 33 MiB in both PSS and `memory.peak`, so
-`<= 0.90` is below the payload itself. Separately, cgroup-v2 charges a fresh
+A row's mandated resident data bounds every candidate from below.
+`allocator_live_32m` keeps 32 MiB of written payload while pinned musl's whole
+process is about 33 MiB in both PSS and `memory.peak`, and each 128-MiB span
+row keeps its mapped 128-MiB input (plus a written 128-MiB destination for
+`memcpy`/`memset`) resident at its checkpoint, so `<= 0.90` is below the
+payload itself. Separately, cgroup-v2 charges a fresh
 leaf in 64-page (256-KiB) per-CPU batches, so `memory.peak` is never below
 256 KiB; a row whose musl peak is one batch cannot reach `<= 0.90`.
 
