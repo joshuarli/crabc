@@ -266,6 +266,58 @@ static int test_page_edge_bounds(void)
     return status;
 }
 
+/*
+ * The vector memchr must agree with the byte-wise contract at every start
+ * alignment, count, and match position, mid-page and ending at a PROT_NONE
+ * page. Like musl's, it stops at the first match, so a count that runs past
+ * the guard is valid when a match precedes the guard.
+ */
+static int test_memchr_alignment_sweep(void)
+{
+    enum { PAGE_BYTES = 4096, MAX_COUNT = 200 };
+    unsigned char *mapping = raw_mmap(PAGE_BYTES * 2);
+    int status = 0;
+
+    if (mapping == MAP_FAILED)
+        return 1;
+    if (raw_mprotect(mapping + PAGE_BYTES, PAGE_BYTES, PROT_NONE) != 0) {
+        raw_munmap(mapping, PAGE_BYTES * 2);
+        return 2;
+    }
+    for (size_t count = 0; count <= MAX_COUNT && status == 0; ++count) {
+        for (size_t placement = 0; placement < 128 && status == 0; ++placement) {
+            /* Placements below 64 are mid-page; the rest end at the guard. */
+            unsigned char *range = placement < 64
+                ? mapping + 1024 + placement
+                : mapping + PAGE_BYTES - (placement - 64) - count;
+            for (size_t index = 0; index < count; ++index)
+                range[index] = (unsigned char)(index % 251);
+            if (memchr(range, 0xfe, count) != NULL) {
+                status = 3;
+                break;
+            }
+            for (size_t index = 0; index < count; ++index) {
+                unsigned char saved = range[index];
+                range[index] = 0xfe;
+                if (memchr(range, 0xfe, count) != range + index ||
+                    memmem(range, count, "\xfe", 1) != range + index) {
+                    status = 4;
+                    break;
+                }
+                /* A match before the guard ends the scan of a longer count. */
+                if (placement >= 64 && memchr(range, 0xfe, (size_t)-1 / 2) != range + index) {
+                    status = 5;
+                    break;
+                }
+                range[index] = saved;
+            }
+        }
+    }
+    if (raw_munmap(mapping, PAGE_BYTES * 2) != 0 && status == 0)
+        status = 6;
+    return status;
+}
+
 int crabc_x86_64_memory_search_probe(void)
 {
     int status;
@@ -285,6 +337,9 @@ int crabc_x86_64_memory_search_probe(void)
     status = test_page_edge_bounds();
     if (status != 0)
         return 50 + status;
+    status = test_memchr_alignment_sweep();
+    if (status != 0)
+        return 60 + status;
     return 0;
 }
 

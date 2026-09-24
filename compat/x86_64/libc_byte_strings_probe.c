@@ -362,6 +362,70 @@ static int check_page_edge_terminator(void)
     return status;
 }
 
+/* Fill `length` deterministic non-NUL, non-'z' bytes and a terminator. */
+static void fill_sweep_text(char *text, size_t length, size_t seed)
+{
+    for (size_t index = 0; index < length; ++index)
+        text[index] = (char)('a' + (index * 7 + seed) % 23);
+    text[length] = '\0';
+}
+
+/* Every scan of one text must agree with its byte-at-a-time expectation. */
+static int check_sweep_text(char *text, size_t length)
+{
+    if (strlen(text) != length || strnlen(text, length + 1) != length ||
+        strnlen(text, (size_t)-1) != length ||
+        (length != 0 && strnlen(text, length - 1) != length - 1) ||
+        strchrnul(text, 'z') != text + length || strchr(text, 'z') != NULL ||
+        strchr(text, '\0') != text + length || strcspn(text, "z") != length)
+        return 1;
+    for (size_t index = 0; index < length; ++index) {
+        char saved = text[index];
+        text[index] = 'z';
+        if (strchr(text, 'z') != text + index || strchrnul(text, 'z') != text + index ||
+            strcspn(text, "z") != index || strstr(text, "z") != text + index)
+            return 2;
+        text[index] = saved;
+    }
+    return 0;
+}
+
+/*
+ * Vector scans must agree with the byte-at-a-time contract at every start
+ * alignment and length, both mid-page and with the terminator on the last
+ * byte before a PROT_NONE page, so that no load may touch the guard.
+ */
+static int check_alignment_sweep(void)
+{
+    enum { PAGE_BYTES = 4096, MAX_LENGTH = 200 };
+    unsigned char *mapping = raw_mmap(PAGE_BYTES * 2);
+    int status = 0;
+
+    if (mapping == MAP_FAILED)
+        return 1;
+    if (raw_mprotect(mapping + PAGE_BYTES, PAGE_BYTES, PROT_NONE) != 0) {
+        raw_munmap(mapping, PAGE_BYTES * 2);
+        return 2;
+    }
+    for (size_t length = 0; length <= MAX_LENGTH && status == 0; ++length) {
+        for (size_t shift = 0; shift < 64 && status == 0; ++shift) {
+            char *text = (char *)(mapping + 1024 + shift);
+            fill_sweep_text(text, length, shift);
+            if (check_sweep_text(text, length) != 0)
+                status = 3;
+        }
+        for (size_t slack = 0; slack < 64 && status == 0; ++slack) {
+            char *text = (char *)(mapping + PAGE_BYTES - 1 - slack - length);
+            fill_sweep_text(text, length, slack);
+            if (check_sweep_text(text, length) != 0)
+                status = 4;
+        }
+    }
+    if (raw_munmap(mapping, PAGE_BYTES * 2) != 0 && status == 0)
+        status = 5;
+    return status;
+}
+
 int crabc_x86_64_byte_strings_probe(void)
 {
     int status;
@@ -387,6 +451,9 @@ int crabc_x86_64_byte_strings_probe(void)
     status = check_page_edge_terminator();
     if (status != 0)
         return 60 + status;
+    status = check_alignment_sweep();
+    if (status != 0)
+        return 80 + status;
     return 0;
 }
 

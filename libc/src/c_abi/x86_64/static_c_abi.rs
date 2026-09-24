@@ -251,6 +251,8 @@ mod memccpy;
 mod mempcpy;
 #[path = "legacy_memory.rs"]
 mod legacy_memory;
+#[path = "byte_scan.rs"]
+mod byte_scan;
 #[path = "memory_search.rs"]
 mod memory_search;
 #[path = "byte_strings.rs"]

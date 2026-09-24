@@ -18,9 +18,10 @@
 //!   searches, and its two-way critical-factorization route below.
 //!
 //! Two source-level adaptations preserve the same public bounded contracts.
-//! The pinned `memchr.c` `__GNUC__` optimization may read whole native words;
-//! this leaf retains its scalar fallback so every byte read lies in the exact
-//! supplied range, including at a protected-page edge. `memmem.c` is expressed
+//! The pinned `memchr.c` `__GNUC__` optimization reads aligned native words
+//! and stops at the first match; this leaf's `memchr` and `memmem` first-byte
+//! screen use the sibling `byte_scan` aligned-SSE2 kernel under the same
+//! stop-at-match page discipline (see that leaf). `memmem.c` is expressed
 //! through direct bounded raw-pointer loops rather than Rust slice indexing:
 //! that keeps a stateless artifact from pulling panic support (and the separate
 //! shared errno/TLS object) into its freestanding candidate, while retaining
@@ -62,22 +63,9 @@ unsafe fn bytes_equal(mut left: *const u8, mut right: *const u8, mut count: usiz
 /// `memory` must designate at least `count` readable bytes. It may be null
 /// only when `count` is zero.
 #[inline]
-unsafe fn find_first_byte(
-    mut memory: *const u8,
-    target: u8,
-    mut count: usize,
-) -> *const u8 {
-    while count != 0 {
-        // SAFETY: the helper's retained count proves this current byte exists.
-        if unsafe { memory.read() } == target {
-            return memory;
-        }
-        // SAFETY: the read consumed a byte from the exact range; advancing to
-        // the following or one-past position does not dereference it yet.
-        memory = unsafe { memory.add(1) };
-        count = count.wrapping_sub(1);
-    }
-    null()
+unsafe fn find_first_byte(memory: *const u8, target: u8, count: usize) -> *const u8 {
+    // SAFETY: the helper contract is the kernel's bounded-scan contract.
+    unsafe { super::byte_scan::find_byte(memory, target, count) }
 }
 
 /// Locate the final `target` in exactly `count` readable bytes.

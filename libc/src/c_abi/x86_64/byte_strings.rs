@@ -28,10 +28,11 @@
 //!   API beyond its separately selected alias contract.
 //!
 //! The two intentional source-level differences preserve the same observable
-//! C contracts at this boundary. First, `strlen` and `strchrnul` select their
-//! musl sources' existing scalar fallback loops instead of the `__GNUC__`
-//! word-load optimization, so every Rust raw read stays at one proven C-string
-//! byte. Second, `strstr` retains musl's two-way factorization and shift-table
+//! C contracts at this boundary. First, `strlen`, `strchrnul`, `strnlen`, and
+//! the one-byte scans of `strcspn` and `strstr` replace musl's `__GNUC__`
+//! aligned-word loops with the sibling `byte_scan` aligned-SSE2 kernels,
+//! which read only pages the byte-wise scan would reach (see that leaf).
+//! Second, `strstr` retains musl's two-way factorization and shift-table
 //! algorithm but grows its known non-NUL haystack prefix one byte at a time
 //! rather than calling musl's bounded speculative `memchr(z, 0, grow)` probe.
 //! That preserves the linear discovery invariant while keeping a terminator at
@@ -42,7 +43,7 @@ use core::{
     ptr::{null, null_mut},
 };
 
-use super::memory_search;
+use super::{byte_scan, memory_search};
 
 /// Locate `target` or the first NUL in one caller-owned C string.
 ///
@@ -51,17 +52,9 @@ use super::memory_search;
 /// `cursor` must designate a readable NUL-terminated byte sequence. It may
 /// advance only through that sequence and its terminator.
 #[inline]
-unsafe fn strchrnul_bytes(mut cursor: *const u8, target: u8) -> *const u8 {
-    loop {
-        // SAFETY: the helper contract supplies the current C-string byte.
-        let byte = unsafe { cursor.read() };
-        if byte == target || byte == 0 {
-            return cursor;
-        }
-        // SAFETY: the observed byte was non-NUL, so the C-string contract
-        // supplies its following byte.
-        cursor = unsafe { cursor.add(1) };
-    }
+unsafe fn strchrnul_bytes(cursor: *const u8, target: u8) -> *const u8 {
+    // SAFETY: the helper contract is the kernel's C-string contract.
+    unsafe { byte_scan::find_byte_or_nul(cursor, target) }
 }
 
 /// Find `target` without returning the C-string terminator as a match unless
@@ -88,37 +81,25 @@ unsafe fn find_byte_in_c_string(cursor: *const u8, target: u8) -> *const u8 {
 ///
 /// `cursor` must designate a readable NUL-terminated byte sequence.
 #[inline]
-unsafe fn offset_to_byte_or_nul(mut cursor: *const u8, target: u8) -> usize {
-    let mut offset = 0usize;
-    loop {
-        // SAFETY: the helper contract supplies the current C-string byte.
-        let byte = unsafe { cursor.read() };
-        if byte == target || byte == 0 {
-            return offset;
-        }
-        // SAFETY: a non-NUL byte proves the following C-string byte exists.
-        cursor = unsafe { cursor.add(1) };
-        offset += 1;
-    }
+unsafe fn offset_to_byte_or_nul(cursor: *const u8, target: u8) -> usize {
+    // SAFETY: the helper contract is the kernel's C-string contract; the
+    // result lies in the same string at or after `cursor`.
+    unsafe { byte_scan::find_byte_or_nul(cursor, target).offset_from(cursor) as usize }
 }
 
-/// Find `target` in exactly `count` readable bytes.
+/// Find `target` among at most `count` bytes, stopping at the first match.
 ///
 /// # Safety
 ///
-/// When `count` is nonzero, `cursor` must designate at least `count` readable
-/// bytes. A null cursor is valid only with a zero count.
+/// `cursor` must designate readable bytes up to the first `target` or, when
+/// there is none, `count` readable bytes. A null cursor is valid only with a
+/// zero count.
 #[inline]
 unsafe fn find_byte_in_range(cursor: *const u8, target: u8, count: usize) -> Option<usize> {
-    let mut offset = 0usize;
-    while offset < count {
-        // SAFETY: `offset < count` keeps this read inside the supplied range.
-        if unsafe { cursor.add(offset).read() } == target {
-            return Some(offset);
-        }
-        offset += 1;
-    }
-    None
+    // SAFETY: the helper contract is the kernel's bounded-scan contract.
+    let found = unsafe { byte_scan::find_byte(cursor, target, count) };
+    // SAFETY: a non-null result lies in the scanned range.
+    (!found.is_null()).then(|| unsafe { found.offset_from(cursor) } as usize)
 }
 
 #[inline]
@@ -139,18 +120,8 @@ fn contains_byte(byte_set: &[u64; 4], byte: u8) -> bool {
 /// call. A null pointer is never valid.
 #[no_mangle]
 pub unsafe extern "C" fn strlen(string: *const c_char) -> usize {
-    let mut cursor = string.cast::<u8>();
-    let mut length = 0usize;
-    loop {
-        // SAFETY: the caller owns one readable NUL-terminated C string.
-        if unsafe { cursor.read() } == 0 {
-            return length;
-        }
-        // SAFETY: the observed byte was non-NUL, so the next C-string byte
-        // exists for the following iteration.
-        cursor = unsafe { cursor.add(1) };
-        length += 1;
-    }
+    // SAFETY: the caller owns one readable NUL-terminated C string.
+    unsafe { offset_to_byte_or_nul(string.cast::<u8>(), 0) }
 }
 
 /// Compare two C strings with musl's unsigned-byte result convention.
