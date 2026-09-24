@@ -108,6 +108,8 @@ mod single_thread;
 mod statistics;
 mod subproc;
 mod support;
+#[cfg(feature = "native-runtime-test-audit")]
+mod theap_trace_audit;
 // Some native lifecycle fixtures intentionally terminalize process-global
 // source state.  Their test-only child-exec boundary lives outside the
 // production allocator modules so a full unit binary can retain every fixture
@@ -189,6 +191,11 @@ pub mod __crabc_runtime {
         native_runtime_process_done_retained_worker_matches_current_thread_test_audit,
         native_runtime_process_done_terminal_purge_test_audit,
         native_runtime_test_arm_owner_exit_collection_rendezvous,
+        native_runtime_current_owner_theap_trace_test_audit,
+    };
+    #[cfg(feature = "native-runtime-test-audit")]
+    pub use crate::theap_trace_audit::{
+        NativeTheapTraceBlock, NativeTheapTraceDirect, NativeTheapTraceFact, NativeTheapTracePage,
     };
 
     #[cfg(feature = "native-runtime-test-fault")]

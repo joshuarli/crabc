@@ -931,6 +931,24 @@ fn retain_runtime_resume_failure(
     drop(page_map_access);
 }
 
+/// The M3 persistent-owner trace image of the active initial engine's
+/// default Theap; absent from production builds.
+#[cfg(feature = "native-runtime-test-audit")]
+impl MainStaticRuntimeFirstArenaPageAllocator {
+    /// Returns `false` unless the initial engine is active.
+    pub(crate) fn test_theap_trace(
+        &self,
+        visit: &mut dyn FnMut(crate::theap_trace_audit::NativeTheapTraceFact),
+    ) -> bool {
+        match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                active.engine.test_theap_trace(visit)
+            }
+            _ => false,
+        }
+    }
+}
+
 impl MainStaticRuntimeFirstArenaPageAllocator {
     /// Collects the vanished initial owner's pages into process ownership and
     /// ends its static page session without retiring the process main Heap.

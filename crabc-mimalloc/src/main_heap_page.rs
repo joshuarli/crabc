@@ -463,6 +463,18 @@ pub(crate) struct MainHeapThreadOwnerLocalAllocator<'owner> {
     engine: &'owner mut OwnerLocalMainHeapPageAllocator<'static, 'static, RuntimeFirstRegularPageBacking>,
 }
 
+/// The M3 persistent-owner trace image of the bound later owner's default
+/// Theap; absent from production builds.
+#[cfg(feature = "native-runtime-test-audit")]
+impl MainHeapThreadOwnerLocalAllocator<'_> {
+    pub(crate) fn test_theap_trace(
+        &self,
+        visit: &mut dyn FnMut(crate::theap_trace_audit::NativeTheapTraceFact),
+    ) -> bool {
+        self.engine.test_theap_trace(visit)
+    }
+}
+
 /// One bounded page engine for a later metadata Theap linked to `mi_heap_main`.
 ///
 /// Field order is intentional: an unfinished drop first gives the generic

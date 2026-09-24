@@ -74,6 +74,13 @@ path = "tests/native_runtime_startup_regular_arena.rs"
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
+name = "native_persistent_owner_local_trace"
+path = "tests/native_persistent_owner_local_trace.rs"
+# The M3 persistent-owner local-path differential walks the current owner's
+# default Theap through an audit-only trace image absent from production.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
 name = "native_initial_persistent_live_transfer"
 path = "tests/native_initial_persistent_live_transfer.rs"
 # This direct-only ownership-transition witness distinguishes a source-dormant

@@ -36853,6 +36853,22 @@ impl<'arena, 'map, Backing: crate::page_backing::PageBacking<'arena>>
     }
 }
 
+/// The M3 persistent-owner trace image of this engine's Theap
+/// (`crate::theap_trace_audit`); absent from production builds.
+#[cfg(feature = "native-runtime-test-audit")]
+impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::PageBacking<'arena>>
+    PageAllocatorEngine<'arena, 'map, Session, Backing> {
+    pub(crate) fn test_theap_trace(
+        &self,
+        visit: &mut dyn FnMut(crate::theap_trace_audit::NativeTheapTraceFact),
+    ) -> bool {
+        // A 48-bit address space holds at most 2^48 / 64 KiB arena slices,
+        // so a longer queue walk proves a corrupted intrusive list.
+        const MAX_QUEUE_MEMBERS: usize = 1 << 32;
+        crate::theap_trace_audit::visit_theap(self.session.theap(), MAX_QUEUE_MEMBERS, visit)
+    }
+}
+
 impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::PageBacking<'arena>>
     PageAllocatorEngine<'arena, 'map, Session, Backing> {
 

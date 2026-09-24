@@ -6797,6 +6797,45 @@ pub fn native_runtime_current_thread_attachment_test_audit(
     }
 }
 
+/// Walks the calling thread's persistent owner's default Theap for the M3
+/// persistent-owner local-trace differential (`crate::theap_trace_audit`).
+///
+/// The initial thread's promoted static owner and an attached later thread's
+/// compiler-TLS owner are both reached exactly as ordinary local operations
+/// reach them (a later owner's engine is bound to its short source session,
+/// which also advances the owner-local operation audit count), and borrowed
+/// only for the scalar walk. Returns `false` when the caller has no active
+/// page engine or the walk was incomplete. Call it only after the owner's
+/// first allocation: as for an ordinary operation, an owner without its
+/// page engine is retained.
+///
+/// `visit` must not enter the allocator: the owner cell rejects the nested
+/// borrow and the process retains its page owner, as for any reentrant
+/// local operation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_current_owner_theap_trace_test_audit(
+    visit: &mut dyn FnMut(crate::theap_trace_audit::NativeTheapTraceFact),
+) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return false;
+    };
+    if current_thread_has_active_native_initial_persistent_owner() {
+        return with_current_thread_native_initial_persistent_owner(|owner| {
+            owner.allocator.test_theap_trace(visit)
+        })
+        .unwrap_or(false);
+    }
+    if !current_thread_has_native_persistent_owner() {
+        return false;
+    }
+    with_current_thread_native_persistent_allocator(false, |allocator| {
+        allocator.test_theap_trace(&mut *visit)
+    })
+    .unwrap_or(false)
+}
+
 /// Runs the selected source's no-callback purge consequence after process
 /// done, over one temporary mapping owned by the retained process pair.
 ///

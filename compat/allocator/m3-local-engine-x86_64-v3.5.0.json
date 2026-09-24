@@ -94,6 +94,37 @@
     "minimum_admin_mini_collections": 1,
     "minimum_admin_full_collections": 1
   },
+  "persistent_owner_profile": {
+    "id": "production-default-theap-persistent-owners",
+    "description": "The production persistent owners through native_allocate_aligned(size, 16)/native_free, compared with the pinned C default Theap through mi_malloc_aligned(size, 16)/mi_free, with default options and each owner's own default arena. Each (workload, owner) pair runs in a fresh process. Workloads keep every bin's live blocks below one page's reserved count and exclude singletons, so no page fills and the default abandoning Theap never reaches the M5 abandonment transition.",
+    "owners": ["initial", "later"],
+    "c_environment": {},
+    "rust_driver": {
+      "source": "crabc-mimalloc/tests/native_persistent_owner_local_trace.rs",
+      "trace_audit": "crabc-mimalloc/src/theap_trace_audit.rs",
+      "target": "native_persistent_owner_local_trace",
+      "test": "persistent_owner_local_trace",
+      "features": ["native-runtime-test-audit"]
+    },
+    "workloads": [
+      {
+        "id": "owner-bin-sweep",
+        "generator": "owner-bin-sweep",
+        "parameters": {"per_bin_limit": "48"}
+      },
+      {
+        "id": "owner-random-mix",
+        "generator": "owner-random-mix",
+        "parameters": {"seed": "0x4d335f4f574e4552", "steps": "30000", "live_cap_bytes": "50331648"}
+      }
+    ],
+    "coverage_requirements": {
+      "page_classes": ["direct-small", "small", "medium", "large"],
+      "page_class_events": ["created", "retired", "retired-reuse", "released"],
+      "forbidden_events": ["full"],
+      "minimum_admin_mini_collections": 1
+    }
+  },
   "rust_unit_batch": {
     "module_prefixes": [
       "single_thread::tests::",
@@ -168,10 +199,8 @@
     {
       "id": "persistent-owner-local-path",
       "source_scope": "plan.md Production architecture 1: the initial and each later persistent owner retain their TLD/Theap and run the same local allocation/free/queue/retirement transitions through the production native_allocate_aligned/native_free boundary.",
-      "checks": [],
-      "remaining_conditions": [
-        "Add a production default-Theap trace profile: drive non-filling local workloads (every page stays below capacity, so the default abandoning Theap never reaches the M5 abandonment transition) through native_allocate_aligned(size, 16)/native_free on the initial persistent owner and on one later persistent owner, each in a fresh process, and compare their normalized Theap traces with pinned C mi_malloc_aligned(size, 16)/mi_free on the main-thread and one worker default Theap."
-      ]
+      "checks": ["persistent-owner-trace-differential"],
+      "remaining_conditions": []
     }
   ]
 }

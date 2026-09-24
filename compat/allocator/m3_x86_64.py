@@ -19,6 +19,14 @@ Both producers use the source non-abandoning local profile
 in-place arena of the same size. The trace format is owned jointly by
 ``m3_local_trace_x86_64.c`` and ``crabc-mimalloc/src/single_thread/local_trace.rs``.
 
+The persistent-owner differential drives the production default Theap
+through ``native_allocate_aligned(size, 16)``/``native_free`` on the initial
+owner and on one later owner, each in a fresh process
+(``crabc-mimalloc/tests/native_persistent_owner_local_trace.rs``), and
+compares it with the same C driver's ``initial``/``later`` modes over
+``mi_malloc_aligned(size, 16)``/``mi_free``. Its workloads never fill a page,
+so the default abandoning Theap stays owner-local.
+
 This is private native Linux/x86-64 allocator-engine evidence. It does not
 claim remote-free, abandonment, reclaim, thread-exit, aligned/zeroed/realloc,
 public ``mi_*``, libc integration, backend promotion, or AArch64 behavior.
@@ -43,11 +51,16 @@ RUNNER_PATH = ROOT / "compat/allocator/run.py"
 CONTRACT_PATH = ROOT / "compat/allocator/m3-local-engine-x86_64-v3.5.0.json"
 C_DRIVER_PATH = ROOT / "compat/allocator/m3_local_trace_x86_64.c"
 RUST_DRIVER_PATH = ROOT / "crabc-mimalloc/src/single_thread/local_trace.rs"
+OWNER_RUST_DRIVER_PATH = ROOT / "crabc-mimalloc/tests/native_persistent_owner_local_trace.rs"
+OWNER_TRACE_AUDIT_PATH = ROOT / "crabc-mimalloc/src/theap_trace_audit.rs"
 LOCKFILE = ROOT / "Cargo.lock"
 TARGET = "x86_64-unknown-linux-musl"
 RUST_TRACE_TEST = "single_thread::local_trace::emit_m3_local_trace"
 WORKLOAD_ENV = "CRABC_M3_LOCAL_TRACE_WORKLOAD"
 OUTPUT_ENV = "CRABC_M3_LOCAL_TRACE_OUTPUT"
+OWNER_ENV = "CRABC_M3_OWNER_TRACE_OWNER"
+OWNER_WORKLOAD_ENV = "CRABC_M3_OWNER_TRACE_WORKLOAD"
+OWNER_OUTPUT_ENV = "CRABC_M3_OWNER_TRACE_OUTPUT"
 WORKLOAD_MAGIC = "m3-local-trace 1"
 
 spec = importlib.util.spec_from_file_location("crabc_allocator_run", RUNNER_PATH)
@@ -57,6 +70,7 @@ spec.loader.exec_module(run)
 
 REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-local-engine-latest.json"
 DIFFERENTIAL_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-local-trace-latest.json"
+OWNER_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-persistent-owner-trace-latest.json"
 MIRI_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-latest.json"
 ARTIFACT_ROOT = run.ARTIFACT_ROOT / "x86_64/m3-local-engine"
 
@@ -331,6 +345,109 @@ def random_mix_workload(seed: int, steps: int, live_cap_bytes: int) -> WorkloadB
     return builder
 
 
+def nonfilling_bin_cap(block_size: int) -> int:
+    """A per-bin live-block bound strictly below one page's reserved count.
+
+    `page_size_for_block` less a 4 KiB page-info allowance under-estimates
+    the source `reserved`, so a bin whose live blocks stay at or below this
+    bound can never exhaust a page: the owner-local default Theap then never
+    moves a page to `BIN_FULL` and never reaches the M5 abandonment
+    transition.
+    """
+
+    return max(0, (page_size_for_block(block_size) - 4 * KIB) // block_size - 1)
+
+
+def owner_bin_sweep_workload(per_bin_limit: int) -> WorkloadBuilder:
+    """Visits every reachable regular bin without filling a page.
+
+    Each bin allocates up to its non-filling bound (alternating the smallest
+    and largest request mapped to it), frees alternating blocks onto the
+    local free list, reuses a few, frees the rest in reverse so the page
+    retires, and ping-pongs once through retired reuse. Later bins' slow
+    paths advance retirement expiry, releasing earlier pages.
+    """
+
+    builder = WorkloadBuilder()
+    for _, (low, high) in reachable_bin_ranges().items():
+        count = min(nonfilling_bin_cap(high), per_bin_limit)
+        assert count >= 1
+        blocks = [builder.allocate(low if index % 2 == 0 else high) for index in range(count)]
+        freed = blocks[::2]
+        builder.free_all(freed)
+        survivors = blocks[1::2]
+        survivors += [builder.allocate(high) for _ in range(min(4, len(freed)))]
+        builder.free_all(reversed(survivors))
+        builder.free(builder.allocate(low))
+    return builder
+
+
+def owner_random_mix_workload(seed: int, steps: int, live_cap_bytes: int) -> WorkloadBuilder:
+    """A seeded owner-local churn over every regular page class, holding each
+    bin's live blocks within its non-filling bound. Singletons are excluded:
+    a singleton page is full from its first allocation."""
+
+    rng = SplitMix64(seed)
+    ranges = reachable_bin_ranges()
+    classes: dict[str, list[int]] = {}
+    for bin_index, (_, high) in ranges.items():
+        classes.setdefault(page_class(high), []).append(bin_index)
+    weights = (("direct-small", 45), ("small", 25), ("medium", 18), ("large", 12))
+    total_weight = sum(weight for _, weight in weights)
+    builder = WorkloadBuilder()
+    live: list[tuple[int, int]] = []
+    per_bin: dict[int, int] = {}
+    live_bytes = 0
+    for _ in range(steps):
+        allocate = not live or (rng.below(100) < 55 and len(live) < 6000)
+        if allocate:
+            pick = rng.below(total_weight)
+            for name, weight in weights:
+                if pick < weight:
+                    break
+                pick -= weight
+            bins = classes[name]
+            bin_index = bins[rng.below(len(bins))]
+            low, high = ranges[bin_index]
+            size = low + rng.below(high - low + 1)
+            if live_bytes + size > live_cap_bytes or per_bin.get(bin_index, 0) >= nonfilling_bin_cap(high):
+                allocate = False
+        if allocate:
+            live.append((builder.allocate(size), bin_index))
+            per_bin[bin_index] = per_bin.get(bin_index, 0) + 1
+            live_bytes += size
+        else:
+            index = rng.below(len(live))
+            identifier, bin_index = live[index]
+            live[index] = live[-1]
+            live.pop()
+            per_bin[bin_index] -= 1
+            live_bytes -= builder.live[identifier]
+            builder.free(identifier)
+    while live:
+        index = rng.below(len(live))
+        identifier, _ = live[index]
+        live[index] = live[-1]
+        live.pop()
+        builder.free(identifier)
+    return builder
+
+
+def generate_owner_workloads(contract: Mapping[str, Any]) -> dict[str, str]:
+    generators = {
+        "owner-bin-sweep": lambda parameters: owner_bin_sweep_workload(int(parameters["per_bin_limit"])),
+        "owner-random-mix": lambda parameters: owner_random_mix_workload(
+            int(parameters["seed"], 0), int(parameters["steps"]), int(parameters["live_cap_bytes"])
+        ),
+    }
+    rendered: dict[str, str] = {}
+    for workload in contract["persistent_owner_profile"]["workloads"]:
+        builder = generators[workload["generator"]](workload.get("parameters", {}))
+        # The owner profile uses the runtime's own default arena.
+        rendered[workload["id"]] = builder.render(0)
+    return rendered
+
+
 def generate_workloads(contract: Mapping[str, Any]) -> dict[str, str]:
     arena_bytes = int(contract["profile"]["arena_bytes"])
     generators = {
@@ -397,24 +514,30 @@ def build_c_driver(contract: Mapping[str, Any], work: Path, offline: bool) -> di
     }
 
 
-def c_environment(contract: Mapping[str, Any]) -> dict[str, str]:
+def c_environment(options: Mapping[str, str]) -> dict[str, str]:
     environment = {
         name: value
         for name, value in os.environ.items()
         if not name.upper().startswith("MIMALLOC_")
     }
-    environment.update(contract["c_oracle"]["environment"])
+    environment.update(options)
     return environment
 
 
-def run_c_trace(binary: Path, workload: Path, output: Path, contract: Mapping[str, Any]) -> None:
+def run_c_trace(
+    binary: Path,
+    workload: Path,
+    output: Path,
+    options: Mapping[str, str],
+    mode: str = "local",
+) -> None:
     record = run.command_record(
-        (str(binary), str(workload), str(output)),
+        (str(binary), str(workload), str(output), mode),
         cwd=workload.parent,
-        env=c_environment(contract),
+        env=c_environment(options),
         timeout_seconds=1800,
     )
-    run.require_success(record, f"pinned C M3 local trace for {workload.name}")
+    run.require_success(record, f"pinned C M3 {mode} trace for {workload.name}")
 
 
 def rust_test_binary() -> Path:
@@ -534,6 +657,13 @@ def trace_coverage(lines: Iterable[str]) -> dict[str, Any]:
             observed.add("created")
         if queue == BIN_FULL:
             observed.add("full")
+        if previous is not None and previous["size"] != size:
+            # Both producers name a page by its slot and metadata address, so
+            # a page released and re-created at the same slot within one
+            # operation appears as a changed line with a new block size.
+            events.setdefault(previous["bin"], set()).add("released")
+            observed.add("created")
+            previous = None
         if previous is not None:
             if previous["queue"] == BIN_FULL and queue != BIN_FULL:
                 observed.add("unfull")
@@ -541,7 +671,7 @@ def trace_coverage(lines: Iterable[str]) -> dict[str, Any]:
                 observed.add("retired-reuse")
         if expire > 0:
             observed.add("retired")
-        pages[pid] = {"bin": home, "queue": queue, "used": used, "expire": expire}
+        pages[pid] = {"bin": home, "queue": queue, "used": used, "expire": expire, "size": size}
     return {
         "admin_full_collections": admin_full,
         "admin_mini_collections": admin_mini,
@@ -612,8 +742,9 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
             c_output = ARTIFACT_ROOT / f"{name}.c.trace"
             c_repeat = work / f"{name}.c.repeat.trace"
             rust_output = ARTIFACT_ROOT / f"{name}.rust.trace"
-            run_c_trace(c_build["binary"], workload, c_output, contract)
-            run_c_trace(c_build["binary"], workload, c_repeat, contract)
+            c_options = contract["c_oracle"]["environment"]
+            run_c_trace(c_build["binary"], workload, c_output, c_options)
+            run_c_trace(c_build["binary"], workload, c_repeat, c_options)
             run_rust_trace(rust_binary, workload, rust_output)
             c_lines = c_output.read_text(encoding="utf-8").splitlines()
             rust_lines = rust_output.read_text(encoding="utf-8").splitlines()
@@ -647,6 +778,140 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
             where = result["divergence"]["operation"] if result["divergence"] else "C repeat"
             unmet.append(f"workload {result['id']} diverged at {where}")
     unmet += [f"coverage: {item}" for item in report["coverage_unmet"]]
+    report["unmet"] = unmet
+    report["status"] = "passed" if not unmet else "failed"
+    return report
+
+
+def owner_rust_test_binary(contract: Mapping[str, Any]) -> Path:
+    rust = contract["persistent_owner_profile"]["rust_driver"]
+    command = [
+        "cargo", "test", "--locked", "--target", TARGET, "-p", "crabc-mimalloc",
+        "--no-default-features", "--features", ",".join(rust["features"]),
+        "--test", rust["target"], "--no-run", "--message-format=json",
+    ]
+    record = run.command_record(command, cwd=ROOT, timeout_seconds=3600)
+    run.require_success(record, "Rust M3 persistent-owner trace test build")
+    executables: list[str] = []
+    for line in str(record["stdout"]).splitlines():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            message.get("reason") == "compiler-artifact"
+            and message.get("target", {}).get("name") == rust["target"]
+            and message.get("profile", {}).get("test")
+            and message.get("executable")
+        ):
+            executables.append(message["executable"])
+    if len(executables) != 1:
+        raise GateError(f"expected one {rust['target']} test executable, found {executables}")
+    return Path(executables[0])
+
+
+def run_owner_rust_trace(
+    binary: Path, test: str, owner: str, workload: Path, output: Path
+) -> None:
+    environment = {
+        name: value for name, value in os.environ.items() if not name.lower().startswith("mimalloc_")
+    }
+    environment[OWNER_ENV] = owner
+    environment[OWNER_WORKLOAD_ENV] = str(workload)
+    environment[OWNER_OUTPUT_ENV] = str(output)
+    record = run.command_record(
+        (str(binary), test, "--exact", "--nocapture", "--test-threads=1"),
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=3600,
+    )
+    run.require_success(record, f"Rust M3 {owner}-owner trace for {workload.name}")
+    if run.parse_rust_test_count(str(record["stdout"]) + "\n" + str(record["stderr"])) != 1:
+        raise GateError(f"Rust M3 {owner}-owner trace for {workload.name} did not run exactly one test")
+
+
+def owner_coverage_unmet(coverage: Mapping[str, Any], requirements: Mapping[str, Any]) -> list[str]:
+    """Checks the owner profile per page class. Aligned 16-byte requests
+    route some bins' sizes to larger bins (source overallocation), so the
+    per-bin matrix belongs to the local-engine differential instead."""
+
+    unmet: list[str] = []
+    bins = coverage["bins"]
+    for name in requirements["page_classes"]:
+        observed: set[str] = set()
+        for bin_index, (_, high) in reachable_bin_ranges().items():
+            if page_class(high) == name:
+                observed.update(bins.get(str(bin_index), []))
+        missing = sorted(set(requirements["page_class_events"]) - observed)
+        if missing:
+            unmet.append(f"{name} pages lack {', '.join(missing)}")
+    for bin_index, names in bins.items():
+        forbidden = sorted(set(requirements["forbidden_events"]) & set(names))
+        if forbidden:
+            unmet.append(f"bin {bin_index} reached {', '.join(forbidden)}")
+    if coverage["admin_mini_collections"] < requirements["minimum_admin_mini_collections"]:
+        unmet.append("generic administration mini-collections were not exercised")
+    return unmet
+
+
+def run_owner_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str, Any]:
+    """Compares the production persistent owners with the pinned C default
+    Theap: each (workload, owner) pair runs in fresh C, repeated C, and Rust
+    processes and must match line by line."""
+
+    profile = contract["persistent_owner_profile"]
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    workloads = generate_owner_workloads(contract)
+    results: list[dict[str, Any]] = []
+    with run.temporary_directory(prefix="crabc-mimalloc-m3-owner-trace-") as temporary_name:
+        work = Path(temporary_name)
+        c_build = build_c_driver(contract, work, offline)
+        rust_binary = owner_rust_test_binary(contract)
+        for name, text in workloads.items():
+            workload = ARTIFACT_ROOT / f"{name}.workload"
+            workload.write_text(text, encoding="utf-8")
+            for owner in profile["owners"]:
+                stem = f"{name}.{owner}"
+                c_output = ARTIFACT_ROOT / f"{stem}.c.trace"
+                c_repeat = work / f"{stem}.c.repeat.trace"
+                rust_output = ARTIFACT_ROOT / f"{stem}.rust.trace"
+                run_c_trace(c_build["binary"], workload, c_output, profile["c_environment"], owner)
+                run_c_trace(c_build["binary"], workload, c_repeat, profile["c_environment"], owner)
+                run_owner_rust_trace(rust_binary, profile["rust_driver"]["test"], owner, workload, rust_output)
+                c_lines = c_output.read_text(encoding="utf-8").splitlines()
+                rust_lines = rust_output.read_text(encoding="utf-8").splitlines()
+                repeat_matches = c_repeat.read_bytes() == c_output.read_bytes()
+                divergence = first_divergence(c_lines, rust_lines)
+                results.append(
+                    {
+                        "c_repeat_identical": repeat_matches,
+                        "c_trace_sha256": run.sha256_file(c_output),
+                        "coverage": trace_coverage(c_lines),
+                        "divergence": divergence,
+                        "id": name,
+                        "owner": owner,
+                        "rust_trace_sha256": run.sha256_file(rust_output),
+                        "status": "matched" if divergence is None and repeat_matches else "diverged",
+                        "trace_lines": len(c_lines),
+                        "workload_sha256": sha256_bytes(text.encode("utf-8")),
+                    }
+                )
+        report: dict[str, Any] = {
+            "archive_sha256": c_build["archive_sha256"],
+            "c_driver_sha256": c_build["driver_sha256"],
+            "rust_driver_sha256": run.sha256_file(OWNER_RUST_DRIVER_PATH),
+            "trace_audit_sha256": run.sha256_file(OWNER_TRACE_AUDIT_PATH),
+            "workloads": results,
+        }
+    unmet: list[str] = []
+    for owner in profile["owners"]:
+        coverage = merge_coverage(result["coverage"] for result in results if result["owner"] == owner)
+        report.setdefault("coverage", {})[owner] = coverage
+        unmet += [f"coverage ({owner} owner): {item}" for item in owner_coverage_unmet(coverage, profile["coverage_requirements"])]
+    for result in results:
+        if result["status"] != "matched":
+            where = result["divergence"]["operation"] if result["divergence"] else "C repeat"
+            unmet.insert(0, f"workload {result['id']} on the {result['owner']} owner diverged at {where}")
     report["unmet"] = unmet
     report["status"] = "passed" if not unmet else "failed"
     return report
@@ -874,6 +1139,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         help="run only the C/Rust trace differential and coverage (development; no gate report)",
     )
     parser.add_argument(
+        "--owner-only",
+        action="store_true",
+        help="run only the persistent-owner C/Rust trace differential (development; no gate report)",
+    )
+    parser.add_argument(
         "--miri-only",
         action="store_true",
         help="run only the Miri component (development; no gate report)",
@@ -891,6 +1161,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 print("\n".join(["M3 Miri component failed:", *(f"  - {item}" for item in miri["unmet"])]), file=sys.stderr)
                 return 1
             return 0
+        if options.owner_only:
+            owner = run_owner_differential(contract, offline=options.offline)
+            run.write_json(OWNER_REPORT_PATH, {"persistent_owner_differential": owner, "provenance": provenance})
+            print(OWNER_REPORT_PATH)
+            if owner["status"] != "passed":
+                print("\n".join(["M3 persistent-owner trace differential failed:", *(f"  - {item}" for item in owner["unmet"])]), file=sys.stderr)
+                return 1
+            return 0
         differential = run_differential(contract, offline=options.offline)
         if options.differential_only:
             report = {"differential": differential, "provenance": provenance}
@@ -903,6 +1181,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         checks: dict[str, Any] = {
             "prerequisites": prerequisite_status(contract),
             "local-trace-differential": differential,
+            "persistent-owner-trace-differential": run_owner_differential(contract, offline=options.offline),
             "rust-unit-batch": run_unit_batch(contract, rust_test_binary()),
             "miri": run_miri(contract),
         }

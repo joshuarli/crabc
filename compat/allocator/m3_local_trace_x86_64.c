@@ -15,12 +15,23 @@
  * of addresses, arena-slice page slots, queue order/counts, the direct-page
  * cache, and Theap counters. Only changed facts are emitted. Any format
  * change must be made identically in both producers.
+ *
+ * The optional MODE argument selects the persistent-owner profile instead
+ * (`initial` or `later`): the default abandoning Theap without a managed
+ * arena, driven through `mi_malloc_aligned(size, 16)`/`mi_free` on the main
+ * thread or on one worker thread. Its Rust counterpart is
+ * `crabc-mimalloc/tests/native_persistent_owner_local_trace.rs` over the
+ * production `native_allocate_aligned`/`native_free` boundary. That Theap
+ * first becomes observable at the owner's first allocation, so the owner
+ * profile emits its bootstrap lines and first snapshot after operation 1,
+ * and names pages by their `memid` arena slice in the one arena they share.
  */
 #include "mimalloc.h"
 #include "mimalloc/internal.h"
 #include "mimalloc/prim-tls.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -47,9 +58,13 @@ typedef struct page_record_s {
   char line[192];
 } page_record_t;
 
+typedef enum trace_mode_e { MODE_LOCAL, MODE_INITIAL, MODE_LATER } trace_mode_t;
+
 static FILE* out;
+static trace_mode_t mode = MODE_LOCAL;
 static uintptr_t arena_base;
 static size_t slot_count;
+static const mi_arena_t* owner_arena;  /* the one arena of every owner-profile page */
 static page_record_t* records;  /* indexed by arena slice slot; page==NULL is empty */
 static unsigned long next_pid = 1;
 static char* queue_lines[MI_BIN_COUNT];
@@ -61,9 +76,31 @@ static void fail(const char* message) {
   exit(2);
 }
 
+static void ensure_slots(size_t count) {
+  if (count <= slot_count) return;
+  size_t next = (slot_count == 0 ? 1024 : slot_count);
+  while (next < count) next *= 2;
+  page_record_t* grown = realloc(records, next * sizeof(page_record_t));
+  if (grown == NULL) fail("out of driver memory");
+  memset(grown + slot_count, 0, (next - slot_count) * sizeof(page_record_t));
+  records = grown;
+  slot_count = next;
+}
+
 /* Names a page by the arena slice holding its first block. Page metadata
-   itself lives in the arena's aligned metadata array, not at the slice. */
+   itself lives in the arena's aligned metadata array, not at the slice.
+   The owner profile has no fixed arena base and reads the same slice from
+   the page's source `memid`. */
 static size_t slot_of(const mi_page_t* page) {
+  if (mode != MODE_LOCAL) {
+    if (page->memid.memkind != MI_MEM_ARENA) fail("owner page is not arena memory");
+    const mi_arena_t* arena = page->memid.mem.arena.arena;
+    if (owner_arena == NULL) owner_arena = arena;
+    else if (owner_arena != arena) fail("owner pages span two arenas");
+    const size_t slot = page->memid.mem.arena.slice_index;
+    ensure_slots(slot + 1);
+    return slot;
+  }
   const uintptr_t address = (uintptr_t)mi_page_start(page);
   if (address < arena_base) fail("page precedes the traced arena");
   const size_t slot = (address - arena_base) / MI_ARENA_SLICE_SIZE;
@@ -125,7 +162,7 @@ static void snapshot(mi_theap_t* theap) {
     append(&members, &members_length, &members_capacity, "");
     size_t walked = 0;
     for (mi_page_t* page = queue->first; page != NULL; page = page->next) {
-      if (++walked > slot_count) fail("queue does not terminate");
+      if (++walked > (mode == MODE_LOCAL ? slot_count : ((size_t)1 << 32))) fail("queue does not terminate");
       const size_t slot = slot_of(page);
       char free_index[48], local_index[48], line[192];
       block_index(free_index, sizeof(free_index), page, page->free);
@@ -216,53 +253,36 @@ static bool read_line(FILE* input, char* buffer, size_t size) {
   return false;
 }
 
-int main(int argc, char** argv) {
-  if (argc != 3) fail("usage: m3-local-trace-c WORKLOAD OUTPUT");
-  FILE* input = fopen(argv[1], "r");
-  if (input == NULL) fail("cannot open workload");
-  out = fopen(argv[2], "w");
-  if (out == NULL) fail("cannot create trace output");
-  static char output_buffer[1 << 20];
-  setvbuf(out, output_buffer, _IOFBF, sizeof(output_buffer));
+typedef struct workload_s {
+  FILE* input;
+  size_t ids;
+  void** blocks;
+} workload_t;
 
+static void* allocate(size_t size) {
+  return (mode == MODE_LOCAL ? mi_malloc(size) : mi_malloc_aligned(size, 16));
+}
+
+/* Applies every remaining workload operation on the calling thread. */
+static void* run_operations(void* argument) {
+  workload_t* workload = argument;
+  void** blocks = workload->blocks;
+  mi_theap_t* theap = (mode == MODE_LOCAL ? _mi_theap_default() : NULL);
   char line[256];
-  if (!read_line(input, line, sizeof(line)) || strcmp(line, WORKLOAD_MAGIC) != 0) fail("bad workload header");
-  size_t arena_bytes = 0, ids = 0;
-  if (!read_line(input, line, sizeof(line)) || sscanf(line, "arena_bytes=%zu ids=%zu", &arena_bytes, &ids) != 2) {
-    fail("bad workload geometry");
-  }
-  if (arena_bytes < MI_ARENA_MIN_SIZE || arena_bytes % MI_ARENA_MIN_SIZE != 0) fail("bad arena size");
-
-  /* Mirror the Rust fixture: one ARENA_ALIGNMENT-aligned, committed, zero
-     region managed in place as a pinned, nonexclusive arena. */
-  const size_t mapping_size = arena_bytes + MI_ARENA_ALIGNMENT;
-  uint8_t* mapping = mmap(NULL, mapping_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-  if (mapping == MAP_FAILED) fail("cannot map the trace arena");
-  arena_base = _mi_align_up((uintptr_t)mapping, MI_ARENA_ALIGNMENT);
-  slot_count = arena_bytes / MI_ARENA_SLICE_SIZE;
-  records = calloc(slot_count, sizeof(page_record_t));
-  void** blocks = calloc(ids == 0 ? 1 : ids, sizeof(void*));
-  if (records == NULL || blocks == NULL) fail("out of driver memory");
-
-  mi_thread_init();
-  mi_theap_t* theap = _mi_theap_default();
-  if (!mi_theap_is_initialized(theap)) fail("default theap is not initialized");
-  mi_arena_id_t arena_id = _mi_arena_id_none();
-  if (!mi_manage_os_memory_ex((void*)arena_base, arena_bytes, true, true, true, -1, false, &arena_id)) {
-    fail("cannot manage the trace arena");
-  }
-
-  bootstrap(theap);
-  snapshot(theap);
   size_t step = 0;
-  while (read_line(input, line, sizeof(line))) {
+  while (read_line(workload->input, line, sizeof(line))) {
     step++;
     size_t id = 0, size = 0;
     if (sscanf(line, "a %zu %zu", &id, &size) == 2) {
-      if (id >= ids || blocks[id] != NULL || size == 0) fail("bad allocation operation");
+      if (id >= workload->ids || blocks[id] != NULL || size == 0) fail("bad allocation operation");
       fprintf(out, "@%zu a%zu %zu\n", step, id, size);
-      void* block = mi_malloc(size);
+      void* block = allocate(size);
       blocks[id] = block;
+      if (theap == NULL) {
+        theap = _mi_theap_default();
+        if (!mi_theap_is_initialized(theap)) fail("the first owner allocation left no default theap");
+        bootstrap(theap);
+      }
       snapshot(theap);
       if (block == NULL) {
         fprintf(out, "= null\n");
@@ -283,7 +303,8 @@ int main(int argc, char** argv) {
     else if (sscanf(line, "f %zu", &id) == 1) {
       /* The generator never reuses an ID. A failed allocation left NULL,
          which the Rust driver skips and `mi_free` accepts as a no-op. */
-      if (id >= ids) fail("bad free operation");
+      if (id >= workload->ids) fail("bad free operation");
+      if (theap == NULL) fail("the owner workload frees before its first allocation");
       fprintf(out, "@%zu f%zu\n", step, id);
       mi_free(blocks[id]);
       blocks[id] = NULL;
@@ -294,8 +315,80 @@ int main(int argc, char** argv) {
     }
   }
   fprintf(out, "E\n");
-  for (size_t id = 0; id < ids; id++) {
+  for (size_t id = 0; id < workload->ids; id++) {
     if (blocks[id] != NULL) fail("workload left a live allocation");
+  }
+  return NULL;
+}
+
+/* One later persistent owner. crabc's libc attaches every pthread before its
+   start routine (`attach_current_thread`), which performs the source
+   `_mi_theap_init` transaction; the worker therefore initializes its thread
+   and default Theap through `mi_thread_init` before its first allocation. */
+static void* run_later_owner(void* workload) {
+  mi_thread_init();
+  if (!mi_theap_is_initialized(_mi_theap_default())) fail("the worker default theap is not initialized");
+  return run_operations(workload);
+}
+
+int main(int argc, char** argv) {
+  if (argc != 3 && argc != 4) fail("usage: m3-local-trace-c WORKLOAD OUTPUT [local|initial|later]");
+  if (argc == 4) {
+    if (strcmp(argv[3], "local") == 0) mode = MODE_LOCAL;
+    else if (strcmp(argv[3], "initial") == 0) mode = MODE_INITIAL;
+    else if (strcmp(argv[3], "later") == 0) mode = MODE_LATER;
+    else fail("unknown trace mode");
+  }
+  FILE* input = fopen(argv[1], "r");
+  if (input == NULL) fail("cannot open workload");
+  out = fopen(argv[2], "w");
+  if (out == NULL) fail("cannot create trace output");
+  static char output_buffer[1 << 20];
+  setvbuf(out, output_buffer, _IOFBF, sizeof(output_buffer));
+
+  char line[256];
+  if (!read_line(input, line, sizeof(line)) || strcmp(line, WORKLOAD_MAGIC) != 0) fail("bad workload header");
+  size_t arena_bytes = 0, ids = 0;
+  if (!read_line(input, line, sizeof(line)) || sscanf(line, "arena_bytes=%zu ids=%zu", &arena_bytes, &ids) != 2) {
+    fail("bad workload geometry");
+  }
+  void** blocks = calloc(ids == 0 ? 1 : ids, sizeof(void*));
+  if (blocks == NULL) fail("out of driver memory");
+  workload_t workload = { input, ids, blocks };
+
+  if (mode == MODE_LOCAL) {
+    if (arena_bytes < MI_ARENA_MIN_SIZE || arena_bytes % MI_ARENA_MIN_SIZE != 0) fail("bad arena size");
+    /* Mirror the Rust fixture: one ARENA_ALIGNMENT-aligned, committed, zero
+       region managed in place as a pinned, nonexclusive arena. */
+    const size_t mapping_size = arena_bytes + MI_ARENA_ALIGNMENT;
+    uint8_t* mapping = mmap(NULL, mapping_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (mapping == MAP_FAILED) fail("cannot map the trace arena");
+    arena_base = _mi_align_up((uintptr_t)mapping, MI_ARENA_ALIGNMENT);
+    slot_count = arena_bytes / MI_ARENA_SLICE_SIZE;
+    records = calloc(slot_count, sizeof(page_record_t));
+    if (records == NULL) fail("out of driver memory");
+
+    mi_thread_init();
+    mi_theap_t* theap = _mi_theap_default();
+    if (!mi_theap_is_initialized(theap)) fail("default theap is not initialized");
+    mi_arena_id_t arena_id = _mi_arena_id_none();
+    if (!mi_manage_os_memory_ex((void*)arena_base, arena_bytes, true, true, true, -1, false, &arena_id)) {
+      fail("cannot manage the trace arena");
+    }
+    bootstrap(theap);
+    snapshot(theap);
+    run_operations(&workload);
+  }
+  else if (arena_bytes != 0) {
+    fail("the owner profile uses the default arena and requires arena_bytes=0");
+  }
+  else if (mode == MODE_INITIAL) {
+    run_operations(&workload);
+  }
+  else {
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, run_later_owner, &workload) != 0) fail("cannot start the worker");
+    if (pthread_join(worker, NULL) != 0) fail("cannot join the worker");
   }
   if (fclose(out) != 0) fail("cannot finish trace output");
   fclose(input);

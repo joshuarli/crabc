@@ -31,7 +31,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator --quick
   allocator-m1
   allocator-m2
-  allocator-m3 [--differential-only|--miri-only]
+  allocator-m3 [--differential-only|--owner-only|--miri-only]
   allocator-m4 [--check|--gate ID|--reader-tests]
   allocator-m5 [--check|--gate ID|--reader-tests]
   allocator-m7 [--check|--gate ID|--reader-tests]
@@ -475,10 +475,10 @@ case "$command" in
         ensure_image
         if [ "$#" -eq 0 ]; then
             run_in_container python3 compat/allocator/m3_x86_64.py
-        elif [ "$#" -eq 1 ] && { [ "$1" = --differential-only ] || [ "$1" = --miri-only ]; }; then
+        elif [ "$#" -eq 1 ] && { [ "$1" = --differential-only ] || [ "$1" = --owner-only ] || [ "$1" = --miri-only ]; }; then
             run_in_container python3 compat/allocator/m3_x86_64.py "$1"
         else
-            fail "allocator-m3 accepts only --differential-only or --miri-only"
+            fail "allocator-m3 accepts only --differential-only, --owner-only, or --miri-only"
         fi
         ;;
     allocator-tls)

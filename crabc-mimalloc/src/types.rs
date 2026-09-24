@@ -5319,7 +5319,7 @@ impl Page {
         self.free
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) const fn remote_free_test_local_free(&self) -> *mut Block {
         self.local_free
@@ -6874,7 +6874,7 @@ impl Theap {
     }
 
     /// Total reserved block bytes in this Theap's full queue.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) const fn pages_full_size(&self) -> usize {
         self.pages_full_size
@@ -6882,7 +6882,7 @@ impl Theap {
 
     /// Copies the source `heartbeat`, `generic_count`, and
     /// `generic_collect_count` fields for the M3 local-engine trace.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) const fn test_generic_administration_image(&self) -> (u64, isize, isize) {
         (self.heartbeat, self.generic_count, self.generic_collect_count)
