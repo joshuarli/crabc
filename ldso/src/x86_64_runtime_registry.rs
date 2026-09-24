@@ -71,6 +71,10 @@ type ProgramHeaderCallback = unsafe extern "C" fn(*mut ProgramHeaderInfo, usize,
 
 enum ObjectStorage { Initial(usize), Runtime(Object) }
 
+// Musl's dlopen handle is its `struct dso`, whose leading fields are the
+// public link map; RTLD_DI_LINKMAP returns that same address. Keep the link
+// map first in a C layout so applications may use either spelling.
+#[repr(C)]
 struct RuntimeObject {
     link_map: LinkMap,
     storage: ObjectStorage,
@@ -213,6 +217,11 @@ impl PreparedInitialRegistry {
             unsafe {
                 (*node).link_map.address = objects[index].base as usize;
                 (*node).link_map.dynamic = objects[index].dynamic;
+            }
+            if objects[index].map_provenance == ObjectMapProvenance::KernelMain {
+                // Only the public name changes. The empty search name keeps
+                // the kernel image out of short-name and $ORIGIN selection.
+                unsafe { (*node).link_map.name = x86_64_library_search::application_name(); }
             }
             if let Some((init, fini)) = lifecycle.callback_plan(index) {
                 unsafe { (*node).callbacks(init, fini) }?;
@@ -652,11 +661,14 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
     let registry = unsafe { &mut *REGISTRY.0.get() };
     if registry.head.is_null() { return Err(ERROR_HANDLE); }
     if registry.shutting_down { return Err(ERROR_SHUTDOWN); }
-    let binding = flags & 3;
-    if !matches!(binding, 1 | 2) || flags & !(3 | 4 | 256 | 4096) != 0 { return Err(22); }
+    // Musl dlopen interprets only RTLD_LAZY, RTLD_NOLOAD and RTLD_GLOBAL. A
+    // mode without RTLD_LAZY binds now; RTLD_NODELETE and unknown bits have no
+    // effect because successful objects are never unloaded.
+    let lazy = flags & 1 != 0;
+    let no_load = flags & 4 != 0;
     let mut new = UnpublishedObjects::new();
     let mut tls_count = registry.tls_count;
-    let root = unsafe { load_one(registry, &mut new, registry.head, filename, flags & 4 != 0, &mut tls_count) }?;
+    let root = unsafe { load_one(registry, &mut new, registry.head, filename, no_load, &mut tls_count) }?;
     let mut node = new.head;
     while !node.is_null() {
         let object = *unsafe { (*node).object() }.ok_or(ERROR_BAD_ELF)?;
@@ -680,7 +692,7 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
         (*snapshot.nodes.as_slice()[index]).callback_state.load(Ordering::Acquire) == CONSTRUCTOR_ABANDONED
     }) { return Err(ERROR_FORK_CONSTRUCTOR); }
     let deferred = unsafe { deferred::relocate_new(snapshot.objects.as_slice(), scope.as_slice(), registry.count,
-        registry.initial_tls_count, binding == 1) }.ok_or(ERROR_RELOCATION)?;
+        registry.initial_tls_count, lazy) }.ok_or(ERROR_RELOCATION)?;
     for index in registry.count..snapshot.objects.as_slice().len() {
         let object = &snapshot.objects.as_slice()[index];
         unsafe { preflight_runtime_callbacks(snapshot.nodes.as_slice()[index]) }.ok_or(ERROR_BAD_ELF)?;
@@ -897,7 +909,7 @@ unsafe extern "C" fn runtime_address_info(address: usize, output: *mut AddressIn
         { name = unsafe { object.strtab.add(offset) }; }
         else { best = 0; }
     }
-    unsafe { core::ptr::write(output, AddressInfo { name: (*node).name.as_ptr(),
+    unsafe { core::ptr::write(output, AddressInfo { name: (*node).link_map.name,
         base: mapping_base as *mut c_void, symbol_name: name, symbol_address: best as *mut c_void }); }
     1
 }
@@ -930,7 +942,7 @@ unsafe extern "C" fn runtime_iterate(callback: ProgramHeaderCallback, data: *mut
             let Some(object) = (unsafe { (*node).object() }) else { return 0; };
             let tls_data = if object.tls_module_id == 0 { core::ptr::null_mut() }
                 else { unsafe { __tls_get_addr(&TlsIndex { ti_module: object.tls_module_id, ti_offset: 0 }) } };
-            ProgramHeaderInfo { address: object.base as usize, name: unsafe { (*node).name.as_ptr() },
+            ProgramHeaderInfo { address: object.base as usize, name: unsafe { (*node).link_map.name },
                 headers: object.phdr, count: object.phnum as u16, additions: unsafe { (*REGISTRY.0.get()).additions },
                 removals: 0, tls_module: object.tls_module_id, tls_data }
         };

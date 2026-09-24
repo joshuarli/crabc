@@ -262,6 +262,14 @@ original C return address for `RTLD_NEXT`. Names, program headers and link-map
 records borrow retained objects; `dl_iterate_phdr` drops the lock around user
 callbacks and reads the successor afterward, admitting nested loading.
 
+Musl interprets only `RTLD_LAZY`, `RTLD_NOLOAD` and `RTLD_GLOBAL`: a mode
+without `RTLD_LAZY` binds now and unknown bits are inert. The kernel-mapped
+main image is named by `AT_EXECFN` (unless it names `/proc/`), else
+`argv[0]`, in `dladdr`, `dl_iterate_phdr` and its link map; direct loader
+entry names it by the program path. `RuntimeObject` is `repr(C)` with its
+link map first, so a handle and its `RTLD_DI_LINKMAP` result are one address
+as in musl.
+
 ## Executed evidence and remaining conditions
 
 `run_general_dynamic_dlopen.sh` first reuses the unchanged portable nested

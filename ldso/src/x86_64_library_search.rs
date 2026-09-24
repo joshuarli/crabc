@@ -17,11 +17,13 @@ static mut ENVIRONMENT_PATH: *const u8 = core::ptr::null();
 static mut ENVIRONMENT_PRELOAD: *const u8 = core::ptr::null();
 static mut SECURE: bool = true;
 static mut INTERPRETER_NAME: *const u8 = b"/lib/ld-crabc-x86_64.so.1\0".as_ptr();
+static mut APPLICATION_NAME: *const u8 = b"\0".as_ptr();
 
 /// Initial stack strings have process lifetime, as in musl's env_path. This
 /// is initialized once before discovery and never refreshed from environ.
 pub(super) unsafe fn initialize(sp: usize) {
     let argc = unsafe { *(sp as *const usize) };
+    let first_argument = if argc == 0 { core::ptr::null() } else { unsafe { *((sp + 8) as *const *const u8) } };
     let mut cursor = (sp + 8 + (argc + 1) * 8) as *const usize;
     let mut environment: *const u8 = core::ptr::null();
     let mut preload: *const u8 = core::ptr::null();
@@ -40,20 +42,34 @@ pub(super) unsafe fn initialize(sp: usize) {
     cursor = unsafe { cursor.add(1) };
     let mut ids = [None; 4];
     let mut secure = false;
+    let mut executable_name: *const u8 = core::ptr::null();
     while unsafe { *cursor } != 0 {
         let tag = unsafe { *cursor };
         let value = unsafe { *cursor.add(1) };
         if (11..=14).contains(&tag) { ids[tag - 11] = Some(value); }
         if tag == 23 { secure |= value != 0; }
+        if tag == 31 { executable_name = value as *const u8; }
         cursor = unsafe { cursor.add(2) };
     }
     secure |= ids.iter().any(Option::is_none) || ids[0] != ids[1] || ids[2] != ids[3];
+    // musl __dls3 names a kernel-mapped application by AT_EXECFN unless it
+    // is a /proc/ spelling, otherwise by argv[0]. Both strings live on the
+    // initial stack for the process lifetime.
+    let proc_prefix = b"/proc/";
+    let use_executable_name = !executable_name.is_null()
+        && !proc_prefix.iter().enumerate().all(|(index, byte)| unsafe { *executable_name.add(index) == *byte });
+    let application = if use_executable_name { executable_name } else { first_argument };
     unsafe {
+        if !application.is_null() { APPLICATION_NAME = application; }
         SECURE = secure;
         ENVIRONMENT_PATH = if secure { core::ptr::null() } else { environment };
         ENVIRONMENT_PRELOAD = if secure { core::ptr::null() } else { preload };
     }
 }
+
+/// Kernel-mapped application name for dladdr, dl_iterate_phdr and link maps.
+/// Direct loader entry names its main object by the opened program path.
+pub(super) unsafe fn application_name() -> *const u8 { unsafe { APPLICATION_NAME } }
 
 /// Command options are explicit input, independent of environment filtering.
 pub(super) unsafe fn command_interpreter(name: *const u8) { unsafe { INTERPRETER_NAME = name; } }
