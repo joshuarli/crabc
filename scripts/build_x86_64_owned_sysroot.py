@@ -874,6 +874,9 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c",
         "-C",
         "panic=abort",
         "-Ztls-model=initial-exec",
+        # C requires distinct functions to have distinct addresses; rustc's
+        # identical-function merging would alias exports musl keeps apart.
+        "-Zmerge-functions=disabled",
         "--remap-path-prefix",
         f"{ROOT}=/crabc",
     ]
@@ -974,6 +977,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c",
             "-C",
             "panic=abort",
             "-Ztls-model=initial-exec",
+            "-Zmerge-functions=disabled",
             "--remap-path-prefix",
             "$CRABC_SOURCE=/crabc",
         ],

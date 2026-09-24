@@ -522,6 +522,9 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
          "--target-dir", str(stage / "cargo"), "--", "--cfg", "crabc_owned_static_sysroot",
          "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG,
          "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec",
+         # C requires distinct functions to have distinct addresses; rustc's
+         # identical-function merging would alias exports musl keeps apart.
+         "-Zmerge-functions=disabled",
          "--remap-path-prefix", f"{ROOT}=/crabc"]
     # The linkage feature selects the general dlfcn bridge. The historical
     # static cfg remains for other shared source-owner visibility choices.
