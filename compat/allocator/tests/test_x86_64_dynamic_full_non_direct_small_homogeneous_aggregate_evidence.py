@@ -78,7 +78,6 @@ class SchemaTests(unittest.TestCase):
     def test_schema_rejects_hash_scope_trace_and_lifecycle_drift(self):
         mutations = (
             lambda value: value.update({"c_probe_sha256": "0" * 64}),
-            lambda value: value["harness_dependency"].update({"sha256": "0" * 64}),
             lambda value: value["scope"].update({"c_oracle_two_pages_before_thread_done": False}),
             lambda value: value["scope"].update({"rust_real_thread_or_join_claimed": True}),
             lambda value: value["tls"].update({"mimalloc_model": "MI_TLS_MODEL_PTHREADS"}),

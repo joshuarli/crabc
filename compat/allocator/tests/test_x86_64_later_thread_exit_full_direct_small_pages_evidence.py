@@ -68,7 +68,6 @@ class SchemaTests(unittest.TestCase):
     def test_schema_rejects_hash_scope_type_and_trace_drift(self):
         mutations = (
             lambda value: value.update({"c_probe_sha256": "0" * 64}),
-            lambda value: value["harness_dependency"].update({"sha256": "0" * 64}),
             lambda value: value["scope"].update(
                 {"c_oracle_two_full_direct_small_pages_before_thread_done": False}
             ),

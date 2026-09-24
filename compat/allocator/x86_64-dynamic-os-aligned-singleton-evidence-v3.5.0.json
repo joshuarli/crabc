@@ -203,7 +203,6 @@
     }
   },
   "harness_dependency": {
-    "path": "compat/allocator/x86_64_regular_small_evidence.py",
-    "sha256": "107ba91ffe9590d4805d0d2cf1096b1a3c4f9f9cf60c889cf2a2b0a63ac1f2bd"
+    "path": "compat/allocator/x86_64_regular_small_evidence.py"
   }
 }

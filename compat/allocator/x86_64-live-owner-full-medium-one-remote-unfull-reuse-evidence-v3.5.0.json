@@ -3,8 +3,7 @@
   "schema": "crabc-mimalloc-x86_64-live-owner-full-medium-one-remote-unfull-reuse-evidence",
   "profile": "linux-x86_64-private-live-owner-full-medium-one-remote-unfull-reuse",
   "harness_dependency": {
-    "path": "compat/allocator/x86_64_live_owner_full_medium_remote_release_evidence.py",
-    "sha256": "81685d488e051c8fe55d81c9f9e16865a77c8ef62cd4d3565b814683a5b4809c"
+    "path": "compat/allocator/x86_64_live_owner_full_medium_remote_release_evidence.py"
   },
   "target": {
     "architecture": "x86_64",

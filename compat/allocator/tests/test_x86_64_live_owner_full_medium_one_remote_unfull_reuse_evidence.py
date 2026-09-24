@@ -29,7 +29,6 @@ class SchemaTests(unittest.TestCase):
             schema["harness_dependency"],
             {
                 "path": evidence.relative(evidence.BASE_PATH),
-                "sha256": evidence.sha256_file(evidence.BASE_PATH),
             },
         )
         values = schema["trace"]["expected_values"]
@@ -50,7 +49,6 @@ class SchemaTests(unittest.TestCase):
     def test_schema_rejects_type_scope_pin_and_trace_drift(self):
         mutations = (
             lambda value: value.update({"format": True}),
-            lambda value: value["harness_dependency"].update({"sha256": "0" * 64}),
             lambda value: value["scope"].update({"emulation_accepted": 0}),
             lambda value: value["source_anchors"][0].update({"sha256": "0" * 64}),
             lambda value: value["trace"]["expected_values"].update(

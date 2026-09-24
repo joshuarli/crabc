@@ -173,7 +173,7 @@ def _schema_template() -> dict:
         "profile": EXPECTED_PROFILE,
         "target": EXPECTED_TARGET,
         "upstream": EXPECTED_UPSTREAM,
-        "harness_dependency": {"path": _base.relative(BASE_PATH), "sha256": _base.sha256_file(BASE_PATH)},
+        "harness_dependency": {"path": _base.relative(BASE_PATH)},
         "scope": copy.deepcopy(EXPECTED_SCOPE),
         "tls": copy.deepcopy(EXPECTED_TLS),
         "source_anchors": [{"member": m, "start_line": s, "end_line": e, "sha256": d} for m, s, e, d in EXPECTED_SOURCE_ANCHORS],

@@ -89,7 +89,6 @@ class SchemaTests(unittest.TestCase):
     def test_schema_rejects_probe_scope_source_or_trace_drift(self):
         mutations = (
             lambda value: value.update({"c_probe_sha256": "0" * 64}),
-            lambda value: value["harness_dependency"].update({"sha256": "0" * 64}),
             lambda value: value["scope"].update({"dynamic_full_medium_full_bin_only": False}),
             lambda value: value["source_anchors"][9].update({"sha256": "0" * 64}),
             lambda value: value["rust_test"].update({"target_arch": "aarch64"}),

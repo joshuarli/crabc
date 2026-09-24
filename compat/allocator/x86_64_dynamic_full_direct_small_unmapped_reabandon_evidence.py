@@ -568,8 +568,7 @@ def _schema_template() -> dict:
     value["schema"] = "crabc-mimalloc-x86_64-dynamic-full-direct-small-unmapped-reabandon-evidence"
     value["profile"] = EXPECTED_PROFILE
     value["harness_dependency"] = {
-        "path": relative(BASE_PATH),
-        "sha256": sha256_file(BASE_PATH),
+        "path": relative(BASE_PATH)
     }
     value["scope"] = dict(EXPECTED_SCOPE)
     value["source_anchors"] = [

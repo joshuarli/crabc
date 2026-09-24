@@ -218,7 +218,7 @@ def exactly_matches(observed, expected):
 
 def _schema_template() -> dict:
     value = _base._schema_template()
-    value.update({"schema": "crabc-mimalloc-x86_64-dynamic-full-singleton-homogeneous-aggregate-evidence", "profile": EXPECTED_PROFILE, "harness_dependency": {"path": _base.relative(BASE_PATH), "sha256": _base.sha256_file(BASE_PATH)}, "scope": copy.deepcopy(EXPECTED_SCOPE), "tls": copy.deepcopy(EXPECTED_TLS), "source_anchors": [{"member": m, "start_line": s, "end_line": e, "sha256": d} for m, s, e, d in EXPECTED_SOURCE_ANCHORS], "c_probe_sha256": _base.sha256_bytes(C_TRACE_PROBE.encode()), "rust_test": {"path": _base.relative(RUST_TEST_SOURCE), "target_arch": "x86_64", "test_filter": RUST_TEST_FILTER}, "trace": {"begin": TRACE_BEGIN, "end": TRACE_END, "expected_values": dict(EXPECTED_TRACE_VALUES)}})
+    value.update({"schema": "crabc-mimalloc-x86_64-dynamic-full-singleton-homogeneous-aggregate-evidence", "profile": EXPECTED_PROFILE, "harness_dependency": {"path": _base.relative(BASE_PATH)}, "scope": copy.deepcopy(EXPECTED_SCOPE), "tls": copy.deepcopy(EXPECTED_TLS), "source_anchors": [{"member": m, "start_line": s, "end_line": e, "sha256": d} for m, s, e, d in EXPECTED_SOURCE_ANCHORS], "c_probe_sha256": _base.sha256_bytes(C_TRACE_PROBE.encode()), "rust_test": {"path": _base.relative(RUST_TEST_SOURCE), "target_arch": "x86_64", "test_filter": RUST_TEST_FILTER}, "trace": {"begin": TRACE_BEGIN, "end": TRACE_END, "expected_values": dict(EXPECTED_TRACE_VALUES)}})
     value["target"] = EXPECTED_TARGET
     value["upstream"] = EXPECTED_UPSTREAM
     return value

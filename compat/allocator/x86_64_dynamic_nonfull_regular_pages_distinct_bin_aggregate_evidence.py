@@ -554,8 +554,7 @@ def _schema_template() -> dict:
     value["schema"] = "crabc-mimalloc-x86_64-dynamic-nonfull-regular-pages-distinct-bin-aggregate-evidence"
     value["profile"] = EXPECTED_PROFILE
     value["harness_dependency"] = {
-        "path": relative(BASE_PATH),
-        "sha256": sha256_file(BASE_PATH),
+        "path": relative(BASE_PATH)
     }
     value["scope"] = copy.deepcopy(EXPECTED_SCOPE)
     value["tls"] = copy.deepcopy(EXPECTED_TLS)

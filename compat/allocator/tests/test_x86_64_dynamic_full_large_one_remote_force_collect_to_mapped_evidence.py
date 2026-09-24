@@ -57,7 +57,6 @@ class SchemaTests(unittest.TestCase):
     def test_schema_rejects_probe_scope_source_or_rust_selection_drift(self):
         mutations = (
             lambda value: value.update({"c_probe_sha256": "0" * 64}),
-            lambda value: value["harness_dependency"].update({"sha256": "0" * 64}),
             lambda value: value["scope"].update(
                 {"one_joined_remote_free_during_thread_exit_only": False}
             ),

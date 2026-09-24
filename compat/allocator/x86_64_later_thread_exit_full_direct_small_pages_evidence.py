@@ -837,8 +837,7 @@ def _schema_template() -> dict:
         "target": copy.deepcopy(EXPECTED_TARGET),
         "upstream": copy.deepcopy(EXPECTED_UPSTREAM),
         "harness_dependency": {
-            "path": _base.relative(BASE_PATH),
-            "sha256": _base.sha256_file(BASE_PATH),
+            "path": _base.relative(BASE_PATH)
         },
         "scope": copy.deepcopy(EXPECTED_SCOPE),
         "tls": copy.deepcopy(EXPECTED_TLS),

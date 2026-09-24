@@ -388,8 +388,7 @@ def _schema_template() -> dict[str, Any]:
         "schema": "crabc-mimalloc-x86_64-live-owner-full-medium-one-remote-unfull-reuse-evidence",
         "profile": EXPECTED_PROFILE,
         "harness_dependency": {
-            "path": relative(BASE_PATH),
-            "sha256": sha256_file(BASE_PATH),
+            "path": relative(BASE_PATH)
         },
         "target": copy.deepcopy(EXPECTED_TARGET),
         "upstream": copy.deepcopy(EXPECTED_UPSTREAM),

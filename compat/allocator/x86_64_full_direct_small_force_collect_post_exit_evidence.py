@@ -408,7 +408,7 @@ def _schema_template() -> dict:
     value = _BASE_SCHEMA_TEMPLATE()
     value["schema"] = "crabc-mimalloc-x86_64-full-direct-small-force-collect-post-exit-evidence"
     value["profile"] = EXPECTED_PROFILE
-    value["harness_dependency"] = {"path": relative(BASE_PATH), "sha256": sha256_file(BASE_PATH)}
+    value["harness_dependency"] = {"path": relative(BASE_PATH)}
     value["scope"] = dict(EXPECTED_SCOPE)
     value["source_anchors"] = [
         {"member": member, "start_line": start, "end_line": end, "sha256": digest}

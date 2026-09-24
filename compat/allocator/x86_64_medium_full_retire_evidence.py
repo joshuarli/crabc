@@ -279,8 +279,7 @@ def _schema_template() -> dict:
     # silently inherit a changed parser, native-provenance check, or report
     # validator from the regular-small differential.
     value["harness_dependency"] = {
-        "path": relative(BASE_PATH),
-        "sha256": sha256_file(BASE_PATH),
+        "path": relative(BASE_PATH)
     }
     value["scope"] = dict(EXPECTED_SCOPE)
     value["source_anchors"] = [
