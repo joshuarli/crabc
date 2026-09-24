@@ -20,15 +20,18 @@
 //!   output-capacity contracts.
 //! - `src/network/gai_strerror.c` supplies the selected stable error strings.
 //!
-//! The private allocation is one anonymous page per result node.  It is not a
-//! general allocator: the mapping is opaque to callers and can be released
-//! only by this leaf's `freeaddrinfo` traversal.  This preserves the C-owned
-//! result lifetime without admitting malloc, a resolver cache, or global
-//! resolver state to the static x86 archive.
+//! Result nodes are opaque to callers and released only by this leaf's
+//! `freeaddrinfo` traversal. In the owned runtimes they come from the
+//! installed C allocator (`calloc`/`free`), as musl's `getaddrinfo` result
+//! block does; the bare leaf roster, which admits no allocator, maps one
+//! anonymous page per node. Neither adds a resolver cache or global resolver
+//! state.
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
-use super::{inet_address, raw_syscall};
+use super::inet_address;
+#[cfg(not(crabc_x86_owned_runtime))]
+use super::raw_syscall;
 
 const AF_UNSPEC: c_int = 0;
 const AF_INET: c_int = 2;
@@ -75,9 +78,14 @@ const EAI_MEMORY: c_int = -10;
 const EAI_SYSTEM: c_int = -11;
 const EAI_OVERFLOW: c_int = -12;
 
+// The bare roster's one-page anonymous result mapping.
+#[cfg(not(crabc_x86_owned_runtime))]
 const MAP_PRIVATE_ANONYMOUS: i64 = 0x22;
+#[cfg(not(crabc_x86_owned_runtime))]
 const PROT_READ_WRITE: i64 = 0x3;
+#[cfg(not(crabc_x86_owned_runtime))]
 const PAGE_SIZE: usize = 4096;
+#[cfg(not(crabc_x86_owned_runtime))]
 const LINUX_ERRNO_MAX: i64 = 4095;
 const NODE_MAGIC: u64 = 0x4352_4142_434E_4442;
 const CANONNAME_CAPACITY: usize = 256;
@@ -131,12 +139,37 @@ pub(crate) struct Address {
     pub(crate) bytes: [u8; 16],
 }
 
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 fn linux_error(result: i64) -> bool {
     result < 0 && result >= -LINUX_ERRNO_MAX
 }
 
-/// Allocate the opaque one-page C result owner.
+// Musl's `calloc`/`free` result-block ownership, through the installed C
+// allocator. Without an owned runtime there is no allocator to admit.
+#[cfg(crabc_x86_owned_runtime)]
+unsafe extern "C" {
+    fn calloc(count: usize, size: usize) -> *mut c_void;
+    fn free(allocation: *mut c_void);
+}
+
+/// Bytes zeroed and owned per result node.
+#[cfg(crabc_x86_owned_runtime)]
+const NODE_BYTES: usize = core::mem::size_of::<NumericAddrInfoNode>();
+#[cfg(not(crabc_x86_owned_runtime))]
+const NODE_BYTES: usize = PAGE_SIZE;
+const _: () = assert!(core::mem::size_of::<NumericAddrInfoNode>() <= NODE_BYTES);
+
+/// Allocate one zero-filled opaque C result node, or null.
+#[cfg(crabc_x86_owned_runtime)]
+unsafe fn allocate_node() -> *mut NumericAddrInfoNode {
+    // SAFETY: the C allocator returns null or a zeroed `malloc`-aligned block
+    // of the requested size, which covers the node's pointer alignment.
+    unsafe { calloc(1, NODE_BYTES) }.cast()
+}
+
+/// Allocate one zero-filled opaque C result page, or null.
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe fn allocate_node() -> *mut NumericAddrInfoNode {
     // SAFETY: this is a fixed anonymous private mapping with no file or
     // caller-owned address. Its page-sized lifetime is released below.
@@ -158,13 +191,16 @@ unsafe fn allocate_node() -> *mut NumericAddrInfoNode {
     }
 }
 
-/// Release the one-page result owner, ignoring a malformed foreign pointer.
+/// Release one result node, ignoring a malformed foreign pointer.
 unsafe fn release_node(node: *mut NumericAddrInfoNode) {
     if node.is_null() || unsafe { (*node).magic } != NODE_MAGIC {
         return;
     }
     // SAFETY: `node` was allocated by `allocate_node` and its magic guards
-    // this leaf's private ownership before releasing exactly one page.
+    // this leaf's private ownership before releasing it exactly once.
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe { free(node.cast()) };
+    #[cfg(not(crabc_x86_owned_runtime))]
     let _ = unsafe {
         raw_syscall::syscall2(
             raw_syscall::SYS_MUNMAP,
@@ -318,8 +354,8 @@ pub(crate) unsafe fn append_node(
     if node.is_null() {
         return Err(EAI_MEMORY);
     }
-    // SAFETY: the mapping is one zeroed writable page and the node is smaller.
-    unsafe { core::ptr::write_bytes(node.cast::<u8>(), 0, PAGE_SIZE) };
+    // SAFETY: the node owns `NODE_BYTES` writable bytes.
+    unsafe { core::ptr::write_bytes(node.cast::<u8>(), 0, NODE_BYTES) };
     unsafe { (*node).magic = NODE_MAGIC };
     unsafe {
         // Musl's result nodes do not echo the input hints: ai_flags is an
