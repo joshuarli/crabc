@@ -72,7 +72,6 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             "candidate": {
                 "count": 1,
                 "kind_counts": {"function": 1},
-                "sha256": "1" * 64,
             },
             "candidate_status": "ok",
             "comparison": "candidate-only-reviewed-native-callable-extension",
@@ -93,7 +92,7 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             },
             "header": "signal.h",
             "profile": "cxx17-strict",
-            "reference": {"count": 0, "kind_counts": {}, "sha256": "2" * 64},
+            "reference": {"count": 0, "kind_counts": {}},
             "reference_status": "ok",
         }
 
@@ -131,7 +130,6 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             "candidate": {
                 "count": 3,
                 "kind_counts": {"function": 3},
-                "sha256": "3" * 64,
             },
             "candidate_status": "ok",
             "comparison": "candidate-only-reviewed-native-callable-extension",
@@ -155,7 +153,6 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             "reference": {
                 "count": 2,
                 "kind_counts": {"function": 2},
-                "sha256": "4" * 64,
             },
             "reference_status": "ok",
         }
@@ -276,7 +273,7 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             },
         )
         for row in (project_only, oracle_not_applicable):
-            self.assertEqual(set(row["candidate"]), {"count", "kind_counts", "sha256"})
+            self.assertEqual(set(row["candidate"]), {"count", "kind_counts"})
             self.assertNotIn("candidate_only", row)
             self.assertNotIn("reference_only", row)
 

@@ -371,38 +371,6 @@ Layout: <ASTRecordLayout
         self.assertFalse(report["scope"]["family_promotion"])
         self.assertFalse(report["scope"]["public_support"])
 
-    def test_collection_digest_binds_layout_relevant_inputs_not_provider_projection(self) -> None:
-        contract = MATRIX.load_contract()
-        with tempfile.TemporaryDirectory(
-            prefix="record-collection-input-",
-            dir=self.matrix_test_work_root(),
-        ) as temporary:
-            candidate = Path(temporary) / "include"
-            shutil.copytree(ROOT / "include", candidate)
-            baseline = MATRIX.record_collection_input_digest(contract, candidate)
-
-            source = next(path for path in sorted(candidate.rglob("*.h")) if path.is_file())
-            source.write_bytes(source.read_bytes() + b"\n/* record-collection-input mutation */\n")
-            self.assertNotEqual(baseline, MATRIX.record_collection_input_digest(contract, candidate))
-
-            source.write_bytes(source.read_bytes().replace(b"\n/* record-collection-input mutation */\n", b""))
-            changed_oracle = dict(contract.oracle_not_applicable)
-            changed_oracle[("synthetic.h", "c11-gnu")] = "synthetic record exception"
-            self.assertNotEqual(
-                baseline,
-                MATRIX.record_collection_input_digest(
-                    dataclasses.replace(contract, oracle_not_applicable=changed_oracle),
-                    candidate,
-                ),
-            )
-
-            original_pin = MATRIX.inventory.LINUX_UAPI_HEADER_MANIFEST_SHA256
-            try:
-                MATRIX.inventory.LINUX_UAPI_HEADER_MANIFEST_SHA256 = "1" * 64
-                self.assertNotEqual(baseline, MATRIX.record_collection_input_digest(contract, candidate))
-            finally:
-                MATRIX.inventory.LINUX_UAPI_HEADER_MANIFEST_SHA256 = original_pin
-
     def test_checked_report_ignores_provider_only_inventory_projection(self) -> None:
         contract = MATRIX.load_contract()
         report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))

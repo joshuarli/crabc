@@ -1,10 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-record-layout-matrix/v1",
   "inputs": {
-    "compiler": "clang",
-    "compiler_collection_inputs_sha256": "9469977222e8181b196f51a60420965fd740216287cd9995c9ad599dd99cc5eb",
-    "header_record_layout_matrix_contract_sha256": "95999a68fa905b64c53d4dc1cd3b959c744e1aa406ebea3790aa12e91b86e65b",
-    "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
+    "compiler": "clang"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",

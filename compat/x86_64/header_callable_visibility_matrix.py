@@ -12,7 +12,6 @@ linkage, or runtime behavior.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import tomllib
@@ -362,14 +361,6 @@ def load_inventory(path: Path) -> Mapping[str, Any]:
     return raw
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(65536), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def index_profile_runs(inventory: Mapping[str, Any]) -> dict[tuple[str, str, str], str]:
     raw_runs = inventory.get("profile_runs")
     require(isinstance(raw_runs, list), "callable inventory profile_runs are missing")
@@ -508,7 +499,6 @@ def build_report(
     inventory: Mapping[str, Any],
     pinned_headers: Sequence[str],
     candidate_headers: Sequence[str],
-    input_digests: Mapping[str, str],
 ) -> dict[str, Any]:
     """Build a deterministic finite matrix from already compiler-derived data."""
 
@@ -524,14 +514,6 @@ def build_report(
     require(set(candidate) == set(pinned) | set(project_only), "candidate roster is not pinned headers plus project-only paths")
     require(set(pinned).isdisjoint(project_only), "project-only paths overlap the pinned roster")
     require(len(candidate) == len(pinned) + len(project_only), "candidate header arithmetic changed")
-
-    expected_digest_keys = {
-        "callable_extension_contract_sha256",
-        "matrix_contract_sha256",
-        "public_header_inventory_sha256",
-    }
-    require(set(input_digests) == expected_digest_keys, "matrix input digest keys changed")
-    require(all(isinstance(value, str) and value for value in input_digests.values()), "matrix input digest is empty")
 
     runs = index_profile_runs(inventory)
     expected_run_keys = {
@@ -679,7 +661,6 @@ def build_report(
         "target": TARGET,
         "platform": PLATFORM,
         "oracle": ORACLE,
-        "inputs": dict(sorted(input_digests.items())),
         "scope": dict(POLICY),
         "profiles": list(contract.profiles),
         "project_only_headers": [header.as_report() for header in contract.project_only_headers],
@@ -725,11 +706,6 @@ def build_file_report(contract: MatrixContract) -> dict[str, Any]:
         inventory=load_inventory(contract.inventory),
         pinned_headers=pinned_headers,
         candidate_headers=candidate_headers,
-        input_digests={
-            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
-            "matrix_contract_sha256": sha256_file(CONTRACT_PATH),
-            "public_header_inventory_sha256": sha256_file(contract.public_headers),
-        },
     )
 
 

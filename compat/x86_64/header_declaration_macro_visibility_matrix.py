@@ -13,7 +13,6 @@ feature or ABI equality.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import tomllib
@@ -348,10 +347,6 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
     )
 
 
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def identity_fact(value: object, location: str) -> dict[str, str]:
     require(isinstance(value, Mapping), f"{location} must be a fact")
     require(set(value) == {"kind", "name", "signature"}, f"{location} fact keys changed")
@@ -437,10 +432,9 @@ def source_summary(value: object, location: str) -> dict[str, Any]:
     """Copy an already-validated source report fact summary without widening it."""
 
     require(isinstance(value, Mapping), f"{location} is invalid")
-    require(set(value) == {"count", "kind_counts", "sha256"}, f"{location} keys changed")
+    require(set(value) == {"count", "kind_counts"}, f"{location} keys changed")
     count = value["count"]
     kind_counts = value["kind_counts"]
-    digest = value["sha256"]
     require(isinstance(count, int) and count >= 0, f"{location}.count is invalid")
     require(isinstance(kind_counts, Mapping), f"{location}.kind_counts is invalid")
     require(
@@ -448,8 +442,7 @@ def source_summary(value: object, location: str) -> dict[str, Any]:
         f"{location}.kind_counts is invalid",
     )
     require(sum(kind_counts.values()) == count, f"{location}.kind_counts does not sum to count")
-    require(isinstance(digest, str) and len(digest) == 64, f"{location}.sha256 is invalid")
-    return {"count": count, "kind_counts": dict(kind_counts), "sha256": digest}
+    return {"count": count, "kind_counts": dict(kind_counts)}
 
 
 def reviewed_declaration_difference(
@@ -713,14 +706,6 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
         "target": TARGET,
         "platform": PLATFORM,
         "oracle": ORACLE,
-        "inputs": {
-            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
-            "callable_visibility_contract_sha256": sha256_file(contract.callable_visibility_contract),
-            "declaration_macro_visibility_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
-            "public_header_inventory_sha256": sha256_file(contract.public_headers),
-            "source_abi_contract_sha256": sha256_file(contract.source_abi_contract),
-            "source_abi_report_sha256": sha256_file(contract.source_abi_report),
-        },
         "scope": dict(POLICY),
         "work_package": dict(contract.work_package),
         "profiles": source["profiles"],

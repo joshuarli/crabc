@@ -316,11 +316,6 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             inventory=inventory,
             pinned_headers=("alpha.h", "beta.h"),
             candidate_headers=("alpha.h", "beta.h", "extension.h"),
-            input_digests={
-                "callable_extension_contract_sha256": "extension-contract",
-                "matrix_contract_sha256": "contract",
-                "public_header_inventory_sha256": "headers",
-            },
         )
 
         rows = {(row["header"], row["profile"]): row for row in report["rows"]}
@@ -358,11 +353,6 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                 inventory=stale_inventory,
                 pinned_headers=("alpha.h", "beta.h"),
                 candidate_headers=("alpha.h", "beta.h", "extension.h"),
-                input_digests={
-                    "callable_extension_contract_sha256": "extension-contract",
-                    "matrix_contract_sha256": "contract",
-                    "public_header_inventory_sha256": "headers",
-                },
             )
 
         stale_metadata_contract = replace(
@@ -377,11 +367,6 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                 inventory=inventory,
                 pinned_headers=("alpha.h", "beta.h"),
                 candidate_headers=("alpha.h", "beta.h", "extension.h"),
-                input_digests={
-                    "callable_extension_contract_sha256": "extension-contract",
-                    "matrix_contract_sha256": "contract",
-                    "public_header_inventory_sha256": "headers",
-                },
             )
 
     def test_reviewed_native_callable_extension_keeps_exact_raw_rows(self) -> None:
@@ -432,18 +417,12 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             "profile_runs": profile_runs,
             "callables": target_records,
         }
-        digests = {
-            "callable_extension_contract_sha256": "extension-contract",
-            "matrix_contract_sha256": "matrix-contract",
-            "public_header_inventory_sha256": "headers",
-        }
 
         report = MATRIX.build_report(
             contract=contract,
             inventory=inventory,
             pinned_headers=headers,
             candidate_headers=headers,
-            input_digests=digests,
         )
 
         reviewed_rows = [
@@ -476,7 +455,6 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                 inventory={**inventory, "callables": [*target_records, extra_raw_record]},
                 pinned_headers=headers,
                 candidate_headers=headers,
-                input_digests=digests,
             )
 
     def test_statx_has_no_remaining_gnu_callable_visibility_gap(self) -> None:

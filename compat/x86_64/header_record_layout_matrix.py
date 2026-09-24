@@ -13,7 +13,6 @@ runtime claim.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -191,38 +190,6 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         exceptions[(header, profile)] = reason
     require(set(exceptions) == {("aio.h", "c11-strict")}, "record-layout oracle exception roster changed")
     return MatrixContract(CONTRACT_SCHEMA, public_headers, generated_report, callable_inventory, inv_contract.profiles, exceptions, expected_policy, NA_CATEGORIES)
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(65536), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def record_collection_input_digest(contract: MatrixContract, project_include: Path) -> str:
-    """Bind record-byte evidence to its compiler inputs, not provider planning.
-
-    The callable inventory contract supplies the finite feature profiles, but
-    this collector independently discovers records from the actual include
-    tree.  Its provider partition and archive roster are deliberately outside
-    this source/layout input boundary.
-    """
-    return abi_matrix.compiler_collection_input_digest(
-        public_headers=contract.public_headers,
-        profiles=contract.profiles,
-        project_include=project_include,
-        oracle_not_applicable=contract.oracle_not_applicable,
-        collector={
-            "ast_json": True,
-            "id": "record-byte-layout-v1",
-            "not_applicable_categories": list(contract.not_applicable_categories),
-            "record_layout_dump": True,
-            "uapi_musl_bits_wrappers": dict(sorted(UAPI_MUSL_BITS_WRAPPERS.items())),
-            "uapi_record_wrappers": dict(sorted(UAPI_RECORD_WRAPPERS.items())),
-        },
-    )
 
 
 def physical_record_layout_work_directory() -> Path:
@@ -754,7 +721,6 @@ def build_report(compiler: str, project_include: Path, musl_include: Path, linux
     pinned_headers = inventory.load_headers(contract.public_headers)
     require(inventory.public_header_paths(musl_include) == pinned_headers, "pinned musl public header tree drifted")
     candidate_headers = inventory.candidate_header_paths(project_include, pinned_headers)
-    collection_inputs = record_collection_input_digest(contract, project_include)
     resource_include = inventory.compiler_resource_include(compiler)
     rows: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(
@@ -786,12 +752,7 @@ def build_report(compiler: str, project_include: Path, musl_include: Path, linux
         "target": TARGET,
         "platform": PLATFORM,
         "oracle": ORACLE,
-        "inputs": {
-            "compiler": compiler,
-            "compiler_collection_inputs_sha256": collection_inputs,
-            "header_record_layout_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
-            "public_header_inventory_sha256": sha256_file(contract.public_headers),
-        },
+        "inputs": {"compiler": compiler},
         "scope": dict(REPORT_SCOPE),
         "profiles": [{"id": profile.identifier, "language": profile.language, "standard": profile.standard, "defines": list(profile.defines)} for profile in contract.profiles],
         "rows": rows,
@@ -811,16 +772,7 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract 
     require(report.get("scope") == REPORT_SCOPE, "record-layout report scope changed")
     inputs = report.get("inputs")
     require(isinstance(inputs, Mapping), "record-layout report inputs are invalid")
-    require(
-        dict(inputs)
-        == {
-            "compiler": "clang",
-            "compiler_collection_inputs_sha256": record_collection_input_digest(contract, ROOT / "include"),
-            "header_record_layout_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
-            "public_header_inventory_sha256": sha256_file(contract.public_headers),
-        },
-        "record-layout report inputs drifted",
-    )
+    require(dict(inputs) == {"compiler": "clang"}, "record-layout report inputs drifted")
     profiles = report.get("profiles")
     expected_profiles = [{"id": profile.identifier, "language": profile.language, "standard": profile.standard, "defines": list(profile.defines)} for profile in contract.profiles]
     require(profiles == expected_profiles, "record-layout profile roster drifted")

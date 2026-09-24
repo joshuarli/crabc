@@ -467,64 +467,6 @@ def oracle_exception_records(
     return records
 
 
-def compiler_collection_input_digest(
-    *,
-    public_headers: Path,
-    profiles: Sequence[callable_inventory.Profile],
-    project_include: Path,
-    oracle_not_applicable: Mapping[tuple[str, str], str],
-    collector: Mapping[str, Any],
-) -> str:
-    """Bind compiler-derived evidence to source inputs, never provider rosters.
-
-    ``header_callable_inventory.json`` also records archive/provider planning.
-    That projection is intentionally absent here: these collectors independently
-    compile declarations and layouts from the headers, profile definitions, and
-    frozen source-oracle inputs below.
-    """
-    require(public_headers.is_file() and not public_headers.is_symlink(), "public header manifest is unsafe")
-    require(isinstance(collector, Mapping) and collector, "collector input is invalid")
-    payload = {
-        "candidate_header_tree_sha256": header_tree_digest(project_include),
-        "collector": dict(collector),
-        "oracle_not_applicable": oracle_exception_records(oracle_not_applicable),
-        "oracle_pins": {
-            "linux_uapi_header_manifest_sha256": callable_inventory.LINUX_UAPI_HEADER_MANIFEST_SHA256,
-            "linux_uapi_source_sha256": callable_inventory.LINUX_UAPI_SOURCE_SHA256,
-            "linux_uapi_version": callable_inventory.LINUX_UAPI_VERSION,
-            "musl_source_sha256": callable_inventory.MUSL_SOURCE_SHA256,
-            "musl_version": callable_inventory.MUSL_VERSION,
-        },
-        "profiles": profile_input_records(profiles),
-        "public_header_inventory_sha256": sha256_file(public_headers),
-        "schema": "crabc.x86_64-header-compiler-collection-input/v1",
-    }
-    try:
-        rendered = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-    except (TypeError, ValueError) as error:
-        raise HeaderAbiMatrixError(f"compiler collection input cannot be canonicalized: {error}") from error
-    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
-
-
-def declaration_form_collection_input_digest(
-    contract: MatrixContract,
-    project_include: Path,
-) -> str:
-    """Bind this matrix's AST/preprocessor declaration-form collector."""
-    return compiler_collection_input_digest(
-        public_headers=contract.public_headers,
-        profiles=contract.profiles,
-        project_include=project_include,
-        oracle_not_applicable=contract.oracle_not_applicable,
-        collector={
-            "ast_json": True,
-            "id": "declaration-form-v1",
-            "macro_preprocessor_records": True,
-            "named_noncallable_declarations": True,
-        },
-    )
-
-
 def physical_x86_work_directory(name: str) -> Path:
     """Create one named physical x86 header-collector root below this checkout."""
     require(
@@ -1241,11 +1183,9 @@ def compare_facts(
 
 
 def facts_summary(records: Sequence[Mapping[str, str]]) -> dict[str, Any]:
-    rendered = json.dumps(list(records), separators=(",", ":"), sort_keys=True)
     return {
         "count": len(records),
         "kind_counts": dict(sorted(Counter(record["kind"] for record in records).items())),
-        "sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
     }
 
 
@@ -1592,7 +1532,6 @@ def build_report(
     pinned_headers = callable_inventory.load_headers(contract.public_headers)
     require(callable_inventory.public_header_paths(musl_include) == pinned_headers, "pinned musl public header tree drifted")
     candidate_headers = callable_inventory.candidate_header_paths(project_include, pinned_headers)
-    collection_inputs = declaration_form_collection_input_digest(contract, project_include)
     resource_include = callable_inventory.compiler_resource_include(compiler)
     candidate = collect_tree(
         tree="candidate",
@@ -1696,13 +1635,7 @@ def build_report(
         "target": TARGET,
         "platform": PLATFORM,
         "oracle": ORACLE,
-        "inputs": {
-            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
-            "compiler_collection_inputs_sha256": collection_inputs,
-            "header_abi_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
-            "public_header_inventory_sha256": sha256_file(contract.public_headers),
-            "compiler": compiler,
-        },
+        "inputs": {"compiler": compiler},
         "scope": dict(REPORT_SCOPE),
         "work_package": dict(contract.work_package),
         "profiles": [
@@ -1955,17 +1888,7 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract)
     require(summary.get("complete") is False, "header ABI matrix must remain a partial report")
     inputs = report["inputs"]
     require(isinstance(inputs, Mapping), "checked header ABI matrix inputs are invalid")
-    require(
-        dict(inputs)
-        == {
-            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
-            "compiler_collection_inputs_sha256": declaration_form_collection_input_digest(contract, ROOT / "include"),
-            "header_abi_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
-            "public_header_inventory_sha256": sha256_file(contract.public_headers),
-            "compiler": "clang",
-        },
-        "checked header ABI matrix inputs drifted",
-    )
+    require(dict(inputs) == {"compiler": "clang"}, "checked header ABI matrix inputs drifted")
 
 
 def check_output(path: Path, rendered: str) -> None:

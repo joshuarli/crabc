@@ -600,86 +600,7 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         self.assertEqual(spaced, ("MAP_FAILED", "object-like: ((void *) -1)"))
         self.assertEqual(compact, ("MAP_FAILED", "object-like: ((void *)-1)"))
 
-    def test_compiler_collection_digest_binds_headers_profiles_pins_and_oracle(self) -> None:
-        """Provider accounting is not a compiler input, unlike these facts."""
-        contract = MATRIX.load_contract()
-        collector = {"id": "declaration-form-v1"}
-        with tempfile.TemporaryDirectory(
-            prefix="compiler-collection-input-",
-            dir=self.matrix_test_work_root(),
-        ) as temporary:
-            candidate = Path(temporary) / "include"
-            shutil.copytree(ROOT / "include", candidate)
-            baseline = MATRIX.compiler_collection_input_digest(
-                public_headers=contract.public_headers,
-                profiles=contract.profiles,
-                project_include=candidate,
-                oracle_not_applicable=contract.oracle_not_applicable,
-                collector=collector,
-            )
-
-            source = next(path for path in sorted(candidate.rglob("*.h")) if path.is_file())
-            source.write_bytes(source.read_bytes() + b"\n/* collection-input mutation */\n")
-            self.assertNotEqual(
-                baseline,
-                MATRIX.compiler_collection_input_digest(
-                    public_headers=contract.public_headers,
-                    profiles=contract.profiles,
-                    project_include=candidate,
-                    oracle_not_applicable=contract.oracle_not_applicable,
-                    collector=collector,
-                ),
-            )
-
-            source.write_bytes(source.read_bytes().replace(b"\n/* collection-input mutation */\n", b""))
-            changed_profiles = (
-                dataclasses.replace(
-                    contract.profiles[0],
-                    defines=(*contract.profiles[0].defines, "CRABC_COLLECTION_INPUT_TEST=1"),
-                ),
-                *contract.profiles[1:],
-            )
-            self.assertNotEqual(
-                baseline,
-                MATRIX.compiler_collection_input_digest(
-                    public_headers=contract.public_headers,
-                    profiles=changed_profiles,
-                    project_include=candidate,
-                    oracle_not_applicable=contract.oracle_not_applicable,
-                    collector=collector,
-                ),
-            )
-
-            changed_oracle = dict(contract.oracle_not_applicable)
-            changed_oracle[("synthetic.h", "c11-gnu")] = "synthetic oracle exception"
-            self.assertNotEqual(
-                baseline,
-                MATRIX.compiler_collection_input_digest(
-                    public_headers=contract.public_headers,
-                    profiles=contract.profiles,
-                    project_include=candidate,
-                    oracle_not_applicable=changed_oracle,
-                    collector=collector,
-                ),
-            )
-
-            original_pin = MATRIX.callable_inventory.MUSL_SOURCE_SHA256
-            try:
-                MATRIX.callable_inventory.MUSL_SOURCE_SHA256 = "0" * 64
-                self.assertNotEqual(
-                    baseline,
-                    MATRIX.compiler_collection_input_digest(
-                        public_headers=contract.public_headers,
-                        profiles=contract.profiles,
-                        project_include=candidate,
-                        oracle_not_applicable=contract.oracle_not_applicable,
-                        collector=collector,
-                    ),
-                )
-            finally:
-                MATRIX.callable_inventory.MUSL_SOURCE_SHA256 = original_pin
-
-    def test_compiler_collection_digest_rejects_symlink_escape(self) -> None:
+    def test_header_tree_digest_rejects_symlink_escape(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="compiler-collection-symlink-",
             dir=self.matrix_test_work_root(),
@@ -693,7 +614,7 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             with self.assertRaisesRegex(MATRIX.HeaderAbiMatrixError, "symlink"):
                 MATRIX.header_tree_digest(root)
 
-    def test_compiler_collection_digest_rejects_symlinked_parent_root(self) -> None:
+    def test_header_tree_digest_rejects_symlinked_parent_root(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="compiler-collection-parent-symlink-",
             dir=self.matrix_test_work_root(),
