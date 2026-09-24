@@ -648,7 +648,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("public x86 support", slice_entry["description"])
         self.assertEqual(
             {entry["command"] for entry in slice_entry["native_evidence"]},
-            {"./scripts/dev-x86_64.sh libc-allocator-observability"},
+            {
+                "./scripts/dev-x86_64.sh libc-allocator-observability",
+                "./scripts/dev-x86_64.sh owned-native-allocator-policy",
+            },
         )
 
         changed = self.data()
