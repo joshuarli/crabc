@@ -365,8 +365,401 @@ static int glob_unreadable_error_cases(void)
     return 0;
 }
 
+/*
+ * Deterministic differential corpus.
+ *
+ * The directed cases above name individual contracts; this corpus checks that
+ * the owned translation reproduces pinned musl across the selected grammar.
+ * `fnmatch-corpus` runs fixed and fixed-seed generated patterns built from
+ * literals, `?`, `*`, escapes, brackets (negation, ranges, reversed ranges,
+ * leading `]`/`-`, classes, collating and equivalence spellings, unterminated
+ * forms), slashes, periods, UTF-8, and invalid bytes against fixed and
+ * generated subjects under all 32 combinations of FNM_PATHNAME, FNM_NOESCAPE,
+ * FNM_PERIOD, FNM_LEADING_DIR, and FNM_CASEFOLD in both C and C.UTF-8.
+ * `glob-corpus` expands fixed and generated patterns over the runner's
+ * `/corpus/outer/inner/tree`, absolute and relative to it, under combinations of
+ * GLOB_MARK, GLOB_NOCHECK, GLOB_NOESCAPE, GLOB_PERIOD, GLOB_ERR, GLOB_NOSORT,
+ * GLOB_DOOFFS, GLOB_TILDE, and GLOB_TILDE_CHECK in both C and C.UTF-8, with an
+ * error callback that continues or aborts.  GLOB_NOSORT results are folded
+ * in sorted order because directory order belongs to the filesystem, not to
+ * the implementation.
+ *
+ * Every result folds into a 64-bit FNV-1a digest printed once per block; the
+ * runner compares the complete transcript with pinned musl.  The `-trace`
+ * selector spellings print each observation to localize a divergence.
+ */
+#ifndef CORPUS_SEED
+#define CORPUS_SEED 0x9e3779b97f4a7c15ULL
+#endif
+
+enum { CORPUS_BLOCK = 1000 };
+
+struct corpus_state {
+    unsigned long long random;
+    unsigned long long digest;
+    int trace;
+    unsigned long calls;
+    unsigned long matches;
+};
+
+static unsigned corpus_next(struct corpus_state *state)
+{
+    unsigned long long x = state->random;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    state->random = x;
+    return (unsigned)((x * 0x2545f4914f6cdd1dULL) >> 32);
+}
+
+static void corpus_fold_bytes(struct corpus_state *state, const void *bytes, size_t size)
+{
+    const unsigned char *cursor = bytes;
+
+    while (size--) {
+        state->digest ^= *cursor++;
+        state->digest *= 0x100000001b3ULL;
+    }
+}
+
+static void corpus_fold(struct corpus_state *state, long value)
+{
+    corpus_fold_bytes(state, &value, sizeof value);
+}
+
+static void corpus_fold_string(struct corpus_state *state, const char *text)
+{
+    corpus_fold_bytes(state, text, strlen(text) + 1);
+}
+
+static int corpus_append(char *buffer, size_t capacity, size_t *length, const char *piece)
+{
+    size_t size = strlen(piece);
+
+    CHECK(*length + size < capacity);
+    memcpy(buffer + *length, piece, size);
+    *length += size;
+    buffer[*length] = 0;
+    return 0;
+}
+
+static void corpus_trace_bytes(const char *label, const char *bytes)
+{
+    const unsigned char *cursor = (const unsigned char *)bytes;
+
+    printf(" %s=", label);
+    if (!*cursor) printf("-");
+    for (; *cursor; ++cursor) printf("%02x", *cursor);
+}
+
+static void corpus_block(struct corpus_state *state, const char *name, const char *locale, size_t block)
+{
+    printf("corpus %s locale=%s block=%zu digest=%016llx\n", name, locale, block, state->digest);
+    state->digest = 0xcbf29ce484222325ULL;
+}
+
+static const char *const fnmatch_fixed_patterns[] = {
+    "", "*", "?", "a", "a*", "*a", "a*b", "*a*", "a?b", "??", "***", "a**b",
+    "\\", "\\\\", "\\*", "\\?", "\\[", "a\\", "[", "[]", "[]]", "[]a]", "[!]a]",
+    "[^]a]", "[!a]", "[^a]", "[a-c]", "[c-a]", "[a-]", "[-a]", "[!-]", "[a-c-e]",
+    "[]-a]", "[\\]]", "[\\a]", "[a\\]", "[[]", "[[:alpha:]]", "[[:digit:]a]",
+    "[![:alpha:]]", "[[:upper:][:digit:]]", "[[:foo:]]", "[[:alpha:]",
+    "[[:alpha", "[[.a.]]", "[[=a=]]", "[[.a", "[[:xdigit:]]*", "[a/b]", "a/b",
+    "a/*", "*/b", "*/*", "a/", "/a", ".*", "*.c", ".", "..", "a/.*", "a/[.]b",
+    "[.]a", "\\.a", "a/\\.b", "[A-Z]", "[a-z]*", "*[[:space:]]*", "*[!a-z]",
+    "\303\251", "\303\211", "[\303\251]", "[\303\200-\303\277]", "[!\303\251]",
+    "*\303\251*", "?\303\251", "\377", "*\377", "[\377]", "\303", "[\303]",
+    "a[", "a[b", "*[", "[[:alpha:][:punct:]]", "[[:lower:]]*[[:upper:]]",
+    "abc/*/d", "*/[!.]*",
+};
+
+/* Each pattern token carries a subject spelling it usually matches, so the
+ * generated corpus exercises successful as well as failing matches. */
+static const char *const fnmatch_pattern_tokens[][2] = {
+    {"a", "a"}, {"b", "b"}, {"A", "a"}, {"B", "B"}, {"c", "c"}, {".", "."},
+    {"/", "/"}, {"-", "-"}, {"*", ""}, {"*", "ab"}, {"*", "a/."}, {"?", "x"},
+    {"?", "/"}, {"\\", "\\"}, {"\\*", "*"}, {"\\?", "?"}, {"\\[", "["},
+    {"\\a", "a"}, {"\\/", "/"}, {"[", "["}, {"]", "]"}, {"[ab]", "b"},
+    {"[!a]", "c"}, {"[^a]", "a"}, {"[]a]", "]"}, {"[a-c]", "B"}, {"[A-Z]", "q"},
+    {"[z-a]", "m"}, {"[-a]", "-"}, {"[a-]", "-"}, {"[[:alpha:]]", "Z"},
+    {"[[:digit:]]", "7"}, {"[[:upper:]]", "a"}, {"[[:lower:]]", "A"},
+    {"[[:space:]]", " "}, {"[[:punct:]]", "."}, {"[[:foo:]]", "f"},
+    {"[[.a.]]", "a"}, {"[[=a=]]", "="}, {"[[:alpha:]", "["}, {"[\\]]", "]"},
+    {"[a/b]", "/"}, {"[.]", "."}, {"[!/]", "/"}, {"\303\251", "\303\211"},
+    {"\303\211", "\303\211"}, {"[\303\251-\303\277]", "\303\266"},
+    {"\377", "\377"}, {"\303", "\303"}, {"[\377]", "\377"},
+};
+
+static const char *const fnmatch_subject_atoms[] = {
+    "a", "b", "A", "B", "c", ".", "/", "\\", "*", "?", "[", "]", "-", " ",
+    "7", "\303\251", "\303\211", "\377", "\303", "x", "ab",
+};
+
+static const char *const fnmatch_fixed_subjects[] = {
+    "", "a", "ab", "abc", "a/b", "a/b/c", ".a", "a/.b", "..", "A", "aB/c",
+    "[", "]", "\\", "*", "a*b", "\303\251", "\303\211x", "\377", "\303",
+    "x\303", " \t", "abc/x/d", "-",
+};
+
+static void fnmatch_observe(struct corpus_state *state, const char *pattern,
+    const char *subject)
+{
+    /* musl never returns from FNM_PATHNAME when its component scan reaches an
+     * invalid multibyte pattern character, so FNM_PATHNAME skips any pattern
+     * that is not valid in this locale. */
+    int pathname = mbstowcs(0, pattern, 0) != (size_t)-1;
+    int flags;
+
+    for (flags = 0; flags != 32; ++flags) {
+        int selected = ((flags & 1) ? FNM_PATHNAME : 0) | ((flags & 2) ? FNM_NOESCAPE : 0)
+            | ((flags & 4) ? FNM_PERIOD : 0) | ((flags & 8) ? FNM_LEADING_DIR : 0)
+            | ((flags & 16) ? FNM_CASEFOLD : 0);
+        int result;
+
+        if ((selected & FNM_PATHNAME) && !pathname) continue;
+        result = fnmatch(pattern, subject, selected);
+
+        ++state->calls;
+        if (!result) ++state->matches;
+        corpus_fold(state, result);
+        if (state->trace) {
+            printf("fnmatch-trace");
+            corpus_trace_bytes("pattern", pattern);
+            corpus_trace_bytes("subject", subject);
+            printf(" flags=%d result=%d\n", selected, result);
+        }
+    }
+}
+
+static int fnmatch_generated_subject(struct corpus_state *state, char *buffer, size_t capacity)
+{
+    size_t length = 0;
+    unsigned count = corpus_next(state) % 7;
+
+    buffer[0] = 0;
+    while (count--)
+        CHECK(corpus_append(buffer, capacity, &length, fnmatch_subject_atoms[corpus_next(state)
+            % (sizeof fnmatch_subject_atoms / sizeof *fnmatch_subject_atoms)]) == 0);
+    return 0;
+}
+
+static int fnmatch_corpus_locale(const char *locale, int trace)
+{
+    struct corpus_state state;
+    size_t pattern;
+    size_t subject;
+
+    CHECK(setlocale(LC_CTYPE, locale) != 0);
+    memset(&state, 0, sizeof state);
+    state.random = CORPUS_SEED;
+    state.digest = 0xcbf29ce484222325ULL;
+    state.trace = trace;
+    for (pattern = 0; pattern != sizeof fnmatch_fixed_patterns / sizeof *fnmatch_fixed_patterns; ++pattern)
+        for (subject = 0; subject != sizeof fnmatch_fixed_subjects / sizeof *fnmatch_fixed_subjects; ++subject)
+            fnmatch_observe(&state, fnmatch_fixed_patterns[pattern], fnmatch_fixed_subjects[subject]);
+    corpus_block(&state, "fnmatch-fixed", locale, 0);
+    for (pattern = 0; pattern != 16 * CORPUS_BLOCK; ++pattern) {
+        char text[128];
+        char generated[64];
+        size_t length = 0;
+        unsigned tokens = 1 + corpus_next(&state) % 6;
+
+        char sample[128];
+        size_t sample_length = 0;
+
+        text[0] = 0;
+        sample[0] = 0;
+        while (tokens--) {
+            const char *const *token = fnmatch_pattern_tokens[corpus_next(&state)
+                % (sizeof fnmatch_pattern_tokens / sizeof *fnmatch_pattern_tokens)];
+
+            CHECK(corpus_append(text, sizeof text, &length, token[0]) == 0);
+            CHECK(corpus_append(sample, sizeof sample, &sample_length, token[1]) == 0);
+        }
+        fnmatch_observe(&state, text, sample);
+        for (subject = 0; subject != 4; ++subject) {
+            CHECK(fnmatch_generated_subject(&state, generated, sizeof generated) == 0);
+            fnmatch_observe(&state, text, generated);
+        }
+        fnmatch_observe(&state, text, fnmatch_fixed_subjects[corpus_next(&state)
+            % (sizeof fnmatch_fixed_subjects / sizeof *fnmatch_fixed_subjects)]);
+        if ((pattern + 1) % CORPUS_BLOCK == 0)
+            corpus_block(&state, "fnmatch-random", locale, pattern / CORPUS_BLOCK);
+    }
+    printf("corpus fnmatch locale=%s calls=%lu matches=%lu\n", locale, state.calls, state.matches);
+    return 0;
+}
+
+static int fnmatch_corpus(int trace)
+{
+    CHECK(fnmatch_corpus_locale("C", trace) == 0);
+    CHECK(fnmatch_corpus_locale("C.UTF-8", trace) == 0);
+    return 0;
+}
+
+#define GLOB_CORPUS "/corpus/outer/inner/tree"
+
+static struct corpus_state *glob_error_state;
+/* The final flag set's error callback requests an abort. */
+static int glob_error_abort;
+
+static int glob_corpus_error(const char *path, int code)
+{
+    struct corpus_state *state = glob_error_state;
+
+    corpus_fold_string(state, path);
+    corpus_fold(state, code);
+    if (state->trace) {
+        printf(" errfunc");
+        corpus_trace_bytes("path", path);
+        printf(" errno=%d", code);
+    }
+    return glob_error_abort;
+}
+
+static int glob_compare_paths(const void *left, const void *right)
+{
+    return strcmp(*(char *const *)left, *(char *const *)right);
+}
+
+static const char *const glob_fixed_patterns[] = {
+    "*", ".*", "?", "??", "a", "a*", "*b", "[ab]", "[!a]*", "d*", "d*/", "d*/*",
+    "*/*", "*/.*", "*/*/*", "d1/sub/*", "d1/*/z", "*/", ".", "..", "./a",
+    "../tree/a", "d1//x", "d1/./x", "missing", "missing/*", "*/missing",
+    "star\\*", "star*", "q\\?", "q?", "br[[]a]", "br\\[a]", "back\\\\slash",
+    "back\\slash", "\303\251*", "[\303\251]", "*\377*", "file.txt/",
+    "file.txt/*", "d2", "d2/", "d2/*", "dangling", "dangling/", "loop/*",
+    "blocked/*", "blocked", "[", "[a", "a[", "\\", "*\\", "d1/[.]y", "d1/.y",
+    "", "/", "//", "/corpus", "/corpus/", "/corpus/*/", "/corpus/*/*/tree//d1/x",
+    "~", "~/", "~/*", "~/../*", "~root", "~root/*", "~tester/*", "~missing",
+    "~missing/*", "\\~/*", "~\\root/*", "~ro*/*", "~/home.txt",
+};
+
+/* A component such as `.*` also matches `..`.  The tree sits three
+ * single-entry directories below `/corpus`, deeper than any generated pattern
+ * can climb, so no expansion lists the chroot root, which differs between the
+ * musl and dynamic-product roots. */
+static const char *const glob_component_tokens[] = {
+    "*", "*", "?", ".*", "a", "b", "d1", "d2", "d*", "[ab]", "[!a]*", "[d]?",
+    "sub", "x", ".y", "z", "star\\*", "q\\?", "br[[]a]", "\\a", "missing",
+    "file.txt", "dangling", "loop", "blocked", "\303\251", "*\377", ".", "..",
+    "[", "\\",
+};
+
+static const int glob_flag_sets[] = {
+    0, GLOB_MARK, GLOB_NOCHECK, GLOB_NOESCAPE, GLOB_PERIOD, GLOB_ERR,
+    GLOB_NOSORT, GLOB_MARK | GLOB_PERIOD, GLOB_NOCHECK | GLOB_NOESCAPE,
+    GLOB_MARK | GLOB_NOSORT | GLOB_DOOFFS, GLOB_ERR | GLOB_MARK | GLOB_NOCHECK,
+    GLOB_TILDE, GLOB_TILDE_CHECK, GLOB_TILDE | GLOB_NOCHECK | GLOB_MARK,
+    GLOB_NOCHECK,
+};
+
+static int glob_observe(struct corpus_state *state, const char *pattern)
+{
+    size_t flag;
+
+    for (flag = 0; flag != sizeof glob_flag_sets / sizeof *glob_flag_sets; ++flag) {
+        glob_t result;
+        size_t index;
+        int status;
+
+        memset(&result, 0, sizeof result);
+        result.gl_offs = 3;
+        glob_error_state = state;
+        glob_error_abort = flag + 1 == sizeof glob_flag_sets / sizeof *glob_flag_sets;
+        if (state->trace) {
+            printf("glob-trace");
+            corpus_trace_bytes("pattern", pattern);
+            printf(" flags=%d", glob_flag_sets[flag]);
+        }
+        status = glob(pattern, glob_flag_sets[flag], glob_corpus_error, &result);
+        ++state->calls;
+        corpus_fold(state, status);
+        corpus_fold(state, (long)result.gl_pathc);
+        if (state->trace) printf(" status=%d count=%zu", status, result.gl_pathc);
+        if (result.gl_pathv) {
+            size_t offset = (glob_flag_sets[flag] & GLOB_DOOFFS) ? result.gl_offs : 0;
+
+            for (index = 0; index != offset; ++index) CHECK(result.gl_pathv[index] == 0);
+            CHECK(result.gl_pathv[offset + result.gl_pathc] == 0);
+            if (glob_flag_sets[flag] & GLOB_NOSORT)
+                qsort(result.gl_pathv + offset, result.gl_pathc, sizeof *result.gl_pathv,
+                    glob_compare_paths);
+            for (index = 0; index != result.gl_pathc; ++index) {
+                corpus_fold_string(state, result.gl_pathv[offset + index]);
+                if (state->trace) corpus_trace_bytes("path", result.gl_pathv[offset + index]);
+            }
+            if (result.gl_pathc) ++state->matches;
+        }
+        if (state->trace) putchar('\n');
+        globfree(&result);
+    }
+    return 0;
+}
+
+static int glob_corpus_pass(struct corpus_state *state, const char *prefix,
+    const char *locale)
+{
+    size_t pattern;
+
+    for (pattern = 0; pattern != sizeof glob_fixed_patterns / sizeof *glob_fixed_patterns; ++pattern) {
+        char text[256];
+        size_t length = 0;
+
+        text[0] = 0;
+        CHECK(corpus_append(text, sizeof text, &length, prefix) == 0);
+        CHECK(corpus_append(text, sizeof text, &length, glob_fixed_patterns[pattern]) == 0);
+        CHECK(glob_observe(state, text) == 0);
+    }
+    corpus_block(state, prefix[0] ? "glob-fixed-absolute" : "glob-fixed-relative", locale, 0);
+    for (pattern = 0; pattern != CORPUS_BLOCK; ++pattern) {
+        char text[256];
+        size_t length = 0;
+        unsigned components = 1 + corpus_next(state) % 3;
+
+        text[0] = 0;
+        CHECK(corpus_append(text, sizeof text, &length, prefix) == 0);
+        while (components--) {
+            CHECK(corpus_append(text, sizeof text, &length, glob_component_tokens[corpus_next(state)
+                % (sizeof glob_component_tokens / sizeof *glob_component_tokens)]) == 0);
+            if (corpus_next(state) % 4 == 0)
+                CHECK(corpus_append(text, sizeof text, &length, glob_component_tokens[corpus_next(state)
+                    % (sizeof glob_component_tokens / sizeof *glob_component_tokens)]) == 0);
+            if (components || corpus_next(state) % 5 == 0)
+                CHECK(corpus_append(text, sizeof text, &length, corpus_next(state) % 7 ? "/" : "//") == 0);
+        }
+        CHECK(glob_observe(state, text) == 0);
+    }
+    corpus_block(state, prefix[0] ? "glob-random-absolute" : "glob-random-relative", locale, 0);
+    return 0;
+}
+
+static int glob_corpus(int trace)
+{
+    struct corpus_state state;
+
+    memset(&state, 0, sizeof state);
+    state.random = CORPUS_SEED;
+    state.digest = 0xcbf29ce484222325ULL;
+    state.trace = trace;
+    CHECK(setlocale(LC_CTYPE, "C") != 0);
+    CHECK(glob_corpus_pass(&state, GLOB_CORPUS "/", "C") == 0);
+    CHECK(setlocale(LC_CTYPE, "C.UTF-8") != 0);
+    CHECK(glob_corpus_pass(&state, GLOB_CORPUS "/", "C.UTF-8") == 0);
+    CHECK(chdir(GLOB_CORPUS) == 0);
+    CHECK(glob_corpus_pass(&state, "", "C.UTF-8") == 0);
+    CHECK(setlocale(LC_CTYPE, "C") != 0);
+    CHECK(glob_corpus_pass(&state, "", "C") == 0);
+    printf("corpus glob calls=%lu nonempty=%lu\n", state.calls, state.matches);
+    return 0;
+}
+
 static int run_selected_case(const char *selector)
 {
+    if (!strcmp(selector, "fnmatch-corpus")) return fnmatch_corpus(0);
+    if (!strcmp(selector, "fnmatch-corpus-trace")) return fnmatch_corpus(1);
+    if (!strcmp(selector, "glob-corpus")) return glob_corpus(0);
+    if (!strcmp(selector, "glob-corpus-trace")) return glob_corpus(1);
     if (!strcmp(selector, "fnmatch-escaped")) return matcher_escaped_wildcard_cases();
     if (!strcmp(selector, "fnmatch-range")) return matcher_range_case();
     if (!strcmp(selector, "fnmatch-nested-class")) return matcher_nested_class_case();

@@ -45,6 +45,26 @@ recursive-separator, and dangling-link marker/errno regressions each execute
 in a separate timeout-contained chroot child before the full workload, so one
 source-loop failure cannot conceal a later boundary.
 
+The `fnmatch-corpus` and `glob-corpus` selectors then compare the owned
+translation with pinned musl over a deterministic corpus. The fnmatch corpus
+runs fixed and fixed-seed generated patterns (literals, wildcards, escapes,
+bracket negation, ranges, classes, collating and equivalence spellings,
+unterminated brackets, slashes, periods, UTF-8, and invalid bytes) against
+fixed, generated, and pattern-derived subjects under all 32 combinations of
+the five public flags in `C` and `C.UTF-8`. The glob corpus expands fixed and
+generated patterns, absolute and relative, over the runner's `/corpus/outer/inner/tree`
+(hidden, metacharacter, UTF-8, and invalid-byte names; nested directories;
+directory, dangling, and looping links; a file used as a directory) under
+mark, no-check, no-escape, period, error, no-sort, offset, and tilde flags,
+with an error callback that continues or aborts. Each block prints one
+FNV-1a digest of every result, so the transcript is judged by comparison with
+musl; the `-trace` selector spellings print each observation.
+
+With `FNM_PATHNAME`, fnmatch.c's component scan advances by `pat_next`'s
+step, which is zero for an invalid multibyte pattern character, so musl never
+returns once the scan reaches one; the corpus therefore skips `FNM_PATHNAME`
+for patterns that are invalid in the current locale.
+
 Word-expansion preflight is covered by the separate installed `wordexp`
 component. Its `nocmd-source` selector in `owned_wordexp_probe.c` checks the
 owned evaluator's `WRDE_CMDSUB` result and musl's distinct `WRDE_BADCHAR`

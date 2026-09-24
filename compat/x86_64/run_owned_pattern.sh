@@ -20,6 +20,8 @@ readonly CASES=(
     glob-literal
     glob-nested
     glob-dangling-mark
+    fnmatch-corpus
+    glob-corpus
     all
 )
 
@@ -70,6 +72,26 @@ prepare_root() {
     chmod 755 "$root" "$root/etc" "$root/fixture" "$root/fixture/dir" \
         "$root/fixture/home" "$root/fixture/userhome"
     chmod 700 "$root/fixture/blocked"
+    mkdir -p "$root/corpus/outer/inner"
+    chmod 755 "$root/corpus" "$root/corpus/outer" "$root/corpus/outer/inner"
+    prepare_corpus_tree "$root/corpus/outer/inner/tree"
+}
+
+# The glob corpus tree: ordinary, hidden, metacharacter, UTF-8, and invalid-byte
+# names; nested directories; directory, dangling, and self-referential links;
+# and a file used as a directory component.
+prepare_corpus_tree() {
+    local tree="$1" name
+    mkdir -p "$tree/d1/sub" "$tree/blocked"
+    for name in a b ab A .hid file.txt 'star*' 'q?' 'br[a]' 'back\slash' \
+        $'\303\251' $'x\377' d1/x d1/.y d1/sub/z d1/sub/.w blocked/inner; do
+        : >"$tree/$name"
+    done
+    ln -s d1 "$tree/d2"
+    ln -s absent "$tree/dangling"
+    ln -s loop "$tree/loop"
+    chmod 755 "$tree" "$tree/d1" "$tree/d1/sub"
+    chmod 700 "$tree/blocked"
 }
 
 run_in_root() {
