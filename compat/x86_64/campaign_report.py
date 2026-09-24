@@ -33,6 +33,7 @@ import aarch64_parity_inventory as inventory
 import dynamic_product_contract as dynamic_product
 import generate_c_abi_evidence_matrix as c_abi_matrix
 import generate_qualification_manifest as qualification_manifest
+import static_product_contract as static_product
 import validate_parity_ledger as ledger
 import validate_loader_libc_tls_runtime_v1 as tls_runtime_v1
 
@@ -73,6 +74,9 @@ TLS_RUNTIME_V1_CHECK_COMMAND = (
 DYNAMIC_PRODUCT_CONTRACT_CHECK_COMMAND = (
     "python3 compat/x86_64/dynamic_product_contract.py --check"
 )
+STATIC_PRODUCT_CONTRACT_CHECK_COMMAND = (
+    "python3 compat/x86_64/static_product_contract.py --check"
+)
 
 
 class CampaignReportError(ValueError):
@@ -108,6 +112,7 @@ def load_validated_campaign_inputs() -> tuple[
     except (
         inventory.InventoryError,
         ledger.LedgerError,
+        static_product.StaticProductError,
         dynamic_product.ProductContractError,
         c_abi_matrix.MatrixError,
         qualification_manifest.QualificationManifestError,
@@ -163,6 +168,9 @@ def load_static_product_contract() -> dict[str, Any]:
         and all(isinstance(family, str) and family for family in value["prerequisite_families"]),
         "static product contract prerequisite_families are invalid",
     )
+    # The checked-in status is only "implemented-unqualified"; a published
+    # receipt for the current clean source is the sole qualification input.
+    value["qualification"] = static_product.load_current_report()
     return value
 
 
@@ -547,7 +555,12 @@ def build_report() -> dict[str, Any]:
         if dynamic_product_report["status"] == "materialized" and tls_runtime_v1_eligible
         else "planned"
     )
-    static_product_status = str(static_product_contract["status"])
+    static_product_report = static_product_contract["qualification"]
+    static_product_status = (
+        COMPLETED_STATUS
+        if static_product_report["status"] == static_product.QUALIFIED_STATUS
+        else "planned"
+    )
     qualification_requirements: list[str] = []
     for family_id in QUALIFICATION_CHAIN:
         for dependency in transitive_dependencies(family_id, families) + [family_id]:
@@ -590,7 +603,10 @@ def build_report() -> dict[str, Any]:
                 contract_status=static_product_status,
             ),
             "owner_family": static_anchor,
+            "product_state": static_product_report["status"],
             "modes": static_product_contract.get("mode"),
+            "coverage_obligations": static_product_report["coverage_obligations"],
+            "suite_cases": static_product_report["case_count"],
             "machine_gate_command": STATIC_PRODUCT_RUNNER_COMMAND,
         },
         "dynamic_product": {
@@ -677,6 +693,13 @@ def build_report() -> dict[str, Any]:
                 ],
                 "process_modes": list(tls_runtime_v1_report["process_modes"]),
                 "eligible_for_dynamic_product": tls_runtime_v1_eligible,
+            },
+            "static_product_contract_check": {
+                "command": STATIC_PRODUCT_CONTRACT_CHECK_COMMAND,
+                "status": static_product_report["status"],
+                "case_count": static_product_report["case_count"],
+                "evidence_path_count": static_product_report["evidence_path_count"],
+                "coverage_obligations": static_product_report["coverage_obligations"],
             },
             "dynamic_product_contract_check": {
                 "command": DYNAMIC_PRODUCT_CONTRACT_CHECK_COMMAND,

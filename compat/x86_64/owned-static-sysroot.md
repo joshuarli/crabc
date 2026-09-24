@@ -1,12 +1,80 @@
-# Private x86-64 owned static sysroot artifact
+# x86-64 owned static product
 
-`./scripts/dev-x86_64.sh owned-static-sysroot` proves one bounded installed
-Linux/x86-64 static TLS, allocator, and POSIX consumers in ordinary `ET_EXEC`
-and static-PIE `ET_DYN` modes, then repeats them from one extracted package. It is a
-verified prerequisite inside the still-planned `sysroot.static-tls` family and
-the still-planned `sysroot.owned-artifact` family, not either family’s
-completion and not public
-x86-64 support.
+`./scripts/dev-x86_64.sh owned-static-sysroot` is the owned static product
+gate. It builds two clean installed trees, then links and executes the finite
+suite declared in `compat/x86_64/static-product.toml` in ordinary static
+`ET_EXEC` and static-PIE `ET_DYN` modes, from the primary tree and from the
+tree extracted from its package, and writes a source-bound receipt. It is the
+native evidence of the still-planned `sysroot.static-tls` family and a
+prerequisite of the still-planned `sysroot.owned-artifact` family, not either
+family’s completion and not public x86-64 support.
+
+## Declared suite and receipt
+
+`static-product.toml` owns the product contract. Its `[[suite.case]]` roster
+names every consumer source and its two per-mode evidence paths; each
+`[[coverage.evidence]]` entry maps one coverage obligation to the cases that
+prove it. `static_product_contract.py` validates that every obligation is
+mapped, every case supports one, each probe is actually linked by the runner,
+and every path is rooted in its own mode job. After its own checks pass, the
+runner requires the set of executed links in both products to equal the
+declared roster exactly, then runs `static_product_contract.py collect`.
+
+`collect` copies compact evidence into a fresh
+`.work/x86_64/reports/owned-static-product/run.*/` directory: the three
+installed manifests, both tree hash lists, the pinned-musl references, the
+consumer matrix summary, both no-builtins link failures, and, per case and
+product, the link receipt and trace, ELF header/program-header/dynamic/
+relocation text, candidate hash, and consumer records. Link maps, symbol
+tables, and executables are bound by digest. `receipt.json` binds the
+retained file digests, both package digests, the live source digest (the
+dynamic product's nonignored-source rule), and the contract digest.
+
+`validate --receipt PATH` is the independent reader. It rehashes all retained
+evidence and requires the live source and contract to match, identical
+installed manifests and tree hash lists, identical packages, identical primary
+and extracted executables and records, and each case's own installed root and
+consumer directory in its link trace, including the owned
+`libcrabc-builtins.a(crabc-builtins.o)` member. It rejects an interpreter,
+dynamic dependency, executable stack, missing TLS/RELRO/stack segment, or a
+non-`R_X86_64_RELATIVE` static-PIE relocation. `publish --receipt PATH`
+requires a clean revision and atomically replaces
+`.work/x86_64/owned-static-qualification.json`. The campaign report treats the
+static product as qualified only while that publication validates for the
+current clean source; the checked-in status stays `implemented-unqualified`.
+Family completion additionally requires every prerequisite family completed.
+
+The product-level consumers added for the declared coverage are:
+
+- `owned_static_startup_probe.c`: constructor-time and `main` publication of
+  argv, `environ`/envp adjacency, and the musl program-name globals and their
+  aliases; every raw kernel auxv pair through `getauxval` without disturbing
+  errno, `ENOENT` for absent tags, and `AT_PHDR`/`AT_PHNUM`/`AT_ENTRY` against
+  `__ehdr_start` and `_start`; then the same facts after re-exec through
+  `/proc/self/exe`. The runner supplies empty, space-bearing, UTF-8, and
+  `=`-bearing strings.
+- `owned_static_termination_probe.c`: one process per route (`return`,
+  `exit`, worker `exit`, last-worker return after main `pthread_exit`,
+  `_Exit`, `_exit`, `quick_exit`, `abort` with and without a returning
+  handler, and default `SIGTERM`), recording status, constructor/atexit/
+  destructor order, and whether pending stdout and a fully buffered FILE were
+  flushed.
+- `owned_static_allocator_remote_probe.c`: four producers hand blocks from
+  every allocation family to four consumers that free, grow, or shrink them
+  while the owner lives; owners then allocate again and exit, and the initial
+  thread reallocates and frees their surviving blocks.
+- `owned_static_system_probe.c`: pathname, descriptor, metadata, directory,
+  and working-directory lifecycle; child exit/signal/stop/continue, process
+  groups, sessions, resource limits, and exec signal inheritance; signal
+  information, masks, coalescing and real-time queuing, handler flags,
+  alternate stacks, and synchronous waits; clocks, sleeps, POSIX and interval
+  timers, and POSIX-TZ calendar conversion; and `SCM_RIGHTS`, peer
+  credentials, Unix-domain stream sockets, and loopback UDP.
+
+Each compares its complete transcript with a static `ET_EXEC` pinned-musl
+image. Successful-allocation errno preservation is not asserted by the
+cross-thread consumer: that is the allocator C ABI boundary's contract.
+The missing-builtins relink is checked in both static modes.
 
 ## Installed contract
 
@@ -438,15 +506,15 @@ mandatory check; serial-versus-parallel timing is opt-in, not extra default work
 
 ## Deliberately unselected
 
-This tree has a deliberately narrow planned static driver and one private
-dual-mode package/extracted-smoke seed, but no shared libc, dynamic loader,
+This tree has a deliberately narrow static driver and one private dual-mode
+package/extracted-smoke product, but no shared libc, dynamic loader,
 compatibility loader alias, dynamic link mode, complete libc archive closure,
 complete compiler-helper profile, or complete static-and-dynamic distribution
-artifact. The driver has not yet proven the full static product's coverage
-suite, including complete allocator lifecycle, pthread, stdio, filesystem, socket, and
-resolver obligations. Those remain requirements of the planned families in
-`compat/x86_64/parity.toml`. The artifact does not change x86 promotion or
-public-support state.
+artifact. The declared suite proves the static product's coverage obligations
+only as composed installed behavior; each family's complete semantics remain
+the requirements of its own gate in `compat/x86_64/parity.toml`. Neither the
+artifact nor a published receipt changes x86 promotion or public-support
+state.
 
 The focused `owned-pthread-join-cancel` command qualifies `pthread_join`,
 `pthread_tryjoin_np`, and `pthread_timedjoin_np` against pinned musl through

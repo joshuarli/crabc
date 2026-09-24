@@ -19953,10 +19953,10 @@ depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.posix-runti
 category = "runtime-artifact"
 description = "Installed static pthread/TLS program behavior through the sealed x86 application sysroot."
 aarch64_gates = ["static-pthread-tls", "sysroot"]
-source_owners = ["compat/static-pthread-tls", "scripts/build_owned_sysroot.py", "crt", "libc", "builtins"]
+source_owners = ["compat/static-pthread-tls", "scripts/build_owned_sysroot.py", "crt", "libc", "builtins", "compat/x86_64/static-product.toml", "compat/x86_64/static_product_contract.py", "compat/x86_64/run_owned_static_sysroot.sh"]
 x86_abi_prerequisites = ["x86 static TLS model", "%fs TLS base", "pthread TLS destructor and startup ordering"]
 x86_header_prerequisites = ["Owned pthread and TLS header declarations must compile and link without ambient target runtime inputs."]
-native_evidence = [{ state = "required", command = "Define native x86 sealed static-pthread-TLS gate", scope = "Must execute a program through the installed x86 sysroot, not a source-only TLS probe." }]
+native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh owned-static-sysroot", scope = "Owned static product gate: two clean byte-identical installed trees and packages, then every case declared in compat/x86_64/static-product.toml linked by the sealed installed driver and executed in static ET_EXEC and static PIE from the primary and extracted trees, each with link receipt/map/trace, ELF, and pinned-musl comparison evidence. Family completion additionally requires every prerequisite family completed and a published source-bound receipt for the current clean revision; the receipt never promotes the family, x86, or public x86 support by itself." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "Static pthread/TLS behavior oracle." }]
 capabilities = []
 status = "planned"

@@ -652,7 +652,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-cond-timed  test timed/shared condition transactions and mutex handoffs
   owned-pthread-mutex  test owned recursive, error-checking, and timed mutex behavior
   owned-pthread-lifecycle  run pinned-musl and installed pthread lifetime consumers
-  owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
+  owned-static-sysroot  build twice and run the declared owned static product suite; write its receipt
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
   lua-dynamic-source-build  qualify pinned Lua through installed/extracted x86 dynamic sysroots
   lua-source-build-admission  validate both physical current-source Lua lane reports and product identities

@@ -1,8 +1,10 @@
-# This is the planned campaign-level owned-static product contract.  It is not
-# evidence that the private owned-static-sysroot artifact completes a family.
+# Campaign-level owned-static product contract. The installed-product runner
+# implements the declared suite; only a live source-bound receipt validated and
+# published by `static_product_contract.py` qualifies the product. Product
+# qualification never completes a family or promotes x86 support by itself.
 schema = "crabc.x86_64-owned-static-product/v1"
 owner_family = "sysroot.static-tls"
-status = "planned"
+status = "implemented-unqualified"
 static_family_ids = ["crt.static-pie", "sysroot.static-tls"]
 prerequisite_families = [
   "oracle.musl-toolchain",
@@ -88,3 +90,240 @@ required = [
   "constructors destructors atexit-class behavior and ordinary/immediate termination",
   "owned compiler helper whose link fails without libcrabc-builtins.a",
 ]
+
+# The finite suite executed by the runner in both static modes against the
+# primary installed tree and the tree extracted from its package. Each path
+# is one sealed-driver link with its own receipt, map, trace, and ELF proof.
+[suite]
+runner = "compat/x86_64/run_owned_static_sysroot.sh"
+command = "./scripts/dev-x86_64.sh owned-static-sysroot"
+products = ["primary", "extracted"]
+mode_paths = ["static-et-exec", "static-pie"]
+compiler_helper_rejection = ["static-et-exec", "static-pie"]
+
+[[suite.case]]
+id = "tls-lifecycle"
+probe = "compat/x86_64/libc_crt_static_tls_probe.c"
+paths = ["static-et-exec", "static-pie"]
+
+[[suite.case]]
+id = "pthread-composition"
+probe = "compat/x86_64/libc_pthread_tls_aggregate_probe.c"
+paths = ["static-et-exec/pthread", "static-pie/pthread"]
+
+[[suite.case]]
+id = "pthread-signal"
+probe = "compat/x86_64/owned_pthread_signal_probe.c"
+paths = ["static-et-exec/pthread-signal", "static-pie/pthread-signal"]
+
+[[suite.case]]
+id = "pthread-lifecycle"
+probe = "compat/x86_64/owned_pthread_lifecycle_consumer.c"
+paths = ["static-et-exec/lifecycle", "static-pie/lifecycle"]
+
+[[suite.case]]
+id = "io-cancellation"
+probe = "compat/x86_64/owned_io_cancellation_probe.c"
+paths = ["static-et-exec/cancellation", "static-pie/cancellation"]
+
+[[suite.case]]
+id = "descriptor-cancellation"
+probe = "compat/x86_64/owned_descriptor_cancellation_probe.c"
+paths = ["static-et-exec/descriptor-cancellation", "static-pie/descriptor-cancellation"]
+
+[[suite.case]]
+id = "socket-cancellation"
+probe = "compat/x86_64/owned_socket_cancellation_probe.c"
+paths = ["static-et-exec/socket-cancellation", "static-pie/socket-cancellation"]
+
+[[suite.case]]
+id = "sleep-wait-cancellation"
+probe = "compat/x86_64/owned_sleep_wait_cancellation_probe.c"
+paths = ["static-et-exec/sleep-wait-cancellation", "static-pie/sleep-wait-cancellation"]
+
+[[suite.case]]
+id = "open-lock-cancellation"
+probe = "compat/x86_64/owned_open_lock_cancellation_probe.c"
+paths = ["static-et-exec/open-lock-cancellation", "static-pie/open-lock-cancellation"]
+
+[[suite.case]]
+id = "sysv-message-cancellation"
+probe = "compat/x86_64/owned_sysv_message_cancellation_probe.c"
+paths = ["static-et-exec/sysv-message-cancellation", "static-pie/sysv-message-cancellation"]
+
+[[suite.case]]
+id = "entropy-cancellation"
+probe = "compat/x86_64/owned_entropy_cancellation_probe.c"
+paths = ["static-et-exec/entropy-cancellation", "static-pie/entropy-cancellation"]
+
+[[suite.case]]
+id = "signal-wait-cancellation"
+probe = "compat/x86_64/owned_signal_wait_cancellation_probe.c"
+paths = ["static-et-exec/signal-wait-cancellation", "static-pie/signal-wait-cancellation"]
+
+[[suite.case]]
+id = "semaphore-wait-cancellation"
+probe = "compat/x86_64/owned_semaphore_wait_cancellation_probe.c"
+paths = ["static-et-exec/semaphore-wait-cancellation", "static-pie/semaphore-wait-cancellation"]
+
+[[suite.case]]
+id = "semaphore-cancellation"
+probe = "compat/x86_64/owned_semaphore_cancellation_probe.c"
+paths = ["static-et-exec/semaphore-cancellation", "static-pie/semaphore-cancellation"]
+
+[[suite.case]]
+id = "allocator-basic"
+probe = "compat/x86_64/libc_allocator_basic_runtime_v1_probe.c"
+paths = ["allocator-et-exec", "allocator-pie"]
+
+[[suite.case]]
+id = "allocator-remote"
+probe = "compat/x86_64/owned_static_allocator_remote_probe.c"
+paths = ["allocator-et-exec/remote", "allocator-pie/remote"]
+
+[[suite.case]]
+id = "posix-composition"
+probe = "compat/x86_64/owned_static_posix_probe.c"
+paths = ["posix-et-exec", "posix-pie"]
+
+[[suite.case]]
+id = "temporary-objects"
+probe = "compat/x86_64/owned_temp_objects_probe.c"
+paths = ["posix-et-exec/temp", "posix-pie/temp"]
+
+[[suite.case]]
+id = "spawn"
+probe = "compat/x86_64/owned_spawn_probe.c"
+paths = ["posix-et-exec/spawn", "posix-pie/spawn"]
+
+[[suite.case]]
+id = "filesystem-clients"
+probe = "compat/x86_64/owned_static_filesystem_consumer.c"
+paths = ["posix-et-exec/filesystem", "posix-pie/filesystem"]
+
+[[suite.case]]
+id = "ipc-readiness"
+probe = "compat/x86_64/owned_static_ipc_readiness_consumer.c"
+paths = ["posix-et-exec/ipc", "posix-pie/ipc"]
+
+[[suite.case]]
+id = "calendar"
+probe = "compat/x86_64/owned_calendar_probe.c"
+paths = ["posix-et-exec/calendar", "posix-pie/calendar"]
+
+[[suite.case]]
+id = "timezone-tzif"
+probe = "compat/x86_64/owned_timezone_tzif_probe.c"
+paths = ["posix-et-exec/tzif", "posix-pie/tzif"]
+
+[[suite.case]]
+id = "system-composition"
+probe = "compat/x86_64/owned_static_system_probe.c"
+paths = ["posix-et-exec/system", "posix-pie/system"]
+
+[[suite.case]]
+id = "stdio-streams"
+probe = "compat/x86_64/owned_static_stdio_probe.c"
+paths = ["stdio-et-exec", "stdio-pie"]
+
+[[suite.case]]
+id = "stdio-backends"
+probe = "compat/x86_64/owned_stdio_backends_probe.c"
+paths = ["stdio-et-exec/backends", "stdio-pie/backends"]
+
+[[suite.case]]
+id = "stdio-process"
+probe = "compat/x86_64/owned_stdio_process_probe.c"
+paths = ["stdio-et-exec/process", "stdio-pie/process"]
+
+[[suite.case]]
+id = "wide-stdio"
+probe = "compat/x86_64/owned_wide_stdio_probe.c"
+paths = ["stdio-et-exec/wide", "stdio-pie/wide"]
+
+[[suite.case]]
+id = "stdio-extensions"
+probe = "compat/x86_64/owned_stdio_extensions_probe.c"
+paths = ["stdio-et-exec/extensions", "stdio-pie/extensions"]
+
+[[suite.case]]
+id = "resolver"
+probe = "compat/x86_64/libc_resolver_runtime_probe.c"
+paths = ["resolver-et-exec", "resolver-pie"]
+
+[[suite.case]]
+id = "printf"
+probe = "compat/x86_64/owned_static_printf_probe.c"
+paths = ["printf-et-exec", "printf-pie"]
+
+[[suite.case]]
+id = "printf-float"
+probe = "compat/x86_64/owned_static_printf_float_probe.c"
+paths = ["printf-et-exec/float", "printf-pie/float"]
+
+[[suite.case]]
+id = "scanf"
+probe = "compat/x86_64/owned_static_scanf_probe.c"
+paths = ["printf-et-exec/scan", "printf-pie/scan"]
+
+[[suite.case]]
+id = "wide-format"
+probe = "compat/x86_64/owned_wide_format_probe.c"
+paths = ["printf-et-exec/wide", "printf-pie/wide"]
+
+[[suite.case]]
+id = "startup-publication"
+probe = "compat/x86_64/owned_static_startup_probe.c"
+paths = ["startup-et-exec", "startup-pie"]
+
+[[suite.case]]
+id = "termination"
+probe = "compat/x86_64/owned_static_termination_probe.c"
+paths = ["startup-et-exec/termination", "startup-pie/termination"]
+
+# Every coverage obligation names the suite cases whose physical evidence
+# the receipt collector and reader require for both modes and products.
+[[coverage.evidence]]
+requirement = "argument environment auxiliary-vector and program-name publication"
+cases = ["startup-publication"]
+
+[[coverage.evidence]]
+requirement = "Initial TLS errno and high-alignment initialized and zero-filled TLS"
+cases = ["tls-lifecycle", "pthread-composition"]
+
+[[coverage.evidence]]
+requirement = "allocator allocation alignment reallocation failure and remote-thread ownership"
+cases = ["allocator-basic", "allocator-remote"]
+
+[[coverage.evidence]]
+requirement = "pthread/C11 creation join/detach synchronization once TSD cancellation atfork/fork and exit behavior"
+cases = ["pthread-composition", "pthread-signal", "pthread-lifecycle", "io-cancellation", "descriptor-cancellation", "socket-cancellation", "sleep-wait-cancellation", "open-lock-cancellation", "sysv-message-cancellation", "entropy-cancellation", "signal-wait-cancellation", "semaphore-wait-cancellation", "semaphore-cancellation"]
+
+[[coverage.evidence]]
+requirement = "stdio creation buffering byte/block/formatted operations positions errors and exit flushing"
+cases = ["stdio-streams", "stdio-backends", "stdio-process", "wide-stdio", "stdio-extensions", "printf", "printf-float", "scanf", "wide-format"]
+
+[[coverage.evidence]]
+requirement = "pathname descriptor directory metadata process signal and time paths"
+cases = ["posix-composition", "temporary-objects", "spawn", "filesystem-clients", "calendar", "timezone-tzif", "system-composition"]
+
+[[coverage.evidence]]
+requirement = "local socket transport and bounded resolver behavior"
+cases = ["ipc-readiness", "system-composition", "resolver"]
+
+[[coverage.evidence]]
+requirement = "constructors destructors atexit-class behavior and ordinary/immediate termination"
+cases = ["tls-lifecycle", "termination"]
+
+[[coverage.evidence]]
+requirement = "owned compiler helper whose link fails without libcrabc-builtins.a"
+cases = ["tls-lifecycle"]
+
+[qualification]
+validator = "compat/x86_64/static_product_contract.py"
+receipt = "source-bound receipt under .work/x86_64/reports/owned-static-product"
+publication = ".work/x86_64/owned-static-qualification.json"
+source = "live nonignored source content and modes; clean revision at publication"
+family_completion = false
+promotion_ready = false
+public_support = false

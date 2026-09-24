@@ -79465,11 +79465,13 @@ def require_closed_static_leaf_artifacts(
 def validate_static_product_contract(
     contract: Mapping[str, Any], families: Mapping[str, Mapping[str, Any]]
 ) -> dict[str, Any]:
-    """Validate the planned owned-static product without promoting its owner.
+    """Validate the implemented owned-static product without promoting its owner.
 
     The private owned-static-sysroot artifacts remain evidence for their narrow
     installed vertical.  This separate contract defines the broader product
     gate that must close before ``sysroot.static-tls`` can become complete.
+    Its suite roster, coverage map, and receipt boundary are validated by
+    ``static_product_contract.py``; only a published live receipt qualifies it.
     """
 
     require(
@@ -79485,6 +79487,8 @@ def validate_static_product_contract(
             "reproducibility",
             "extracted_smoke",
             "coverage",
+            "suite",
+            "qualification",
         },
         "static product contract keys drifted",
     )
@@ -79497,8 +79501,8 @@ def validate_static_product_contract(
         "static product owner must be sysroot.static-tls",
     )
     require(
-        contract.get("status") == "planned",
-        "static product contract must remain planned",
+        contract.get("status") == "implemented-unqualified",
+        "checked-in static product contract must remain implemented-unqualified",
     )
 
     static_family_ids = string_list(
@@ -79535,10 +79539,7 @@ def validate_static_product_contract(
         "static product names an unknown prerequisite family",
     )
     owner = families["sysroot.static-tls"]
-    require(
-        owner.get("status") == "planned",
-        "static product owner must remain planned",
-    )
+    require_static_tls_family_evidence(owner, families)
     owner_dependencies = string_list(
         owner.get("depends_on"), "family[sysroot.static-tls].depends_on"
     )
@@ -79685,7 +79686,7 @@ def validate_static_product_contract(
     )
     coverage = contract.get("coverage")
     require(isinstance(coverage, Mapping), "static_product.coverage must be a table")
-    require(set(coverage) == {"required"}, "static_product.coverage keys drifted")
+    require(set(coverage) == {"required", "evidence"}, "static_product.coverage keys drifted")
     require(
         tuple(string_list(coverage.get("required"), "static_product.coverage.required"))
         == (
@@ -79701,11 +79702,66 @@ def validate_static_product_contract(
         ),
         "static product coverage contract drifted",
     )
+    import static_product_contract as static_product
+
+    try:
+        suite_report = static_product.validate_contract(contract)
+    except static_product.StaticProductError as error:
+        raise LedgerError(f"static product suite contract rejected: {error}") from error
     return {
         "owner_family": "sysroot.static-tls",
         "modes": len(actual_modes),
         "coverage_obligations": len(coverage["required"]),
+        "suite_cases": suite_report["case_count"],
     }
+
+
+def require_static_tls_family_evidence(
+    family: Mapping[str, Any], families: Mapping[str, Mapping[str, Any]]
+) -> None:
+    """Bind ``sysroot.static-tls`` to the owned static product gate.
+
+    While planned, the family names the real product runner as required
+    evidence. Completion additionally needs a published static product receipt
+    for the current clean source and every prerequisite family completed; a
+    status edit or a stale receipt is never enough.
+    """
+    status = family.get("status")
+    require(status in ALLOWED_STATUSES, "sysroot.static-tls status is invalid")
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list) and len(evidence) == 1 and isinstance(evidence[0], Mapping)
+        and set(evidence[0]) == {"state", "command", "scope"}
+        and evidence[0].get("command") == "./scripts/dev-x86_64.sh owned-static-sysroot"
+        and evidence[0].get("state") == ("required" if status == "planned" else "verified"),
+        "sysroot.static-tls must name the owned static product gate as its evidence",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and "compat/x86_64/static-product.toml" in scope
+        and "published source-bound receipt" in scope
+        and "public x86 support" in scope,
+        "sysroot.static-tls evidence scope must name the declared suite and receipt boundary",
+    )
+    if status == "planned":
+        return
+    incomplete = [
+        dependency
+        for dependency in family.get("depends_on", [])
+        if families[dependency].get("status") != "foundation-verified"
+    ]
+    require(not incomplete, f"sysroot.static-tls cannot complete before {', '.join(incomplete)}")
+    import static_product_contract as static_product
+
+    try:
+        receipt = static_product.load_publication()
+    except static_product.StaticProductError as error:
+        raise LedgerError(f"sysroot.static-tls publication rejected: {error}") from error
+    require(
+        receipt is not None,
+        "foundation-verified sysroot.static-tls needs a published static product receipt for current clean source",
+    )
 
 
 def require_signal_header_trace_ownership(family: Mapping[str, Any]) -> None:

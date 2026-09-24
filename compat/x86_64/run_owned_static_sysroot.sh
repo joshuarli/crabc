@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Private installed Linux/x86-64 static sysroot and pthread/TLS consumer gate.
+# Owned Linux/x86-64 static product gate.
 #
 # Two clean builds must produce byte-identical regular-file trees. The actual
-# consumer setup first proves header isolation, then each independent TLS,
-# allocator, POSIX, stdio, resolver, and positional-printf job compiles, links,
-# and executes through the installed sealed driver in both ET_EXEC and
-# static-PIE modes. It also packs and safely extracts the regular-file tree
-# before running the same matrix.
-# This remains a narrow non-promoting product slice: no loader, libc.so,
-# dynamic mode, family completion, x86 promotion, or public-support claim.
+# consumer setup first proves header isolation, then every case declared by
+# compat/x86_64/static-product.toml (startup publication, TLS, allocator,
+# pthread/cancellation, POSIX/system, stdio/formatting, resolver, and
+# termination consumers) compiles, links, and executes through the installed
+# sealed driver in both ET_EXEC and static-PIE modes. It also packs and safely
+# extracts the regular-file tree before running the same matrix, then writes a
+# source-bound receipt through static_product_contract.py.
+# A receipt qualifies only the static product: no loader, libc.so, dynamic
+# mode, family completion, x86 promotion, or public-support claim.
 set -euo pipefail
 # The stack-protector negative child deliberately faults; do not leave cores
 # in the checkout or make parallel test runs compete for a core filename.
@@ -25,22 +27,7 @@ readonly CONSUMER_MATRIX="$ROOT_DIR/compat/x86_64/owned_static_consumer_matrix.p
 readonly CONSUMER_MATRIX_DEFAULT_WORKERS=4
 readonly CONSUMER_MATRIX_MAX_WORKERS=8
 readonly CONSUMER_MATRIX_TIMEOUT_SECONDS=300
-readonly -a CONSUMER_EVIDENCE_PATHS=(
-    static-et-exec static-pie
-    static-et-exec/pthread static-pie/pthread static-et-exec/lifecycle static-pie/lifecycle
-    allocator-et-exec allocator-pie posix-et-exec posix-pie
-    posix-et-exec/temp posix-pie/temp posix-et-exec/spawn posix-pie/spawn
-    posix-et-exec/calendar posix-pie/calendar posix-et-exec/tzif posix-pie/tzif
-    posix-et-exec/filesystem posix-pie/filesystem
-    posix-et-exec/ipc posix-pie/ipc
-    stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends
-    stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie
-    stdio-et-exec/wide stdio-pie/wide
-    stdio-et-exec/extensions stdio-pie/extensions
-    printf-et-exec printf-pie printf-et-exec/float printf-pie/float
-    printf-et-exec/scan printf-pie/scan
-    printf-et-exec/wide printf-pie/wide
-)
+readonly STATIC_PRODUCT_CONTRACT="$ROOT_DIR/compat/x86_64/static_product_contract.py"
 readonly ELF64_PROGRAM_HEADER_SIZE=56
 readonly ELF64_PROGRAM_HEADER_COUNT_OFFSET=56
 readonly ELF64_PROGRAM_HEADER_OFFSET=32
@@ -701,6 +688,48 @@ for offset in range(0, len(data), 96):
 PY
 }
 
+# The startup consumer observes these exact vectors. Empty, space-bearing,
+# UTF-8, and `=`-bearing strings are part of the compared transcript, and the
+# oracle and every owned arm receive the same bytes.
+run_startup_publication() {
+    local binary="$1"
+    local output="$2"
+
+    timeout 30 env -i CRABC_STATIC_STARTUP=published CRABC_EMPTY= CRABC_EQUALS=a=b \
+        "$binary" alpha '' 'two words' "$(printf '\303\274-utf8')" >"$output"
+}
+
+# One process per termination route, in a fixed order. The transcript records
+# the shell-observed status (128+signal for a signal death), the ordering
+# markers and pending stdio text on stdout, stderr, and the fully buffered
+# FILE's bytes. Core dumps stay disabled for the deliberate SIGABRT routes.
+write_termination_transcript() {
+    local binary="$1"
+    local scratch="$2"
+    local output="$3"
+    local route status
+
+    mkdir "$scratch"
+    : >"$output"
+    for route in return exit worker-exit main-pthread-exit _Exit _exit quick_exit \
+        abort abort-handled signal; do
+        set +e
+        (ulimit -c 0; exec timeout 30 env -i "$binary" "$route" "$scratch/$route.file" \
+            >"$scratch/$route.stdout" 2>"$scratch/$route.stderr")
+        status=$?
+        set -e
+        {
+            printf 'route=%s status=%s\nstdout=' "$route" "$status"
+            cat "$scratch/$route.stdout"
+            printf '\nstderr='
+            cat "$scratch/$route.stderr"
+            printf '\nfile='
+            cat "$scratch/$route.file"
+            printf '\n'
+        } >>"$output"
+    done
+}
+
 seed_resolver_fixture() {
     local fixture_root="$1"
 
@@ -866,6 +895,29 @@ run_static_mode() {
             expected_output=ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT
             minimum_tls_alignment=1
             ;;
+        allocator-remote)
+            probe=owned_static_allocator_remote_probe.c
+            expected_output=owned-allocator-remote-ok
+            minimum_tls_alignment=1
+            ;;
+        startup)
+            # The top-level job receives the shared reference prefix; its
+            # nested termination job receives the exact termination record.
+            probe=owned_static_startup_probe.c
+            minimum_tls_alignment=1
+            [ -f "$printf_matrix_reference.startup" ] || fail "${label} startup reference is missing"
+            ;;
+        termination)
+            probe=owned_static_termination_probe.c
+            minimum_tls_alignment=1
+            [ -f "$printf_matrix_reference" ] || fail "${label} termination reference is missing"
+            ;;
+        system)
+            probe=owned_static_system_probe.c
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/system-scratch")
+            [ -f "$printf_matrix_reference" ] || fail "${label} system reference is missing"
+            ;;
         posix)
             probe=owned_static_posix_probe.c
             expected_output='owned-static-posix: PASS'
@@ -984,6 +1036,8 @@ run_static_mode() {
     elif [ "$consumer_kind" = filesystem ]; then
         mkdir "$mode_root/directory" "$mode_root/directory/nested"
         touch "$mode_root/directory/alpha" "$mode_root/directory/beta"
+    elif [ "$consumer_kind" = system ]; then
+        mkdir "$mode_root/system-scratch"
     fi
     (
         cd "$mode_root"
@@ -1019,7 +1073,24 @@ run_static_mode() {
     assert_final_static_image "$candidate" "$mode" "$mode_root/file-header" \
         "$mode_root/program-headers" "$mode_root/dynamic" "$mode_root/symbols" \
         "$mode_root/relocations" "$minimum_tls_alignment"
-    if [ "$consumer_kind" = calendar ]; then
+    if [ "$consumer_kind" = startup ]; then
+        run_startup_publication "$candidate" "$mode_root/startup-records" ||
+            fail "${label} startup publication candidate failed"
+        cmp "$printf_matrix_reference.startup" "$mode_root/startup-records" ||
+            fail "${label} startup publication differs from pinned musl"
+    elif [ "$consumer_kind" = termination ]; then
+        write_termination_transcript "$candidate" "$mode_root/termination-scratch" \
+            "$mode_root/termination-records"
+        cmp "$printf_matrix_reference" "$mode_root/termination-records" ||
+            fail "${label} termination routes differ from pinned musl"
+    elif [ "$consumer_kind" = system ]; then
+        timeout 60 env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/system-records" ||
+            fail "${label} filesystem/process/signal/time/socket candidate failed"
+        cmp "$printf_matrix_reference" "$mode_root/system-records" ||
+            fail "${label} filesystem/process/signal/time/socket records differ from pinned musl"
+        [ -z "$(find "$mode_root/system-scratch" -mindepth 1 -print -quit)" ] ||
+            fail "${label} system consumer retained scratch entries"
+    elif [ "$consumer_kind" = calendar ]; then
         env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/calendar-records" ||
             fail "${label} calendar candidate failed"
         cmp "$printf_matrix_reference" "$mode_root/calendar-records" ||
@@ -1154,25 +1225,47 @@ run_static_mode() {
             "$label calendar" calendar "$printf_matrix_reference.calendar"
         run_static_mode "$installed_root" "$mode" "$mode_root/tzif" \
             "$label timezone specification" timezone-tzif
+        run_static_mode "$installed_root" "$mode" "$mode_root/system" \
+            "$label filesystem/process/signal/time/socket composition" system \
+            "$printf_matrix_reference.system"
+    fi
+    if [ "$consumer_kind" = allocator ]; then
+        run_static_mode "$installed_root" "$mode" "$mode_root/remote" \
+            "$label cross-thread ownership" allocator-remote
+    fi
+    if [ "$consumer_kind" = startup ]; then
+        run_static_mode "$installed_root" "$mode" "$mode_root/termination" \
+            "$label termination routes" termination "$printf_matrix_reference.termination"
     fi
     assert_malformed_tls_rejected "$candidate" "$label"
     sha256sum "$candidate" | awk '{ print $1 }' >"$mode_root/candidate.sha256"
 }
 
+# Relink one mode's exact consumer objects with the owned runtime inputs except
+# libcrabc-builtins.a. The selected compiler-helper boundary must be the
+# failure; a successful link would mean an ambient or libc-internal helper.
 assert_missing_builtins_rejected() {
     local installed_root="$1"
     local mode_root="$2"
+    local mode="$3"
+    local entry
+    local -a mode_flags
 
-    if "$link_editor" -static --no-dynamic-linker --no-undefined -e _start \
-        "$installed_root/usr/lib/crt1.o" "$installed_root/usr/lib/crti.o" \
+    case "$mode" in
+        -static) mode_flags=(-static); entry=crt1.o ;;
+        -static-pie) mode_flags=(-static -pie); entry=rcrt1.o ;;
+        *) fail "unknown missing-builtins mode: $mode" ;;
+    esac
+    if "$link_editor" "${mode_flags[@]}" --no-dynamic-linker --no-undefined -e _start \
+        "$installed_root/usr/lib/$entry" "$installed_root/usr/lib/crti.o" \
         "$mode_root/probe.o" "$mode_root/peer.o" "$mode_root/builtins.o" \
         "$installed_root/usr/lib/libc.a" "$installed_root/usr/lib/crtn.o" \
         -o "$mode_root/without-builtins" >"$mode_root/without-builtins.stdout" \
         2>"$mode_root/without-builtins.stderr"; then
-        fail "consumer unexpectedly linked without installed compiler helpers"
+        fail "${mode} consumer unexpectedly linked without installed compiler helpers"
     fi
     grep -Fq '__udivti3' "$mode_root/without-builtins.stderr" ||
-        fail "missing-builtins link did not fail at the selected helper boundary"
+        fail "${mode} missing-builtins link did not fail at the selected helper boundary"
 }
 
 write_consumer_matrix_manifest() {
@@ -1210,6 +1303,8 @@ consumer_specs = (
     ("resolver", "resolver-pie", "-static-pie", "resolver static PIE", "static-pie"),
     ("printf", "printf-et-exec", "-static", "positional printf ET_EXEC", "et-exec"),
     ("printf", "printf-pie", "-static-pie", "positional printf static PIE", "static-pie"),
+    ("startup", "startup-et-exec", "-static", "startup/termination ET_EXEC", "et-exec"),
+    ("startup", "startup-pie", "-static-pie", "startup/termination static PIE", "static-pie"),
 )
 for tree_name, installed_root, consumer_root in (
     ("primary", primary, primary_consumer),
@@ -1225,7 +1320,7 @@ for tree_name, installed_root, consumer_root in (
             label if tree_name == "primary" else f"extracted {label}",
             kind,
         ]
-        if kind in ("printf", "stdio", "posix", "tls"):
+        if kind in ("printf", "stdio", "posix", "tls", "startup"):
             argv.append(str(printf_matrix_reference))
         jobs.append(
             {
@@ -1276,7 +1371,7 @@ compare_consumer_matrix_runs() {
     # the serial/parallel comparison an additional determinism check rather
     # than just a timing report, while both passes reuse the same cold-built
     # primary and extracted trees.
-    for mode_root in "${CONSUMER_EVIDENCE_PATHS[@]}"; do
+    for mode_root in "${suite_paths[@]}"; do
         cmp "$serial_primary/$mode_root/candidate.sha256" \
             "$parallel_primary/$mode_root/candidate.sha256" ||
             fail "${mode_root} primary output differs between serial and parallel consumers"
@@ -1304,10 +1399,10 @@ def read_summary(path: Path, expected_workers: int) -> tuple[float, list[str]]:
         value.get("schema") != 1
         or value.get("workers") != expected_workers
         or not isinstance(jobs, list)
-        or len(jobs) != 24
+        or len(jobs) != 28
         or any(not isinstance(job, dict) or job.get("status") != "passed" for job in jobs)
     ):
-        raise SystemExit(f"consumer timing summary is not a complete passing 24-job run: {path}")
+        raise SystemExit(f"consumer timing summary is not a complete passing 28-job run: {path}")
     elapsed = value.get("elapsed_seconds")
     if not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed) or elapsed <= 0:
         raise SystemExit(f"consumer timing summary has no finite elapsed time: {path}")
@@ -1412,6 +1507,13 @@ done
 [ -f "$PACKAGE" ] || fail "missing x86 owned-sysroot package helper"
 [ -f "$CONSUMER_MATRIX" ] || fail "missing owned-static consumer matrix helper"
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
+[ -f "$STATIC_PRODUCT_CONTRACT" ] || fail "missing static product contract validator"
+python3 -B "$STATIC_PRODUCT_CONTRACT" --check >/dev/null
+mapfile -t suite_paths < <(python3 -B "$STATIC_PRODUCT_CONTRACT" --suite-paths)
+[ "${#suite_paths[@]}" -gt 0 ] || fail "static product contract declares no suite paths"
+# The receipt binds the source observed before the first build; collection
+# fails if any nonignored source changed while the product was built or run.
+started_source_sha256="$(python3 -B "$STATIC_PRODUCT_CONTRACT" --source-digest)"
 if command -v ld.lld >/dev/null 2>&1; then
     link_editor=ld.lld
 else
@@ -1424,7 +1526,8 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 python3 -B -m unittest -v \
     scripts.tests.test_build_x86_64_owned_sysroot \
     compat.x86_64.tests.test_owned_static_sysroot_package \
-    compat.x86_64.tests.test_owned_static_consumer_matrix
+    compat.x86_64.tests.test_owned_static_consumer_matrix \
+    compat.x86_64.tests.test_static_product_suite
 
 work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-owned-static-sysroot.XXXXXX")"
 chmod 2770 "$work_dir"
@@ -1746,6 +1849,37 @@ timeout 30s env -i "$header_consumer/ipc-reference" >"$header_consumer/ipc-refer
 timeout 20s env -i "$header_consumer/pthread-reference" >"$header_consumer/pthread-reference-output" ||
     fail "pinned-musl pthread composition reference failed"
 [ ! -s "$header_consumer/pthread-reference-output" ] || fail "pthread reference emitted unexpected output"
+# Startup publication, termination, cross-thread allocation, and the
+# filesystem/process/signal/time/socket composition compare against a static
+# ET_EXEC pinned-musl image: its kernel auxv, exec, and exit paths are the
+# static-product semantics under test.
+for product_probe in startup termination allocator_remote system; do
+    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -static -no-pie -pthread -fno-builtin \
+        -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_${product_probe}_probe.c" \
+        -o "$header_consumer/${product_probe}-reference"
+    readelf -hW "$header_consumer/${product_probe}-reference" >"$header_consumer/${product_probe}-reference.elf"
+    grep -Eq 'Type:[[:space:]]+EXEC' "$header_consumer/${product_probe}-reference.elf" ||
+        fail "pinned-musl ${product_probe} reference is not ET_EXEC"
+done
+run_startup_publication "$header_consumer/startup-reference" "$printf_matrix_reference.startup" ||
+    fail "pinned-musl startup publication reference failed"
+grep -qx 'relaunch status=0' "$printf_matrix_reference.startup" ||
+    fail "pinned-musl startup publication reference did not relaunch"
+write_termination_transcript "$header_consumer/termination-reference" \
+    "$header_consumer/termination-scratch" "$printf_matrix_reference.termination"
+[ "$(grep -c '^route=' "$printf_matrix_reference.termination")" -eq 10 ] ||
+    fail "pinned-musl termination reference has an incomplete route transcript"
+reference_output="$(timeout 60 env -i "$header_consumer/allocator_remote-reference")" ||
+    fail "pinned-musl cross-thread allocation reference failed"
+[ "$reference_output" = owned-allocator-remote-ok ] ||
+    fail "pinned-musl cross-thread allocation output drifted: $reference_output"
+mkdir "$header_consumer/system-scratch"
+timeout 60 env -i "$header_consumer/system-reference" "$header_consumer/system-scratch" \
+    >"$printf_matrix_reference.system" || fail "pinned-musl system composition reference failed"
+grep -qx owned-static-system-ok "$printf_matrix_reference.system" ||
+    fail "pinned-musl system composition reference is incomplete"
+[ -z "$(find "$header_consumer/system-scratch" -mindepth 1 -print -quit)" ] ||
+    fail "pinned-musl system composition reference retained scratch entries"
 
 common_compile=(
     gcc -std=c11 -D_GNU_SOURCE -fno-pie -ffreestanding -fno-builtin
@@ -1806,6 +1940,17 @@ audit_header_dependencies "$header_consumer/scanf.d" "$primary" \
     -o "$header_consumer/pthread.o"
 audit_header_dependencies "$header_consumer/pthread.d" "$primary" \
     "$ROOT_DIR/compat/x86_64/libc_pthread_tls_aggregate_probe.c"
+for product_probe in startup termination allocator_remote system; do
+    "${common_compile[@]}" -MD -MF "$header_consumer/${product_probe}.d" \
+        -c "$ROOT_DIR/compat/x86_64/owned_static_${product_probe}_probe.c" \
+        -o "$header_consumer/${product_probe}.o"
+    audit_header_dependencies "$header_consumer/${product_probe}.d" "$primary" \
+        "$ROOT_DIR/compat/x86_64/owned_static_${product_probe}_probe.c"
+done
+grep -Fq "$primary/usr/include/sys/auxv.h" "$header_consumer/startup.d" ||
+    fail "startup dependency trace did not resolve installed sys/auxv.h"
+grep -Fq "$primary/usr/include/sys/socket.h" "$header_consumer/system.d" ||
+    fail "system dependency trace did not resolve installed sys/socket.h"
 grep -Fq "$primary/usr/include/errno.h" "$dependency_file" ||
     fail "consumer dependency trace did not resolve installed errno.h"
 grep -Fq "$primary/usr/include/pthread.h" "$dependency_file" ||
@@ -1829,7 +1974,8 @@ run_consumer_matrix "$work_dir" "$primary" "$extracted" "$primary_consumer" \
     "$extracted_consumer" "$consumer_workers" "$printf_matrix_reference"
 python3 -B "$ROOT_DIR/compat/x86_64/check_resolver_fixture_isolation.py" \
     "$primary_consumer/resolver-et-exec/candidate"
-assert_missing_builtins_rejected "$primary" "$primary_consumer/static-et-exec"
+assert_missing_builtins_rejected "$primary" "$primary_consumer/static-et-exec" -static
+assert_missing_builtins_rejected "$primary" "$primary_consumer/static-pie" -static-pie
 if [ "$consumer_benchmark" = 1 ]; then
     serial_primary_consumer="$work_dir/primary-consumer-serial"
     serial_extracted_consumer="$work_dir/extracted-consumer-serial"
@@ -1840,12 +1986,23 @@ if [ "$consumer_benchmark" = 1 ]; then
         "$primary_consumer" "$extracted_consumer" \
         "$work_dir/consumer-matrix-serial-logs" "$work_dir/consumer-matrix-logs"
 fi
-for mode_root in "${CONSUMER_EVIDENCE_PATHS[@]}"; do
+for consumer_root in "$primary_consumer" "$extracted_consumer"; do
+    # The contract's declared suite is the exact set of executed links; an
+    # undeclared or missing case cannot pass as incidental extra evidence.
+    (cd "$consumer_root" && find . -name candidate.sha256 |
+        sed -e 's#^\./##' -e 's#/candidate\.sha256$##' | sort) >"$consumer_root.executed-paths"
+    printf '%s\n' "${suite_paths[@]}" | sort | cmp - "$consumer_root.executed-paths" ||
+        fail "executed consumer roster differs from compat/x86_64/static-product.toml: $consumer_root"
+done
+for mode_root in "${suite_paths[@]}"; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"
     assert_mode_evidence_reproducible "$primary" "$primary_consumer/$mode_root" \
         "$extracted" "$extracted_consumer/$mode_root" "$mode_root"
 done
+python3 -B "$STATIC_PRODUCT_CONTRACT" collect --work-dir "$work_dir" \
+    --source-sha256 "$started_source_sha256"
 
-printf 'x86 owned static sysroot dual-mode + extracted TLS, allocator, POSIX, stdio, resolver, and positional-printf consumers: PASS\n'
+printf 'x86 owned static product: declared %s-path suite in ET_EXEC and static-PIE from installed and extracted trees: PASS\n' \
+    "${#suite_paths[@]}"
