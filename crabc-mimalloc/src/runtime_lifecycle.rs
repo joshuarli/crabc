@@ -7736,6 +7736,24 @@ impl NativePersistentThreadOwner {
     /// the attachment's final source teardown.  A pending, retained, or
     /// merely attachment-only owner still needs its ordinary terminal path
     /// and must not be mistaken for this completed split transition.
+    /// Finishes an owner whose Theap never materialized a page engine after
+    /// the process became terminally retained.
+    ///
+    /// Source `_mi_thread_done` runs `_mi_theap_collect_abandon` on this
+    /// initialized Theap, but with no page it only offers `_mi_deferred_free`
+    /// and resets the empty queues. A retained process publishes no page
+    /// backing and admits no allocation, so no engine can be formed and a
+    /// callback could not allocate. The owner therefore completes only its
+    /// root/list/TLD boundary. Returns `Ok(false)` without effect when a page
+    /// engine exists; that owner keeps the ordinary collect-abandon path.
+    fn finish_attachment_only_in_retained_process(&mut self) -> Result<bool, ()> {
+        if !matches!(&self.state, NativePersistentThreadOwnerExitState::AttachmentOnly) {
+            return Ok(false);
+        }
+        self.attachment.finish_after_user_destructors().map_err(|_| ())?;
+        Ok(true)
+    }
+
     fn teardown_after_owner_exit_deferred_free_phase(&mut self) -> Result<(), ()> {
         if matches!(&self.state, NativePersistentThreadOwnerExitState::AttachmentOnly)
             && self.attachment.is_torn_down_after_owner_exit()
@@ -16866,12 +16884,25 @@ fn run_current_thread_native_owner_exit_deferred_free_phase(
 /// retained payload cannot become a normal thread-return result.
 fn finish_current_thread_native_persistent_owner_after_user_destructors(
 ) -> ThreadFinishResult {
-    let phase = match begin_current_thread_native_owner_exit_deferred_free_phase() {
-        Ok(phase) => phase,
-        Err(_) => fail_stop_with_current_thread_native_owner(),
-    };
-    if run_current_thread_native_owner_exit_deferred_free_phase(phase).is_err() {
-        fail_stop_with_current_thread_native_owner();
+    // A retained process has no page backing to materialize an engine from.
+    // An owner that never allocated has no source page state for it to drain
+    // and finishes its attachment directly; an engine-bearing owner keeps
+    // the ordinary collect-abandon phases below.
+    let finished_without_engine = RUNTIME_PROCESS.state.load(Ordering::Acquire) == PROCESS_RETAINED
+        && match with_current_thread_native_persistent_owner(
+            NativePersistentThreadOwner::finish_attachment_only_in_retained_process,
+        ) {
+            Ok(Ok(finished)) => finished,
+            Ok(Err(())) | Err(_) => fail_stop_with_current_thread_native_owner(),
+        };
+    if !finished_without_engine {
+        let phase = match begin_current_thread_native_owner_exit_deferred_free_phase() {
+            Ok(phase) => phase,
+            Err(_) => fail_stop_with_current_thread_native_owner(),
+        };
+        if run_current_thread_native_owner_exit_deferred_free_phase(phase).is_err() {
+            fail_stop_with_current_thread_native_owner();
+        }
     }
     let teardown = current_thread_native_persistent_owner_cell().teardown(|mut owner| {
         owner
