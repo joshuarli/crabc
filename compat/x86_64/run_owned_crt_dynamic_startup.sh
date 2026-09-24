@@ -11,6 +11,8 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${1:-}"
 if [ -z "$product" ]; then
     work="$(mktemp -d "$TMPDIR/owned-crt-dynamic-product.XXXXXX")"
+    # Supplied-product replays resolve this path from the host.
+    chmod a+rx "$work"
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic-sysroot" \
         >"$work/dynamic-build.json"
     printf 'owned dynamic CRT startup product: %s\n' "$work/dynamic-sysroot"

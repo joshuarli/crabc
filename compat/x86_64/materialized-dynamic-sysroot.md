@@ -19,18 +19,20 @@ the opaque allocation token described in [initial-worker-tls.md](initial-worker-
 Neither linkage path clones those implementations. The static feature remains
 cfg-disjoint and its existing installed gate remains applicable unchanged.
 
-The executable contains owned `Scrt1.o` (PIE) or dynamic `crt1.o` (ET_EXEC),
-and `crabc-dynamic-attach.o`. Both entries compile the same authenticated
-dynamic startup source under linkage-specific relocation models. The default
-CRT builder still produces the original static `crt1.o`; only its explicit
-`--owned-dynamic-sysroot` mode selects dynamic `crt1.o`. The attachment object
-contains only the established loader/libc attachment owner. The 72-byte
-RuntimeV1 and 32-byte OwnedCrtHandoff are unchanged. The loader supplies the
-conventional x86 `rdx` finalizer, installs initial FS once, and retains the
-canonical graph. Shared libc publishes process/TLS identity before callbacks;
-executable preinit precedes dependency constructors. Ordinary exit dispatches
-exit registrations, executable finalizers, dependency finalizers, and shared
-stdio flushing. `_Exit` bypasses callbacks and flushing.
+The executable contains owned `Scrt1.o` (PIE) or the conventional `crt1.o`
+(ET_EXEC), and `crabc-dynamic-attach.o`. Both entries compile the same
+authenticated dynamic startup source under linkage-specific relocation models.
+`crt1.o` is the one file the static product installs too: it selects its
+static or owned-dynamic startup owner at entry (`crt/src/x86_64_crt1.rs`); the
+explicit `--owned-dynamic-sysroot` mode selects only the owned `Scrt1.o`. The
+attachment object contains only the established loader/libc attachment owner.
+The 72-byte RuntimeV1 and 32-byte OwnedCrtHandoff are unchanged. The loader
+supplies the conventional x86 `rdx` finalizer, installs initial FS once, and
+retains the canonical graph. Shared libc publishes process/TLS identity before
+callbacks; executable preinit precedes the loader's initial constructors,
+which end with the main image. Ordinary exit dispatches exit registrations,
+the loader's reverse-construction finalizers (main included), and shared stdio
+flushing. `_Exit` bypasses callbacks and flushing.
 
 Initial TLS is copied from relocated templates for every worker, including
 over-aligned modules, TBSS, errno and the accepted allocator's IE TLS. Live

@@ -154,8 +154,8 @@ def require_import(row,kind,binding,visibility):
     expected={'type':kind,'binding':binding,'visibility':visibility,'section_index':'UND','version':None,'version_default':False,'size_bytes':0}
     require(same({k:row.get(k) for k in expected},expected),'startup import metadata differs')
 
-def require_function(row,section,visibility):
-    expected={'type':'FUNC','binding':'GLOBAL','visibility':visibility,'version':None,'version_default':False}
+def require_function(row,section,visibility,binding='GLOBAL'):
+    expected={'type':'FUNC','binding':binding,'visibility':visibility,'version':None,'version_default':False}
     require(same({k:row.get(k) for k in expected},expected),'startup function metadata differs')
     ndx=row.get('section_index')
     require(type(ndx) is str and ndx.isdigit() and int(ndx)>0 and section is not None
@@ -322,7 +322,7 @@ def descriptor_runtime_source_order(sources):
     require(attachment.count('mod loader_tls_runtime_v1;')==1,'selected attachment module roster differs')
     selected=_runtime_python_definition(crt_build,'def selected_objects(args: argparse.Namespace) -> tuple[ObjectSpec, ...]:','dynamic CRT selection')
     _runtime_order(selected,('owned = getattr(args, "owned_dynamic_sysroot", False)',
-                             '"owned-dynamic-exec-entry"','"owned-dynamic-pie-entry"'), 'dynamic CRT selection')
+                             '"owned-dynamic-pie-entry"'), 'dynamic CRT selection')
     compile_loop=_runtime_python_definition(crt_build,'def build(args: argparse.Namespace) -> dict[str, object]:','dynamic CRT compile')
     _runtime_order(compile_loop,('["--cfg", "crabc_dynamic_main_thread_runtime_v1"]',
                                  'or (args.dynamic_main_thread_runtime_v1 and spec.name == "Scrt1.o")',
@@ -598,16 +598,23 @@ def account_products(facts):
         result[key]={}
         for name in ARRAYS:
             item=exact(facts,key,name);require_import(item['row'],'NOTYPE','GLOBAL','DEFAULT');result[key][name]=item
-    for key in ('static-crt1.o','static-rcrt1.o'):
-        item=exact(facts,key,BOOTSTRAP);require_import(item['row'],'NOTYPE','GLOBAL','HIDDEN');result[key][BOOTSTRAP]=item
+    # Both products install the one conventional crt1.o. It carries failing
+    # weak defaults for the static bootstrap and the RuntimeV1 attachment
+    # that libc.a or crabc-dynamic-attach.o override, and never imports the
+    # handoff; rcrt1.o and Scrt1.o keep their single mode's strong imports.
+    for key in ('static-crt1.o','dynamic-crt1.o'):
+        for name,visibility in ((BOOTSTRAP,'HIDDEN'),(ATTACH,'DEFAULT')):
+            item=exact(facts,key,name);require_function(item['row'],item['section'],visibility,'WEAK');result[key][name]=item
+    item=exact(facts,'static-rcrt1.o',BOOTSTRAP);require_import(item['row'],'NOTYPE','GLOBAL','HIDDEN');result['static-rcrt1.o'][BOOTSTRAP]=item
     bootstrap=exact(facts,'candidate-static',BOOTSTRAP);require_function(bootstrap['row'],bootstrap['section'],'HIDDEN')
     result['candidate-static']={BOOTSTRAP:bootstrap}
     got=exact(facts,'candidate-static','_GLOBAL_OFFSET_TABLE_');require_import(got['row'],'NOTYPE','GLOBAL','DEFAULT');result['candidate-static']['_GLOBAL_OFFSET_TABLE_']=got
-    for key in ('static-Scrt1.o','dynamic-crt1.o','dynamic-Scrt1.o'):
+    for key in ('static-Scrt1.o','dynamic-Scrt1.o','dynamic-crabc-dynamic-attach.o'):
+        result.setdefault(key,{})
         item=exact(facts,key,HANDOFF);require_import(item['row'],'OBJECT','WEAK','DEFAULT');result[key][HANDOFF]=item
-    for key in ('dynamic-crt1.o','dynamic-Scrt1.o'):
-        item=exact(facts,key,ATTACH);require_import(item['row'],'NOTYPE','GLOBAL','DEFAULT');result[key][ATTACH]=item
-    result['dynamic-crabc-dynamic-attach.o']={}
+    for key in ('static-crt1.o','dynamic-crt1.o'):
+        require(not any(x['row']['name']==HANDOFF for x in rows(facts,key)),'conventional crt1.o imports the loader handoff: '+key)
+    item=exact(facts,'dynamic-Scrt1.o',ATTACH);require_import(item['row'],'NOTYPE','GLOBAL','DEFAULT');result['dynamic-Scrt1.o'][ATTACH]=item
     for name,visibility in ((ATTACH,'DEFAULT'),(RECORD,'HIDDEN')):
         item=exact(facts,'dynamic-crabc-dynamic-attach.o',name);require_function(item['row'],item['section'],visibility);result['dynamic-crabc-dynamic-attach.o'][name]=item
     result['candidate-shared']={}
@@ -639,15 +646,23 @@ def relocations(path):
 
 # Pinned owned CRT callers use PLT32 (4) for direct non-PIC calls and
 # GOTPCREL (9) for PIC calls/data references, each with the x86 PC bias -4.
+# The conventional crt1.o calls its own weak defaults, which the matching
+# link's strong definitions override, so those rows name defined symbols.
 # The attach object's record callback is a defined hidden function; treating
 # it as another undefined import would erase its actual ownership boundary.
+# The attach object also carries the CRT's handoff slot reader.
+CONVENTIONAL_CRT1_RELOCATIONS={
+    BOOTSTRAP:(((4,-4),),'FUNC','WEAK','HIDDEN',True),
+    ATTACH:(((4,-4),),'FUNC','WEAK','DEFAULT',True),
+}
 CRT_CALLER_RELOCATIONS={
-    'static-crt1.o':{BOOTSTRAP:(4,'0','GLOBAL','HIDDEN',False)},
-    'static-rcrt1.o':{BOOTSTRAP:(9,'0','GLOBAL','HIDDEN',False)},
-    'static-Scrt1.o':{HANDOFF:(9,'OBJECT','WEAK','DEFAULT',False)},
-    'dynamic-crt1.o':{HANDOFF:(9,'OBJECT','WEAK','DEFAULT',False),ATTACH:(4,'0','GLOBAL','DEFAULT',False)},
-    'dynamic-Scrt1.o':{HANDOFF:(9,'OBJECT','WEAK','DEFAULT',False),ATTACH:(9,'0','GLOBAL','DEFAULT',False)},
-    'dynamic-crabc-dynamic-attach.o':{RECORD:(9,'FUNC','GLOBAL','HIDDEN',True)},
+    'static-crt1.o':CONVENTIONAL_CRT1_RELOCATIONS,
+    'static-rcrt1.o':{BOOTSTRAP:(((9,-4),),'0','GLOBAL','HIDDEN',False)},
+    'static-Scrt1.o':{HANDOFF:(((9,-4),),'OBJECT','WEAK','DEFAULT',False)},
+    'dynamic-crt1.o':CONVENTIONAL_CRT1_RELOCATIONS,
+    'dynamic-Scrt1.o':{HANDOFF:(((9,-4),),'OBJECT','WEAK','DEFAULT',False),ATTACH:(((9,-4),),'0','GLOBAL','DEFAULT',False)},
+    'dynamic-crabc-dynamic-attach.o':{RECORD:(((9,-4),),'FUNC','GLOBAL','HIDDEN',True),
+                                      HANDOFF:(((9,-4),),'OBJECT','WEAK','DEFAULT',False)},
 }
 
 def require_crt_caller_relocations(result):
@@ -656,12 +671,15 @@ def require_crt_caller_relocations(result):
         rows=result.get(role)
         require(type(rows) is list,'CRT caller relocation object absent: '+role)
         observed=[row for row in rows if row['name'] in selected]
-        require(len(observed)==len(relations) and {row['name'] for row in observed}==set(relations),
+        require(len(observed)==sum(len(relation[0]) for relation in relations.values())
+                and {row['name'] for row in observed}==set(relations),
                 'CRT caller relocation roster differs: '+role)
+        for name,(kinds,*_rest) in relations.items():
+            require(sorted((row.get('kind'),row.get('addend')) for row in observed if row['name']==name)==sorted(kinds),
+                    'CRT caller relocation kinds differ: '+role+'/'+name)
         for row in observed:
-            kind,symbol_type,binding,visibility,defined=relations[row['name']]
-            expected={'kind':kind,'addend':-4,'symbol_type':symbol_type,'binding':binding,
-                      'visibility':visibility,'symbol_value':0}
+            _kinds,symbol_type,binding,visibility,defined=relations[row['name']]
+            expected={'symbol_type':symbol_type,'binding':binding,'visibility':visibility,'symbol_value':0}
             require(same({key:row.get(key) for key in expected},expected),
                     'CRT caller relocation metadata differs: '+role+'/'+row['name'])
             section=row.get('symbol_section')

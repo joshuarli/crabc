@@ -1,4 +1,4 @@
-"""Linkage-specific x86 entry selection without changing static defaults."""
+"""Linkage-specific x86 entry selection: one crt1.o, mode-specific Scrt1.o."""
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,34 +12,30 @@ spec.loader.exec_module(builder)
 
 
 class DynamicEntryModes(unittest.TestCase):
-    def test_default_and_legacy_private_modes_keep_static_crt1(self):
+    def test_every_mode_selects_the_one_conventional_crt1(self):
+        # The static and dynamic products each install this crt1.o; the
+        # combined-sysroot leaf proves the installed bytes are identical.
+        conventional = builder.OBJECTS[0]
+        self.assertEqual(conventional.name, "crt1.o")
         for private in (False, True):
-            args = SimpleNamespace(dynamic_main_thread_runtime_v1=private,
-                                   general_dynamic_lifecycle=private, owned_dynamic_sysroot=False)
-            selected = {item.name: item for item in builder.selected_objects(args)}
-            self.assertEqual(selected["crt1.o"], builder.OBJECTS[0])
-            if not private:
-                self.assertEqual(tuple(selected.values()), builder.OBJECTS)
+            for owned in (False, True):
+                args = SimpleNamespace(dynamic_main_thread_runtime_v1=private,
+                                       general_dynamic_lifecycle=private, owned_dynamic_sysroot=owned)
+                selected = {item.name: item for item in builder.selected_objects(args)}
+                self.assertEqual(selected["crt1.o"], conventional)
+                for name in ("rcrt1.o", "crti.o", "crtn.o"):
+                    self.assertEqual(selected[name], next(item for item in builder.OBJECTS if item.name == name))
+        self.assertEqual(conventional.undefined_symbols, builder.CONVENTIONAL_EXEC_BOUNDARIES)
 
-    def test_owned_dynamic_entries_share_handoff_source_but_not_relocation_model(self):
+    def test_owned_dynamic_pie_entry_leaves_main_lifecycle_to_the_loader(self):
         args = SimpleNamespace(dynamic_main_thread_runtime_v1=False,
                                general_dynamic_lifecycle=False, owned_dynamic_sysroot=True)
-        selected = {item.name: item for item in builder.selected_objects(args)}
-        executable, pie = selected["crt1.o"], selected["Scrt1.o"]
-        self.assertEqual(executable.source_name, pie.source_name)
-        self.assertEqual(executable.relocation_model, "static")
+        pie = next(item for item in builder.selected_objects(args) if item.name == "Scrt1.o")
         self.assertEqual(pie.relocation_model, "pic")
-        self.assertEqual(executable.entry_contract, "owned-dynamic-exec-entry")
         self.assertEqual(pie.entry_contract, "owned-dynamic-pie-entry")
-        self.assertEqual(executable.undefined_symbols, pie.undefined_symbols)
-        self.assertNotIn("__crabc_x86_static_tls_bootstrap", executable.undefined_symbols)
         # The installed owned loader constructs and finalizes the main image;
-        # these entries dispatch only preinit and never call _init/_fini.
-        self.assertEqual(executable.undefined_symbols, builder.OWNED_DYNAMIC_RUNTIME_BOUNDARIES)
-        self.assertTrue({"_init", "_fini"}.isdisjoint(executable.undefined_symbols))
-        self.assertIn("__preinit_array_start", executable.undefined_symbols)
-        for name in ("rcrt1.o", "crti.o", "crtn.o"):
-            self.assertEqual(selected[name], next(item for item in builder.OBJECTS if item.name == name))
+        # this entry dispatches only preinit and never calls _init/_fini.
+        self.assertEqual(pie.undefined_symbols, builder.OWNED_DYNAMIC_RUNTIME_BOUNDARIES)
 
     def test_private_lifecycle_modes_keep_the_crt_owned_main_array_walk(self):
         for dynamic_main_thread, general in ((True, False), (False, True)):

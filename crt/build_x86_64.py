@@ -5,8 +5,10 @@ This is deliberately not a target switch for ``build.py``. It produces only
 the target-specific ordinary-static, static-PIE, and dynamic entry
 objects: ``crt1.o``, ``Scrt1.o``, ``rcrt1.o``, ``crti.o``, and ``crtn.o``.
 It does not install a sysroot or select a crabc dynamic loader or libc.
-The explicit owned-dynamic-sysroot mode builds dynamic crt1.o and Scrt1.o
-from one authenticated startup owner; default crt1.o remains static-owned.
+Every mode builds the same conventional crt1.o, which enters both static
+ET_EXEC and dynamic non-PIE executables, so the static and dynamic products
+install one file. The explicit owned-dynamic-sysroot mode selects the
+authenticated dynamic-PIE Scrt1.o for the installed dynamic product.
 """
 
 from __future__ import annotations
@@ -114,6 +116,21 @@ OWNED_DYNAMIC_RUNTIME_BOUNDARIES = tuple(
     name for name in STATIC_PIE_BOUNDARIES if name not in {"_init", "_fini"}
 ) + (X86_64_OWNED_CRT_HANDOFF_BOUNDARY, X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY)
 
+# The conventional non-PIE crt1.o (`x86_64_crt1.rs`) carries both startup
+# owners. Its static TLS bootstrap, owned-handoff reader and RuntimeV1
+# attachment are failing weak defaults that libc.a or crabc-dynamic-attach.o
+# override, so neither a static nor a dynamic link leaves them unresolved, and
+# it never imports the loader's handoff symbol itself.
+CONVENTIONAL_EXEC_BOUNDARIES = STATIC_PIE_BOUNDARIES
+# Rust cfgs for that crt1.o: the static path plus the installed owned-dynamic
+# path whose loader owns main construction and finalization.
+CONVENTIONAL_EXEC_CFGS = (
+    "crabc_x86_64_combined_exec_entry",
+    "crabc_dynamic_main_thread_runtime_v1",
+    "crabc_general_dynamic_lifecycle",
+    "crabc_owned_dynamic_runtime",
+)
+
 OWNED_CRT_NOTE = (
     struct.pack("<III", 6, 4, 0x43525401)
     + b"CRABC\0\0\0"
@@ -130,10 +147,10 @@ OBJECTS = (
         "crt1.o",
         "x86_64_crt1.rs",
         "static",
-        "ordinary-static-entry",
+        "conventional-exec-entry",
         (".text._start",),
         ("_start",),
-        STATIC_PIE_LIBC_BOUNDARIES,
+        CONVENTIONAL_EXEC_BOUNDARIES,
     ),
     ObjectSpec(
         "rcrt1.o",
@@ -238,7 +255,7 @@ def parse_args() -> argparse.Namespace:
         "--owned-dynamic-sysroot",
         action="store_true",
         help=(
-            "build authenticated dynamic crt1.o and Scrt1.o for the owned installed product, "
+            "build the authenticated dynamic-PIE Scrt1.o for the owned installed product, "
             "whose loader constructs and finalizes the main image"
         ),
     )
@@ -261,10 +278,10 @@ def selected_objects(args: argparse.Namespace) -> tuple[ObjectSpec, ...]:
                 else STATIC_PIE_BOUNDARIES
                 + (X86_64_OWNED_CRT_HANDOFF_BOUNDARY, X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY)
             ),
-            entry_contract=("owned-dynamic-exec-entry" if spec.name == "crt1.o" else
-                            "owned-dynamic-pie-entry" if args.general_dynamic_lifecycle or owned else spec.entry_contract),
+            entry_contract=("owned-dynamic-pie-entry" if args.general_dynamic_lifecycle or owned
+                            else spec.entry_contract),
         )
-        if spec.name == "Scrt1.o" or (owned and spec.name == "crt1.o")
+        if spec.name == "Scrt1.o"
         else spec
         for spec in OBJECTS
     )
@@ -549,7 +566,7 @@ def inspect_object(spec: ObjectSpec, path: Path) -> dict[str, object]:
     unexpected = sorted(unresolved.difference(spec.undefined_symbols))
     if unexpected:
         raise BuildError(f"{path}: unexpected runtime dependency symbols: {unexpected}")
-    if spec.name == "Scrt1.o" or spec.entry_contract == "owned-dynamic-exec-entry":
+    if spec.name == "Scrt1.o" or spec.entry_contract == "conventional-exec-entry":
         owned_note = sections.get(".note.crabc.owned-crt")
         if owned_note is None or owned_note.section_type != SHT_NOTE:
             raise BuildError(f"{path}: dynamic entry lacks the owned-CRT ELF note")
@@ -565,7 +582,7 @@ def inspect_object(spec: ObjectSpec, path: Path) -> dict[str, object]:
         "path": path.name,
         "sha256": sha256_file(path),
         "entry_contract": spec.entry_contract,
-        "owned_lifecycle_note": spec.name == "Scrt1.o" or spec.entry_contract == "owned-dynamic-exec-entry",
+        "owned_lifecycle_note": spec.name == "Scrt1.o" or spec.entry_contract == "conventional-exec-entry",
         "sections": [section.name for section in elf.sections],
         "defined_symbols": sorted(item.name for item in elf.symbols if item.name and item.section_index != SHN_UNDEF),
         "undefined_symbols": sorted(item.name for item in elf.symbols if item.name and item.section_index == SHN_UNDEF),
@@ -609,7 +626,7 @@ def audit_entry_machine_code(
     }
     if spec.entry_contract == "static-pie-entry":
         required_machine_sequences["syscall"] = b"\x0f\x05"
-    elif spec.entry_contract not in {"ordinary-static-entry", "dynamic-pie-entry", "owned-dynamic-pie-entry", "owned-dynamic-exec-entry"}:
+    elif spec.entry_contract not in {"conventional-exec-entry", "dynamic-pie-entry", "owned-dynamic-pie-entry"}:
         raise BuildError(f"{path}: machine audit is invalid for {spec.entry_contract}")
     missing = [
         instruction
@@ -631,12 +648,14 @@ def audit_entry_machine_code(
     if R_X86_64_PLT32 not in relocation_types:
         raise BuildError(f"{path}: startup entry lacks its direct Rust handoff")
     direct_handoff_symbol: str | None = None
-    if spec.entry_contract in {"dynamic-pie-entry", "owned-dynamic-pie-entry", "owned-dynamic-exec-entry"}:
+    if spec.entry_contract in {"dynamic-pie-entry", "owned-dynamic-pie-entry", "conventional-exec-entry"}:
         # This literal early-entry sequence preserves only `%rsp` in r15 and
         # calls the Rust handoff. In particular it never captures `%rdx` as a
         # guessed loader finalizer: musl 1.2.6 x86-64 Scrt1 passes null.
         expected_prefix = b"\x49\x89\xe7\x31\xed\x48\x83\xe4\xf0\x4c\x89\xff\xe8"
-        if spec.entry_contract in {"owned-dynamic-pie-entry", "owned-dynamic-exec-entry"}:
+        # The owned entries also carry `%rdx` (kernel zero or the owned
+        # interpreter's finalizer) into the Rust handoff's second argument.
+        if spec.entry_contract in {"owned-dynamic-pie-entry", "conventional-exec-entry"}:
             expected_prefix = b"\x49\x89\xe7\x48\x89\xd6\x31\xed\x48\x83\xe4\xf0\x4c\x89\xff\xe8"
         if not entry_bytes.startswith(expected_prefix) or not entry_bytes.endswith(b"\x0f\x0b"):
             raise BuildError(f"{path}: dynamic entry does not retain the bounded musl-shaped handoff")
@@ -646,13 +665,18 @@ def audit_entry_machine_code(
         if len(entry_relocations) != 1 or len(direct_handoffs) != 1:
             raise BuildError(f"{path}: dynamic entry must retain exactly one direct Rust handoff relocation")
         direct_handoff = direct_handoffs[0]
+        # The conventional entry first chooses its static or dynamic owner.
+        handoff_target = (
+            "__crabc_x86_64_exec_start"
+            if spec.entry_contract == "conventional-exec-entry"
+            else "__crabc_x86_64_dynamic_start"
+        )
         if (
-            direct_handoff.symbol_name != "__crabc_x86_64_dynamic_start"
+            direct_handoff.symbol_name != handoff_target
             or direct_handoff.symbol_section_index == SHN_UNDEF
         ):
             raise BuildError(
-                f"{path}: dynamic entry direct handoff must target the defined "
-                "__crabc_x86_64_dynamic_start symbol"
+                f"{path}: entry direct handoff must target the defined {handoff_target} symbol"
             )
         direct_handoff_symbol = direct_handoff.symbol_name
     return (
@@ -671,8 +695,12 @@ def audit_entry_machine_code(
                 else {}
             ),
             **(
-                {"loader_finalizer": ("authenticated-owned-rdx" if spec.entry_contract.startswith("owned-dynamic-") else "null-musl-x86_64-convention")}
-                if spec.entry_contract in {"dynamic-pie-entry", "owned-dynamic-pie-entry", "owned-dynamic-exec-entry"}
+                {"loader_finalizer": (
+                    "null-musl-x86_64-convention" if spec.entry_contract == "dynamic-pie-entry"
+                    else "authenticated-owned-rdx-or-kernel-null" if spec.entry_contract == "conventional-exec-entry"
+                    else "authenticated-owned-rdx"
+                )}
+                if spec.entry_contract in {"dynamic-pie-entry", "owned-dynamic-pie-entry", "conventional-exec-entry"}
                 else {}
             ),
         },
@@ -730,21 +758,27 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 "crabc_x86_64_" + spec.name.removesuffix(".o").replace(".", "_"),
                 *(
                     ["--cfg", "crabc_dynamic_main_thread_runtime_v1"]
-                    if spec.entry_contract in {"owned-dynamic-pie-entry", "owned-dynamic-exec-entry"}
+                    if spec.entry_contract == "owned-dynamic-pie-entry"
                     or (args.dynamic_main_thread_runtime_v1 and spec.name == "Scrt1.o")
                     else []
                 ),
                 *(
                     ["--cfg", "crabc_general_dynamic_lifecycle"]
-                    if spec.entry_contract in {"owned-dynamic-pie-entry", "owned-dynamic-exec-entry"}
+                    if spec.entry_contract == "owned-dynamic-pie-entry"
                     else []
                 ),
-                # Only the installed product pairs these entries with the
+                # Only the installed product pairs this entry with the
                 # owned loader that constructs and finalizes the main image.
                 *(
                     ["--cfg", "crabc_owned_dynamic_runtime"]
-                    if args.owned_dynamic_sysroot
-                    and spec.entry_contract in {"owned-dynamic-pie-entry", "owned-dynamic-exec-entry"}
+                    if args.owned_dynamic_sysroot and spec.entry_contract == "owned-dynamic-pie-entry"
+                    else []
+                ),
+                # Every mode's crt1.o is the one conventional entry that the
+                # static and dynamic products both install.
+                *(
+                    [argument for cfg in CONVENTIONAL_EXEC_CFGS for argument in ("--cfg", cfg)]
+                    if spec.entry_contract == "conventional-exec-entry"
                     else []
                 ),
                 str(source),
@@ -767,11 +801,10 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 raise BuildError(f"rustc reported success but did not create {destination}")
             inspection = inspect_object(spec, destination)
             if spec.entry_contract in {
-                "ordinary-static-entry",
+                "conventional-exec-entry",
                 "static-pie-entry",
                 "dynamic-pie-entry",
                 "owned-dynamic-pie-entry",
-                "owned-dynamic-exec-entry",
             }:
                 machine_contract, machine_record = audit_entry_machine_code(
                     spec, destination, objdump, environment

@@ -2,9 +2,9 @@
 
 //! Interpreter-initialized Linux/x86-64 application entry.
 //!
-//! The CRT producer compiles this same owner as PIC for Scrt1.o and, only in
-//! explicit owned-dynamic-sysroot mode, with static relocation for dynamic
-//! crt1.o. The default/static runtime entry remains x86_64_crt1.rs.
+//! The CRT producer compiles this owner as PIC for Scrt1.o. The one non-PIE
+//! entry for both static ET_EXEC and dynamic non-PIE is x86_64_crt1.rs, which
+//! reuses this crate's dynamic startup module.
 //!
 //! The entry is deliberately minimal and leaves the original initial stack
 //! untouched until normal Rust startup parses it. An ELF interpreter has

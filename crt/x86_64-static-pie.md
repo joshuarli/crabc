@@ -11,10 +11,15 @@ dynamic-PIE `Scrt1.o`; its contract is documented in
 
 The static evidence consumes exactly these Rust-produced objects:
 
-- `crt1.o`: preserves the Linux entry stack, establishes the SysV call frame,
-  and makes one direct `R_X86_64_PLT32` handoff to the shared static startup.
-  It has no self-relocation phase and must not read the GOT or TLS before the
-  libc-owned bootstrap has installed the initial image.
+- `crt1.o`: preserves the Linux entry stack and `%rdx`, establishes the SysV
+  call frame, and makes one direct `R_X86_64_PLT32` handoff to its startup
+  selector. Kernel entry of a static executable (null `%rdx`, no owned loader
+  handoff) takes the shared static startup; the same object is the installed
+  dynamic non-PIE entry (`crt/x86_64-dynamic-startup.md`). It has no
+  self-relocation phase and must not read the GOT or TLS before the
+  libc-owned bootstrap has installed the initial image. It carries a failing
+  weak default for that bootstrap, which libc.a's definition overrides,
+  because dynamic links never supply it.
 - `rcrt1.o`: parses Linux's initial stack for `AT_PHDR`, `AT_PHENT`, and
   `AT_PHNUM`; derives the load bias from `PT_PHDR`; validates dynamic and
   relocation ranges against `PT_LOAD`; applies only symbol-free
@@ -105,7 +110,7 @@ lifecycle. This is deliberately an evidence-only x86 helper bundle: it is not
 an installed compiler runtime, an owned sysroot, a libc/TLS proof, dynamic CRT
 support, or public x86 support.
 
-Remaining work is intentionally out of this slice: dynamic `crt1.o` and
+Remaining work is intentionally out of this slice: the dynamic `crt1.o` and
 `Scrt1.o` contracts beyond this static `ET_EXEC` entry, owned-loader startup
 handoff, x86-64 ldso relocation/TLS support, pthread TLS lifecycle, sysroot
 installation, and all public-support promotion evidence.

@@ -83,10 +83,11 @@ DTV-growth, sysroot, or promotion claim. Those obligations remain explicit in
 
 ## Installed owned product
 
-`crt/build_x86_64.py --owned-dynamic-sysroot` builds the installed dynamic
-entries: `Scrt1.o` (PIC, dynamic PIE) and a dynamic `crt1.o` (static
-relocation, dynamic non-PIE) from the same `x86_64_Scrt1.rs` owner. That mode
-adds `crabc_owned_dynamic_runtime` to the lifecycle and RuntimeV1 cfgs. The
+`crt/build_x86_64.py --owned-dynamic-sysroot` builds the installed dynamic-PIE
+`Scrt1.o` (PIC) from `x86_64_Scrt1.rs`, adding `crabc_owned_dynamic_runtime`
+to the lifecycle and RuntimeV1 cfgs. The dynamic non-PIE entry is the
+conventional `crt1.o` (`x86_64_crt1.rs`, static relocation) that every mode
+builds and that the static product installs too; see "One crt1.o" below. The
 entry keeps the untouched stack in `r15`, captures `%rdx`, and the Rust
 startup authenticates it against the owned loader's `OwnedCrtHandoffV1`
 process finalizer, attaches the RuntimeV1 TLS descriptor, and calls
@@ -119,6 +120,35 @@ main image outside the callback plan.
 Musl never dispatches a dynamic executable's `DT_PREINIT_ARRAY`. The owned CRT
 does, as the ELF gABI requires; that single leading `P` is the only admitted
 difference in the evidence transcripts.
+
+## One crt1.o
+
+A combined sysroot installs each CRT object once, so the static and dynamic
+products must install the same `crt1.o`, as pinned musl and the frozen AArch64
+`crt/src/normal_entry.rs` do. `crt/src/x86_64_crt1.rs` (built with
+`crabc_x86_64_combined_exec_entry` plus the owned-dynamic cfgs) chooses its
+startup owner from facts fixed before `_start`: a null `%rdx` and no owned
+handoff record (below) mean kernel entry of a static `ET_EXEC`, which takes the static path (libc.a TLS bootstrap, CRT-owned
+preinit/init/fini arrays); a resolved handoff selects the owned-dynamic path
+above, which rejects any register/record mismatch.
+
+The static product forbids unresolved symbols in its executables, and a
+dynamic link has no libc.a, so `crt1.o` references no mode-specific symbol it
+cannot resolve. It carries failing weak defaults for the static bootstrap
+(`__crabc_x86_static_tls_bootstrap`), the RuntimeV1 attachment
+(`__crabc_x86_loader_tls_runtime_v1_attach`) and the handoff slot reader
+(`__crabc_x86_64_attached_owned_crt_handoff`); libc.a or
+`crabc-dynamic-attach.o` supplies the strong definitions. The handoff reader
+(`crt/src/x86_64_owned_crt_handoff_attachment.rs`) is partial-linked into
+`crabc-dynamic-attach.o`, which only dynamic executables link, so the weak
+`__crabc_x86_64_owned_crt_handoff` import the interpreter relocates never
+reaches a static executable.
+
+`./scripts/dev-x86_64.sh owned-combined-sysroot` composes the two products
+and fails closed on any shared runtime path with different bytes, including
+`usr/lib/crt1.o`; the static product suite (`owned-static-sysroot`) runs this
+`crt1.o` as every static `ET_EXEC`, and the leaf below runs it as the dynamic
+non-PIE entry.
 
 Run the installed-product evidence against one supplied product, or omit the
 argument to build one clean product first:

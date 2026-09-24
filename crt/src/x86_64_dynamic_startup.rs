@@ -53,6 +53,11 @@ struct OwnedCrtHandoffV1 {
 
 static mut INITIAL_DEPENDENCY_CONSTRUCTORS: Option<LifecycleHook> = None;
 
+// Scrt1.o reads the weak handoff slot itself. The combined static/dynamic
+// crt1.o is also linked into static executables, which must not retain an
+// unresolved loader symbol, so it reaches the same slot only through the
+// dynamic-only main-resident attachment (see `x86_64_crt1.rs`).
+#[cfg(not(crabc_x86_64_combined_exec_entry))]
 core::arch::global_asm!(
     ".att_syntax prefix",
     ".weak __crabc_x86_64_owned_crt_handoff",
@@ -98,9 +103,35 @@ unsafe extern "C" {
     fn __crabc_init_array_end_address() -> *const LinkerArrayEntry;
     fn __crabc_fini_array_start_address() -> *const LinkerArrayEntry;
     fn __crabc_fini_array_end_address() -> *const LinkerArrayEntry;
+    #[cfg(not(crabc_x86_64_combined_exec_entry))]
     fn __crabc_x86_64_owned_crt_handoff_value() -> *const OwnedCrtHandoffV1;
+    #[cfg(crabc_x86_64_combined_exec_entry)]
+    fn __crabc_x86_64_attached_owned_crt_handoff() -> *const OwnedCrtHandoffV1;
     #[cfg(crabc_dynamic_main_thread_runtime_v1)]
     fn __crabc_x86_loader_tls_runtime_v1_attach() -> c_int;
+}
+
+/// The owned interpreter's post-relocation handoff record, or null.
+///
+/// # Safety
+///
+/// Call only after entry, when the executable's GOT is final: relocated by
+/// the interpreter, or fixed by a static link.
+unsafe fn owned_crt_handoff() -> *const OwnedCrtHandoffV1 {
+    #[cfg(not(crabc_x86_64_combined_exec_entry))]
+    return unsafe { __crabc_x86_64_owned_crt_handoff_value() };
+    #[cfg(crabc_x86_64_combined_exec_entry)]
+    return unsafe { __crabc_x86_64_attached_owned_crt_handoff() };
+}
+
+/// Whether an owned interpreter published a handoff for this process.
+///
+/// # Safety
+///
+/// As for `owned_crt_handoff`.
+#[cfg(crabc_x86_64_combined_exec_entry)]
+pub(crate) unsafe fn owned_crt_handoff_present() -> bool {
+    !unsafe { owned_crt_handoff() }.is_null()
 }
 
 impl InitialProcess {
@@ -165,7 +196,7 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(
     // The tiny assembly helper checks the unresolved weak GOT entry before it
     // reads the data word. Rust must not form a direct reference to an absent
     // weak object: that would fault on the required foreign-musl null path.
-    let handoff = unsafe { __crabc_x86_64_owned_crt_handoff_value() };
+    let handoff = unsafe { owned_crt_handoff() };
     let rtld_fini = unsafe { configure_owned_loader_handoff(handoff) };
     #[cfg(crabc_general_dynamic_lifecycle)]
     let rtld_fini = {

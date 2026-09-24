@@ -770,16 +770,20 @@ int main(void) {
         facts={}
         for key in ('static-crt1.o','static-Scrt1.o','static-rcrt1.o','dynamic-crt1.o','dynamic-Scrt1.o'):
             values=[row(x) for x in reader.ARRAYS]
-            if key in ('static-crt1.o','static-rcrt1.o'):values.append(row(reader.BOOTSTRAP,visibility='HIDDEN'))
+            if key.endswith('-crt1.o'):
+                values.append(row(reader.BOOTSTRAP,'FUNC','WEAK','HIDDEN',section='1'))
+                values.append(row(reader.ATTACH,'FUNC','WEAK',section='1'))
+            elif key=='static-rcrt1.o':values.append(row(reader.BOOTSTRAP,visibility='HIDDEN'))
             else:values.append(row(reader.HANDOFF,'OBJECT','WEAK'))
-            if key.startswith('dynamic'):values.append(row(reader.ATTACH))
+            if key=='dynamic-Scrt1.o':values.append(row(reader.ATTACH))
             facts[key]=member(values)
         facts['candidate-static']=[{**member([row(reader.BOOTSTRAP,'FUNC',visibility='HIDDEN',section='1')]),'member':'runtime.o','member_index':0,'member_occurrence':0},
                                   {**member([row('_GLOBAL_OFFSET_TABLE_')]),'member':'producer.o','member_index':1,'member_occurrence':0}]
         facts['candidate-shared']=member([row(reader.CONVENTIONAL,'OBJECT','WEAK')])
         facts['candidate-shared']['symbol_tables'].append({'name':'.dynsym','section_index':3,'rows':[row(reader.CONVENTIONAL,'OBJECT','WEAK')]})
         facts['candidate-loader']=member([])
-        facts['dynamic-crabc-dynamic-attach.o']=member([row(reader.ATTACH,'FUNC',section='1'),row(reader.RECORD,'FUNC',visibility='HIDDEN',section='1')])
+        facts['dynamic-crabc-dynamic-attach.o']=member([row(reader.ATTACH,'FUNC',section='1'),row(reader.RECORD,'FUNC',visibility='HIDDEN',section='1'),
+                                                        row(reader.HANDOFF,'OBJECT','WEAK')])
         return facts
 
     def test_actual_shaped_product_tables_cannot_collapse_import_origins(self):
@@ -793,7 +797,11 @@ int main(void) {
         for section in ('UND','COM','ABS','0'):
             facts=self.fixture();facts['candidate-static'][0]['symbol_tables'][0]['rows'][0]['section_index']=section
             with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
-        facts=self.fixture();facts['dynamic-crt1.o']['symbol_tables'][0]['rows']=[x for x in facts['dynamic-crt1.o']['symbol_tables'][0]['rows'] if x['name']!=reader.HANDOFF]
+        facts=self.fixture();facts['dynamic-Scrt1.o']['symbol_tables'][0]['rows']=[x for x in facts['dynamic-Scrt1.o']['symbol_tables'][0]['rows'] if x['name']!=reader.HANDOFF]
+        with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
+        # The conventional crt1.o must not import the loader handoff itself.
+        facts=self.fixture();facts['static-crt1.o']['symbol_tables'][0]['rows'].append(
+            copy.deepcopy(facts['static-Scrt1.o']['symbol_tables'][0]['rows'][-1]))
         with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
 
     def test_private_startup_names_cannot_gain_public_loader_or_shared_definitions(self):

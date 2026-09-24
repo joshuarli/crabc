@@ -6184,68 +6184,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("libc-static-tls-v1", runner)
 
 
-    def test_libc_crt1_static_tls_artifact_is_an_owned_et_exec_composition(self) -> None:
-        """Ratchet the conventional static start object before sysroot work."""
-
-        crt1 = (ROOT / "crt" / "src" / "x86_64_crt1.rs").read_text(
-            encoding="utf-8"
-        )
-        startup = (ROOT / "crt" / "src" / "x86_64_startup.rs").read_text(
-            encoding="utf-8"
-        )
-        builder = (ROOT / "crt" / "build_x86_64.py").read_text(encoding="utf-8")
-        runner = (
-            ROOT / "compat" / "x86_64" / "run_libc_crt1_static_tls.sh"
-        ).read_text(encoding="utf-8")
-        dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(
-            encoding="utf-8"
-        )
-
-        for required in (
-            ".section .text._start",
-            "mov r15, rsp",
-            "and rsp, -16",
-            "__crabc_x86_64_static_pie_start",
-            ".note.GNU-stack",
-        ):
-            self.assertIn(required, crt1)
-        self.assertNotIn("arch_prctl", crt1.lower())
-        self.assertNotIn("__crabc_x86_static_tls_bootstrap", crt1)
-
-        self.assertIn("__crabc_x86_static_tls_bootstrap", startup)
-        self.assertLess(
-            startup.index("if unsafe { __crabc_x86_static_tls_bootstrap(initial_stack) }"),
-            startup.index("unsafe {\n        __libc_start_main("),
-        )
-        for required in (
-            '"crt1.o"',
-            '"x86_64_crt1.rs"',
-            "relocation-model=static",
-            "R_X86_64_PLT32",
-            "ordinary-static-entry",
-        ):
-            self.assertIn(required, builder)
-
-        for required in (
-            "-static",
-            "--no-dynamic-linker",
-            "--no-undefined",
-            '"$crt_dir/crt1.o"',
-            '"$crt_dir/crti.o"',
-            '"$crt_dir/crtn.o"',
-            "ET_EXEC",
-            "PT_TLS",
-            "__crabc_x86_static_tls_bootstrap",
-            "__libc_start_main",
-            "PIMBCAF",
-            "expect_bootstrap_rejection",
-            "PT_TLS p_filesz",
-        ):
-            self.assertIn(required, runner)
-        self.assertNotIn('"$link_editor" -pie', runner)
-        self.assertNotIn("--whole-archive", runner)
-        self.assertIn("libc-crt1-static-tls", dispatcher)
-
     def test_owned_static_sysroot_is_reproducible_and_rejects_ambient_inputs(self) -> None:
         builder = (
             ROOT / "scripts" / "build_x86_64_owned_sysroot.py"

@@ -21,8 +21,8 @@
       "binding": "WEAK",
       "kind": 9,
       "name": "__crabc_x86_64_owned_crt_handoff",
-      "offset": 51,
-      "row_index": 6,
+      "offset": 3,
+      "row_index": 0,
       "symbol_section": 0,
       "symbol_type": "OBJECT",
       "symbol_value": 0,
@@ -39,7 +39,7 @@
       "symbol_section": 0,
       "symbol_type": "0",
       "symbol_value": 0,
-      "table_section_index": 14,
+      "table_section_index": 13,
       "visibility": "DEFAULT"
     }
   ],
@@ -51,39 +51,52 @@
       "name": "__crabc_x86_loader_tls_runtime_v1_record",
       "offset": 3,
       "row_index": 0,
-      "symbol_section": 3,
+      "symbol_section": 2,
       "symbol_type": "FUNC",
       "symbol_value": 0,
-      "table_section_index": 9,
+      "table_section_index": 8,
       "visibility": "HIDDEN"
+    },
+    {
+      "addend": -4,
+      "binding": "WEAK",
+      "kind": 9,
+      "name": "__crabc_x86_64_owned_crt_handoff",
+      "offset": 3,
+      "row_index": 0,
+      "symbol_section": 0,
+      "symbol_type": "OBJECT",
+      "symbol_value": 0,
+      "table_section_index": 14,
+      "visibility": "DEFAULT"
     }
   ],
   "dynamic-crt1.o": [
     {
       "addend": -4,
       "binding": "WEAK",
-      "kind": 9,
-      "name": "__crabc_x86_64_owned_crt_handoff",
-      "offset": 51,
-      "row_index": 6,
-      "symbol_section": 0,
-      "symbol_type": "OBJECT",
-      "symbol_value": 0,
-      "table_section_index": 3,
-      "visibility": "DEFAULT"
-    },
-    {
-      "addend": -4,
-      "binding": "GLOBAL",
       "kind": 4,
       "name": "__crabc_x86_loader_tls_runtime_v1_attach",
       "offset": 183,
       "row_index": 3,
-      "symbol_section": 0,
-      "symbol_type": "0",
+      "symbol_section": 6,
+      "symbol_type": "FUNC",
       "symbol_value": 0,
-      "table_section_index": 14,
+      "table_section_index": 19,
       "visibility": "DEFAULT"
+    },
+    {
+      "addend": -4,
+      "binding": "WEAK",
+      "kind": 4,
+      "name": "__crabc_x86_static_tls_bootstrap",
+      "offset": 98,
+      "row_index": 1,
+      "symbol_section": 4,
+      "symbol_type": "FUNC",
+      "symbol_value": 0,
+      "table_section_index": 27,
+      "visibility": "HIDDEN"
     }
   ],
   "static-Scrt1.o": [
@@ -104,15 +117,28 @@
   "static-crt1.o": [
     {
       "addend": -4,
-      "binding": "GLOBAL",
+      "binding": "WEAK",
+      "kind": 4,
+      "name": "__crabc_x86_loader_tls_runtime_v1_attach",
+      "offset": 183,
+      "row_index": 3,
+      "symbol_section": 6,
+      "symbol_type": "FUNC",
+      "symbol_value": 0,
+      "table_section_index": 19,
+      "visibility": "DEFAULT"
+    },
+    {
+      "addend": -4,
+      "binding": "WEAK",
       "kind": 4,
       "name": "__crabc_x86_static_tls_bootstrap",
       "offset": 98,
       "row_index": 1,
-      "symbol_section": 0,
-      "symbol_type": "0",
+      "symbol_section": 4,
+      "symbol_type": "FUNC",
       "symbol_value": 0,
-      "table_section_index": 15,
+      "table_section_index": 27,
       "visibility": "HIDDEN"
     }
   ],

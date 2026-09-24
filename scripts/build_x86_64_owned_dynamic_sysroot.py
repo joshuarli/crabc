@@ -581,17 +581,31 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     crt = stage / "crt"
     run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--owned-dynamic-sysroot",
          "--out-dir", str(crt), "--llvm-objdump", objdump])
-    # This explicit CRT mode builds both dynamic entries from the same
-    # authenticated handoff owner; default/static CRT production is unchanged.
+    # This explicit CRT mode selects the authenticated dynamic-PIE Scrt1.o.
+    # Its crt1.o, crti.o and crtn.o are byte-identical to the static
+    # product's: one crt1.o serves static ET_EXEC and dynamic non-PIE.
     for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
         common.copy_artifact(crt / name, library / name)
     # Main-resident attachment preserves the established main-only weak wire.
+    # It also carries the CRT's owned-handoff slot reader, which the combined
+    # crt1.o must not import itself because static executables link it too.
+    attachment_parts = stage / "dynamic-attachment"
+    attachment_parts.mkdir()
+    handoff_reader_command = [rustup, "run", common.PINNED_TOOLCHAIN, "rustc", "--edition=2021",
+                              "--crate-name", "crabc_owned_crt_handoff_attachment", "--crate-type", "lib",
+                              "--emit", "obj", "-C", "opt-level=2", "-C", "panic=abort",
+                              "-C", "relocation-model=pic", "--remap-path-prefix", f"{ROOT}=/crabc",
+                              str(ROOT / "crt/src/x86_64_owned_crt_handoff_attachment.rs"),
+                              "-o", str(attachment_parts / "crt-handoff-reader.o")]
+    run(handoff_reader_command)
     run([rustup, "run", common.PINNED_TOOLCHAIN, "rustc", "--edition=2021",
          "--crate-name", "crabc_dynamic_attachment", "--crate-type", "lib", "--emit=obj",
          "-C", "opt-level=2", "-C", "panic=abort", "-C", "relocation-model=pic",
          "--remap-path-prefix", f"{ROOT}=/crabc",
          str(ROOT / "libc/src/c_abi/x86_64/owned_dynamic_attachment.rs"),
-         "-o", str(library / "crabc-dynamic-attach.o")])
+         "-o", str(attachment_parts / "libc-attachment.o")])
+    run([str(lld), "-r", str(attachment_parts / "libc-attachment.o"),
+         str(attachment_parts / "crt-handoff-reader.o"), "-o", str(library / "crabc-dynamic-attach.o")])
     (library / "crabc-dynamic-attach.o").chmod(0o644)
     common.copy_artifact(builtins, library / builtins.name)
     loader_env = common.deterministic_environment()
