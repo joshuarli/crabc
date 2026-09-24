@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nine frozen FILE-engine probes through one installed-header object each.
+# Ten frozen FILE-engine probes through one installed-header object each.
 set -euo pipefail
 ulimit -c 0
 
@@ -226,6 +226,7 @@ declare -a ROLES=(
     stdio.scanf
     stdio.frozen-surface
     stdio.engine-model
+    stdio.buffering-lifecycle
 )
 declare -A SOURCE=(
     [stdio.file-backends]="$ROOT/compat/x86_64/owned_stdio_backends_probe.c"
@@ -237,7 +238,16 @@ declare -A SOURCE=(
     [stdio.scanf]="$ROOT/compat/x86_64/owned_static_scanf_probe.c"
     [stdio.frozen-surface]="$ROOT/compat/x86_64/owned_stdio_surface_probe.c"
     [stdio.engine-model]="$ROOT/compat/x86_64/owned_stdio_engine_model_probe.c"
+    [stdio.buffering-lifecycle]="$ROOT/compat/x86_64/owned_stdio_buffering_probe.c"
 )
+# The buffering row's terminal target needs a pseudo-terminal master. Dynamic
+# cells execute in a chroot without devpts, so every cell of that row receives
+# the same fresh /dev/ptmx descriptor 3 by redirection; argv stays unchanged.
+run_role() {
+    local role="$1"
+    shift
+    if [ "$role" = stdio.buffering-lifecycle ]; then capture "$@" 3<>/dev/ptmx; else capture "$@"; fi
+}
 role_flags() {
     if [ "$1" = stdio.scanf ]; then printf '%s\0' -DCRABC_OWNED_SCANF; fi
 }
@@ -270,11 +280,12 @@ done
 
 sha256sum "${SOURCE[stdio.file-backends]}" "${SOURCE[stdio.process-streams]}" "${SOURCE[stdio.wide-stream]}" \
     "${SOURCE[stdio.wide-format]}" "${SOURCE[stdio.file-extensions]}" "${SOURCE[stdio.printf-float]}" \
-    "${SOURCE[stdio.scanf]}" "${SOURCE[stdio.frozen-surface]}" "${SOURCE[stdio.engine-model]}" "$RUNNER" \
+    "${SOURCE[stdio.scanf]}" "${SOURCE[stdio.frozen-surface]}" "${SOURCE[stdio.engine-model]}" \
+    "${SOURCE[stdio.buffering-lifecycle]}" "$RUNNER" \
     "$WORK/control-sh.c" "$WORK/control-cat.c" "$WORK/control-sleep.c" \
     "$WORK/stdio.file-backends.o" "$WORK/stdio.process-streams.o" "$WORK/stdio.wide-stream.o" \
     "$WORK/stdio.wide-format.o" "$WORK/stdio.file-extensions.o" "$WORK/stdio.printf-float.o" "$WORK/stdio.scanf.o" \
-    "$WORK/stdio.frozen-surface.o" "$WORK/stdio.engine-model.o" \
+    "$WORK/stdio.frozen-surface.o" "$WORK/stdio.engine-model.o" "$WORK/stdio.buffering-lifecycle.o" \
     "$WORK/control-sh.o" "$WORK/control-cat.o" "$WORK/control-sleep.o" >"$WORK/source-object-before.sha256"
 
 for applet in sh cat sleep; do
@@ -444,7 +455,7 @@ for role in "${ROLES[@]}"; do
         rmdir "$root/scratch"
     else
         scratch="$WORK/oracle-$role-stream"
-        capture "$role-oracle-run" env -i LC_ALL=C LANG=C TZ=UTC "$oracle" "$scratch"
+        run_role "$role" "$role-oracle-run" env -i LC_ALL=C LANG=C TZ=UTC "$oracle" "$scratch"
         [ "$role" != stdio.file-backends ] || rm "$scratch"
     fi
 
@@ -465,7 +476,7 @@ for role in "${ROLES[@]}"; do
             capture "$role-$linkage-cleanup" test ! -e "$root/scratch/stream"
         else
             scratch="$WORK/$role-$linkage-stream"
-            capture "$role-$linkage-run" env -i LC_ALL=C LANG=C TZ=UTC "$executable" "$scratch"
+            run_role "$role" "$role-$linkage-run" env -i LC_ALL=C LANG=C TZ=UTC "$executable" "$scratch"
             if [ "$role" = stdio.file-backends ]; then
                 cp "$scratch" "$WORK/stdio.file-backends-$linkage-exit"
                 rm "$scratch"
@@ -499,9 +510,9 @@ for role in "${ROLES[@]}"; do
             install_control_runtime "$linkage" "$root"
             proc_setup "$proc_linkage" "$root"
         fi
-        capture "$role-$linkage-kernel" chroot "$root" /consumer /scratch/stream
+        run_role "$role" "$role-$linkage-kernel" chroot "$root" /consumer /scratch/stream
         if [ "$role" = stdio.file-backends ]; then cp "$root/scratch/stream" "$WORK/stdio.file-backends-dynamic-$linkage-kernel-exit"; fi
-        capture "$role-$linkage-direct" chroot "$root" "$INTERPRETER" /consumer /scratch/stream
+        run_role "$role" "$role-$linkage-direct" chroot "$root" "$INTERPRETER" /consumer /scratch/stream
         if [ "$role" = stdio.file-backends ]; then cp "$root/scratch/stream" "$WORK/stdio.file-backends-dynamic-$linkage-direct-exit"; fi
         if [ "$role" = stdio.process-streams ] || [ "$role" = stdio.wide-format ]; then
             proc_teardown "$proc_linkage" "$root"
@@ -604,4 +615,4 @@ PY
 
 python3 -B "$READER" "$WORK/owned-stdio-file-engine.json" --checkout "$ROOT" --require-static
 chmod a+r "$WORK/owned-stdio-file-engine.json"
-printf 'owned FILE engine: PASS (nine closed FILE/format/process/surface/model rows; pinned musl, supplied static/static-PIE, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$WORK"
+printf 'owned FILE engine: PASS (ten closed FILE/format/process/surface/model/buffering rows; pinned musl, supplied static/static-PIE, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$WORK"

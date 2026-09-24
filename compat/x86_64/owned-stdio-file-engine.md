@@ -2,7 +2,7 @@
 
 `run_owned_stdio_file_engine.sh [STATIC_SYSROOT DYNAMIC_SYSROOT]` records a
 finite installed-header FILE-engine replay. It compiles one unchanged object
-for each of nine frozen probes with the selected dynamic product's
+for each of ten frozen probes with the selected dynamic product's
 headers, links that same object once with pinned musl and once in every
 product linkage, and retains raw compiler, linker, run, copied-root,
 and seal evidence. Without a supplied pair it first builds current static and
@@ -11,13 +11,14 @@ replays every row against the checkout's own source.
 
 The closed rows are `stdio.file-backends`, `stdio.process-streams`,
 `stdio.wide-stream`, `stdio.wide-format`, `stdio.file-extensions`,
-`stdio.printf-float`, `stdio.scanf`, `stdio.frozen-surface`, and
-`stdio.engine-model`. They retain
+`stdio.printf-float`, `stdio.scanf`, `stdio.frozen-surface`,
+`stdio.engine-model`, and `stdio.buffering-lifecycle`. They retain
 the actual observations in `owned_stdio_backends_probe.c`,
 `owned_stdio_process_probe.c`, `owned_wide_stdio_probe.c`,
 `owned_wide_format_probe.c`, `owned_stdio_extensions_probe.c`,
 `owned_static_printf_float_probe.c`, `owned_static_scanf_probe.c`,
-`owned_stdio_surface_probe.c`, and `owned_stdio_engine_model_probe.c`:
+`owned_stdio_surface_probe.c`, `owned_stdio_engine_model_probe.c`, and
+`owned_stdio_buffering_probe.c`:
 descriptor/memory/cookie streams including
 ordinary-exit flushing; `popen`/`pclose`/`system` process and failure cleanup;
 wide orientation and memory streams; wide grammar; `stdio_ext` state and
@@ -33,11 +34,21 @@ valid operations and folds each step's result, errno, position, indicators,
 pipe contents, memory or cookie bytes) into one digest per scenario, so it
 compares musl's buffering and read-ahead policy as well as results. Building it
 with `-DMODEL_TRACE` prints the steps themselves to localize a differing
-digest. The rows do not add a runtime API.
+digest. The buffering row runs each scenario in a fresh child whose standard
+output and error share a regular file, a pipe, or a pseudo-terminal, and prints
+the bytes each target received. Raw `write` markers, an `atexit` handler and an
+ELF destructor interleave with stdio output, so the transcript itself records
+when the engine wrote: stdout's lazy terminal probe, line-buffer split points,
+unbuffered stderr, `setvbuf` and its wrappers before and after I/O,
+`fflush(NULL)` and ordinary-exit order, unread input returned to a shared
+descriptor at exit, `fclose(stdout)`, and `exit`/return/`_Exit`/`quick_exit`/
+`abort`/`pthread_exit`. The runner opens `/dev/ptmx` as descriptor 3 for every
+cell of that row, because the dynamic chroot has no devpts; the probe unlocks
+it and opens the terminal with `TIOCGPTPEER`. The rows do not add a runtime API.
 
 ## Frozen symbol surface
 
-The reader parses the undefined global and weak symbols of the nine retained
+The reader parses the undefined global and weak symbols of the ten retained
 installed-header ELF objects. Together they must reference every symbol that
 the frozen ledger `compat/crabc-rs/coverage.toml` lists for
 `stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`, and

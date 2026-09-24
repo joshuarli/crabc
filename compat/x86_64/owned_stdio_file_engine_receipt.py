@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reconstruct the bounded installed FILE-engine receipt from retained bytes.
 
-This reader deliberately validates nine FILE-engine probes as separate
+This reader deliberately validates ten FILE-engine probes as separate
 installed-header objects.  It does not add a stdio API, infer symbols from a
 report, or treat an earlier static-only run as six-mode product evidence.
 The retained objects' undefined-symbol tables must jointly reference the whole
@@ -118,6 +118,13 @@ ROLES: dict[str, dict[str, object]] = {
         "headers": ("stdio.h", "stdio_ext.h", "stdlib.h", "string.h", "stdarg.h", "stdint.h", "errno.h",
                     "fcntl.h", "locale.h", "pthread.h", "signal.h", "unistd.h", "wchar.h",
                     "sys/ioctl.h", "sys/resource.h", "sys/stat.h", "features.h", "bits/alltypes.h"),
+        "flags": (), "side_effect": None,
+    },
+    "stdio.buffering-lifecycle": {
+        "source": "compat/x86_64/owned_stdio_buffering_probe.c",
+        "behavior": "file-pipe-terminal-buffering-flush-and-exit-order-transcripts",
+        "headers": ("stdio.h", "stdlib.h", "string.h", "errno.h", "fcntl.h", "pthread.h", "signal.h",
+                    "unistd.h", "wchar.h", "sys/ioctl.h", "sys/wait.h", "features.h", "bits/alltypes.h"),
         "flags": (), "side_effect": None,
     },
 }
@@ -703,7 +710,7 @@ def undefined_symbols(path: Path) -> set[str]:
 
 
 def validate_frozen_surface(checkout: Path, workloads: Mapping[str, Path]) -> dict[str, int]:
-    """Require the nine objects to reference every frozen FILE-capability symbol."""
+    """Require the ten objects to reference every frozen FILE-capability symbol."""
     referenced: set[str] = set()
     for role in SCOPE:
         referenced |= undefined_symbols(workloads[role])

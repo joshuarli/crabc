@@ -90,6 +90,7 @@ STDIO_ENGINE_ROWS = (
     "stdio.scanf",
     "stdio.frozen-surface",
     "stdio.engine-model",
+    "stdio.buffering-lifecycle",
 )
 # The engine reader proves these capabilities' complete frozen symbol lists
 # are referenced by its retained objects; fopen64 is the v3 macro receipt's.
