@@ -38670,6 +38670,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let queue_bin = queue_bin.ok_or(FreeError::Lifecycle)?;
 
         if used == 0 {
+            // Pinned `free.c:49-52` does not re-retire an already retired
+            // page: its partly elapsed countdown and interior marker stay.
+            // SAFETY: this owner exclusively controls the ordinary byte.
+            if unsafe { page.as_ref() }.retire_expire() != 0 {
+                return Ok(());
+            }
             // `mi_page_retire` clears the page-wide interior marker only once
             // every allocation from the page has returned. Clearing it for an
             // individual aligned free would make another live interior
@@ -39547,16 +39553,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // this raw projection remains disjoint from producer atomics.
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
+            // Pinned `alloc.c:mi_page_malloc_zero` pops without touching
+            // `retire_expire`; queue selection (`mi_page_queue_find_free`)
+            // and `_mi_theap_collect_retired` own that byte.
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
-                // SAFETY: the same owner exclusively controls this ordinary
-                // retirement byte; no whole-page reference is created.
-                unsafe { Page::set_retire_expire_at(page, 0) };
                 return Ok(Some(block));
             }
             if free_list.quick_collect().map_err(GenericPathError::Local)? {
                 if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
-                    // SAFETY: same disjoint owner-only byte contract as above.
-                    unsafe { Page::set_retire_expire_at(page, 0) };
                     return Ok(Some(block));
                 }
             }
@@ -39572,8 +39576,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
-                // SAFETY: the active owner exclusively controls this byte.
-                unsafe { Page::set_retire_expire_at(page, 0) };
                 return Ok(Some(block));
             }
         }
@@ -39595,13 +39597,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // this owner controls its ordinary fields. Producer atomics remain
         // disjoint from the raw local-list projection.
         let mut free_list = unsafe { LocalFreeList::from_page_at(page) }?;
-        let block = free_list.pop(zero)?;
-        if block.is_some() {
-            // SAFETY: this active owner exclusively controls the ordinary
-            // retirement byte.
-            unsafe { Page::set_retire_expire_at(page, 0) };
-        }
-        Ok(block)
+        // Like `mi_page_malloc_zero`, the pop leaves `retire_expire` alone: a
+        // retired page reached through the direct cache stays retired until
+        // queue selection or `_mi_theap_collect_retired` clears it.
+        free_list.pop(zero)
     }
 
     /// Performs the `alloc-aligned.c`/`arena.c` fresh OS-singleton sequence.
@@ -44712,6 +44711,59 @@ mod tests {
                 allocator.free(first).unwrap();
                 allocator.free(second).unwrap();
             }
+        });
+    }
+
+    /// Pinned `alloc.c:mi_page_malloc_zero` pops `page->free` without
+    /// touching `retire_expire`. A retired sole page that still has immediate
+    /// blocks therefore stays retired through direct-cache allocation, and a
+    /// later local free does not restart its countdown (`page.c:429`). Only
+    /// queue selection or `_mi_theap_collect_retired` clears it.
+    #[test]
+    fn direct_cache_allocation_keeps_a_retired_page_countdown() {
+        with_allocator(|allocator| {
+            let first = allocator.allocate(8, false).unwrap();
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+            // SAFETY: `first` keeps the page live for this read.
+            assert!(unsafe { !page.as_ref().free_list_head().is_null() });
+            unsafe { allocator.free(first).unwrap() };
+            assert_eq!(unsafe { page.as_ref().retire_expire() }, RETIRE_CYCLES);
+
+            let second = allocator.allocate(8, false).unwrap();
+            assert_eq!(unsafe { allocator.page_for_block(second) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() }, 1);
+            assert_eq!(
+                unsafe { page.as_ref().retire_expire() },
+                RETIRE_CYCLES,
+                "the direct fast path must not clear the source retirement countdown",
+            );
+            unsafe { allocator.free(second).unwrap() };
+            assert_eq!(unsafe { page.as_ref().retire_expire() }, RETIRE_CYCLES);
+        });
+    }
+
+    /// Pinned `free.c:49-52` retires a page at `used == 0` only while its
+    /// `retire_expire` is still zero, so a local free on an already retired
+    /// page keeps the partly elapsed countdown rather than restarting it.
+    #[test]
+    fn local_free_keeps_an_elapsed_retirement_countdown() {
+        with_allocator(|allocator| {
+            let first = allocator.allocate(8, false).unwrap();
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+            unsafe { allocator.free(first).unwrap() };
+            assert_eq!(unsafe { page.as_ref().retire_expire() }, RETIRE_CYCLES);
+            // One normal `_mi_theap_collect_retired` pass decrements it.
+            assert!(allocator.collect_retired(false));
+            assert_eq!(unsafe { page.as_ref().retire_expire() }, RETIRE_CYCLES - 1);
+
+            let second = allocator.allocate(8, false).unwrap();
+            assert_eq!(unsafe { allocator.page_for_block(second) }, page.as_ptr());
+            unsafe { allocator.free(second).unwrap() };
+            assert_eq!(
+                unsafe { page.as_ref().retire_expire() },
+                RETIRE_CYCLES - 1,
+                "a local free must not re-retire an already retired page",
+            );
         });
     }
 
