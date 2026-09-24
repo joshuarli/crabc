@@ -2909,6 +2909,30 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
             .begin_deferred_free_aligned_allocation(request, alignment, zero)
     }
 
+    /// Starts pinned `mi_theap_collect(theap, force)` through the same
+    /// value-only callback split as generic allocation.
+    #[inline]
+    pub(crate) fn begin_deferred_free_collection(
+        &mut self,
+        force: bool,
+    ) -> crate::single_thread::DeferredFreeAllocationPhase {
+        self.engine.begin_deferred_free_collection(force)
+    }
+
+    /// The offset-aligned (`_at`) form of
+    /// [`Self::begin_deferred_free_aligned_allocation`].
+    #[inline]
+    pub(crate) fn begin_deferred_free_aligned_allocation_at(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        offset: usize,
+        zero: bool,
+    ) -> crate::single_thread::DeferredFreeAllocationPhase {
+        self.engine
+            .begin_deferred_free_aligned_allocation_at(request, alignment, offset, zero)
+    }
+
     /// Resumes a callback-selected native generic phase after the runtime
     /// reacquired and revalidated this owner-local engine.
     #[inline]

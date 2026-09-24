@@ -2099,10 +2099,51 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
 
     /// Starts an aligned persistent-initial allocation with the same
     /// caller-stack deferred-free phase contract as ordinary allocation.
+    #[inline]
     pub(crate) fn begin_deferred_free_aligned_current_initial_thread_local(
         &mut self,
         request: usize,
         alignment: usize,
+        zero: bool,
+    ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        self.begin_deferred_free_aligned_at_current_initial_thread_local(request, alignment, 0, zero)
+    }
+
+    /// Starts pinned `mi_theap_collect(theap, force)` for the persistent
+    /// initial owner. Only an active engine owns pages to collect: a source
+    /// that has not yet materialized its page engine completes at once rather
+    /// than activating one merely to find it empty.
+    pub(crate) fn begin_deferred_free_collection_current_initial_thread_local(
+        &mut self,
+        force: bool,
+    ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        let engine = match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => &mut active.engine,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Retained
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Transition => return None,
+            _ => return Some(MainStaticDeferredFreeAllocationPhase::Complete(None)),
+        };
+        match engine.begin_deferred_free_collection(force) {
+            DeferredFreeAllocationPhase::Complete(block) => {
+                Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
+            }
+            DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                Some(MainStaticDeferredFreeAllocationPhase::Collect {
+                    source: engine.deferred_free_source()?,
+                    collection,
+                    continuation,
+                })
+            }
+        }
+    }
+
+    /// The offset-aligned (`_at`) form of
+    /// [`Self::begin_deferred_free_aligned_current_initial_thread_local`].
+    pub(crate) fn begin_deferred_free_aligned_at_current_initial_thread_local(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        offset: usize,
         zero: bool,
     ) -> Option<MainStaticDeferredFreeAllocationPhase> {
         if !matches!(
@@ -2115,7 +2156,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             return None;
         }
         self.allocate_with(request, |engine| {
-            match engine.begin_deferred_free_aligned_allocation(request, alignment, zero) {
+            match engine.begin_deferred_free_aligned_allocation_at(request, alignment, offset, zero) {
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }

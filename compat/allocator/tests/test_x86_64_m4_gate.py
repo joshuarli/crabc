@@ -109,6 +109,7 @@ class M4GateContractTests(unittest.TestCase):
 
     def test_missing_evidence_cannot_be_unblocked_by_editing_the_contract(self) -> None:
         unblocked = copy.deepcopy(self.contract)
+        unblocked["evidence"]["differential:collection"]["command"] = None
         self.gate_record(unblocked, "m4.collection")["blocked_by"] = []
         with self.assertRaisesRegex(harness.HarnessError, "missing evidence without a blocker"):
             self.validate(unblocked)

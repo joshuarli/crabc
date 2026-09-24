@@ -8,6 +8,7 @@ members = [
     "crabc-mimalloc",
     "compat/allocator/test-adapter",
     "compat/allocator/runtime-ticket-zero-adapter",
+    "compat/allocator/native-mi-adapter",
 ]
 resolver = "2"
 

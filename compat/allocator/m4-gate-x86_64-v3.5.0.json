@@ -31,20 +31,44 @@
   },
   "evidence": {
     "differential:operations": {
-      "command": null,
-      "scope": "One checked-in C driver runs as two separate processes, linked once against the pinned C v3.5.0 release library and once against the native adapter, and both address-free traces must be equal: allocation, zeroing, calloc/mallocn overflow, usable and good size across every size class, the realloc family (ceil-half reuse, grow/shrink copy, rezalloc/recalloc tail zeroing, reallocf release, reallocarray/reallocarr errno), expand, the aligned family (natural, over-allocated, offset, OS-aligned singleton, invalid alignment), posix_memalign/memalign/valloc/pvalloc/aligned_alloc argument rules, umalloc/urealloc/ufree block sizes, free_size/free_aligned, and the strdup/realpath/dupenv conveniences with errno after each call."
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--offline",
+        "--differential",
+        "operations"
+      ],
+      "scope": "One checked-in C driver runs as two separate processes, linked once against the pinned C v3.5.0 release sources and once against the native adapter, and both address-free traces (logical ids, reuse relations, usable size, alignment, 64 KiB slice) must be equal: allocation, zeroing, calloc/mallocn overflow, usable and good size across every size class, the realloc family (ceil-half reuse, grow/shrink copy, rezalloc/recalloc tail zeroing, reallocf release, reallocarray/reallocarr errno), expand, the aligned family (natural, over-allocated, offset, OS-aligned singleton, invalid alignment, meta alignment), posix_memalign/memalign/valloc/pvalloc/aligned_alloc argument rules, umalloc/urealloc/ufree block sizes, the free forms and mi_cfree/mi_check_owned, the strdup/realpath/dupenv conveniences with errno after each call, and identical termination of the plain-C mi_new abort cases."
     },
     "differential:page-kinds": {
-      "command": null,
-      "scope": "The same two-process driver compares the small, medium, large, and huge-singleton geometry both allocators select: block and usable size at each class boundary and MI_*_OBJ_SIZE_MAX edge, alignment of consecutive blocks, reuse of a freed block by the next same-class request, and huge-singleton release on free."
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--offline",
+        "--differential",
+        "page-kinds"
+      ],
+      "scope": "Separate pinned-C and native-adapter processes run the same driver scenario: for request sizes at each small, medium, large, and huge-singleton edge, two pages' worth of blocks (so pages fill and leave their queue), interleaved frees, and a second round whose blocks, slices, and reuse relations show the page selection, retirement, and release of each kind."
     },
     "differential:collection": {
-      "command": null,
-      "scope": "The same two-process driver compares `mi_collect(false)` and `mi_collect(true)` through observable effects after frees, deferred retirement, and page reuse: which previously freed blocks are reissued, and the committed-memory result both allocators report through the process's own mapping state."
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--offline",
+        "--differential",
+        "collection"
+      ],
+      "scope": "Separate pinned-C and native-adapter processes run the same driver scenario: after filling and freeing pages of several classes, `mi_collect(false)`, `mi_collect(true)`, or no collection, then a different-class probe and a same-class allocation whose block, slice, and reuse relations show which pages each collection released."
     },
     "differential:oom-failure": {
-      "command": null,
-      "scope": "Under a fixed RLIMIT_AS both processes refuse the same OS-backed requests: NULL results and errno for malloc/calloc/aligned/realloc/posix_memalign, preservation of the old block and its bytes on realloc and aligned-realloc failure, reallocf release, and the `mi_option_retry_on_oom` retry outcome."
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--offline",
+        "--differential",
+        "oom"
+      ],
+      "scope": "Under a fixed RLIMIT_AS both processes refuse the same OS-backed requests: NULL results and errno for malloc/calloc/aligned/realloc/posix_memalign, preservation of the old block and its bytes on realloc and aligned-realloc failure, reallocf release, continued service from existing pages, and recovery after the limit is lifted."
     },
     "unit:native-operations": {
       "command": [
@@ -55,12 +79,27 @@
       "scope": "The focused native-engine integration regressions for aligned and ordinary reallocation, owner-local and foreign reallocation, pointer-first usable size, and huge-singleton local free."
     },
     "adapter:export-boundary": {
-      "command": null,
-      "scope": "The native adapter builds as a static library whose defined global symbols are exactly the M4 external functions, compiles against the pinned `include/mimalloc.h` prototypes, links with no C mimalloc object, and executes on native x86-64."
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--offline",
+        "--adapter-boundary"
+      ],
+      "scope": "The native adapter builds as a static library whose defined `mi_*` globals are exactly the M4 external functions, that defines no libc allocator entry and no C mimalloc `_mi_*` internal, and against which alone a C probe naming every function through the pinned `include/mimalloc.h` prototypes links and runs on native x86-64."
     },
     "upstream:test-api": {
       "command": null,
       "scope": "Unmodified pinned `test/test-api.c` with `testhelper.h` compiles against the pinned headers, links against the native adapter only, and every M4-owned check reports `ok.` (the heap-os1, heap-os2, heap-many, and arena_reserve checks belong to M6)."
+    },
+    "differential:threads": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--offline",
+        "--differential",
+        "threads"
+      ],
+      "scope": "Separate pinned-C and native-adapter processes run the same threaded driver scenario: a worker bound by its first call allocates, reallocates an initial-thread block in place through the shared Heap, frees an initial-thread huge block remotely, and exits; the initial thread then reallocates and frees the exited worker's blocks and observes the resulting reuse; a second worker's first call is `mi_malloc_aligned(0, 16)` (test-api.c `zero_aligned_first`)."
     }
   },
   "gates": [
@@ -82,15 +121,12 @@
         "mi_zalloc",
         "mi_zalloc_small"
       ],
-      "acceptance": "Default-Theap allocation follows src/alloc.c: `mi_malloc(0)` returns a distinct minimal block, requests above MI_MAX_ALLOC_SIZE and overflowing counts fail with the source errno, zeroing entries return zeroed usable bytes, the `u` forms report the page block size, and the `mi_new` family follows the plain-C `mi_try_new_handler` (error message, abort unless nothrow).",
+      "acceptance": "Default-Theap allocation follows src/alloc.c: `mi_malloc(0)` returns a distinct minimal block, an oversized request still counts its generic call and forces one collection before failing, overflowing counts fail without a message, zeroing entries return zeroed usable bytes, the `u` forms report the page block size, and the `mi_new` family follows the plain-C `mi_try_new_handler` (abort unless nothrow). errno is the default error handler's result; message rendering and registered handlers are M7's error-reporting sites.",
       "evidence": [
         "differential:operations",
         "adapter:export-boundary"
       ],
-      "blocked_by": [
-        "No unprefixed `mi_*` C ABI exists over the native `__crabc_runtime` engine; the only C-callable routes are libc's malloc family and the prefixed single-thread `crabc_test_*` adapter.",
-        "The native runtime reports a client's usable size but not its page block size, which the `u` forms return."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.free",
@@ -109,9 +145,7 @@
         "differential:operations",
         "adapter:export-boundary"
       ],
-      "blocked_by": [
-        "No unprefixed `mi_*` C ABI exists over the native engine, and the native free boundary rejects an unmapped pointer where the source free forms return without effect."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.realloc",
@@ -134,12 +168,10 @@
       "evidence": [
         "differential:operations",
         "unit:native-operations",
-        "adapter:export-boundary"
+        "adapter:export-boundary",
+        "differential:threads"
       ],
-      "blocked_by": [
-        "No unprefixed `mi_*` C ABI exists over the native engine.",
-        "The native runtime has no `mi_expand` entry (the engine's `expand_in_place` is unexposed) and no pre/post block-size result for `mi_urealloc`."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.aligned",
@@ -173,10 +205,7 @@
         "unit:native-operations",
         "adapter:export-boundary"
       ],
-      "blocked_by": [
-        "No unprefixed `mi_*` C ABI exists over the native engine.",
-        "The native runtime exposes only zero-offset aligned allocation and reallocation; the engine's `allocate_aligned_at`/`reallocate_aligned_at` forms are unreachable from it."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.usable-size",
@@ -191,9 +220,7 @@
         "differential:operations",
         "adapter:export-boundary"
       ],
-      "blocked_by": [
-        "No unprefixed `mi_*` C ABI exists over the native engine."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.source-conveniences",
@@ -216,9 +243,7 @@
         "differential:operations",
         "adapter:export-boundary"
       ],
-      "blocked_by": [
-        "No unprefixed `mi_*` C ABI exists over the native engine, and no native safe-pointer PageMap query answers `mi_check_owned` for an arbitrary pointer."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.collection",
@@ -232,7 +257,7 @@
         "adapter:export-boundary"
       ],
       "blocked_by": [
-        "The native runtime has no collection entry: default-Theap collection runs only inside owner exit, fork preparation, and the forced deferred-free OOM retry."
+        "The native engine does not reclaim an abandoned full page on its owner's free as pinned `mi_free_try_collect_mt` does (`mi_abandoned_page_try_reclaim` into the originating Theap within `page_max_reclaim`, after which the emptied page is retired): it frees the page when its last block returns. The first divergence is `page_kinds.3.1.0` (12 KiB-bin medium pages) and `collect.probe.2.0` (32 KiB-bin pages before `mi_collect(false)`). Abandonment and reclaim are M5 work."
       ]
     },
     {
@@ -245,21 +270,19 @@
         "unit:native-operations"
       ],
       "blocked_by": [
-        "No differential compares the page kind, block size, and reuse the native engine selects at each class boundary with pinned C."
+        "The native engine does not reclaim an abandoned full page on its owner's free as pinned `mi_free_try_collect_mt` does (`mi_abandoned_page_try_reclaim` into the originating Theap within `page_max_reclaim`, after which the emptied page is retired): it frees the page when its last block returns. The first divergence is `page_kinds.3.1.0` (12 KiB-bin medium pages) and `collect.probe.2.0` (32 KiB-bin pages before `mi_collect(false)`). Abandonment and reclaim are M5 work."
       ]
     },
     {
       "id": "m4.oom-failure",
       "required": true,
       "items": [],
-      "acceptance": "OS refusal propagates as the source NULL/errno result without corrupting allocator state, every failed reallocation preserves the old block and its bytes, and `mi_option_retry_on_oom` retries as the source does.",
+      "acceptance": "OS refusal propagates as the source NULL/errno result without corrupting allocator state, and every failed reallocation preserves the old block and its bytes (`reallocf` releases it). `mi_option_retry_on_oom` is a Windows-only retry and has no Linux effect.",
       "evidence": [
         "differential:oom-failure",
         "unit:native-operations"
       ],
-      "blocked_by": [
-        "No differential exercises OS-refused allocation through the native engine; only invalid-size requests are covered by the focused regressions."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.c-adapter",
@@ -267,11 +290,10 @@
       "items": [],
       "acceptance": "One native adapter exports exactly the M4 external functions with the pinned `mimalloc.h` prototypes over `__crabc_runtime`, attaches and finishes threads through the source thread-done key, and contains no C mimalloc object.",
       "evidence": [
-        "adapter:export-boundary"
+        "adapter:export-boundary",
+        "differential:threads"
       ],
-      "blocked_by": [
-        "No native `mi_*` adapter exists."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.upstream",

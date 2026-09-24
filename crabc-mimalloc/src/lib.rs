@@ -94,6 +94,9 @@ mod random;
 mod remote_free;
 mod runtime_lifecycle;
 mod size_class;
+#[cfg(target_arch = "x86_64")]
+#[doc(hidden)]
+pub mod source_api;
 mod single_thread;
 mod statistics;
 mod subproc;
@@ -148,6 +151,8 @@ pub mod __crabc_runtime {
     #[cfg(target_arch = "x86_64")]
     pub use crate::diagnostic_output::RuntimeStderrOutput;
     #[cfg(target_arch = "x86_64")]
+    pub use crate::source_api;
+    #[cfg(target_arch = "x86_64")]
     pub use crate::runtime_lifecycle::{
         NativeProcessStartupFacts, publish_native_process_startup_facts,
     };
@@ -194,9 +199,11 @@ pub mod __crabc_runtime {
         process_is_active, prepare_native_later_thread_arena,
         retain_current_thread_native_owner_after_process_done_nonfinal,
         reinitialize_current_thread_native_owner_for_final_process_exit,
-        native_allocate_aligned, native_free, native_reallocate, native_reallocate_aligned,
+        native_allocate, native_allocate_aligned, native_allocate_aligned_at, native_free,
+        native_reallocate, native_reallocate_aligned, native_reallocate_aligned_at,
+        native_reallocate_source, native_collect,
         native_reallocate_zeroed, native_reallocate_aligned_zeroed,
-        native_usable_size,
+        native_usable_size, native_block_size, native_pointer_is_mapped, native_os_page_size,
         NativeDeferredFreeCallback, register_native_deferred_free_callback,
     };
 

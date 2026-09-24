@@ -1,0 +1,15 @@
+[package]
+name = "crabc-mimalloc-native-mi-adapter"
+version.workspace = true
+edition.workspace = true
+description = "Evidence-only unprefixed mi_* C ABI over the native crabc-mimalloc runtime"
+# The adapter translates pinned mimalloc C entry points.
+license = "MIT"
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+crabc-mimalloc = { path = "../../../crabc-mimalloc", default-features = false }

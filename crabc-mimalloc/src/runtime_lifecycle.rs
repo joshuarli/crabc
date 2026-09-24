@@ -7550,14 +7550,37 @@ impl NativePersistentThreadOwner {
     /// Runs phase A for an aligned native allocation. The lower phase holds
     /// only alignment geometry, so callback delivery still happens after this
     /// owner-local projection and its containing TLS owner-cell borrow end.
+    #[inline]
     fn begin_deferred_free_aligned_allocation(
         &mut self,
         request: usize,
         alignment: usize,
         zero: bool,
     ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
+        self.begin_deferred_free_aligned_allocation_at(request, alignment, 0, zero)
+    }
+
+    /// Runs phase A of pinned `mi_theap_collect(theap, force)`.
+    fn begin_deferred_free_collection(
+        &mut self,
+        force: bool,
+    ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
         let phase = self.with_local_allocator(|allocator| {
-            allocator.begin_deferred_free_aligned_allocation(request, alignment, zero)
+            allocator.begin_deferred_free_collection(force)
+        })?;
+        self.defer_after_generic_allocation_phase(phase)
+    }
+
+    /// The offset-aligned (`_at`) form of phase A for an aligned allocation.
+    fn begin_deferred_free_aligned_allocation_at(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        offset: usize,
+        zero: bool,
+    ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
+        let phase = self.with_local_allocator(|allocator| {
+            allocator.begin_deferred_free_aligned_allocation_at(request, alignment, offset, zero)
         })?;
         self.defer_after_generic_allocation_phase(phase)
     }
@@ -8001,15 +8024,39 @@ impl NativeInitialPersistentThreadOwner {
     }
 
     /// Starts phase A of one initial aligned allocation.
+    #[inline]
     fn begin_deferred_free_aligned_allocation(
         &mut self,
         request: usize,
         alignment: usize,
         zero: bool,
     ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
+        self.begin_deferred_free_aligned_allocation_at(request, alignment, 0, zero)
+    }
+
+    /// Starts phase A of pinned `mi_theap_collect(theap, force)` on the
+    /// initial owner.
+    fn begin_deferred_free_collection(
+        &mut self,
+        force: bool,
+    ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
         let phase = self
             .allocator
-            .begin_deferred_free_aligned_current_initial_thread_local(request, alignment, zero)?;
+            .begin_deferred_free_collection_current_initial_thread_local(force)?;
+        self.defer_after_generic_allocation_phase(phase)
+    }
+
+    /// The offset-aligned (`_at`) form of the initial aligned phase A.
+    fn begin_deferred_free_aligned_allocation_at(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        offset: usize,
+        zero: bool,
+    ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
+        let phase = self
+            .allocator
+            .begin_deferred_free_aligned_at_current_initial_thread_local(request, alignment, offset, zero)?;
         self.defer_after_generic_allocation_phase(phase)
     }
 
@@ -9231,12 +9278,13 @@ fn begin_current_thread_native_deferred_free_allocation(
 fn begin_current_thread_native_deferred_free_aligned_allocation(
     request: usize,
     alignment: usize,
+    offset: usize,
     zero: bool,
 ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerAccessError> {
     let mut may_create = true;
     loop {
         match with_current_thread_native_persistent_owner(|owner| {
-            owner.begin_deferred_free_aligned_allocation(request, alignment, zero)
+            owner.begin_deferred_free_aligned_allocation_at(request, alignment, offset, zero)
         }) {
             Ok(Ok(phase)) => return Ok(phase),
             Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly)) if may_create => {
@@ -9356,11 +9404,13 @@ fn run_current_thread_native_deferred_free_phase(
 fn run_current_thread_native_deferred_free_aligned_allocation(
     request: usize,
     alignment: usize,
+    offset: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
     let phase = begin_current_thread_native_deferred_free_aligned_allocation(
         request,
         alignment,
+        offset,
         zero,
     )?;
     run_current_thread_native_deferred_free_phase(phase)
@@ -9371,14 +9421,37 @@ fn run_current_thread_native_deferred_free_aligned_allocation(
 fn begin_current_thread_native_initial_deferred_free_aligned_allocation(
     request: usize,
     alignment: usize,
+    offset: usize,
     zero: bool,
 ) -> Result<NativeInitialDeferredFreeAllocationPhase, NativeInitialPersistentThreadOwnerAccessError> {
-    match with_current_thread_native_initial_persistent_allocator(true, |owner| {
+    native_initial_deferred_free_phase_result(with_current_thread_native_initial_persistent_allocator(true, |owner| {
         (
-            owner.begin_deferred_free_aligned_allocation(request, alignment, zero),
+            owner.begin_deferred_free_aligned_allocation_at(request, alignment, offset, zero),
             owner.is_retained(),
         )
-    }) {
+    }))
+}
+
+/// Starts phase A of one ordinary (`_mi_theap_malloc_zero`) allocation
+/// through the pinned initial compiler-TLS owner.
+fn begin_current_thread_native_initial_deferred_free_allocation(
+    request: usize,
+    zero: bool,
+) -> Result<NativeInitialDeferredFreeAllocationPhase, NativeInitialPersistentThreadOwnerAccessError> {
+    native_initial_deferred_free_phase_result(with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        (owner.begin_deferred_free_allocation(request, zero), owner.is_retained())
+    }))
+}
+
+/// Classifies one initial-owner phase-A projection: a retained owner never
+/// yields its phase, and a refused phase without retention is unavailable.
+fn native_initial_deferred_free_phase_result(
+    projection: Result<
+        (Option<NativeInitialDeferredFreeAllocationPhase>, bool),
+        NativeInitialPersistentThreadOwnerAccessError,
+    >,
+) -> Result<NativeInitialDeferredFreeAllocationPhase, NativeInitialPersistentThreadOwnerAccessError> {
+    match projection {
         Ok((Some(phase), false)) => Ok(phase),
         Ok((Some(_) | None, true)) => Err(NativeInitialPersistentThreadOwnerAccessError::Retained),
         Ok((None, false)) => Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable),
@@ -9419,13 +9492,32 @@ fn resume_current_thread_native_initial_deferred_free_allocation(
 fn run_current_thread_native_initial_deferred_free_aligned_allocation(
     request: usize,
     alignment: usize,
+    offset: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
-    let mut phase = begin_current_thread_native_initial_deferred_free_aligned_allocation(
+    let phase = begin_current_thread_native_initial_deferred_free_aligned_allocation(
         request,
         alignment,
+        offset,
         zero,
     )?;
+    run_current_thread_native_initial_deferred_free_phase(phase)
+}
+
+/// Drives one initial-owner ordinary allocation through the same phases.
+fn run_current_thread_native_initial_deferred_free_allocation(
+    request: usize,
+    zero: bool,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
+    let phase = begin_current_thread_native_initial_deferred_free_allocation(request, zero)?;
+    run_current_thread_native_initial_deferred_free_phase(phase)
+}
+
+/// Drives one already-selected initial-owner phase to completion. Ordinary
+/// and aligned allocation both enter here after their phase-A borrow ended.
+fn run_current_thread_native_initial_deferred_free_phase(
+    mut phase: NativeInitialDeferredFreeAllocationPhase,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
     loop {
         phase = match phase {
             NativeInitialDeferredFreeAllocationPhase::Complete(block) => return Ok(block),
@@ -10057,42 +10149,29 @@ fn native_initial_deferred_free_allocation_result(
     }
 }
 
-/// Allocates through the initial thread's already-installed source owner.
-///
-/// The caller selected this pinned compiler-TLS cell before any ambient
-/// initial-thread admission. A valid active cell needs no cold promotion,
-/// scheduler, or parked-engine bridge; the cell itself remains the exact
-/// current-owner and reentrancy boundary.
-fn native_initial_thread_allocate_aligned_from_installed_owner(
-    request: usize,
-    alignment: usize,
-    zero: bool,
-) -> NativePageAllocationResult {
-    native_initial_deferred_free_allocation_result(
-        run_current_thread_native_initial_deferred_free_aligned_allocation(
-            request,
-            alignment,
-            zero,
-        ),
-    )
-}
-
 /// Allocates through the initial thread's continuously stored source owner.
-/// This is the cold initial-owner path: promotion is a one-time startup
-/// transition, after which the public allocation boundary selects the
-/// installed compiler-TLS cell above without reopening initial admission.
-fn native_initial_thread_allocate_aligned(
+///
+/// Both the already-installed cell and the cold path enter here. For an
+/// installed cell the caller selected it before any ambient initial-thread
+/// admission, so it needs no cold promotion, scheduler, or parked-engine
+/// bridge. The cold path's promotion is a one-time startup transition, after
+/// which the public allocation boundary selects the installed cell without
+/// reopening initial admission.
+fn native_initial_thread_allocate(
     request: usize,
-    alignment: usize,
+    shape: NativeAllocationShape,
     zero: bool,
 ) -> NativePageAllocationResult {
-    native_initial_deferred_free_allocation_result(
-        run_current_thread_native_initial_deferred_free_aligned_allocation(
-            request,
-            alignment,
-            zero,
-        ),
-    )
+    native_initial_deferred_free_allocation_result(match shape {
+        NativeAllocationShape::Ordinary => {
+            run_current_thread_native_initial_deferred_free_allocation(request, zero)
+        }
+        NativeAllocationShape::Aligned { alignment, offset } => {
+            run_current_thread_native_initial_deferred_free_aligned_allocation(
+                request, alignment, offset, zero,
+            )
+        }
+    })
 }
 
 /// Frees a PageMap-proven current initial-thread client through that owner's
@@ -10237,19 +10316,115 @@ impl NativeSubprocessOperation {
 /// represented solely by source Page used/free state plus the process PageMap;
 /// no client address is copied into the runtime owner.
 #[doc(hidden)]
+#[inline]
 pub fn native_allocate_aligned(
     request: usize,
     alignment: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    native_allocate_shaped(request, NativeAllocationShape::Aligned { alignment, offset: 0 }, zero)
+}
+
+/// Allocates one source ordinary block, pinned `_mi_theap_malloc_zero` on
+/// the current default Theap, through the same owner selection as
+/// [`native_allocate_aligned`]. Unlike the C-facing aligned entry it makes
+/// no alignment promise beyond the selected size class.
+#[doc(hidden)]
+#[inline]
+pub fn native_allocate(request: usize, zero: bool) -> NativePageAllocationResult {
+    native_allocate_shaped(request, NativeAllocationShape::Ordinary, zero)
+}
+
+/// Allocates one block whose `pointer + offset` is aligned, pinned
+/// `mi_theap_malloc_zero_aligned_at`. A nonzero offset is refused for the
+/// OS-aligned singleton range above `MI_PAGE_MAX_OVERALLOC_ALIGN`, as in the
+/// source selector.
+#[doc(hidden)]
+#[inline]
+pub fn native_allocate_aligned_at(
+    request: usize,
+    alignment: usize,
+    offset: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    native_allocate_shaped(request, NativeAllocationShape::Aligned { alignment, offset }, zero)
+}
+
+/// Runs pinned `mi_collect(force)` on the calling thread's default Theap:
+/// `_mi_deferred_free(theap, force)` with the page engine released, then the
+/// normal or forced `mi_theap_collect_ex` collection and statistics merge.
+///
+/// As in the source, a thread whose default Theap has not been initialized
+/// has nothing to collect: an owner that has not yet materialized a page
+/// engine returns without a callback. A source-state failure retains the
+/// owner exactly as the allocation phases do.
+#[doc(hidden)]
+pub fn native_collect(force: bool) {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return;
+    };
+    if current_thread_has_active_native_initial_persistent_owner()
+        || (!current_thread_has_native_persistent_owner()
+            && RUNTIME_PROCESS.is_on_initial_allocation_thread())
+    {
+        let phase = match with_current_thread_native_initial_persistent_allocator(false, |owner| {
+            (owner.begin_deferred_free_collection(force), owner.is_retained())
+        }) {
+            Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled) => return,
+            projection => native_initial_deferred_free_phase_result(projection),
+        };
+        let result = phase.and_then(run_current_thread_native_initial_deferred_free_phase);
+        if matches!(result, Err(NativeInitialPersistentThreadOwnerAccessError::Retained)) {
+            RUNTIME_PROCESS.retain_page_owner();
+        }
+        return;
+    }
+    let phase = match with_current_thread_native_persistent_owner(|owner| {
+        owner.begin_deferred_free_collection(force)
+    }) {
+        Ok(Ok(phase)) => phase,
+        Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly))
+        | Err(NativePersistentThreadOwnerAccessError::NotInstalled) => return,
+        Ok(Err(
+            NativePersistentThreadOwnerLocalAccessError::Access(_)
+            | NativePersistentThreadOwnerLocalAccessError::Terminal,
+        )) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            return;
+        }
+        Err(NativePersistentThreadOwnerAccessError::Unavailable
+            | NativePersistentThreadOwnerAccessError::Retained) => return,
+    };
+    let _ = run_current_thread_native_deferred_free_phase(phase);
+}
+
+/// The source allocation entry one native request selects.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeAllocationShape {
+    /// `_mi_theap_malloc_zero`.
+    Ordinary,
+    /// `mi_theap_malloc_zero_aligned_at`.
+    Aligned { alignment: usize, offset: usize },
+}
+
+fn native_allocate_shaped(
+    request: usize,
+    shape: NativeAllocationShape,
     zero: bool,
 ) -> NativePageAllocationResult {
     #[cfg(target_arch = "x86_64")]
     let Some(_operation) = enter_native_allocation_operation() else {
         return NativePageAllocationResult::Unavailable;
     };
-    if !crate::size_class::request_size_is_valid(request)
-        || !crate::size_class::alignment_is_valid(alignment)
-    {
-        return NativePageAllocationResult::AllocationFailed;
+    // An invalid alignment fails before any allocation. An oversized request
+    // is not refused here: as in pinned `_mi_malloc_generic`, the engine
+    // counts it, runs administration, and retries once after a forced
+    // collection before the page lookup reports it unallocatable.
+    if let NativeAllocationShape::Aligned { alignment, .. } = shape {
+        if !crate::size_class::alignment_is_valid(alignment) {
+            return NativePageAllocationResult::AllocationFailed;
+        }
     }
     // A thread admitted to a child subprocess allocates from its own child
     // Theap, as source `mi_malloc` does through that thread's default Theap.
@@ -10263,24 +10438,22 @@ pub fn native_allocate_aligned(
     // Allocation admission permits the source-attached initial owner before
     // final startup and preserves the post-terminal unavailable behavior.
     if current_thread_has_active_native_initial_persistent_owner() {
-        return native_initial_thread_allocate_aligned_from_installed_owner(
-            request, alignment, zero,
-        );
+        return native_initial_thread_allocate(request, shape, zero);
     }
     if current_thread_has_native_persistent_owner() {
-        return native_later_thread_allocate_aligned(request, alignment, zero);
+        return native_later_thread_allocate(request, shape, zero);
     }
     // Caller identity remains the cold-selection boundary: only a thread
     // without an installed owner may promote the initial static source.
     if RUNTIME_PROCESS.is_on_initial_allocation_thread() {
-        return native_initial_thread_allocate_aligned(request, alignment, zero);
+        return native_initial_thread_allocate(request, shape, zero);
     }
     // A final B-side free may already have recorded one or more A terminal
     // completions for this attachment. Those entries retain only A's parked
     // token and admission proof; they do not borrow B's independent inline
     // owner. B may therefore continue persistent local allocation while its
     // eventual source finish still precedes every completion release.
-    native_later_thread_allocate_aligned(request, alignment, zero)
+    native_later_thread_allocate(request, shape, zero)
 }
 
 /// Looks up one exact native client before a pointer-first reallocation.
@@ -10407,7 +10580,7 @@ fn native_reallocate_pointer_first_local(
     allocation: LiveAllocationPointer,
     new_size: usize,
     current: LiveThreadId,
-    replacement_alignment: usize,
+    replacement_shape: NativeAllocationShape,
     ordinary_reuse: bool,
     zero: bool,
 ) -> NativePageAllocationResult {
@@ -10430,7 +10603,7 @@ fn native_reallocate_pointer_first_local(
     // normal nested allocation, but it must never inherit an outer pointer
     // lifetime or an owner-local mutable projection.
     drop(allocation);
-    let replacement = match native_allocate_aligned(new_size, replacement_alignment, false) {
+    let replacement = match native_allocate_shaped(new_size, replacement_shape, false) {
         NativePageAllocationResult::Allocated(replacement) => replacement,
         result @ (NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
@@ -10611,7 +10784,7 @@ fn native_reallocate_release_unpublished_replacement(replacement: core::ptr::Non
 fn native_reallocate_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
     new_size: usize,
-    replacement_alignment: usize,
+    replacement_shape: NativeAllocationShape,
     ordinary_zero_compat: bool,
     zero: bool,
 ) -> NativePageAllocationResult {
@@ -10621,7 +10794,7 @@ fn native_reallocate_pointer_first_nonlocal(
     // Preserve only scalar comparison inputs and reacquire the exact live
     // source after replacement allocation finishes its callback phase.
     drop(allocation);
-    let replacement = match native_allocate_aligned(new_size, replacement_alignment, false) {
+    let replacement = match native_allocate_shaped(new_size, replacement_shape, false) {
         NativePageAllocationResult::Allocated(replacement) => replacement,
         result @ (NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
@@ -10781,7 +10954,11 @@ pub unsafe fn native_reallocate_aligned(
     // ordinary realloc. Larger alignments use the foreign-safe aligned reuse
     // predicate and retain their requested alignment on replacement.
     // SAFETY: forward the exact-live client contract through this guard.
-    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::Aligned(alignment), false) }
+    unsafe {
+        native_reallocate_inner(
+            block, new_size, NativeReallocationMode::Aligned { alignment, offset: 0 }, false,
+        )
+    }
 }
 
 /// Reallocates an aligned native client with pinned `mi_rezalloc_aligned`
@@ -10806,7 +10983,67 @@ pub unsafe fn native_reallocate_aligned_zeroed(
         return NativePageAllocationResult::AllocationFailed;
     }
     // SAFETY: forward the exact-live aligned client contract.
-    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::Aligned(alignment), true) }
+    unsafe {
+        native_reallocate_inner(
+            block, new_size, NativeReallocationMode::Aligned { alignment, offset: 0 }, true,
+        )
+    }
+}
+
+/// Reallocates one native client with pinned `_mi_theap_realloc_zero`
+/// (`mi_theap_realloc_zero_ex`) semantics on the current default Theap.
+///
+/// Unlike [`native_reallocate`], whose replacement keeps the C ABI's
+/// sixteen-byte alignment, the replacement is a source ordinary allocation.
+/// A null `block` allocates, and a zero `new_size` returns a minimal block
+/// whose first byte is cleared unless `zero` initializes it entirely.
+///
+/// # Safety
+///
+/// The caller obligations and result ownership are identical to
+/// [`native_reallocate`].
+#[doc(hidden)]
+pub unsafe fn native_reallocate_source(
+    block: Option<core::ptr::NonNull<u8>>,
+    new_size: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = enter_native_reallocation_operation(block) else {
+        return NativePageAllocationResult::Retained;
+    };
+    // SAFETY: forward the exact-live client contract through this guard.
+    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::SourceOrdinary, zero) }
+}
+
+/// Reallocates one native client with pinned
+/// `mi_theap_realloc_zero_aligned_at` semantics: `pointer + offset` of the
+/// result is aligned.
+///
+/// # Safety
+///
+/// The caller obligations and result ownership are identical to
+/// [`native_reallocate_aligned`], with `offset` the address equation the
+/// caller requires of the result.
+#[doc(hidden)]
+pub unsafe fn native_reallocate_aligned_at(
+    block: Option<core::ptr::NonNull<u8>>,
+    new_size: usize,
+    alignment: usize,
+    offset: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = enter_native_reallocation_operation(block) else {
+        return NativePageAllocationResult::Retained;
+    };
+    if !crate::size_class::alignment_is_valid(alignment) {
+        return NativePageAllocationResult::AllocationFailed;
+    }
+    // SAFETY: forward the exact-live aligned client contract.
+    unsafe {
+        native_reallocate_inner(block, new_size, NativeReallocationMode::Aligned { alignment, offset }, zero)
+    }
 }
 
 /// Enters the operation guard for a reallocation of `block`.
@@ -10826,11 +11063,17 @@ fn enter_native_reallocation_operation(
     }
 }
 
-/// Selects the C ABI's 16-byte policy or pinned aligned-realloc's source
-/// alignment without accepting an invalid combination of branch flags.
+/// Selects the C ABI's 16-byte policy, pinned ordinary realloc, or pinned
+/// aligned-realloc's source alignment without accepting an invalid
+/// combination of branch flags.
 enum NativeReallocationMode {
+    /// libc's C `realloc`: ordinary reuse with a sixteen-byte-aligned
+    /// replacement.
     CAbiOrdinary,
-    Aligned(usize),
+    /// `mi_theap_realloc_zero_ex`: ordinary reuse and replacement.
+    SourceOrdinary,
+    /// `mi_theap_realloc_zero_aligned_at`.
+    Aligned { alignment: usize, offset: usize },
 }
 
 /// Executes the shared pointer-first ordinary or aligned realloc transaction.
@@ -10845,25 +11088,36 @@ unsafe fn native_reallocate_inner(
     mode: NativeReallocationMode,
     zero: bool,
 ) -> NativePageAllocationResult {
-    let (replacement_alignment, ordinary, aligned) = match mode {
-        NativeReallocationMode::CAbiOrdinary => (NATIVE_C_MALLOC_ALIGNMENT, true, false),
-        NativeReallocationMode::Aligned(alignment) => (
-            alignment,
-            alignment <= core::mem::size_of::<usize>(),
+    // `ordinary` selects `mi_theap_realloc_zero_ex`'s same-Heap ceil-half
+    // reuse and zero ranges; `source_kernel` whether a null or zero-size
+    // request runs that kernel's zero-size compatibility clear.
+    let (replacement_shape, ordinary, source_kernel, offset) = match mode {
+        NativeReallocationMode::CAbiOrdinary => (
+            NativeAllocationShape::Aligned { alignment: NATIVE_C_MALLOC_ALIGNMENT, offset: 0 },
             true,
+            false,
+            0,
         ),
+        NativeReallocationMode::SourceOrdinary => (NativeAllocationShape::Ordinary, true, true, 0),
+        // Pinned alloc-aligned.c delegates an alignment of at most one word
+        // with a zero offset to `_mi_theap_realloc_zero`, replacement
+        // included.
+        NativeReallocationMode::Aligned { alignment, offset }
+            if alignment <= core::mem::size_of::<usize>() && offset == 0 =>
+        {
+            (NativeAllocationShape::Ordinary, true, true, 0)
+        }
+        NativeReallocationMode::Aligned { alignment, offset } => {
+            (NativeAllocationShape::Aligned { alignment, offset }, false, false, offset)
+        }
     };
-    if !crate::size_class::request_size_is_valid(new_size) {
-        return NativePageAllocationResult::AllocationFailed;
-    }
     let Some(block) = block else {
-        let result = native_allocate_aligned(new_size, replacement_alignment, zero);
+        let result = native_allocate_shaped(new_size, replacement_shape, zero);
         return match result {
             NativePageAllocationResult::Allocated(replacement)
-                if aligned && ordinary && new_size == 0 && !zero => {
-                // Pinned mi_theap_realloc_zero_aligned_at delegates low
-                // alignment, including null input, to the ordinary zero-size
-                // kernel. That kernel clears byte zero after allocation.
+                if source_kernel && new_size == 0 && !zero => {
+                // The source kernel clears byte zero of a zero-size result,
+                // including one for a null input.
                 unsafe { replacement.as_ptr().write(0) };
                 NativePageAllocationResult::Allocated(replacement)
             }
@@ -10877,10 +11131,26 @@ unsafe fn native_reallocate_inner(
         Ok(allocation) => allocation,
         Err(result) => return result,
     };
-    if !ordinary && crate::aligned::realloc_can_reuse(
-        block.as_ptr().addr(), allocation.usable_size(), new_size,
-        replacement_alignment, 0,
+    // Pinned `mi_theap_realloc_zero_ex` reuses a fitting block in place when
+    // `mi_page_heap(page) == _mi_theap_heap(theap)`, whichever thread owns or
+    // abandoned the page. Every native page belongs to the process main Heap
+    // and so does every caller's default Theap (the Heap registry admits only
+    // main Heaps), so that comparison holds for each live allocation and the
+    // decision needs no read of the page's owner-only `heap` field.
+    if ordinary && matches!(
+        crate::alloc::reallocation_plan(Some(allocation.usable_size()), new_size, true),
+        crate::alloc::ReallocationPlan::Reuse
     ) {
+        drop(allocation);
+        return NativePageAllocationResult::Allocated(block);
+    }
+    let aligned_reuse = match replacement_shape {
+        NativeAllocationShape::Aligned { alignment, .. } if !ordinary => crate::aligned::realloc_can_reuse(
+            block.as_ptr().addr(), allocation.usable_size(), new_size, alignment, offset,
+        ),
+        _ => false,
+    };
+    if aligned_reuse {
         // Pinned aligned realloc has no target-Heap condition in this branch.
         drop(allocation);
         return NativePageAllocationResult::Allocated(block);
@@ -10892,7 +11162,7 @@ unsafe fn native_reallocate_inner(
     };
     if allocation.is_associated_with(current) {
         native_reallocate_pointer_first_local(
-            allocation, new_size, current, replacement_alignment, ordinary, zero,
+            allocation, new_size, current, replacement_shape, ordinary, zero,
         )
     } else {
         if let Err(result) = native_reallocate_prepare_caller_persistent_owner(current) {
@@ -10903,7 +11173,7 @@ unsafe fn native_reallocate_inner(
             return result;
         }
         native_reallocate_pointer_first_nonlocal(
-            allocation, new_size, replacement_alignment, ordinary, zero,
+            allocation, new_size, replacement_shape, ordinary, zero,
         )
     }
 }
@@ -11287,6 +11557,67 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
     let usable_size = allocation.usable_size();
     drop(allocation);
     Some(usable_size)
+}
+
+/// Returns the page block size of one live native allocation, the value the
+/// pinned `u`-suffixed entries (`mi_umalloc`, `mi_urealloc`, `mi_ufree`)
+/// report through `mi_page_block_size`. Unlike [`native_usable_size`] it is
+/// not reduced by an aligned client's interior offset.
+///
+/// # Safety
+///
+/// `block` must be an exact live native allocation, as for
+/// [`native_usable_size`].
+#[doc(hidden)]
+pub unsafe fn native_block_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: forwarded exact-live native-client contract.
+    match unsafe { page_map.lookup_live_allocation(block) } {
+        Ok(Some(allocation)) => Some(allocation.block_size()),
+        Ok(None) | Err(_) => None,
+    }
+}
+
+/// Returns the started process's OS page size, pinned `_mi_os_page_size()`
+/// after `_mi_os_init`; `None` before the process has started.
+#[doc(hidden)]
+pub fn native_os_page_size() -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    // SAFETY: the published process owner and its immutable ready image stay
+    // in final static slots for the process lifetime once active.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    Some(owner.ready().ok()?.memory_config().ok()?.page_size().bytes())
+}
+
+/// Reports whether the native PageMap registers a page for `pointer`: pinned
+/// `_mi_checked_ptr_page(p) != NULL`, which `mi_cfree` and
+/// `mi_check_owned`/`mi_any_heap_contains` ask of an arbitrary pointer.
+/// A process that has not started maps nothing.
+///
+/// # Safety
+///
+/// The caller must exclude a concurrent PageMap registration or
+/// unregistration of the arena slice containing `pointer`: it is an exact
+/// live native allocation, or lies in memory the caller owns that this
+/// allocator never mapped. The answer carries no ownership of the page.
+#[doc(hidden)]
+pub unsafe fn native_pointer_is_mapped(pointer: *const u8) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return false;
+    };
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        return false;
+    };
+    // SAFETY: forwarded slice-exclusion contract.
+    matches!(unsafe { page_map.registers_address(pointer) }, Ok(true))
 }
 
 /// The allocation vocabulary shared by the source-shaped owner-exit fixtures
@@ -13977,16 +14308,21 @@ fn begin_current_thread_page_owner_session(
     })
 }
 
-fn native_later_thread_allocate_aligned(
+fn native_later_thread_allocate(
     request: usize,
-    alignment: usize,
+    shape: NativeAllocationShape,
     zero: bool,
 ) -> NativePageAllocationResult {
-    let result = run_current_thread_native_deferred_free_aligned_allocation(
-        request,
-        alignment,
-        zero,
-    );
+    let result = match shape {
+        NativeAllocationShape::Ordinary => {
+            run_current_thread_native_deferred_free_allocation(request, zero)
+        }
+        NativeAllocationShape::Aligned { alignment, offset } => {
+            run_current_thread_native_deferred_free_aligned_allocation(
+                request, alignment, offset, zero,
+            )
+        }
+    };
     match result {
         Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
         Ok(None) => NativePageAllocationResult::AllocationFailed,

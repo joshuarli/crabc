@@ -1291,6 +1291,26 @@ impl ProcessPageMapLease {
         Ok(NonNull::new(page))
     }
 
+    /// Reports whether the PageMap registers a page for an arbitrary address,
+    /// the pinned `_mi_checked_ptr_page`/`_mi_safe_ptr_page` question behind
+    /// `mi_cfree` and `mi_any_heap_contains`. It returns no page and no
+    /// dispatch facts.
+    ///
+    /// # Safety
+    ///
+    /// The caller must exclude a concurrent register or unregister of the
+    /// arena slice containing `pointer`, as the source's plain entry read
+    /// does. An exact live native client satisfies this, as does an address
+    /// inside memory the caller owns that this allocator never mapped.
+    pub(crate) unsafe fn registers_address(self, pointer: *const u8) -> Result<bool, ProcessPageMapError> {
+        self.ensure_ready()?;
+        if self.storage.root.load().is_none() {
+            return Err(ProcessPageMapError::Poisoned);
+        }
+        // SAFETY: forwarded from this method's slice-exclusion contract.
+        Ok(!unsafe { self.storage.page_map_ref().checked_lookup(pointer) }.is_null())
+    }
+
     /// Looks up one exact live allocation and copies its source dispatch facts.
     ///
     /// This is the source-shaped shared front edge for general `free`,

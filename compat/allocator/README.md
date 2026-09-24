@@ -121,6 +121,26 @@ command exits 3. `--differential-only` and `--miri-only` are development
 subsets that write separate reports and never close M3. Traces and workloads
 stay under `.work/allocator-x86_64/target/compat/allocator/x86_64/m3-local-engine/`.
 
+`./compat/allocator/run-x86_64.sh allocator-m4` is the fail-closed Milestone 4
+gate in the same shape. [`m4-gate-x86_64-v3.5.0.json`](m4-gate-x86_64-v3.5.0.json)
+selects the standard, extended, and aligned allocation groups plus
+`mi_collect`, minus every item the M6/M7 contracts own; the few remaining
+items another milestone owns are listed under `excluded_items` with their
+owner and reason. Its gates cover allocation, free, reallocation, aligned
+operations, usable/good size, source conveniences, collection, page kinds,
+OOM/failure preservation, the native `mi_*` adapter, and the unmodified
+`test/test-api.c`. Its evidence modes are `x86_64_m4_gate.py --native-tests`
+(the focused native-engine regressions), `--adapter-boundary` (the export and
+header audit of [`native-mi-adapter/`](native-mi-adapter/), an evidence-only
+static library exporting exactly the M4 `mi_*` functions over
+`crabc_mimalloc::source_api`), and `--differential SCENARIO`, which links the
+one shared driver [`x86_64_m4_operations_driver.c`](x86_64_m4_operations_driver.c)
+against the pinned C sources and against that adapter and requires the two
+processes' address-free traces to be equal for the `operations`, `page-kinds`,
+`collection`, `oom`, and `threads` scenarios. Both raw traces are kept beside
+the report, `x86_64/m4-gate/report.json` under the allocator artifacts
+directory. `--gate ID` runs one gate's evidence.
+
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
 Linux/x86-64 little-endian development is active alongside runtime parity;

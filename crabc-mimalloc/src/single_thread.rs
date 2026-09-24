@@ -165,8 +165,8 @@ use crate::main_theap::{
 };
 use crate::config::{
     ARENA_BIN_COUNT, ARENA_SLICE_SIZE, BIN_COUNT, BIN_FULL, BIN_HUGE, LARGE_MAX_OBJ_SIZE,
-    MAX_ALIGN_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX,
-    WORD_SIZE,
+    MAX_ALIGN_SIZE, MAX_ALLOC_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGES_DIRECT, PAGE_MAX_OVERALLOC_ALIGN,
+    SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
 };
 use crate::free_list::{FreeListError, LocalFreeList};
 use crate::invariants;
@@ -435,6 +435,15 @@ pub(crate) enum DeferredFreeAllocationContinuation {
         alignment: usize,
         zero: bool,
     },
+    /// Pinned `mi_theap_collect(theap, force)` itself: the selected callback
+    /// and collection are the whole operation, with no page lookup after.
+    Collection,
+    /// A generic request `mi_find_page` refuses: a size above
+    /// `MI_MAX_ALLOC_SIZE`, or a huge alignment of at least
+    /// `MI_PAGE_META_ALIGNMENT` that the arena refuses. The source still
+    /// counts the generic call, runs administration, and retries once after
+    /// a forced collection before reporting out-of-memory.
+    Refused,
 }
 
 /// One completed native generic allocation attempt or its source collection
@@ -37059,7 +37068,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         let request = request.max(WORD_SIZE);
         if !size_class::request_size_is_valid(request) {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Refused);
         }
         if request <= SMALL_SIZE_MAX {
             return self.begin_deferred_free_small_allocation(request, zero);
@@ -37077,47 +37086,51 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// remains source-fast and has no `_mi_malloc_generic` administration;
     /// every natural, overallocated, and OS-singleton fallback receives the
     /// same value-only callback continuation as ordinary allocation.
+    #[inline]
     pub(crate) fn begin_deferred_free_aligned_allocation(
         &mut self,
         size: usize,
         alignment: usize,
         zero: bool,
     ) -> DeferredFreeAllocationPhase {
+        self.begin_deferred_free_aligned_allocation_at(size, alignment, 0, zero)
+    }
+
+    /// The `mi_theap_malloc_zero_aligned_at` form of
+    /// [`Self::begin_deferred_free_aligned_allocation`]: `pointer + offset` is
+    /// aligned. The natural branch requires a zero offset and the OS-aligned
+    /// singleton refuses a nonzero one, exactly as the source selector does.
+    pub(crate) fn begin_deferred_free_aligned_allocation_at(
+        &mut self,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+        zero: bool,
+    ) -> DeferredFreeAllocationPhase {
         if self.is_collection_poisoned() || !size_class::alignment_is_valid(alignment) {
             return DeferredFreeAllocationPhase::Complete(None);
         }
-        if let Some(block) = self.allocate_aligned_small_head(size, alignment, 0, zero) {
+        if let Some(block) = self.allocate_aligned_small_head(size, alignment, offset, zero) {
             return DeferredFreeAllocationPhase::Complete(Some(block));
         }
 
         let os_page_size = self.page_map.memory_config().page_size().bytes();
-        match aligned::allocation_plan(size, alignment, 0, os_page_size) {
-            Some(aligned::AlignedAllocationPlan::Natural) => {
-                let request = size.max(WORD_SIZE);
-                let Some(generic) = self.generic_allocation_continuation(request, zero) else {
-                    return DeferredFreeAllocationPhase::Complete(None);
-                };
-                self.begin_deferred_free_generic_allocation(
-                    DeferredFreeAllocationContinuation::Aligned {
-                        generic,
-                        completion: DeferredFreeAlignedCompletion::Natural { alignment },
-                    },
-                )
-            }
-            Some(aligned::AlignedAllocationPlan::Overallocate { request }) => {
-                let Some(generic) = self.generic_allocation_continuation(request, zero) else {
-                    return DeferredFreeAllocationPhase::Complete(None);
-                };
-                self.begin_deferred_free_generic_allocation(
-                    DeferredFreeAllocationContinuation::Aligned {
-                        generic,
-                        completion: DeferredFreeAlignedCompletion::Overallocate {
-                            alignment,
-                            offset: 0,
-                        },
-                    },
-                )
-            }
+        match aligned::allocation_plan(size, alignment, offset, os_page_size) {
+            // Both branches allocate their base through
+            // `_mi_theap_malloc_zero`, so a base request within
+            // `MI_SMALL_SIZE_MAX` first pops its direct page, exactly like an
+            // ordinary small allocation, before any generic search.
+            Some(aligned::AlignedAllocationPlan::Natural) => self.begin_deferred_free_aligned_base(
+                size.max(WORD_SIZE),
+                zero,
+                DeferredFreeAlignedCompletion::Natural { alignment },
+            ),
+            Some(aligned::AlignedAllocationPlan::Overallocate { request }) => self
+                .begin_deferred_free_aligned_base(
+                    request,
+                    zero,
+                    DeferredFreeAlignedCompletion::Overallocate { alignment, offset },
+                ),
             Some(aligned::AlignedAllocationPlan::HugeSingleton { request, alignment }) => {
                 self.begin_deferred_free_generic_allocation(
                     DeferredFreeAllocationContinuation::AlignedHuge {
@@ -37127,7 +37140,31 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     },
                 )
             }
-            None => DeferredFreeAllocationPhase::Complete(None),
+            // An oversized request or a huge alignment with an offset fails
+            // in `alloc-aligned.c` before any allocation. The remaining
+            // refusals (an over-allocation beyond `MI_MAX_ALLOC_SIZE`, or an
+            // OS-aligned singleton the arena refuses for its alignment) are
+            // generic allocations whose page lookup fails.
+            None if size > MAX_ALLOC_SIZE || (alignment > PAGE_MAX_OVERALLOC_ALIGN && offset != 0) => {
+                DeferredFreeAllocationPhase::Complete(None)
+            }
+            None => self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Refused),
+        }
+    }
+
+    /// Starts pinned `mi_theap_collect(theap, force)` (`theap.c:123-148`) as
+    /// the same value-only callback phase an allocation uses: phase B runs
+    /// `_mi_deferred_free(theap, force)` with the page engine released, and
+    /// phase C performs the normal or forced collection and statistics merge.
+    /// Unlike generic allocation it does not advance the administration
+    /// counters.
+    pub(crate) fn begin_deferred_free_collection(&mut self, force: bool) -> DeferredFreeAllocationPhase {
+        if self.is_collection_poisoned() {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
+        DeferredFreeAllocationPhase::Collect {
+            collection: if force { GenericAllocationCollection::Force } else { GenericAllocationCollection::Full },
+            continuation: DeferredFreeAllocationContinuation::Collection,
         }
     }
 
@@ -37159,6 +37196,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         {
             return DeferredFreeAllocationPhase::Complete(None);
         }
+        if continuation == DeferredFreeAllocationContinuation::Collection {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
         match collection {
             // The force collector is the source's one retry. A second no-page
             // result is final and must not schedule another force callback.
@@ -37173,10 +37213,50 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
+    /// Starts the ordinary base allocation of an aligned request and applies
+    /// `completion` to its block, at once for a direct-page pop and in phase
+    /// C after a generic lookup.
+    fn begin_deferred_free_aligned_base(
+        &mut self,
+        request: usize,
+        zero: bool,
+        completion: DeferredFreeAlignedCompletion,
+    ) -> DeferredFreeAllocationPhase {
+        if request <= SMALL_SIZE_MAX {
+            return match self.begin_deferred_free_small_allocation_with(request, zero, Some(completion)) {
+                DeferredFreeAllocationPhase::Complete(Some(base)) => {
+                    DeferredFreeAllocationPhase::Complete(self.complete_deferred_free_aligned_base(base, completion))
+                }
+                phase => phase,
+            };
+        }
+        let Some(generic) = self.generic_allocation_continuation(request, zero) else {
+            return DeferredFreeAllocationPhase::Complete(None);
+        };
+        self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Aligned {
+            generic,
+            completion,
+        })
+    }
+
+    #[inline]
     fn begin_deferred_free_small_allocation(
         &mut self,
         request: usize,
         zero: bool,
+    ) -> DeferredFreeAllocationPhase {
+        self.begin_deferred_free_small_allocation_with(request, zero, None)
+    }
+
+    /// Source `mi_theap_malloc_small_zero`: pop the direct page, else enter
+    /// generic allocation. A generic continuation carries an aligned caller's
+    /// `completion`; a direct pop returns the plain base for the caller to
+    /// complete.
+    fn begin_deferred_free_small_allocation_with(
+        &mut self,
+        request: usize,
+        zero: bool,
+        completion: Option<DeferredFreeAlignedCompletion>,
     ) -> DeferredFreeAllocationPhase {
         let Some(bin) = size_class::bin(request) else {
             return DeferredFreeAllocationPhase::Complete(None);
@@ -37202,14 +37282,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(block_size) = size_class::bin_size(bin) else {
             return DeferredFreeAllocationPhase::Complete(None);
         };
-        self.begin_deferred_free_generic_allocation(
-            DeferredFreeAllocationContinuation::Generic(GenericAllocationContinuation {
-                bin,
-                block_size,
-                kind: PageKind::Small,
-                zero,
-            }),
-        )
+        let generic = GenericAllocationContinuation {
+            bin,
+            block_size,
+            kind: PageKind::Small,
+            zero,
+        };
+        self.begin_deferred_free_generic_allocation(match completion {
+            None => DeferredFreeAllocationContinuation::Generic(generic),
+            Some(completion) => DeferredFreeAllocationContinuation::Aligned { generic, completion },
+        })
     }
 
     fn generic_allocation_continuation(
@@ -37314,6 +37396,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 alignment,
                 zero,
             } => Ok(self.allocate_os_aligned_singleton(request, alignment, zero)),
+            // Phase C ends a collection before any lookup; no block exists.
+            DeferredFreeAllocationContinuation::Collection => Ok(None),
+            // `mi_find_page` refuses this request on every attempt.
+            DeferredFreeAllocationContinuation::Refused => Ok(None),
         }
     }
 

@@ -17,14 +17,28 @@ blocker, so the contract cannot claim completion that no executable check
 supports. Runnable evidence is always executed; its pass never removes a
 blocker by itself.
 
-`--native-tests` runs the evidence check this module owns directly: the
-focused native-engine integration regressions, each its own test process.
+The evidence checks this module owns:
+
+- `--native-tests` runs the focused native-engine integration regressions,
+  each its own test process;
+- `--differential SCENARIO` links the shared C driver
+  `x86_64_m4_operations_driver.c` once against the pinned C sources and once
+  against the native `mi_*` adapter (`native-mi-adapter/`), runs the scenario
+  in a fresh process of each, and requires identical address-free traces; the
+  `operations` scenario also requires identical termination for every
+  process-terminating `mi_new` case;
+- `--adapter-boundary` audits the native adapter static library: its defined
+  `mi_*` globals are exactly the M4 external functions, it defines no libc
+  allocator entry or C mimalloc `_mi_*` internal, and a C probe that
+  takes every function's address through the pinned `mimalloc.h` links
+  against it alone and runs.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -68,6 +82,26 @@ NATIVE_TESTS = (
     "native_pointer_first_nonlocal_reallocate",
 )
 NATIVE_TEST_FEATURES = "native-runtime-test-audit"
+
+OPERATIONS_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m4_operations_driver.c"
+OPERATIONS_TRACE_BEGIN = "CRABC_MI_M4_OPERATIONS_TRACE_BEGIN"
+OPERATIONS_TRACE_END = "CRABC_MI_M4_OPERATIONS_TRACE_END"
+# Driver scenarios, each one evidence entry run in fresh processes.
+DIFFERENTIAL_SCENARIOS = ("operations", "page-kinds", "collection", "oom", "threads")
+# Scenarios the driver ends with `abort()` in pinned C (plain-C `mi_new`
+# without a new handler); both processes must terminate the same way.
+ABORT_SCENARIOS = (
+    "new_n_overflow", "new_too_large", "new_aligned_too_large",
+    "new_realloc_too_large", "new_reallocn_overflow",
+)
+# Defining any of these would make the adapter an allocator interposer.
+C_ALLOCATOR_NAMES = frozenset({
+    "malloc", "calloc", "realloc", "free", "cfree", "aligned_alloc", "posix_memalign", "memalign",
+    "valloc", "pvalloc", "reallocarray", "reallocarr", "malloc_usable_size", "malloc_size",
+    "__libc_malloc", "__libc_calloc", "__libc_realloc", "__libc_free", "__libc_memalign",
+})
+ADAPTER_PACKAGE = "crabc-mimalloc-native-mi-adapter"
+ADAPTER_STATICLIB = "libcrabc_mimalloc_native_mi_adapter.a"
 
 
 def _string_list(value: object, subject: str, *, allow_empty: bool = False) -> list[str]:
@@ -323,6 +357,227 @@ def run_native_tests() -> dict[str, Any]:
     return report
 
 
+# ---------------------------------------------------------------------------
+# differential:operations
+# ---------------------------------------------------------------------------
+
+def parse_operations_trace(output: str, description: str) -> dict[str, str]:
+    """Parse one marked, ordered `key=value` trace with unique keys."""
+
+    lines = output.splitlines()
+    if lines.count(OPERATIONS_TRACE_BEGIN) != 1 or lines.count(OPERATIONS_TRACE_END) != 1:
+        raise harness.HarnessError(f"{description} did not emit exactly one complete trace")
+    start = lines.index(OPERATIONS_TRACE_BEGIN) + 1
+    stop = lines.index(OPERATIONS_TRACE_END)
+    trace: dict[str, str] = {}
+    for line in lines[start:stop]:
+        key, separator, value = line.partition("=")
+        if not separator or not re.fullmatch(r"[A-Za-z0-9_.]+", key):
+            raise harness.HarnessError(f"{description} emitted a malformed trace line: {line[:80]}")
+        if key in trace:
+            raise harness.HarnessError(f"{description} repeated trace key {key}")
+        trace[key] = value
+    if not trace:
+        raise harness.HarnessError(f"{description} emitted an empty trace")
+    return trace
+
+
+def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, str]) -> None:
+    """Require equal traces, reporting differences in C trace order.
+
+    Allocation ids and reuse relations cascade, so the first differing key
+    is the one that locates a divergence.
+    """
+
+    if list(c_trace) == list(rust_trace) and dict(c_trace) == dict(rust_trace):
+        return
+    missing = [key for key in c_trace if key not in rust_trace]
+    extra = [key for key in rust_trace if key not in c_trace]
+    different = [key for key in c_trace if key in rust_trace and c_trace[key] != rust_trace[key]]
+    detail = "".join(f"\n{key}: C={c_trace[key]} Rust={rust_trace[key]}" for key in different[:12])
+    raise harness.HarnessError(
+        f"C/Rust operations trace mismatch: {len(different)} differing, {len(missing)} missing, "
+        f"{len(extra)} extra; first missing {missing[:4]}, first extra {extra[:4]}{detail}"
+    )
+
+
+def build_c_driver(source: Path, temporary: Path) -> Path:
+    """Link the shared driver against the pinned release `src/static.c`."""
+
+    compiler = harness.require_tool("musl-gcc")
+    driver = temporary / "operations-c"
+    build = harness.command_record(
+        [
+            compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+            *harness.CONFIGURATION_PROFILES["release"], "-I", str(source / "include"),
+            str(OPERATIONS_DRIVER), str(source / "src/static.c"), "-pthread", "-o", str(driver),
+        ],
+        cwd=source,
+    )
+    harness.require_success(build, "M4 operations C driver build")
+    return driver
+
+
+def build_adapter_library(temporary: Path) -> Path:
+    """Build the native adapter static library in this run's own target."""
+
+    target_dir = temporary / "cargo-target"
+    build = harness.command_record(
+        [
+            harness.require_tool("cargo"), "build", "--locked", "--release", "--target", RUST_TARGET,
+            "-p", ADAPTER_PACKAGE, "--target-dir", str(target_dir),
+        ],
+        cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+    )
+    harness.require_success(build, "M4 native adapter build")
+    return target_dir / RUST_TARGET / "release" / ADAPTER_STATICLIB
+
+
+def build_rust_driver(source: Path, temporary: Path) -> Path:
+    """Link the same driver, unchanged, against the native adapter only."""
+
+    library = build_adapter_library(temporary)
+    driver = temporary / "operations-rust"
+    link = harness.command_record(
+        [
+            harness.require_tool("musl-gcc"), "-std=c11", "-O2", "-I", str(source / "include"),
+            str(OPERATIONS_DRIVER), str(library), "-pthread", "-o", str(driver),
+        ],
+        cwd=source,
+    )
+    harness.require_success(link, "M4 operations Rust driver link")
+    return driver
+
+
+def run_driver(driver: Path, arguments: Sequence[str] = ()) -> dict[str, Any]:
+    return harness.command_record((str(driver), *arguments), cwd=driver.parent, env={}, timeout_seconds=600)
+
+
+def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
+    harness.require_native_x86_64()
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m4-operations-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        drivers = {"c": build_c_driver(source, temporary), "rust": build_rust_driver(source, temporary)}
+        executions = {side: run_driver(driver, (scenario,)) for side, driver in drivers.items()}
+        for side, execution in executions.items():
+            harness.require_success(execution, f"M4 operations {side} driver")
+        traces = {
+            side: parse_operations_trace(str(execution["stdout"]), f"{side} operations trace")
+            for side, execution in executions.items()
+        }
+        terminations = {
+            name: {side: run_driver(driver, (f"abort:{name}",))["status"] for side, driver in drivers.items()}
+            for name in (ABORT_SCENARIOS if scenario == "operations" else ())
+        }
+    # Keep both raw traces beside the report so a mismatch can be located.
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    for side, execution in executions.items():
+        (ARTIFACTS / f"{scenario}-{side}.trace").write_text(str(execution["stdout"]))
+    compare_operations_traces(traces["c"], traces["rust"])
+    unequal = {name: status for name, status in terminations.items() if status["c"] != status["rust"]}
+    if unequal:
+        raise harness.HarnessError(f"C/Rust operations termination mismatch: {unequal}")
+    report = {
+        "abort_scenarios": terminations,
+        "compared_key_count": len(traces["c"]),
+        "scenario": scenario,
+        "status": "passed",
+        "trace": traces["c"],
+    }
+    harness.write_json(ARTIFACTS / f"{scenario}.json", report)
+    return report
+
+
+# ---------------------------------------------------------------------------
+# adapter:export-boundary
+# ---------------------------------------------------------------------------
+
+def m4_external_functions(contract: Mapping[str, Any], api: Mapping[str, Any]) -> list[str]:
+    """The M4 gate items the pinned header declares as functions."""
+
+    kinds = {item["name"]: item.get("kind") for item in api["items"]}
+    return sorted(
+        name for gate in contract["gates"] for name in gate["items"] if kinds.get(name) == "external-function"
+    )
+
+
+def defined_global_symbols(nm_output: str) -> set[str]:
+    """Names from `nm -g --defined-only` (`[address] type name` lines)."""
+
+    symbols: set[str] = set()
+    for line in nm_output.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and len(fields[-2]) == 1:
+            symbols.add(fields[-1])
+    return symbols
+
+
+def adapter_probe_source(functions: Sequence[str]) -> str:
+    """A C unit that names every function through the pinned header."""
+
+    table = "".join(f"  (void (*)(void))&{name},\n" for name in functions)
+    return (
+        "#include <stdio.h>\n#include \"mimalloc.h\"\n"
+        f"static void (*const table[])(void) = {{\n{table}}};\n"
+        "int main(void) {\n"
+        "  size_t present = 0;\n"
+        "  for (size_t i = 0; i < sizeof table / sizeof table[0]; i++) { present += (table[i] != NULL); }\n"
+        "  void* p = mi_malloc(64);\n  mi_free(p);\n"
+        "  printf(\"%zu %d\\n\", present, p != NULL);\n  return 0;\n}\n"
+    )
+
+
+def run_adapter_boundary(offline: bool) -> dict[str, Any]:
+    harness.require_native_x86_64()
+    pin = harness.load_pin()
+    contract = harness.read_json(CONTRACT)
+    functions = m4_external_functions(contract, harness.read_json(harness.ALLOCATOR_ROOT / "api-v3.5.0.json"))
+    archive = harness.fetch_archive(pin, offline)
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m4-adapter-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        library = build_adapter_library(temporary)
+        symbols = harness.command_record((harness.require_tool("nm"), "-g", "--defined-only", str(library)), cwd=temporary)
+        harness.require_success(symbols, "M4 adapter symbol listing")
+        probe_source = temporary / "adapter-probe.c"
+        probe_source.write_text(adapter_probe_source(functions))
+        probe = temporary / "adapter-probe"
+        link = harness.command_record(
+            [
+                harness.require_tool("musl-gcc"), "-std=c11", "-Werror=implicit-function-declaration",
+                "-I", str(source / "include"), str(probe_source), str(library), "-pthread", "-o", str(probe),
+            ],
+            cwd=temporary,
+        )
+        harness.require_success(link, "M4 adapter probe link")
+        execution = harness.command_record((str(probe),), cwd=temporary, env={})
+        harness.require_success(execution, "M4 adapter probe execution")
+    defined = defined_global_symbols(str(symbols["stdout"]))
+    exported = sorted(name for name in defined if name.startswith("mi_"))
+    if exported != functions:
+        raise harness.HarnessError(
+            "M4 adapter mi_* exports differ from the M4 external functions: "
+            f"missing {sorted(set(functions) - set(exported))}, extra {sorted(set(exported) - set(functions))}"
+        )
+    interposed = sorted(defined & C_ALLOCATOR_NAMES)
+    if interposed:
+        raise harness.HarnessError(f"M4 adapter defines C allocator entries: {interposed}")
+    # Pinned C mimalloc defines its internal entries as `_mi_*` globals; none
+    # may be present, so no C allocator object reached the archive.
+    c_internal = sorted(name for name in defined if name.startswith("_mi_"))
+    if c_internal:
+        raise harness.HarnessError(f"M4 adapter contains C mimalloc symbols: {c_internal[:8]}")
+    if str(execution["stdout"]).split() != [str(len(functions)), "1"]:
+        raise harness.HarnessError(f"M4 adapter probe reported {execution['stdout']!r}")
+    report = {"exported_functions": exported, "status": "passed"}
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    harness.write_json(ARTIFACTS / "adapter-boundary.json", report)
+    return report
+
+
 def load_summary() -> tuple[dict[str, Any], dict[str, Any]]:
     contract = harness.read_json(CONTRACT)
     summary = validate_contract(
@@ -342,11 +597,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--gate", choices=GATE_IDS, help="execute only this gate's runnable evidence")
     mode.add_argument("--native-tests", action="store_true",
         help="run the focused native-engine integration regressions")
+    mode.add_argument("--adapter-boundary", action="store_true",
+        help="audit the native adapter's export boundary and header linkage")
+    mode.add_argument("--differential", choices=DIFFERENTIAL_SCENARIOS,
+        help="run one shared-driver pinned-C/native-adapter differential scenario")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     arguments = parser.parse_args(argv)
     if arguments.native_tests:
         report = run_native_tests()
         print(f"M4 native-engine regressions passed: {len(report['targets'])} targets")
+        return 0
+    if arguments.adapter_boundary:
+        report = run_adapter_boundary(arguments.offline)
+        print(f"M4 adapter boundary passed: {len(report['exported_functions'])} functions")
+        return 0
+    if arguments.differential is not None:
+        report = run_operations_differential(arguments.offline, arguments.differential)
+        print(f"M4 {arguments.differential} differential passed: {report['compared_key_count']} keys")
         return 0
     contract, summary = load_summary()
     if arguments.check:
