@@ -327,7 +327,7 @@ fn repaired_child(inherited: &[Block], survivor: NonNull<NativeAllocatorThreadDe
 }
 
 fn initialize() {
-    assert!(initialize_process(4096, unsafe { RuntimeStderrOutput::new(no_output) }));
+    assert!(test_initialize_process_from_host_environment(4096, unsafe { RuntimeStderrOutput::new(no_output) }));
     assert!(prepare_native_later_thread_arena());
 }
 

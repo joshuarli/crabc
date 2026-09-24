@@ -1157,13 +1157,13 @@ mod tests {
     fn native_child_threads_allocate_concurrently_and_another_thread_destroys() {
         use crate::runtime_lifecycle::{
             attach_current_thread, finish_current_thread_native_after_user_destructors,
-            initialize_process, prepare_native_later_thread_arena, ThreadAttachResult,
-            ThreadFinishResult,
+            prepare_native_later_thread_arena, test_initialize_process_from_host_environment,
+            ThreadAttachResult, ThreadFinishResult,
         };
         crate::test_process::run_in_fresh_process(
             "subproc::lifecycle::tests::native_child_threads_allocate_concurrently_and_another_thread_destroys",
             || {
-                assert!(initialize_process(4096, unsafe {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
                     crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
                 }));
                 assert!(prepare_native_later_thread_arena());

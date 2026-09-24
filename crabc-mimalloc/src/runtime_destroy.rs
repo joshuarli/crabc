@@ -544,7 +544,7 @@ mod tests {
         std::thread::spawn(move || {
             let observation = FinalOutputObservation::new();
             let _observation_registration = FinalOutputObservationRegistration::install(&observation);
-            assert!(initialize_process(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
+            assert!(test_initialize_process_from_host_environment(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
             assert!(prepare_native_later_thread_arena());
             assert_eq!(native_process_done_action(NativeProcessDoneInvocation::Automatic),
                 Ok(NativeProcessDoneAction::DestroyBacking));
@@ -666,7 +666,7 @@ mod tests {
             // drop its pending owner. This child has a fresh process owner;
             // it exits while the parked worker remains mapped.
             unsafe { std::env::set_var("mimalloc_destroy_on_exit", "1"); }
-            assert!(initialize_process(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
+            assert!(test_initialize_process_from_host_environment(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
             assert!(prepare_native_later_thread_arena());
             let NativePageAllocationResult::Allocated(initial_client) = native_allocate_aligned(80, 16, false)
                 else { panic!("initial pending-owner fixture client"); };

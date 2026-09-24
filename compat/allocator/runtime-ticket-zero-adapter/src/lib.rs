@@ -21,7 +21,9 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(target_arch = "x86_64")]
-use crabc_mimalloc::__crabc_runtime::RuntimeStderrOutput;
+use crabc_mimalloc::__crabc_runtime::{
+    NativeProcessStartupFacts, RuntimeStderrOutput, publish_native_process_startup_facts,
+};
 
 use crabc_mimalloc::__crabc_runtime::{
     TicketZeroLaterThreadPageResult, TicketZeroPageAllocationResult,
@@ -65,12 +67,27 @@ fn adapter_runtime_stderr_output() -> RuntimeStderrOutput {
     unsafe { RuntimeStderrOutput::new(adapter_musl_fputs_stderr) }
 }
 
-/// Preserves the frozen AArch adapter surface while requiring the explicit
-/// FILE provider for selected x86 evidence.
+/// The adapter's explicit musl-hosted raw environment reader, standing in
+/// for the embedding runtime's environment owner.
+#[cfg(target_arch = "x86_64")]
+unsafe fn adapter_musl_environment() -> *const *const c_char {
+    // SAFETY: a raw read of the linked musl process's `environ` word; the C
+    // test process performs no concurrent environment mutation.
+    unsafe { ptr::read(ptr::addr_of!(environ)).cast_const().cast() }
+}
+
+/// Preserves the frozen AArch adapter surface while publishing the explicit
+/// raw startup facts and FILE provider for selected x86 evidence.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 fn adapter_initialize_process(page_size: usize) -> bool {
-    initialize_process(page_size, adapter_runtime_stderr_output())
+    // SAFETY: both callbacks remain valid for this linked musl process.
+    let Some(facts) = (unsafe {
+        NativeProcessStartupFacts::new(page_size, adapter_musl_environment, adapter_runtime_stderr_output())
+    }) else {
+        return false;
+    };
+    publish_native_process_startup_facts(facts) && initialize_process()
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -140,6 +157,7 @@ impl From<NativeRuntimeLifecycleAudit> for CrabcTicketZeroTestLifecycleAudit {
 unsafe extern "C" {
     fn fputs(message: *const c_char, stream: *mut c_void) -> c_int;
     static mut stderr: *mut c_void;
+    static mut environ: *mut *mut c_char;
 }
 
 unsafe extern "C" {

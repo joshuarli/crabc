@@ -179,6 +179,12 @@ impl ProcessMainInitializationStorage {
         std::boxed::Box::leak(std::boxed::Box::new(Self::new()))
     }
 
+    /// Whether no source startup has claimed this coordinator.
+    #[cfg(test)]
+    pub(crate) fn test_is_cold(&self) -> bool {
+        self.state.load(Ordering::Acquire) == COLD
+    }
+
     /// Runs the bounded source startup path over the process-static owners.
     ///
     /// # Safety
@@ -1284,6 +1290,156 @@ impl Drop for ProcessMainStartup {
 
 static PROCESS_MAIN_INITIALIZATION: ProcessMainInitializationStorage =
     ProcessMainInitializationStorage::new();
+
+/// Raw, nonowning process-start facts for the selected x86 native runtime.
+///
+/// Pinned mimalloc's Unix primitives observe the kernel base page size, the C
+/// `environ` vector (`src/prim/unix/prim.c:874-905`), and the process
+/// `stderr` FILE directly. This engine may not reach public libc, `/proc`, or
+/// `getauxval` for those observations, so the embedding runtime publishes
+/// them once, before any allocation can reach the engine. Explicit runtime
+/// startup and a lazy first allocation then consume this same image.
+///
+/// Nothing here is owned. The environment reader borrows the embedding
+/// runtime's current environment on each call, including later lazy option
+/// retries after a coordinated environment mutation, and the output
+/// primitive borrows its FILE provider. `AT_RANDOM` and the remaining
+/// auxiliary vector are intentionally absent: pinned v3.5.0 draws
+/// `_mi_prim_random_buf` from `getrandom` directly and reads no other auxv
+/// entry, so copying the startup key would add an unused, lifetime-sensitive
+/// secret rather than a source input.
+#[cfg(target_arch = "x86_64")]
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct NativeProcessStartupFacts {
+    page_size: crate::os::PageSize,
+    environment_reader: VmOptionEnvironmentReader,
+    stderr_output: crate::diagnostic_output::RuntimeStderrOutput,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeProcessStartupFacts {
+    /// Builds one startup image from runtime-validated `AT_PAGESZ`, the
+    /// runtime's source environment reader, and its selected FILE output.
+    ///
+    /// Returns `None` when `page_size_bytes` is not a supported Linux/x86-64
+    /// base page size; no image with an invalid page geometry can exist.
+    ///
+    /// # Safety
+    ///
+    /// For the complete process lifetime, every call to `environment_reader`
+    /// must return null or a NUL-terminated C environment vector whose
+    /// non-null entries remain valid NUL-terminated strings for the duration
+    /// of that observation, with the direct-mutation coordination pinned
+    /// `_mi_prim_getenv` requires of `environ`. The reader must not allocate
+    /// through this engine or unwind. `stderr_output` carries the obligations
+    /// documented on [`crate::diagnostic_output::RuntimeStderrOutput::new`].
+    #[inline]
+    pub unsafe fn new(
+        page_size_bytes: usize,
+        environment_reader: unsafe fn() -> *const *const core::ffi::c_char,
+        stderr_output: crate::diagnostic_output::RuntimeStderrOutput,
+    ) -> Option<Self> {
+        Some(Self {
+            page_size: crate::os::PageSize::new(page_size_bytes)?,
+            environment_reader,
+            stderr_output,
+        })
+    }
+
+    #[inline]
+    pub(crate) const fn page_size(&self) -> crate::os::PageSize {
+        self.page_size
+    }
+
+    #[inline]
+    pub(crate) const fn environment_reader(&self) -> VmOptionEnvironmentReader {
+        self.environment_reader
+    }
+
+    #[inline]
+    pub(crate) const fn stderr_output(&self) -> crate::diagnostic_output::RuntimeStderrOutput {
+        self.stderr_output
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+const STARTUP_FACTS_ABSENT: u8 = 0;
+#[cfg(target_arch = "x86_64")]
+const STARTUP_FACTS_WRITING: u8 = 1;
+#[cfg(target_arch = "x86_64")]
+const STARTUP_FACTS_PUBLISHED: u8 = 2;
+
+/// One-way, allocation-free publication slot for [`NativeProcessStartupFacts`].
+///
+/// The first publisher alone moves ABSENT -> WRITING, writes the image, and
+/// Release-publishes PUBLISHED. The image is never replaced, so a reader that
+/// Acquire-observes PUBLISHED may copy it at any later time. A reader that
+/// races the single write observes no facts, which is the same allocation-free
+/// refusal as a process whose runtime has not published them yet.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct ProcessStartupFactsCell {
+    state: AtomicU8,
+    facts: UnsafeCell<MaybeUninit<NativeProcessStartupFacts>>,
+}
+
+// SAFETY: the ABSENT -> WRITING CAS grants one writer exclusive access to the
+// inline image before its Release publication; afterwards the image is only
+// copied out and never mutated.
+#[cfg(target_arch = "x86_64")]
+unsafe impl Sync for ProcessStartupFactsCell {}
+
+#[cfg(target_arch = "x86_64")]
+impl ProcessStartupFactsCell {
+    pub(crate) const fn new() -> Self {
+        Self {
+            state: AtomicU8::new(STARTUP_FACTS_ABSENT),
+            facts: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
+
+    /// The one production slot consumed by the runtime process owner.
+    #[inline]
+    pub(crate) fn global() -> &'static Self {
+        &PROCESS_STARTUP_FACTS
+    }
+
+    /// Publishes `facts` unless an earlier image already fixed this process.
+    /// A refused later image is dropped without touching the published one.
+    pub(crate) fn publish(&self, facts: NativeProcessStartupFacts) -> bool {
+        if self
+            .state
+            .compare_exchange(
+                STARTUP_FACTS_ABSENT,
+                STARTUP_FACTS_WRITING,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            return false;
+        }
+        // SAFETY: the successful CAS above made this caller the sole writer,
+        // and no reader copies the slot before the Release store below.
+        unsafe { (*self.facts.get()).write(facts) };
+        self.state.store(STARTUP_FACTS_PUBLISHED, Ordering::Release);
+        true
+    }
+
+    /// Copies the published image, or reports that none is visible yet.
+    #[inline]
+    pub(crate) fn published(&self) -> Option<NativeProcessStartupFacts> {
+        if self.state.load(Ordering::Acquire) != STARTUP_FACTS_PUBLISHED {
+            return None;
+        }
+        // SAFETY: PUBLISHED is Release-stored after the only write and the
+        // image is never mutated again; `NativeProcessStartupFacts` is Copy.
+        Some(unsafe { (*self.facts.get()).assume_init_read() })
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+static PROCESS_STARTUP_FACTS: ProcessStartupFactsCell = ProcessStartupFactsCell::new();
 
 /// A process-main startup failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

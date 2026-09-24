@@ -149,6 +149,10 @@ pub mod __crabc_runtime {
 
     #[cfg(target_arch = "x86_64")]
     pub use crate::diagnostic_output::RuntimeStderrOutput;
+    #[cfg(target_arch = "x86_64")]
+    pub use crate::runtime_lifecycle::{
+        NativeProcessStartupFacts, publish_native_process_startup_facts,
+    };
     #[cfg(feature = "native-runtime-test-audit")]
     pub use crate::runtime_lifecycle::{
         NativeRuntimeCurrentThreadAttachmentAudit, NativeRuntimeFirstArenaPolicyAudit,

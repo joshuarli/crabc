@@ -78,6 +78,7 @@ pub(crate) struct DiagnosticOptionSnapshot {
 
 #[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
+#[derive(Clone, Copy)]
 pub struct RuntimeStderrOutput {
     invoke: DefaultStderrOutput,
 }

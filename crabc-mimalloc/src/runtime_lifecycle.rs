@@ -100,19 +100,27 @@ use crate::main_theap::MainStaticHeapLease;
 use crate::meta::MetaAllocation;
 #[cfg(any(test, feature = "native-runtime-test-audit", target_arch = "x86_64"))]
 use crate::meta::MetaAllocator;
-use crate::os::{MemoryConfig, PageSize, StartupInput};
+use crate::os::{MemoryConfig, StartupInput};
+#[cfg(any(test, target_arch = "aarch64"))]
+use crate::os::PageSize;
 #[cfg(target_arch = "x86_64")]
 use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::os::{MapAccess, Mapping};
 #[cfg(target_arch = "x86_64")]
 use crate::diagnostic_output::{
-    FinalProcessDiagnosticView, FinalProcessInfo, ProcessDiagnosticInputs, RuntimeStderrOutput,
+    FinalProcessDiagnosticView, FinalProcessInfo, ProcessDiagnosticInputs,
 };
+#[cfg(all(test, target_arch = "x86_64"))]
+use crate::diagnostic_output::RuntimeStderrOutput;
 use crate::process_init::{
     ProcessMainBackingBinding, ProcessMainInitializationStorage, ProcessMainInitError,
     ProcessMainThread,
 };
+#[cfg(target_arch = "x86_64")]
+pub use crate::process_init::NativeProcessStartupFacts;
+#[cfg(target_arch = "x86_64")]
+use crate::process_init::ProcessStartupFactsCell;
 use crate::process_arena::{
     ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessPageBackingLease, ProcessSharedArenaStorage,
 };
@@ -4490,8 +4498,8 @@ impl RuntimeProcessStorage {
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    fn initialize(&'static self, page_size_bytes: usize, stderr_output: RuntimeStderrOutput) -> bool {
-        let default_stderr_output = stderr_output.into_default_stderr_output();
+    fn initialize(&'static self, facts: NativeProcessStartupFacts) -> bool {
+        let default_stderr_output = facts.stderr_output().into_default_stderr_output();
         let Some(completion) = self.begin_initialization_once() else {
             return match self.state.load(Ordering::Acquire) {
                 PROCESS_ACTIVE => true,
@@ -4502,30 +4510,34 @@ impl RuntimeProcessStorage {
         debug_assert_eq!(self.state.load(Ordering::Acquire), PROCESS_COLD);
         self.state.store(PROCESS_INITIALIZING, Ordering::Release);
 
-        let Some(page_size) = PageSize::new(page_size_bytes) else {
-            self.retain();
-            return false;
-        };
         // Source `mi_process_init_once` observes its environment options
         // before `_mi_os_init` builds the process memory configuration. The
-        // runtime owns that raw-environ read while startup still owns a stable
-        // initial vector; the resolved image then stays beside this exact
-        // ticket-zero subprocess for its process lifetime.
-        let options = source_vm_options_from_process_environment();
-        let config = MemoryConfig::detect(StartupInput::new(page_size));
-        // SAFETY: libc calls this only after initial TLS exists and before
-        // application constructors. This static owner retains ticket zero for
-        // the process lifetime, and no competing runtime lifecycle call can
-        // pass the INITIALIZING state above.
+        // runtime-published reader supplies that raw-environ observation
+        // while startup still owns a stable initial vector; the resolved
+        // image then stays beside this exact ticket-zero subprocess for its
+        // process lifetime.
+        let options = source_vm_options_from_environment_reader(facts.environment_reader());
+        let config = MemoryConfig::detect(StartupInput::new(facts.page_size()));
+        // SAFETY: the embedding runtime publishes its startup facts only
+        // after initial TLS exists, and either calls this before application
+        // constructors or reaches it from the process's first allocation.
+        // This static owner retains ticket zero for the process lifetime, and
+        // no competing runtime lifecycle call can pass the INITIALIZING state
+        // above.
         let owner = unsafe {
             ProcessMainInitializationStorage::global()
                 .prepare_with_vm_options_from_source_environment(
                     config,
                     options,
-                    // SAFETY: the runtime winning startup owns stable raw
-                    // environ observation and the public x86 capability owns
-                    // its FILE provider for this exact process lifetime.
-                    unsafe { ProcessDiagnosticInputs::new(process_environment_pointer, default_stderr_output) },
+                    // SAFETY: `NativeProcessStartupFacts::new` required this
+                    // reader and FILE provider to satisfy the diagnostic
+                    // input obligations for this exact process lifetime.
+                    unsafe {
+                        ProcessDiagnosticInputs::new(
+                            facts.environment_reader(),
+                            default_stderr_output,
+                        )
+                    },
                 )
         };
         let Ok((owner, startup)) = owner else {
@@ -4551,7 +4563,7 @@ impl RuntimeProcessStorage {
     }
 
     #[cfg(all(target_arch = "x86_64", miri))]
-    fn initialize(&'static self, _page_size_bytes: usize, _stderr_output: RuntimeStderrOutput) -> bool {
+    fn initialize(&'static self, _facts: NativeProcessStartupFacts) -> bool {
         // Miri has no raw `environ` model. Do not activate a parallel/no-op
         // diagnostic startup path merely to consume the required x86 input.
         false
@@ -4640,6 +4652,26 @@ impl RuntimeProcessStorage {
     }
 }
 
+/// Resolve the selected VM descriptors through the runtime-published raw
+/// environment reader, the x86 counterpart of pinned
+/// `src/prim/unix/prim.c:_mi_prim_getenv`'s direct `environ` read.
+///
+/// An unavailable or overlong entry remains unresolved in the permanent
+/// process policy: its current source default is usable for that option read,
+/// and only that descriptor retries through this same reader on a later
+/// `mi_option_get`-shaped policy access.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+fn source_vm_options_from_environment_reader(
+    environment_reader: crate::config::VmOptionEnvironmentReader,
+) -> VmOptions {
+    let mut options = VmOptions::uninitialized();
+    // SAFETY: `NativeProcessStartupFacts::new` required each reader call to
+    // return null or a valid environment vector for the observation, with
+    // the ordinary caller coordination of a direct C environment mutation.
+    unsafe { options.initialize_from_source_environment(environment_reader()) };
+    options
+}
+
 /// Resolve the selected VM descriptors from the same raw Unix `environ`
 /// source that pinned `src/prim/unix/prim.c:_mi_prim_getenv` reads.
 ///
@@ -4650,7 +4682,7 @@ impl RuntimeProcessStorage {
 /// permanent process policy: its current source default is usable for that
 /// option read, and only that descriptor retries through this same raw reader
 /// on a later `mi_option_get`-shaped policy access.
-#[cfg(not(miri))]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 fn source_vm_options_from_process_environment() -> VmOptions {
     let mut options = VmOptions::uninitialized();
     // SAFETY: `RuntimeProcessStorage::initialize` runs after libc startup
@@ -4664,15 +4696,16 @@ fn source_vm_options_from_process_environment() -> VmOptions {
 /// Miri has no process-global C `environ` model. Keep every descriptor
 /// unresolved so the private runtime stays inactive there instead of treating
 /// host-model execution as evidence for the native raw-environment boundary.
-#[cfg(miri)]
+#[cfg(all(target_arch = "aarch64", miri))]
 fn source_vm_options_from_process_environment() -> VmOptions {
     VmOptions::uninitialized()
 }
 
 /// Reads the C `environ` object without creating an alias to mutable foreign
-/// state. The selected crabc libc exports it as a weak alias of `__environ`;
-/// native evidence uses the matching musl process global.
-#[cfg(not(miri))]
+/// state. The selected crabc libc exports it as a weak alias of `__environ`.
+/// Only the paused AArch64 bridge still reads it here; the x86 runtime
+/// receives its reader in [`NativeProcessStartupFacts`] instead.
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 fn process_environment_pointer() -> *const *const core::ffi::c_char {
     unsafe extern "C" {
         static mut environ: *mut *mut core::ffi::c_char;
@@ -9476,19 +9509,100 @@ fn with_current_thread_native_persistent_pointer<R>(
     }
 }
 
-/// Initializes the retained ticket-zero process owner from libc's validated
-/// `AT_PAGESZ` value. A false result means this private lifecycle is
-/// unavailable for the process. The embedding libc owns backend selection: its
-/// default C-backed build may remain selected, while an explicitly selected
-/// native-shadow build must fail its native allocation boundary without
-/// sending a native pointer to that C backend.
+/// Publishes the embedding runtime's raw process-start facts.
+///
+/// This is allocation-free and performs no source startup. Once published,
+/// the one image serves both [`initialize_process`] and a lazy first
+/// allocation. A false result means an earlier image already fixed this
+/// process; the new image is ignored rather than replacing inputs that a
+/// startup may already have observed.
 #[doc(hidden)]
 #[inline]
 #[cfg(target_arch = "x86_64")]
-pub fn initialize_process(page_size_bytes: usize, stderr_output: RuntimeStderrOutput) -> bool {
+pub fn publish_native_process_startup_facts(facts: NativeProcessStartupFacts) -> bool {
+    ProcessStartupFactsCell::global().publish(facts)
+}
+
+/// Explicitly initializes the retained ticket-zero process owner from the
+/// runtime's published startup facts, as pinned `_mi_auto_process_init` does
+/// before constructors. A false result means this private lifecycle is
+/// unavailable for the process: no facts are published, the caller is not
+/// the thread that owns (or may claim) initial startup, or source startup was
+/// retained. Repeating the call on the initial thread after a completed
+/// explicit or lazy startup returns true without a second startup. The
+/// embedding libc owns backend selection: its default C-backed build may
+/// remain selected, while an explicitly selected native-shadow build must
+/// fail its native allocation boundary without sending a native pointer to
+/// that C backend.
+#[doc(hidden)]
+#[inline]
+#[cfg(target_arch = "x86_64")]
+pub fn initialize_process() -> bool {
+    let Some(facts) = ProcessStartupFactsCell::global().published() else { return false; };
     if !admission::register_initial_descriptor() { return false; }
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return false; };
-    RUNTIME_PROCESS.initialize(page_size_bytes, stderr_output)
+    RUNTIME_PROCESS.initialize(facts)
+}
+
+/// Test-only raw environment reader for the musl-hosted native unit binary.
+///
+/// The fixture process's own C `environ` stands in for the embedding
+/// runtime's environment owner; the production engine never names it.
+#[cfg(all(test, target_arch = "x86_64"))]
+pub(crate) unsafe fn test_host_process_environment() -> *const *const core::ffi::c_char {
+    unsafe extern "C" {
+        static mut environ: *mut *mut core::ffi::c_char;
+    }
+    // SAFETY: this reads the test process's C global word only; tests that
+    // mutate it do so before startup on the same thread, as C requires.
+    unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
+}
+
+/// Publishes host-process startup facts and performs explicit startup, the
+/// fixture equivalent of the selected libc bridge.
+#[cfg(all(test, target_arch = "x86_64"))]
+pub(crate) fn test_initialize_process_from_host_environment(
+    page_size_bytes: usize,
+    stderr_output: RuntimeStderrOutput,
+) -> bool {
+    // SAFETY: the host reader returns the fixture process's live `environ`,
+    // and each caller supplies a process-lifetime FILE output fixture.
+    let Some(facts) = (unsafe {
+        NativeProcessStartupFacts::new(page_size_bytes, test_host_process_environment, stderr_output)
+    }) else {
+        return false;
+    };
+    let _ = publish_native_process_startup_facts(facts);
+    initialize_process()
+}
+
+/// Enters one native allocation that may be the process's first.
+///
+/// Pinned `mi_malloc_generic_admin` initializes a thread whose default Theap
+/// is still empty through `_mi_thread_init`, whose first step is the
+/// `mi_process_init` once body. The embedding runtime ordinarily performs
+/// that startup explicitly before constructors; this is the same transition
+/// when an allocation reaches a still-cold process first. It consumes only
+/// the published raw startup facts and repeats the explicit sequence exactly:
+/// source startup, then the dormant first-arena preparation that a later
+/// worker attachment requires. A caller that is unregistered after startup
+/// has begun is an ordinary unattached thread and receives no lazy
+/// authority; a failed lazy startup is retained exactly like a failed
+/// explicit one.
+#[cfg(target_arch = "x86_64")]
+fn enter_native_allocation_operation() -> Option<admission::NativeAllocatorOperationGuard> {
+    match admission::NativeAllocatorOperationGuard::enter() {
+        Ok(operation) => return Some(operation),
+        Err(admission::NativeAllocatorEntryError::Unregistered) => {}
+        Err(_) => return None,
+    }
+    if RUNTIME_PROCESS.state.load(Ordering::Acquire) != PROCESS_COLD {
+        return None;
+    }
+    if !initialize_process() || !prepare_native_later_thread_arena() {
+        return None;
+    }
+    admission::NativeAllocatorOperationGuard::enter().ok()
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -10091,7 +10205,7 @@ pub fn native_allocate_aligned(
     zero: bool,
 ) -> NativePageAllocationResult {
     #[cfg(target_arch = "x86_64")]
-    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+    let Some(_operation) = enter_native_allocation_operation() else {
         return NativePageAllocationResult::Unavailable;
     };
     if !crate::size_class::request_size_is_valid(request)
@@ -10530,7 +10644,7 @@ pub unsafe fn native_reallocate(
     new_size: usize,
 ) -> NativePageAllocationResult {
     #[cfg(target_arch = "x86_64")]
-    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+    let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
     // SAFETY: forward the exact-live client contract through one operation
@@ -10552,7 +10666,7 @@ pub unsafe fn native_reallocate_zeroed(
     new_size: usize,
 ) -> NativePageAllocationResult {
     #[cfg(target_arch = "x86_64")]
-    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+    let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
     // SAFETY: forward the exact-live native client contract.
@@ -10580,7 +10694,7 @@ pub unsafe fn native_reallocate_aligned(
     alignment: usize,
 ) -> NativePageAllocationResult {
     #[cfg(target_arch = "x86_64")]
-    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+    let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
     if !crate::size_class::alignment_is_valid(alignment) {
@@ -10608,7 +10722,7 @@ pub unsafe fn native_reallocate_aligned_zeroed(
     alignment: usize,
 ) -> NativePageAllocationResult {
     #[cfg(target_arch = "x86_64")]
-    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+    let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
     if !crate::size_class::alignment_is_valid(alignment) {
@@ -10616,6 +10730,23 @@ pub unsafe fn native_reallocate_aligned_zeroed(
     }
     // SAFETY: forward the exact-live aligned client contract.
     unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::Aligned(alignment), true) }
+}
+
+/// Enters the operation guard for a reallocation of `block`.
+///
+/// A present block is an exact live native client, so its caller is already
+/// registered. A null block is pinned `mi_realloc(NULL, size)`: an ordinary
+/// allocation that may be the process's first. That arm takes no outer guard;
+/// its nested [`native_allocate_aligned`] enters through the same lazy
+/// first-allocation boundary as any other allocation.
+#[cfg(target_arch = "x86_64")]
+fn enter_native_reallocation_operation(
+    block: Option<core::ptr::NonNull<u8>>,
+) -> Result<Option<admission::NativeAllocatorOperationGuard>, admission::NativeAllocatorEntryError> {
+    match block {
+        Some(_) => admission::NativeAllocatorOperationGuard::enter().map(Some),
+        None => Ok(None),
+    }
 }
 
 /// Selects the C ABI's 16-byte policy or pinned aligned-realloc's source
@@ -17294,6 +17425,227 @@ mod tests {
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
 
+    /// Startup facts naming only the fixture process's own `environ` and
+    /// musl `stderr`, exactly as the selected libc bridge publishes them.
+    #[cfg(target_arch = "x86_64")]
+    fn host_startup_facts() -> NativeProcessStartupFacts {
+        // SAFETY: the host reader and musl FILE fixture remain valid for the
+        // fresh test process that consumes these facts.
+        unsafe {
+            NativeProcessStartupFacts::new(
+                4096,
+                test_host_process_environment,
+                RuntimeStderrOutput::new(deferred_free_boundary_test_stderr),
+            )
+        }
+        .expect("the native x86 fixture uses a supported base page size")
+    }
+
+    /// Allocates, writes, and frees one C-aligned native client on the caller.
+    #[cfg(target_arch = "x86_64")]
+    fn native_round_trip(size: usize) -> bool {
+        let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(size, 16, false)
+        else {
+            return false;
+        };
+        // SAFETY: the fresh client is exclusively owned for `size` bytes.
+        unsafe { block.as_ptr().write_bytes(0x5a, size) };
+        // SAFETY: `block` is this thread's exact live native client.
+        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+        true
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn lazy_first_allocation_runs_the_published_source_startup_once() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::lazy_first_allocation_runs_the_published_source_startup_once",
+            || {
+                assert!(!process_is_active());
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(!process_is_active(), "publication alone performs no source startup");
+                assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_COLD);
+
+                // Pinned `mi_malloc_generic_admin` reaches `_mi_thread_init`
+                // and then `mi_process_init` from the first allocation.
+                assert!(native_round_trip(48), "the first allocation starts the process lazily");
+                assert!(process_is_active());
+                assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_ACTIVE);
+
+                // Explicit startup after a lazy one reports the completed
+                // process without reopening either source once gate.
+                assert!(initialize_process());
+                assert!(!publish_native_process_startup_facts(host_startup_facts()),
+                    "the first published image remains the process image");
+                assert!(native_round_trip(96));
+
+                // Another thread has no attachment. It gets the ordinary
+                // unattached refusal, never a second lazy startup, and the
+                // active process remains usable by its initial owner.
+                let foreign = std::thread::spawn(|| {
+                    matches!(native_allocate_aligned(32, 16, false),
+                        NativePageAllocationResult::Unavailable)
+                        && !initialize_process()
+                }).join().expect("the unattached thread returns its refusal");
+                assert!(foreign);
+                assert!(process_is_active());
+                assert!(native_round_trip(64));
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn cold_allocation_without_startup_facts_refuses_without_retaining_the_process() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::cold_allocation_without_startup_facts_refuses_without_retaining_the_process",
+            || {
+                // No `/proc`, `getauxval`, or ambient `environ` substitute
+                // exists: without published facts the engine cannot start.
+                assert!(matches!(native_allocate_aligned(48, 16, false),
+                    NativePageAllocationResult::Unavailable));
+                // SAFETY: the null input is an allocation request.
+                assert!(matches!(unsafe { native_reallocate(None, 48) },
+                    NativePageAllocationResult::Unavailable));
+                assert!(!initialize_process());
+                assert!(!process_is_active());
+                assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_COLD,
+                    "an allocation-free refusal does not retain source startup");
+                assert!(ProcessMainInitializationStorage::global().test_is_cold());
+
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(native_round_trip(48), "the refused process still starts lazily later");
+                assert!(process_is_active());
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn null_reallocation_is_a_lazy_first_allocation() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::null_reallocation_is_a_lazy_first_allocation",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                // SAFETY: pinned `mi_realloc(NULL, size)` is `mi_malloc`.
+                let NativePageAllocationResult::Allocated(block) =
+                    (unsafe { native_reallocate(None, 40) })
+                else {
+                    panic!("realloc(NULL) reaches the lazy first-allocation startup");
+                };
+                assert!(process_is_active());
+                // SAFETY: the fresh client is exclusively owned for 40 bytes.
+                unsafe { block.as_ptr().write_bytes(0x3c, 40) };
+                // SAFETY: `block` is this thread's exact live native client.
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn concurrent_first_allocations_start_one_initial_owner() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::concurrent_first_allocations_start_one_initial_owner",
+            || {
+                const RACERS: usize = 8;
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                let barrier = std::sync::Arc::new(std::sync::Barrier::new(RACERS));
+                let (outcomes, receiver) = std::sync::mpsc::channel();
+                for _ in 0..RACERS {
+                    let barrier = barrier.clone();
+                    let outcomes = outcomes.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        // Each racer is an unattached thread. Exactly one
+                        // can claim the initial descriptor and run source
+                        // startup; the rest see the ordinary refusal.
+                        let started = native_round_trip(64);
+                        let repeated = started && native_round_trip(128);
+                        outcomes.send((started, repeated)).expect("the fixture receives each outcome");
+                        // The winner is now the process's initial owner and
+                        // its TLS holds the static source roots. Never let
+                        // any racer exit; this fresh child ends with them.
+                        loop { std::thread::park(); }
+                    });
+                }
+                let outcomes: std::vec::Vec<(bool, bool)> = (0..RACERS)
+                    .map(|_| receiver.recv().expect("each first-allocation racer reports"))
+                    .collect();
+                assert_eq!(outcomes.iter().filter(|(started, _)| *started).count(), 1,
+                    "exactly one racing first allocation becomes the initial owner");
+                assert!(outcomes.iter().all(|(started, repeated)| started == repeated),
+                    "the winning initial owner keeps allocating after startup");
+                assert!(process_is_active());
+                assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_ACTIVE);
+            },
+        );
+    }
+
+    /// A fixed environment vector that is deliberately not the process's
+    /// ambient `environ`.
+    #[cfg(target_arch = "x86_64")]
+    struct SyntheticStartupEnvironment([*const core::ffi::c_char; 2]);
+
+    // SAFETY: the vector and its one entry are immutable static C strings.
+    #[cfg(target_arch = "x86_64")]
+    unsafe impl Sync for SyntheticStartupEnvironment {}
+
+    #[cfg(target_arch = "x86_64")]
+    static SYNTHETIC_STARTUP_ENVIRONMENT: SyntheticStartupEnvironment =
+        SyntheticStartupEnvironment([c"mimalloc_purge_delay=321".as_ptr(), core::ptr::null()]);
+
+    #[cfg(target_arch = "x86_64")]
+    static SYNTHETIC_STARTUP_ENVIRONMENT_READS: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn synthetic_startup_environment() -> *const *const core::ffi::c_char {
+        SYNTHETIC_STARTUP_ENVIRONMENT_READS.fetch_add(1, Ordering::AcqRel);
+        SYNTHETIC_STARTUP_ENVIRONMENT.0.as_ptr()
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn lazy_startup_observes_options_only_through_the_published_reader() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::lazy_startup_observes_options_only_through_the_published_reader",
+            || {
+                // The ambient process environment names different values.
+                // This single-threaded fresh child mutates its own
+                // environment before any allocator or reader observation.
+                std::env::set_var("mimalloc_purge_delay", "654");
+                std::env::set_var("mimalloc_disallow_os_alloc", "1");
+                // SAFETY: the synthetic reader returns an immutable static
+                // vector, and the musl FILE fixture is process-lifetime.
+                let facts = unsafe {
+                    NativeProcessStartupFacts::new(
+                        4096,
+                        synthetic_startup_environment,
+                        RuntimeStderrOutput::new(deferred_free_boundary_test_stderr),
+                    )
+                }
+                .expect("the native x86 fixture uses a supported base page size");
+                assert!(publish_native_process_startup_facts(facts));
+                assert_eq!(SYNTHETIC_STARTUP_ENVIRONMENT_READS.load(Ordering::Acquire), 0,
+                    "publication does not observe the environment");
+                assert!(native_round_trip(48));
+                assert!(SYNTHETIC_STARTUP_ENVIRONMENT_READS.load(Ordering::Acquire) > 0,
+                    "source option initialization used the published reader");
+
+                // SAFETY: ACTIVE was observed through the round trip above;
+                // only immutable ready witnesses are copied.
+                let owner = unsafe { RUNTIME_PROCESS.active_owner() }
+                    .expect("lazy startup published the process owner");
+                let ready = owner.ready().expect("lazy startup completed readiness");
+                let backing = ready.process_backing().expect("the ready process has its VM backing");
+                let policy = backing.process().policy();
+                assert_eq!(policy.purge_delay_milliseconds(), 321);
+                assert!(!policy.disallow_os_alloc(),
+                    "the ambient environ is never an engine input");
+            },
+        );
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn runtime_process_once_waits_for_terminal_startup_and_refuses_owner_reentry() {
@@ -18287,7 +18639,7 @@ mod tests {
             // fixture; its selected stderr remains live until this isolated
             // test process exits. The fresh child starts before another test
             // can initialize this irreversible static source owner.
-            assert!(initialize_process(
+            assert!(test_initialize_process_from_host_environment(
                 4096,
                 unsafe { RuntimeStderrOutput::new(deferred_free_boundary_test_stderr) },
             ));

@@ -13,13 +13,14 @@ use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crabc_mimalloc::__crabc_runtime::{
-    RuntimeStderrOutput, NativeProcessDestroyError, NativeProcessDoneAction,
+    NativeProcessStartupFacts, RuntimeStderrOutput, NativeProcessDestroyError, NativeProcessDoneAction,
     NativeProcessDoneInvocation, SelectedProcessDoneResult, ThreadAttachResult,
     ThreadFinalProcessExitOwnerResult, ThreadFinishResult,
     attach_current_thread, capture_native_process_destroy_request,
     finish_current_thread_native_after_user_destructors,
     finish_selected_default_release_process_after_user_atexit,
     initialize_process, prepare_native_later_thread_arena,
+    publish_native_process_startup_facts,
     native_process_done_action, prepare_native_process_destroy,
     retain_current_thread_native_owner_after_process_done_nonfinal,
     reinitialize_current_thread_native_owner_for_final_process_exit,
@@ -79,9 +80,28 @@ unsafe extern "C" fn runtime_stderr_output(message: *const c_char) {
     };
 }
 
+/// Raw source environment reader handed to the native allocator.
+///
+/// Pinned `src/prim/unix/prim.c:_mi_prim_getenv` reads the C `environ`
+/// spelling directly. libc owns that weak alias of `__environ`, so it, not
+/// the allocator engine, performs the read, preserving the exact symbol the
+/// source observes. Each call returns the current vector; a later lazy option
+/// retry therefore follows a coordinated `setenv` just as the source does.
+unsafe fn runtime_source_environment() -> *const *const c_char {
+    unsafe extern "C" {
+        static mut environ: *mut *mut c_char;
+    }
+    // SAFETY: a raw word read of libc's own process environment global.
+    // Startup installed the validated kernel vector before publication, and
+    // later mutation keeps C's ordinary caller-coordination obligation.
+    unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
+}
+
 /// Start the selected native process owner after x86 startup has installed
 /// validated `environ`, `AT_PAGESZ`, initial TLS, and permanent `stderr`.
 ///
+/// libc first publishes those raw facts to the engine, then performs the
+/// explicit source startup that a lazy first allocation would otherwise run.
 /// A false result makes selected owned startup reject before constructors:
 /// process initialization can have published an owner before its later-arena
 /// preparation discovers a retained source state. It must not continue with a
@@ -90,7 +110,17 @@ unsafe extern "C" fn runtime_stderr_output(message: *const c_char) {
 /// process finalization; default teardown preserves live allocation backing.
 pub(super) unsafe fn initialize_selected_process(page_size: usize) -> bool {
     let stderr_output = unsafe { RuntimeStderrOutput::new(runtime_stderr_output) };
-    let ready = initialize_process(page_size, stderr_output) && prepare_native_later_thread_arena();
+    // SAFETY: `runtime_source_environment` reads libc's own `environ` for the
+    // process lifetime, and `runtime_stderr_output` is the permanent
+    // `stderr` provider documented above.
+    let Some(facts) = (unsafe {
+        NativeProcessStartupFacts::new(page_size, runtime_source_environment, stderr_output)
+    }) else {
+        return false;
+    };
+    let ready = publish_native_process_startup_facts(facts)
+        && initialize_process()
+        && prepare_native_later_thread_arena();
     #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
     if ready { ALLOCATOR_LIFECYCLE_PHASE.store(1, Ordering::Release); }
     ready
