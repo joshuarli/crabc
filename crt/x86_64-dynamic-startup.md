@@ -182,7 +182,10 @@ and 24 destructors each, and gives each of them twenty leaf libraries: 43
 initial images, with 21 or 20 `DT_NEEDED` edges on three of them. Every leaf
 keeps its value in dynamic TLS, so the initial generation has 40 TLS modules
 and the plugin adds 20 runtime modules; a worker created after `dlopen` sums
-every value again. Its complete construction/finalization transcript, sums
+every value again. `main` then reads the debugger view: `DT_DEBUG` must equal
+libc's `_dl_debug_addr`, `_dl_debug_state` must resolve, and the consistent
+`r_debug` list must start at the main link map, stay doubly linked and hold
+the plugin (image counts differ only because musl's loader is its libc). Its complete construction/finalization transcript, sums
 and exit status must equal pinned musl's in both modes and entries. The
 installed loader keeps graph objects, edges, copied callback arrays and the
 initial DTV in loader mappings sized from the graph, not in fixed tables. The dynamic qualification

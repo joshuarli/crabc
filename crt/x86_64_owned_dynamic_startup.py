@@ -97,7 +97,7 @@ WIDE_CALLBACKS = 24
 WIDE_HUB = "libowned-startup-wide-hub.so"
 WIDE_PLUGIN = "libowned-startup-wide-plugin.so"
 WIDE_STATUS = 7
-WIDE_VALUES = "|1420,2210,3630|"
+WIDE_VALUES = "|1420,2210,3630,1|"
 
 
 def wide_leaf(group: str, index: int) -> str:

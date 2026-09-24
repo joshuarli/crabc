@@ -13,6 +13,7 @@
  * WIDE_PLUGIN; otherwise the executable.
  * Every marker is written unbuffered so stdio finalization cannot reorder it.
  */
+#define _GNU_SOURCE
 #include <unistd.h>
 
 #define WIDE_FANOUT 20
@@ -70,8 +71,12 @@ int wide_plugin_value(void) { return 2000 WIDE_EACH(WIDE_SUM); }
 
 #else
 #include <dlfcn.h>
+#include <link.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <string.h>
+
+extern ElfW(Dyn) _DYNAMIC[];
 
 #define WIDE_DECLARE(id) int wide_w_##id##_value(void);
 #define WIDE_SUM(id) + wide_w_##id##_value()
@@ -88,6 +93,35 @@ static void *worker(void *unused)
 	return (void *)(long)(wide_hub_value() WIDE_EACH(WIDE_SUM) + plugin_value());
 }
 
+/* The debugger view (DT_DEBUG, `_dl_debug_addr`, `_dl_debug_state`) must
+ * describe the consistent graph: main first, doubly linked, and the runtime
+ * plugin present. Loader and libc image counts differ between musl (one
+ * image) and the owned runtime (two), so only the shared structure is read. */
+static int debugger_view(void)
+{
+	struct r_debug *debug = 0;
+	for (ElfW(Dyn) *entry = _DYNAMIC; entry->d_tag; ++entry)
+		if (entry->d_tag == DT_DEBUG) debug = (struct r_debug *)entry->d_un.d_ptr;
+	void *libc = dlopen("libc.so", RTLD_NOW | RTLD_NOLOAD);
+	struct r_debug **slot = libc ? dlsym(libc, "_dl_debug_addr") : 0;
+	void (*state)(void) = libc ? (void (*)(void))dlsym(libc, "_dl_debug_state") : 0;
+	struct link_map *main_map = 0;
+	if (!debug || !slot || *slot != debug || !state || debug->r_version != 1
+	    || debug->r_state != RT_CONSISTENT || !debug->r_brk
+	    || dlinfo(dlopen(0, RTLD_NOW), RTLD_DI_LINKMAP, &main_map) || debug->r_map != main_map)
+		return 0;
+	int count = 0, plugin = 0;
+	struct link_map *previous = 0;
+	for (struct link_map *map = debug->r_map; map && count < 1000; map = map->l_next, ++count) {
+		if (map->l_prev != previous) return 0;
+		size_t length = map->l_name ? strlen(map->l_name) : 0;
+		const char *suffix = "libowned-startup-wide-plugin.so";
+		if (length >= strlen(suffix) && !strcmp(map->l_name + length - strlen(suffix), suffix)) plugin = 1;
+		previous = map;
+	}
+	return count >= 63 && plugin;
+}
+
 int main(void)
 {
 	int initial = wide_hub_value() WIDE_EACH(WIDE_SUM);
@@ -99,7 +133,8 @@ int main(void)
 	void *result;
 	if (pthread_create(&thread, 0, worker, 0) || pthread_join(thread, &result)) return 42;
 	char text[48];
-	int length = snprintf(text, sizeof text, "|%d,%d,%ld|", initial, plugin_value(), (long)result);
+	int length = snprintf(text, sizeof text, "|%d,%d,%ld,%d|", initial, plugin_value(), (long)result,
+	                      debugger_view());
 	(void)write(1, text, (size_t)length);
 	return 7;
 }
