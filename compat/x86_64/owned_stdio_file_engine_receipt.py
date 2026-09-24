@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Reconstruct the bounded installed FILE-engine receipt from retained bytes.
 
-This reader deliberately validates seven existing FILE-engine probes as separate
+This reader deliberately validates eight FILE-engine probes as separate
 installed-header objects.  It does not add a stdio API, infer symbols from a
 report, or treat an earlier static-only run as six-mode product evidence.
+The retained objects' undefined-symbol tables must jointly reference the whole
+frozen surface of the four FILE capabilities this component credits.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import struct
 import importlib.util
 import json
 import os
@@ -16,6 +19,7 @@ from pathlib import Path
 import re
 import stat
 import sys
+import tomllib
 from typing import Any, Mapping
 
 HERE = Path(__file__).resolve().parent
@@ -101,8 +105,20 @@ ROLES: dict[str, dict[str, object]] = {
                     "fenv.h", "unistd.h", "sys/resource.h", "features.h", "bits/alltypes.h"),
         "flags": ("-DCRABC_OWNED_SCANF",), "side_effect": None,
     },
+    "stdio.frozen-surface": {
+        "source": "compat/x86_64/owned_stdio_surface_probe.c",
+        "behavior": "frozen-symbol-surface-status-values-setvbuf-regions-and-exit-order",
+        "headers": ("stdio.h", "stdio_ext.h", "stdlib.h", "string.h", "stdarg.h", "errno.h",
+                    "unistd.h", "fcntl.h", "wchar.h", "locale.h", "features.h", "bits/alltypes.h"),
+        "flags": (), "side_effect": None,
+    },
 }
 SCOPE = tuple(ROLES)
+# The frozen AArch64 capability ledger names each credited capability's exact
+# C symbol surface. `stdio.fopen64-alias` is a header macro with no x86 ELF
+# name; the separate v3 stdio component owns that observation.
+FROZEN_LEDGER = "compat/crabc-rs/coverage.toml"
+FROZEN_CAPABILITIES = ("stdio.path-stream", "stdio.stream-io", "stdio.position-buffering", "stdio.format-scan")
 COMMON_FLAGS = ("-std=c11", "-D_GNU_SOURCE", "-pthread", "-fno-builtin", "-fno-stack-protector")
 CONTROL_COMPILE_FLAGS = ("-std=c11", "-fno-builtin", "-fno-stack-protector")
 
@@ -624,6 +640,73 @@ def validate_object_seals(work: Path, report: Mapping[str, Any], sources: Mappin
     return workloads
 
 
+def frozen_surface(checkout: Path) -> dict[str, tuple[str, ...]]:
+    """Read each credited capability's exact symbol list from the frozen ledger."""
+    ledger = regular(checkout / FROZEN_LEDGER, "frozen capability ledger")
+    try:
+        with ledger.open("rb") as stream:
+            value = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ReceiptError("frozen capability ledger is unreadable") from error
+    records = value.get("capability")
+    require(type(records) is list, "frozen capability ledger has no capability list")
+    surface: dict[str, tuple[str, ...]] = {}
+    for record in records:
+        if type(record) is dict and record.get("id") in FROZEN_CAPABILITIES:
+            symbols = record.get("symbols")
+            require(record["id"] not in surface and type(symbols) is list and symbols
+                    and all(type(symbol) is str and symbol for symbol in symbols),
+                    f"frozen {record['id']} symbol list is invalid")
+            surface[record["id"]] = tuple(symbols)
+    require(set(surface) == set(FROZEN_CAPABILITIES), "frozen FILE capability roster differs")
+    return {capability: surface[capability] for capability in FROZEN_CAPABILITIES}
+
+
+def undefined_symbols(path: Path) -> set[str]:
+    """Undefined global/weak names in one retained x86-64 ELF relocatable object."""
+    data = regular(path, "retained workload object").read_bytes()
+    require(len(data) >= 64 and data[:4] == b"\x7fELF" and data[4] == 2 and data[5] == 1,
+            f"{path.name} is not a little-endian ELF64 object")
+    (e_type, e_machine, _version, _entry, _phoff, shoff, _flags, _ehsize, _phentsize, _phnum,
+     shentsize, shnum, _shstrndx) = struct.unpack_from("<HHIQQQIHHHHHH", data, 16)
+    require(e_type == 1 and e_machine == 62 and shentsize == 64 and shnum > 0
+            and shoff + shnum * shentsize <= len(data), f"{path.name} is not an x86-64 relocatable object")
+    sections = [struct.unpack_from("<IIQQQQIIQQ", data, shoff + index * shentsize) for index in range(shnum)]
+    names: set[str] = set()
+    tables = 0
+    for _name, kind, _flags, _address, offset, size, link, _info, _align, entsize in sections:
+        if kind != 2:  # SHT_SYMTAB
+            continue
+        tables += 1
+        require(entsize == 24 and size % 24 == 0 and offset + size <= len(data) and link < shnum,
+                f"{path.name} symbol table is malformed")
+        strings_offset, strings_size = sections[link][4], sections[link][5]
+        require(strings_offset + strings_size <= len(data), f"{path.name} string table is malformed")
+        strings = data[strings_offset:strings_offset + strings_size]
+        for entry in range(offset, offset + size, 24):
+            name, info, _other, index, _value, _size = struct.unpack_from("<IBBHQQ", data, entry)
+            if index != 0 or (info >> 4) not in (1, 2) or not name:
+                continue
+            end = strings.find(b"\0", name)
+            require(end > name, f"{path.name} symbol name is malformed")
+            names.add(strings[name:end].decode("ascii"))
+    require(tables == 1, f"{path.name} must contain exactly one symbol table")
+    return names
+
+
+def validate_frozen_surface(checkout: Path, workloads: Mapping[str, Path]) -> dict[str, int]:
+    """Require the eight objects to reference every frozen FILE-capability symbol."""
+    referenced: set[str] = set()
+    for role in SCOPE:
+        referenced |= undefined_symbols(workloads[role])
+    counts: dict[str, int] = {}
+    for capability, symbols in frozen_surface(checkout).items():
+        missing = [symbol for symbol in symbols if symbol not in referenced]
+        require(not missing, f"{capability} frozen symbols are not exercised: {', '.join(missing)}")
+        counts[capability] = len(symbols)
+    return counts
+
+
 def validate_link(work: Path, commands: Mapping[str, Mapping[str, object]], links: Mapping[str, object],
                   role: str, linkage: str, product: Path, workload: Path, executable: Path) -> None:
     stem = f"{role}-{linkage}"
@@ -878,6 +961,7 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = True) 
     control = validate_control_material(work, report, tools)
     validate_process_proc(work, report, tools)
     workloads = validate_object_seals(work, report, sources, control)
+    surface = validate_frozen_surface(checkout, workloads)
     validate_commands(checkout, work, report, sources, workloads, tools, control)
     return {
         "schema": SCHEMA,
@@ -889,6 +973,7 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = True) 
         "products": report["products"],
         "source": report["source"],
         "source_product_seal": report["seals"]["source-product-before"],
+        "frozen_surface": surface,
         "family_completion": False,
         "promotion_ready": False,
         "public_support": False,

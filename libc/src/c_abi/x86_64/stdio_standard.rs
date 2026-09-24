@@ -1444,8 +1444,9 @@ pub unsafe extern "C" fn feof(stream: *mut StandardStream) -> c_int {
         unsafe { reject_stream() };
         return 0;
     }
-    // SAFETY: caller supplies one selected stream pointer.
-    unsafe { ((*stream).flags & F_EOF) as c_int }
+    // SAFETY: caller supplies one selected stream pointer. Pinned musl
+    // feof.c returns `!!(f->flags & F_EOF)`: exactly 0 or 1.
+    unsafe { ((*stream).flags & F_EOF != 0) as c_int }
 }
 
 // Pinned musl `src/stdio/feof.c` uses `weak_alias(feof, feof_unlocked)` to
@@ -1475,8 +1476,9 @@ pub unsafe extern "C" fn ferror(stream: *mut StandardStream) -> c_int {
         unsafe { reject_stream() };
         return 0;
     }
-    // SAFETY: caller supplies one selected stream pointer.
-    unsafe { ((*stream).flags & F_ERR) as c_int }
+    // SAFETY: caller supplies one selected stream pointer. Pinned musl
+    // ferror.c returns `!!(f->flags & F_ERR)`: exactly 0 or 1.
+    unsafe { ((*stream).flags & F_ERR != 0) as c_int }
 }
 
 // Pinned musl `src/stdio/ferror.c` uses `weak_alias(ferror, ferror_unlocked)`

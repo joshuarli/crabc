@@ -303,6 +303,44 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
                 coordinator._product_pairs(self.fixture.root, matrix)
         replay.assert_not_called()
 
+    def test_stdio_engine_adapter_requires_the_frozen_symbol_surface(self) -> None:
+        """Engine credit depends on the reader's frozen-ledger symbol check."""
+        import owned_stdio_file_engine_receipt as engine
+
+        fixture = self.fixture
+        request = coordinator.ComponentRequest(reports=fixture.reports["stdio-engine"])
+        context = coordinator.MatrixContext(
+            SOURCE, fixture.matrix()["inputs"], fixture.products,
+            fixture.static_preparation, fixture.dynamic_qualification,
+        )
+
+        def report(pair_report: Path, surface: object) -> dict[str, object]:
+            pair = next(pair for pair, path in request.reports.items() if path == pair_report)
+            value: dict[str, object] = {
+                "schema": "crabc.x86_64-owned-stdio-file-engine/v1", "matrix": "supplied-static",
+                "cells": len(coordinator.PAIR_MODES), "execution_cells": list(coordinator.STDIO_ENGINE_CELLS),
+                "scope": list(coordinator.STDIO_ENGINE_ROWS),
+                "rows": {row: {"fixture": True} for row in coordinator.STDIO_ENGINE_ROWS},
+                "products": {kind: str(path) for kind, path in fixture.products[pair].items()},
+                "family_completion": False, "promotion_ready": False, "public_support": False,
+            }
+            if surface is not None:
+                value["frozen_surface"] = surface
+            return value
+
+        complete = {capability: 1 for capability in coordinator.STDIO_ENGINE_FROZEN_SURFACE}
+        partial = {capability: 1 for capability in sorted(coordinator.STDIO_ENGINE_FROZEN_SURFACE)[1:]}
+        with mock.patch.object(coordinator, "current_source_identity", return_value=SOURCE):
+            with mock.patch.object(engine, "validate_report",
+                                   side_effect=lambda path, _root, require_static: report(path, complete)):
+                observed = coordinator._stdio_engine_adapter(fixture.root, request, context)
+            self.assertEqual(set(observed), set(coordinator.PAIRS))
+            for surface in (None, partial):
+                with mock.patch.object(engine, "validate_report",
+                                       side_effect=lambda path, _root, require_static, surface=surface: report(path, surface)):
+                    with self.assertRaisesRegex(coordinator.FamilyError, "frozen symbol surface differs"):
+                        coordinator._stdio_engine_adapter(fixture.root, request, context)
+
     def test_rich_text_adapter_accepts_the_public_aggregate_collector_contract(self) -> None:
         import owned_text_locale_numeric_component_receipt as component
 

@@ -46,7 +46,7 @@ pub unsafe extern "C" fn __fwritable(stream: *mut StandardStream) -> c_int { uns
 /// The caller exclusively accesses a live FILE and its buffer state.
 #[no_mangle]
 pub unsafe extern "C" fn __fpending(stream: *mut StandardStream) -> usize {
-    unsafe { if (*stream).direction == BufferDirection::Write { (*stream).write_position.offset_from((*stream).buffer) as usize } else { 0 } }
+    unsafe { if (*stream).direction == BufferDirection::Write { pending_output(stream) } else { 0 } }
 }
 /// # Safety
 /// The caller exclusively accesses a live FILE and its buffer state.
@@ -86,7 +86,7 @@ pub unsafe extern "C" fn __fpurge(stream: *mut StandardStream) -> c_int {
     unsafe {
         (*stream).read_position = (*stream).buffer;
         (*stream).read_end = (*stream).buffer;
-        (*stream).write_position = (*stream).buffer;
+        reset_write_region(stream);
         (*stream).direction = BufferDirection::Neutral;
         0
     }

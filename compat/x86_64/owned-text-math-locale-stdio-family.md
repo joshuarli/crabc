@@ -158,8 +158,12 @@ aggregate. Input receipt paths are resolved against the supplied checkout.
 header-profile, pointer-equality, and ET_REL import observation. The separate
 `owned_stdio_file_engine_receipt.py` is required before any stdio capability
 can receive credit. Its closed rows are file backends, process streams, wide
-streams, wide formatting, file extensions, printf float behavior, and scanf
-behavior. There is no fallback from the bounded stdio receipt to those rows.
+streams, wide formatting, file extensions, printf float behavior, scanf
+behavior, and the frozen stdio surface. Its retained objects must reference
+every frozen `stdio.path-stream`, `stdio.stream-io`,
+`stdio.position-buffering`, and `stdio.format-scan` symbol, and the coordinator
+requires the reader's `frozen_surface` result for all four. There is no
+fallback from the bounded stdio receipt to those rows.
 
 Math, Wordexp, regex, and calendar retain their own public evidence contracts.
 The calendar component requires all five named calendar rows; its malformed

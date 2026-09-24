@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import stat
+import struct
 import tempfile
 import unittest
 from unittest import mock
@@ -29,10 +30,57 @@ def source_identity(root: Path, path: Path) -> dict[str, object]:
     return {key: value[key] for key in ("path", "sha256", "mode")}
 
 
+# A small stand-in for the frozen ledger: two credited symbols per capability,
+# an uncredited macro capability, and an unrelated one the reader must ignore.
+FIXTURE_SURFACE = {
+    "stdio.path-stream": ("fopen", "popen"),
+    "stdio.stream-io": ("fgetc", "getline"),
+    "stdio.position-buffering": ("fseeko", "stdout"),
+    "stdio.format-scan": ("__isoc99_sscanf", "vfscanf"),
+}
+FIXTURE_LEDGER_EXTRA = {"stdio.fopen64-alias": ("fopen64",), "stdio.memory-stream": ("fmemopen",)}
+
+
+def elf_object(undefined: tuple[str, ...], defined: tuple[str, ...] = (), machine: int = 62) -> bytes:
+    """Minimal ELF64 ET_REL: null, .strtab and .symtab sections only."""
+    names = [*undefined, *defined]
+    strings = b"\0" + b"".join(name.encode() + b"\0" for name in names)
+    offsets, cursor = [], 1
+    for name in names:
+        offsets.append(cursor)
+        cursor += len(name) + 1
+    symbols = bytes(24) + b"".join(
+        struct.pack("<IBBHQQ", offset, (1 << 4) | 2, 0, 1 if index >= len(undefined) else 0, 0, 0)
+        for index, offset in enumerate(offsets))
+    strtab_offset = 64
+    symtab_offset = (strtab_offset + len(strings) + 7) & ~7
+    shoff = (symtab_offset + len(symbols) + 7) & ~7
+    header = struct.pack("<16sHHIQQQIHHHHHH", b"\x7fELF\x02\x01\x01" + bytes(9), 1, machine, 1, 0, 0,
+                         shoff, 0, 64, 0, 0, 64, 3, 0)
+    sections = (bytes(64)
+                + struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, strtab_offset, len(strings), 0, 0, 1, 0)
+                + struct.pack("<IIQQQQIIQQ", 0, 2, 0, 0, symtab_offset, len(symbols), 1, 1, 8, 24))
+    body = bytearray(shoff)
+    body[:64] = header
+    body[strtab_offset:strtab_offset + len(strings)] = strings
+    body[symtab_offset:symtab_offset + len(symbols)] = symbols
+    return bytes(body) + sections
+
+
+def fixture_workload_symbols(role: str, omit: frozenset[str]) -> tuple[str, ...]:
+    """Spread the fixture surface across roles; the surface row adds the rest."""
+    if role == "stdio.frozen-surface":
+        chosen = ("getline", "__isoc99_sscanf", "fseeko", "fmemopen")
+    else:
+        chosen = {"stdio.file-backends": ("fopen", "fgetc", "stdout"), "stdio.process-streams": ("popen",),
+                  "stdio.scanf": ("vfscanf",)}.get(role, ("fclose",))
+    return tuple(symbol for symbol in chosen if symbol not in omit)
+
+
 class ReceiptFixture:
     """A complete physical report; only product internals are mocked."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, omit: frozenset[str] = frozenset()) -> None:
         self.root = root
         self.checkout = root / "checkout"
         self.work = self.checkout / ".work/file-engine"
@@ -80,10 +128,15 @@ class ReceiptFixture:
         self.runner.chmod(0o755)
         self.reader = self.checkout / "compat/x86_64/owned_stdio_file_engine_receipt.py"
         self.reader.write_text("# sealed reader\n")
+        ledger = self.checkout / receipt.FROZEN_LEDGER
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text("".join(
+            f'[[capability]]\nid = "{capability}"\nsymbols = {json.dumps(list(symbols))}\n\n'
+            for capability, symbols in {**FIXTURE_SURFACE, **FIXTURE_LEDGER_EXTRA}.items()))
         self.workloads: dict[str, Path] = {}
         for role in receipt.SCOPE:
             workload = self.work / f"{role}.o"
-            workload.write_bytes((role + " object\n").encode())
+            workload.write_bytes(elf_object(fixture_workload_symbols(role, omit)))
             self.workloads[role] = workload
         self.control_sources: dict[str, Path] = {}
         self.control_objects: dict[str, Path] = {}
@@ -401,7 +454,15 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
     def setUp(self) -> None:
         (ROOT / ".work").mkdir(exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=ROOT / ".work")
-        self.fixture = ReceiptFixture(Path(self.temporary.name))
+        self.addCleanup(self.temporary.cleanup)
+        self.patches: list[mock._patch] = []
+        self.addCleanup(lambda: [patch.stop() for patch in reversed(self.patches)])
+        self.use_fixture(ReceiptFixture(Path(self.temporary.name)))
+
+    def use_fixture(self, fixture: ReceiptFixture) -> None:
+        for patch in reversed(self.patches):
+            patch.stop()
+        self.fixture = fixture
         self.patches = [
             mock.patch.object(receipt, "ORACLE_COMPILER", str(self.fixture.tool)),
             mock.patch.object(receipt, "CONTROL_BUSYBOX", self.fixture.control_busybox),
@@ -415,8 +476,6 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         ]
         for patch in self.patches:
             patch.start()
-        self.addCleanup(self.temporary.cleanup)
-        self.addCleanup(lambda: [patch.stop() for patch in reversed(self.patches)])
 
     def _link(self, product: Path, workload: Path, executable: Path, _receipt: Path, linkage: str) -> dict[str, object]:
         expected_product = self.fixture.static if linkage.startswith("static") else self.fixture.dynamic
@@ -440,6 +499,10 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         self.assertEqual(receipt.SCOPE, (
             "stdio.file-backends", "stdio.process-streams", "stdio.wide-stream",
             "stdio.wide-format", "stdio.file-extensions", "stdio.printf-float", "stdio.scanf",
+            "stdio.frozen-surface",
+        ))
+        self.assertEqual(receipt.FROZEN_CAPABILITIES, (
+            "stdio.path-stream", "stdio.stream-io", "stdio.position-buffering", "stdio.format-scan",
         ))
         self.assertEqual(receipt.EXECUTION_CELLS, (
             "static", "static-pie", "dynamic-pie-kernel", "dynamic-pie-direct",
@@ -453,6 +516,23 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         self.assertEqual(report["execution_cells"], list(receipt.EXECUTION_CELLS))
         self.assertEqual(report["products"], self.fixture.report["products"])
         self.assertEqual(report["source"], self.fixture.report["source"])
+        self.assertEqual(report["frozen_surface"], {key: len(value) for key, value in FIXTURE_SURFACE.items()})
+
+    def test_objects_must_reference_every_frozen_capability_symbol(self) -> None:
+        self.use_fixture(ReceiptFixture(Path(self.temporary.name) / "missing", frozenset({"getline"})))
+        with self.assertRaisesRegex(receipt.ReceiptError, "stdio.stream-io frozen symbols are not exercised: getline"):
+            self.validate()
+
+    def test_only_undefined_global_references_count_toward_the_surface(self) -> None:
+        path = self.fixture.work / "probe.o"
+        path.write_bytes(elf_object(("getc", "stdout"), defined=("fgetc",)))
+        self.assertEqual(receipt.undefined_symbols(path), {"getc", "stdout"})
+        path.write_bytes(elf_object(("getc",), machine=183))
+        with self.assertRaisesRegex(receipt.ReceiptError, "not an x86-64 relocatable object"):
+            receipt.undefined_symbols(path)
+        path.write_bytes(b"getc object\n")
+        with self.assertRaisesRegex(receipt.ReceiptError, "not a little-endian ELF64 object"):
+            receipt.undefined_symbols(path)
 
     def test_requires_supplied_static_admission(self) -> None:
         with self.assertRaisesRegex(receipt.ReceiptError, "requires supplied-static"):

@@ -80,7 +80,13 @@ STDIO_ENGINE_ROWS = (
     "stdio.file-extensions",
     "stdio.printf-float",
     "stdio.scanf",
+    "stdio.frozen-surface",
 )
+# The engine reader proves these capabilities' complete frozen symbol lists
+# are referenced by its retained objects; fopen64 is the v3 macro receipt's.
+STDIO_ENGINE_FROZEN_SURFACE = frozenset((
+    "stdio.path-stream", "stdio.stream-io", "stdio.position-buffering", "stdio.format-scan",
+))
 STDIO_COMPONENT_CELLS = (
     "dynamic-pie-kernel", "dynamic-pie-direct",
     "dynamic-non-pie-kernel", "dynamic-non-pie-direct",
@@ -775,6 +781,10 @@ def _stdio_engine_adapter(root: Path, request: ComponentRequest, _context: Matri
         cells = report.get("execution_cells")
         require(isinstance(cells, list) and tuple(cells) == STDIO_ENGINE_CELLS,
                 f"stdio-engine {pair} mode roster differs")
+        surface = report.get("frozen_surface")
+        require(isinstance(surface, Mapping) and set(surface) == STDIO_ENGINE_FROZEN_SURFACE
+                and all(type(count) is int and count > 0 for count in surface.values()),
+                f"stdio-engine {pair} frozen symbol surface differs")
         result[pair] = ComponentEvidence(
             source=_source_after_reader(root),
             products=_normal_products(root, report.get("products"), "stdio-engine", source_mount=str(root)),

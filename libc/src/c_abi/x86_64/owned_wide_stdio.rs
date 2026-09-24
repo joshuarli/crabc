@@ -151,7 +151,10 @@ pub unsafe extern "C" fn ungetwc(character: u32, stream: *mut StandardStream) ->
         if !prepare_read(stream) || character == WEOF { return WEOF; }
         let mut bytes = [0u8; 4];
         let length = codec::encode_for_locale(bytes.as_mut_ptr().cast(), character as c_int, codec::locale_ctype_is_utf8());
-        if length == usize::MAX || (*stream).read_position.offset_from((*stream).buffer.sub(UNGET)) < length as isize { return WEOF; }
+        // musl compares addresses (`f->rpos < f->buf - UNGET + l`): after a
+        // mid-stream setvbuf the unread region may lie in the previous buffer.
+        if length == usize::MAX
+            || ((*stream).read_position as usize) < (*stream).buffer.sub(UNGET) as usize + length { return WEOF; }
         (*stream).read_position = (*stream).read_position.sub(length);
         ptr::copy_nonoverlapping(bytes.as_ptr(), (*stream).read_position, length);
         (*stream).flags &= !F_EOF;

@@ -626,7 +626,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   wordexp-paths-private  run the private wordexp pathname and passwd fixture
   wordexp-result-private  test wordexp partial-result ownership with result allocation failures
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
-  owned-stdio-file-engine --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  replay seven installed FILE-engine rows
+  owned-stdio-file-engine --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  replay eight installed FILE-engine rows
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
   owned-math-fenv-all-entry [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test the bounded installed C math/fenv all-entry component
   owned-text-locale-numeric-component --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  test bounded installed numeric, locale, wide-conversion, and UTF iconv rows

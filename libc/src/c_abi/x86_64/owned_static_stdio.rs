@@ -122,7 +122,14 @@ pub struct StandardStream {
     capacity: usize,
     read_position: *mut u8,
     read_end: *mut u8,
+    // musl wbase/wpos/wend. `buffer`/`capacity` are only the configured
+    // buf/buf_size: a write region keeps the storage it started in until it
+    // drains, so setvbuf can never orphan pending output (src/stdio/setvbuf.c
+    // changes buf/buf_size/lbf only; __stdio_write re-establishes the region).
+    // Outside the Write direction the region is empty.
+    write_base: *mut u8,
     write_position: *mut u8,
+    write_end: *mut u8,
     owner: AtomicI32,
     lock_count: usize,
     // musl ftrylockfile.c: only explicit caller locks enter the current
@@ -143,7 +150,8 @@ impl StandardStream {
             direction: BufferDirection::Neutral, getln_buffer: ptr::null_mut(),
             buffer: ptr::null_mut(), capacity,
             read_position: ptr::null_mut(), read_end: ptr::null_mut(),
-            write_position: ptr::null_mut(), owner: AtomicI32::new(0),
+            write_base: ptr::null_mut(), write_position: ptr::null_mut(), write_end: ptr::null_mut(),
+            owner: AtomicI32::new(0),
             lock_count: 0, next: ptr::null_mut(), previous: ptr::null_mut(),
             next_locked: ptr::null_mut(), previous_locked: ptr::null_mut(),
             line_buffered: flags & F_STDOUT_WRITE != 0, backend: Backend::Descriptor, write_failed: false,
@@ -217,7 +225,7 @@ unsafe fn initialize_buffer(stream: *mut StandardStream) {
             (*stream).buffer = buffer;
             (*stream).read_position = buffer;
             (*stream).read_end = buffer;
-            (*stream).write_position = buffer;
+            reset_write_region(stream);
             // musl __fdopen activates line buffering for every writable
             // terminal via TIOCGWINSZ; stderr remains unbuffered.
             if matches!((*stream).backend, Backend::Descriptor)
@@ -229,6 +237,27 @@ unsafe fn initialize_buffer(stream: *mut StandardStream) {
             }
         }
     }
+}
+
+/// Begin an empty write region in the configured buffer, as musl __towrite
+/// and a completed __stdio_write do (`wpos = wbase = buf; wend = buf+size`).
+/// # Safety
+/// The caller holds the stream lock (or exclusively owns unpublished storage)
+/// and the stream has no pending output that must survive.
+unsafe fn reset_write_region(stream: *mut StandardStream) {
+    unsafe {
+        (*stream).write_base = (*stream).buffer;
+        (*stream).write_position = (*stream).buffer;
+        (*stream).write_end = (*stream).buffer.add((*stream).capacity);
+    }
+}
+
+/// Bytes accepted into the active write region but not yet written.
+/// # Safety
+/// The caller holds the stream lock of a live, initialized stream.
+unsafe fn pending_output(stream: *const StandardStream) -> usize {
+    // Both pointers always lie in the one region reset_write_region opened.
+    unsafe { (*stream).write_position.offset_from((*stream).write_base) as usize }
 }
 
 unsafe fn futex_wait(lock: &AtomicI32, value: i32) {
@@ -809,7 +838,7 @@ pub unsafe extern "C" fn fflush(stream: *mut StandardStream) -> c_int {
             let mut current = OPEN_STREAMS;
             while !current.is_null() {
                 let _guard = StreamGuard::acquire(current);
-                if (*current).write_position != (*current).buffer { result |= fflush(current); }
+                if pending_output(current) != 0 { result |= fflush(current); }
                 current = (*current).next;
             }
             return result;
@@ -829,20 +858,33 @@ pub unsafe extern "C" fn fflush(stream: *mut StandardStream) -> c_int {
 }
 
 /// Called after ordinary-exit callbacks; _Exit and abort deliberately skip it.
+///
+/// Pinned musl src/stdio/__stdio_exit.c: take the open-file list lock, then
+/// `close_file` every listed FILE (newest first) and finally stdin, stdout and
+/// stderr. Each close_file writes pending output and returns unread lookahead
+/// to the descriptor, so an inherited or shared open description observes the
+/// logical position. FFINALLOCK and the list lock are never released: any
+/// other thread that later touches stdio blocks until _Exit rather than
+/// buffering bytes that nothing would write.
 pub(crate) unsafe fn flush_all_on_exit() {
     unsafe {
-        // musl __stdio_exit also restores descriptor positions after input
-        // lookahead so an inherited/shared open description sees the logical
-        // position, rather than the end of our private read buffer.
-        fflush(ptr::addr_of_mut!(STDIN_STREAM));
-        fflush(ptr::addr_of_mut!(STDOUT_STREAM));
-        fflush(ptr::addr_of_mut!(STDERR_STREAM));
-        let _list = ListGuard::acquire();
+        core::mem::forget(ListGuard::acquire());
         let mut stream = OPEN_STREAMS;
         while !stream.is_null() {
-            fflush(stream);
+            final_flush(stream);
             stream = (*stream).next;
         }
+        final_flush(ptr::addr_of_mut!(STDIN_STREAM));
+        final_flush(ptr::addr_of_mut!(STDOUT_STREAM));
+        final_flush(ptr::addr_of_mut!(STDERR_STREAM));
+    }
+}
+
+// The exiting thread keeps this FILE's lock for the rest of the process.
+unsafe fn final_flush(stream: *mut StandardStream) {
+    unsafe {
+        core::mem::forget(StreamGuard::acquire(stream));
+        fflush(stream);
     }
 }
 
@@ -854,25 +896,31 @@ unsafe fn prepare_read(stream: *mut StandardStream) -> bool {
     }
 }
 
+// musl __towrite runs only while no write region is active (`!f->wend`); it
+// then opens the region in the configured buffer. Unlike __towrite, unread
+// lookahead is first returned to the backend: input followed directly by
+// output is undefined in C, and this engine keeps the logical position there.
 unsafe fn prepare_write(stream: *mut StandardStream) -> bool {
     if !unsafe { is_selected_stream(stream) } {
         return true;
     }
-    let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) };
-    if unread == 0 {
-        unsafe { (*stream).direction = BufferDirection::Write; }
+    if unsafe { (*stream).direction == BufferDirection::Write } {
         return true;
     }
-    let result = unsafe {
-        owned_stdio_backends::seek(stream, -(unread as i64), SEEK_CUR)
-    };
-    if result < 0 {
-        unsafe { mark_error(stream) };
-        return false;
+    let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) };
+    if unread != 0 {
+        let result = unsafe {
+            owned_stdio_backends::seek(stream, -(unread as i64), SEEK_CUR)
+        };
+        if result < 0 {
+            unsafe { mark_error(stream) };
+            return false;
+        }
     }
     unsafe {
         (*stream).read_position = (*stream).buffer;
         (*stream).read_end = (*stream).buffer;
+        reset_write_region(stream);
         (*stream).direction = BufferDirection::Write;
     }
     true
@@ -1105,18 +1153,13 @@ unsafe fn flush_output_held(stream: *mut StandardStream) -> c_int {
     if !unsafe { is_writable(stream) } {
         return 0;
     }
-    let pending = unsafe {
-        (*stream)
-            .write_position
-            .offset_from((*stream).buffer) as usize
-    };
-    if pending == 0 {
+    if unsafe { pending_output(stream) } == 0 {
         return 0;
     }
 
     unsafe {
         write_backend_held(stream, ptr::null(), 0);
-        (*stream).write_position = (*stream).buffer;
+        reset_write_region(stream);
         if (*stream).write_failed { EOF } else { 0 }
     }
 }
@@ -1129,9 +1172,10 @@ unsafe fn write_backend_held(stream: *mut StandardStream, source: *const u8, len
         (*stream).write_failed = false;
         if !matches!((*stream).backend, Backend::Descriptor) {
             if owned_stdio_backends::ignores_writes(stream) { return length; }
-            let pending = (*stream).write_position.offset_from((*stream).buffer) as usize;
-            (*stream).write_position = (*stream).buffer;
-            if pending != 0 && owned_stdio_backends::write(stream, (*stream).buffer, pending) < pending {
+            let base = (*stream).write_base;
+            let pending = pending_output(stream);
+            reset_write_region(stream);
+            if pending != 0 && owned_stdio_backends::write(stream, base, pending) < pending {
                 if (*stream).write_failed { (*stream).direction = BufferDirection::Neutral; }
                 return 0;
             }
@@ -1150,8 +1194,8 @@ unsafe fn write_backend_held(stream: *mut StandardStream, source: *const u8, len
                     0x5413, window_size.as_mut_ptr() as i64) != 0 { (*stream).line_buffered = false; }
             }
         }
-        let pending = (*stream).write_position.offset_from((*stream).buffer) as usize;
-        let mut vectors = [IoVec { base: (*stream).buffer.cast(), length: pending },
+        let pending = pending_output(stream);
+        let mut vectors = [IoVec { base: (*stream).write_base.cast(), length: pending },
             IoVec { base: source as *mut c_void, length }];
         let mut index = if pending == 0 { 1 } else { 0 };
         let mut remaining = pending + length;
@@ -1159,12 +1203,12 @@ unsafe fn write_backend_held(stream: *mut StandardStream, source: *const u8, len
             let count = c_ssize_status(raw_syscall::syscall3(raw_syscall::SYS_WRITEV,
                 (*stream).file_descriptor as i64, vectors.as_mut_ptr().add(index) as i64, (2-index) as i64));
             if count >= 0 && count as usize == remaining {
-                (*stream).write_position = (*stream).buffer;
+                reset_write_region(stream);
                 return length;
             }
             if count <= 0 {
                 if count == 0 { errno::set_errno(EIO); }
-                (*stream).write_position = (*stream).buffer;
+                reset_write_region(stream);
                 (*stream).write_failed = true;
                 (*stream).direction = BufferDirection::Neutral;
                 mark_error(stream);
@@ -1206,9 +1250,11 @@ pub(crate) unsafe fn with_formatted_stream(stream: *mut StandardStream, format: 
         let old_buffer = (*stream).buffer;
         let unbuffered = (*stream).capacity == 0;
         if unbuffered {
+            // musl vfprintf also clears wpos/wbase/wend here, so bytes left
+            // in an old region by mid-stream setvbuf are not written.
             (*stream).buffer = temporary.as_mut_ptr();
             (*stream).capacity = temporary.len();
-            (*stream).write_position = (*stream).buffer;
+            reset_write_region(stream);
         }
         let mut result = format();
         if unbuffered {
@@ -1218,7 +1264,7 @@ pub(crate) unsafe fn with_formatted_stream(stream: *mut StandardStream, format: 
             if (*stream).write_failed { result = EOF; }
             (*stream).buffer = old_buffer;
             (*stream).capacity = 0;
-            (*stream).write_position = old_buffer;
+            reset_write_region(stream);
             (*stream).direction = BufferDirection::Neutral;
         }
         if (*stream).flags & F_ERR != 0 { result = EOF; }
@@ -1262,9 +1308,8 @@ unsafe fn write_byte_held(stream: *mut StandardStream, byte: u8) -> c_int {
         return EOF;
     }
     unsafe { mark_io_started(stream) };
-    let capacity = unsafe { (*stream).capacity };
     unsafe {
-        if (*stream).write_position == (*stream).buffer.add(capacity)
+        if (*stream).write_position == (*stream).write_end
             || ((*stream).line_buffered && byte == b'\n')
         {
             return if write_backend_held(stream, &byte, 1) == 1 { byte as c_int } else { EOF };
@@ -1477,7 +1522,7 @@ unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: 
     unsafe {
         if total == 0 { return if size == 0 { 0 } else { count }; }
         let source = source.cast::<u8>();
-        let available = (*stream).buffer.add((*stream).capacity).offset_from((*stream).write_position) as usize;
+        let available = (*stream).write_end.offset_from((*stream).write_position) as usize;
         if total > available { return write_backend_held(stream, source, total) / size; }
         let mut prefix = 0;
         if (*stream).line_buffered {
@@ -1640,7 +1685,8 @@ pub unsafe extern "C" fn feof(stream: *mut StandardStream) -> c_int {
         unsafe { reject_stream() };
         return 0;
     }
-    unsafe { ((*stream).flags & F_EOF) as c_int }
+    // musl feof.c: `!!(f->flags & F_EOF)`, exactly 0 or 1.
+    unsafe { ((*stream).flags & F_EOF != 0) as c_int }
 }
 
 /// # Safety
@@ -1653,7 +1699,8 @@ pub unsafe extern "C" fn ferror(stream: *mut StandardStream) -> c_int {
         unsafe { reject_stream() };
         return 0;
     }
-    unsafe { ((*stream).flags & F_ERR) as c_int }
+    // musl ferror.c: `!!(f->flags & F_ERR)`, exactly 0 or 1.
+    unsafe { ((*stream).flags & F_ERR != 0) as c_int }
 }
 
 /// # Safety
@@ -1714,7 +1761,7 @@ pub(super) unsafe extern "C" fn __fseeko(
     unsafe {
         (*stream).read_position = (*stream).buffer;
         (*stream).read_end = (*stream).buffer;
-        (*stream).write_position = (*stream).buffer;
+        reset_write_region(stream);
         (*stream).flags &= !F_EOF;
         (*stream).direction = BufferDirection::Neutral;
     }
@@ -1733,7 +1780,7 @@ pub(super) unsafe extern "C" fn __ftello(stream: *mut StandardStream) -> i64 {
     }
     let raw_position = unsafe {
         owned_stdio_backends::seek(stream, 0,
-            if (*stream).flags & F_APP != 0 && (*stream).write_position != (*stream).buffer { SEEK_END } else { SEEK_CUR })
+            if (*stream).flags & F_APP != 0 && pending_output(stream) != 0 { SEEK_END } else { SEEK_CUR })
     };
     let kernel_position = raw_position;
     if kernel_position < 0 {
@@ -1741,7 +1788,7 @@ pub(super) unsafe extern "C" fn __ftello(stream: *mut StandardStream) -> i64 {
     }
     let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) } as i64;
     let pending = if unsafe { is_writable(stream) } {
-        (unsafe { (*stream).write_position.offset_from((*stream).buffer) }) as i64
+        (unsafe { pending_output(stream) }) as i64
     } else {
         0
     };
@@ -1841,25 +1888,32 @@ pub unsafe extern "C" fn fsetpos(
 }
 
 
+/// Reconfigure buffering as pinned musl src/stdio/setvbuf.c does: only the
+/// configured buffer, its size, and line buffering change. Active unread input
+/// and pending output keep the storage their region started in until the next
+/// refill or write completes, so a (C-undefined) call after I/O loses no bytes.
+/// An unknown type returns -1 without errno, after line buffering was reset.
 /// # Safety
-/// Configure a live stream before I/O. Non-null `buffer` remains writable for
-/// `size` bytes until close or the next permitted configuration.
+/// `stream` is live. A non-null `buffer` remains writable for `size` bytes
+/// until close, and until any region already using it has drained after a
+/// later reconfiguration.
 #[no_mangle]
 pub unsafe extern "C" fn setvbuf(stream: *mut StandardStream, buffer: *mut c_char, mode: c_int, size: usize) -> c_int {
     unsafe {
         let _guard = StreamGuard::acquire(stream);
-        if !(0..=2).contains(&mode) { errno::set_errno(EINVAL); return -1; }
-        if mode == 2 { (*stream).capacity = 0; }
-        else if !buffer.is_null() && size >= UNGET {
-            (*stream).buffer = buffer.cast::<u8>().add(UNGET);
-            (*stream).capacity = size - UNGET;
+        (*stream).line_buffered = false;
+        match mode {
+            2 => (*stream).capacity = 0,
+            0 | 1 => {
+                if !buffer.is_null() && size >= UNGET {
+                    (*stream).buffer = buffer.cast::<u8>().add(UNGET);
+                    (*stream).capacity = size - UNGET;
+                }
+                (*stream).line_buffered = mode == 1 && (*stream).capacity != 0;
+            }
+            _ => return -1,
         }
-        (*stream).line_buffered = mode == 1 && (*stream).capacity != 0;
         (*stream).flags |= F_SVB;
-        (*stream).read_position = (*stream).buffer;
-        (*stream).read_end = (*stream).buffer;
-        (*stream).write_position = (*stream).buffer;
-        (*stream).direction = BufferDirection::Neutral;
         0
     }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seven frozen FILE-engine probes through one installed-header object each.
+# Eight frozen FILE-engine probes through one installed-header object each.
 set -euo pipefail
 ulimit -c 0
 
@@ -208,6 +208,7 @@ declare -a ROLES=(
     stdio.file-extensions
     stdio.printf-float
     stdio.scanf
+    stdio.frozen-surface
 )
 declare -A SOURCE=(
     [stdio.file-backends]="$ROOT/compat/x86_64/owned_stdio_backends_probe.c"
@@ -217,6 +218,7 @@ declare -A SOURCE=(
     [stdio.file-extensions]="$ROOT/compat/x86_64/owned_stdio_extensions_probe.c"
     [stdio.printf-float]="$ROOT/compat/x86_64/owned_static_printf_float_probe.c"
     [stdio.scanf]="$ROOT/compat/x86_64/owned_static_scanf_probe.c"
+    [stdio.frozen-surface]="$ROOT/compat/x86_64/owned_stdio_surface_probe.c"
 )
 role_flags() {
     if [ "$1" = stdio.scanf ]; then printf '%s\0' -DCRABC_OWNED_SCANF; fi
@@ -250,9 +252,11 @@ done
 
 sha256sum "${SOURCE[stdio.file-backends]}" "${SOURCE[stdio.process-streams]}" "${SOURCE[stdio.wide-stream]}" \
     "${SOURCE[stdio.wide-format]}" "${SOURCE[stdio.file-extensions]}" "${SOURCE[stdio.printf-float]}" \
-    "${SOURCE[stdio.scanf]}" "$RUNNER" "$WORK/control-sh.c" "$WORK/control-cat.c" "$WORK/control-sleep.c" \
+    "${SOURCE[stdio.scanf]}" "${SOURCE[stdio.frozen-surface]}" "$RUNNER" \
+    "$WORK/control-sh.c" "$WORK/control-cat.c" "$WORK/control-sleep.c" \
     "$WORK/stdio.file-backends.o" "$WORK/stdio.process-streams.o" "$WORK/stdio.wide-stream.o" \
     "$WORK/stdio.wide-format.o" "$WORK/stdio.file-extensions.o" "$WORK/stdio.printf-float.o" "$WORK/stdio.scanf.o" \
+    "$WORK/stdio.frozen-surface.o" \
     "$WORK/control-sh.o" "$WORK/control-cat.o" "$WORK/control-sleep.o" >"$WORK/source-object-before.sha256"
 
 for applet in sh cat sleep; do
@@ -582,4 +586,4 @@ PY
 
 python3 -B "$READER" "$WORK/owned-stdio-file-engine.json" --checkout "$ROOT" --require-static
 chmod a+r "$WORK/owned-stdio-file-engine.json"
-printf 'owned FILE engine: PASS (seven closed FILE/format/process rows; pinned musl, supplied static/static-PIE, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$WORK"
+printf 'owned FILE engine: PASS (eight closed FILE/format/process/surface rows; pinned musl, supplied static/static-PIE, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$WORK"
