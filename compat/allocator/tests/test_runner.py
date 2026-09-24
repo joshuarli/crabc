@@ -1977,12 +1977,6 @@ class ContractTests(unittest.TestCase):
             "mod loom_tests;",
             remote_free,
         )
-        self.assertIn(
-            "#[cfg(all(test, feature = \"loom\"))]\n"
-            "#[path = \"remote_free_owner_unown_loom.rs\"]\n"
-            "mod owner_unown_loom_tests;",
-            remote_free,
-        )
 
     def test_pin_is_complete_and_names_the_exact_archive(self) -> None:
         pin = RUNNER.load_pin()

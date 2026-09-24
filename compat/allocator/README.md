@@ -744,9 +744,15 @@ already-popped block as private allocator poison, so later allocator entry
 points reject without further state mutation. This slice also includes one
 queue-detached, stable page's mapped/unmapped abandonment/adoption
 protocol, including failed-reader restoration and clear-once-set quiescence.
-A default-off Loom model exercises five exact shared head protocols: two
-live-owner publishers, owner collection racing publication, bitmap adoption
-racing an abandoned producer, and abandoned unown racing publication.
+A default-off Loom model executes the production `xthread_free`
+publication, detach, claim, unown, and expected-head unown transitions over
+one page whose PageMap entry, metadata, owner-only fields, and block links are
+Loom cells. Its schedules compose live-owner collection and release,
+owner exit with mapped or unmapped abandonment, reabandonment, small-page
+partial collection, and a mapped arena reader with final remote frees; any
+page release not ordered after a legal client's reads fails the model.
+Negative controls require that failure for Relaxed head orderings and for a
+client read after its publication.
 Deterministic native regressions separately cover the bitmap-field
 quiescence, abandonment publication, adoption versus a remote producer,
 ownership-release races, scoped producer cancellation/admission, regular
@@ -1042,9 +1048,9 @@ fixed `aarch64-unknown-linux-musl` target and rejects any selected allocator
 dependency package, version, source, edge, build script, or proc macro outside
 the audited `chacha20`/`zeroize` graph. Target-conditional packages retained
 only in `Cargo.lock` do not satisfy or fail that selected-graph judge. It then
-runs the five test-only Loom schedules over the shared production remote-head
-publication/detach and abandoned owner-claim/unown loops and records their
-exact pass count separately from the
+runs the test-only Loom page-protocol schedules over the shared production
+remote-head publication/detach and abandoned owner-claim/unown loops and
+records their exact pass count separately from the
 ordinary unit suite. That test command explicitly clears
 `CARGO_ENCODED_RUSTFLAGS`: the model does not access a compiler-TLS root, and
 the pinned nightly cannot link its `std`/Loom test binary with the production
@@ -1992,8 +1998,8 @@ The separate bounded lifecycle/concurrency judge is also native x86-only:
 ./compat/allocator/run-x86_64.sh allocator-lifecycle
 ```
 
-It records eleven named private Rust lanes (15 selected tests, including five
-finite Loom head-protocol models) in
+It records eleven named private Rust lanes (the named unit tests plus the
+finite Loom page-protocol module and its negative control) in
 `compat/reports/allocator/x86_64/lifecycle-concurrency.json`. It is evidence
 for only those listed compiler-TLS, private-key, and remote-head transitions;
 it is not general process/thread lifecycle, client routing,

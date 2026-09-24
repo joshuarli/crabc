@@ -100,18 +100,18 @@ class CargoCommandTests(unittest.TestCase):
 
     def test_finite_loom_is_explicit_and_the_other_lanes_are_exact(self) -> None:
         loom = next(lane for lane in EVIDENCE.TEST_LANES if lane.kind == "finite-loom")
-        self.assertEqual(loom.identifier, "remote-free-finite-loom-head-protocols")
+        self.assertEqual(loom.identifier, "remote-free-finite-loom-page-protocol")
         self.assertEqual(loom.features, ("loom",))
         self.assertFalse(loom.exact_filter)
-        self.assertEqual(loom.expected_pass_count, 5)
-        self.assertEqual(len(loom.source_tests), 5)
+        self.assertEqual(loom.expected_pass_count, len(loom.source_tests))
         self.assertTrue(
             all(lane.exact_filter for lane in EVIDENCE.TEST_LANES if lane is not loom)
         )
 
-    def test_fixed_selection_has_the_bounded_fifteen_test_total(self) -> None:
-        self.assertEqual(len(EVIDENCE.TEST_LANES), 11)
-        self.assertEqual(sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES), 15)
+    def test_fixed_selection_expects_every_named_source_test(self) -> None:
+        for lane in EVIDENCE.TEST_LANES:
+            with self.subTest(lane=lane.identifier):
+                self.assertEqual(lane.expected_pass_count, len(lane.source_tests))
         self.assertEqual(
             [lane.identifier for lane in EVIDENCE.TEST_LANES],
             [
@@ -125,7 +125,7 @@ class CargoCommandTests(unittest.TestCase):
                 "dynamic-arena-singleton-detached-post-exit-owner",
                 "remote-free-joined-multi-producer",
                 "remote-free-owner-collection-race",
-                "remote-free-finite-loom-head-protocols",
+                "remote-free-finite-loom-page-protocol",
             ],
         )
 
@@ -192,10 +192,11 @@ class ReportTests(unittest.TestCase):
         report = self.complete_report()
         self.assertEqual(report["status"], "passed")
         self.assertFalse(report["scope"]["public_runtime_support"])
+        expected = sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES)
         self.assertEqual(report["summary"], {
-            "expected_pass_count": 15,
-            "observed_pass_count": 15,
-            "lane_count": 11,
+            "expected_pass_count": expected,
+            "observed_pass_count": expected,
+            "lane_count": len(EVIDENCE.TEST_LANES),
         })
         self.assertTrue(report["cargo"]["locked"])
         self.assertEqual(

@@ -336,12 +336,12 @@ TEST_LANES = (
     TestLane(
         identifier="remote-free-joined-multi-producer",
         kind="native-unit",
-        test_filter="remote_free::tests::std_multi_producer_pushes_are_all_collected_once",
+        test_filter="remote_free::tests::sidecar_free_multi_producer_pushes_are_all_collected_once",
         exact_filter=True,
         features=(),
         expected_pass_count=1,
         source_tests=(
-            "remote_free::tests::std_multi_producer_pushes_are_all_collected_once",
+            "remote_free::tests::sidecar_free_multi_producer_pushes_are_all_collected_once",
         ),
         bounded_behavior=(
             "eight scoped producers publish 64 blocks each to one live owner-associated test page",
@@ -364,23 +364,29 @@ TEST_LANES = (
         ),
     ),
     TestLane(
-        identifier="remote-free-finite-loom-head-protocols",
+        identifier="remote-free-finite-loom-page-protocol",
         kind="finite-loom",
         test_filter="remote_free::loom_tests",
         exact_filter=False,
         features=("loom",),
-        expected_pass_count=5,
+        expected_pass_count=10,
         source_tests=(
-            "remote_free::loom_tests::loom_multiple_remote_publishers_preserve_owner_bit_and_collect_every_block_once",
-            "remote_free::loom_tests::loom_owner_collection_racing_publication_loses_no_block_and_keeps_owner_bit",
-            "remote_free::loom_tests::loom_bitmap_adopter_racing_abandoned_publisher_has_one_owner_and_correct_bitmap_responsibility",
-            "remote_free::loom_tests::loom_abandoned_unown_racing_publisher_either_transfers_or_retains_collection_obligation",
-            "remote_free::loom_tests::loom_expected_head_unown_racing_allow_collect_publisher_preserves_the_head_or_collection",
+            "remote_free::loom_tests::claimed_abandoned_remote_free_stays_linear",
+            "remote_free::loom_tests::loom_live_owner_collects_remote_frees_before_its_page_release",
+            "remote_free::loom_tests::loom_model_rejects_a_head_without_source_acq_rel_ordering",
+            "remote_free::loom_tests::loom_model_rejects_a_client_read_after_its_publication",
+            "remote_free::loom_tests::loom_owner_exit_racing_final_remote_frees_releases_the_page_once",
+            "remote_free::loom_tests::loom_full_page_owner_exit_reabandons_to_mapped_then_releases_once",
+            "remote_free::loom_tests::loom_arena_reader_racing_final_remote_free_has_one_owner_and_one_release",
+            "remote_free::loom_tests::loom_small_page_partial_collection_retains_its_head_until_the_final_free",
+            "remote_free::loom_tests::loom_small_page_unown_from_free_keeps_the_page_mapped_with_its_client",
+            "remote_free::loom_tests::loom_owner_exit_remote_frees_and_arena_reader_compose_to_one_release",
         ),
         bounded_behavior=(
-            "Loom explores the modeled two-producer live-head publication and collection interleavings",
-            "Loom explores the modeled abandoned-head claim and unown transitions with one owner bit",
-            "the model covers only integer head/link identities and the production atomic transition helpers",
+            "Loom executes the production xthread_free publication, detach, claim, unown, and expected-head unown transitions under a bounded preemption schedule",
+            "source-plain PageMap entry, page metadata, owner used/free lists, and block links are Loom cells, so an unordered client read or owner access versus page release fails the model",
+            "negative controls require Loom to report a causality violation for Relaxed head operations and for a page release unordered with a client read",
+            "remote free, live-owner collection and release, owner exit with mapped or unmapped abandonment, reabandonment, small-page partial collection, and a mapped arena reader are composed on one page without a lease, counter, or registry",
         ),
     ),
 )
@@ -389,7 +395,7 @@ EXCLUSIONS = (
     "No public mi_*, malloc-family, crabc-libc, dynamic-linker, or crabc-rs x86-64 runtime support is exercised or claimed.",
     "No complete process or pthread/TLS callback lifecycle is exercised or claimed.",
     "No general allocation/free routing, cross-thread client API, owner-exit traversal, adoption, or whole-allocator stress regime is exercised or claimed.",
-    "The Loom lane does not model page identity, arena lookup, bitmap fields, retirement/release, compiler TLS, or owner-local used/local_free mutation.",
+    "The Loom lane mirrors the xthread_id identity CAS and one arena bitmap bit with source orderings; it does not execute arena search, queue traversal, reclaim-on-free, compiler TLS, or fault injection.",
     "No C-oracle differential, fault injection, fork, interposition, sanitizer, performance, or API-surface conclusion follows from these Rust tests.",
 )
 

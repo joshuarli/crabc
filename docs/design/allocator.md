@@ -2771,7 +2771,9 @@ full-non-direct-small, and full-direct-small handoffs above; all other
 initially-unmapped pages retain the raw terminal decision for a later
 lifecycle. A test-only Loom model executes the
 live-owner remote-head publication/detach loops and the abandoned
-owner-claim/unown races under bounded schedules; deterministic native
+owner-claim/unown races under bounded schedules, with the PageMap entry,
+page metadata, owner fields, and block links as Loom cells so a release
+unordered with a legal client's reads fails; deterministic native
 regressions cover the bitmap-field quiescence and full one-page abandonment
 interleavings. A dedicated pinned-target probe proves that the TLS
 roots are hidden `STT_TLS` objects accessed through initial-exec relocations
