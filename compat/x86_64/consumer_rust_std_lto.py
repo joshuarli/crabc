@@ -820,6 +820,13 @@ def unwind_matrix(context: Context, provider_vendor: Path, labels: Sequence[str]
     return results
 
 
+def dynamic_symbols(context: Context, image: Path) -> set[str]:
+    """Every defined or undefined dynamic-symbol name of one ELF image."""
+
+    listing = checked_output([context.tool("llvm-nm"), "--dynamic", image], "llvm-nm --dynamic")
+    return {line.split()[-1] for line in listing.splitlines() if line.split()}
+
+
 def cross_dso_lane(context: Context, label: str, *, build_std: bool) -> dict[str, Any]:
     """Unwind through C frames of an initial and a runtime DSO (one product pair).
 
@@ -863,6 +870,17 @@ def cross_dso_lane(context: Context, label: str, *, build_std: bool) -> dict[str
         missing = {"_Unwind_RaiseException", "_Unwind_Resume", "_Unwind_Backtrace"} - set(report["elf"]["defined_unwind_abi"])
         if missing:
             unmet.append(f"unwind/{lane.name}: executable lacks provider entries {sorted(missing)}")
+        # One provider per image: the executable resolves every `_Unwind_*`
+        # reference through its own ordinary link, and the C DSOs carry no
+        # unwinder at all, so their frames are reachable only by the
+        # executable's provider walking dl_iterate_phdr.
+        report["dynamic_unwind_symbols"] = {
+            image.name: sorted(name for name in dynamic_symbols(context, image) if name.startswith("_Unwind_"))
+            for image in (binary, dsos / CROSS_DSO_INITIAL, dsos / CROSS_DSO_RUNTIME)
+        }
+        shared = {name: symbols for name, symbols in report["dynamic_unwind_symbols"].items() if symbols}
+        if shared:
+            unmet.append(f"unwind/{lane.name}: _Unwind_* crosses an image boundary dynamically: {shared}")
         report["execution"] = execute(context, lane, binary, runtime="candidate", product=dynamic_root, label="run",
                                       libraries=[dsos / CROSS_DSO_INITIAL, dsos / CROSS_DSO_RUNTIME])
         unmet.extend(expected_output(f"unwind/{lane.name}", report["execution"], CROSS_DSO_STDOUT))

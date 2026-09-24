@@ -416,6 +416,12 @@ keep its payload. The provider finds the C frame's FDE only through that
 DSO's `PT_GNU_EH_FRAME`, so the lane first reports a DSO the installed driver
 linked without `--eh-frame-hdr`.
 
+Each Rust image carries its own statically extracted provider; no shared
+unwinder is installed. The lane requires that no image's dynamic symbol table
+defines or imports an `_Unwind_*` name, so the executable resolves every
+reference through its ordinary link and the C DSOs' frames are reached only
+by that provider walking `dl_iterate_phdr`.
+
 Finally it runs the six standalone malformed-metadata regressions above
 once and retains their receipts. They inject their own `dl_iterate_phdr`
 images in the pinned-musl harness and supplement the owned-product lanes.
