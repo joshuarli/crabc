@@ -632,7 +632,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
   owned-stdio-file-engine --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  replay eight installed FILE-engine rows
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
-  owned-math-fenv-all-entry [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test the bounded installed C math/fenv all-entry component
+  owned-math-fenv-all-entry [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test the installed C math/fenv all-entry component; builds current products without a supplied pair
   owned-calendar-component [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test installed time.clock-calendar rows with fixed IANA TZif fixtures
   owned-text-locale-numeric-component --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  test bounded installed numeric, locale, wide-conversion, and UTF iconv rows
   owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT [OPTIONS]  run the frozen native Alpine workloads with supplied package inputs
@@ -3497,7 +3497,7 @@ prepare_owned_posix_replay_arguments() {
     local static_product=''
     local dynamic_product=''
     local expected="usage: ./scripts/dev-x86_64.sh $selected_command [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]"
-    if [ "$selected_command" = owned-pthread-signal ] || [ "$selected_command" = owned-math-fenv-all-entry ] || [ "$selected_command" = owned-wordexp-expected-inputs ]; then
+    if [ "$selected_command" = owned-pthread-signal ] || [ "$selected_command" = owned-wordexp-expected-inputs ]; then
         expected="usage: ./scripts/dev-x86_64.sh $selected_command [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT"
     fi
     if [ "${1:-}" = --static-sysroot ]; then
@@ -3510,7 +3510,7 @@ prepare_owned_posix_replay_arguments() {
         [ -n "$1" ] && [[ "$1" != -* ]] || fail "$expected"
         dynamic_product="$1"
     fi
-    if { [ "$selected_command" = owned-pthread-signal ] || [ "$selected_command" = owned-math-fenv-all-entry ] || [ "$selected_command" = owned-wordexp-expected-inputs ]; } && [ -z "$dynamic_product" ]; then
+    if { [ "$selected_command" = owned-pthread-signal ] || [ "$selected_command" = owned-wordexp-expected-inputs ]; } && [ -z "$dynamic_product" ]; then
         fail "$expected"
     fi
     if { [ "$selected_command" = owned-locale ] || [ "$selected_command" = owned-wordexp ] || [ "$selected_command" = owned-stdio ] || [ "$selected_command" = owned-numeric-calendar ] || [ "$selected_command" = owned-math-fenv-all-entry ] || [ "$selected_command" = owned-aio ]; } && [ -n "$static_product" ] && [ -z "$dynamic_product" ]; then

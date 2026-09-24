@@ -19,8 +19,11 @@ stage records a zero status and that caller environment both before and after
 the probe. `validate_owned_math_fenv_all_entry.py` requires the fixed stage
 order, body sizes, zero statuses, and caller restoration.
 
-The runner translates all ten object roles through the supplied dynamic
-driver, combines their ET_REL objects, and requires every selected import to be
+Without a supplied pair, `./scripts/dev-x86_64.sh owned-math-fenv-all-entry`
+first builds current static and dynamic products inside its evidence
+directory, so the single command runs all six entry modes against the
+checkout's own source. The runner translates all ten object roles through
+the dynamic driver, combines their ET_REL objects, and requires every selected import to be
 defined by the supplied dynamic provider. When a static product is supplied it
 also requires every selected archive definition. Its retained header trace
 uses the fixed-image compiler selected by the sealed helper because the

@@ -38,7 +38,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertEqual(
             result.stderr,
-            f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT\n",
+            f"usage: {RUNNER} [[--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT]\n",
         )
 
     def test_exact_four_contract_roster_has_206_distinct_entries(self) -> None:
@@ -170,7 +170,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
 
     def test_runner_usage_and_path_boundary(self) -> None:
         for arguments in (
-            (), ("--static-sysroot",), ("--static-sysroot", ""),
+            ("--static-sysroot",), ("--static-sysroot", ""), ("--static-sysroot", "/one"),
             ("--static-sysroot", "-x"), ("",), ("-x",),
             ("--static-sysroot", "/one", "--static-sysroot", "/two"),
             ("/one", "/two"),

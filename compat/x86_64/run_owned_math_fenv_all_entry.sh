@@ -21,7 +21,7 @@ readonly RUNNER="$ROOT/compat/x86_64/run_owned_math_fenv_all_entry.sh"
 readonly DRIVER="$ROOT/compat/x86_64/owned_math_fenv_all_entry_driver.c"
 
 usage() {
-    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT\n' "$0" >&2
+    printf 'usage: %s [[--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
 
@@ -47,7 +47,7 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
-[ -n "$provided_dynamic" ] || usage
+[ -z "$provided_static" ] || [ -n "$provided_dynamic" ] || usage
 
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
@@ -61,7 +61,9 @@ import sys
 
 root, temporary, static, dynamic = map(Path, sys.argv[1:])
 root = root.resolve(strict=True)
-items = [(temporary, 'TMPDIR'), (dynamic, 'dynamic product')]
+items = [(temporary, 'TMPDIR')]
+if str(dynamic) != '.':
+    items.append((dynamic, 'dynamic product'))
 if str(static) != '.':
     items.append((static, 'static product'))
 for path, description in items:
@@ -77,7 +79,9 @@ for path, description in items:
         raise SystemExit(f'owned math/fenv all-entry {description} is not a directory')
 PY
 
-provided_dynamic="$(realpath -e -- "$provided_dynamic")"
+if [ -n "$provided_dynamic" ]; then
+    provided_dynamic="$(realpath -e -- "$provided_dynamic")"
+fi
 if [ -n "$provided_static" ]; then
     provided_static="$(realpath -e -- "$provided_static")"
 fi
@@ -91,17 +95,27 @@ for path in "$COPIES" "$VALIDATOR" "$CONTRACT" "$PROVIDER_EVIDENCE" "$COVERAGE" 
     [ -f "$path" ] || fail "missing retained component input: $path"
 done
 
+readonly WORK="$(mktemp -d "$TMPDIR/owned-math-fenv-all-entry.XXXXXX")"
+chmod a+rx "$WORK"
+trap 'chmod -R a+rX "$WORK"' EXIT
+printf 'owned math/fenv all-entry evidence: %s\n' "$WORK"
+
+# Without a supplied pair, build current static and dynamic products so one
+# command runs all six entry modes against the checkout's own source.
+if [ -z "$provided_dynamic" ]; then
+    provided_static="$WORK/static-product"
+    provided_dynamic="$WORK/dynamic-product"
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$provided_static" \
+        >"$WORK/static-build.json"
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$provided_dynamic" \
+        >"$WORK/dynamic-build.json"
+fi
 readonly STATIC_PRODUCT="$provided_static"
 readonly DYNAMIC_PRODUCT="$provided_dynamic"
 [ -x "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" ] || fail 'missing supplied dynamic driver'
 if [ -n "$STATIC_PRODUCT" ]; then
     [ -x "$STATIC_PRODUCT/bin/crabc-cc" ] || fail 'missing supplied static driver'
 fi
-
-readonly WORK="$(mktemp -d "$TMPDIR/owned-math-fenv-all-entry.XXXXXX")"
-chmod a+rx "$WORK"
-trap 'chmod -R a+rX "$WORK"' EXIT
-printf 'owned math/fenv all-entry evidence: %s\n' "$WORK"
 
 readonly -a ROLE_SOURCES=(
     'driver|compat/x86_64/owned_math_fenv_all_entry_driver.c|'
