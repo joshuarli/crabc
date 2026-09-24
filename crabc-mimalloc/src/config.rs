@@ -14,8 +14,8 @@
 // `include/mimalloc/bits.h:33-145` and
 // `include/mimalloc/internal.h:717-719` (word and two-level page-map
 // constants), `src/bitmap.h:94-105` (bitmap-bounded arena constants),
-// `src/options.c:160,623-674` (generic collection and selected environment
-// descriptors), and
+// `src/options.c:15-16,40-177,623-696` (the complete `mi_option_e`
+// descriptor table, its release defaults, and environment grammar), and
 // `CMakeLists.txt:7-24,161-192,280-340,361-454,647-693,769-774` (selected
 // normal-release switches and the deliberately excluded Armv8.3-a path).
 // The selected M1 branch is LP64, little-endian Linux/AArch64 normal release:
@@ -25,8 +25,9 @@
 // `MI_BCHUNK_BITS_SHIFT` are C/Rust checked as the actual selected macros, not
 // re-derived formulas. The C oracle deliberately keeps the project Armv8.0
 // baseline instead of CMake's optional Armv8.3-a path. These constants do
-// not offer runtime CMake-mode selection; the selected source option image
-// below retains only the process descriptors explicitly listed there.
+// not offer runtime CMake-mode selection. [`SourceOption`] names every
+// pinned `mi_option_e` descriptor; [`VmOptions`] retains only the VM-policy
+// subset that `src/os.c`/`src/arena.c` observe through its process owner.
 
 pub(crate) const WORD_SIZE: usize = core::mem::size_of::<usize>();
 pub(crate) const KIB: usize = 1024;
@@ -122,6 +123,359 @@ pub(crate) const PAGE_MAP_SUB_SHIFT: usize = 13;
 pub(crate) const PAGE_MAP_SUB_COUNT: usize = 1 << PAGE_MAP_SUB_SHIFT;
 pub(crate) const PAGE_MAP_SHIFT: usize = MAX_VABITS - PAGE_MAP_SUB_SHIFT - ARENA_SLICE_SHIFT;
 
+/// The number of pinned `mi_option_e` descriptors (`_mi_option_last`).
+pub(crate) const SOURCE_OPTION_COUNT: usize = 47;
+
+/// Pinned `mi_option_e` from `include/mimalloc.h:463-520`, excluding the
+/// five legacy enumerator aliases that name an existing descriptor.
+///
+/// The discriminant is the exact public C enumerator value, and
+/// [`SourceOption::ALL`] is the `src/options.c:112-177` table order used by
+/// `_mi_options_init` and `mi_options_print_out`. Deprecated descriptors stay
+/// present because the public API and environment still accept them; they
+/// have no allocator effect in the pinned source.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceOption {
+    ShowErrors = 0,
+    ShowStats = 1,
+    Verbose = 2,
+    DeprecatedEagerCommit = 3,
+    ArenaEagerCommit = 4,
+    PurgeDecommits = 5,
+    AllowLargeOsPages = 6,
+    ReserveHugeOsPages = 7,
+    ReserveHugeOsPagesAt = 8,
+    ReserveOsMemory = 9,
+    DeprecatedSegmentCache = 10,
+    DeprecatedPageReset = 11,
+    DeprecatedAbandonedPagePurge = 12,
+    DeprecatedSegmentReset = 13,
+    DeprecatedEagerCommitDelay = 14,
+    PurgeDelay = 15,
+    UseNumaNodes = 16,
+    DisallowOsAlloc = 17,
+    OsTag = 18,
+    MaxErrors = 19,
+    MaxWarnings = 20,
+    DeprecatedMaxSegmentReclaim = 21,
+    DestroyOnExit = 22,
+    ArenaReserve = 23,
+    ArenaPurgeMult = 24,
+    DeprecatedPurgeExtendDelay = 25,
+    DisallowArenaAlloc = 26,
+    RetryOnOom = 27,
+    DeprecatedVisitAbandoned = 28,
+    GuardedMin = 29,
+    GuardedMax = 30,
+    GuardedPrecise = 31,
+    GuardedSampleRate = 32,
+    GuardedSampleSeed = 33,
+    GenericCollect = 34,
+    PageReclaimOnFree = 35,
+    PageFullRetain = 36,
+    PageMaxCandidates = 37,
+    MaxVabits = 38,
+    PagemapCommit = 39,
+    PageCommitOnDemand = 40,
+    PageMaxReclaim = 41,
+    PageCrossThreadMaxReclaim = 42,
+    AllowThp = 43,
+    MinimalPurgeSize = 44,
+    ArenaMaxObjectSize = 45,
+    ArenaIsNumaLocal = 46,
+}
+
+impl SourceOption {
+    /// Every descriptor in source table order, which is also enumerator order.
+    pub(crate) const ALL: [Self; SOURCE_OPTION_COUNT] = [
+        Self::ShowErrors,
+        Self::ShowStats,
+        Self::Verbose,
+        Self::DeprecatedEagerCommit,
+        Self::ArenaEagerCommit,
+        Self::PurgeDecommits,
+        Self::AllowLargeOsPages,
+        Self::ReserveHugeOsPages,
+        Self::ReserveHugeOsPagesAt,
+        Self::ReserveOsMemory,
+        Self::DeprecatedSegmentCache,
+        Self::DeprecatedPageReset,
+        Self::DeprecatedAbandonedPagePurge,
+        Self::DeprecatedSegmentReset,
+        Self::DeprecatedEagerCommitDelay,
+        Self::PurgeDelay,
+        Self::UseNumaNodes,
+        Self::DisallowOsAlloc,
+        Self::OsTag,
+        Self::MaxErrors,
+        Self::MaxWarnings,
+        Self::DeprecatedMaxSegmentReclaim,
+        Self::DestroyOnExit,
+        Self::ArenaReserve,
+        Self::ArenaPurgeMult,
+        Self::DeprecatedPurgeExtendDelay,
+        Self::DisallowArenaAlloc,
+        Self::RetryOnOom,
+        Self::DeprecatedVisitAbandoned,
+        Self::GuardedMin,
+        Self::GuardedMax,
+        Self::GuardedPrecise,
+        Self::GuardedSampleRate,
+        Self::GuardedSampleSeed,
+        Self::GenericCollect,
+        Self::PageReclaimOnFree,
+        Self::PageFullRetain,
+        Self::PageMaxCandidates,
+        Self::MaxVabits,
+        Self::PagemapCommit,
+        Self::PageCommitOnDemand,
+        Self::PageMaxReclaim,
+        Self::PageCrossThreadMaxReclaim,
+        Self::AllowThp,
+        Self::MinimalPurgeSize,
+        Self::ArenaMaxObjectSize,
+        Self::ArenaIsNumaLocal,
+    ];
+
+    /// Maps a raw C `mi_option_t` value, as `mi_option_get`'s range check
+    /// does. The five legacy enumerators already equal their canonical value.
+    #[inline]
+    pub(crate) const fn from_source_value(value: i32) -> Option<Self> {
+        if value < 0 || value as usize >= SOURCE_OPTION_COUNT {
+            return None;
+        }
+        Some(Self::ALL[value as usize])
+    }
+
+    #[inline]
+    pub(crate) const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The source descriptor name (`#opt` in `MI_OPTION(opt)`), without the
+    /// `mimalloc_` environment prefix.
+    pub(crate) const fn name(self) -> &'static [u8] {
+        match self {
+            Self::ShowErrors => b"show_errors",
+            Self::ShowStats => b"show_stats",
+            Self::Verbose => b"verbose",
+            Self::DeprecatedEagerCommit => b"deprecated_eager_commit",
+            Self::ArenaEagerCommit => b"arena_eager_commit",
+            Self::PurgeDecommits => b"purge_decommits",
+            Self::AllowLargeOsPages => b"allow_large_os_pages",
+            Self::ReserveHugeOsPages => b"reserve_huge_os_pages",
+            Self::ReserveHugeOsPagesAt => b"reserve_huge_os_pages_at",
+            Self::ReserveOsMemory => b"reserve_os_memory",
+            Self::DeprecatedSegmentCache => b"deprecated_segment_cache",
+            Self::DeprecatedPageReset => b"deprecated_page_reset",
+            Self::DeprecatedAbandonedPagePurge => b"deprecated_abandoned_page_purge",
+            Self::DeprecatedSegmentReset => b"deprecated_segment_reset",
+            Self::DeprecatedEagerCommitDelay => b"deprecated_eager_commit_delay",
+            Self::PurgeDelay => b"purge_delay",
+            Self::UseNumaNodes => b"use_numa_nodes",
+            Self::DisallowOsAlloc => b"disallow_os_alloc",
+            Self::OsTag => b"os_tag",
+            Self::MaxErrors => b"max_errors",
+            Self::MaxWarnings => b"max_warnings",
+            Self::DeprecatedMaxSegmentReclaim => b"deprecated_max_segment_reclaim",
+            Self::DestroyOnExit => b"destroy_on_exit",
+            Self::ArenaReserve => b"arena_reserve",
+            Self::ArenaPurgeMult => b"arena_purge_mult",
+            Self::DeprecatedPurgeExtendDelay => b"deprecated_purge_extend_delay",
+            Self::DisallowArenaAlloc => b"disallow_arena_alloc",
+            Self::RetryOnOom => b"retry_on_oom",
+            Self::DeprecatedVisitAbandoned => b"deprecated_visit_abandoned",
+            Self::GuardedMin => b"guarded_min",
+            Self::GuardedMax => b"guarded_max",
+            Self::GuardedPrecise => b"guarded_precise",
+            Self::GuardedSampleRate => b"guarded_sample_rate",
+            Self::GuardedSampleSeed => b"guarded_sample_seed",
+            Self::GenericCollect => b"generic_collect",
+            Self::PageReclaimOnFree => b"page_reclaim_on_free",
+            Self::PageFullRetain => b"page_full_retain",
+            Self::PageMaxCandidates => b"page_max_candidates",
+            Self::MaxVabits => b"max_vabits",
+            Self::PagemapCommit => b"pagemap_commit",
+            Self::PageCommitOnDemand => b"page_commit_on_demand",
+            Self::PageMaxReclaim => b"page_max_reclaim",
+            Self::PageCrossThreadMaxReclaim => b"page_cross_thread_max_reclaim",
+            Self::AllowThp => b"allow_thp",
+            Self::MinimalPurgeSize => b"minimal_purge_size",
+            Self::ArenaMaxObjectSize => b"arena_max_object_size",
+            Self::ArenaIsNumaLocal => b"arena_is_numa_local",
+        }
+    }
+
+    /// The `MI_OPTION_LEGACY` spelling, consulted only when the canonical
+    /// environment name is absent (`src/options.c:629-636`).
+    pub(crate) const fn legacy_name(self) -> Option<&'static [u8]> {
+        match self {
+            Self::ArenaEagerCommit => Some(b"eager_region_commit"),
+            Self::PurgeDecommits => Some(b"reset_decommits"),
+            Self::AllowLargeOsPages => Some(b"large_os_pages"),
+            Self::PurgeDelay => Some(b"reset_delay"),
+            Self::DisallowOsAlloc => Some(b"limit_os_alloc"),
+            Self::DeprecatedPurgeExtendDelay => Some(b"decommit_extend_delay"),
+            Self::PageReclaimOnFree => Some(b"abandoned_reclaim_on_free"),
+            _ => None,
+        }
+    }
+
+    /// The initial descriptor value of the selected Linux/x86-64 and
+    /// Linux/AArch64 LP64 normal-release profile.
+    ///
+    /// `MI_DEBUG == 0`, no `MI_SHOW_ERRORS`, no `MI_GUARDED`, non-Android,
+    /// non-Apple, and `MI_INTPTR_SIZE > 4` select the conditional defaults
+    /// in `src/options.c:40-110`. A compile-time guarded or debug profile
+    /// must select its own row rather than mutate this one.
+    pub(crate) const fn default_value(self) -> i64 {
+        match self {
+            // `MI_DEBUG || MI_SHOW_ERRORS` is false in the selected profile.
+            Self::ShowErrors => 0,
+            Self::ShowStats => 0,
+            // `MI_DEFAULT_VERBOSE`.
+            Self::Verbose => 0,
+            Self::DeprecatedEagerCommit => 1,
+            // `MI_DEFAULT_ARENA_EAGER_COMMIT`.
+            Self::ArenaEagerCommit => 2,
+            Self::PurgeDecommits => 1,
+            // `MI_DEFAULT_ALLOW_LARGE_OS_PAGES`,
+            // `MI_DEFAULT_RESERVE_HUGE_OS_PAGES`, and
+            // `MI_DEFAULT_RESERVE_OS_MEMORY`.
+            Self::AllowLargeOsPages | Self::ReserveHugeOsPages | Self::ReserveOsMemory => 0,
+            Self::ReserveHugeOsPagesAt => -1,
+            Self::DeprecatedSegmentCache
+            | Self::DeprecatedPageReset
+            | Self::DeprecatedAbandonedPagePurge
+            | Self::DeprecatedSegmentReset => 0,
+            Self::DeprecatedEagerCommitDelay => 1,
+            Self::PurgeDelay => 1_000,
+            Self::UseNumaNodes => 0,
+            Self::DisallowOsAlloc => 0,
+            Self::OsTag => 100,
+            Self::MaxErrors | Self::MaxWarnings => 32,
+            Self::DeprecatedMaxSegmentReclaim => 10,
+            Self::DestroyOnExit => 0,
+            // `MI_DEFAULT_ARENA_RESERVE` on 64-bit, in KiB.
+            Self::ArenaReserve => 1024 * 1024,
+            Self::ArenaPurgeMult => 4,
+            Self::DeprecatedPurgeExtendDelay => 1,
+            // `MI_DEFAULT_DISALLOW_ARENA_ALLOC`.
+            Self::DisallowArenaAlloc => 0,
+            Self::RetryOnOom => 400,
+            Self::DeprecatedVisitAbandoned => 1,
+            Self::GuardedMin => 0,
+            Self::GuardedMax => GIB as i64,
+            Self::GuardedPrecise => 0,
+            // `MI_DEFAULT_GUARDED_SAMPLE_RATE` without `MI_GUARDED`.
+            Self::GuardedSampleRate => 0,
+            Self::GuardedSampleSeed => 0,
+            Self::GenericCollect => 10_000,
+            Self::PageReclaimOnFree => 0,
+            Self::PageFullRetain => 2,
+            Self::PageMaxCandidates => 4,
+            Self::MaxVabits => 0,
+            // `MI_DEFAULT_PAGEMAP_COMMIT` off Apple.
+            Self::PagemapCommit => 0,
+            Self::PageCommitOnDemand => 0,
+            // `MI_DEFAULT_PAGE_MAX_RECLAIM` and
+            // `MI_DEFAULT_PAGE_CROSS_THREAD_MAX_RECLAIM`.
+            Self::PageMaxReclaim => -1,
+            Self::PageCrossThreadMaxReclaim => 32,
+            // `MI_DEFAULT_ALLOW_THP` on non-Android Linux.
+            Self::AllowThp => 1,
+            Self::MinimalPurgeSize => 0,
+            // `MI_DEFAULT_ARENA_MAX_OBJECT_SIZE`:
+            // `(MI_SIZE_BITS * MI_ARENA_MAX_CHUNK_OBJ_SIZE) / MI_KiB`.
+            Self::ArenaMaxObjectSize => ((WORD_SIZE * 8 * ARENA_MAX_CHUNK_OBJ_SIZE) / KIB) as i64,
+            Self::ArenaIsNumaLocal => 0,
+        }
+    }
+
+    /// `mi_option_has_size_in_kib` (`src/options.c:182-185`).
+    #[inline]
+    pub(crate) const fn has_size_in_kib(self) -> bool {
+        matches!(
+            self,
+            Self::ReserveOsMemory | Self::ArenaReserve | Self::MinimalPurgeSize | Self::ArenaMaxObjectSize
+        )
+    }
+}
+
+/// The source `mi_option_init` observation of one descriptor's environment.
+///
+/// `legacy` records that the canonical name was absent and the value came
+/// from the deprecated spelling, which the source reports with a warning
+/// before it parses the value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SourceOptionObservation<'value> {
+    pub(crate) environment: VmOptionEnvironment<'value>,
+    pub(crate) legacy: bool,
+}
+
+/// One bounded `_mi_getenv` observation for any source descriptor.
+///
+/// # Safety
+///
+/// `environment` carries the raw `environ` validity, lifetime, and
+/// direct-mutation coordination obligations documented on
+/// [`VmOptions::initialize_from_source_environment`].
+pub(crate) unsafe fn observe_source_option<'value>(
+    environment: *const *const core::ffi::c_char,
+    option: SourceOption,
+    value: &'value mut [u8; SOURCE_OPTION_VALUE_BYTES + 1],
+) -> SourceOptionObservation<'value> {
+    // SAFETY: forwarded unchanged to the raw source environment scan.
+    unsafe { source_environment_option(environment, option.name(), option.legacy_name(), value) }
+}
+
+/// The fixed `mi_option_init` value buffer, including its trailing NUL.
+pub(crate) type SourceOptionValueBuffer = [u8; SOURCE_OPTION_VALUE_BYTES + 1];
+
+/// One accepted `mi_option_init` environment value, tagged with the store
+/// path the source uses for it (`src/options.c:648-680`).
+///
+/// The distinction is observable: only a converted value goes through
+/// `mi_option_set`, whose guarded min/max coupling can rewrite a second
+/// descriptor. A boolean spelling is stored directly into the one slot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceOptionValue {
+    /// Empty, `1`/`TRUE`/`YES`/`ON`, or `0`/`FALSE`/`NO`/`OFF`: the source
+    /// assigns `desc->value` and `desc->init` without `mi_option_set`.
+    Boolean(i64),
+    /// A complete `strtol` conversion (with the KiB suffix rules for size
+    /// descriptors), stored by `mi_option_set(desc->option, value)`.
+    Converted(i64),
+}
+
+impl SourceOptionValue {
+    #[inline]
+    pub(crate) const fn value(self) -> i64 {
+        match self {
+            Self::Boolean(value) | Self::Converted(value) => value,
+        }
+    }
+}
+
+/// Parses one source environment value for `option`.
+///
+/// `None` is the source's invalid-value branch, which leaves the descriptor
+/// `MI_OPTION_DEFAULTED` and reports a warning.
+pub(crate) fn parse_source_option(option: SourceOption, input: &[u8]) -> Option<SourceOptionValue> {
+    if input.is_empty() || ascii_eq_ignore_case(input, b"1") || ascii_eq_ignore_case(input, b"TRUE")
+        || ascii_eq_ignore_case(input, b"YES") || ascii_eq_ignore_case(input, b"ON")
+    {
+        return Some(SourceOptionValue::Boolean(1));
+    }
+    if ascii_eq_ignore_case(input, b"0") || ascii_eq_ignore_case(input, b"FALSE")
+        || ascii_eq_ignore_case(input, b"NO") || ascii_eq_ignore_case(input, b"OFF")
+    {
+        return Some(SourceOptionValue::Boolean(0));
+    }
+    parse_source_converted_value(option, input).map(SourceOptionValue::Converted)
+}
+
 /// The selected VM-policy and generic-allocation descriptors from pinned
 /// `src/options.c`.
 ///
@@ -183,106 +537,36 @@ impl VmOption {
         Self::ArenaIsNumaLocal,
     ];
 
-    /// The source descriptor name without its `mimalloc_` environment prefix.
+    /// The complete source descriptor this VM-policy slot mirrors. Names,
+    /// legacy spellings, defaults, and size units come from that one table.
     #[inline]
-    const fn source_name(self) -> &'static [u8] {
+    pub(crate) const fn source(self) -> SourceOption {
         match self {
-            Self::PurgeDecommits => b"purge_decommits",
-            Self::AllowLargeOsPages => b"allow_large_os_pages",
-            Self::ReserveHugeOsPages => b"reserve_huge_os_pages",
-            Self::ReserveHugeOsPagesAt => b"reserve_huge_os_pages_at",
-            Self::PurgeDelay => b"purge_delay",
-            Self::UseNumaNodes => b"use_numa_nodes",
-            Self::AllowThp => b"allow_thp",
-            Self::ArenaEagerCommit => b"arena_eager_commit",
-            Self::ArenaReserve => b"arena_reserve",
-            Self::ArenaPurgeMult => b"arena_purge_mult",
-            Self::ArenaMaxObjectSize => b"arena_max_object_size",
-            Self::DisallowArenaAlloc => b"disallow_arena_alloc",
-            Self::DisallowOsAlloc => b"disallow_os_alloc",
-            Self::PageCommitOnDemand => b"page_commit_on_demand",
-            Self::ArenaIsNumaLocal => b"arena_is_numa_local",
-            Self::MinimalPurgeSize => b"minimal_purge_size",
-            Self::ReserveOsMemory => b"reserve_os_memory",
-            Self::DestroyOnExit => b"destroy_on_exit",
-            Self::GenericCollect => b"generic_collect",
-        }
-    }
-
-    /// The deprecated source descriptor name, if this selected descriptor has
-    /// one.  It is queried only when the canonical spelling is absent.
-    #[inline]
-    const fn legacy_source_name(self) -> Option<&'static [u8]> {
-        match self {
-            Self::PurgeDecommits => Some(b"reset_decommits"),
-            Self::AllowLargeOsPages => Some(b"large_os_pages"),
-            Self::PurgeDelay => Some(b"reset_delay"),
-            Self::ArenaEagerCommit => Some(b"eager_region_commit"),
-            Self::DisallowOsAlloc => Some(b"limit_os_alloc"),
-            Self::ReserveHugeOsPages
-            | Self::ReserveHugeOsPagesAt
-            | Self::UseNumaNodes
-            | Self::AllowThp
-            | Self::ArenaReserve
-            | Self::ArenaPurgeMult
-            | Self::ArenaMaxObjectSize
-            | Self::DisallowArenaAlloc
-            | Self::PageCommitOnDemand
-            | Self::ArenaIsNumaLocal
-            | Self::MinimalPurgeSize
-            | Self::ReserveOsMemory
-            | Self::DestroyOnExit
-            | Self::GenericCollect => None,
+            Self::PurgeDecommits => SourceOption::PurgeDecommits,
+            Self::AllowLargeOsPages => SourceOption::AllowLargeOsPages,
+            Self::ReserveHugeOsPages => SourceOption::ReserveHugeOsPages,
+            Self::ReserveHugeOsPagesAt => SourceOption::ReserveHugeOsPagesAt,
+            Self::PurgeDelay => SourceOption::PurgeDelay,
+            Self::UseNumaNodes => SourceOption::UseNumaNodes,
+            Self::AllowThp => SourceOption::AllowThp,
+            Self::ArenaEagerCommit => SourceOption::ArenaEagerCommit,
+            Self::ArenaReserve => SourceOption::ArenaReserve,
+            Self::ArenaPurgeMult => SourceOption::ArenaPurgeMult,
+            Self::ArenaMaxObjectSize => SourceOption::ArenaMaxObjectSize,
+            Self::DisallowArenaAlloc => SourceOption::DisallowArenaAlloc,
+            Self::DisallowOsAlloc => SourceOption::DisallowOsAlloc,
+            Self::PageCommitOnDemand => SourceOption::PageCommitOnDemand,
+            Self::ArenaIsNumaLocal => SourceOption::ArenaIsNumaLocal,
+            Self::MinimalPurgeSize => SourceOption::MinimalPurgeSize,
+            Self::ReserveOsMemory => SourceOption::ReserveOsMemory,
+            Self::DestroyOnExit => SourceOption::DestroyOnExit,
+            Self::GenericCollect => SourceOption::GenericCollect,
         }
     }
 
     #[inline]
     const fn default_value(self) -> i64 {
-        match self {
-            // `src/options.c:112-114`.
-            Self::PurgeDecommits => 1,
-            // `MI_DEFAULT_ALLOW_LARGE_OS_PAGES` and
-            // `MI_DEFAULT_RESERVE_HUGE_OS_PAGES` on normal Linux.
-            Self::AllowLargeOsPages | Self::ReserveHugeOsPages | Self::ReserveOsMemory => 0,
-            // `src/options.c:117`.
-            Self::ReserveHugeOsPagesAt => -1,
-            // `src/options.c:122`.
-            Self::PurgeDelay => 1_000,
-            // `src/options.c:123`.
-            Self::UseNumaNodes => 0,
-            // `MI_DEFAULT_ALLOW_THP` on non-Android Linux.
-            Self::AllowThp => 1,
-            // `MI_DEFAULT_ARENA_EAGER_COMMIT` in `src/options.c:46-48`.
-            Self::ArenaEagerCommit => 2,
-            // `MI_DEFAULT_ARENA_RESERVE` is expressed in KiB.
-            Self::ArenaReserve => 1024 * 1024,
-            // `src/options.c:149` applies this source multiplier to the
-            // configured arena purge delay.
-            Self::ArenaPurgeMult => 4,
-            // `MI_SIZE_BITS * MI_ARENA_MAX_CHUNK_OBJ_SIZE / MI_KiB`:
-            // `(64 * 32 MiB) / KiB == 2 GiB`, stored in KiB.
-            Self::ArenaMaxObjectSize => 2 * 1024 * 1024,
-            // `src/options.c:143,147,151,168,177`.
-            Self::DisallowArenaAlloc
-            | Self::DisallowOsAlloc
-            | Self::PageCommitOnDemand
-            | Self::ArenaIsNumaLocal
-            | Self::DestroyOnExit => 0,
-            // `src/options.c:160`; `page.c:1030` clamps this raw value only
-            // at each 1,000-call generic administration boundary.
-            Self::GenericCollect => 10_000,
-            // `src/options.c:174`, expressed in KiB like the two arena-size
-            // descriptors.
-            Self::MinimalPurgeSize => 0,
-        }
-    }
-
-    #[inline]
-    const fn has_size_in_kib(self) -> bool {
-        matches!(
-            self,
-            Self::ArenaReserve | Self::ArenaMaxObjectSize | Self::MinimalPurgeSize | Self::ReserveOsMemory
-        )
+        self.source().default_value()
     }
 }
 
@@ -455,15 +739,9 @@ impl VmOptions {
             return;
         }
         let mut value = [0u8; SOURCE_OPTION_VALUE_BYTES + 1];
-        let observation = unsafe {
-            source_environment_option(
-                environment,
-                option.source_name(),
-                option.legacy_source_name(),
-                &mut value,
-            )
-        };
-        self.initialize_one(option, observation);
+        // SAFETY: forwarded from this source-environment observation boundary.
+        let observation = unsafe { observe_source_option(environment, option.source(), &mut value) };
+        self.initialize_one(option, observation.environment);
     }
 
     /// Performs one source lazy initialization attempt.
@@ -475,7 +753,7 @@ impl VmOptions {
         match environment {
             VmOptionEnvironment::Unavailable => {}
             VmOptionEnvironment::Absent => slot.state = VmOptionState::Defaulted,
-            VmOptionEnvironment::Value(value) => match parse_source_option_value(option, value) {
+            VmOptionEnvironment::Value(value) => match parse_source_option_value(option.source(), value) {
                 Some(value) => {
                     slot.value = value;
                     slot.state = VmOptionState::Initialized;
@@ -548,27 +826,31 @@ impl VmOptions {
 /// Resolve one source `mimalloc_<descriptor>` variable with its legacy
 /// fallback.  A matching but overlong canonical value is an unavailable C
 /// primitive result, not an absence that permits consulting the old spelling.
+/// Only a successful legacy read (`err == 0`) reports `legacy`, which is the
+/// exact condition for the source deprecation warning.
 unsafe fn source_environment_option<'value>(
     environment: *const *const core::ffi::c_char,
     canonical_name: &[u8],
     legacy_name: Option<&[u8]>,
     value: &'value mut [u8; SOURCE_OPTION_VALUE_BYTES + 1],
-) -> VmOptionEnvironment<'value> {
+) -> SourceOptionObservation<'value> {
     let canonical = unsafe { source_environment_lookup(environment, canonical_name, value) };
-    match canonical {
+    let (lookup, legacy) = match canonical {
         SourceEnvironmentLookup::Absent => match legacy_name {
-            Some(legacy_name) => match unsafe {
-                source_environment_lookup(environment, legacy_name, value)
-            } {
-                SourceEnvironmentLookup::Absent => VmOptionEnvironment::Absent,
-                SourceEnvironmentLookup::Value(length) => VmOptionEnvironment::Value(&value[..length]),
-                SourceEnvironmentLookup::Unavailable => VmOptionEnvironment::Unavailable,
-            },
-            None => VmOptionEnvironment::Absent,
+            Some(legacy_name) => {
+                let lookup = unsafe { source_environment_lookup(environment, legacy_name, value) };
+                (lookup, matches!(lookup, SourceEnvironmentLookup::Value(_)))
+            }
+            None => (SourceEnvironmentLookup::Absent, false),
         },
+        found => (found, false),
+    };
+    let environment = match lookup {
+        SourceEnvironmentLookup::Absent => VmOptionEnvironment::Absent,
         SourceEnvironmentLookup::Value(length) => VmOptionEnvironment::Value(&value[..length]),
         SourceEnvironmentLookup::Unavailable => VmOptionEnvironment::Unavailable,
-    }
+    };
+    SourceOptionObservation { environment, legacy }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -638,22 +920,21 @@ unsafe fn source_environment_name_matches(
     }
 }
 
-/// Parses the value grammar used by `src/options.c:636-674` for the selected
-/// VM and arena options. The C path uppercases its bounded temporary buffer,
+/// Parses the value grammar used by `src/options.c:639-676` for every
+/// source descriptor. The C path uppercases its bounded temporary buffer,
 /// treats an empty value as enabled, accepts four boolean spellings, and then
 /// applies its `strtol` and (for named size options) KiB/suffix conversion.
-fn parse_source_option_value(option: VmOption, input: &[u8]) -> Option<i64> {
-    if input.is_empty() || ascii_eq_ignore_case(input, b"1") || ascii_eq_ignore_case(input, b"TRUE")
-        || ascii_eq_ignore_case(input, b"YES") || ascii_eq_ignore_case(input, b"ON")
-    {
-        return Some(1);
-    }
-    if ascii_eq_ignore_case(input, b"0") || ascii_eq_ignore_case(input, b"FALSE")
-        || ascii_eq_ignore_case(input, b"NO") || ascii_eq_ignore_case(input, b"OFF")
-    {
-        return Some(0);
-    }
+/// Callers that must reproduce the source store path use
+/// [`parse_source_option`] instead.
+#[inline]
+fn parse_source_option_value(option: SourceOption, input: &[u8]) -> Option<i64> {
+    parse_source_option(option, input).map(SourceOptionValue::value)
+}
 
+/// The `strtol` branch of `mi_option_init`, after the boolean spellings.
+/// Pinned musl `strtol` reports `EINVAL` for an empty digit sequence, so a
+/// bare size suffix is invalid rather than zero.
+fn parse_source_converted_value(option: SourceOption, input: &[u8]) -> Option<i64> {
     let (parsed, mut index) = parse_source_decimal(input)?;
     if !option.has_size_in_kib() {
         return (index == input.len()).then_some(parsed);
@@ -1031,21 +1312,21 @@ mod tests {
 
     #[test]
     fn vm_option_parser_matches_the_non_size_source_grammar() {
-        assert_eq!(parse_source_option_value(VmOption::AllowThp, b""), Some(1));
-        assert_eq!(parse_source_option_value(VmOption::AllowThp, b"YeS"), Some(1));
-        assert_eq!(parse_source_option_value(VmOption::AllowThp, b"OFF"), Some(0));
-        assert_eq!(parse_source_option_value(VmOption::AllowThp, b" \t-42"), Some(-42));
+        assert_eq!(parse_source_option_value(SourceOption::AllowThp, b""), Some(1));
+        assert_eq!(parse_source_option_value(SourceOption::AllowThp, b"YeS"), Some(1));
+        assert_eq!(parse_source_option_value(SourceOption::AllowThp, b"OFF"), Some(0));
+        assert_eq!(parse_source_option_value(SourceOption::AllowThp, b" \t-42"), Some(-42));
         assert_eq!(
-            parse_source_option_value(VmOption::AllowThp, b"+9223372036854775807"),
+            parse_source_option_value(SourceOption::AllowThp, b"+9223372036854775807"),
             Some(i64::MAX)
         );
         assert_eq!(
-            parse_source_option_value(VmOption::AllowThp, b"-9223372036854775808"),
+            parse_source_option_value(SourceOption::AllowThp, b"-9223372036854775808"),
             Some(i64::MIN)
         );
-        assert_eq!(parse_source_option_value(VmOption::AllowThp, b"9223372036854775808"), None);
-        assert_eq!(parse_source_option_value(VmOption::AllowThp, b"12x"), None);
-        assert_eq!(parse_source_option_value(VmOption::AllowThp, b" + "), None);
+        assert_eq!(parse_source_option_value(SourceOption::AllowThp, b"9223372036854775808"), None);
+        assert_eq!(parse_source_option_value(SourceOption::AllowThp, b"12x"), None);
+        assert_eq!(parse_source_option_value(SourceOption::AllowThp, b" + "), None);
     }
 
     #[test]
@@ -1062,7 +1343,7 @@ mod tests {
             (b"-7".as_slice(), -7),
         ] {
             assert_eq!(
-                parse_source_option_value(VmOption::DestroyOnExit, input),
+                parse_source_option_value(SourceOption::DestroyOnExit, input),
                 Some(expected),
                 "source parser must retain the raw signed destroy_on_exit value"
             );
@@ -1071,26 +1352,26 @@ mod tests {
 
     #[test]
     fn vm_size_options_preserve_the_source_kib_suffix_rules() {
-        assert_eq!(parse_source_option_value(VmOption::ReserveOsMemory, b"2MiB"), Some(2 * 1024));
+        assert_eq!(parse_source_option_value(SourceOption::ReserveOsMemory, b"2MiB"), Some(2 * 1024));
         assert_eq!(
-            parse_source_option_value(VmOption::ArenaReserve, b"2"),
+            parse_source_option_value(SourceOption::ArenaReserve, b"2"),
             Some(1),
             "a suffix-free source size is bytes rounded to KiB"
         );
-        assert_eq!(parse_source_option_value(VmOption::ArenaReserve, b"2K"), Some(2));
-        assert_eq!(parse_source_option_value(VmOption::ArenaReserve, b"2MiB"), Some(2 * 1024));
+        assert_eq!(parse_source_option_value(SourceOption::ArenaReserve, b"2K"), Some(2));
+        assert_eq!(parse_source_option_value(SourceOption::ArenaReserve, b"2MiB"), Some(2 * 1024));
         assert_eq!(
-            parse_source_option_value(VmOption::ArenaReserve, b"2GIB"),
+            parse_source_option_value(SourceOption::ArenaReserve, b"2GIB"),
             Some(2 * 1024 * 1024)
         );
-        assert_eq!(parse_source_option_value(VmOption::ArenaReserve, b"-7M"), Some(0));
+        assert_eq!(parse_source_option_value(SourceOption::ArenaReserve, b"-7M"), Some(0));
         assert_eq!(
-            parse_source_option_value(VmOption::ArenaReserve, b"9223372036854775807T"),
+            parse_source_option_value(SourceOption::ArenaReserve, b"9223372036854775807T"),
             Some((MAX_ALLOC_SIZE / KIB) as i64),
             "a valid source long that overflows a suffix conversion saturates"
         );
         assert_eq!(
-            parse_source_option_value(VmOption::ArenaReserve, b"999999999999999999999T"),
+            parse_source_option_value(SourceOption::ArenaReserve, b"999999999999999999999T"),
             None,
             "strtol overflow rejects the source value before size saturation"
         );

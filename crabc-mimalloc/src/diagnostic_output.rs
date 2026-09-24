@@ -24,7 +24,11 @@
 // primitive stays caller-supplied: this owner does not assert that a raw Linux
 // descriptor write has FILE buffering, locking, or failure equivalence.
 
-use crate::config::VmOptionEnvironmentReader;
+use crate::config::{
+    SourceOption, SourceOptionValue, SourceOptionValueBuffer, VmOptionEnvironment, VmOptionEnvironmentReader,
+    VmOptionState, DEBUG_LEVEL, KIB, MAX_ALLOC_SIZE, SECURE_LEVEL, SOURCE_OPTION_COUNT,
+    observe_source_option, parse_source_option,
+};
 use crate::lock::PrivateLock;
 use crate::os::ProcessUsage;
 use crate::statistics::{
@@ -47,6 +51,8 @@ const DEFAULT_STDERR_AND_DELAYED: u8 = 2;
 const DEFAULT_CALLBACK: u8 = 3;
 
 const THREAD_WARNING_PREFIX_BYTES: usize = 64;
+/// `_mi_verbose_message`'s prefix, delivered as its own `_mi_fputs` fragment.
+const VERBOSE_PREFIX: &CStr = c"mimalloc: ";
 const WARNING_PREFIX_HEAD: &[u8] = b"mimalloc: warning: thread 0x";
 const WARNING_PREFIX_TAIL: &[u8] = b": ";
 const FINAL_NOT_ALL_FREED: &[u8] = b"not all freed";
@@ -141,192 +147,130 @@ impl ProcessDiagnosticInputs {
     }
 }
 
-const DIAGNOSTIC_DESCRIPTOR_COUNT: usize = 4;
-const SOURCE_OPTION_VALUE_BYTES: usize = 64;
-const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
-const DIAGNOSTIC_SHOW_ERRORS: usize = 0;
-const DIAGNOSTIC_SHOW_STATS: usize = 1;
-const DIAGNOSTIC_VERBOSE: usize = 2;
-const DIAGNOSTIC_MAX_WARNINGS: usize = 3;
+// The source table stores C `long`; on the selected LP64 targets that is
+// both `i64` (the option-table value) and `isize` (the diagnostic snapshot).
+const _: () = assert!(core::mem::size_of::<isize>() == core::mem::size_of::<i64>());
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum DiagnosticOptionInit {
-    Uninitialized,
-    Defaulted,
-    Initialized,
-}
-
+/// One `mi_option_desc_t` value/init pair (`include/mimalloc/internal.h:455-468`).
 #[derive(Clone, Copy)]
-struct DiagnosticOptionSlot {
-    name: &'static [u8],
-    value: isize,
-    init: DiagnosticOptionInit,
+struct SourceOptionSlot {
+    value: i64,
+    init: VmOptionState,
 }
 
-/// The exact selected four-entry `options.c` image. It intentionally does
-/// not share `VmOptions`: callback/output state and these source descriptors
-/// remain outside `VmPolicy`.
-struct ProcessDiagnosticOptions {
-    slots: [DiagnosticOptionSlot; DIAGNOSTIC_DESCRIPTOR_COUNT],
+/// The complete pinned `mi_options[]` image (`src/options.c:112-177`).
+///
+/// Pinned `options.c` owns this table together with the output and warning
+/// machinery: `mi_option_init` reports through `_mi_warning_message`, whose
+/// gate lazily reads `verbose` and `show_errors` from the same table. Keeping
+/// the table beside [`OutputOwner`]'s delivery state preserves that one
+/// source module boundary.
+///
+/// Transitional boundary: the process VM policy still resolves its
+/// [`crate::config::VmOptions`] subset from the same raw environment before
+/// this owner exists, so a VM descriptor has two images with equal startup
+/// values. The crate-private [`OutputOwner::option_set`] reaches only this
+/// table; before a public `mi_option_set` is exposed, the VM policy must read
+/// this table instead of its copy.
+struct ProcessSourceOptions {
+    slots: [SourceOptionSlot; SOURCE_OPTION_COUNT],
     environment_reader: VmOptionEnvironmentReader,
 }
 
-impl ProcessDiagnosticOptions {
+/// Warnings owed by one `mi_option_init` attempt, in their source order:
+/// the deprecated-spelling warning precedes value parsing, and the invalid
+/// warning follows the `MI_OPTION_DEFAULTED` transition.
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+struct SourceOptionInitWarnings {
+    deprecated: bool,
+    invalid: bool,
+}
+
+impl ProcessSourceOptions {
     const fn new(environment_reader: VmOptionEnvironmentReader) -> Self {
-        Self {
-            slots: [
-                DiagnosticOptionSlot { name: b"show_errors", value: 0, init: DiagnosticOptionInit::Uninitialized },
-                DiagnosticOptionSlot { name: b"show_stats", value: 0, init: DiagnosticOptionInit::Uninitialized },
-                DiagnosticOptionSlot { name: b"verbose", value: 0, init: DiagnosticOptionInit::Uninitialized },
-                DiagnosticOptionSlot { name: b"max_warnings", value: 32, init: DiagnosticOptionInit::Uninitialized },
-            ],
-            environment_reader,
+        let mut slots = [SourceOptionSlot { value: 0, init: VmOptionState::Uninitialized }; SOURCE_OPTION_COUNT];
+        let mut index = 0;
+        while index < SOURCE_OPTION_COUNT {
+            slots[index].value = SourceOption::ALL[index].default_value();
+            index += 1;
         }
+        Self { slots, environment_reader }
+    }
+
+    #[inline]
+    const fn value(&self, option: SourceOption) -> i64 {
+        self.slots[option.index()].value
+    }
+
+    #[inline]
+    fn set_value(&mut self, option: SourceOption, value: i64) {
+        self.slots[option.index()].value = value;
     }
 
     #[inline]
     const fn snapshot(&self) -> DiagnosticOptionSnapshot {
         DiagnosticOptionSnapshot::new(
-            self.slots[DIAGNOSTIC_SHOW_ERRORS].value,
-            self.slots[DIAGNOSTIC_VERBOSE].value,
-            self.slots[DIAGNOSTIC_MAX_WARNINGS].value,
+            self.value(SourceOption::ShowErrors) as isize,
+            self.value(SourceOption::Verbose) as isize,
+            self.value(SourceOption::MaxWarnings) as isize,
         )
-        .with_show_stats(self.slots[DIAGNOSTIC_SHOW_STATS].value)
+        .with_show_stats(self.value(SourceOption::ShowStats) as isize)
     }
 
-    /// Mirrors one `mi_option_init`: unavailable source environment results
-    /// intentionally leave the slot UNINIT so a later warning route retries.
-    unsafe fn initialize_one(&mut self, index: usize) -> Option<usize> {
-        if self.slots[index].init != DiagnosticOptionInit::Uninitialized {
-            return None;
+    /// Mirrors one `mi_option_init`. An unavailable environment result leaves
+    /// the slot UNINIT so a later `mi_option_get` retries it.
+    unsafe fn initialize_one(&mut self, option: SourceOption) -> SourceOptionInitWarnings {
+        let mut warnings = SourceOptionInitWarnings::default();
+        if self.slots[option.index()].init != VmOptionState::Uninitialized {
+            return warnings;
         }
         // SAFETY: ProcessDiagnosticInputs documents this reader's source
         // lifetime and stability obligation; this is its bounded source use.
         let environment = unsafe { (self.environment_reader)() };
-        let mut value = [0_u8; SOURCE_OPTION_VALUE_BYTES + 1];
-        match unsafe { diagnostic_environment_value(environment, self.slots[index].name, &mut value) } {
-            DiagnosticEnvironmentValue::Unavailable => None,
-            DiagnosticEnvironmentValue::Absent => {
-                self.slots[index].init = DiagnosticOptionInit::Defaulted;
-                None
-            }
-            DiagnosticEnvironmentValue::Value(length) => match parse_diagnostic_source_value(&value[..length]) {
-                Some(parsed) => {
-                    self.slots[index].value = parsed;
-                    self.slots[index].init = DiagnosticOptionInit::Initialized;
-                    None
+        let mut value: SourceOptionValueBuffer = [0; _];
+        // SAFETY: the reader's result carries the raw `environ` contract.
+        let observation = unsafe { observe_source_option(environment, option, &mut value) };
+        warnings.deprecated = observation.legacy;
+        match observation.environment {
+            VmOptionEnvironment::Unavailable => {}
+            VmOptionEnvironment::Absent => self.slots[option.index()].init = VmOptionState::Defaulted,
+            VmOptionEnvironment::Value(input) => match parse_source_option(option, input) {
+                Some(SourceOptionValue::Boolean(value)) => {
+                    self.slots[option.index()] = SourceOptionSlot { value, init: VmOptionState::Initialized };
                 }
+                // `mi_option_set` performs the initialized store, including
+                // its guarded min/max coupling.
+                Some(SourceOptionValue::Converted(value)) => self.set(option, value),
                 None => {
                     // C defaults before `_mi_warning_message` to avoid a
                     // recursive verbose lookup. The caller emits only after
                     // this state is fully visible in its exclusive startup or
                     // lock-serialized retry phase.
-                    self.slots[index].init = DiagnosticOptionInit::Defaulted;
-                    Some(index)
+                    self.slots[option.index()].init = VmOptionState::Defaulted;
+                    warnings.invalid = true;
                 }
             },
         }
+        warnings
     }
-}
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum DiagnosticEnvironmentValue {
-    Absent,
-    Value(usize),
-    Unavailable,
-}
-
-/// The selected `_mi_prim_getenv` scan for the four diagnostic descriptors.
-unsafe fn diagnostic_environment_value(
-    environment: *const *const c_char,
-    name: &[u8],
-    value: &mut [u8; SOURCE_OPTION_VALUE_BYTES + 1],
-) -> DiagnosticEnvironmentValue {
-    if environment.is_null() {
-        return DiagnosticEnvironmentValue::Unavailable;
-    }
-    for entry_index in 0..SOURCE_ENVIRONMENT_ENTRY_LIMIT {
-        // SAFETY: ProcessDiagnosticInputs owns the same stable valid vector
-        // obligation as the pinned Unix `_mi_prim_getenv` boundary.
-        let entry = unsafe { core::ptr::read(environment.add(entry_index)) };
-        if entry.is_null() {
-            return DiagnosticEnvironmentValue::Absent;
-        }
-        if !unsafe { diagnostic_environment_name_matches(entry, name) } {
-            continue;
-        }
-        let entry_value = unsafe { entry.add(b"mimalloc_".len() + name.len() + 1) };
-        for value_index in 0..=SOURCE_OPTION_VALUE_BYTES {
-            let byte = unsafe { core::ptr::read(entry_value.add(value_index).cast::<u8>()) };
-            if byte == 0 {
-                return DiagnosticEnvironmentValue::Value(value_index);
-            }
-            if value_index == SOURCE_OPTION_VALUE_BYTES {
-                return DiagnosticEnvironmentValue::Unavailable;
-            }
-            value[value_index] = byte;
-        }
-        unreachable!("bounded diagnostic source environment scan returns in-loop");
-    }
-    DiagnosticEnvironmentValue::Absent
-}
-
-unsafe fn diagnostic_environment_name_matches(entry: *const c_char, name: &[u8]) -> bool {
-    for (index, expected) in b"mimalloc_".iter().chain(name).enumerate() {
-        let found = unsafe { core::ptr::read(entry.add(index).cast::<u8>()) };
-        if !found.eq_ignore_ascii_case(expected) {
-            return false;
+    /// `mi_option_set` (`src/options.c:302-316`), including its guarded
+    /// min/max coupling through `_mi_option_get_fast`'s raw value read.
+    fn set(&mut self, option: SourceOption, value: i64) {
+        self.slots[option.index()] = SourceOptionSlot { value, init: VmOptionState::Initialized };
+        if option == SourceOption::GuardedMin && self.value(SourceOption::GuardedMax) < value {
+            self.set(SourceOption::GuardedMax, value);
+        } else if option == SourceOption::GuardedMax && self.value(SourceOption::GuardedMin) > value {
+            self.set(SourceOption::GuardedMin, value);
         }
     }
-    unsafe { core::ptr::read(entry.add(b"mimalloc_".len() + name.len()).cast::<u8>()) == b'=' }
-}
 
-/// `options.c:639-688` without size suffix handling: the selected descriptors
-/// are source `long` scalars, so the value must consume the complete string.
-fn parse_diagnostic_source_value(input: &[u8]) -> Option<isize> {
-    if input.is_empty() || ascii_eq_ignore_case(input, b"1")
-        || ascii_eq_ignore_case(input, b"TRUE") || ascii_eq_ignore_case(input, b"YES")
-        || ascii_eq_ignore_case(input, b"ON")
-    {
-        return Some(1);
+    /// `mi_option_set_default` (`src/options.c:318-325`).
+    fn set_default(&mut self, option: SourceOption, value: i64) {
+        if self.slots[option.index()].init != VmOptionState::Initialized {
+            self.slots[option.index()].value = value;
+        }
     }
-    if ascii_eq_ignore_case(input, b"0") || ascii_eq_ignore_case(input, b"FALSE")
-        || ascii_eq_ignore_case(input, b"NO") || ascii_eq_ignore_case(input, b"OFF")
-    {
-        return Some(0);
-    }
-    let mut index = 0;
-    while input.get(index).is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)) {
-        index += 1;
-    }
-    let negative = match input.get(index) {
-        Some(b'+') => { index += 1; false }
-        Some(b'-') => { index += 1; true }
-        _ => false,
-    };
-    let digit_start = index;
-    let mut magnitude = 0_u128;
-    while let Some(byte @ b'0'..=b'9') = input.get(index).copied() {
-        magnitude = magnitude.checked_mul(10)?.checked_add((byte - b'0') as u128)?;
-        index += 1;
-    }
-    if index == digit_start || index != input.len() {
-        return None;
-    }
-    let positive_limit = isize::MAX as u128;
-    let negative_limit = positive_limit + 1;
-    if negative {
-        (magnitude <= negative_limit).then(|| {
-            if magnitude == negative_limit { isize::MIN } else { -(magnitude as isize) }
-        })
-    } else {
-        (magnitude <= positive_limit).then_some(magnitude as isize)
-    }
-}
-
-#[inline]
-fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
-    left.len() == right.len() && left.iter().zip(right).all(|(left, right)| left.eq_ignore_ascii_case(right))
 }
 
 impl DiagnosticOptionSnapshot {
@@ -477,6 +421,45 @@ pub(crate) struct FinalProcessDiagnosticView {
     subprocess_sequence: usize,
     statistics: FinalStatisticsSnapshot,
     process: FinalProcessInfo,
+}
+
+/// A broken private source-option owner boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceOptionAccessError {
+    /// `_mi_options_init` has not installed this owner's descriptor table.
+    Unavailable,
+    /// The private descriptor lock reported an impossible primitive error.
+    Lock(Errno),
+}
+
+/// `MI_MALLOC_VERSION` in the pinned `include/mimalloc.h:11`.
+const SOURCE_VERSION: i32 = 30_500;
+
+/// `mi_option_get_clamp`'s comparison order (`src/options.c:286-289`).
+#[inline]
+const fn source_option_clamp(value: i64, min: i64, max: i64) -> i64 {
+    if value < min {
+        min
+    } else if value > max {
+        max
+    } else {
+        value
+    }
+}
+
+/// `mi_option_get_size`'s conversion (`src/options.c:291-301`): negative
+/// values become zero and a KiB descriptor saturates at `MI_MAX_ALLOC_SIZE`.
+#[inline]
+const fn source_option_size(option: SourceOption, value: i64) -> usize {
+    let size = if value < 0 { 0 } else { value as usize };
+    if option.has_size_in_kib() {
+        match size.checked_mul(KIB) {
+            Some(size) => size,
+            None => MAX_ALLOC_SIZE,
+        }
+    } else {
+        size
+    }
 }
 
 /// A final source-diagnostic phase could not inspect its owner.
@@ -657,6 +640,38 @@ impl SourceFormattedMessage {
         append_mbind_unsigned_decimal(&mut bytes, &mut length, pages as u64);
         append_mbind_bytes(&mut bytes, &mut length, b" page(s))\n");
         Self { bytes, length }
+    }
+
+    /// `"process init: 0x%zx\n"` with `_mi_thread_id()` (`src/init.c:541`);
+    /// a widthless `x` has the source minimum width two and uppercase digits.
+    fn process_init(thread_identity: usize) -> Self {
+        let mut message = Self::empty();
+        message.append(b"process init: 0x");
+        append_mbind_uppercase_hex_minimum_two(&mut message.bytes, &mut message.length, thread_identity as u64);
+        message.append(b"\n");
+        message
+    }
+
+    /// An empty source `mi_vfprintf` payload for fixed-literal composition.
+    #[inline]
+    const fn empty() -> Self {
+        Self { bytes: [0; SOURCE_FORMAT_STORAGE_BYTES], length: 0 }
+    }
+
+    /// Appends literal or `%s` bytes through the 990-byte payload limit.
+    #[inline]
+    fn append(&mut self, bytes: &[u8]) {
+        append_mbind_bytes(&mut self.bytes, &mut self.length, bytes);
+    }
+
+    /// Appends the source `%ld`/`%i` conversion: `mi_out_num` digits after a
+    /// `-` prefix; `LONG_MIN` keeps its two's-complement magnitude.
+    #[inline]
+    fn append_signed_decimal(&mut self, value: i64) {
+        if value < 0 {
+            self.append(b"-");
+        }
+        append_mbind_unsigned_decimal(&mut self.bytes, &mut self.length, value.unsigned_abs());
     }
 
     #[inline]
@@ -862,7 +877,7 @@ pub(crate) struct OutputOwner {
     argument: AtomicPtr<c_void>,
     warning_count: AtomicUsize,
     max_warning_count: isize,
-    source_options: UnsafeCell<core::mem::MaybeUninit<ProcessDiagnosticOptions>>,
+    source_options: UnsafeCell<core::mem::MaybeUninit<ProcessSourceOptions>>,
     source_options_ready: AtomicU8,
     source_options_lock: PrivateLock,
 }
@@ -956,35 +971,57 @@ impl OutputOwner {
         self.max_warning_count = options.max_warnings;
     }
 
-    /// Resolves the selected four `options.c` descriptors before VM/OS work.
+    /// Performs the option prefix of `mi_process_init_once`
+    /// (`src/init.c:540-544`): the verbose `process init` line, then
+    /// `_mi_options_init` (`src/options.c:187-203`), before VM/OS work.
     ///
-    /// The exclusive startup borrow proves that no dispatcher can observe the
-    /// inline option image until all four source-order initial attempts have
-    /// completed and the post-pass warning cap has replaced the initial 16.
-    /// Unavailable environment reads remain UNINIT, exactly for a later
-    /// lock-serialized warning-route retry.
+    /// The verbose read may lazily initialize `verbose` (and report its own
+    /// invalid value) before the loop. Every source descriptor is then
+    /// initialized in table order, with each
+    /// deprecated-spelling or invalid-value warning delivered before the next
+    /// descriptor. The exclusive startup borrow proves that no dispatcher can
+    /// observe the inline option image until the loop has completed and the
+    /// post-pass warning cap has replaced the initial 16. Unavailable
+    /// environment reads remain UNINIT, exactly for a later lock-serialized
+    /// source retry. The selected profile is not `MI_GUARDED`, so the source's
+    /// guarded large-page adjustment is absent.
     pub(crate) unsafe fn initialize_source_options(
         &mut self,
         environment_reader: VmOptionEnvironmentReader,
     ) {
-        let options = ProcessDiagnosticOptions::new(environment_reader);
+        let options = ProcessSourceOptions::new(environment_reader);
         unsafe { (*self.source_options.get()).write(options) };
         self.source_options_ready.store(1, Ordering::Release);
-        for index in 0..DIAGNOSTIC_DESCRIPTOR_COUNT {
+
+        // `_mi_verbose_message("process init: 0x%zx\n", _mi_thread_id())`.
+        let mut pending = PendingSourceWarnings::new();
+        // SAFETY: exclusive startup ownership, as for the loop below.
+        let (verbose, warnings) = unsafe { self.source_option_get_unlocked(SourceOption::Verbose) };
+        unsafe {
+            self.collect_source_option_init_warnings_unlocked(SourceOption::Verbose, warnings, &mut pending)
+        };
+        // SAFETY: no source-options lock is held during startup delivery.
+        unsafe { pending.deliver(self) };
+        if verbose != 0 {
+            let message = SourceFormattedMessage::process_init(thread_pointer_identity());
+            self.fputs_default(Some(VERBOSE_PREFIX), message.as_c_str());
+        }
+
+        for option in SourceOption::ALL {
             let mut pending = PendingSourceWarnings::new();
             // SAFETY: the exclusive startup borrow is the only descriptor
             // access before a route is borrowed or post-init dispatch starts.
-            let (_, invalid) = unsafe { self.source_option_get_unlocked(index) };
-            if let Some(invalid) = invalid {
-                unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
-            }
+            let (_, warnings) = unsafe { self.source_option_get_unlocked(option) };
+            unsafe { self.collect_source_option_init_warnings_unlocked(option, warnings, &mut pending) };
             // SAFETY: normal source startup has no custom registration before
             // options initialization; no source-options lock is held here.
             unsafe { pending.deliver(self) };
         }
         // `_mi_options_init` assigns the global warning cap only after its
-        // complete descriptor loop. A max_warnings error above therefore used
-        // the source initial cap of 16 before this write.
+        // complete descriptor loop. A warning above therefore used the
+        // source initial cap of 16 before this write. The matching
+        // `mi_max_error_count` assignment has no reader until the source
+        // error-message route exists; its descriptor was initialized above.
         self.max_warning_count = unsafe { self.source_option_snapshot_unlocked() }.max_warnings;
     }
 
@@ -1020,20 +1057,289 @@ impl OutputOwner {
         unsafe { pending.deliver(self) };
     }
 
+    /// Runs one lock-serialized descriptor operation, then delivers the source
+    /// warnings it staged after the descriptor lock is released.
+    ///
+    /// # Safety
+    ///
+    /// The same callback registration, in-flight delivery, and no-reentry
+    /// obligations as [`Self::warning_from_source_options`] apply.
+    unsafe fn with_source_options<R>(
+        &self,
+        operation: impl FnOnce(&Self, &mut PendingSourceWarnings) -> R,
+    ) -> Result<R, SourceOptionAccessError> {
+        if self.source_options_ready.load(Ordering::Acquire) != 1 {
+            return Err(SourceOptionAccessError::Unavailable);
+        }
+        let mut pending = PendingSourceWarnings::new();
+        let result = {
+            let _guard = self
+                .source_options_lock
+                .lock()
+                .map_err(SourceOptionAccessError::Lock)?;
+            operation(self, &mut pending)
+        };
+        // SAFETY: descriptor locking ended above; the caller owns the
+        // serialized output scope documented on this method.
+        unsafe { pending.deliver(self) };
+        Ok(result)
+    }
+
+    /// `mi_option_get` (`src/options.c:275-284`): lazily initialize an UNINIT
+    /// descriptor, deliver its source warnings, and return its current value
+    /// even when the environment remains unavailable for a later retry.
+    ///
+    /// # Safety
+    ///
+    /// The same obligations as [`Self::warning_from_source_options`] apply,
+    /// because a lazy initialization can deliver source warnings.
+    pub(crate) unsafe fn option_get(&self, option: SourceOption) -> Result<i64, SourceOptionAccessError> {
+        unsafe {
+            self.with_source_options(|owner, pending| {
+                // SAFETY: `with_source_options` holds the descriptor lock.
+                let (value, warnings) = owner.source_option_get_unlocked(option);
+                owner.collect_source_option_init_warnings_unlocked(option, warnings, pending);
+                value
+            })
+        }
+    }
+
+    /// `mi_option_get_clamp` (`src/options.c:286-289`). The source compares
+    /// against `min` first, so an inverted range returns `min` or `max`
+    /// exactly as C does instead of rejecting it.
+    ///
+    /// # Safety
+    ///
+    /// See [`Self::option_get`].
+    pub(crate) unsafe fn option_get_clamp(
+        &self,
+        option: SourceOption,
+        min: i64,
+        max: i64,
+    ) -> Result<i64, SourceOptionAccessError> {
+        let value = unsafe { self.option_get(option) }?;
+        Ok(source_option_clamp(value, min, max))
+    }
+
+    /// `mi_option_get_size` (`src/options.c:291-301`).
+    ///
+    /// # Safety
+    ///
+    /// See [`Self::option_get`].
+    pub(crate) unsafe fn option_get_size(&self, option: SourceOption) -> Result<usize, SourceOptionAccessError> {
+        let value = unsafe { self.option_get(option) }?;
+        Ok(source_option_size(option, value))
+    }
+
+    /// `mi_option_is_enabled` (`src/options.c:327-329`).
+    ///
+    /// # Safety
+    ///
+    /// See [`Self::option_get`].
+    pub(crate) unsafe fn option_is_enabled(&self, option: SourceOption) -> Result<bool, SourceOptionAccessError> {
+        Ok(unsafe { self.option_get(option) }? != 0)
+    }
+
+    /// `mi_option_set` (`src/options.c:302-316`), including the guarded
+    /// min/max coupling. It never observes the environment.
+    ///
+    /// # Safety
+    ///
+    /// The caller must not race a descriptor reader that relies on this
+    /// value's publication order; the source table is an unsynchronized
+    /// global whose races are tolerated only because concurrent
+    /// initialization resolves to one value. The lock makes each Rust store
+    /// atomic with respect to other descriptor operations.
+    pub(crate) unsafe fn option_set(&self, option: SourceOption, value: i64) -> Result<(), SourceOptionAccessError> {
+        unsafe {
+            self.with_source_options(|owner, _| {
+                // SAFETY: `with_source_options` holds the descriptor lock.
+                (&mut *owner.source_options.get()).assume_init_mut().set(option, value);
+            })
+        }
+    }
+
+    /// `mi_option_set_default` (`src/options.c:318-325`).
+    ///
+    /// # Safety
+    ///
+    /// See [`Self::option_set`].
+    pub(crate) unsafe fn option_set_default(
+        &self,
+        option: SourceOption,
+        value: i64,
+    ) -> Result<(), SourceOptionAccessError> {
+        unsafe {
+            self.with_source_options(|owner, _| {
+                // SAFETY: `with_source_options` holds the descriptor lock.
+                (&mut *owner.source_options.get()).assume_init_mut().set_default(option, value);
+            })
+        }
+    }
+
+    /// `mi_option_set_enabled` (`src/options.c:331-333`); `mi_option_enable`
+    /// and `mi_option_disable` are its `true`/`false` forms.
+    ///
+    /// # Safety
+    ///
+    /// See [`Self::option_set`].
+    #[inline]
+    pub(crate) unsafe fn option_set_enabled(
+        &self,
+        option: SourceOption,
+        enable: bool,
+    ) -> Result<(), SourceOptionAccessError> {
+        unsafe { self.option_set(option, i64::from(enable)) }
+    }
+
+    /// `mi_option_set_enabled_default` (`src/options.c:335-337`).
+    ///
+    /// # Safety
+    ///
+    /// See [`Self::option_set`].
+    #[inline]
+    pub(crate) unsafe fn option_set_enabled_default(
+        &self,
+        option: SourceOption,
+        enable: bool,
+    ) -> Result<(), SourceOptionAccessError> {
+        unsafe { self.option_set_default(option, i64::from(enable)) }
+    }
+
+    /// `mi_options_print_out` (`src/options.c:214-260`): the version line,
+    /// every descriptor after a possible lazy initialization, and the selected
+    /// build-configuration lines. `output == None` is the source `NULL` default
+    /// route; a custom callback receives each line directly with `argument`.
+    ///
+    /// The selected Rust engine has no CMake build type or git description,
+    /// matching the pinned C oracle compiled without `MI_CMAKE_BUILD_TYPE`
+    /// and `MI_GIT_DESCRIBE`. `page_record_bytes` is the caller's
+    /// `sizeof(mi_page_t)` equivalent.
+    ///
+    /// # Safety
+    ///
+    /// The obligations of [`Self::option_get`] apply. A custom `output` and
+    /// the objects reachable from `argument` must remain valid for every line.
+    pub(crate) unsafe fn options_print_out(
+        &self,
+        output: Option<OutputCallback>,
+        argument: *mut c_void,
+        page_record_bytes: usize,
+    ) -> Result<(), SourceOptionAccessError> {
+        let mut line = SourceFormattedMessage::empty();
+        line.append(b"v");
+        line.append_signed_decimal(i64::from(SOURCE_VERSION / 10_000));
+        line.append(b".");
+        line.append_signed_decimal(i64::from((SOURCE_VERSION % 10_000) / 100));
+        line.append(b".");
+        line.append_signed_decimal(i64::from(SOURCE_VERSION % 100));
+        line.append(b"\n");
+        unsafe { self.fprintf(output, argument, &line) };
+
+        for option in SourceOption::ALL {
+            let value = unsafe { self.option_get(option) }?;
+            let mut line = SourceFormattedMessage::empty();
+            line.append(b"option '");
+            line.append(option.name());
+            line.append(b"': ");
+            line.append_signed_decimal(value);
+            line.append(b" ");
+            if option.has_size_in_kib() {
+                line.append(b"KiB");
+            }
+            line.append(b"\n");
+            unsafe { self.fprintf(output, argument, &line) };
+        }
+
+        let mut line = SourceFormattedMessage::empty();
+        line.append(b"debug level : ");
+        line.append_signed_decimal(DEBUG_LEVEL as i64);
+        line.append(b"\n");
+        unsafe { self.fprintf(output, argument, &line) };
+        let mut line = SourceFormattedMessage::empty();
+        line.append(b"secure level: ");
+        line.append_signed_decimal(SECURE_LEVEL as i64);
+        line.append(b"\n");
+        unsafe { self.fprintf(output, argument, &line) };
+        // `MI_TRACK_TOOL` is "none" without a tracking build.
+        let mut line = SourceFormattedMessage::empty();
+        line.append(b"mem tracking: none\n");
+        unsafe { self.fprintf(output, argument, &line) };
+        // `MI_PAGE_META_IS_ALIGNED` selects the aligned-free line; the
+        // selected profile has neither guarded nor encoded free lists.
+        let mut line = SourceFormattedMessage::empty();
+        line.append(b"free: aligned, page size: ");
+        line.append_signed_decimal(page_record_bytes as i64);
+        line.append(b"\n");
+        unsafe { self.fprintf(output, argument, &line) };
+        Ok(())
+    }
+
+    /// `_mi_fprintf` after formatting: `_mi_fputs(out, arg, NULL, buf)`.
+    ///
+    /// # Safety
+    ///
+    /// The default route has [`Self::raw_message`]'s obligations; a custom
+    /// callback and argument must be valid for this call.
+    unsafe fn fprintf(&self, output: Option<OutputCallback>, argument: *mut c_void, message: &SourceFormattedMessage) {
+        match output {
+            None => self.fputs_default(None, message.as_c_str()),
+            // SAFETY: the caller supplies the callback/argument validity.
+            Some(output) => unsafe { invoke_callback(output, message.as_c_str(), argument) },
+        }
+    }
+
     /// Reads one source descriptor while the caller has either exclusive
     /// startup ownership or `source_options_lock`.
-    unsafe fn source_option_get_unlocked(&self, index: usize) -> (isize, Option<usize>) {
+    unsafe fn source_option_get_unlocked(
+        &self,
+        option: SourceOption,
+    ) -> (i64, SourceOptionInitWarnings) {
         let options = unsafe { (&mut *self.source_options.get()).assume_init_mut() };
-        let invalid = unsafe { options.initialize_one(index) };
-        (options.slots[index].value, invalid)
+        let warnings = unsafe { options.initialize_one(option) };
+        (options.value(option), warnings)
     }
 
     unsafe fn source_option_snapshot_unlocked(&self) -> DiagnosticOptionSnapshot {
         unsafe { (&*self.source_options.get()).assume_init_ref() }.snapshot()
     }
 
-    unsafe fn source_option_set_value_unlocked(&self, index: usize, value: isize) {
-        unsafe { (&mut *self.source_options.get()).assume_init_mut() }.slots[index].value = value;
+    unsafe fn source_option_set_value_unlocked(&self, option: SourceOption, value: i64) {
+        unsafe { (&mut *self.source_options.get()).assume_init_mut() }.set_value(option, value);
+    }
+
+    /// The raw `mi_options[option]` value/init pair, read without lazy
+    /// initialization, for the pinned C table comparison.
+    #[cfg(test)]
+    fn source_option_image_for_test(&self, option: SourceOption) -> (i64, VmOptionState) {
+        assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
+        let _guard = self.source_options_lock.lock().expect("test descriptor lock");
+        // SAFETY: the table is installed and the lock excludes mutation.
+        let options = unsafe { (&*self.source_options.get()).assume_init_ref() };
+        let slot = options.slots[option.index()];
+        (slot.value, slot.init)
+    }
+
+    /// Stages the warnings of one `mi_option_init` attempt in source order.
+    unsafe fn collect_source_option_init_warnings_unlocked(
+        &self,
+        option: SourceOption,
+        warnings: SourceOptionInitWarnings,
+        pending: &mut PendingSourceWarnings,
+    ) {
+        if warnings.deprecated {
+            // The deprecated spelling has no gate descriptor of its own:
+            // `verbose` and `show_errors` have no legacy name, so this gate
+            // never reads the still-UNINIT descriptor that produced it.
+            unsafe {
+                self.collect_warning_from_source_options_unlocked(
+                    deprecated_source_option_message(option), pending,
+                )
+            };
+        }
+        if warnings.invalid {
+            unsafe { self.collect_invalid_source_option_unlocked(option, pending) };
+        }
     }
 
     /// Implements the finite `mi_option_get(verbose)` then
@@ -1045,21 +1351,23 @@ impl OutputOwner {
         message: SourceFormattedMessage,
         pending: &mut PendingSourceWarnings,
     ) {
-        let (verbose, invalid_verbose) = unsafe { self.source_option_get_unlocked(DIAGNOSTIC_VERBOSE) };
-        if let Some(invalid) = invalid_verbose {
-            unsafe { self.collect_invalid_source_option_unlocked(invalid, pending) };
-        }
+        let (verbose, verbose_warnings) = unsafe { self.source_option_get_unlocked(SourceOption::Verbose) };
+        unsafe {
+            self.collect_source_option_init_warnings_unlocked(SourceOption::Verbose, verbose_warnings, pending)
+        };
         if verbose != 0 {
             pending.push(unsafe { self.source_option_snapshot_unlocked() }, message);
             return;
         }
 
-        let (show_errors, invalid_show_errors) = unsafe {
-            self.source_option_get_unlocked(DIAGNOSTIC_SHOW_ERRORS)
+        let (show_errors, show_errors_warnings) = unsafe {
+            self.source_option_get_unlocked(SourceOption::ShowErrors)
         };
-        if let Some(invalid) = invalid_show_errors {
-            unsafe { self.collect_invalid_source_option_unlocked(invalid, pending) };
-        }
+        unsafe {
+            self.collect_source_option_init_warnings_unlocked(
+                SourceOption::ShowErrors, show_errors_warnings, pending,
+            )
+        };
         if show_errors != 0 {
             pending.push(unsafe { self.source_option_snapshot_unlocked() }, message);
         }
@@ -1070,25 +1378,25 @@ impl OutputOwner {
     /// before the parent gate continues.
     unsafe fn collect_invalid_source_option_unlocked(
         &self,
-        index: usize,
+        option: SourceOption,
         pending: &mut PendingSourceWarnings,
     ) {
-        if index == DIAGNOSTIC_VERBOSE {
+        if option == SourceOption::Verbose {
             let snapshot = unsafe { self.source_option_snapshot_unlocked() };
             if snapshot.verbose == 0 {
-                unsafe { self.source_option_set_value_unlocked(DIAGNOSTIC_VERBOSE, 1) };
+                unsafe { self.source_option_set_value_unlocked(SourceOption::Verbose, 1) };
                 unsafe {
                     self.collect_warning_from_source_options_unlocked(
-                        invalid_diagnostic_option_message(index), pending,
+                        invalid_source_option_message(option), pending,
                     )
                 };
-                unsafe { self.source_option_set_value_unlocked(DIAGNOSTIC_VERBOSE, 0) };
+                unsafe { self.source_option_set_value_unlocked(SourceOption::Verbose, 0) };
                 return;
             }
         }
         unsafe {
             self.collect_warning_from_source_options_unlocked(
-                invalid_diagnostic_option_message(index), pending,
+                invalid_source_option_message(option), pending,
             )
         };
     }
@@ -1157,6 +1465,20 @@ impl OutputOwner {
         self.default_sink
             .store(DEFAULT_STDERR_AND_DELAYED, Ordering::Release);
         self.argument.store(core::ptr::null_mut(), Ordering::Release);
+        // `if (mi_option_is_enabled(mi_option_verbose)) { mi_options_print(); }`
+        // An owner without an installed option table is only a direct output
+        // fixture; the source always has its static table here.
+        // SAFETY: the caller serializes this startup phase as documented above.
+        if let Ok(true) = unsafe { self.option_is_enabled(SourceOption::Verbose) } {
+            // SAFETY: the same startup serialization covers the default route.
+            let _ = unsafe {
+                self.options_print_out(
+                    None,
+                    core::ptr::null_mut(),
+                    core::mem::size_of::<crate::types::Page>(),
+                )
+            };
+        }
     }
 
     /// Emits a preformatted source message through `_mi_fputs`' default path.
@@ -1221,24 +1543,28 @@ impl OutputOwner {
             // Pinned `||` reads show_stats first and only then verbose. Each
             // lazy descriptor retry remains serialized, and any invalid-value
             // warning is staged until after the descriptor lock is released.
-            let (show_stats, invalid_show_stats) = unsafe {
-                self.source_option_get_unlocked(DIAGNOSTIC_SHOW_STATS)
+            let (show_stats, show_stats_warnings) = unsafe {
+                self.source_option_get_unlocked(SourceOption::ShowStats)
             };
-            if let Some(invalid) = invalid_show_stats {
-                unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
-            }
+            unsafe {
+                self.collect_source_option_init_warnings_unlocked(
+                    SourceOption::ShowStats, show_stats_warnings, &mut pending,
+                )
+            };
             if show_stats != 0 {
                 // This is source `||`, not a two-option snapshot: a signed
                 // nonzero show_stats must not initialize, retry, or stage an
                 // invalid warning for verbose.
                 true
             } else {
-                let (verbose, invalid_verbose) = unsafe {
-                    self.source_option_get_unlocked(DIAGNOSTIC_VERBOSE)
+                let (verbose, verbose_warnings) = unsafe {
+                    self.source_option_get_unlocked(SourceOption::Verbose)
                 };
-                if let Some(invalid) = invalid_verbose {
-                    unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
-                }
+                unsafe {
+                    self.collect_source_option_init_warnings_unlocked(
+                        SourceOption::Verbose, verbose_warnings, &mut pending,
+                    )
+                };
                 verbose != 0
             }
         };
@@ -1282,12 +1608,14 @@ impl OutputOwner {
                 .source_options_lock
                 .lock()
                 .map_err(FinalDiagnosticOutputError::SourceOptionsLock)?;
-            let (verbose, invalid_verbose) = unsafe {
-                self.source_option_get_unlocked(DIAGNOSTIC_VERBOSE)
+            let (verbose, verbose_warnings) = unsafe {
+                self.source_option_get_unlocked(SourceOption::Verbose)
             };
-            if let Some(invalid) = invalid_verbose {
-                unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
-            }
+            unsafe {
+                self.collect_source_option_init_warnings_unlocked(
+                    SourceOption::Verbose, verbose_warnings, &mut pending,
+                )
+            };
             verbose
         };
         // SAFETY: the descriptor lock was released before any foreign output.
@@ -1759,17 +2087,29 @@ unsafe fn render_final_verbose_tail(output: &OutputOwner, page_record_bytes: usi
     unsafe { output.raw_message(line.as_message()) };
 }
 
-fn invalid_diagnostic_option_message(index: usize) -> SourceFormattedMessage {
-    let message = match index {
-        DIAGNOSTIC_SHOW_ERRORS => b"environment option mimalloc_show_errors has an invalid value.\n\0".as_slice(),
-        DIAGNOSTIC_SHOW_STATS => b"environment option mimalloc_show_stats has an invalid value.\n\0".as_slice(),
-        DIAGNOSTIC_VERBOSE => b"environment option mimalloc_verbose has an invalid value.\n\0".as_slice(),
-        DIAGNOSTIC_MAX_WARNINGS => b"environment option mimalloc_max_warnings has an invalid value.\n\0".as_slice(),
-        _ => unreachable!("only the fixed selected source descriptors are selectable"),
-    };
-    // SAFETY: each fixed source message is NUL-terminated and has no interior
-    // NUL, matching the fixed `mi_option_init` literals.
-    SourceFormattedMessage::from_source_formatted(unsafe { CStr::from_bytes_with_nul_unchecked(message) })
+/// `"environment option mimalloc_%s has an invalid value.\n"`
+/// (`src/options.c:681-688`).
+fn invalid_source_option_message(option: SourceOption) -> SourceFormattedMessage {
+    let mut message = SourceFormattedMessage::empty();
+    message.append(b"environment option mimalloc_");
+    message.append(option.name());
+    message.append(b" has an invalid value.\n");
+    message
+}
+
+/// `"environment option \"mimalloc_%s\" is deprecated -- use \"mimalloc_%s\"
+/// instead.\n"` (`src/options.c:633-635`).
+fn deprecated_source_option_message(option: SourceOption) -> SourceFormattedMessage {
+    let legacy = option
+        .legacy_name()
+        .expect("only a descriptor with a legacy spelling reports deprecation");
+    let mut message = SourceFormattedMessage::empty();
+    message.append(b"environment option \"mimalloc_");
+    message.append(legacy);
+    message.append(b"\" is deprecated -- use \"mimalloc_");
+    message.append(option.name());
+    message.append(b"\" instead.\n");
+    message
 }
 
 /// Borrowed route from a process-owned diagnostic image to the pinned huge-page
@@ -1849,6 +2189,7 @@ mod tests {
         ThreadWarningPrefix,
     };
     use crate::{
+        config::{SourceOption, VmOptionState, SOURCE_OPTION_COUNT},
         os::ProcessUsage,
         statistics::{FinalStatCount, FinalStatisticsSnapshot},
     };
@@ -1942,12 +2283,19 @@ mod tests {
     static mut DIAGNOSTIC_ENVIRONMENT_ENTRIES: [*const c_char; 5] = [core::ptr::null(); 5];
 
     const DIAGNOSTIC_ENV_FIXED: usize = 0;
-    const DIAGNOSTIC_ENV_FOUR_UNAVAILABLE_THEN_VERBOSE: usize = 1;
+    const DIAGNOSTIC_ENV_STARTUP_UNAVAILABLE_THEN_FIXED: usize = 1;
+    /// A startup that resolves `verbose` performs one `process init` read
+    /// plus one read for each of the other 46 descriptors.
+    const RESOLVED_STARTUP_ENVIRONMENT_READS: usize = SOURCE_OPTION_COUNT;
+    /// When every startup read is unavailable, `verbose` stays UNINIT and is
+    /// read again at its table position: 1 + 47 reads.
+    const UNAVAILABLE_STARTUP_ENVIRONMENT_READS: usize = 1 + SOURCE_OPTION_COUNT;
 
     unsafe fn diagnostic_test_environment_reader() -> *const *const c_char {
         let call = DIAGNOSTIC_ENVIRONMENT_CALLS.fetch_add(1, Ordering::Relaxed) + 1;
         if DIAGNOSTIC_ENVIRONMENT_MODE.load(Ordering::Relaxed)
-            == DIAGNOSTIC_ENV_FOUR_UNAVAILABLE_THEN_VERBOSE && call <= 4
+            == DIAGNOSTIC_ENV_STARTUP_UNAVAILABLE_THEN_FIXED
+            && call <= UNAVAILABLE_STARTUP_ENVIRONMENT_READS
         {
             return core::ptr::null();
         }
@@ -2153,13 +2501,19 @@ mod tests {
         // completed; the reader uses the test's stable raw vector.
         unsafe { owner.initialize_source_options(diagnostic_test_environment_reader) };
 
-        assert_eq!(DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed), 4);
-        assert_eq!(capture.count(), 2);
-        assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(
-            capture.message(1),
+            DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed),
+            RESOLVED_STARTUP_ENVIRONMENT_READS,
+        );
+        assert_eq!(capture.count(), 4);
+        assert_eq!(capture.message(0), b"mimalloc: ", "verbose=1 emits the source process-init line first");
+        let process_init = std::format!("process init: 0x{:02X}\n", thread_pointer_identity());
+        assert_eq!(capture.message(1), process_init.as_bytes());
+        assert_live_thread_warning_prefix(capture.message(2));
+        assert_eq!(
+            capture.message(3),
             b"environment option mimalloc_show_errors has an invalid value.\n",
-            "show_errors defaults before its warning, then the source gate lazily resolves verbose=1",
+            "show_errors defaults before its warning, and verbose=1 bypasses the show_errors gate",
         );
     }
 
@@ -2170,11 +2524,11 @@ mod tests {
             .expect("diagnostic environment test lock is not poisoned");
         let show_errors = b"mimalloc_show_errors=0\0";
         let verbose = b"mimalloc_verbose=1\0";
-        // The four startup reads are unavailable. The first warning retry may
+        // Every startup read is unavailable. The first warning retry may
         // resolve only verbose: enabled verbose bypasses show_errors entirely.
         unsafe {
             install_diagnostic_test_environment(
-                DIAGNOSTIC_ENV_FOUR_UNAVAILABLE_THEN_VERBOSE,
+                DIAGNOSTIC_ENV_STARTUP_UNAVAILABLE_THEN_FIXED,
                 [
                     show_errors.as_ptr().cast(), verbose.as_ptr().cast(),
                     core::ptr::null(), core::ptr::null(), core::ptr::null(),
@@ -2192,7 +2546,10 @@ mod tests {
         // the one source descriptor retry.
         unsafe { owner.warning_from_source_options(source_message(b"mbind retry\n\0")) };
 
-        assert_eq!(DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed), 5);
+        assert_eq!(
+            DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed),
+            UNAVAILABLE_STARTUP_ENVIRONMENT_READS + 1,
+        );
         assert_eq!(capture.count(), 2);
         assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(capture.message(1), b"mbind retry\n");
@@ -2373,7 +2730,7 @@ mod tests {
         // alone and must neither read nor stage verbose's invalid warning.
         unsafe {
             install_diagnostic_test_environment(
-                DIAGNOSTIC_ENV_FOUR_UNAVAILABLE_THEN_VERBOSE,
+                DIAGNOSTIC_ENV_STARTUP_UNAVAILABLE_THEN_FIXED,
                 [
                     show_errors.as_ptr().cast(),
                     show_stats.as_ptr().cast(),
@@ -2393,12 +2750,15 @@ mod tests {
 
         // SAFETY: this runs the source gate before the later scalar capture.
         let permit = final_statistics_permit(&owner);
-        assert_eq!(DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed), 5);
+        assert_eq!(
+            DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed),
+            UNAVAILABLE_STARTUP_ENVIRONMENT_READS + 1,
+        );
         // SAFETY: the scalar view is complete and output is serialized.
         unsafe { permit.emit(final_process_view()) };
         assert_eq!(
             DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed),
-            5,
+            UNAVAILABLE_STARTUP_ENVIRONMENT_READS + 1,
             "the permit emitter must not revisit a source option after the merge/sampling boundary",
         );
         assert_eq!(capture.count(), 35);
@@ -3104,5 +3464,472 @@ mod tests {
         }
         std::eprintln!();
         std::eprintln!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_END");
+    }
+
+    // ---------------------------------------------------------------------
+    // Complete `options.c` descriptor table.
+    // ---------------------------------------------------------------------
+
+    const OPTION_TRACE_ENVIRONMENT_ENTRIES: usize = 32;
+    static mut OPTION_TRACE_ENVIRONMENT: [*const c_char; OPTION_TRACE_ENVIRONMENT_ENTRIES + 1] =
+        [core::ptr::null(); OPTION_TRACE_ENVIRONMENT_ENTRIES + 1];
+
+    /// Every caller holds DIAGNOSTIC_ENVIRONMENT_TEST_LOCK while the
+    /// installed NUL-terminated entries remain live.
+    unsafe fn option_trace_environment_reader() -> *const *const c_char {
+        core::ptr::addr_of!(OPTION_TRACE_ENVIRONMENT).cast()
+    }
+
+    /// Installs one NUL-terminated environment image for the option table.
+    /// The caller holds DIAGNOSTIC_ENVIRONMENT_TEST_LOCK and keeps `entries`
+    /// live until the owner under test is dropped.
+    fn install_option_trace_environment(entries: &[std::vec::Vec<u8>]) {
+        assert!(entries.len() <= OPTION_TRACE_ENVIRONMENT_ENTRIES);
+        let mut vector = [core::ptr::null(); OPTION_TRACE_ENVIRONMENT_ENTRIES + 1];
+        for (slot, entry) in vector.iter_mut().zip(entries) {
+            assert_eq!(entry.last(), Some(&0));
+            *slot = entry.as_ptr().cast();
+        }
+        // SAFETY: the caller holds the environment test lock.
+        unsafe { OPTION_TRACE_ENVIRONMENT = vector };
+    }
+
+    fn environment_entries(entries: &[&[u8]]) -> std::vec::Vec<std::vec::Vec<u8>> {
+        entries
+            .iter()
+            .map(|entry| {
+                let mut bytes = entry.to_vec();
+                bytes.push(0);
+                bytes
+            })
+            .collect()
+    }
+
+    /// Registers `capture`, then performs the source option prefix of
+    /// process initialization against the installed test environment.
+    fn initialized_option_owner(capture: &Capture) -> OutputOwner {
+        let mut owner = output_owner();
+        // SAFETY: the capture outlives the owner and registration precedes
+        // the serialized startup dispatch.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(capture)) };
+        capture.reset();
+        // SAFETY: the caller holds the environment lock for the owner's life.
+        unsafe { owner.initialize_source_options(option_trace_environment_reader) };
+        owner
+    }
+
+    #[test]
+    fn complete_startup_reports_legacy_then_invalid_values_in_table_order() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let entries = environment_entries(&[
+            b"mimalloc_show_errors=1",
+            b"mimalloc_decommit_extend_delay=bogus",
+            b"mimalloc_arena_reserve=12Q",
+            b"mimalloc_reset_delay=5",
+            b"mimalloc_purge_decommits=0",
+            b"mimalloc_reset_decommits=1",
+        ]);
+        install_option_trace_environment(&entries);
+        let capture = Capture::new();
+        let owner = initialized_option_owner(&capture);
+
+        // Table order: purge_decommits (5, canonical wins silently),
+        // purge_delay (15, legacy), arena_reserve (23, invalid), then
+        // deprecated_purge_extend_delay (25, legacy and invalid).
+        let bodies = [
+            b"environment option \"mimalloc_reset_delay\" is deprecated -- use \"mimalloc_purge_delay\" instead.\n".as_slice(),
+            b"environment option mimalloc_arena_reserve has an invalid value.\n",
+            b"environment option \"mimalloc_decommit_extend_delay\" is deprecated -- use \"mimalloc_deprecated_purge_extend_delay\" instead.\n",
+            b"environment option mimalloc_deprecated_purge_extend_delay has an invalid value.\n",
+        ];
+        assert_eq!(capture.count(), 2 * bodies.len());
+        for (index, body) in bodies.iter().enumerate() {
+            assert_live_thread_warning_prefix(capture.message(2 * index));
+            assert_eq!(capture.message(2 * index + 1), *body, "warning {index}");
+        }
+        assert_eq!(
+            owner.source_option_image_for_test(SourceOption::PurgeDecommits),
+            (0, VmOptionState::Initialized),
+        );
+        assert_eq!(owner.source_option_image_for_test(SourceOption::PurgeDelay), (5, VmOptionState::Initialized));
+        assert_eq!(
+            owner.source_option_image_for_test(SourceOption::ArenaReserve),
+            (1024 * 1024, VmOptionState::Defaulted),
+        );
+        assert_eq!(
+            owner.source_option_image_for_test(SourceOption::DeprecatedPurgeExtendDelay),
+            (1, VmOptionState::Defaulted),
+        );
+        for option in SourceOption::ALL {
+            assert_ne!(owner.source_option_image_for_test(option).1, VmOptionState::Uninitialized);
+        }
+    }
+
+    #[test]
+    fn environment_boolean_spelling_bypasses_the_guarded_min_max_coupling() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        // `guarded_min` (29) precedes `guarded_max` (30). A boolean store
+        // leaves min above max; a numeric store through `mi_option_set`
+        // would have lowered min to the new max.
+        let entries = environment_entries(&[b"mimalloc_guarded_min=TRUE", b"mimalloc_guarded_max=0"]);
+        install_option_trace_environment(&entries);
+        let capture = Capture::new();
+        let owner = initialized_option_owner(&capture);
+        assert_eq!(owner.source_option_image_for_test(SourceOption::GuardedMin), (1, VmOptionState::Initialized));
+        assert_eq!(owner.source_option_image_for_test(SourceOption::GuardedMax), (0, VmOptionState::Initialized));
+
+        let entries = environment_entries(&[b"mimalloc_guarded_min=2000", b"mimalloc_guarded_max=7"]);
+        install_option_trace_environment(&entries);
+        let owner = initialized_option_owner(&capture);
+        assert_eq!(owner.source_option_image_for_test(SourceOption::GuardedMin), (7, VmOptionState::Initialized));
+        assert_eq!(owner.source_option_image_for_test(SourceOption::GuardedMax), (7, VmOptionState::Initialized));
+        assert_eq!(capture.count(), 0);
+    }
+
+    #[test]
+    fn option_api_preserves_source_clamp_size_and_guarded_coupling() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        install_option_trace_environment(&[]);
+        let capture = Capture::new();
+        let owner = initialized_option_owner(&capture);
+        assert_eq!(capture.count(), 0);
+        // SAFETY: the capture remains live and every call is serialized.
+        unsafe {
+            assert_eq!(owner.option_get_clamp(SourceOption::PurgeDelay, 2_000, 10), Ok(2_000));
+            assert_eq!(owner.option_get_clamp(SourceOption::PurgeDelay, -1, 100), Ok(100));
+            owner.option_set(SourceOption::ArenaReserve, i64::MAX).unwrap();
+            assert_eq!(owner.option_get_size(SourceOption::ArenaReserve), Ok(isize::MAX as usize));
+            owner.option_set(SourceOption::ArenaReserve, -5).unwrap();
+            assert_eq!(owner.option_get_size(SourceOption::ArenaReserve), Ok(0));
+            owner.option_set(SourceOption::ArenaReserve, 3).unwrap();
+            assert_eq!(owner.option_get_size(SourceOption::ArenaReserve), Ok(3 * 1024));
+            assert_eq!(owner.option_get_size(SourceOption::PurgeDelay), Ok(1_000));
+
+            owner.option_set(SourceOption::GuardedMin, 1 << 31).unwrap();
+            assert_eq!(owner.option_get(SourceOption::GuardedMax), Ok(1 << 31));
+            owner.option_set(SourceOption::GuardedMax, 10).unwrap();
+            assert_eq!(owner.option_get(SourceOption::GuardedMin), Ok(10));
+
+            owner.option_set_default(SourceOption::ShowStats, 7).unwrap();
+            assert_eq!(owner.source_option_image_for_test(SourceOption::ShowStats), (7, VmOptionState::Defaulted));
+            owner.option_set_enabled(SourceOption::ShowStats, false).unwrap();
+            owner.option_set_enabled_default(SourceOption::ShowStats, true).unwrap();
+            assert_eq!(owner.source_option_image_for_test(SourceOption::ShowStats), (0, VmOptionState::Initialized));
+            assert_eq!(owner.option_is_enabled(SourceOption::ArenaEagerCommit), Ok(true));
+        }
+        assert_eq!(SourceOption::from_source_value(-1), None);
+        assert_eq!(SourceOption::from_source_value(SOURCE_OPTION_COUNT as i32), None);
+        assert_eq!(SourceOption::from_source_value(46), Some(SourceOption::ArenaIsNumaLocal));
+        assert_eq!(capture.count(), 0, "no descriptor operation above warns");
+    }
+
+    #[test]
+    fn verbose_post_init_prints_every_descriptor_through_the_default_route() {
+        let _guard = default_stderr_test_guard();
+        reset_default_stderr_capture();
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let entries = environment_entries(&[b"mimalloc_verbose=1", b"mimalloc_arena_reserve=4MiB"]);
+        install_option_trace_environment(&entries);
+        let mut owner = output_owner();
+        // SAFETY: the test owns startup and holds the environment lock.
+        unsafe { owner.initialize_source_options(option_trace_environment_reader) };
+        // SAFETY: this is the one source post-init transition.
+        unsafe { owner.post_init() };
+
+        // The delayed `process init` fragments flush first, then each
+        // `mi_options_print` line goes directly to the default primitive.
+        let expected_lines = 1 + SOURCE_OPTION_COUNT + 4;
+        assert_eq!(DEFAULT_STDERR_CAPTURE.count(), 1 + expected_lines);
+        let process_init = std::format!("mimalloc: process init: 0x{:02X}\n", thread_pointer_identity());
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(0), process_init.as_bytes());
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(1), b"v3.5.0\n");
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(2), b"option 'show_errors': 0 \n");
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(4), b"option 'verbose': 1 \n");
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(2 + 23), b"option 'arena_reserve': 4096 KiB\n");
+        let tail = 2 + SOURCE_OPTION_COUNT;
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail), b"debug level : 0\n");
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail + 1), b"secure level: 0\n");
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail + 2), b"mem tracking: none\n");
+        let page = std::format!("free: aligned, page size: {}\n", core::mem::size_of::<crate::types::Page>());
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail + 3), page.as_bytes());
+    }
+
+    fn hex(bytes: &[u8]) -> std::string::String {
+        let mut text = std::string::String::new();
+        for byte in bytes {
+            text.push_str(&std::format!("{byte:02x}"));
+        }
+        text
+    }
+
+    /// Hex fragments with the live `_mi_thread_id()` spelling replaced by
+    /// `TID`, so the separate C and Rust processes compare logically.
+    fn normalized_capture(capture: &Capture) -> std::string::String {
+        assert!(capture.count() <= MAX_MESSAGES, "option trace capture overflow");
+        let thread = std::format!("0x{:02X}", thread_pointer_identity());
+        let fragments: std::vec::Vec<std::string::String> = (0..capture.count())
+            .map(|index| {
+                let text = std::string::String::from_utf8(capture.message(index).to_vec())
+                    .expect("source option messages are ASCII");
+                hex(text.replace(&thread, "0xTID").as_bytes())
+            })
+            .collect();
+        fragments.join(":")
+    }
+
+    const fn option_state_code(state: VmOptionState) -> u8 {
+        match state {
+            VmOptionState::Uninitialized => 0,
+            VmOptionState::Defaulted => 1,
+            VmOptionState::Initialized => 2,
+        }
+    }
+
+    fn option_name(option: SourceOption) -> &'static str {
+        core::str::from_utf8(option.name()).expect("source option names are ASCII")
+    }
+
+    /// The fixed environment scenarios mirrored by the pinned C probe in
+    /// `compat/allocator/x86_64_m7_options_oracle.c`. Both halves print the entries,
+    /// so a drift in either literal list fails the comparison.
+    fn option_trace_scenarios() -> std::vec::Vec<(&'static str, std::vec::Vec<std::vec::Vec<u8>>)> {
+        let overlong = {
+            let mut entry = b"mimalloc_purge_delay=".to_vec();
+            entry.extend_from_slice(&[b'1'; 65]);
+            entry
+        };
+        let exact = {
+            let mut entry = b"mimalloc_arena_reserve=".to_vec();
+            entry.extend_from_slice(&[b'0'; 63]);
+            entry.push(b'7');
+            entry
+        };
+        let cap_names: [&[u8]; 20] = [
+            b"deprecated_eager_commit", b"arena_eager_commit", b"purge_decommits",
+            b"allow_large_os_pages", b"reserve_huge_os_pages", b"reserve_huge_os_pages_at",
+            b"reserve_os_memory", b"deprecated_segment_cache", b"deprecated_page_reset",
+            b"deprecated_abandoned_page_purge", b"deprecated_segment_reset",
+            b"deprecated_eager_commit_delay", b"purge_delay", b"use_numa_nodes",
+            b"disallow_os_alloc", b"os_tag", b"max_errors", b"deprecated_max_segment_reclaim",
+            b"destroy_on_exit", b"arena_reserve",
+        ];
+        let mut cap = std::vec![b"mimalloc_show_errors=1".to_vec(), b"mimalloc_max_warnings=0".to_vec()];
+        for name in cap_names {
+            let mut entry = b"mimalloc_".to_vec();
+            entry.extend_from_slice(name);
+            entry.extend_from_slice(b"=x");
+            cap.push(entry);
+        }
+        let terminate = |entries: std::vec::Vec<std::vec::Vec<u8>>| {
+            entries.into_iter().map(|mut entry| { entry.push(0); entry }).collect()
+        };
+        let literal = |entries: &[&[u8]]| terminate(entries.iter().map(|entry| entry.to_vec()).collect());
+        std::vec![
+            ("empty", literal(&[])),
+            ("canonical", literal(&[
+                b"MIMALLOC_PURGE_DELAY=250",
+                b"mimalloc_arena_reserve=2MiB",
+                b"mimalloc_reserve_os_memory=3g",
+                b"mimalloc_minimal_purge_size=1500",
+                b"mimalloc_arena_max_object_size=-5",
+                b"Mimalloc_Allow_Thp=off",
+                b"mimalloc_page_full_retain=",
+                b"mimalloc_os_tag=yes",
+                b"mimalloc_generic_collect=+42",
+                b"mimalloc_page_max_reclaim= -3",
+                b"mimalloc_guarded_min=4096",
+                b"mimalloc_guarded_max=100",
+                b"mimalloc_max_vabits=39",
+                b"mimalloc_deprecated_eager_commit=0",
+                b"mimalloc_retry_on_oom=TRUE",
+                b"mimalloc_use_numa_nodes=9223372036854775807",
+                b"mimalloc_reserve_huge_os_pages_at=-9223372036854775808",
+                b"mimalloc_arena_purge_mult=1tb",
+                b"mimalloc_verbose",
+                b"mimalloc_show_stats_extra=1",
+                b"unrelated=1",
+            ])),
+            ("legacy", literal(&[
+                b"mimalloc_show_errors=1",
+                b"mimalloc_reset_delay=5",
+                b"MIMALLOC_LARGE_OS_PAGES=1",
+                b"mimalloc_decommit_extend_delay=bogus",
+                b"mimalloc_abandoned_reclaim_on_free=1",
+                b"mimalloc_purge_decommits=0",
+                b"mimalloc_reset_decommits=1",
+                b"mimalloc_eager_region_commit=1",
+                b"mimalloc_limit_os_alloc=0",
+            ])),
+            ("invalid", literal(&[
+                b"mimalloc_show_errors=1",
+                b"mimalloc_arena_reserve=12Q",
+                b"mimalloc_max_warnings=2",
+                b"mimalloc_purge_delay=9223372036854775808",
+                b"mimalloc_reserve_os_memory=99999999999999999999T",
+                b"mimalloc_arena_max_object_size=9223372036854775807T",
+                b"mimalloc_minimal_purge_size=4kib",
+                b"mimalloc_verbose=bogus",
+            ])),
+            ("verbose", literal(&[
+                b"mimalloc_verbose=1",
+                b"mimalloc_arena_reserve=zz",
+                b"mimalloc_reset_delay=7",
+            ])),
+            // Boolean spellings store directly; only a numeric value goes
+            // through `mi_option_set` and its guarded min/max coupling.
+            ("guarded_boolean", literal(&[
+                b"mimalloc_guarded_min=TRUE",
+                b"mimalloc_guarded_max=0",
+            ])),
+            ("guarded_numeric", literal(&[
+                b"mimalloc_guarded_min=2000",
+                b"mimalloc_guarded_max=off",
+                b"mimalloc_guarded_sample_rate=7",
+            ])),
+            // `strtol` accepts an empty digit sequence without an error and
+            // leaves `end` at the start, so a bare size suffix is zero KiB.
+            ("size_without_digits", literal(&[
+                b"mimalloc_show_errors=1",
+                b"mimalloc_arena_reserve=K",
+                b"mimalloc_reserve_os_memory=MiB",
+                b"mimalloc_minimal_purge_size=b",
+                b"mimalloc_arena_max_object_size=-K",
+                b"mimalloc_purge_delay=K",
+            ])),
+            ("cap", terminate(cap)),
+            ("overlong", terminate(std::vec![
+                b"mimalloc_show_errors=1".to_vec(),
+                overlong,
+                b"mimalloc_reset_delay=3".to_vec(),
+                exact,
+            ])),
+        ]
+    }
+
+    /// Machine-readable Rust half of the M7 options/environment C/Rust
+    /// differential. The pinned C probe prints the same keys.
+    #[test]
+    fn source_options_trace_for_pinned_c_comparison() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        std::println!("CRABC_MI_M7_OPTIONS_TRACE_BEGIN");
+        std::println!("options.count={SOURCE_OPTION_COUNT}");
+        for option in SourceOption::ALL {
+            std::println!(
+                "options.descriptor.{}={},{},{}",
+                option.index(),
+                option_name(option),
+                option.legacy_name().map_or("-", |name| core::str::from_utf8(name).unwrap()),
+                u8::from(option.has_size_in_kib()),
+            );
+        }
+        for (scenario, entries) in option_trace_scenarios() {
+            let environment: std::vec::Vec<std::string::String> =
+                entries.iter().map(|entry| hex(&entry[..entry.len() - 1])).collect();
+            std::println!("scenario.{scenario}.environment={}", environment.join(":"));
+            install_option_trace_environment(&entries);
+            let capture = Capture::new();
+            let owner = initialized_option_owner(&capture);
+            std::println!("scenario.{scenario}.messages={}", normalized_capture(&capture));
+            for option in SourceOption::ALL {
+                let (value, state) = owner.source_option_image_for_test(option);
+                // SAFETY: the capture is live and this call is serialized.
+                let size = unsafe { owner.option_get_size(option) }.expect("installed option table");
+                std::println!(
+                    "scenario.{scenario}.option.{}={value},{},{size}",
+                    option_name(option),
+                    option_state_code(state),
+                );
+            }
+            std::println!("scenario.{scenario}.lazy_messages={}", normalized_capture(&capture));
+        }
+
+        install_option_trace_environment(&[]);
+        let capture = Capture::new();
+        let owner = initialized_option_owner(&capture);
+        let record = |step: &str, value: i64| std::println!("api.{step}={value}");
+        let image = |step: &str, option: SourceOption| {
+            let (value, state) = owner.source_option_image_for_test(option);
+            std::println!("api.{step}={value},{}", option_state_code(state));
+        };
+        // The future C ABI adapter maps raw `mi_option_t` values through
+        // `SourceOption::from_source_value`; an out-of-range value reads as
+        // zero and ignores mutation, as `mi_option_get`/`mi_option_set` do.
+        let raw_get = |value: i32| match SourceOption::from_source_value(value) {
+            Some(option) => unsafe { owner.option_get(option) }.unwrap(),
+            None => 0,
+        };
+        // SAFETY: the capture remains live and every call is serialized.
+        unsafe {
+            record("clamp.arena_purge_mult", owner.option_get_clamp(SourceOption::ArenaPurgeMult, 5, 10).unwrap());
+            record("clamp.purge_delay_low", owner.option_get_clamp(SourceOption::PurgeDelay, -1, 100).unwrap());
+            record("clamp.purge_delay_inverted", owner.option_get_clamp(SourceOption::PurgeDelay, 2_000, 10).unwrap());
+            record("clamp.reserve_at", owner.option_get_clamp(SourceOption::ReserveHugeOsPagesAt, 0, 5).unwrap());
+            owner.option_set(SourceOption::ArenaReserve, i64::MAX).unwrap();
+            record("size.arena_reserve_max", owner.option_get_size(SourceOption::ArenaReserve).unwrap() as i64);
+            owner.option_set(SourceOption::ArenaReserve, -5).unwrap();
+            record("size.arena_reserve_negative", owner.option_get_size(SourceOption::ArenaReserve).unwrap() as i64);
+            owner.option_set(SourceOption::ArenaReserve, 3).unwrap();
+            record("size.arena_reserve_three", owner.option_get_size(SourceOption::ArenaReserve).unwrap() as i64);
+            owner.option_set(SourceOption::PurgeDelay, -5).unwrap();
+            record("size.purge_delay_negative", owner.option_get_size(SourceOption::PurgeDelay).unwrap() as i64);
+            owner.option_set(SourceOption::PurgeDelay, 7).unwrap();
+            record("size.purge_delay_seven", owner.option_get_size(SourceOption::PurgeDelay).unwrap() as i64);
+            owner.option_set(SourceOption::GuardedMin, 1 << 31).unwrap();
+            image("guarded.raise_min.min", SourceOption::GuardedMin);
+            image("guarded.raise_min.max", SourceOption::GuardedMax);
+            owner.option_set(SourceOption::GuardedMax, 10).unwrap();
+            image("guarded.lower_max.min", SourceOption::GuardedMin);
+            image("guarded.lower_max.max", SourceOption::GuardedMax);
+            owner.option_set(SourceOption::GuardedMax, 20).unwrap();
+            image("guarded.raise_max.min", SourceOption::GuardedMin);
+            image("guarded.raise_max.max", SourceOption::GuardedMax);
+            owner.option_set_default(SourceOption::ShowStats, 7).unwrap();
+            image("set_default.defaulted", SourceOption::ShowStats);
+            owner.option_set(SourceOption::ShowStats, 0).unwrap();
+            owner.option_set_default(SourceOption::ShowStats, 9).unwrap();
+            image("set_default.initialized", SourceOption::ShowStats);
+            owner.option_set_enabled(SourceOption::AllowThp, false).unwrap();
+            owner.option_set_enabled_default(SourceOption::AllowThp, true).unwrap();
+            image("enabled.allow_thp", SourceOption::AllowThp);
+            owner.option_set_enabled_default(SourceOption::OsTag, true).unwrap();
+            image("enabled.os_tag_default", SourceOption::OsTag);
+            owner.option_set_enabled(SourceOption::DisallowOsAlloc, true).unwrap();
+            image("enabled.enable", SourceOption::DisallowOsAlloc);
+            owner.option_set_enabled(SourceOption::DisallowOsAlloc, false).unwrap();
+            image("enabled.disable", SourceOption::DisallowOsAlloc);
+            record("enabled.arena_eager_commit", i64::from(owner.option_is_enabled(SourceOption::ArenaEagerCommit).unwrap()));
+        }
+        record("invalid.get_negative", raw_get(-1));
+        record("invalid.get_last", raw_get(SOURCE_OPTION_COUNT as i32));
+        record("invalid.get_large", raw_get(1_000));
+        record("invalid.clamp", source_option_clamp_for_test(raw_get(-1), 5, 10));
+        record("invalid.enabled", i64::from(raw_get(SOURCE_OPTION_COUNT as i32) != 0));
+        let print = Capture::new();
+        // SAFETY: the print capture outlives this synchronous call.
+        unsafe {
+            owner.options_print_out(
+                Some(capture_output),
+                capture_argument(&print),
+                core::mem::size_of::<crate::types::Page>(),
+            )
+        }
+        .unwrap();
+        std::println!("api.print={}", normalized_capture(&print));
+        std::println!("api.messages={}", normalized_capture(&capture));
+        std::println!("CRABC_MI_M7_OPTIONS_TRACE_END");
+    }
+
+    fn source_option_clamp_for_test(value: i64, min: i64, max: i64) -> i64 {
+        super::source_option_clamp(value, min, max)
     }
 }
