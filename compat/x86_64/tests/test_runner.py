@@ -782,7 +782,6 @@ unsafe fn join_selected_worker_inner(
             ".weak strerror_l",
             ".set strerror_l, __strerror_l",
             "fn __strerror_l(",
-            "error_strings::strerror(error)",
             "LC_GLOBAL_LOCALE",
             "general locale database",
         ):
