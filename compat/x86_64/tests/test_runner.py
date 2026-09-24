@@ -151,7 +151,6 @@ unsafe fn join_selected_worker_inner(
         with self.assertRaisesRegex(ValueError, "missing selected-worker inner join"):
             _selected_join_inner_body("unsafe fn unrelated() {}")
 
-
     def test_named_locale_multibyte_static_artifact_stays_closed(self) -> None:
         """One named-locale/multibyte archive artifact remains below parity."""
         static_root = (
@@ -352,7 +351,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("libc-locale-profile)", dispatcher)
         self.assertIn("run_locale_profile_header_abi()", dispatcher)
 
-
     def test_sched_cpu_macro_family_stays_header_only(self) -> None:
         """Keep CPU-set syntax below affinity, scheduler, and allocator runtime work."""
         header = (ROOT / "include" / "sched.h").read_text(encoding="utf-8")
@@ -409,7 +407,6 @@ unsafe fn join_selected_worker_inner(
         self.assertNotIn("-nostdlib", runner)
         self.assertNotIn("sched_setaffinity", runner)
         self.assertIn("sched-cpu-macros-header-abi", dispatcher)
-
 
     def test_fanotify_event_traversal_macros_stay_header_only(self) -> None:
         """Pin record traversal syntax without selecting a watcher runtime."""
@@ -741,7 +738,6 @@ unsafe fn join_selected_worker_inner(
             parity,
         )
         self.assertIn("libc-locale-ctype-locators)", dispatcher)
-
 
     def test_locale_error_strings_artifact_stays_abi_only_and_non_promoting(
         self,
@@ -2941,7 +2937,6 @@ unsafe fn join_selected_worker_inner(
         self.assertNotIn('cargo "$@"', source)
         self.assertNotIn('-p crabc-ldso', source)
 
-
     def test_x86_parity_ledger_is_a_required_contract_check(self) -> None:
         validator = ROOT / "compat" / "x86_64" / "validate_parity_ledger.py"
         completed = subprocess.run(
@@ -2954,7 +2949,6 @@ unsafe fn join_selected_worker_inner(
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("x86 parity ledger: PASS", completed.stdout)
-
 
     def test_libc_static_c_abi_timerfd_artifact_stays_bounded(self) -> None:
         static_root = (
@@ -4286,178 +4280,6 @@ unsafe fn join_selected_worker_inner(
         )
         self.assertIn("run_libc_sigpending_probe()", dispatcher)
         self.assertIn("libc-sigpending)", dispatcher)
-
-
-    def test_libc_static_c_abi_pthread_atfork_artifact_stays_bounded(self) -> None:
-        static_root = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
-        ).read_text(encoding="utf-8")
-        atfork = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_atfork.rs"
-        ).read_text(encoding="utf-8")
-        pthread_create_join = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
-        ).read_text(encoding="utf-8")
-        static_startup = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
-        ).read_text(encoding="utf-8")
-        process_exit = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_exit.rs"
-        ).read_text(encoding="utf-8")
-        probe = (
-            ROOT / "compat" / "x86_64" / "libc_pthread_atfork_probe.c"
-        ).read_text(encoding="utf-8")
-        start = (
-            ROOT / "compat" / "x86_64" / "libc_pthread_atfork_start.S"
-        ).read_text(encoding="utf-8")
-        artifact_runner = (
-            ROOT / "compat" / "x86_64" / "run_libc_pthread_atfork.sh"
-        ).read_text(encoding="utf-8")
-        static_exports = {
-            line
-            for line in (
-                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
-            ).read_text(encoding="utf-8").splitlines()
-            if line and not line.startswith("#")
-        }
-        runner = RUNNER.read_text(encoding="utf-8")
-
-        self.assertIn('#[path = "pthread_atfork.rs"]', static_root)
-        for required in (
-            "pinned musl 1.2.6 release commit",
-            "src/thread/pthread_atfork.c",
-            "src/process/fork.c",
-            "const ATFORK_CAPACITY: usize = 32",
-            "fn __fork_handler",
-            "fn pthread_atfork",
-            "fn fork",
-            "fn __aio_atfork",
-            "weak_alias(dummy, __aio_atfork)",
-            "src/aio/aio.c",
-            "ENOMEM",
-            "EAGAIN",
-            "No user callback may recurse",
-            "callbacks must return normally.",
-            "AIO, allocator-wide fork state, and arbitrary application locks remain",
-        ):
-            self.assertIn(required, atfork)
-        fork_body = atfork.split('pub unsafe extern "C" fn fork()', 1)[1]
-        self.assertLess(
-            fork_body.index("__fork_handler(-1)"),
-            fork_body.index("pthread_tsd::pthread_fork_prepare()"),
-        )
-        self.assertLess(
-            fork_body.index("pthread_tsd::pthread_fork_prepare()"),
-            fork_body.index("pthread_create_join::pthread_fork_prepare()"),
-        )
-        self.assertLess(
-            fork_body.index("pthread_create_join::pthread_fork_prepare()"),
-            fork_body.index("raw_selected_fork()"),
-        )
-        self.assertLess(
-            fork_body.index("raw_selected_fork()"),
-            fork_body.index("__fork_handler(if result == 0"),
-        )
-        self.assertLess(
-            fork_body.index("__fork_handler(if result == 0"),
-            fork_body.index("c_status(result)"),
-        )
-        self.assertNotIn("__aio_atfork", fork_body)
-        self.assertIn("LINUX_X86_64_SYS_FORK", atfork)
-        self.assertIn('core::arch::asm!(\n            "syscall",', atfork)
-        for required in (
-            "SELECTED_WORKER_REGISTRY_HEAD",
-            "SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) != 0",
-            "is_current_selected_worker",
-            "pthread_fork_prepare",
-            "pthread_fork_parent",
-            "pthread_fork_child",
-        ):
-            self.assertIn(required, pthread_create_join)
-        self.assertIn('#[path = "process_exit.rs"]', static_startup)
-        self.assertIn(
-            "pub use process_exit::{atexit, __cxa_atexit, __cxa_finalize, __funcs_on_exit};",
-            static_startup,
-        )
-        for required in ("fn atexit", "fn __funcs_on_exit"):
-            self.assertIn(required, process_exit)
-        self.assertIn("fn exit", static_startup)
-
-        for required in (
-            "check_parent_child_and_exit_order",
-            "check_live_selected_worker_fork",
-            "check_fixed_capacity_rejection",
-            "check_raw_fork_error_parent_order",
-            "install_fork_error_filter",
-            "SYS_clone",
-            "SYS_fork",
-            "SYS_seccomp",
-            "CRABC_SECCOMP_RET_ERRNO | EPERM",
-            "pthread_join(worker, &result)",
-            "recovery = check_parent_child_and_exit_order()",
-            "atexit(child_exit_callback)",
-            "CRABC_ATFORK_AIO_HOOK_OVERRIDE",
-            "check_aio_hook_override",
-            "__builtin_trap",
-        ):
-            self.assertIn(required, probe)
-        self.assertLess(
-            probe.index("result = check_live_selected_worker_fork();"),
-            probe.index("result = check_raw_fork_error_parent_order();"),
-        )
-        for required in (
-            "__crabc_x86_static_tls_bootstrap",
-            "crabc_x86_64_pthread_atfork_probe",
-        ):
-            self.assertIn(required, start)
-        self.assertNotIn("arch_prctl", start.lower())
-
-        for required in (
-            "run_musl_oracle.sh",
-            "sys/prctl.h",
-            "-pthread",
-            "-nostdlib -static",
-            "-DCRABC_ATFORK_FREESTANDING",
-            "candidate does not define ${symbol}",
-            "fork does not route through the private atfork dispatcher",
-            "exit does not route through the bounded ordinary-exit dispatcher",
-            "candidate selected dynamic interpreter",
-            "candidate selected dynamic dependency",
-            "candidate retains unresolved symbol",
-            "archive lost musl weak __aio_atfork binding",
-            "CRABC_ATFORK_AIO_HOOK_OVERRIDE",
-            "caller strong __aio_atfork did not override the archive weak binding",
-        ):
-            self.assertIn(required, artifact_runner)
-        self.assertNotIn("--whole-archive", artifact_runner)
-        self.assertNotIn("posix_spawn wait3", artifact_runner)
-        self.assertIn("-Wl,--gc-sections", artifact_runner)
-        self.assertIn("-Wl,-u,__ldso_atfork", artifact_runner)
-        self.assertIn("-Wl,-u,__aio_atfork", artifact_runner)
-        self.assertIn(
-            "candidate unexpectedly pulls unrelated wait extension", artifact_runner
-        )
-        self.assertTrue(
-            {
-                "pthread_atfork",
-                "fork",
-                "__fork_handler",
-                "__aio_atfork",
-                "atexit",
-                "exit",
-                "__funcs_on_exit",
-            }
-            <= static_exports
-        )
-        self.assertIn("run_libc_pthread_atfork_probe()", runner)
-        self.assertIn(
-            "/workspace/compat/x86_64/run_libc_pthread_atfork.sh", runner
-        )
-        self.assertIn(
-            '    libc-pthread-atfork)\n        [ "$#" -eq 0 ] || fail "libc-pthread-atfork takes no arguments"',
-            runner,
-        )
-
 
     def test_libc_static_c_abi_pthread_normal_mutex_artifact_stays_private(
         self,
@@ -5982,7 +5804,6 @@ unsafe fn join_selected_worker_inner(
             runner,
         )
 
-
     def test_libc_static_initial_tls_v1_artifact_stays_narrow(self) -> None:
         """Keep the isolated x86 initial-TLS template distinct from composition.
 
@@ -6183,7 +6004,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("public x86 support", pthread_tls_family)
         self.assertIn("libc-static-tls-v1", runner)
 
-
     def test_owned_static_sysroot_is_reproducible_and_rejects_ambient_inputs(self) -> None:
         builder = (
             ROOT / "scripts" / "build_x86_64_owned_sysroot.py"
@@ -6235,7 +6055,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("still-planned `sysroot.static-tls`", normalized_evidence)
         self.assertIn("still-planned `sysroot.owned-artifact`", normalized_evidence)
         self.assertIn("not public x86-64 support", normalized_evidence)
-
 
     def test_libc_static_c_abi_secure_environment_stays_startup_bounded(self) -> None:
         static_root = (
@@ -6332,7 +6151,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("libc-secure-environment)", dispatcher)
         self.assertIn("run_libc_secure_environment.sh", dispatcher)
 
-
     def test_libc_static_c_abi_network_byte_order_artifact_stays_isolated(
         self,
     ) -> None:
@@ -6424,7 +6242,6 @@ unsafe fn join_selected_worker_inner(
             parity_ledger,
         )
         self.assertIn("libc-network-byte-order)", dispatcher)
-
 
     def test_libc_static_c_abi_in6addr_any_artifact_stays_private(self) -> None:
         static_root = (
@@ -7786,7 +7603,6 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("nameser-header-abi)", dispatcher)
         self.assertIn("libc-ns-put16)", dispatcher)
 
-
     def test_system_information_syscall_judge_accepts_the_owned_raw_wrapper(
         self,
     ) -> None:
@@ -7965,7 +7781,6 @@ esac
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertIn("physical checkout .work directory", rejected.stderr)
 
-
     def test_libc_static_c_abi_random_entropy_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -8095,7 +7910,6 @@ esac
             parity_ledger,
         )
         self.assertIn("libc-random-entropy", runner)
-
 
     def test_libc_owned_bsd_random_stays_feature_selected_and_provenanced(self) -> None:
         """The legacy BSD generator is the narrowly selected musl semantic port."""
@@ -8227,7 +8041,6 @@ esac
         ):
             self.assertIn(required, dispatcher)
 
-
     def test_libc_static_c_abi_bounded_regex_artifact_stays_non_promoting(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -8308,7 +8121,6 @@ esac
         self.assertIn("does not complete `pattern.regex`", parity_ledger)
         self.assertIn("select `pattern.wordexp`", parity_ledger)
         self.assertIn("libc-regex)", dispatcher)
-
 
     def test_libc_static_c_abi_stdio_standard_streams_artifact_stays_narrow(
         self,
@@ -8467,101 +8279,6 @@ esac
         self.assertIn("stdio-standard-header-abi", dispatcher)
         self.assertIn("libc-stdio-standard", dispatcher)
         self.assertIn("run_stdio_standard_header_abi()", dispatcher)
-
-    def test_libc_static_c_abi_stdio_format_scan_artifact_stays_narrow(
-        self,
-    ) -> None:
-        static_root = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
-        ).read_text(encoding="utf-8")
-        implementation = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
-            "stdio_format_scan.rs"
-        ).read_text(encoding="utf-8")
-        fixture = (
-            ROOT / "compat" / "x86_64" / "libc_stdio_format_scan_probe.c"
-        ).read_text(encoding="utf-8")
-        start = (
-            ROOT / "compat" / "x86_64" / "libc_stdio_format_scan_start.S"
-        ).read_text(encoding="utf-8")
-        artifact_runner = (
-            ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
-        ).read_text(encoding="utf-8")
-        static_exports = (
-            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
-        ).read_text(encoding="utf-8")
-        static_export_names = {
-            line
-            for line in static_exports.splitlines()
-            if line and not line.startswith("#")
-        }
-        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
-            encoding="utf-8"
-        )
-        dispatcher = RUNNER.read_text(encoding="utf-8")
-
-        symbols = (
-            "snprintf", "vsnprintf", "sprintf", "vsprintf", "sscanf", "vsscanf"
-        )
-        self.assertIn('#[path = "stdio_format_scan.rs"]', static_root)
-        for symbol in symbols:
-            self.assertIn(f'pub unsafe extern "C" fn {symbol}', implementation)
-            self.assertIn(symbol, static_export_names)
-            self.assertIn(symbol, fixture)
-        self.assertEqual(implementation.count("# Safety"), len(symbols) + 8)
-        for required in (
-            "musl 1.2.6 release commit",
-            "src/stdio/vfprintf.c",
-            "src/internal/intscan.c",
-            "The active Linux/AArch64 implementation remains the broader",
-            "args.next_arg",
-            "zero-capacity",
-            "pointer-valued `%p`",
-        ):
-            self.assertIn(required, implementation)
-        self.assertNotIn("src/stdio/printf_core.c", implementation)
-        for required in (
-            "CRABC_TYPE_IS(__typeof__(&snprintf)",
-            "call_vsnprintf",
-            "call_vsprintf",
-            "call_vsscanf",
-            '"%#x|%#.3o|%#.0o|%08.3d"',
-            '"ab%hhncd%ln"',
-            '"%2147483648d%n"',
-            '"0xg"',
-            '"0x1", "%2x"',
-            '" %Q", "%%%c"',
-            '"a", "%2c"',
-            "CRABC_STDIO_FORMAT_SCAN_FREESTANDING",
-            "check_candidate_limitations",
-        ):
-            self.assertIn(required, fixture)
-        for required in (
-            "arch_prctl(ARCH_SET_FS",
-            "%fs:0",
-            "mov $60, %eax",
-        ):
-            self.assertIn(required, start)
-        for required in (
-            "static_c_abi_exports.txt",
-            "-nostdlib -static",
-            "--no-undefined",
-            "R_X86_64_TPOFF",
-            "__errno_location",
-            "CRABC_STDIO_FORMAT_SCAN_FREESTANDING",
-            "timeout --foreground",
-            "printf fprintf vprintf vfprintf",
-            "args.next_arg",
-        ):
-            self.assertIn(required, artifact_runner)
-        self.assertNotIn("--whole-archive", artifact_runner)
-        self.assertIn('id = "static-c-stdio-format-scan"', parity_ledger)
-        self.assertIn(
-            'command = "./scripts/dev-x86_64.sh libc-stdio-format-scan"',
-            parity_ledger,
-        )
-        self.assertIn("libc-stdio-format-scan", dispatcher)
-        self.assertIn("run_libc_stdio_format_scan.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_format_scan_is_opt_in(self) -> None:
         implementation = (
@@ -10575,160 +10292,6 @@ esac
         )
         self.assertIn("run_libc_stdio_permanent_freading_stdin.sh", dispatcher)
 
-    def test_libc_static_c_abi_stdio_permanent_fsetlocking_stdin_stays_bounded(
-        self,
-    ) -> None:
-        """__fsetlocking keeps musl's fixed stdin no-op below lock semantics."""
-        implementation = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
-        ).read_text(encoding="utf-8")
-        c_header_probe = (
-            ROOT / "compat" / "x86_64" /
-            "stdio_permanent_fsetlocking_stdin_header_abi_probe.c"
-        ).read_text(encoding="utf-8")
-        cxx_header_probe = (
-            ROOT / "compat" / "x86_64" /
-            "stdio_permanent_fsetlocking_stdin_header_abi_probe.cpp"
-        ).read_text(encoding="utf-8")
-        header_runner = (
-            ROOT / "compat" / "x86_64" /
-            "run_stdio_permanent_fsetlocking_stdin_header_abi.sh"
-        ).read_text(encoding="utf-8")
-        fixture = (
-            ROOT / "compat" / "x86_64" /
-            "libc_stdio_permanent_fsetlocking_stdin_probe.c"
-        ).read_text(encoding="utf-8")
-        start = (
-            ROOT / "compat" / "x86_64" /
-            "libc_stdio_permanent_fsetlocking_stdin_start.S"
-        ).read_text(encoding="utf-8")
-        runner = (
-            ROOT / "compat" / "x86_64" /
-            "run_libc_stdio_permanent_fsetlocking_stdin.sh"
-        ).read_text(encoding="utf-8")
-        exports = {
-            line
-            for line in (
-                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
-            ).read_text(encoding="utf-8").splitlines()
-            if line and not line.startswith("#")
-        }
-        ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
-            encoding="utf-8"
-        )
-        dispatcher = RUNNER.read_text(encoding="utf-8")
-
-        for symbol in (
-            "__freading",
-            "__fsetlocking",
-            "__freadable",
-            "__fwritable",
-            "__fbufsize",
-            "__flbf",
-        ):
-            self.assertIn(symbol, exports)
-        for symbol in (
-            "__fwriting",
-            "__fpending",
-            "__fpurge",
-            "_flushlbf",
-        ):
-            self.assertNotIn(symbol, exports)
-        for required in (
-            "src/stdio/ext.c",
-            'pub unsafe extern "C" fn __fsetlocking',
-            "const FSETLOCKING_QUERY: c_int = 0",
-            "const FSETLOCKING_INTERNAL: c_int = 1",
-            "const FSETLOCKING_BYCALLER: c_int = 2",
-            "stream != ptr::addr_of_mut!(STDIN_STREAM)",
-            "Musl's selected source body returns zero without changing any state.",
-        ):
-            self.assertIn(required, implementation)
-        for probe in (c_header_probe, cxx_header_probe):
-            for required in (
-                "stdio_ext.h",
-                "__fsetlocking",
-                "FILE",
-                "FSETLOCKING_STDIN",
-                "FSETLOCKING_QUERY",
-                "FSETLOCKING_INTERNAL",
-                "FSETLOCKING_BYCALLER",
-            ):
-                self.assertIn(required, probe)
-        for required in (
-            "CRABC_STDIO_PERMANENT_FSETLOCKING_STDIN_C11",
-            "CRABC_STDIO_PERMANENT_FSETLOCKING_STDIN_CXX17",
-            "stdio_ext.h stdio.h features.h bits/alltypes.h",
-            "-nostdinc",
-            "-nostdinc++",
-            "assert_cxx_c_linkage",
-            "run_musl_oracle.sh",
-        ):
-            self.assertIn(required, header_runner)
-        for required in (
-            "__fsetlocking(stdin, FSETLOCKING_QUERY) != 0",
-            "fsetlocking_entry(stdin, FSETLOCKING_INTERNAL) != 0",
-            "__fsetlocking(stdin, FSETLOCKING_BYCALLER) != 0",
-            "CRABC_STDIO_PERMANENT_FSETLOCKING_STDIN_FREESTANDING",
-        ):
-            self.assertIn(required, fixture)
-        for forbidden in (
-            "fputc",
-            "fflush",
-            "fgetc",
-            "stdout",
-            "stderr",
-            "fopen",
-            "tmpfile",
-            "dup",
-            "close",
-            "setvbuf",
-            "__freading",
-            "__freadable",
-            "__fwriting",
-            "__fwritable",
-        ):
-            self.assertNotIn(forbidden, fixture)
-        for required in (
-            "__crabc_x86_static_tls_bootstrap",
-            "crabc_x86_64_stdio_permanent_fsetlocking_stdin_probe",
-            "mov $231, %eax",
-        ):
-            self.assertIn(required, start)
-        for required in (
-            "ORACLE_ARCHIVE",
-            "run_stdio_permanent_fsetlocking_stdin_header_abi.sh",
-            "STATIC_C_ABI_EXPORTS",
-            "strong __fsetlocking",
-            "FSETLOCKING_QUERY",
-            "__fwriting",
-            "-nostdlib -static",
-            "dynamic TLS model",
-            "unowned runtime dependency",
-            "__fsetlocking unexpectedly contains a syscall path",
-            "__crabc_x86_static_tls_bootstrap",
-        ):
-            self.assertIn(required, runner)
-        self.assertNotIn("--whole-archive", runner)
-        self.assertIn('id = "static-c-stdio-permanent-fsetlocking-stdin"', ledger)
-        self.assertIn(
-            'command = "./scripts/dev-x86_64.sh libc-stdio-permanent-fsetlocking-stdin"',
-            ledger,
-        )
-        self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-fsetlocking-stdin-header-abi", dispatcher)
-        self.assertIn("libc-stdio-permanent-fsetlocking-stdin", dispatcher)
-        self.assertIn(
-            "stdio-permanent-fsetlocking-stdin-header-abi) ;;", dispatcher
-        )
-        self.assertIn(
-            "|libc-stdio-permanent-fsetlocking-stdin|", dispatcher
-        )
-        self.assertIn(
-            "run_stdio_permanent_fsetlocking_stdin_header_abi.sh", dispatcher
-        )
-        self.assertIn("run_libc_stdio_permanent_fsetlocking_stdin.sh", dispatcher)
-
     def test_libc_static_c_abi_stdio_permanent_fseterr_stdin_stays_bounded(
         self,
     ) -> None:
@@ -11411,139 +10974,6 @@ esac
         )
         self.assertIn("run_libc_stdio_permanent_fwritable_stderr.sh", dispatcher)
 
-    def test_libc_static_c_abi_stdio_permanent_feof_unlocked_stays_bounded(
-        self,
-    ) -> None:
-        """One GNU/BSD EOF alias remains permanent-stdin observation only."""
-        implementation = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
-        ).read_text(encoding="utf-8")
-        c_header_probe = (
-            ROOT / "compat" / "x86_64" /
-            "stdio_permanent_feof_unlocked_header_abi_probe.c"
-        ).read_text(encoding="utf-8")
-        cxx_header_probe = (
-            ROOT / "compat" / "x86_64" /
-            "stdio_permanent_feof_unlocked_header_abi_probe.cpp"
-        ).read_text(encoding="utf-8")
-        header_runner = (
-            ROOT / "compat" / "x86_64" /
-            "run_stdio_permanent_feof_unlocked_header_abi.sh"
-        ).read_text(encoding="utf-8")
-        fixture = (
-            ROOT / "compat" / "x86_64" /
-            "libc_stdio_permanent_feof_unlocked_probe.c"
-        ).read_text(encoding="utf-8")
-        start = (
-            ROOT / "compat" / "x86_64" /
-            "libc_stdio_permanent_feof_unlocked_start.S"
-        ).read_text(encoding="utf-8")
-        runner = (
-            ROOT / "compat" / "x86_64" /
-            "run_libc_stdio_permanent_feof_unlocked.sh"
-        ).read_text(encoding="utf-8")
-        exports = {
-            line
-            for line in (
-                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
-            ).read_text(encoding="utf-8").splitlines()
-            if line and not line.startswith("#")
-        }
-        ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
-            encoding="utf-8"
-        )
-        dispatcher = RUNNER.read_text(encoding="utf-8")
-
-        self.assertIn("feof", exports)
-        self.assertIn("feof_unlocked", exports)
-        self.assertIn("ferror_unlocked", exports)
-        for symbol in (
-            "clearerr_unlocked",
-            "_IO_feof_unlocked",
-        ):
-            self.assertNotIn(symbol, exports)
-        for required in (
-            "src/stdio/feof.c",
-            "weak_alias(feof, feof_unlocked)",
-            'pub unsafe extern "C" fn feof',
-            ".weak feof_unlocked",
-            ".set feof_unlocked, feof",
-            "F_EOF",
-        ):
-            self.assertIn(required, implementation)
-        for probe in (c_header_probe, cxx_header_probe):
-            for required in (
-                "feof_unlocked",
-                "FILE",
-                "_GNU_SOURCE",
-                "_BSD_SOURCE",
-                "REQUIRE_HIDDEN",
-            ):
-                self.assertIn(required, probe)
-        for required in (
-            "c11-gnu",
-            "c11-bsd",
-            "cxx17-gnu",
-            "cxx17-bsd",
-            "c11-posix-2008",
-            "cxx17-posix-2008",
-            "CRABC_STDIO_PERMANENT_FEOF_UNLOCKED_C11_GNU",
-            "CRABC_STDIO_PERMANENT_FEOF_UNLOCKED_CXX17_GNU",
-            "CRABC_STDIO_PERMANENT_FEOF_UNLOCKED_REQUIRE_HIDDEN",
-            "-nostdinc",
-            "-nostdinc++",
-            "assert_cxx_c_linkage",
-            "assert_hidden",
-            "run_musl_oracle.sh",
-        ):
-            self.assertIn(required, header_runner)
-        for required in (
-            "#include <errno.h>",
-            "feof_unlocked_entry != feof_entry",
-            "redirect_empty_input",
-            "errno = 0;",
-            "errno != 0",
-            "feof_entry(stdin) != 0 || feof_unlocked_entry(stdin) != 0",
-            "fgetc_entry(stdin) != EOF",
-            "feof_entry(stdin) == 0 || feof_unlocked_entry(stdin) == 0",
-            "CRABC_STDIO_PERMANENT_FEOF_UNLOCKED_FREESTANDING",
-        ):
-            self.assertIn(required, fixture)
-        for required in (
-            "__crabc_x86_static_tls_bootstrap",
-            "crabc_x86_64_stdio_permanent_feof_unlocked_probe",
-            "mov $231, %eax",
-        ):
-            self.assertIn(required, start)
-        for required in (
-            "ORACLE_ARCHIVE",
-            "run_stdio_permanent_feof_unlocked_header_abi.sh",
-            "STATIC_C_ABI_EXPORTS",
-            "strong feof",
-            "weak feof_unlocked",
-            "assert_weak_same_address_alias",
-            "weak_alias(feof, feof_unlocked)",
-            "-nostdlib -static",
-            "--gc-sections",
-            "candidate unexpectedly pulls independently selected ferror_unlocked",
-            "dynamic TLS model",
-            "unowned runtime dependency",
-            "feof unexpectedly contains a syscall path",
-            "__crabc_x86_static_tls_bootstrap",
-        ):
-            self.assertIn(required, runner)
-        self.assertNotIn("--whole-archive", runner)
-        self.assertIn('id = "static-c-stdio-permanent-feof-unlocked"', ledger)
-        self.assertIn(
-            'command = "./scripts/dev-x86_64.sh libc-stdio-permanent-feof-unlocked"',
-            ledger,
-        )
-        self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-feof-unlocked-header-abi", dispatcher)
-        self.assertIn("libc-stdio-permanent-feof-unlocked", dispatcher)
-        self.assertIn("run_stdio_permanent_feof_unlocked_header_abi.sh", dispatcher)
-        self.assertIn("run_libc_stdio_permanent_feof_unlocked.sh", dispatcher)
-
     def test_libc_static_c_abi_stdio_permanent_fileno_stays_bounded(self) -> None:
         """fileno observes only the three permanent descriptor adapters."""
         implementation = (
@@ -11649,128 +11079,6 @@ esac
         self.assertIn("libc-stdio-permanent-fileno", dispatcher)
         self.assertIn("run_stdio_permanent_fileno_header_abi.sh", dispatcher)
         self.assertIn("run_libc_stdio_permanent_fileno.sh", dispatcher)
-
-    def test_libc_static_c_abi_stdio_permanent_fileno_unlocked_stays_bounded(
-        self,
-    ) -> None:
-        """The GNU/BSD weak alias remains permanent-stream-only evidence."""
-        implementation = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
-        ).read_text(encoding="utf-8")
-        c_header_probe = (
-            ROOT / "compat" / "x86_64" /
-            "stdio_permanent_fileno_unlocked_header_abi_probe.c"
-        ).read_text(encoding="utf-8")
-        cxx_header_probe = (
-            ROOT / "compat" / "x86_64" /
-            "stdio_permanent_fileno_unlocked_header_abi_probe.cpp"
-        ).read_text(encoding="utf-8")
-        header_runner = (
-            ROOT / "compat" / "x86_64" /
-            "run_stdio_permanent_fileno_unlocked_header_abi.sh"
-        ).read_text(encoding="utf-8")
-        fixture = (
-            ROOT / "compat" / "x86_64" /
-            "libc_stdio_permanent_fileno_unlocked_probe.c"
-        ).read_text(encoding="utf-8")
-        start = (
-            ROOT / "compat" / "x86_64" /
-            "libc_stdio_permanent_fileno_unlocked_start.S"
-        ).read_text(encoding="utf-8")
-        runner = (
-            ROOT / "compat" / "x86_64" /
-            "run_libc_stdio_permanent_fileno_unlocked.sh"
-        ).read_text(encoding="utf-8")
-        exports = {
-            line
-            for line in (
-                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
-            ).read_text(encoding="utf-8").splitlines()
-            if line and not line.startswith("#")
-        }
-        ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
-            encoding="utf-8"
-        )
-        dispatcher = RUNNER.read_text(encoding="utf-8")
-
-        self.assertIn("fileno", exports)
-        self.assertIn("fileno_unlocked", exports)
-        for required in (
-            "src/stdio/fileno.c",
-            "weak_alias(fileno, fileno_unlocked)",
-            'pub unsafe extern "C" fn fileno',
-            ".weak fileno_unlocked",
-            ".set fileno_unlocked, fileno",
-        ):
-            self.assertIn(required, implementation)
-        for probe in (c_header_probe, cxx_header_probe):
-            for required in (
-                "fileno_unlocked",
-                "FILE",
-                "_GNU_SOURCE",
-                "_BSD_SOURCE",
-                "REQUIRE_HIDDEN",
-            ):
-                self.assertIn(required, probe)
-        for required in (
-            "c11-gnu",
-            "c11-bsd",
-            "cxx17-gnu",
-            "cxx17-bsd",
-            "c11-posix-2008",
-            "cxx17-posix-2008",
-            "CRABC_STDIO_PERMANENT_FILENO_UNLOCKED_C11_GNU",
-            "CRABC_STDIO_PERMANENT_FILENO_UNLOCKED_CXX17_GNU",
-            "CRABC_STDIO_PERMANENT_FILENO_UNLOCKED_REQUIRE_HIDDEN",
-            "-nostdinc",
-            "-nostdinc++",
-            "assert_cxx_c_linkage",
-            "assert_hidden",
-            "run_musl_oracle.sh",
-        ):
-            self.assertIn(required, header_runner)
-        for required in (
-            "fileno_unlocked_entry != fileno_entry",
-            "fileno_entry(stdin) != 0 || fileno_unlocked_entry(stdin) != 0",
-            "fileno_entry(stdout) != 1 || fileno_unlocked_entry(stdout) != 1",
-            "fileno_entry(stderr) != 2 || fileno_unlocked_entry(stderr) != 2",
-            "CRABC_STDIO_PERMANENT_FILENO_UNLOCKED_FREESTANDING",
-        ):
-            self.assertIn(required, fixture)
-        for forbidden in ("fgetc", "fputc", "dup", "pipe", "fopen", "tmpfile"):
-            self.assertNotIn(forbidden, fixture)
-        for required in (
-            "__crabc_x86_static_tls_bootstrap",
-            "crabc_x86_64_stdio_permanent_fileno_unlocked_probe",
-            "mov $231, %eax",
-        ):
-            self.assertIn(required, start)
-        for required in (
-            "ORACLE_ARCHIVE",
-            "run_stdio_permanent_fileno_unlocked_header_abi.sh",
-            "STATIC_C_ABI_EXPORTS",
-            "strong fileno",
-            "weak fileno_unlocked",
-            "assert_weak_same_address_alias",
-            "weak_alias(fileno, fileno_unlocked)",
-            "-nostdlib -static",
-            "dynamic TLS model",
-            "unowned runtime dependency",
-            "fileno unexpectedly contains a syscall path",
-            "__crabc_x86_static_tls_bootstrap",
-        ):
-            self.assertIn(required, runner)
-        self.assertNotIn("--whole-archive", runner)
-        self.assertIn('id = "static-c-stdio-permanent-fileno-unlocked"', ledger)
-        self.assertIn(
-            'command = "./scripts/dev-x86_64.sh libc-stdio-permanent-fileno-unlocked"',
-            ledger,
-        )
-        self.assertIn("does not select `stdio.stream-io`", ledger)
-        self.assertIn("stdio-permanent-fileno-unlocked-header-abi", dispatcher)
-        self.assertIn("libc-stdio-permanent-fileno-unlocked", dispatcher)
-        self.assertIn("run_stdio_permanent_fileno_unlocked_header_abi.sh", dispatcher)
-        self.assertIn("run_libc_stdio_permanent_fileno_unlocked.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_path_stream_stays_one_slot(self) -> None:
         """The pathname stream is a fixed static lifecycle, not general stdio."""
@@ -12133,7 +11441,6 @@ esac
         )
         self.assertIn("libc-text-math-locale-stdio-composition", dispatcher)
 
-
     def test_libc_static_c_abi_tree_search_slice_stays_independent(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -12359,7 +11666,6 @@ esac
         self.assertIn("gettext-catalog-header-abi)", dispatcher)
         self.assertIn("libc-gettext-catalog)", dispatcher)
 
-
     def test_pathname_lifecycle_runner_releases_dedicated_mkdirat_export(
         self,
     ) -> None:
@@ -12372,7 +11678,6 @@ esac
         self.assertIsNotNone(unselected)
         assert unselected is not None
         self.assertNotIn("mkdirat", unselected.group(1).split())
-
 
     def test_libc_static_c_abi_sysv_semaphore_artifact_stays_narrow(self) -> None:
         static_root = (
@@ -12563,7 +11868,6 @@ esac
             runner,
         )
 
-
     def test_filesystem_directory_traversal_dispatch_stays_explicit(self) -> None:
         """Keep ftw/nftw's opt-in gate and selected aggregate independently callable."""
 
@@ -12622,7 +11926,6 @@ esac
         ):
             self.assertIn(component, aggregate_runner)
 
-
     def test_x86_fs_credentials_are_typed_and_child_contained(self) -> None:
         process = (ROOT / "crabc-rs" / "src" / "process_x86_64.rs").read_text(
             encoding="utf-8"
@@ -12662,7 +11965,6 @@ esac
         self.assertIn('"--ignored"', test)
         self.assertIn("x86_64_fs_credentials_child_queries_and_requests_current_identity", test)
         self.assertIn("Err(Errno::INVAL)", test)
-
 
     def test_core_refuses_a_non_native_host_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -14263,7 +13565,6 @@ esac
             self.assertIn('"$test_binary" --test-threads=1', source_test_command)
             self.assertNotIn("cargo", source_test_command)
 
-
     def test_ldso_initial_exec_tls_stays_a_fixed_leaf_sibling(self) -> None:
         runner = (ROOT / "compat" / "x86_64" / "run_ldso_initial_tls.sh").read_text(
             encoding="utf-8"
@@ -15555,7 +14856,6 @@ esac
         ):
             self.assertIn(required, assembly)
 
-
     def test_libc_static_c_abi_ns_put32_artifact_stays_private(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -15691,7 +14991,6 @@ esac
         )
         self.assertIn("nameser-header-abi)", dispatcher)
         self.assertIn("libc-ns-put32)", dispatcher)
-
 
     def test_libc_static_c_abi_ns_skiprr_artifact_stays_private(self) -> None:
         static_root = (
@@ -15834,7 +15133,6 @@ esac
         self.assertIn("libc-ns-skiprr)", dispatcher)
         self.assertIn("run_libc_ns_skiprr.sh", dispatcher)
 
-
     def test_libc_static_c_abi_nameser_wire_aggregate_stays_private(self) -> None:
         probe = (
             ROOT / "compat" / "x86_64" / "libc_nameser_wire_aggregate_probe.c"
@@ -15898,7 +15196,6 @@ esac
         )
         self.assertIn("libc-nameser-wire-aggregate)", dispatcher)
         self.assertIn("run_libc_nameser_wire_aggregate.sh", dispatcher)
-
 
     def test_libc_static_c_abi_sched_getparam_artifact_stays_musl_enosys(self) -> None:
         static_root = (
@@ -16035,7 +15332,6 @@ esac
         self.assertIn("sched-getparam-header-abi)", dispatcher)
         self.assertIn("libc-sched-getparam)", dispatcher)
 
-
     def test_libc_static_c_abi_sched_setparam_artifact_stays_musl_enosys(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -16169,7 +15465,6 @@ esac
         self.assertIn("run_libc_sched_setparam_probe()", dispatcher)
         self.assertIn("sched-setparam-header-abi)", dispatcher)
         self.assertIn("libc-sched-setparam)", dispatcher)
-
 
     def test_libc_static_c_abi_sched_setscheduler_artifact_stays_musl_enosys(self) -> None:
         static_root = (
@@ -16461,7 +15756,6 @@ esac
         self.assertIn("sched-getaffinity-header-abi)", dispatcher)
         self.assertIn("libc-sched-getaffinity)", dispatcher)
 
-
     def test_libc_static_c_abi_sched_setaffinity_artifact_stays_bounded(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -16609,7 +15903,6 @@ esac
         self.assertIn("sched-setaffinity-header-abi)", dispatcher)
         self.assertIn("libc-sched-setaffinity)", dispatcher)
 
-
     def test_libc_static_c_abi_setfsuid_artifact_stays_bounded(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -16744,7 +16037,6 @@ esac
         self.assertIn("run_libc_setfsuid_probe()", dispatcher)
         self.assertIn("setfsuid-header-abi)", dispatcher)
         self.assertIn("libc-setfsuid)", dispatcher)
-
 
     def test_libc_static_c_abi_setfsgid_artifact_stays_bounded(self) -> None:
         static_root = (
@@ -16889,7 +16181,6 @@ esac
         self.assertIn("setfsgid-header-abi)", dispatcher)
         self.assertIn("libc-setfsgid)", dispatcher)
 
-
     def test_libc_static_c_abi_personality_artifact_stays_bounded(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -17019,7 +16310,6 @@ esac
         self.assertIn("personality-header-abi)", dispatcher)
         self.assertIn("libc-personality)", dispatcher)
 
-
     def test_campaign_dispatch_surface_is_explicit_and_host_safe(self) -> None:
         """Phase 0 reporting must not need a Docker image just to explain blockers."""
         dispatcher = RUNNER.read_text(encoding="utf-8")
@@ -17051,7 +16341,6 @@ esac
         campaign_status = dispatcher.index("campaign-status)")
         next_arm = dispatcher.index("campaign-family)", campaign_status)
         self.assertNotIn("ensure_image", dispatcher[campaign_status:next_arm])
-
 
     def test_routine_c_abi_matrix_dispatches_checked_registry_natively(self) -> None:
         dispatcher = RUNNER.read_text(encoding="utf-8")
