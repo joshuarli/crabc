@@ -21,6 +21,7 @@ use super::x86_64_general_initial_loader_state::GeneralInitialLoaderState;
 use super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle;
 use super::x86_64_initial_graph_state::InitialGraphState;
 use super::x86_64_runtime_memory::{LoaderBuffer, LoaderVec};
+use super::x86_64_library_search::{LoadedName, ObjectName};
 use super::x86_64_runtime_lock::{RuntimeGuard, CallbackGuard, wait_initialization, wake_initialization};
 use super::x86_64_general_relocation::deferred::{self, PendingRelocations, PreparedRetry};
 use core::cell::UnsafeCell;
@@ -90,7 +91,11 @@ struct RuntimeObject {
     needed: LoaderVec<*mut RuntimeObject>,
     // Lazily retained dlsym dependency order; see `dependency_scope`.
     dependency_scope: Option<LoaderBuffer<*mut RuntimeObject>>,
-    name: [u8; MAX_PATH],
+    // The stored pathname every public view shows: a runtime object's own
+    // exact-size mapping, released with the node on rollback, or an initial
+    // object's name retained by the initial object table.
+    name: ObjectName,
+    owned_name: Option<LoadedName>,
     // Initializers then finalizers, copied once before the node can run
     // either. Musl's ELF arrays have no length bound, so this is sized to the
     // object; rollback releases it with the node and published nodes retain it.
@@ -108,18 +113,16 @@ struct RuntimeObject {
 }
 
 impl RuntimeObject {
-    unsafe fn allocate(storage: ObjectStorage, identity: ObjectIdentity, index: usize, name: &[u8], short_name: bool) -> Option<*mut Self> {
-        if name.len() >= MAX_PATH { return None; }
+    unsafe fn allocate(storage: ObjectStorage, identity: ObjectIdentity, index: usize, name: Option<LoadedName>, short_name: bool) -> Option<*mut Self> {
         let address = unsafe { syscall6(SYS_MMAP, 0, core::mem::size_of::<Self>() as i64,
             PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
         if is_linux_error(address) { return None; }
         let node = address as *mut Self;
         unsafe { core::ptr::write(node, Self { link_map: LinkMap { address: 0, name: core::ptr::null(), dynamic: core::ptr::null(), next: core::ptr::null_mut(), previous: core::ptr::null_mut() }, storage, identity, index,
             next: core::ptr::null_mut(), previous: core::ptr::null_mut(), symbol_next: core::ptr::null_mut(), fini_next: core::ptr::null_mut(), needed_by: core::ptr::null_mut(), global: false, short_name,
-            needed: LoaderVec::new(), dependency_scope: None, name: [0; MAX_PATH],
+            needed: LoaderVec::new(), dependency_scope: None, name: name.as_ref().map_or(ObjectName::EMPTY, LoadedName::view), owned_name: name,
             callbacks: None, initializer_count: 0, finalizer_count: 0,
             callback_state: AtomicI32::new(0), callback_waiters: AtomicBool::new(false) });
-            core::ptr::copy_nonoverlapping(name.as_ptr(), (*node).name.as_mut_ptr(), name.len());
             (*node).link_map.name = (*node).name.as_ptr();
             if let ObjectStorage::Runtime(object) = &(*node).storage {
                 (*node).link_map.address = object.base as usize;
@@ -202,6 +205,7 @@ impl Drop for UnpublishedObjects {
                 // release its one owned callback mapping explicitly.
                 core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).callbacks));
                 core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).needed));
+                core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).owned_name));
                 syscall2(SYS_MUNMAP, node as i64, core::mem::size_of::<RuntimeObject>() as i64);
                 node = previous;
             }
@@ -245,12 +249,14 @@ impl PreparedInitialRegistry {
         let mut nodes = UnpublishedObjects::new();
         let mut by_index = LoaderBuffer::new(graph.object_count(), core::ptr::null_mut::<RuntimeObject>())?;
         for index in 0..graph.object_count() {
-            let node = unsafe { RuntimeObject::allocate(ObjectStorage::Initial(index), graph.identity(index)?, index, b"", objects[index].search_short_name) }?;
+            let node = unsafe { RuntimeObject::allocate(ObjectStorage::Initial(index), graph.identity(index)?, index, None, objects[index].search_short_name) }?;
             unsafe { nodes.append(node) }?;
             by_index.as_mut_slice()[index] = node;
             unsafe {
                 (*node).link_map.address = objects[index].base as usize;
                 (*node).link_map.dynamic = objects[index].dynamic;
+                (*node).name = objects[index].search_name;
+                (*node).link_map.name = (*node).name.as_ptr();
             }
             if objects[index].map_provenance == ObjectMapProvenance::KernelMain {
                 // Only the public name changes. The empty search name keeps
@@ -268,8 +274,6 @@ impl PreparedInitialRegistry {
             if let Some(parent) = objects[index].needed_by {
                 unsafe { (*node).needed_by = by_index.as_slice()[parent]; }
             }
-            let length = unsafe { bounded_nul(objects[index].search_name.as_ptr(), MAX_PATH) }?;
-            unsafe { (&mut (*node).name)[..length].copy_from_slice(&objects[index].search_name[..length]); }
             let edges = graph.edges(index)?;
             unsafe { (*node).needed.reserve(edges.len()) }?;
             for child in edges {
@@ -619,9 +623,7 @@ fn report(output: &mut RuntimeDiagnostic, kind: i32, number: i32, parts: &[&[u8]
 }
 
 unsafe fn node_name(node: *mut RuntimeObject) -> &'static [u8] {
-    let name = unsafe { (*node).name.as_ptr() };
-    let length = unsafe { bounded_nul(name, MAX_PATH) }.unwrap();
-    unsafe { core::slice::from_raw_parts(name, length) }
+    unsafe { (*node).name.bytes() }
 }
 
 unsafe fn find_identity(registry: &RuntimeRegistry, new: &UnpublishedObjects, identity: ObjectIdentity) -> *mut RuntimeObject {
@@ -670,7 +672,7 @@ unsafe fn load_one(
         let existing = unsafe { find_short_name(registry, new, name) };
         if !existing.is_null() { return Ok(existing); }
     }
-    let (fd, path, length) = unsafe { open_runtime_file(parent, name) }?;
+    let (fd, path) = unsafe { open_runtime_file(parent, name) }?;
     let identity = unsafe { file_identity_from_fd(fd) };
     let Some(identity) = identity else {
         // Report fstat's errno as musl load_library does; a zero identity
@@ -690,7 +692,7 @@ unsafe fn load_one(
     let mapped = unsafe { map_elf_reporting_error(fd, false, true, ObjectRole::Library) };
     unsafe { syscall1(SYS_CLOSE, fd); }
     let mut object = mapped?;
-    object.search_name = path;
+    object.search_name = path.view();
     object.search_short_name = short_name;
     let index = match registry.count.checked_add(new.count).and_then(|index| index.checked_add(1)).map(|next| next - 1) {
         Some(index) => index,
@@ -705,7 +707,7 @@ unsafe fn load_one(
         object.tls_offset_below_tp = 0;
         *tls_count = id;
     }
-    let node = unsafe { RuntimeObject::allocate(ObjectStorage::Runtime(object), identity, index, &path[..length], short_name) };
+    let node = unsafe { RuntimeObject::allocate(ObjectStorage::Runtime(object), identity, index, Some(path), short_name) };
     let Some(node) = node else {
         unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
         return Err(ENOMEM);
@@ -923,10 +925,9 @@ unsafe extern "C" fn runtime_open(filename: *const u8, flags: i32, diagnostic: *
         let _guard = RuntimeGuard::acquire();
         return unsafe { (*REGISTRY.0.get()).head.cast() };
     }
-    let Some(length) = (unsafe { bounded_nul(filename, MAX_PATH) }) else {
-        report(diagnostic, if flags & 4 != 0 { DIAGNOSTIC_NOT_LOADED } else { DIAGNOSTIC_LOAD }, 36, &[]);
-        return core::ptr::null_mut();
-    };
+    // The caller's C string is opened as given, as musl does; only the
+    // kernel limits a pathname's length.
+    let Some(length) = (unsafe { bounded_nul(filename, isize::MAX as usize) }) else { return core::ptr::null_mut(); };
     let filename = unsafe { core::slice::from_raw_parts(filename, length) };
     let result = {
         let guard = RuntimeGuard::acquire();

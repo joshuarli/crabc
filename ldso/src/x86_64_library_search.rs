@@ -4,6 +4,10 @@
 //! (MIT, 9fa28ece75d8a2191de7c5bb53bed224c5947417): environment first,
 //! first-load ancestors next, configured/default system directories last.
 //! Empty colon and newline components are skipped; unexpected open errors stop search.
+//! A name containing '/' is opened as given, so only the kernel's PATH_MAX
+//! applies; a bare name longer than NAME_MAX fails; search candidates are
+//! composed in musl's `2*NAME_MAX+2` buffer, skipping any that do not fit;
+//! `$ORIGIN` expansion and every admitted pathname are sized to their bytes.
 //! The canonical installed interpreter has installation prefix "". Direct
 //! entry derives the prefix from its invocation name, or from the executable's
 //! PT_INTERP in listing mode. Test roots supply only declared application
@@ -12,7 +16,13 @@ use super::*;
 use super::x86_64_runtime_memory::LoaderBuffer;
 use core::cell::UnsafeCell;
 
+/// Linux PATH_MAX, including the terminator. Musl only uses it to reject an
+/// installation prefix; every other length here is sized to its bytes.
 const PATH_CAPACITY: usize = 4096;
+/// Musl `load_library`'s `char buf[2*NAME_MAX+2]`, shared by `path_open`
+/// candidates and `fixup_rpath`'s `/proc/self/exe` readlink.
+const SEARCH_BUFFER: usize = 2 * NAME_MAX + 2;
+const NAME_MAX: usize = 255;
 static mut ENVIRONMENT_PATH: *const u8 = core::ptr::null();
 static mut ENVIRONMENT_PRELOAD: *const u8 = core::ptr::null();
 static mut SECURE: bool = true;
@@ -74,8 +84,13 @@ pub(super) unsafe fn application_name() -> *const u8 { unsafe { APPLICATION_NAME
 /// Command options are explicit input, independent of environment filtering.
 pub(super) unsafe fn command_interpreter(name: *const u8) { unsafe { INTERPRETER_NAME = name; } }
 pub(super) unsafe fn interpreter_name() -> &'static [u8] {
-    let pointer = unsafe { INTERPRETER_NAME };
-    let length = unsafe { bounded_nul(pointer, PATH_CAPACITY) }.unwrap_or(0);
+    unsafe { c_string(INTERPRETER_NAME) }
+}
+
+/// A process-lifetime C string from the initial stack, argv, PT_INTERP or a
+/// static literal. Like musl, none of these is length-limited here.
+unsafe fn c_string(pointer: *const u8) -> &'static [u8] {
+    let length = unsafe { bounded_nul(pointer, isize::MAX as usize) }.unwrap_or(0);
     unsafe { core::slice::from_raw_parts(pointer, length) }
 }
 
@@ -97,6 +112,8 @@ pub(super) unsafe fn installation_prefix() -> &'static [u8] {
         .rev()
         .nth(1)
         .map_or(0, |(index, _)| index);
+    // Musl ignores a prefix that could not form a pathname.
+    if length >= PATH_CAPACITY { return b""; }
     &name[..length]
 }
 pub(super) unsafe fn command_path(path: *const u8) { unsafe { ENVIRONMENT_PATH = path; } }
@@ -104,12 +121,10 @@ pub(super) unsafe fn command_preload(path: *const u8) { unsafe { ENVIRONMENT_PRE
 
 /// A missing or malformed optional preload is ignored by musl load_preload;
 /// successful admissions still participate in the complete initial graph.
-/// Overlong selected lists are rejected rather than silently truncated.
-pub(super) unsafe fn preloads() -> Result<&'static [u8], i32> {
+pub(super) unsafe fn preloads() -> &'static [u8] {
     let preload = unsafe { ENVIRONMENT_PRELOAD };
-    if preload.is_null() { return Ok(&[]); }
-    let length = unsafe { bounded_nul(preload, PATH_CAPACITY) }.ok_or(36)?;
-    Ok(unsafe { core::slice::from_raw_parts(preload, length) })
+    if preload.is_null() { return &[]; }
+    unsafe { c_string(preload) }
 }
 
 // The initial transaction is single-threaded; runtime selection holds the
@@ -169,93 +184,155 @@ unsafe fn system_paths() -> &'static [u8] {
     }
 }
 
-pub(super) type Opened = (i64, [u8; MAX_PATH], usize);
+/// One admitted object's pathname: NUL-terminated in a loader mapping sized
+/// to it, as musl copies `pathname` into the DSO allocation. Its owner (the
+/// initial object table or a runtime registry node) outlives every
+/// [`ObjectName`] view of it.
+pub(super) struct LoadedName(LoaderBuffer<u8>);
+
+impl LoadedName {
+    /// Copy `bytes` and a terminator; `None` when the kernel refuses the map.
+    pub(super) fn new(bytes: &[u8]) -> Option<Self> {
+        let mut buffer = LoaderBuffer::new(bytes.len().checked_add(1)?, 0u8)?;
+        buffer.as_mut_slice()[..bytes.len()].copy_from_slice(bytes);
+        Some(Self(buffer))
+    }
+
+    pub(super) fn view(&self) -> ObjectName {
+        let bytes = self.0.as_slice();
+        ObjectName { pointer: bytes.as_ptr(), length: bytes.len() - 1 }
+    }
+}
+
+/// A copyable view of an object's NUL-terminated pathname. Object records
+/// are plain copies, so the bytes belong to a [`LoadedName`] or to a
+/// process-lifetime string such as the direct command's program argument.
+#[derive(Clone, Copy)]
+pub(super) struct ObjectName { pointer: *const u8, length: usize }
+
+impl ObjectName {
+    /// The kernel-mapped executable has no search name.
+    pub(super) const EMPTY: Self = Self { pointer: b"\0".as_ptr(), length: 0 };
+
+    /// # Safety
+    /// `bytes` is followed by a NUL byte and outlives every copy of the view.
+    pub(super) unsafe fn borrowed(bytes: &[u8]) -> Self { Self { pointer: bytes.as_ptr(), length: bytes.len() } }
+
+    /// The terminated C string, for link maps and diagnostics.
+    pub(super) fn as_ptr(self) -> *const u8 { self.pointer }
+
+    /// # Safety
+    /// The owner of the viewed bytes is still live.
+    pub(super) unsafe fn bytes<'a>(self) -> &'a [u8] { unsafe { core::slice::from_raw_parts(self.pointer, self.length) } }
+}
+
+pub(super) type Opened = (i64, LoadedName);
 
 unsafe fn direct(name: &[u8]) -> Result<Opened, i32> {
     if name.is_empty() { return Err(22); }
-    if name.len() >= MAX_PATH { return Err(36); }
-    let mut path = [0; MAX_PATH];
-    path[..name.len()].copy_from_slice(name);
-    let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0x80000, 0) };
-    if fd < 0 { Err((-fd) as i32) } else { Ok((fd, path, name.len())) }
+    // The name is stored as given; the kernel alone limits its length.
+    let path = LoadedName::new(name).ok_or(12)?;
+    let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.view().as_ptr() as i64, 0x80000, 0) };
+    if fd < 0 { Err((-fd) as i32) } else { Ok((fd, path)) }
 }
 
 unsafe fn path_open(paths: &[u8], name: &[u8]) -> Result<Option<Opened>, i32> {
     for directory in paths.split(|byte| matches!(byte, b':' | b'\n')).filter(|part| !part.is_empty()) {
-        let length = directory.len().checked_add(1).and_then(|n| n.checked_add(name.len())).ok_or(36)?;
-        if length >= MAX_PATH { continue; }
-        let mut path = [0; MAX_PATH];
+        // snprintf(buf, sizeof buf, "%.*s/%s") < sizeof buf: skip what does not fit.
+        let length = directory.len().saturating_add(1).saturating_add(name.len());
+        if length >= SEARCH_BUFFER { continue; }
+        let mut path = [0; SEARCH_BUFFER];
         path[..directory.len()].copy_from_slice(directory);
         path[directory.len()] = b'/';
         path[directory.len() + 1..length].copy_from_slice(name);
-        match unsafe { direct(&path[..length]) } {
-            Ok(opened) => return Ok(Some(opened)),
-            Err(2 | 20 | 13 | 36) => (),
-            Err(error) => return Err(error),
+        let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0x80000, 0) };
+        if fd >= 0 {
+            let Some(stored) = LoadedName::new(&path[..length]) else {
+                unsafe { syscall1(SYS_CLOSE, fd); }
+                return Err(12);
+            };
+            return Ok(Some((fd, stored)));
+        }
+        match (-fd) as i32 {
+            2 | 20 | 13 | 36 => (),
+            error => return Err(error),
         }
     }
     Ok(None)
 }
 
-unsafe fn object_paths(object: &Object, output: &mut [u8; PATH_CAPACITY]) -> Result<usize, i32> {
-    if object.runpath.is_null() { return Ok(0); }
-    let paths = unsafe { core::slice::from_raw_parts(object.runpath, object.runpath_len) };
-    if !paths.contains(&b'$') {
-        if paths.len() >= output.len() { return Err(36); }
-        output[..paths.len()].copy_from_slice(paths);
-        return Ok(paths.len());
+/// An object's search path: its DT_RUNPATH bytes, or musl fixup_rpath's
+/// `$ORIGIN` expansion in a loader mapping sized to the result.
+enum ObjectPaths<'a> { None, Borrowed(&'a [u8]), Expanded(LoaderBuffer<u8>) }
+
+impl ObjectPaths<'_> {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::None => &[],
+            Self::Borrowed(bytes) => bytes,
+            Self::Expanded(buffer) => buffer.as_slice(),
+        }
     }
+}
+
+unsafe fn object_paths(object: &Object) -> Result<ObjectPaths<'_>, i32> {
+    if object.runpath.is_null() { return Ok(ObjectPaths::None); }
+    let paths = unsafe { core::slice::from_raw_parts(object.runpath, object.runpath_len) };
+    if !paths.contains(&b'$') { return Ok(ObjectPaths::Borrowed(paths)); }
     // Musl ignores the whole path on any unrecognized expansion.
     let mut remaining = paths;
+    let (mut expansions, mut token_bytes) = (0usize, 0usize);
     while let Some(index) = remaining.iter().position(|byte| *byte == b'$') {
         remaining = &remaining[index..];
         let skip = if remaining.starts_with(b"${ORIGIN}") { 9 }
-            else if remaining.starts_with(b"$ORIGIN") { 7 } else { return Ok(0); };
+            else if remaining.starts_with(b"$ORIGIN") { 7 } else { return Ok(ObjectPaths::None); };
         remaining = &remaining[skip..];
+        expansions += 1;
+        token_bytes += skip;
     }
-    let mut executable = [0; MAX_PATH];
+    let mut executable = [0; SEARCH_BUFFER];
     let name = if object.map_provenance == ObjectMapProvenance::KernelMain {
-        if unsafe { SECURE } { return Ok(0); }
-        let size = unsafe { syscall3(89, b"/proc/self/exe\0".as_ptr() as i64, executable.as_mut_ptr() as i64, MAX_PATH as i64) };
+        if unsafe { SECURE } { return Ok(ObjectPaths::None); }
+        let size = unsafe { syscall3(89, b"/proc/self/exe\0".as_ptr() as i64, executable.as_mut_ptr() as i64, SEARCH_BUFFER as i64) };
         if size < 0 {
-            return match -size { 2 | 20 | 13 => Ok(0), error => Err(error as i32) };
+            return match -size { 2 | 20 | 13 => Ok(ObjectPaths::None), error => Err(error as i32) };
         }
-        if size as usize >= MAX_PATH { return Ok(0); }
+        if size as usize >= SEARCH_BUFFER { return Ok(ObjectPaths::None); }
         &executable[..size as usize]
     } else {
-        let length = unsafe { bounded_nul(object.search_name.as_ptr(), MAX_PATH) }.ok_or(36)?;
-        &object.search_name[..length]
+        unsafe { object.search_name.bytes() }
     };
     let origin = name.iter().rposition(|byte| *byte == b'/').map_or(b".".as_slice(), |index| &name[..index]);
-    if unsafe { SECURE } && !name.starts_with(b"/") { return Ok(0); }
+    // Musl disallows a non-absolute origin name for AT_SECURE.
+    if unsafe { SECURE } && !name.starts_with(b"/") { return Ok(ObjectPaths::None); }
+    let length = expansions.checked_mul(origin.len())
+        .and_then(|bytes| bytes.checked_add(paths.len() - token_bytes)).ok_or(12)?;
+    let mut output = LoaderBuffer::new(length, 0u8).ok_or(12)?;
+    let bytes = output.as_mut_slice();
     let mut count = 0;
     let mut input = paths;
     while !input.is_empty() {
         let (part, skip) = if input.starts_with(b"${ORIGIN}") { (origin, 9) }
             else if input.starts_with(b"$ORIGIN") { (origin, 7) } else { (&input[..1], 1) };
-        let end = count + part.len();
-        if end >= output.len() { return Err(36); }
-        output[count..end].copy_from_slice(part);
-        count = end;
+        bytes[count..count + part.len()].copy_from_slice(part);
+        count += part.len();
         input = &input[skip..];
     }
-    Ok(count)
+    Ok(ObjectPaths::Expanded(output))
 }
 
 /// The iterator starts at the requesting object and follows only its first
 /// load ancestry. dlopen itself starts at the main executable, as musl does.
 pub(super) unsafe fn open<'a>(name: &[u8], ancestors: impl Iterator<Item = &'a Object>) -> Result<Opened, i32> {
     if name.is_empty() || name.contains(&b'/') { return unsafe { direct(name) }; }
-    if name.len() > 255 { return Err(36); }
+    if name.len() > NAME_MAX { return Err(36); }
     let environment = unsafe { ENVIRONMENT_PATH };
     if !environment.is_null() {
-        let length = unsafe { bounded_nul(environment, PATH_CAPACITY) }.ok_or(36)?;
-        if let Some(opened) = unsafe { path_open(core::slice::from_raw_parts(environment, length), name) }? { return Ok(opened); }
+        if let Some(opened) = unsafe { path_open(c_string(environment), name) }? { return Ok(opened); }
     }
-    let mut paths = [0; PATH_CAPACITY];
     for object in ancestors {
-        let length = unsafe { object_paths(object, &mut paths) }?;
-        if let Some(opened) = unsafe { path_open(&paths[..length], name) }? { return Ok(opened); }
+        let paths = unsafe { object_paths(object) }?;
+        if let Some(opened) = unsafe { path_open(paths.bytes(), name) }? { return Ok(opened); }
     }
     unsafe { path_open(system_paths(), name) }?.ok_or(2)
 }

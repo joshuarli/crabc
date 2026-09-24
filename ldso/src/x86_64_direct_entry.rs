@@ -16,9 +16,11 @@ unsafe fn command_error(message: &[u8]) -> ! {
     loop {}
 }
 
+/// Argument strings are NUL-terminated in the kernel stack mapping for the
+/// process lifetime; like musl, the loader imposes no length of its own.
 unsafe fn argument(pointer: usize) -> &'static [u8] {
     let pointer = pointer as *const u8;
-    let length = unsafe { bounded_nul(pointer, 4096) }.unwrap_or_else(|| unsafe { usage() });
+    let length = unsafe { bounded_nul(pointer, isize::MAX as usize) }.unwrap_or_else(|| unsafe { usage() });
     unsafe { core::slice::from_raw_parts(pointer, length) }
 }
 
@@ -64,13 +66,13 @@ pub(super) unsafe fn prepare(sp: usize, ldso_base: usize) -> (Object, usize) {
         if index == argc { usage(); }
         let program_pointer = *argv.add(index);
         let program = argument(program_pointer);
-        if program.len() >= MAX_PATH { command_error(b"executable pathname exceeds loader capacity\n"); }
         let fd = syscall4(SYS_OPENAT, AT_FDCWD, program_pointer as i64, 0x80000, 0);
         if fd < 0 { command_error(b"cannot open executable\n"); }
         let mapped = map_elf_for_role(fd, false, true, ObjectRole::Main);
         syscall1(SYS_CLOSE, fd);
         let mut main = mapped.unwrap_or_else(|| command_error(b"not a valid dynamic executable\n"));
-        main.search_name[..program.len()].copy_from_slice(program);
+        // Musl names the program by its argument string (app.name = argv[0]).
+        main.search_name = x86_64_library_search::ObjectName::borrowed(program);
         if LIST {
             for index in 0..main.phnum {
                 let phdr = main.phdr.add(index * 56);
@@ -132,7 +134,7 @@ pub(super) unsafe fn list_and_exit(objects: &[Object], ldso_base: usize) {
         write(b"\t"); write(x86_64_library_search::interpreter_name());
         address_line(ldso_base as u64);
         for object in objects.iter().skip(1) {
-            let name = argument(object.search_name.as_ptr() as usize);
+            let name = object.search_name.bytes();
             let requested = if object.initial_load_name_is_short {
                 name.iter().rposition(|byte| *byte == b'/').map_or(name, |index| &name[index + 1..])
             } else { name };

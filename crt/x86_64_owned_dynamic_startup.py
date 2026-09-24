@@ -44,6 +44,7 @@ MAIN_SOURCE = FIXTURES / "owned_dynamic_startup_main.c"
 DEPENDENCY_SOURCE = FIXTURES / "owned_dynamic_startup_dependency.c"
 PLUGIN_SOURCE = FIXTURES / "owned_dynamic_startup_plugin.c"
 WIDE_SOURCE = FIXTURES / "owned_dynamic_startup_wide.c"
+NAMES_SOURCE = FIXTURES / "owned_dynamic_startup_names.c"
 DEPENDENCY = "libowned-startup-dependency.so"
 PLUGIN = "libowned-startup-plugin.so"
 SCHEMA = "crabc.x86_64-owned-crt-dynamic-startup/v1"
@@ -98,6 +99,86 @@ WIDE_HUB = "libowned-startup-wide-hub.so"
 WIDE_PLUGIN = "libowned-startup-wide-plugin.so"
 WIDE_STATUS = 7
 WIDE_VALUES = "|1420,2210,3630,1|"
+
+
+# The names graph (see NAMES_SOURCE) has no admitted difference. Each arm lays
+# out one tree below its own root; every path below has the same length in
+# both arms, so the transcripts compare byte for byte.
+NAMES_STATUS = 7
+NAMES_SEARCH = "libowned-startup-name-search.so"
+NAMES_LEAF = "libowned-startup-name-leaf.so"
+NAMES_DEEP = "libowned-startup-name-deep.so"
+# Musl composes search candidates in char[2*NAME_MAX+2].
+NAMES_SEARCH_BUFFER = 512
+# Case, the executable's path length and whether it reads the long preloads
+# or the long library path.
+NAMES_CASES = {"initial": 600, "dlopen": 3000, "search": 3000, "preload": 3000}
+
+
+def names_path(root: str, group: str, total: int, filename: str) -> str:
+    """`root/names/group/.../filename`, padded to exactly `total` bytes.
+
+    Padding directories are at most 200 bytes, below NAME_MAX.
+    """
+
+    head = f"{root}/names/{group}"
+    room = total - len(head) - 1 - len(filename)
+    require(room >= 2, f"names path {group} cannot reach {total} bytes")
+    segments = []
+    while room > 0:
+        size = min(200, room - 1)
+        if room - (size + 1) == 1:
+            size -= 1
+        segments.append(group[0] * size)
+        room -= size + 1
+    path = "/".join([head, *segments, filename])
+    require(len(path) == total, f"names path {group} has {len(path)} bytes, not {total}")
+    return path
+
+
+def names_layout(root: str) -> dict[str, str]:
+    """Every name-bearing path of one arm below `root` (empty in the chroot)."""
+
+    # An ordinary directory, padded like every other path.
+    short = names_path(root, "short", 200, "x")[:-2]
+    layout = {
+        "a": names_path(root, "a", 600, "libowned-startup-name-a.so"),
+        "b": names_path(root, "b", 3000, "libowned-startup-name-b.so"),
+        "c": names_path(root, "c", 600, "libowned-startup-name-c.so"),
+        "d": names_path(root, "d", 3000, "libowned-startup-name-d.so"),
+        "e": names_path(root, "e", 3000, "libowned-startup-name-e.so"),
+        "f": names_path(root, "f", 3000, "libowned-startup-name-f.so"),
+        "leaf": f"{short}/{NAMES_LEAF}",
+        "deep": f"{short}/{NAMES_DEEP}",
+        # Two 3000-byte directories and one whose candidate is exactly the
+        # buffer size are skipped; the 511-byte candidate fits and is opened.
+        "search-long-1": names_path(root, "long", 3000, NAMES_SEARCH),
+        "search-long-2": names_path(root, "longer", 3000, NAMES_SEARCH),
+        "search-skipped": names_path(root, "skipped", NAMES_SEARCH_BUFFER, NAMES_SEARCH),
+        "search": names_path(root, "fits", NAMES_SEARCH_BUFFER - 1, NAMES_SEARCH),
+        # Two $ORIGIN expansions of a ~3000-byte directory exceed any fixed
+        # path buffer and each candidate exceeds musl's; the last component
+        # is an ordinary directory.
+        "runpath": f"$ORIGIN:${{ORIGIN}}:{short}",
+    }
+    for mode in MODES:
+        for length in sorted(set(NAMES_CASES.values())):
+            layout[f"program-{mode}-{length}"] = names_path(root, f"program{length}", length, f"main-names-{mode}")
+    return layout
+
+
+def names_environment(layout: dict[str, str], mode: str, case: str) -> dict[str, str]:
+    environment = {"NAMES_CASE": case, "NAMES_PROGRAM": layout[f"program-{mode}-{NAMES_CASES[case]}"],
+                   "NAMES_A": layout["a"], "NAMES_B": layout["b"], "NAMES_LEAF": layout["leaf"]}
+    if case == "dlopen":
+        environment.update(NAMES_C=layout["c"], NAMES_D=layout["d"], NAMES_DEEP=layout["deep"])
+    elif case == "search":
+        directories = [layout[key].rpartition("/")[0]
+                       for key in ("search-long-1", "search-long-2", "search-skipped", "search")]
+        environment.update(LD_LIBRARY_PATH=":".join(directories), NAMES_SEARCH=layout["search"])
+    elif case == "preload":
+        environment.update(LD_PRELOAD=f"{layout['e']}:{layout['f']}", NAMES_E=layout["e"], NAMES_F=layout["f"])
+    return environment
 
 
 def wide_leaf(group: str, index: int) -> str:
@@ -518,6 +599,166 @@ def execute_wide(recorder: Recorder, root: Path, work: Path) -> list[dict[str, o
     return cells
 
 
+# Image roster of the names graph: role defines, the exported identifier and
+# its value, the bare-named dependency, and whether the SONAME is the image's
+# own absolute path (so the executable records a pathname DT_NEEDED).
+# Dependencies precede their dependents.
+NAMES_IMAGES = {
+    "leaf": ("leaf", "names_leaf_value", 3, None, False),
+    "deep": ("leaf", "names_deep_value", 4, None, False),
+    "a": ("leaf", "names_a_value", 1, None, True),
+    "b": ("origin", "names_b_value", 200, "leaf", True),
+    "c": ("leaf", "names_c_value", 5, None, False),
+    "d": ("origin", "names_d_value", 400, "deep", False),
+    "e": ("leaf", "names_e_value", 6, None, False),
+    "f": ("leaf", "names_f_value", 7, None, False),
+    "search-long-1": ("leaf", "names_search_value", 8, None, False),
+    "search-long-2": ("leaf", "names_search_value", 8, None, False),
+    "search-skipped": ("leaf", "names_search_value", 8, None, False),
+    "search": ("leaf", "names_search_value", 9, None, False),
+}
+DEPENDENCY_SYMBOL = {"leaf": "names_leaf_value", "deep": "names_deep_value"}
+
+
+def names_defines(key: str) -> list[str]:
+    role, symbol, value, dependency, _pathname = NAMES_IMAGES[key]
+    defines = [f"-DNAMES_SYMBOL={symbol}", f"-DNAMES_ID={value}"]
+    if role == "leaf":
+        return ["-DNAMES_LEAF", *defines]
+    return ["-DNAMES_ORIGIN", *defines, f"-DNAMES_LEAF_SYMBOL={DEPENDENCY_SYMBOL[dependency]}"]
+
+
+def replay_link(recorder: Recorder, label: str, linked: Path, output: Path, *, soname: str | None = None,
+                runpath: str | None = None, inputs: dict[Path, Path] | None = None) -> None:
+    """Relink through the installed driver's recorded LLD command.
+
+    The installed driver deliberately refuses pathname SONAMEs, pathname
+    DT_NEEDED entries and `$ORIGIN` search paths in application images. Only
+    those name-bearing arguments of its exact recorded command change here.
+    """
+
+    command = json.loads(Path(str(linked) + ".crabc-link.json").read_text())["link_command"]
+    require(command[-2:] == ["-o", str(linked)], f"{label}: recorded link command shape")
+    command = [str(inputs.get(Path(item), item)) if inputs else item for item in command[:-1]] + [str(output)]
+    for flag, value in (("-soname", soname), ("-rpath", runpath)):
+        if value is not None:
+            require(command.count(flag) == 1, f"{label}: recorded link command has no single {flag}")
+            command[command.index(flag) + 1] = value
+    output.parent.mkdir(parents=True, exist_ok=True)
+    recorder.run(label, command)
+
+
+def build_names(recorder: Recorder, product: Path, work: Path) -> dict[str, object]:
+    """Build the names graph through the installed driver and pinned musl."""
+
+    driver = str(product / "bin/crabc-cc-dynamic")
+    candidate = work / "candidate" / "names"
+    oracle_root = work / "oracle" / "names-root"
+    candidate_layout = names_layout("")
+    oracle_layout = names_layout(str(oracle_root))
+    normal: dict[str, Path] = {}
+    final: dict[str, Path] = {}
+    for key, (_role, _symbol, _value, dependency, pathname) in NAMES_IMAGES.items():
+        defines = names_defines(key)
+        basename = candidate_layout[key].rpartition("/")[2]
+        directory = candidate / key
+        directory.mkdir(parents=True)
+        obj = directory / f"{basename}.o"
+        recorder.run(f"compile-names-{key}", [driver, "--dynamic-shared-object", "-c", *FIXTURE_FLAGS, *defines,
+                                              str(NAMES_SOURCE), "-o", str(obj)])
+        declared = ["--application-dso", str(normal[dependency])] if dependency else []
+        normal[key] = directory / basename
+        recorder.run(f"link-names-{key}", [driver, "--dynamic-shared-object", str(obj), *declared,
+                                           "-o", str(normal[key])])
+        final[key] = normal[key]
+        if pathname or dependency:
+            final[key] = directory / "final" / basename
+            replay_link(recorder, f"relink-names-{key}", normal[key], final[key],
+                        soname=candidate_layout[key] if pathname else None,
+                        runpath=candidate_layout["runpath"] if dependency else None)
+        oracle_output = Path(oracle_layout[key])
+        oracle_output.parent.mkdir(parents=True, exist_ok=True)
+        soname = oracle_layout[key] if pathname else basename
+        search = ["-Wl,--enable-new-dtags", f"-Wl,-rpath,{oracle_layout['runpath']}", "-Wl,--no-as-needed",
+                  oracle_layout[dependency]] if dependency else []
+        recorder.run(f"oracle-names-{key}", [str(ORACLE_COMPILER), "-fPIC", "-shared", *FIXTURE_FLAGS, *defines,
+                                             str(NAMES_SOURCE), f"-Wl,-soname,{soname}", *search,
+                                             "-o", str(oracle_output)])
+    report: dict[str, object] = {}
+    for mode, (flag, _entry, elf_type, oracle_flags) in MODES.items():
+        obj = candidate / f"main-names-{mode}.o"
+        recorder.run(f"compile-names-{mode}", [driver, flag, "-c", *FIXTURE_FLAGS, str(NAMES_SOURCE), "-o", str(obj)])
+        linked = candidate / f"main-names-{mode}"
+        recorder.run(f"link-names-{mode}", [driver, flag, str(obj), "--application-dso", str(normal["a"]),
+                                            "--application-dso", str(normal["b"]),
+                                            "--transitive-application-dso", str(normal["leaf"]), "-o", str(linked)])
+        output = candidate / "final" / f"main-names-{mode}"
+        replay_link(recorder, f"relink-names-{mode}", linked, output,
+                    inputs={normal["a"]: final["a"], normal["b"]: final["b"]})
+        image = parse_elf(output)
+        expected = (candidate_layout["a"], candidate_layout["b"], "libc.so")
+        require(image.elf_type == elf_type and image.needed == expected,
+                f"{output.name}: names DT_NEEDED differs: {[len(name) for name in image.needed]}")
+        report[mode] = {"needed_lengths": [len(name) for name in image.needed]}
+        for length in sorted(set(NAMES_CASES.values())):
+            program = Path(oracle_layout[f"program-{mode}-{length}"])
+            program.parent.mkdir(parents=True, exist_ok=True)
+            recorder.run(f"oracle-names-{mode}-{length}",
+                         [str(ORACLE_COMPILER), *oracle_flags, *FIXTURE_FLAGS, "-fstack-protector-strong",
+                          str(NAMES_SOURCE), "-Wl,--no-as-needed", oracle_layout["a"], oracle_layout["b"],
+                          "-o", str(program)])
+    report["images"] = {key: str(path.relative_to(candidate)) for key, path in final.items()}
+    return report
+
+
+def execute_names(recorder: Recorder, root: Path, work: Path) -> list[dict[str, object]]:
+    """Compare every names case's transcript and status with pinned musl."""
+
+    candidate = work / "candidate" / "names"
+    candidate_layout = names_layout("")
+    oracle_layout = names_layout(str(work / "oracle" / "names-root"))
+    for key in NAMES_IMAGES:
+        built = candidate / key / "final" if (candidate / key / "final").is_dir() else candidate / key
+        target = root / candidate_layout[key].lstrip("/")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built / target.name, target)
+    for mode in MODES:
+        for length in sorted(set(NAMES_CASES.values())):
+            target = root / candidate_layout[f"program-{mode}-{length}"].lstrip("/")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(candidate / "final" / f"main-names-{mode}", target)
+    cells = []
+    for mode in MODES:
+        for entry in ENTRIES:
+            for case in NAMES_CASES:
+                environment = names_environment(candidate_layout, mode, case)
+                prefix = [INTERPRETER] if entry == "direct" else []
+                observed = recorder.run(f"candidate-names-{mode}-{entry}-{case}",
+                                        [TIMEOUT, "20", CHROOT, str(root), *prefix, environment["NAMES_PROGRAM"]],
+                                        environment=environment, expect_success=False)
+                oracle_environment = names_environment(oracle_layout, mode, case)
+                oracle_prefix = [str(ORACLE_INTERPRETER)] if entry == "direct" else []
+                reference = recorder.run(f"oracle-names-{mode}-{entry}-{case}",
+                                         [TIMEOUT, "20", *oracle_prefix, oracle_environment["NAMES_PROGRAM"]],
+                                         environment=oracle_environment, expect_success=False)
+                label = f"names/{mode}/{entry}/{case}"
+                transcript = observed.stdout.decode(errors="replace")
+                oracle_transcript = reference.stdout.decode(errors="replace")
+                # Every stored name the oracle reports must match all three views.
+                reports = [item.rpartition(":")[2] for item in oracle_transcript.split(";") if item.count(":") == 2]
+                require(reference.returncode == NAMES_STATUS and reference.stderr == b"" and reports
+                        and all(item == "111" for item in reports) and "dlopen-failed" not in oracle_transcript,
+                        f"{label}: pinned musl oracle observed {oracle_transcript!r} status {reference.returncode} "
+                        f"{reference.stderr.decode(errors='replace')!r}")
+                require(observed.returncode == NAMES_STATUS and transcript == oracle_transcript
+                        and observed.stderr == b"",
+                        f"{label}: owned {transcript!r} status {observed.returncode} "
+                        f"{observed.stderr.decode(errors='replace')!r}; musl {oracle_transcript!r}")
+                cells.append({"mode": mode, "entry": entry, "scenario": f"names-{case}", "status": NAMES_STATUS,
+                              "candidate": transcript, "oracle": oracle_transcript})
+    return cells
+
+
 def execute(recorder: Recorder, product: Path, work: Path) -> list[dict[str, object]]:
     root = work / "execution-root"
     shutil.copytree(product, root, symlinks=True)
@@ -557,7 +798,7 @@ def execute(recorder: Recorder, product: Path, work: Path) -> list[dict[str, obj
                         f"musl {oracle_transcript!r} status {reference.returncode}")
                 cells.append({"mode": mode, "entry": entry, "scenario": scenario, "status": status,
                               "candidate": transcript, "oracle": oracle_transcript})
-    return cells + execute_wide(recorder, root, work)
+    return cells + execute_wide(recorder, root, work) + execute_names(recorder, root, work)
 
 
 def product_identity(product: Path) -> str:
@@ -578,10 +819,11 @@ def main(arguments: list[str]) -> int:
         recorder = Recorder(work)
         report = {"schema": SCHEMA, "product_manifest_sha256": before,
                   "fixtures": {path.name: sha256(path)
-                               for path in (MAIN_SOURCE, DEPENDENCY_SOURCE, PLUGIN_SOURCE, WIDE_SOURCE)},
+                               for path in (MAIN_SOURCE, DEPENDENCY_SOURCE, PLUGIN_SOURCE, WIDE_SOURCE, NAMES_SOURCE)},
                   "admitted_difference": "owned executable DT_PREINIT_ARRAY dispatch (leading P)"}
         report.update(build(recorder, product, work))
         report["wide"] = build_wide(recorder, product, work)
+        report["names"] = build_names(recorder, product, work)
         report["cells"] = execute(recorder, product, work)
         require(product_identity(product) == before, "installed product manifest changed during evidence")
         report["family_completion"] = False

@@ -90,13 +90,33 @@ pub(crate) enum GeneralInitialPreparationStage {
 /// The table grows in loader mappings with the graph; discovery stores each
 /// newly admitted object at the graph index it was given. Readers see a
 /// slice exactly as long as the objects stored so far.
-pub(super) struct ObjectTable(LoaderVec<Object>);
+pub(super) struct ObjectTable(
+    LoaderVec<Object>,
+    // Owners of the admitted pathnames that object records view. Growth
+    // moves only the owners; each name's mapping, and so every view, stays.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    LoaderVec<super::x86_64_library_search::LoadedName>,
+);
 
 impl ObjectTable {
     fn with_main(main: Object) -> Option<Self> {
         let mut objects = LoaderVec::new();
         objects.push(main)?;
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        return Some(Self(objects, LoaderVec::new()));
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         Some(Self(objects))
+    }
+
+    /// Retain `name` for the rest of the process and return its view.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    pub(crate) fn retain_name(
+        &mut self,
+        name: super::x86_64_library_search::LoadedName,
+    ) -> Option<super::x86_64_library_search::ObjectName> {
+        let view = name.view();
+        self.1.push(name)?;
+        Some(view)
     }
 
     /// Store `object` at graph index `index`, extending the table with empty

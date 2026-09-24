@@ -537,9 +537,10 @@ explicit policy in its link plan and output receipt. A declared DSO with a
 nondefault RUNPATH must carry a matching receipt bound to its bytes, RUNPATH
 and canonical absolute `output_path`. Moving the DSO and unchanged receipt to
 another directory requires a new declaration. Runtime path selection does
-not add libraries to the final link command. Existing 512-byte admitted
-pathname storage, a 4096-byte expanded object/environment/preload-list bound,
-and initial graph/per-object admission bounds remain selected limits.
+not add libraries to the final link command. Admitted pathnames, `$ORIGIN`
+expansions and the environment/preload lists are sized to their bytes, as
+in pinned musl; only its `2*NAME_MAX+2` search-candidate buffer and
+`NAME_MAX` bare-name limit apply.
 
 `run_general_dynamic_search.sh` runs the same 37 process decisions against
 installed candidate and separately built pinned-musl roots, in PIE and

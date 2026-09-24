@@ -73,9 +73,15 @@ checks the program-header fields against `dl_iterate_phdr`, validates the
 entry against the main executable's executable LOAD, and checks the executable
 pathname independently of `--argv0`.
 
-The initial graph has no object or `DT_NEEDED` bound; 512-byte admitted
-pathname storage and 4096-byte option/search/preload bounds remain explicit
-selected limits.
+The initial graph has no object or `DT_NEEDED` bound, and names follow
+pinned musl: the program, options, `LD_LIBRARY_PATH` and `LD_PRELOAD` are
+read unbounded from the initial stack; a name containing `/` is opened as
+given (only the kernel's `PATH_MAX` applies); a bare name over `NAME_MAX`
+fails; search candidates use musl's `2*NAME_MAX+2` buffer and skip any that
+do not fit; `$ORIGIN` expansion and every admitted pathname are sized to
+their bytes (`x86_64_library_search::LoadedName`). The main program is named
+by its argument string. `owned-crt-dynamic-startup`'s names graph compares
+these with pinned musl.
 
 Evidence uses separate installed candidate and pinned-musl roots. Candidate
 execution contains only the materialized owned runtime and explicitly built

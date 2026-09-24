@@ -32,11 +32,11 @@ fn abandoned_registry_nodes_unmap_only_transaction_owned_images() {
         let borrowed_image = page()?;
         let new_image = page()?;
         let mut nodes = UnpublishedObjects::new();
-        let initial = RuntimeObject::allocate(ObjectStorage::Initial(0), identity(1), 0, b"main", false)?;
+        let initial = RuntimeObject::allocate(ObjectStorage::Initial(0), identity(1), 0, LoadedName::new(b"main"), false)?;
         nodes.append(initial)?;
         let runtime = RuntimeObject::allocate(ObjectStorage::Runtime(Object {
             map_span_start: new_image as u64, map_span_byte_len: PAGE, ..EMPTY_OBJECT
-        }), identity(2), 1, b"runtime", true)?;
+        }), identity(2), 1, LoadedName::new(b"runtime"), true)?;
         nodes.append(runtime)?;
         if !mapped(new_image) || !mapped(borrowed_image) { return None; }
         drop(nodes);
@@ -52,7 +52,7 @@ fn runtime_scope_and_constructor_queue_are_resource_sized_and_cycle_safe() {
         let mut nodes = UnpublishedObjects::new();
         let mut pointers = std::vec::Vec::new();
         for index in 0..65 {
-            let node = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(index as u64), index, b"object", true).unwrap();
+            let node = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(index as u64), index, LoadedName::new(b"object"), true).unwrap();
             nodes.append(node).unwrap();
             pointers.push(node);
         }
@@ -103,7 +103,7 @@ unsafe extern "C" fn recursive_finalizer() {
 fn shared_callback_owner_claims_once_across_recursive_and_concurrent_calls() {
     unsafe {
         let mut nodes = UnpublishedObjects::new();
-        let node = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(9), 0, b"callbacks", true).unwrap();
+        let node = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(9), 0, LoadedName::new(b"callbacks"), true).unwrap();
         nodes.append(node).unwrap();
         (*node).callbacks(&[recursive_initializer as *const () as usize], &[recursive_finalizer as *const () as usize]).unwrap();
         let saved = {
@@ -133,8 +133,8 @@ fn shared_callback_owner_claims_once_across_recursive_and_concurrent_calls() {
 fn completed_cycle_root_skips_an_inherited_abandoned_constructor_queue() {
     unsafe {
         let mut nodes = UnpublishedObjects::new();
-        let root = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(501), 0, b"cycle-root", true).unwrap();
-        let dependency = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(502), 1, b"cycle-dependency", true).unwrap();
+        let root = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(501), 0, LoadedName::new(b"cycle-root"), true).unwrap();
+        let dependency = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(502), 1, LoadedName::new(b"cycle-dependency"), true).unwrap();
         nodes.append(root).unwrap();
         nodes.append(dependency).unwrap();
         (*root).needed.push(dependency).unwrap();

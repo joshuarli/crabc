@@ -600,13 +600,10 @@ unsafe fn canonical_libc_alias_identity(
     suffix: &[u8],
 ) -> Result<Option<ObjectIdentity>, ()> {
     let length = prefix.len().checked_add(suffix.len()).ok_or(())?;
-    if length + 1 > MAX_PATH {
-        return Err(());
-    }
-    let mut path = [0u8; MAX_PATH];
-    path[..prefix.len()].copy_from_slice(prefix);
-    path[prefix.len()..length].copy_from_slice(suffix);
-    let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0x80000, 0) };
+    let mut path = super::x86_64_runtime_memory::LoaderBuffer::new(length.checked_add(1).ok_or(())?, 0u8).ok_or(())?;
+    path.as_mut_slice()[..prefix.len()].copy_from_slice(prefix);
+    path.as_mut_slice()[prefix.len()..length].copy_from_slice(suffix);
+    let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_slice().as_ptr() as i64, 0x80000, 0) };
     if fd == -2 {
         return Ok(None);
     }
@@ -666,7 +663,7 @@ unsafe fn discover_needed(
         // Musl load_preload has no requesting DSO. Successfully admitted
         // preloads become main pseudo-dependencies before ordinary NEEDED
         // edges, preserving main-first global scope and constructor order.
-        let preloads = x86_64_library_search::preloads().ok()?;
+        let preloads = x86_64_library_search::preloads();
         // C isspace includes vertical tab; Rust ASCII whitespace does not.
         for name in preloads.split(|byte| matches!(byte, b':' | b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)).filter(|name| !name.is_empty()) {
             if let Some(index) = load_initial_library(graph, objects, None, name).ok()? {
@@ -718,8 +715,7 @@ unsafe fn load_initial_library(
     if short_name {
         if let Some(index) = objects[..graph.object_count()].iter().position(|object| {
             if !object.search_short_name { return false; }
-            let length = bounded_nul(object.search_name.as_ptr(), MAX_PATH).unwrap_or(0);
-            let stored = &object.search_name[..length];
+            let stored = object.search_name.bytes();
             let start = stored.iter().rposition(|byte| *byte == b'/').map_or(0, |n| n + 1);
             &stored[start..] == name
         }) { return Ok(Some(index)); }
@@ -730,7 +726,7 @@ unsafe fn load_initial_library(
         ancestor = object.needed_by;
         Some(object)
     });
-    let (fd, search_name, _) = match x86_64_library_search::open(name, chain) {
+    let (fd, search_name) = match x86_64_library_search::open(name, chain) {
         Ok(opened) => opened,
         Err(_) => return Ok(None),
     };
@@ -752,6 +748,10 @@ unsafe fn load_initial_library(
             unmap_object(&object);
             return Err(());
         }
+    };
+    let Some(search_name) = objects.retain_name(search_name) else {
+        unmap_object(&object);
+        return Err(());
     };
     object.search_name = search_name;
     object.search_short_name = short_name;

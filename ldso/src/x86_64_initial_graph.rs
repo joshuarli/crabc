@@ -915,8 +915,10 @@ struct Object {
     relro_byte_len: u64,
     runpath: *const u8,
     runpath_len: usize,
+    // The admitted pathname, owned by the initial object table, a runtime
+    // registry node or (direct entry's program) the initial stack.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    search_name: [u8; MAX_PATH],
+    search_name: x86_64_library_search::ObjectName,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     search_short_name: bool,
     // Listing preserves the first admission's name. Later inode matches may
@@ -994,7 +996,7 @@ const EMPTY_OBJECT: Object = Object {
     runpath: core::ptr::null(),
     runpath_len: 0,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    search_name: [0; MAX_PATH],
+    search_name: x86_64_library_search::ObjectName::EMPTY,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     search_short_name: false,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
