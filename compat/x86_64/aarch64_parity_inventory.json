@@ -416,13 +416,13 @@
     },
     {
       "aarch64_classification": "native-unsafe",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "loader.dlfcn-basic",
       "x86_family": "ldso.dynamic-runtime"
     },
     {
       "aarch64_classification": "native-unsafe",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "loader.dlfcn-introspection",
       "x86_family": "ldso.dynamic-runtime"
     },
@@ -1507,7 +1507,7 @@
       "contract_state": "selected-private",
       "id": "ldso.dynamic-runtime",
       "verified_artifact_count": 16,
-      "verified_slice_count": 2
+      "verified_slice_count": 4
     },
     {
       "aarch64_gates": [

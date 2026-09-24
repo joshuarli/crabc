@@ -20307,6 +20307,118 @@ oracle = [
   { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "ET_REL probe objects, PT_INTERP kernel and direct entry, and dl_phdr_info/link_map/Dl_info layouts." },
 ]
 
+[[family.verified_slice]]
+id = "loader.dlfcn-basic.general-runtime"
+description = "Native x86 `loader.dlfcn-basic` slice inside still-planned `ldso.dynamic-runtime`: the frozen symbols `dladdr`, `dlclose`, `dlerror`, `dlopen` and `dlsym` in both installed products. The dynamic libc's `general_dlfcn.rs` calls the interpreter's private runtime open/symbol/close/address operations (`x86_64_runtime_registry.rs`), which admit general dependency graphs with search, identity, scope, relocation, TLS and constructor transactions and roll back failed loads; libc formats the loader's `RuntimeDiagnostic` record as pinned musl 1.2.6 `dlerror` text in per-thread storage (`dlfcn_diagnostic.rs`). Successful `dlclose` validates and retains, as musl does. The static product's `static_dlfcn.rs` is musl's loaderless libc.a surface with its weak `dlopen`/`dladdr` spellings. crabc-rs `dl::Library` reaches the same loader through the private RuntimeV1 facade. Recorded deliberate boundaries: `DT_TEXTREL`, `DT_FLAGS_1` bits other than NOW/PIE/NODELETE, and RELR without `DT_RELRENT` are rejected. This does not complete the family or promote public x86 support."
+capabilities = ["loader.dlfcn-basic"]
+source_owners = [
+  "include/dlfcn.h",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/general_dlfcn.rs",
+  "libc/src/c_abi/x86_64/dlfcn_diagnostic.rs",
+  "libc/src/c_abi/x86_64/static_dlfcn.rs",
+  "libc/src/c_abi/x86_64/error_strings.rs",
+  "libc/src/c_abi/x86_64/runtime_facade_v1.rs",
+  "ldso/src/x86_64_runtime_registry.rs",
+  "ldso/src/x86_64_runtime_lock.rs",
+  "ldso/src/x86_64_library_search.rs",
+  "ldso/src/x86_64_initial_graph.rs",
+  "ldso/src/x86_64_general_relocation.rs",
+  "ldso/src/x86_64_deferred_relocations.rs",
+  "ldso/src/x86_64_runtime_tls_view.rs",
+  "crabc-core/src/runtime.rs",
+  "crabc-rs/src/dl.rs",
+  "compat/x86_64/run_general_dynamic_dlopen.sh",
+  "compat/x86_64/general_dynamic_dlfcn_contract.h",
+  "compat/x86_64/general_dynamic_dlfcn_contract.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_dso.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_rollback.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_concurrent.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_reentrant.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_malformed.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_malformed.py",
+  "compat/x86_64/general_dynamic_dlfcn_contract_fork.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_relr.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_relr.py",
+  "compat/x86_64/general_dynamic_failure_consumer.c",
+  "compat/x86_64/general_dynamic_failure_plugin.c",
+  "compat/x86_64/general_dynamic_failure_mutate.py",
+  "compat/x86_64/general_dynamic_scope_consumer.c",
+  "compat/x86_64/general_dynamic_scope_plugin.c",
+  "compat/x86_64/run_ldso_static_dlfcn.sh",
+  "compat/x86_64/ldso_static_dlfcn_contract.c",
+  "compat/x86_64/ldso_static_dlfcn_override.c",
+  "compat/x86_64/runtime_private_facades.py",
+  "compat/x86_64/runtime_private_facades_loader.c",
+]
+x86_abi_prerequisites = [
+  "Installed LP64 `<dlfcn.h>`: `Dl_info` is four pointers, RTLD_LAZY=1, RTLD_NOW=2, RTLD_NOLOAD=4, RTLD_GLOBAL=256, RTLD_NODELETE=4096, RTLD_DEFAULT=0 and RTLD_NEXT=-1. An x86 `dlsym` tail trampoline passes the caller's return address from `[rsp]` so RTLD_NEXT starts after the calling object.",
+  "libc.so exports all five as default-visible global functions, as musl's libc.so does; libc.a publishes `dlopen` and `dladdr` as STB_WEAK and `dlsym`, `dlclose` and `dlerror` as global, as musl's libc.a does.",
+  "The private `__crabc_x86_64_runtime_open` wire passes a 1032-byte `RuntimeDiagnostic` (musl message kind, errno or relocation type, three copied names); the other runtime operations return private codes that libc maps to musl texts. No loader string borrowed by a diagnostic outlives a failed transaction.",
+]
+x86_header_prerequisites = ["Installed `include/dlfcn.h` declares the five functions, `Dl_info`, and the RTLD constants for the selected profiles; the private runtime wire and RuntimeV1 table remain uninstalled."]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh general-dynamic-dlopen", scope = "Installed dynamic product (DYNAMIC_SYSROOT argument, `--entry-mode dynamic-pie` and `dynamic-non-pie`). Pinned-musl byte-for-byte differentials for dlopen/dlsym/dlclose/dlerror/dladdr: exact dlerror texts for missing, NOLOAD, empty, directory, non-ELF, missing-dependency `(needed by ...)`, unresolved-symbol, runtime initial-exec TLS, unsupported relocation, exiting-process, and `Invalid library handle %p` failures; per-thread one-shot dlerror; RTLD_LAZY/NOW/NOLOAD/GLOBAL/LOCAL modes with inert unknown bits; handle, RTLD_DEFAULT and caller RTLD_NEXT scope with promotion; retained dlclose and reopen; dladdr exact/interior/header/main/unmapped results; the seven libc.so exports' type/binding/visibility; failed multi-object rollback with TLS and retry; concurrent success/failure loads beside dlsym readers; constructor reentry; fork beside and from loads; malformed map_library inputs; RELR; 41-module TLS growth. It does not qualify the ldso.dynamic-runtime family or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh ldso-static-dlfcn", scope = "Builds (or accepts STATIC_SYSROOT) the installed static product and compares it with pinned musl 1.2.6 libc.a: the seven archive bindings (dlopen/dladdr/dl_iterate_phdr STB_WEAK, the others global), one consumer's stdout as static ET_EXEC and static PIE (every open fails with `Dynamic loading not supported`, `Symbol not found: %s`, `Invalid library handle %p`, dladdr 0 with untouched output, one-image dl_iterate_phdr with module-one TLS, per-thread one-shot dlerror), application overrides of the three weak entries, and closed images with no loader-record import." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh runtime-private-facades", scope = "Builds a fresh installed dynamic product and runs crabc-rs's `dl` facade over the private RuntimeV1 table in PIE and non-PIE through kernel and direct interpreter entry, requiring each copied diagnostic, address, link-map and image-snapshot observation to equal the same product's public dlfcn result in-process." },
+]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 ldso/dynlink.c and src/ldso/{dlopen,dlsym,__dlsym,dlclose,dlerror,dladdr}.c, libc.so and libc.a", role = "Byte-exact dlfcn behavior, diagnostics and archive/shared symbol bindings." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "ELF64 ET_DYN mapping, RELA/RELR relocation, symbol scope and TLS contracts." },
+]
+
+[[family.verified_slice]]
+id = "loader.dlfcn-introspection.general-runtime"
+description = "Native x86 `loader.dlfcn-introspection` slice inside still-planned `ldso.dynamic-runtime`: the frozen symbols `dl_iterate_phdr` and `dlinfo` in both installed products. The dynamic libc forwards both to the interpreter's runtime registry, whose `repr(C)` `RuntimeObject` begins with the public link map so a handle and its `RTLD_DI_LINKMAP` result are one address, and whose iteration drops the loader lock around each callback and reads the successor afterward, as pinned musl 1.2.6 does. The main image is named by AT_EXECFN or argv[0]; `dlpi_adds` counts successful opens and `dlpi_tls_data` is the calling thread's block. The static product's `static_dlfcn.rs` keeps musl's weak `dl_iterate_phdr` over the one-executable `static_dl_iterate_phdr.rs` translation and musl's handle-rejecting `dlinfo`. crabc-rs `dl` image snapshots and library information use the private RuntimeV1 facade. This does not complete the family or promote public x86 support."
+capabilities = ["loader.dlfcn-introspection"]
+source_owners = [
+  "include/dlfcn.h",
+  "include/link.h",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/general_dlfcn.rs",
+  "libc/src/c_abi/x86_64/dlfcn_diagnostic.rs",
+  "libc/src/c_abi/x86_64/static_dlfcn.rs",
+  "libc/src/c_abi/x86_64/static_dl_iterate_phdr.rs",
+  "libc/src/c_abi/x86_64/auxv_observation.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/runtime_facade_v1.rs",
+  "ldso/src/x86_64_runtime_registry.rs",
+  "ldso/src/x86_64_runtime_lock.rs",
+  "ldso/src/x86_64_runtime_tls_view.rs",
+  "ldso/src/x86_64_library_search.rs",
+  "crabc-core/src/runtime.rs",
+  "crabc-rs/src/dl.rs",
+  "compat/x86_64/run_general_dynamic_dlopen.sh",
+  "compat/x86_64/general_dynamic_dlfcn_contract.h",
+  "compat/x86_64/general_dynamic_dlfcn_contract.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_dso.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_concurrent.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_iterate.c",
+  "compat/x86_64/general_dynamic_dlfcn_contract_tls.c",
+  "compat/x86_64/general_dynamic_iterate_consumer.c",
+  "compat/x86_64/general_dynamic_tls_consumer.c",
+  "compat/x86_64/general_dynamic_tls_plugin.c",
+  "compat/x86_64/run_ldso_static_dlfcn.sh",
+  "compat/x86_64/ldso_static_dlfcn_contract.c",
+  "compat/x86_64/ldso_static_dlfcn_override.c",
+  "compat/x86_64/runtime_private_facades.py",
+  "compat/x86_64/runtime_private_facades_loader.c",
+]
+x86_abi_prerequisites = [
+  "Installed LP64 `<link.h>`: `struct dl_phdr_info` is address, name, program-header pointer, u16 count, u64 additions and removals, TLS module ID and TLS data pointer; `struct link_map` is address, name, dynamic pointer, next and previous. RTLD_DI_LINKMAP is 2.",
+  "libc.so exports both as default-visible global functions; libc.a publishes `dl_iterate_phdr` as STB_WEAK and `dlinfo` as global, as musl does.",
+  "Returned names, program headers and link maps borrow retained process-lifetime objects; dlclose never unmaps them.",
+]
+x86_header_prerequisites = ["Installed `include/dlfcn.h` declares `dlinfo` and RTLD_DI_LINKMAP; installed `include/link.h` declares `dl_iterate_phdr`, `struct dl_phdr_info` and `struct link_map`."]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh general-dynamic-dlopen", scope = "Installed dynamic product (DYNAMIC_SYSROOT argument, `--entry-mode dynamic-pie` and `dynamic-non-pie`). Pinned-musl byte-for-byte differentials for dlinfo and dl_iterate_phdr: RTLD_DI_LINKMAP returns the handle's own link map in object order with main named by AT_EXECFN, invalid handles and unsupported requests leave the result untouched with musl's texts; dl_iterate_phdr names, dlpi_adds per successful dlopen, TLS module data, nested callbacks, retained close, appended objects, callback dlopen/dlclose/failed loads beside a loading thread, concurrent readers never observing rolled-back objects, DTV growth racing thread creation, and the two libc.so exports' type/binding/visibility. It does not qualify the ldso.dynamic-runtime family or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh ldso-static-dlfcn", scope = "Builds (or accepts STATIC_SYSROOT) the installed static product and compares it with pinned musl 1.2.6 libc.a: the seven archive bindings (dlopen/dladdr/dl_iterate_phdr STB_WEAK, the others global), one consumer's stdout as static ET_EXEC and static PIE (every open fails with `Dynamic loading not supported`, `Symbol not found: %s`, `Invalid library handle %p`, dladdr 0 with untouched output, one-image dl_iterate_phdr with module-one TLS, per-thread one-shot dlerror), application overrides of the three weak entries, and closed images with no loader-record import." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh runtime-private-facades", scope = "Builds a fresh installed dynamic product and runs crabc-rs's `dl` facade over the private RuntimeV1 table in PIE and non-PIE through kernel and direct interpreter entry, requiring each copied diagnostic, address, link-map and image-snapshot observation to equal the same product's public dlfcn result in-process." },
+]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 ldso/dynlink.c::dl_iterate_phdr and src/ldso/{dlinfo,dl_iterate_phdr}.c, libc.so and libc.a", role = "Byte-exact introspection behavior, diagnostics and archive/shared symbol bindings." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "Program headers, link_map/dl_phdr_info layouts and TLS module identity." },
+]
 [[family.verified_artifact]]
 id = "ldso-initial-tls"
 description = "Private native x86 Variant-II initial-TLS interpreter artifact within still-planned `ldso.dynamic-runtime`, not the `crabc-ldso` target. A fixed main PIE (without PT_TLS) -> mid.so -> leaf.so graph maps exactly two GNU-Dynamic TLS DSO images. The candidate assigns one-based module IDs only to the TLS-bearing images, lays their PT_TLS images below TP with the musl 1.2.6 initial-layout alignment phase, copies initialized data, zeroes TBSS, installs a private immutable DTV plus module-size table at `%fs`, and sets ARCH_SET_FS only after all graph relocations and before dependency constructors. It accepts only R_X86_64_DTPMOD64/R_X86_64_DTPOFF64 and the fixed graph's __tls_get_addr JUMP_SLOT route; the private resolver rejects absent modules and offsets outside a module's recorded PT_TLS.p_memsz. The TLS-free candidate interpreter has no external runtime dependency; its exact two-DSO DT_NEEDED graph runs under `env -i`, while the pinned musl 1.2.6 static __tls_get_addr object supplies the naked reference main's resolver without a libc DT_NEEDED edge. The runner proves initialized values, 4096-byte alignment, TBSS zeroing and mutation, module-ID/DTV ownership, and that only the candidate resolves the direct main import from its interpreter. It fails closed for p_filesz > p_memsz, non-power-of-two alignment, p_offset/p_vaddr phase mismatch, duplicate PT_TLS, initialized TLS outside a readable file-backed PT_LOAD, nonzero DTPMOD addend, DTPOFF outside PT_TLS.p_memsz, R_X86_64_TPOFF64, and DF_STATIC_TLS. It excludes initial-exec/TPOFF admission beyond that rejection, TLSDESC, DTV growth, dlopen, dynamic thread allocation, pthread/TCB parity, loader/libc RuntimeV1 bridging, a general loader, dynamic CRT/sysroot, full x86-64 parity, and public x86 support."
