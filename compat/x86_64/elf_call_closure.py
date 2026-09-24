@@ -237,7 +237,13 @@ UNKNOWN = Value("?")
 
 @dataclasses.dataclass(frozen=True)
 class Transform:
-    """An immediate ``and``/``or``/``add`` applied to a register's prior value."""
+    """An operation applied to a register's prior value.
+
+    ``and``/``or``/``add`` apply an immediate. ``zext``/``sext`` copy the low
+    ``immediate`` bits of a source register into a ``width``-bit result,
+    zero- or sign-extending them; a root argument keeps its name because the
+    callee sees the same C argument at its declared width.
+    """
 
     operation: str
     immediate: int
@@ -245,6 +251,15 @@ class Transform:
 
     def apply(self, value: Value) -> list[Value]:
         mask = (1 << self.width) - 1
+        if self.operation in {"zext", "sext"}:
+            if value.kind == "arg":
+                return [value]
+            if value.kind != "int" or value.width < self.immediate:
+                return [UNKNOWN]
+            number = value.number & ((1 << self.immediate) - 1)
+            if self.operation == "sext" and number >> (self.immediate - 1) & 1:
+                number -= 1 << self.immediate
+            return [Value("int", number & mask, self.width)]
         if self.operation == "and":
             if value.kind == "int":
                 return [Value("int", value.number & self.immediate & mask, self.width)]
@@ -375,7 +390,7 @@ class Candidate:
         pending = list(roots)
         while pending:
             function = pending.pop()
-            if function.start in seen or function.name in excluded:
+            if function.start in seen or self.names[function.start] & excluded:
                 continue
             seen[function.start] = function
             for instruction in function.instructions:
@@ -417,11 +432,14 @@ class Resolver:
                 continue
             visited.add((index, wanted, transforms))
             defined = self.definition(function.instructions[index], wanted)
-            if defined is None or isinstance(defined, (str, Transform)):
+            if defined is None or isinstance(defined, (str, Transform, tuple)):
                 if isinstance(defined, str):
                     wanted = defined
                 elif isinstance(defined, Transform):
                     transforms = (defined,) + transforms
+                elif isinstance(defined, tuple):
+                    wanted, transform = defined
+                    transforms = (transform,) + transforms
                 if index == 0:
                     results.add(("in", wanted, transforms))
                 pending.extend((predecessor, wanted, transforms) for predecessor in function.predecessors[index])
@@ -433,8 +451,13 @@ class Resolver:
         return results
 
     @staticmethod
-    def definition(instruction: Instruction, name: str) -> "Value | str | Transform | None":
-        """How ``instruction`` defines ``name``: a value, a source register, or not at all."""
+    def definition(instruction: Instruction, name: str) -> "Value | str | Transform | tuple[str, Transform] | None":
+        """How ``instruction`` defines ``name``.
+
+        The result is a value, a source register copied whole, a transform of
+        the prior value, a source register and the transform its copy
+        applies, or ``None`` when the instruction leaves ``name`` alone.
+        """
 
         mnemonic = instruction.mnemonic
         operands = instruction.operands
@@ -473,11 +496,21 @@ class Resolver:
                 # upper bits, so only its own width is known.
                 return Value("int", number & ((1 << width) - 1), width)
             source_register = register(source)
-            if source_register is not None and width >= 32:
+            if source_register is not None and width == 64:
                 return source_register[0]
+            if source_register is not None and width == 32:
+                # A 32-bit copy keeps the low half and zero-extends it.
+                return source_register[0], Transform("zext", 32, 64)
             return UNKNOWN
         if mnemonic.startswith(("movz", "movs")) and source is not None and register(source) is not None:
-            return register(source)[0]
+            source_full, source_width = register(source)
+            # A write of 32 bits or more leaves the whole register known.
+            result_width = 64 if width >= 32 else width
+            if mnemonic.startswith("movz"):
+                return source_full, Transform("zext", source_width, result_width)
+            # A sign extension into 32 bits is known at that width; the
+            # write's zero upper half is not needed by any check.
+            return source_full, Transform("sext", source_width, 32 if width == 32 else result_width)
         if mnemonic.startswith(("xor", "sub")) and source is not None and register(source) == destination:
             return Value("int", 0, width)
         immediate = _IMMEDIATE.match(source or "")

@@ -146,6 +146,24 @@ class SyscallResolutionTests(unittest.TestCase):
         self.assertTrue(event.value("rax").matches("0x38"))
         self.assertTrue(event.value("rax").matches("0x1238"))
 
+    def test_narrowing_copies_keep_only_the_copied_bits(self) -> None:
+        # A zero-extending byte copy and a 32-bit register copy both drop the
+        # source's upper bits; the kernel sees only the copied value.
+        for load in ("mov    $0x1ca,%ecx\n  401013:\tmovzbl %cl,%eax",
+                     "movabs $0x1000000ca,%rcx\n  401013:\tmov    %ecx,%eax"):
+            text = INLINED.replace("mov    $0x5f,%eax", load)
+            event = closure(text, "umask").syscalls[0]
+            self.assertTrue(event.value("rax").matches("0xca"), load)
+            self.assertFalse(event.value("rax").matches("0x1ca"), load)
+
+    def test_sign_extending_copy_extends_a_known_value(self) -> None:
+        text = INLINED.replace("mov    $0x5f,%eax", "mov    $0xff,%ecx\n  401013:\tmovsbl %cl,%eax")
+        self.assertTrue(closure(text, "umask").syscalls[0].value("rax").matches("0xffffffff"))
+
+    def test_extending_copy_keeps_a_root_argument(self) -> None:
+        text = INLINED.replace("mov    $0x5f,%eax", "movslq %edi,%rax")
+        self.assertTrue(closure(text, "umask").syscalls[0].value("rax").matches("arg:rdi"))
+
     def test_unknown_syscall_number_fails_an_allow_list(self) -> None:
         text = INLINED.replace("mov    $0x5f,%eax", "mov    (%rdi),%eax")
         self.assertTrue(failures(text, "umask", syscalls_only=["0x5f"]))
@@ -170,6 +188,11 @@ class ClosureTests(unittest.TestCase):
     def test_excluded_boundary_is_not_entered(self) -> None:
         self.assertEqual(closure_module.check(closure(PROGRAM, "_start"), syscalls=["nr=231"]), [])
         excluded = closure(PROGRAM, "_start", exclude=["exit"])
+        self.assertEqual(excluded.syscalls, [])
+
+    def test_excluded_boundary_matches_any_alias(self) -> None:
+        aliases = {0x404050: {"exit", "_Exit"}}
+        excluded = closure(PROGRAM, "_start", aliases=aliases, exclude=["_Exit"])
         self.assertEqual(excluded.syscalls, [])
 
     def test_roots_and_reach_checks_accept_any_alias(self) -> None:
