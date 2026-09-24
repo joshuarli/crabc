@@ -72,10 +72,12 @@ are not transferable passes for a different revision.
   `m5-remote` (fails a runner test), `crt-dynamic`, `dynamic-product`,
   `std-lto`, `m2-vm-arenas`, `alloc-fork` (unfinished), `m5-stress` (an
   untested arena singleton PageMap span fix), and `m4` (scratch probes only).
-  Keep `ed4db0ba6` out of `main`. Preserve the frozen POSIX
-  (`posix-runtime-f5904a276`) and active-source unwinder
-  (`unwinder-products-b1a84d8a9`) evidence and the allocator SIGSEGV core/log.
-  Old stash entries are under `refs/archive/stash/*`.
+  Keep `ed4db0ba6` out of `main`. No worktrees remain; every branch is kept,
+  and the unmerged commits of the removed pre-campaign worktrees were already
+  superseded on `main`. JSON/log receipts from the frozen POSIX, unwinder,
+  resolver, and product evidence worktrees are in
+  `.work/archive/*-receipts.tar.gz`; keep the allocator SIGSEGV core/log. Old
+  stash entries are under `refs/archive/stash/*`.
 - **Open cross-lane defects (one owner each):** 358 runner scripts still build
   with plain `cargo rustc` and fail to link `rust_eh_personality` on the pinned
   nightly (`libc-resolver-runtime` included); generalize `2261f8e20`.
