@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the pinned Rust unwind provider without bundling a Rust panic owner."""
+"""Build the pinned Rust unwind provider as one localized C-ABI archive member."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -33,6 +33,13 @@ UNWIND_ABI = {
     '_Unwind_FindEnclosingFunction', '_Unwind_RaiseException', '_Unwind_ForcedUnwind',
     '_Unwind_Resume', '_Unwind_Resume_or_Rethrow', '_Unwind_DeleteException', '_Unwind_Backtrace',
 }
+# The standalone provider is one localized C-ABI object: its defined globals
+# are exactly UNWIND_ABI and it imports only these C symbols. It carries its
+# own copy of the pinned `core` code it uses, so a consumer's `core` (stock or
+# `-Zbuild-std`) never has to match the provider's crate hashes.
+PROVIDER_MEMBER = 'crabc-unwind.o'
+PROVIDER_C_ABI_IMPORTS = frozenset({'abort', 'bcmp', 'dl_iterate_phdr', 'memcmp', 'memcpy', 'memmove', 'memset'})
+STANDALONE_CFG = 'crabc_unwinder_standalone'
 PATCHED_UNWINDING = 'unwinding'
 PATCHES = {
     'src/unwinder/find_fde/phdr.rs': {
@@ -47,6 +54,28 @@ PATCHES = {
 PATCHED_UNWINDING_UPSTREAM_TREE_SHA256 = '8ce98e8ae23314ff1312aec0c3f6c627df256a61e212923a6cd70fd53a0990d9'
 PATCHED_UNWINDING_LICENSE = 'MIT OR Apache-2.0'
 CRATES_IO_REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
+
+def audit_provider_symbols(defined, undefined):
+    """Require the localized provider to expose only the C unwind ABI.
+
+    ``defined`` and ``undefined`` are ``llvm-nm`` listings of the final
+    provider object or archive. A Rust-mangled or other extra global would
+    make the archive depend on, or collide with, a consumer's own Rust crates.
+    """
+
+    def names(listing):
+        return {line.split()[-1] for line in listing.splitlines()
+                if line.split() and not line.endswith(':')}
+
+    exported = names(defined)
+    if exported != UNWIND_ABI:
+        raise ValueError(f'provider global definitions differ from the unwind ABI: {sorted(exported ^ UNWIND_ABI)}')
+    imported = names(undefined)
+    if not imported <= PROVIDER_C_ABI_IMPORTS:
+        raise ValueError(f'provider imports symbols outside its C ABI: {sorted(imported - PROVIDER_C_ABI_IMPORTS)}')
+    if 'dl_iterate_phdr' not in imported:
+        raise ValueError('provider does not discover frame metadata through dl_iterate_phdr')
+
 
 def run(args, **kwargs):
     return subprocess.check_output([str(a) for a in args], text=True, **kwargs)
@@ -326,9 +355,9 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     environment = {k: v for k, v in os.environ.items() if not k.startswith(('CARGO_', 'RUSTFLAGS', 'RUSTUP_TOOLCHAIN'))}
     environment.update(CARGO_HOME=str(cargo_home),
         CARGO_TARGET_DIR=str(output / 'target'), TMPDIR=str(temporary),
-        CARGO_ENCODED_RUSTFLAGS='\x1f'.join(['-Crelocation-model=pic', '-Cembed-bitcode=yes',
+        CARGO_ENCODED_RUSTFLAGS='\x1f'.join(['-Crelocation-model=pic',
             '-Cforce-unwind-tables=yes', '--remap-path-prefix', f'{ROOT.parent}=/crabc']),
-        SOURCE_DATE_EPOCH='0', CARGO_INCREMENTAL='0')
+        CARGO_PROFILE_RELEASE_LTO='fat', SOURCE_DATE_EPOCH='0', CARGO_INCREMENTAL='0')
     kwargs = {'cwd': ROOT, 'env': environment}
     source_manifest = ['--manifest-path', str(ROOT / 'Cargo.toml'), '--locked']
     metadata = json.loads(run([*cargo, 'metadata', *source_manifest, '--format-version=1', '--filter-platform', TARGET], **kwargs))
@@ -343,7 +372,12 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     packages = audit_graph(patched_metadata, tomllib.loads((staged['manifest'].parent / 'Cargo.lock').read_text()), patched_unwinding=True)
     if Path(packages[PATCHED_UNWINDING]['manifest_path']).parent != staged['staged']:
         raise ValueError('Cargo did not compile the staged unwinding source')
-    log = run([*cargo, 'build', *manifest, '--release', '--target', TARGET, '--message-format=json'], **staged_kwargs)
+    # One fat-LTO staticlib compilation fuses the provider graph with the
+    # pinned target `core` it was compiled against. Only that fused object is
+    # retained; Rust's compiler-builtins members are dropped so compiler helper
+    # calls resolve against the consumer's owned builtins archive.
+    log = run([*cargo, 'rustc', *manifest, '--release', '--target', TARGET, '--crate-type', 'staticlib',
+               '--message-format=json', '--', '--cfg', STANDALONE_CFG], **staged_kwargs)
     verify_staged_patched_unwinding(staged)
     (output / 'cargo.jsonl').write_text(log)
     sysroot = Path(run([*rustc, '--print', 'sysroot'], **kwargs).strip())
@@ -351,9 +385,10 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     # llvm-tools reside under the host triple, which this image pins to musl.
     ar = llvm / 'llvm-ar'
     nm = llvm / 'llvm-nm'
-    if not ar.exists():
+    objcopy = llvm / 'llvm-objcopy'
+    if not ar.exists() or not objcopy.exists():
         raise ValueError('pinned llvm-tools are unavailable')
-    members = []
+    artifacts = [json.loads(line) for line in log.splitlines() if line.startswith('{')]
     sources = []
     for name in sorted(PINS):
         package = packages[name]
@@ -362,39 +397,44 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
         sources.append({'name': name, 'version': package['version'], 'license': package['license'],
             'features': sorted(FEATURES[name]), 'files': [
                 {'path': str(p.relative_to(source)), 'sha256': digest(p)} for p in package_files]})
-        artifacts = [json.loads(line) for line in log.splitlines() if line.startswith('{')]
-        matching = [a for a in artifacts if a.get('reason') == 'compiler-artifact' and a['package_id'] == package['id'] and 'lib' in a['target']['kind']]
-        archives = [Path(f) for a in matching for f in a['filenames'] if f.endswith('.rlib')]
-        if len(archives) != 1:
-            raise ValueError(f'expected one Rust archive for {name}')
-        archive = archives[0]
-        directory = output / 'members' / name
-        directory.mkdir(parents=True, exist_ok=True)
-        names = run([ar, 't', archive]).splitlines()
-        for member in names:
-            if member in {'lib.rmeta', 'lib.rmeta-link'}:
-                continue
-            if '/' in member or not member.endswith('.o'):
-                raise ValueError(f'unexpected Rust archive member: {member}')
-            subprocess.run([str(ar), 'x', str(archive), member], cwd=directory, check=True)
-            path = directory / member
-            header = path.read_bytes()[:20]
-            if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\x3e\x00':
-                raise ValueError('non-native ELF object in provider')
-            members.append(path)
+        if not any(a.get('reason') == 'compiler-artifact' and a['package_id'] == package['id'] for a in artifacts):
+            raise ValueError(f'provider graph did not compile {name}')
+    root_package = packages['crabc-unwinder']
+    staticlibs = [Path(f) for a in artifacts
+                  if a.get('reason') == 'compiler-artifact' and a['package_id'] == root_package['id']
+                  for f in a['filenames'] if f.endswith('.a')]
+    if len(staticlibs) != 1:
+        raise ValueError('expected one fused crabc-unwinder staticlib')
+    staticlib = staticlibs[0]
+    staticlib_members = run([ar, 't', staticlib]).splitlines()
+    fused_members = [member for member in staticlib_members if member.startswith('crabc_unwinder-')]
+    dropped_members = [member for member in staticlib_members if member not in fused_members]
+    if len(fused_members) != 1 or '/' in fused_members[0] or not fused_members[0].endswith('.o'):
+        raise ValueError(f'fused provider staticlib has an unexpected member roster: {fused_members}')
+    directory = output / 'members'
+    directory.mkdir()
+    subprocess.run([str(ar), 'x', str(staticlib), fused_members[0]], cwd=directory, check=True)
+    fused = directory / fused_members[0]
+    header = fused.read_bytes()[:20]
+    if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\x3e\x00':
+        raise ValueError('non-native ELF object in provider')
+    keep = directory / 'keep-global-symbols.txt'
+    keep.write_text(''.join(f'{symbol}\n' for symbol in sorted(UNWIND_ABI)))
+    member = directory / PROVIDER_MEMBER
+    subprocess.run([str(objcopy), f'--keep-global-symbols={keep}', str(fused), str(member)], check=True)
+    audit_provider_symbols(
+        run([nm, '--defined-only', '--extern-only', member]),
+        run([nm, '--undefined-only', member]),
+    )
+    members = [member]
     archive = output / 'libcrabc-unwind.a'
     archive.unlink(missing_ok=True)
     subprocess.run([str(ar), 'rcsD', str(archive), *map(str, members)], check=True)
     symbols = run([nm, '--defined-only', '--extern-only', archive])
     (output / 'defined-symbols.txt').write_text(symbols)
-    names = {line.split()[-1] for line in symbols.splitlines() if len(line.split()) >= 3}
-    if {n for n in names if n.startswith('_Unwind_')} != UNWIND_ABI:
-        raise ValueError('unwind ABI inventory changed')
-    forbidden = {'rust_eh_personality', 'rust_begin_unwind', '__rust_alloc', 'malloc', '__register_frame', '__deregister_frame'}
-    if names & forbidden:
-        raise ValueError('provider contains an unapproved runtime owner')
     undefined = run([nm, '--undefined-only', archive])
     (output / 'undefined-symbols.txt').write_text(undefined)
+    audit_provider_symbols(symbols, undefined)
     provenance = {'schema': 1, 'target': TARGET, 'toolchain': run([*rustc, '-Vv'], **kwargs),
         'upstream_commit': '0e2de8fb536b1ca42066024609f58d708cf80e69',
         'archive': {'name': archive.name, 'sha256': digest(archive)}, 'dependencies': sources,
@@ -405,6 +445,11 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
             'patches': staged['patches'],
         },
         'unwind_abi': sorted(UNWIND_ABI), 'members': [{'name': p.name, 'sha256': digest(p)} for p in members],
+        'fused_staticlib': {'member': fused_members[0], 'sha256': digest(fused),
+                            'dropped_compiler_builtins_members': len(dropped_members)},
+        'c_abi_undefined': sorted(PROVIDER_C_ABI_IMPORTS & {
+            line.split()[-1] for line in undefined.splitlines() if line.split()}),
+        'standalone_panic': 'abort',
         'native_build_products': False, 'personality_owner': 'consumer Rust std',
         'qualified': False}
     (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')

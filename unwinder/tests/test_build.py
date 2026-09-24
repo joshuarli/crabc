@@ -294,5 +294,40 @@ class DependencyBoundary(unittest.TestCase):
                 run.assert_not_called()
             self.assertEqual(receipt.read_text(), 'historical evidence\n')
 
+
+class StandaloneProviderSymbols(unittest.TestCase):
+    """The localized provider object may expose and import only C ABI names."""
+
+    def defined(self, names):
+        return 'crabc-unwind.o:\n' + ''.join(f'0000000000000000 T {name}\n' for name in sorted(names))
+
+    def undefined(self, names):
+        return 'crabc-unwind.o:\n' + ''.join(f'                 U {name}\n' for name in sorted(names))
+
+    def test_exact_unwind_abi_with_c_imports_is_accepted(self):
+        builder.audit_provider_symbols(self.defined(builder.UNWIND_ABI),
+                                       self.undefined({'abort', 'dl_iterate_phdr', 'memcpy'}))
+
+    def test_unlocalized_rust_symbol_is_rejected(self):
+        extra = '_RNvNtNtNtCs8RSF2zGfTh7_9unwinding8unwinder4arch6x86_6412save_context'
+        with self.assertRaisesRegex(ValueError, 'global definitions differ'):
+            builder.audit_provider_symbols(self.defined({*builder.UNWIND_ABI, extra}),
+                                           self.undefined({'dl_iterate_phdr'}))
+
+    def test_missing_unwind_entry_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'global definitions differ'):
+            builder.audit_provider_symbols(self.defined(builder.UNWIND_ABI - {'_Unwind_Resume'}),
+                                           self.undefined({'dl_iterate_phdr'}))
+
+    def test_consumer_core_dependency_is_rejected(self):
+        for imported in ('_ZN4core9panicking9panic_fmt17h0123456789abcdefE', 'rust_begin_unwind', '__udivti3'):
+            with self.assertRaisesRegex(ValueError, 'outside its C ABI'):
+                builder.audit_provider_symbols(self.defined(builder.UNWIND_ABI),
+                                               self.undefined({'dl_iterate_phdr', imported}))
+
+    def test_metadata_discovery_import_is_required(self):
+        with self.assertRaisesRegex(ValueError, 'dl_iterate_phdr'):
+            builder.audit_provider_symbols(self.defined(builder.UNWIND_ABI), self.undefined({'memcpy'}))
+
 if __name__ == '__main__':
     unittest.main()

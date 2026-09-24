@@ -1,12 +1,28 @@
 # Native x86 unwind provider
 
-`build.py` compiles the approved `unwinding` configuration and extracts only
-Rust objects from its three dependency archives into `libcrabc-unwind.a` for
-the stock-Rust consumer path. The source-built path instead stages that exact
+`build.py` compiles the approved `unwinding` configuration into
+`libcrabc-unwind.a`, an ordinary archive with one localized C-ABI member,
+`crabc-unwind.o`. The source-built cleanup path instead stages that exact
 patched provider graph below its consumer evidence directory and makes
-`crabc-unwinder` a normal Cargo dependency. Both paths provide the 17
+`crabc-unwinder` a normal Cargo dependency. Both forms provide the 17
 `_Unwind_*` functions in `UNWIND_ABI`; Rust std supplies its own personality
-and panic runtime. Neither provider form is a standalone C unwinder.
+and panic runtime.
+
+The archive member is one fat-LTO `staticlib` compilation of
+`crabc-unwinder` and its three dependencies against the pinned target `core`.
+Rust's compiler-builtins members are dropped (compiler helpers resolve against
+the consumer's owned `libcrabc-builtins.a`), and `llvm-objcopy` localizes every
+definition except `UNWIND_ABI`. `audit_provider_symbols` then requires the
+defined globals to equal that ABI and the imports to be C ABI only
+(`dl_iterate_phdr`, `abort`, and memory primitives). The provider therefore
+carries its own copy of the `core` code it uses: a consumer whose `core` has
+different crate hashes, such as a `-Zbuild-std` graph, still resolves only the
+`_Unwind_*` names against it, and a linker extracts the member exactly as it
+would from an installed `libunwind.a`. Only this standalone build passes
+`--cfg crabc_unwinder_standalone`, which adds a panic handler that calls C
+`abort`: a bounds or arithmetic panic inside the unwinder has no consumer std
+to report it. An earlier archive of the raw rlib objects depended on the
+stock `core` crate hashes and could not link into a build-std consumer.
 
 Build from the checkout through the pinned native dispatcher:
 
@@ -28,9 +44,10 @@ the archive in either runtime product. The Python dependency-audit tests can
 also run on the host without compiling target code.
 
 `provenance.json` records the exact source-file digests, licenses, enabled
-features, compiler identity, archive members and archive digest. `cargo.jsonl`
-and the defined/undefined symbol inventories retain build evidence.
-The artifact embeds LLVM bitcode, uses PIC and preserves unwind tables. This
+features, compiler identity, the fused staticlib member and dropped
+compiler-builtins member count, the archive member and archive digest, and
+the C imports. `cargo.jsonl` and the defined/undefined symbol inventories
+retain build evidence. The member is PIC native code with unwind tables. This
 alone does not prove consumer or cross-runtime LTO qualification.
 
 Before compiling, `build.py` verifies the normal checked-in registry lock and
@@ -404,8 +421,8 @@ non-null targets during bounded `dl_iterate_phdr` callbacks. Consumers must
 request `--eh-frame-hdr`. No C/C++/standalone assembly object, prebuilt target
 unwinder, libgcc or compiler-rt archive is included. libc's Rust cfg-discovery
 build script is the sole admitted build executable. The selected path has no
-allocation, registry, mutable global frame state, thread creation, personality
-or panic-handler implementation.
+allocation, registry, mutable global frame state, thread creation or
+personality; its only panic handler is the standalone archive's local abort.
 
 ## Qualification boundary
 
