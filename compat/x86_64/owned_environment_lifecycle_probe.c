@@ -309,6 +309,41 @@ static void run_spawn_environment(void)
     CHECK(clearenv() == 0);
 }
 
+/* Musl rejects a null, empty, or '='-containing name with EINVAL before it
+ * looks at the environment; a successful call and a missing unset name leave
+ * errno untouched. clearenv also succeeds on an already-cleared vector. */
+static void check_name_validation(void)
+{
+    static char kept[] = "KEPT=value";
+    static char *direct_environment[] = { kept, NULL };
+
+    environ = direct_environment;
+    errno = 0;
+    CHECK(setenv(NULL, "value", 1) == -1 && errno == EINVAL);
+    errno = 0;
+    CHECK(setenv("", "value", 1) == -1 && errno == EINVAL);
+    errno = 0;
+    CHECK(setenv("KEPT=", "value", 1) == -1 && errno == EINVAL);
+    errno = 0;
+    CHECK(setenv("A=B", "value", 0) == -1 && errno == EINVAL);
+    errno = 0;
+    CHECK(unsetenv("") == -1 && errno == EINVAL);
+    errno = 0;
+    CHECK(unsetenv("KEPT=value") == -1 && errno == EINVAL);
+    CHECK(environ == direct_environment && direct_environment[0] == kept &&
+        direct_environment[1] == NULL && text_equal(getenv("KEPT"), "value"));
+    errno = ERANGE;
+    CHECK(unsetenv("ABSENT") == 0 && errno == ERANGE);
+    CHECK(setenv("KEPT", "ignored", 0) == 0 && errno == ERANGE);
+    CHECK(environ == direct_environment && text_equal(getenv("KEPT"), "value"));
+    CHECK(setenv("ADDED", "", 1) == 0 && errno == ERANGE);
+    CHECK(text_equal(getenv("ADDED"), "") && text_equal(getenv("KEPT"), "value"));
+    CHECK(unsetenv("KEPT") == 0 && errno == ERANGE && getenv("KEPT") == NULL);
+    CHECK(clearenv() == 0 && errno == ERANGE && environ == NULL);
+    CHECK(clearenv() == 0 && errno == ERANGE && environ == NULL);
+    CHECK(unsetenv("ADDED") == 0 && errno == ERANGE);
+}
+
 static void run_exec_child(void)
 {
     CHECK(text_equal(getenv("EXEC_ENV"), "visible"));
@@ -345,6 +380,7 @@ int main(int argc, char **argv)
     }
     CHECK(argc == 1);
     check_replacement_removal_clear();
+    check_name_validation();
     check_direct_environ_and_borrowed_value();
     run_fork_snapshot();
     run_exec_environment();
