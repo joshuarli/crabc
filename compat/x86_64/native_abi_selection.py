@@ -449,8 +449,12 @@ def _locale_alias_reader():
 
 
 def _locale_alias_source_files(reader: Any) -> tuple[str, ...]:
-    """Return the exact current files that define the locale attachment."""
-    selected = getattr(reader, 'SELECTED_SOURCES', None)
+    """Return the exact current files that define the locale attachment.
+
+    Only the current collector schema is admitted, so bind that schema's
+    source roster rather than the historical v3 one.
+    """
+    selected = getattr(reader, 'CURRENT_SELECTED_SOURCES', None)
     require(isinstance(selected, tuple) and selected and all(isinstance(name, str) for name in selected),
             'locale alias reader source roster differs')
     names = (
@@ -8890,7 +8894,9 @@ def native_locale_alias_adapter(report_path: Path | None, *, facts: Mapping[str,
         'schema', 'status', 'mode_policy', 'image_inputs', 'source_before', 'source_after', 'source_contract',
         'products', 'collector_commands', 'runner_commands', 'snapshots', 'artifacts', 'runtime', 'symbols', 'nonclaims',
     }, 'locale alias receipt')
-    require(raw['schema'] == reader.SCHEMA and raw['status'] == reader.STATUS,
+    # The current collector writes only CURRENT_SCHEMA; the reader's older
+    # pinned-image profile remains replayable history, not current evidence.
+    require(raw['schema'] == reader.CURRENT_SCHEMA and raw['status'] == reader.STATUS,
             'locale alias receipt schema or status differs')
     receipt_source = exact(validated.get('source'), {'revision', 'tree', 'content_sha256', 'clean', 'paths'},
                            'locale reader source')
