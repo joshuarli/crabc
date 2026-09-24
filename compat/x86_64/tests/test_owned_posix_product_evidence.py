@@ -798,6 +798,26 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                 # The installed roster is the whole combined tree.
                 self.assertEqual(files, json.loads(manifest.read_text(encoding="utf-8"))["files"])
 
+    def test_dynamic_product_consumers_accept_a_combined_sysroot(self) -> None:
+        # The fork workload compiles against the product's own stdint.h.
+        (self.dynamic / "usr/include/stdint.h").write_bytes(b"/* owned stdint */\n")
+        self.refresh_dynamic_manifest()
+        root = self.combined_product()
+        manifest = root / "share/crabc/manifest.json"
+        fork = self.load_consumer("owned_dynamic_fork_evidence")
+        audit = self.load_consumer("owned_posix_filesystem_audit")
+        self.assertEqual(fork.product_manifest(root), manifest)
+        self.assertEqual(audit.validate_dynamic_product(root), root)
+
+    @staticmethod
+    def load_consumer(name: str):
+        spec = importlib.util.spec_from_file_location(f"{name}_combined_test", ROOT / "compat/x86_64" / f"{name}.py")
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
     def test_combined_sysroot_rejects_substituted_or_moved_product_payload(self) -> None:
         root = self.combined_product()
         path = root / "share/crabc/manifest.json"
