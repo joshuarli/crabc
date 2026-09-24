@@ -124,6 +124,8 @@ class OwnedRegexComponentReceiptTests(unittest.TestCase):
                 stdout = b"{}\n"
             if label == "oracle-run" or label.endswith("-run") or label.endswith("-kernel") or label.endswith("-direct"):
                 stdout = b"match fixture nsub=0 so=0 eo=1\n" + module.ORACLE_COMPLETION
+            if label.endswith("-bounded"):
+                stdout = module.BOUNDED_ORACLE if label == "oracle-bounded" else module.BOUNDED_OWNED
             if label == "object-imports":
                 stdout = b"".join(f"{name} U\n".encode() for name in module.API)
             if label in {"oracle-providers", "static-archive-providers", "static-providers", "static-pie-providers"}:
@@ -239,6 +241,16 @@ class OwnedRegexComponentReceiptTests(unittest.TestCase):
         self.rewrite_identity(identity)
         self.rewrite_report(record)
         with self.assertRaisesRegex(self.module.RegexReceiptError, "stdout differs from pinned musl"):
+            self.validate()
+
+    def test_recomputed_identity_does_not_admit_a_faulting_owned_bounded_backreference(self) -> None:
+        record = self.report_value()
+        identity = record["commands"]["dynamic-non-pie-direct-bounded"]["stdout"]
+        path = self.root / identity["path"]
+        path.write_bytes(self.module.BOUNDED_ORACLE)
+        self.rewrite_identity(identity)
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.RegexReceiptError, "bounded-backreference outcome differs"):
             self.validate()
 
     def test_recomputed_identity_does_not_admit_changed_product_link_validation(self) -> None:

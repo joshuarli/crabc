@@ -387,6 +387,19 @@ unsafe fn pop_backtrack(
     }
 }
 
+/// Byte length of the caller's NUL-terminated subject.
+///
+/// # Safety
+///
+/// `string` is the `regexec` subject: readable through its terminating NUL.
+unsafe fn c_string_length(string: *const c_char) -> usize {
+    let mut length = 0usize;
+    while unsafe { *string.add(length) } != 0 {
+        length += 1;
+    }
+    length
+}
+
 unsafe fn byte_prefix_equal(left: *const c_char, right: *const c_char, count: usize) -> bool {
     for index in 0..count {
         if unsafe { *left.add(index) != *right.add(index) } { return false; }
@@ -415,6 +428,8 @@ unsafe fn run_backtrack(
     let mut match_end_offset = -1;
     let tags_count = unsafe { (*tnfa).num_tags as usize };
     let states_count = unsafe { (*tnfa).num_states as usize };
+    // Measured on the first backreference only; bounds its source comparison.
+    let mut subject_length: Option<usize> = None;
     let memory = unsafe { tre_mem_new() };
     if memory.is_null() { return REG_ESPACE; }
     let mut status = REG_NOMATCH;
@@ -494,8 +509,50 @@ unsafe fn run_backtrack(
                     let end = unsafe { (*pmatch.add(backref)).rm_eo };
                     let length = end - start;
                     let state_id = unsafe { (*transition).state_id as usize };
-                    if length >= 0
-                        && unsafe { byte_prefix_equal(string.add(start as usize), string_byte.sub(1), length as usize) }
+                    // regexec.c:785-786 is `strncmp(string + so, str_byte - 1,
+                    // (size_t)bt_len)`.  An unset group has `so == eo == -1`
+                    // and compares nothing.  When `[so, so + bt_len)` lies in
+                    // the subject, every left byte is non-NUL, so the byte
+                    // comparison stops at the same first difference strncmp
+                    // does and never reads past the right side's terminator.
+                    //
+                    // Intentional differences, each confined to input where
+                    // the source's comparison or following advance leaves
+                    // the caller's NUL-terminated subject:
+                    //
+                    // - A reference into a still-open group (undefined by
+                    //   POSIX, accepted by musl) can pair this iteration's
+                    //   start tag with an older end tag.  The source then
+                    //   compares whole suffixes under the wrapped `size_t`
+                    //   length and, on equality, moves the matcher backwards
+                    //   by the negative length; that publishes inverted
+                    //   offsets or never terminates (for example
+                    //   `\(a\(\2\|x\)b\)*` on "abab").
+                    // - The source keeps `pos_add_next` from the last decoded
+                    //   character when it restarts at `pos_start` or resumes
+                    //   after a backreference, so after a multibyte UTF-8
+                    //   character its tag offsets can drift from byte
+                    //   offsets.  This port keeps that drift exactly; but a
+                    //   drifted range can end past the subject's terminator,
+                    //   where the source reads and then resumes matching
+                    //   beyond the caller's string.
+                    //
+                    // Both are failed backreferences here, which backtrack as
+                    // the source does for any other mismatch.  The installed
+                    // probe's `--bounded-backreference` mode exercises the
+                    // second against a guarded subject; see
+                    // docs/evidence/x86-owned-regex.md.
+                    let equal = match length {
+                        0 => true,
+                        1.. => {
+                            let length = length as usize;
+                            let subject = *subject_length.get_or_insert_with(|| unsafe { c_string_length(string) });
+                            (start as usize).checked_add(length).is_some_and(|limit| limit <= subject)
+                                && unsafe { byte_prefix_equal(string.add(start as usize), string_byte.sub(1), length) }
+                        }
+                        _ => false,
+                    };
+                    if equal
                         && !(length == 0 && unsafe { *states_seen.add(state_id) } != 0) {
                         unsafe { *states_seen.add(state_id) = (length == 0) as c_int; }
                         string_byte = unsafe { string_byte.offset((length - 1) as isize) };

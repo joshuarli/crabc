@@ -45,6 +45,16 @@ treats them as failed backreferences and backtracks as for any mismatch.
   musl) can yield a negative length. musl compares under the wrapped `size_t`
   length and, on equality, moves the matcher backwards; for example
   `\(a\(\2\|x\)b\)*` on `abab` never terminates.
+- musl's backtracking matcher keeps the previous character's byte width when
+  it restarts at a later start position, so after a UTF-8 multibyte character
+  its tag offsets drift from byte offsets. The port keeps that drift exactly,
+  but a drifted range that ends past the terminator is not compared. musl
+  compares it and advances beyond the string: `\(.*\)*\1a` on the C.UTF-8
+  subject `aaa\xc3\xa9\xc3\xa9ba` placed before an unmapped page faults
+  under musl. The probe's `--bounded-backreference` mode runs exactly that
+  case; the runner requires the musl child to fault with `SIGSEGV` and every
+  owned entry to report musl's ordinary-memory answer (match `0,3`, group
+  `0,1`).
 
 ## Installed-product proof
 

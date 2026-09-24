@@ -10,6 +10,10 @@ readonly RUNNER="$ROOT/compat/x86_64/run_owned_regex.sh"
 readonly RECEIPT_READER="$ROOT/compat/x86_64/owned_regex_component_receipt.py"
 readonly COPIES="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+# `--bounded-backreference` outcomes: pinned musl reads past a guarded subject;
+# the owned port rejects the out-of-subject backreference range instead.
+readonly BOUNDED_ORACLE='bounded-backreference source-fault signal=11'
+readonly BOUNDED_OWNED='bounded-backreference status=0 match=0,3 group=0,1'
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -237,6 +241,12 @@ compare_oracle() {
     cmp "$WORK/oracle-run.status" "$WORK/$stem.status" || fail "$stem status differs from pinned musl"
 }
 
+check_bounded() {
+    local stem="$1" expected="$2"
+    [ "$(cat "$WORK/$stem.stdout")" = "$expected" ] && [ ! -s "$WORK/$stem.stderr" ] ||
+        fail "$stem bounded-backreference outcome differs"
+}
+
 check_nm_api_rows() {
     local report="$1" kind="$2" description="$3"
     python3 -B - "$report" "$kind" "$description" <<'PY'
@@ -293,6 +303,8 @@ capture oracle-run env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle"
 [ "$(tail -n 1 "$WORK/oracle-run.stdout")" = owned-regex-installed-header-ok ] ||
     fail 'pinned musl transcript is incomplete'
 [ ! -s "$WORK/oracle-run.stderr" ] || fail 'pinned musl emitted stderr'
+capture oracle-bounded env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle" --bounded-backreference
+check_bounded oracle-bounded "$BOUNDED_ORACLE"
 
 if [ -n "$STATIC_PRODUCT" ]; then
     capture static-archive-providers /usr/bin/env -i LC_ALL=C LANG=C TZ=UTC PATH=/usr/bin:/bin \
@@ -308,6 +320,8 @@ if [ -n "$STATIC_PRODUCT" ]; then
         validate_link "$mode" "$STATIC_PRODUCT" "$WORK/workload.o" "$WORK/$mode" "$receipt" "$mode"
         capture "$mode-run" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode"
         compare_oracle "$mode-run"
+        capture "$mode-bounded" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode" --bounded-backreference
+        check_bounded "$mode-bounded" "$BOUNDED_OWNED"
         capture "$mode-providers" /usr/bin/env -i LC_ALL=C LANG=C TZ=UTC PATH=/usr/bin:/bin \
             /usr/bin/nm -g --defined-only --format=posix "$WORK/$mode"
         check_nm_api_rows "$WORK/$mode-providers.stdout" T "$mode provider"
@@ -339,6 +353,10 @@ for mode in pie non-pie; do
     compare_oracle "dynamic-$mode-kernel"
     capture "dynamic-$mode-direct" chroot "$root" "$INTERPRETER" /consumer
     compare_oracle "dynamic-$mode-direct"
+    capture "dynamic-$mode-kernel-bounded" chroot "$root" /consumer --bounded-backreference
+    check_bounded "dynamic-$mode-kernel-bounded" "$BOUNDED_OWNED"
+    capture "dynamic-$mode-direct-bounded" chroot "$root" "$INTERPRETER" /consumer --bounded-backreference
+    check_bounded "dynamic-$mode-direct-bounded" "$BOUNDED_OWNED"
     capture "dynamic-$mode-copy-audit-after" python3 -B "$COPIES" audit \
         --product "$DYNAMIC_PRODUCT" --execution-root "$root" \
         --source-consumer "$executable" --execution-consumer "$root/consumer" \

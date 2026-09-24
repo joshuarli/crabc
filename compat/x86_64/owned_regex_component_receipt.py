@@ -41,6 +41,12 @@ HEADERS = (
     "features.h", "bits/alltypes.h",
 )
 ORACLE_COMPLETION = b"owned-regex-installed-header-ok\n"
+# `--bounded-backreference`: pinned musl faults reading past a guarded subject;
+# the owned port rejects the out-of-subject range and reports musl's
+# ordinary-memory answer (docs/evidence/x86-owned-regex.md).
+BOUNDED_ARGUMENT = "--bounded-backreference"
+BOUNDED_ORACLE = b"bounded-backreference source-fault signal=11\n"
+BOUNDED_OWNED = b"bounded-backreference status=0 match=0,3 group=0,1\n"
 API = ("regcomp", "regexec", "regerror", "regfree")
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 SOURCE_PATHS = {
@@ -252,6 +258,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
         "oracle-link": [tool("oracle"), "-static", "-fno-pie", "-no-pie", m(workload), "-o", m(oracle)],
         "oracle-providers": symbols("nm", "-g", "--defined-only", "--format=posix", m(oracle)),
         "oracle-run": ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(oracle)],
+        "oracle-bounded": ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(oracle), BOUNDED_ARGUMENT],
     }
     if mode == FULL_MODE:
         require(static is not None, "full regex mode needs a static product")
@@ -263,6 +270,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
             plan[f"{name}-validate"] = ["python3", "-B", "-", SOURCE_MOUNT, m(static), m(workload),
                                           m(executable), m(receipt), linkage]
             plan[f"{name}-run"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(executable)]
+            plan[f"{name}-bounded"] = [*plan[f"{name}-run"], BOUNDED_ARGUMENT]
             plan[f"{name}-providers"] = symbols("nm", "-g", "--defined-only", "--format=posix", m(executable))
         plan["static-archive-providers"] = symbols("nm", "-g", "--defined-only", "--format=posix",
                                                      m(static / "usr/lib/libc.a"))
@@ -280,6 +288,8 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
         plan[f"{name}-copy-audit-before"] = ["python3", "-B", copy_tool, "audit", *payload]
         plan[f"{name}-kernel"] = ["chroot", m(root_copy), "/consumer"]
         plan[f"{name}-direct"] = ["chroot", m(root_copy), INTERPRETER, "/consumer"]
+        plan[f"{name}-kernel-bounded"] = [*plan[f"{name}-kernel"], BOUNDED_ARGUMENT]
+        plan[f"{name}-direct-bounded"] = [*plan[f"{name}-direct"], BOUNDED_ARGUMENT]
         plan[f"{name}-copy-audit-after"] = ["python3", "-B", copy_tool, "audit", *payload]
     plan["dynamic-providers"] = symbols("readelf", "--dyn-syms", "--wide", m(dynamic / "usr/lib/libc.so"))
     return plan
@@ -474,6 +484,8 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
     require((oracle_stdout == ORACLE_COMPLETION or oracle_stdout.endswith(b"\n" + ORACLE_COMPLETION))
             and raw["oracle-run"]["stderr"] == b"",
             "pinned musl regex oracle transcript is incomplete")
+    require(raw["oracle-bounded"]["stdout"] == BOUNDED_ORACLE and raw["oracle-bounded"]["stderr"] == b"",
+            "pinned musl bounded-backreference outcome differs")
     for label, kind in (("object-imports", "U"), ("oracle-providers", "T")):
         require(raw[label]["stderr"] == b"", f"{label} emitted stderr")
         require(replay_symbol_reader(root, label, plan[label]) == raw[label]["stdout"],
@@ -515,12 +527,17 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
             require(raw[candidate_label]["stdout"] == raw["oracle-run"]["stdout"] and
                     raw[candidate_label]["stderr"] == raw["oracle-run"]["stderr"],
                     f"{candidate_label} transcript differs from pinned musl")
+            bounded_labels = [f"{name}-bounded"]
         else:
             for entry in ("kernel", "direct"):
                 candidate_label = f"{name}-{entry}"
                 require(raw[candidate_label]["stdout"] == raw["oracle-run"]["stdout"] and
                         raw[candidate_label]["stderr"] == raw["oracle-run"]["stderr"],
                         f"{candidate_label} stdout differs from pinned musl")
+            bounded_labels = [f"{name}-kernel-bounded", f"{name}-direct-bounded"]
+        for label in bounded_labels:
+            require(raw[label]["stdout"] == BOUNDED_OWNED and raw[label]["stderr"] == b"",
+                    f"{label} bounded-backreference outcome differs")
 
     payloads = report["execution_payloads"]
     require(isinstance(payloads, dict) and set(payloads) == {"pie", "non-pie"}, "regex copied payload roster differs")

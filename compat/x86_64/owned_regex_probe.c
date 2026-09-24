@@ -11,6 +11,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #ifdef REG_STARTEND
 #error "REG_STARTEND is not part of musl's installed regex interface"
@@ -632,6 +635,62 @@ static void check_regerror_table(void)
     printf("regerror-bounded digest=%016llx\n", digest);
 }
 
+/*
+ * `--bounded-backreference`: a backreference range that leaves the subject.
+ *
+ * musl's backtracking matcher keeps the previous character's byte width when
+ * it restarts at a later start position, so after a UTF-8 multibyte
+ * character its tag offsets can drift from byte offsets.  For this valid BRE
+ * and valid C.UTF-8 subject, a drifted `\1` range then extends past the
+ * terminator; musl compares it, advances beyond the caller's string, and
+ * faults when that string ends at an unmapped page.  The owned port keeps the
+ * drift but treats a range outside the subject as a failed backreference
+ * (the intentional difference in docs/evidence/x86-owned-regex.md), which
+ * yields musl's own ordinary-memory answer here.  The runner requires the
+ * pinned musl child to fault and every owned entry to print that answer, so
+ * this mode is kept out of the byte-compared transcript.
+ */
+static int check_bounded_backreference(void)
+{
+    static const char subject[] = "aaa\xc3\xa9\xc3\xa9" "ba";
+    long page = sysconf(_SC_PAGESIZE);
+    regex_t compiled;
+    regmatch_t matches[2];
+    char *mapping;
+    char *guarded;
+    pid_t child;
+    int status;
+
+    CHECK(page > 0 && (size_t)page > sizeof subject);
+    CHECK(setlocale(LC_ALL, "C.UTF-8") != NULL);
+    CHECK(public_regcomp(&compiled, "\\(.*\\)*\\1a", 0) == REG_OK);
+    mapping = mmap(0, 2 * (size_t)page, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(mapping != MAP_FAILED);
+    CHECK(mprotect(mapping + page, (size_t)page, PROT_NONE) == 0);
+    guarded = mapping + page - sizeof subject;
+    memcpy(guarded, subject, sizeof subject);
+    CHECK(fflush(stdout) == 0);
+    child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        memset(matches, 0x5a, sizeof matches);
+        status = public_regexec(&compiled, guarded, 2, matches, 0);
+        printf("bounded-backreference status=%d match=%ld,%ld group=%ld,%ld\n",
+            status, (long)matches[0].rm_so, (long)matches[0].rm_eo,
+            (long)matches[1].rm_so, (long)matches[1].rm_eo);
+        _Exit(fflush(stdout) == 0 ? 0 : 127);
+    }
+    CHECK(waitpid(child, &status, 0) == child);
+    if (WIFSIGNALED(status))
+        printf("bounded-backreference source-fault signal=%d\n", WTERMSIG(status));
+    else
+        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    public_regfree(&compiled);
+    CHECK(munmap(mapping, 2 * (size_t)page) == 0);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     int trace = 0;
@@ -655,6 +714,8 @@ int main(int argc, char **argv)
      * REG_ICASE case pairing. */
     static const regmatch_t escaped_icase[] = {{1, 2}};
 
+    if (argc == 2 && !strcmp(argv[1], "--bounded-backreference"))
+        return check_bounded_backreference();
     CHECK(setlocale(LC_ALL, "C.UTF-8") != NULL);
     expect_match("ere-leftmost-longest", "a|ab", REG_EXTENDED, "zab", 1,
         longest, 0);
