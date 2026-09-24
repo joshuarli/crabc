@@ -12,6 +12,15 @@
  * class and free each other's blocks. A single-threaded `_Fork` child runs
  * no handler and still allocates.
  *
+ * The synccall-create scenario composes the allocator's per-thread attach
+ * with musl's all-thread credential rendezvous: while threads churn and a
+ * thread repeatedly sets its unchanged IDs (each call signals every thread),
+ * two creators start short-lived C11 threads and explicitly scheduled
+ * pthreads that allocate before exit, and the initial thread keeps probing a
+ * thread handle. A new thread must be able to take part in a rendezvous at
+ * every point where it can wait (here, behind a probe the rendezvous has
+ * already caught), or the process stalls.
+ *
  * Output is written with dprintf after each child has been reaped, so the
  * transcript is deterministic and identical for every conforming libc.
  */
@@ -19,9 +28,11 @@
 #include <errno.h>
 #include <malloc.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <threads.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -282,6 +293,86 @@ static void repeat_scenario(void) {
     dprintf(1, "repeat children %d\n", REPEATS);
 }
 
+#define CREATIONS 300
+static int stop_credentials;
+static int creators_done;
+
+static int c11_allocating_thread(void *argument) {
+    size_t size = sizes[(size_t)argument % 3] + (size_t)argument % 64;
+    unsigned char *block = malloc(size);
+    CHECK(block);
+    memset(block, 0x5a, size);
+    free(block);
+    return 7;
+}
+
+static void *explicit_allocating_thread(void *argument) {
+    return c11_allocating_thread(argument) == 7 ? argument : 0;
+}
+
+static void *c11_creator(void *unused) {
+    (void)unused;
+    for (size_t i = 0; i < CREATIONS; i++) {
+        thrd_t thread;
+        int result = 0;
+        CHECK(thrd_create(&thread, c11_allocating_thread, (void *)i) == thrd_success);
+        CHECK(thrd_join(thread, &result) == thrd_success && result == 7);
+    }
+    __atomic_fetch_add(&creators_done, 1, __ATOMIC_ACQ_REL);
+    return 0;
+}
+
+static void *explicit_creator(void *unused) {
+    (void)unused;
+    pthread_attr_t attributes;
+    struct sched_param parameter = { .sched_priority = 0 };
+    CHECK(pthread_attr_init(&attributes) == 0);
+    CHECK(pthread_attr_setinheritsched(&attributes, PTHREAD_EXPLICIT_SCHED) == 0);
+    CHECK(pthread_attr_setschedpolicy(&attributes, SCHED_OTHER) == 0);
+    CHECK(pthread_attr_setschedparam(&attributes, &parameter) == 0);
+    for (size_t i = 1; i <= CREATIONS; i++) {
+        pthread_t thread;
+        void *result = 0;
+        CHECK(pthread_create(&thread, &attributes, explicit_allocating_thread, (void *)i) == 0);
+        CHECK(pthread_join(thread, &result) == 0 && result == (void *)i);
+    }
+    CHECK(pthread_attr_destroy(&attributes) == 0);
+    __atomic_fetch_add(&creators_done, 1, __ATOMIC_ACQ_REL);
+    return 0;
+}
+
+static void *credential_rendezvous(void *counter) {
+    uid_t user = getuid();
+    gid_t group = getgid();
+    unsigned long calls = 0;
+    while (!__atomic_load_n(&stop_credentials, __ATOMIC_ACQUIRE)) {
+        CHECK(setgid(group) == 0);
+        CHECK(setuid(user) == 0);
+        calls++;
+    }
+    *(unsigned long *)counter = calls;
+    return 0;
+}
+
+static void synccall_create_scenario(void) {
+    pthread_t churn, credentials, c11, explicit;
+    unsigned long calls = 0;
+    CHECK(pthread_create(&churn, 0, churner, 0) == 0);
+    CHECK(pthread_create(&credentials, 0, credential_rendezvous, &calls) == 0);
+    CHECK(pthread_create(&c11, 0, c11_creator, 0) == 0);
+    CHECK(pthread_create(&explicit, 0, explicit_creator, 0) == 0);
+    while (__atomic_load_n(&creators_done, __ATOMIC_ACQUIRE) < 2)
+        CHECK(pthread_kill(churn, 0) == 0);
+    CHECK(pthread_join(c11, 0) == 0);
+    CHECK(pthread_join(explicit, 0) == 0);
+    __atomic_store_n(&stop_credentials, 1, __ATOMIC_RELEASE);
+    CHECK(pthread_join(credentials, 0) == 0);
+    CHECK(calls > 0);
+    __atomic_store_n(&stop_churn, 1, __ATOMIC_RELEASE);
+    CHECK(pthread_join(churn, 0) == 0);
+    dprintf(1, "synccall-create threads %d\n", 2 * CREATIONS);
+}
+
 static void *exiting_worker(void *unused) {
     (void)unused;
     fill(worker_blocks, 0x63);
@@ -304,6 +395,8 @@ int main(int argc, char **argv) {
         CHECK(pthread_join(worker, 0) == 0);
         fork_and_check("joined", 1);
         release(worker_blocks);
+    } else if (!strcmp(argv[1], "synccall-create")) {
+        synccall_create_scenario();
     } else if (!strcmp(argv[1], "repeat")) {
         repeat_scenario();
     } else if (!strcmp(argv[1], "underscore")) {

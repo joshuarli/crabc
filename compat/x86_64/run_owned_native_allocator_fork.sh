@@ -4,7 +4,8 @@
 # The probe runs a multithreaded parent with live allocations and concurrent
 # churn, forks from the initial thread, from a worker and after a joined
 # worker, forks repeatedly under three-thread churn, and runs a
-# single-threaded _Fork. Allocating pthread_atfork handlers record their
+# single-threaded _Fork, and repeats a credential rendezvous while C11 and
+# explicitly scheduled threads attach to the allocator. Allocating pthread_atfork handlers record their
 # order. Each owned native-shadow product mode must reproduce the oracle
 # transcript exactly. Without supplied products the runner builds both
 # native-shadow sysroots; supplied ones must record that backend.
@@ -13,7 +14,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_native_allocator_fork_probe.c"
-readonly scenarios=(initial worker joined repeat underscore)
+readonly scenarios=(initial worker joined repeat underscore synccall-create)
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -120,4 +121,4 @@ for mode in pie non-pie; do
             "/consumer-$mode" "$scenario"
     done
 done
-printf 'owned native-allocator fork: PASS (musl + native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; initial/worker/joined/repeated fork, _Fork); evidence: %s\n' "$work"
+printf 'owned native-allocator fork: PASS (musl + native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; initial/worker/joined/repeated fork, _Fork, credential rendezvous during C11/explicit-scheduling creation); evidence: %s\n' "$work"

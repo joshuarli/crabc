@@ -2490,9 +2490,10 @@ unsafe fn selected_worker_native_mimalloc_attached(
 /// thread-list lock, so a later `__synccall` does not signal a task that is
 /// about to vanish. Only the clone tail's `SYS_exit` follows the release.
 ///
-/// Such a child may still run with every signal blocked. It first leaves
-/// only `SIGSYNCCALL` deliverable: taking the lock while that signal is
-/// blocked could deadlock against a rendezvous that is waiting for it.
+/// Such a child may still run with every other signal blocked. It sets
+/// exactly that mask, so `SIGSYNCCALL` is certainly deliverable: taking the
+/// lock while that signal is blocked could deadlock against a rendezvous
+/// that is waiting for it.
 #[cfg(crabc_x86_owned_runtime)]
 fn commit_unstarted_worker_exit(control: *mut ThreadControl) {
     let mask = !(1_u64 << (super::owned_synccall::SIGSYNCCALL - 1));
@@ -2889,9 +2890,21 @@ unsafe fn create_selected_worker_with_attributes(
     // This runtime also holds SIGCANCEL until that cache is ready. Preserve
     // the existing all-signal setup interval for explicit scheduling/C11 and
     // the frozen private leaf's cancellation-only mask.
+    //
+    // Owned creation never blocks SIGSYNCCALL, in the creator or the child,
+    // just as musl blocks only application signals here. The child can wait
+    // before its callback (for the scheduler handoff or, with the native
+    // allocator, for the registry lock during attach) and the creator can
+    // wait for a refused child to exit; a `__synccall` rendezvous may have
+    // already caught the holder of what they wait for, and waits in turn for
+    // them. Its handler needs no FS+32 or worker identity.
     let creation_signal_mask = if cfg!(crabc_x86_owned_runtime) {
         if attributes.scheduler_requested || !matches!(start, SelectedWorkerStart::Pthread(_)) {
-            u64::MAX
+            #[cfg(crabc_x86_owned_runtime)]
+            let all = !(1_u64 << (super::owned_synccall::SIGSYNCCALL - 1));
+            #[cfg(not(crabc_x86_owned_runtime))]
+            let all = u64::MAX;
+            all
         } else { 0xffff_fffc_7fff_ffff | (1_u64 << 32) }
     } else { 1_u64 << 32 };
     let mut creator_signal_mask = 0_u64;
