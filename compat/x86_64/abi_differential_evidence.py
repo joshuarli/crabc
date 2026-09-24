@@ -278,7 +278,25 @@ def read_selection(evidence: EvidenceSet) -> str:
 
 
 def read_selection_closure(evidence: EvidenceSet) -> str:
-    report = _selection(evidence, closure=True)
+    import native_abi_selection
+
+    try:
+        report = _selection(evidence, closure=True)
+    except native_abi_selection.SelectionError as error:
+        # The replay already reconstructed the report; name what stays open.
+        blockers = inventory.read_json(evidence.reports["native_abi_selection"], "selection report")["closure"]["blockers"]
+        codes: dict[str, int] = {}
+        for blocker in blockers:
+            codes[str(blocker.get("code"))] = codes.get(str(blocker.get("code")), 0) + 1
+        families = sorted({
+            str(blocker["family"]) for blocker in blockers
+            if blocker.get("code") == "family-semantic-evidence-unavailable" and "family" in blocker
+        })
+        raise EvidenceError(
+            f"{error}: {len(blockers)} blockers ("
+            + ", ".join(f"{code}={count}" for code, count in sorted(codes.items()))
+            + f"); family semantic evidence unavailable for {len(families)} families"
+        ) from error
     return f"selection closure holds for {len(report['identities'])} identities"
 
 
