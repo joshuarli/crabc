@@ -1,25 +1,25 @@
 {
   "schema": "crabc.x86_64-qualification-case-manifest/v1",
-  "gate": "consumer.source-build",
+  "gate": "compat.loader-corpus",
   "target": {
     "triple": "x86_64-unknown-linux-musl",
     "system": "Linux",
     "machine": "x86_64",
     "endianness": "little"
   },
-  "oracle": "frozen-aarch64-selected-source-consumers-and-pinned-musl-1.2.6",
-  "provenance": "pinned-source-inputs-and-owned-crabc-sysroot",
+  "oracle": "pinned-musl-1.2.6-and-frozen-loader-corpus",
+  "provenance": "separate-pinned-musl-oracle-and-owned-crabc-interpreter-and-libc",
   "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
   "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
   "cases": [
     {
-      "id": "lua-frozen-source-build",
+      "id": "loader-corpus-frozen-roster",
       "command": [
         "python3",
-        "compat/lua/qualify_source_build.py"
+        "compat/x86_64/qualify_loader_corpus.py"
       ],
-      "runner_sha256": "8f11c7b4880bcf54914a81c2e338a031dc5f547e7913c13fe6c08051ff0fa956",
-      "expected_stdout_line": "x86 consumer.source-build Lua roster: PASS (non-promoting)",
+      "runner_sha256": "617cb7d4503b80b4a4b7a82d17f0b7c1437dc0e0e483b2d2e181bf1babb1080c",
+      "expected_stdout_line": "x86 compat.loader-corpus loader/corpus roster: PASS (non-promoting)",
       "timeout_seconds": 3600
     }
   ]

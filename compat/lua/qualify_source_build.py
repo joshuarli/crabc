@@ -36,7 +36,7 @@ for directory in (X86_DIRECTORY, LUA_DIRECTORY):
 import run as LUA  # noqa: E402
 import run_x86_dynamic as DYNAMIC  # noqa: E402
 import source_build_admission as ADMISSION  # noqa: E402
-import campaign_report as CAMPAIGN  # noqa: E402
+import qualification_case as CASE  # noqa: E402
 import owned_dynamic_qualification as PRODUCT  # noqa: E402
 
 FAMILY = "consumer.source-build"
@@ -52,49 +52,6 @@ def require(condition: bool, message: str) -> None:
         raise LUA.RunnerError(message)
 
 
-def clean_source_identity() -> dict[str, str]:
-    """Return the Lua lanes' source identity only for clean committed source."""
-
-    revision = PRODUCT.require_clean_source()
-    identity = LUA.current_source_identity()
-    require(identity.get("revision") == revision, "source revision changed while sealing the case")
-    return identity
-
-
-def prerequisite_blockers(report: Mapping[str, Any]) -> list[str]:
-    """Return transitive family prerequisites that are not yet verified."""
-
-    rows = report.get("families")
-    require(isinstance(rows, list), "campaign report has no family rows")
-    families: dict[str, Mapping[str, Any]] = {}
-    for row in rows:
-        require(isinstance(row, Mapping) and isinstance(row.get("id"), str), "campaign family row is invalid")
-        dependencies = row.get("dependencies")
-        require(isinstance(dependencies, list), f"campaign family {row['id']} dependencies are invalid")
-        families[row["id"]] = {"status": row.get("status"), "depends_on": dependencies}
-    require(FAMILY in families, f"campaign report has no {FAMILY} family")
-    try:
-        prerequisites = CAMPAIGN.transitive_dependencies(FAMILY, families)
-    except CAMPAIGN.CampaignReportError as error:
-        raise LUA.RunnerError(str(error)) from error
-    return [
-        family for family in prerequisites
-        if families[family]["status"] != CAMPAIGN.COMPLETED_STATUS
-    ]
-
-
-def require_prerequisites_closed() -> None:
-    try:
-        report = CAMPAIGN.build_report()
-    except CAMPAIGN.CampaignReportError as error:
-        raise LUA.RunnerError(f"campaign report is invalid: {error}") from error
-    blockers = prerequisite_blockers(report)
-    require(
-        not blockers,
-        f"{FAMILY} prerequisites are not foundation-verified: {', '.join(blockers)}",
-    )
-
-
 def require_lane(result: tuple[Mapping[str, Any], Path, Path | None], lane: str) -> dict[str, str]:
     report, report_path, latest = result
     require(
@@ -105,8 +62,8 @@ def require_lane(result: tuple[Mapping[str, Any], Path, Path | None], lane: str)
 
 
 def qualify() -> dict[str, object]:
-    source = clean_source_identity()
-    require_prerequisites_closed()
+    source = CASE.clean_source_identity()
+    CASE.require_prerequisites_closed(FAMILY)
     static = require_lane(
         LUA.run_x86_static_dispatch(jobs=JOBS, timeout=COMMAND_TIMEOUT), "static"
     )
@@ -118,7 +75,7 @@ def qualify() -> dict[str, object]:
         admission.get("source_identity") == source,
         "Lua admission is bound to a different source than this case",
     )
-    require(clean_source_identity() == source, "source changed during the Lua qualification case")
+    require(CASE.clean_source_identity() == source, "source changed during the Lua qualification case")
     return {
         "family": FAMILY,
         "source_identity": source,
@@ -134,7 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     try:
         summary = qualify()
-    except (LUA.RunnerError, PRODUCT.QualificationError, OSError, ValueError) as error:
+    except (LUA.RunnerError, CASE.QualificationCaseError, PRODUCT.QualificationError, OSError, ValueError) as error:
         print(f"x86 consumer.source-build Lua roster: FAIL: {error}", file=sys.stderr)
         return 1
     print(json.dumps(summary, sort_keys=True))

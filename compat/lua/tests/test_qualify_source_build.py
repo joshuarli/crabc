@@ -69,8 +69,8 @@ class QualificationCaseTests(unittest.TestCase):
         report = campaign({"sysroot.owned-artifact": "planned", "compat.loader-corpus": "planned"})
         with (
             self.forbid_execution(),
-            mock.patch.object(QUALIFY, "clean_source_identity", return_value=SOURCE),
-            mock.patch.object(QUALIFY.CAMPAIGN, "build_report", return_value=report),
+            mock.patch.object(QUALIFY.CASE, "clean_source_identity", return_value=SOURCE),
+            mock.patch.object(QUALIFY.CASE.CAMPAIGN, "build_report", return_value=report),
         ):
             status, stdout, stderr = self.run_main()
         self.assertEqual(status, 1)
@@ -84,11 +84,11 @@ class QualificationCaseTests(unittest.TestCase):
         with (
             self.forbid_execution(),
             mock.patch.object(
-                QUALIFY.PRODUCT, "require_clean_source",
-                side_effect=QUALIFY.PRODUCT.QualificationError("qualification publication requires clean source"),
+                QUALIFY.CASE.PRODUCT, "require_clean_source",
+                side_effect=QUALIFY.CASE.PRODUCT.QualificationError("qualification publication requires clean source"),
             ),
             mock.patch.object(
-                QUALIFY.CAMPAIGN, "build_report", side_effect=AssertionError("prerequisites read")
+                QUALIFY.CASE.CAMPAIGN, "build_report", side_effect=AssertionError("prerequisites read")
             ),
         ):
             status, stdout, stderr = self.run_main()
@@ -117,8 +117,8 @@ class QualificationCaseTests(unittest.TestCase):
 
         identities = iter((SOURCE, after))
         stack = contextlib.ExitStack()
-        stack.enter_context(mock.patch.object(QUALIFY, "clean_source_identity", side_effect=lambda: next(identities)))
-        stack.enter_context(mock.patch.object(QUALIFY.CAMPAIGN, "build_report", return_value=campaign({})))
+        stack.enter_context(mock.patch.object(QUALIFY.CASE, "clean_source_identity", side_effect=lambda: next(identities)))
+        stack.enter_context(mock.patch.object(QUALIFY.CASE.CAMPAIGN, "build_report", return_value=campaign({})))
         stack.enter_context(mock.patch.object(QUALIFY.LUA, "run_x86_static_dispatch", side_effect=static))
         stack.enter_context(mock.patch.object(QUALIFY.DYNAMIC, "run_dynamic_dispatch", side_effect=dynamic))
         stack.enter_context(mock.patch.object(QUALIFY.ADMISSION, "validate", side_effect=admission))

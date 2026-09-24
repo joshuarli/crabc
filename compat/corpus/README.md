@@ -159,5 +159,26 @@ APK cache before running it.
 All 34 workloads remain required for completion; a pass on one product or
 revision is not evidence for another.
 
+### Ordered qualification case
+
+`compat/x86_64/qualify_loader_corpus.py` is the only case pinned by
+`compat/x86_64/qualification_loader_corpus.json` for the ordered
+`compat.loader-corpus` gate. It consumes, and never rebuilds, the reviewed
+three-product dynamic cohort that `materialized-dynamic-sysroot` produced and
+`owned_dynamic_qualification.py publish` selected for the same clean revision.
+That cohort's receipt already ran the 21 frozen synthetic loader workloads and
+these 34 package workloads on both clean builds and the package-extracted
+product. The case collects a fresh loader inventory for each of the three
+products, runs the loader-family collector over the cohort and inventories, and
+replays its receipt.
+
+The case refuses before any work unless the checkout is clean committed
+source and every transitive family prerequisite of `compat.loader-corpus` is
+`foundation-verified`, naming the open ones. It also refuses without a current
+cohort publication, a synthetic roster other than the frozen AArch64 `ldso`
+choices, or a `manifest.toml` whose Git blob differs from the frozen baseline
+commit's. It rechecks the clean source before printing its non-promoting
+marker. Retained case state is under `.work/x86_64/loader-corpus-qualification/`.
+
 This is one consumer component for the frozen 34 workloads. It does not close
 the wider software-corpus, loader-family, performance, or source-build scope.

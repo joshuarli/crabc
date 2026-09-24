@@ -65,10 +65,11 @@ executable prefix infrastructure, not final qualification or promotion.
 
 ## Remaining implementation before qualification
 - Register dependency-ready full-family case manifests and execute their real
-  ordered prefixes. Only `consumer.source-build` is ready (its one Lua roster
-  case is described in `compat/lua/README.md`); the other seven gates are
-  planned, so every prefix, including `--through consumer.source-build`, is
-  rejected before executing a target case.
+  ordered prefixes. `compat.loader-corpus` and `consumer.source-build` are
+  ready, each with one case that requires clean source and verified family
+  prerequisites (`compat/corpus/README.md`, `compat/lua/README.md`). The other
+  six gates are planned, so every prefix, including `--through` either ready
+  gate, is rejected before executing a target case.
 - Make final qualification/promotion validation consume current same-revision
   bound receipts for the complete unchanged chain. Do not infer completion from
   `ready`, a private prefix, or historical reports.
