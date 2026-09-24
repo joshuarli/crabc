@@ -149,6 +149,22 @@
         "evidence_check_ids": [
           "os-aligned-page-publication-fault-receiver"
         ]
+      },
+      {
+        "id": "metadata-page-publication",
+        "source_anchor": {
+          "member": "src/page.c",
+          "start_line": 1048,
+          "end_line": 1117,
+          "sha256": "fd4a63385b988fa96324171916bc0db89af60818c6edf5ca79ba67b724253e6f"
+        },
+        "required_definitions": [
+          "static mi_decl_noinline void* mi_malloc_generic_fallback",
+          "void* _mi_malloc_generic"
+        ],
+        "evidence_check_ids": [
+          "metadata-publication-fault-receiver"
+        ]
       }
     ],
     "branch_matrix": [
@@ -607,17 +623,66 @@
         "missing_conditions": [
           "The named source relation is bounded; it does not promote an unselected receiver."
         ]
+      },
+      {
+        "id": "metadata-publication-os-map-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "detached-Theap _mi_meta_zalloc case 1: os-map-failure",
+        "source_anchors": [
+          {
+            "member": "src/page.c",
+            "start_line": 1048,
+            "end_line": 1117,
+            "sha256": "fd4a63385b988fa96324171916bc0db89af60818c6edf5ca79ba67b724253e6f"
+          }
+        ],
+        "evidence_check_ids": [
+          "metadata-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "metadata-publication-os-commit-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "detached-Theap _mi_meta_zalloc case 2: os-commit-failure",
+        "source_anchors": [
+          {
+            "member": "src/page.c",
+            "start_line": 1048,
+            "end_line": 1117,
+            "sha256": "fd4a63385b988fa96324171916bc0db89af60818c6edf5ca79ba67b724253e6f"
+          }
+        ],
+        "evidence_check_ids": [
+          "metadata-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "metadata-publication-arena-commit-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "detached-Theap _mi_meta_zalloc case 3: arena-commit-failure",
+        "source_anchors": [
+          {
+            "member": "src/page.c",
+            "start_line": 1048,
+            "end_line": 1117,
+            "sha256": "fd4a63385b988fa96324171916bc0db89af60818c6edf5ca79ba67b724253e6f"
+          }
+        ],
+        "evidence_check_ids": [
+          "metadata-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
       }
     ],
     "unqualified_failure_matrix": [
-      {
-        "id": "metadata-publication-generic-retry",
-        "source_scope": "src/subproc.c:29-37 `_mi_meta_zalloc` through `_mi_malloc_generic` (src/page.c:1091-1116) and `mi_malloc_generic_fallback` (src/page.c:1048-1065) under a sustained primitive failure.",
-        "required_evidence": [
-          "Rust `_mi_malloc_generic` small-queue search before `mi_malloc_generic_fallback` (pinned C claims six fresh pages, Rust four)",
-          "passing `allocator-fault-seam-inventory --metadata-publication-receiver` receipt"
-        ]
-      },
       {
         "id": "remaining-ambient-and-hardware-fault-receivers",
         "source_scope": "Ambient option/detection, hardware huge-page success, physical NUMA placement, generic callbacks/statistics, and unselected OS/PageMap callers.",
@@ -639,10 +704,16 @@
         "kind": "c-rust-fault-seam-inventory",
         "target": "os_page::tests::emit_os_publication_fault_receiver_trace",
         "expected_passed_test_count": 1
+      },
+      {
+        "id": "metadata-publication-fault-receiver",
+        "kind": "c-rust-fault-seam-inventory",
+        "target": "meta::tests::emit_metadata_publication_fault_receiver_trace",
+        "expected_passed_test_count": 1
       }
     ],
     "remaining_conditions": [
-      "The metadata-publication receiver matches pinned C ownership, rollback, and retry relations but not its fresh-page claim count or committed accounting; the ordinary OS claim/publication receiver is required independently of hardware.",
+      "The metadata-publication and ordinary OS claim/publication receivers are bounded single-request relations and are required independently of hardware.",
       "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
       "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
       "The fault-injection component and M2 remain partial."

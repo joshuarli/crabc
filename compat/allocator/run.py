@@ -13182,6 +13182,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or raw_check.get("target") != {
                         "source-indexed-fault-seam-inventory": "os::tests::emit_m2_fault_seam_inventory_c_rust_trace",
                         "os-aligned-page-publication-fault-receiver": "os_page::tests::emit_os_publication_fault_receiver_trace",
+                        "metadata-publication-fault-receiver": "meta::tests::emit_metadata_publication_fault_receiver_trace",
                     }.get(raw_check.get("id"))
                     or not (ALLOCATOR_ROOT / "x86_64_fault_seam_inventory.py").is_file()
                 ):
@@ -14364,7 +14365,8 @@ def _m2_x86_64_fault_check_records(
     """Bind the named partial fault component to retained process streams."""
 
     component = next(item for item in summary["components"] if item["id"] == "fault-injection")
-    if len(component["checks"]) != 2:
+    receipt_keys = ("huge_branch_receipt", "os_publication_receipt", "metadata_publication_receipt")
+    if len(component["checks"]) != len(receipt_keys):
         raise HarnessError("native x86 M2 fault-inventory check roster is absent")
     producer = _m2_x86_64_fault_producer()
     if not isinstance(evidence, Mapping):
@@ -14377,7 +14379,7 @@ def _m2_x86_64_fault_check_records(
     if not isinstance(records, list) or len(records) != len(producer.BRANCH_ROWS):
         raise HarnessError("native x86 M2 fault-inventory executed receipt changed")
     results = []
-    for check, receipt_key in zip(component["checks"], ("huge_branch_receipt", "os_publication_receipt")):
+    for check, receipt_key in zip(component["checks"], receipt_keys):
         receipt = evidence.get(receipt_key)
         if not isinstance(receipt, Mapping) or not isinstance(receipt.get("rust_run"), Mapping):
             raise HarnessError("native x86 M2 fault-inventory Rust receipt is absent")

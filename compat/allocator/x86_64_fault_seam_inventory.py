@@ -28,9 +28,10 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA = "crabc-mimalloc-x86_64-fault-seam-inventory-evidence"
-# Format 3 requires the separate ordinary OS publication receiver as well as
-# the source diagnostic/huge receiver. Legacy reports cannot admit the new rows.
-FORMAT = 3
+# Format 4 requires the metadata-publication receiver beside the ordinary OS
+# publication and source diagnostic/huge receivers. Legacy reports cannot
+# admit the new rows.
+FORMAT = 4
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
@@ -262,7 +263,7 @@ DIAGNOSTIC_OWNER_BOUNDARY = {
 NONCLAIMS = (
     "This selected node-62 EPERM receiver proves current-source C/Rust private diagnostic delivery through the stored default sink and custom callback; it does not qualify general FILE short-write/error/buffering parity, recursive output, selected x86 libc startup, or ambient NUMA placement.",
     "This fixed primitive-response profile does not qualify successful hardware huge pages or physical NUMA placement.",
-    "Metadata allocation/publication is unadmitted until its separate receiver matches pinned C; ordinary OS publication has its own required receiver.",
+    "The metadata-publication receiver admits only one detached-Theap `_mi_meta_zalloc` under three sustained primitive failures; ordinary OS publication has its own required receiver.",
     "This receipt leaves the fault-injection component and M2 partial.",
 )
 FRAGMENT_PATH = ROOT / "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
@@ -275,7 +276,6 @@ FAULT_COMPONENT_SOURCE_UNITS = [
     "src/os.c", "src/page-map.c", "src/prim/unix/prim.c", "src/options.c", "src/arena.c",
 ]
 FAULT_COMPONENT_UNQUALIFIED_IDS = (
-    "metadata-publication-generic-retry",
     "remaining-ambient-and-hardware-fault-receivers",
 )
 SOURCE_ANCHORS = (
@@ -286,6 +286,7 @@ SOURCE_ANCHORS = (
     {"member": "src/os.c", "start_line": 771, "end_line": 853, "sha256": "89affd5d917f2f40f32764001c58d52f72bf9e3faa23cdaa965f49bf322c05c2"},
     {"member": "src/page-map.c", "start_line": 214, "end_line": 515, "sha256": "b0218dd17e7a38ed3018fcb3f2941f5421fd72afb05c02023ce49bf21734edd3"},
     {"member": "src/arena.c", "start_line": 781, "end_line": 1297, "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"},
+    {"member": "src/page.c", "start_line": 1048, "end_line": 1117, "sha256": "fd4a63385b988fa96324171916bc0db89af60818c6edf5ca79ba67b724253e6f"},
 )
 SOURCE_REQUIRED_DEFINITIONS = (
     ("void mi_os_prim_free", "void _mi_os_free_ex", "void _mi_os_free"),
@@ -295,17 +296,10 @@ SOURCE_REQUIRED_DEFINITIONS = (
     ("void* _mi_os_alloc_huge_os_pages", "static void mi_os_free_huge_os_pages"),
     ("static bool mi_page_map_init_once", "bool _mi_page_map_register"),
     ("static uint8_t* mi_arenas_page_alloc_fresh_area", "static mi_page_t* mi_arenas_page_alloc_fresh", "static void mi_arenas_page_free_prim"),
+    ("static mi_decl_noinline void* mi_malloc_generic_fallback", "void* _mi_malloc_generic"),
 )
 BRANCH_OPEN_CONDITION = "The named source relation is bounded; it does not promote an unselected receiver."
 FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
-    {
-        "id": "metadata-publication-generic-retry",
-        "source_scope": "src/subproc.c:29-37 `_mi_meta_zalloc` through `_mi_malloc_generic` (src/page.c:1091-1116) and `mi_malloc_generic_fallback` (src/page.c:1048-1065) under a sustained primitive failure.",
-        "required_evidence": [
-            "Rust `_mi_malloc_generic` small-queue search before `mi_malloc_generic_fallback` (pinned C claims six fresh pages, Rust four)",
-            "passing `allocator-fault-seam-inventory --metadata-publication-receiver` receipt",
-        ],
-    },
     {
         "id": "remaining-ambient-and-hardware-fault-receivers",
         "source_scope": "Ambient option/detection, hardware huge-page success, physical NUMA placement, generic callbacks/statistics, and unselected OS/PageMap callers.",
@@ -316,7 +310,7 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
     },
 ]
 FAULT_COMPONENT_REMAINING_CONDITIONS = [
-    "The metadata-publication receiver matches pinned C ownership, rollback, and retry relations but not its fresh-page claim count or committed accounting; the ordinary OS claim/publication receiver is required independently of hardware.",
+    "The metadata-publication and ordinary OS claim/publication receivers are bounded single-request relations and are required independently of hardware.",
     "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
     "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
     "The fault-injection component and M2 remain partial.",
@@ -414,7 +408,22 @@ SOURCE_ROWS = (
         ("os_page.rs OsAlignedPageClaim/PublishedOsAlignedPage and single_thread.rs rollback_fresh_os_aligned",),
         tuple("os-publication-" + case for case in OS_PUBLICATION_BOUNDARY["cases"]),
     ),
+    SourceRow(
+        "metadata-page-publication", "src/subproc.c:29-37; src/page.c:1048-1117",
+        ("meta.rs MetadataEngine::zalloc through single_thread.rs allocate_generic_with_retry",),
+        tuple("metadata-publication-" + case for case in METADATA_PUBLICATION_BOUNDARY["cases"]),
+    ),
 )
+
+# The one fault-inventory check that proves each source row's branches.
+SOURCE_ROW_CHECK_IDS = {
+    "os-aligned-page-publication": OS_PUBLICATION_CHECK_ID,
+    "metadata-page-publication": METADATA_PUBLICATION_CHECK_ID,
+}
+
+
+def _source_row_check_id(source_row: str) -> str:
+    return SOURCE_ROW_CHECK_IDS.get(source_row, FAULT_COMPONENT_CHECK_ID)
 
 
 # This is a finite *admission* domain, not a claim to enumerate Linux errors
@@ -584,16 +593,19 @@ BRANCH_ROWS = (
     ) for index, (case, point, ordinal) in enumerate(zip(OS_PUBLICATION_BOUNDARY["cases"],
         ("Map", "Commit", "Commit", "Map", "Commit+Unmap", "Map+Unmap", "Unmap"),
         (1, 1, 2, 1, 1, 1, 1)), 1)),
+    *(BranchRow(
+        "metadata-publication-" + case, "metadata-page-publication",
+        "detached-Theap _mi_meta_zalloc case " + str(index) + ": " + case,
+        METADATA_PUBLICATION_TARGET, point, 0, "ENOMEM",
+        "sustained primitive failure through `_mi_malloc_generic` search, fallback, and forced retry; committed delta equal to pinned C",
+        "no capability, live metadata owner and PageMap entry intact, reserved restored, zeroed Malloc-provenance retry after recovery",
+    ) for index, (case, point) in enumerate(zip(METADATA_PUBLICATION_BOUNDARY["cases"],
+        ("Map", "Commit", "Commit")), 1)),
 )
 
 UNQUALIFIED_BRANCHES: tuple[dict[str, str], ...] = ()
 
-STOPPED_RECEIVERS = (
-    StoppedReceiver(
-        "metadata-map-commit-publication",
-        "The separate metadata-publication receiver still differs from pinned C in `_mi_malloc_generic` fresh-page retry count.",
-    ),
-)
+STOPPED_RECEIVERS: tuple[StoppedReceiver, ...] = ()
 
 
 def _exact_strings(values: object, *, label: str) -> list[str]:
@@ -691,6 +703,11 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         "kind": "c-rust-fault-seam-inventory",
         "target": OS_PUBLICATION_TARGET,
         "expected_passed_test_count": 1,
+    }, {
+        "id": METADATA_PUBLICATION_CHECK_ID,
+        "kind": "c-rust-fault-seam-inventory",
+        "target": METADATA_PUBLICATION_TARGET,
+        "expected_passed_test_count": 1,
     }]:
         raise EvidenceError("fault inventory M2 check roster changed")
     definitions = component.get("bounded_source_definitions")
@@ -704,7 +721,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         if (
             not isinstance(definition, Mapping)
             or set(definition) != {"evidence_check_ids", "id", "required_definitions", "source_anchor"}
-            or definition.get("evidence_check_ids") != [OS_PUBLICATION_CHECK_ID if row.identifier == "os-aligned-page-publication" else FAULT_COMPONENT_CHECK_ID]
+            or definition.get("evidence_check_ids") != [_source_row_check_id(row.identifier)]
             or definition.get("required_definitions") != list(required_definitions)
             or definition.get("source_anchor") != anchor
         ):
@@ -723,7 +740,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
             or set(branch) != {"disposition", "evidence_check_ids", "id", "missing_conditions", "source_anchors", "source_scope"}
             or branch.get("disposition") != "admitted-current-source-c-rust-relation"
             or branch.get("source_scope") != row.c_branch
-            or branch.get("evidence_check_ids") != [OS_PUBLICATION_CHECK_ID if row.source_row == "os-aligned-page-publication" else FAULT_COMPONENT_CHECK_ID]
+            or branch.get("evidence_check_ids") != [_source_row_check_id(row.source_row)]
             or branch.get("source_anchors") != [anchors_by_source_row[row.source_row]]
             or branch.get("missing_conditions") != [BRANCH_OPEN_CONDITION]
         ):
@@ -947,10 +964,15 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
 
     if report.get("profile") == "os-aligned-page-publication":
         return validate_os_publication_report(report)
+    if report.get("profile") == "metadata-page-publication":
+        return validate_metadata_publication_report(report)
     if "os_publication_receipt" not in report:
         raise ValueError("fault inventory OS publication receipt is missing")
+    if "metadata_publication_receipt" not in report:
+        raise ValueError("fault inventory metadata publication receipt is missing")
     expected_keys = {
         "architecture", "branch_records", "diagnostic_owner_boundary", "format", "os_publication_receipt",
+        "metadata_publication_receipt",
         "fault_component_fragment", "huge_branch_receipt", "inventory", "nonclaims", "schema", "status",
         "stopped_receivers", "source_state_after", "source_state_before", "upstream",
         "unqualified_branches", "vm_receipt",
@@ -981,6 +1003,7 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("fault inventory fragment receipt changed")
     huge_receipt = _validate_huge_branch_receipt(report.get("huge_branch_receipt"), runner)
     os_receipt = validate_os_publication_report(report["os_publication_receipt"])
+    metadata_receipt = validate_metadata_publication_report(report["metadata_publication_receipt"])
     pin = runner.load_pin()
     if report.get("upstream") != {
         "archive_sha256": pin["sha256"], "revision": pin["revision"],
@@ -1012,7 +1035,8 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         )
     except runner.HarnessError as error:
         raise ValueError("fault inventory source attestation changed") from error
-    if not before["worktree_clean"] or before != after or os_receipt["source_state_before"] != before:
+    if (not before["worktree_clean"] or before != after or os_receipt["source_state_before"] != before
+            or metadata_receipt["source_state_before"] != before):
         raise ValueError("fault inventory source state is not one clean revision")
     return {
         "branch_records": records,
@@ -1020,6 +1044,7 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         "fault_component_fragment": fragment_receipt,
         "huge_branch_receipt": huge_receipt,
         "os_publication_receipt": os_receipt,
+        "metadata_publication_receipt": metadata_receipt,
         "inventory": inventory,
         "nonclaims": nonclaims,
         "stopped_receivers": stopped,
@@ -2435,6 +2460,7 @@ def run_evidence(
         raise EvidenceError(str(error)) from error
 
     os_receipt = run_os_publication_receiver(offline=offline, test_program=test_program)
+    metadata_receipt = run_metadata_publication_receiver(offline=offline, test_program=test_program)
     artifacts.mkdir(parents=True, exist_ok=True)
     try:
         with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-source-") as temporary:
@@ -2493,6 +2519,7 @@ def run_evidence(
     report = {
         "architecture": "x86_64",
         "os_publication_receipt": os_receipt,
+        "metadata_publication_receipt": metadata_receipt,
         "branch_records": _branch_records(),
         "format": FORMAT,
         "fault_component_fragment": fragment_receipt,
