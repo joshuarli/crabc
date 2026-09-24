@@ -38970,12 +38970,52 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// The non-force page/backing portion of source
     /// `mi_theap_collect(theap, false)` selected by generic administration.
     /// The caller has already delivered `_mi_deferred_free(theap, false)` at
-    /// its phase boundary. The existing ordinary collector owns the same
-    /// retired/full-page and non-force arena purge sequence without borrowing
-    /// a callback context or manufacturing a statistics merge.
+    /// its phase boundary and merges statistics afterwards.
+    ///
+    /// `theap.c:mi_theap_collect_ex(MI_NORMAL)` runs
+    /// `_mi_theap_collect_retired(theap, false)` (including the
+    /// non-abandoning full-queue scan), then `mi_theap_visit_pages` over every
+    /// queue below `BIN_FULL` (issue #1220: normal collection skips full
+    /// pages) with `mi_theap_page_collect`: `_mi_page_free_collect(page,
+    /// false)` and, for an all-free page that is not already retired,
+    /// `_mi_page_free`. Only then does it run the non-force arena collection.
     fn collect_generic_administration(&mut self, force: bool) -> bool {
         debug_assert!(!force, "generic administration uses only normal source collect");
-        self.collect_retired(false)
+        if !self.collect_retired_pages(false) {
+            return false;
+        }
+        for bin in 0..BIN_FULL {
+            let mut page = match self.session.queue(bin) {
+                Some(queue) => queue.first(),
+                None => return false,
+            };
+            while let Some(current) = NonNull::new(page) {
+                // SAFETY: this session owns the source queue links. Save the
+                // successor before `_mi_page_free` can release the current
+                // page; producers can publish only to its remote atomics.
+                let next = unsafe { (*page).next() };
+                if let Err(error) = self.page_free_collect_false(current) {
+                    self.retain_page_collect_poison(current, error, None);
+                    return false;
+                }
+                // SAFETY: the current owner just completed the false-force
+                // collection; zero use excludes every legal live client.
+                let release = unsafe {
+                    Page::owner_used_at(current) == 0 && (*page).retire_expire() == 0
+                };
+                if release && !self.release_page(bin, page) {
+                    self.retain_page_collect_poison(current, PageCollectError::Lifecycle, None);
+                    return false;
+                }
+                // Preserve a detached OS release owner exactly as the forced
+                // visitor does; the remaining pages keep their ownership.
+                if self.pending_os_release.is_some() {
+                    return false;
+                }
+                page = next;
+            }
+        }
+        self.arena.collect(self.page_map.memory_config(), false, self.thread_sequence)
     }
 
     /// Source `page.c:mi_malloc_generic_fallback` retries OOM only after
@@ -44764,6 +44804,36 @@ mod tests {
                 RETIRE_CYCLES - 1,
                 "a local free must not re-retire an already retired page",
             );
+        });
+    }
+
+    /// Pinned `mi_theap_collect(theap, false)` (the generic-administration
+    /// full collection, `page.c:1026-1030`) visits every non-full queue with
+    /// `_mi_page_free_collect(page, false)` after `_mi_theap_collect_retired`,
+    /// so a page whose immediate list is exhausted receives its deferred
+    /// `local_free` list.
+    #[test]
+    fn generic_administration_full_collection_transfers_local_free_lists() {
+        with_allocator(|allocator| {
+            // A 2048-byte small page initially extends to four blocks; the
+            // fourth allocation exhausts `free` while the page stays in its
+            // regular queue.
+            let blocks: [_; 4] = core::array::from_fn(|_| allocator.allocate(2048, false).unwrap());
+            let page = NonNull::new(unsafe { allocator.page_for_block(blocks[0]) }).unwrap();
+            for block in &blocks[1..] {
+                assert_eq!(unsafe { allocator.page_for_block(*block) }, page.as_ptr());
+            }
+            assert!(unsafe { page.as_ref().free_list_head().is_null() });
+            unsafe { allocator.free(blocks[1]).unwrap() };
+            assert!(unsafe { !page.as_ref().remote_free_test_local_free().is_null() });
+            assert!(unsafe { !page_is_in_full(page.as_ref()) });
+
+            assert!(allocator.collect_generic_administration(false));
+            assert_eq!(unsafe { page.as_ref().free_list_head() }.cast::<u8>(), blocks[1].as_ptr());
+            assert!(unsafe { page.as_ref().remote_free_test_local_free().is_null() });
+            for block in [blocks[0], blocks[2], blocks[3]] {
+                unsafe { allocator.free(block).unwrap() };
+            }
         });
     }
 
