@@ -2,11 +2,13 @@
 # Pinned-musl differential for owned perror and the legacy err(3) family.
 #
 # The three probe roles are compiled once with the project headers and then
-# linked unchanged by musl and the installed crabc drivers.  Static musl also
-# proves the original independent err.o/perror.o archive replacement behavior.
-# The installed one-CGU static archive retains strong providers, so its normal
-# static/static-PIE delivery is qualified separately. Dynamic providers prove
-# ordinary consumer lookup and the source oracle's libc-local internal edges.
+# linked unchanged by musl and the installed crabc drivers.  Static musl
+# proves the independent err.o/perror.o/strerror.o archive replacement
+# behavior; the installed static archive, one member per Rust module, must
+# reproduce it: an application strerror or perror links without a duplicate
+# definition in static and static-PIE mode and replaces the internal edge.
+# Dynamic providers prove ordinary consumer lookup and the source oracle's
+# libc-local internal edges.
 set -euo pipefail
 ulimit -c 0
 
@@ -212,8 +214,7 @@ run_base "$work/oracle-static-root" /consumer oracle-static kernel ''
 printf 'owned error-reporting pinned-musl static normal: PASS\n'
 
 # Musl's independent err.o/perror.o objects retain strong application-provider
-# replacement at final static link. This source oracle is intentionally kept
-# distinct from the installed one-CGU static archive's strong-provider scope.
+# replacement at final static link; the installed static archive must match.
 for kind in strerror perror; do
     link_oracle_static "oracle-static-interpose-$kind" "$work/$kind-static.o"
     run_interpose "$work/oracle-static-interpose-$kind-root" /consumer \
@@ -277,6 +278,25 @@ link_static_candidate() {
     cp "$candidate" "$work/$label-root/consumer"
     run_base "$work/$label-root" /consumer "$label" kernel ''
     compare_base "$label" oracle-static kernel
+    local kind root
+    for kind in strerror perror; do
+        root="$work/$label-interpose-$kind-root"
+        candidate="$work/$label-interpose-$kind-consumer"
+        receipt="$candidate.receipt.json"
+        step="link-$label-interpose-$kind"
+        (
+            cd "$work"
+            "$product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$receipt")" \
+                "$work/$kind-static.o" -o "$candidate"
+        )
+        prepare_static_root "$root"
+        cp "$candidate" "$root/consumer"
+        run_interpose "$root" /consumer "$label-interpose-$kind" kernel '' "$kind"
+        cmp "$work/oracle-static-interpose-$kind-kernel-interpose.stdout" \
+            "$work/$label-interpose-$kind-kernel-interpose.stdout"
+        cmp "$work/oracle-static-interpose-$kind-kernel-interpose.stderr" \
+            "$work/$label-interpose-$kind-kernel-interpose.stderr"
+    done
     printf 'owned error-reporting %s: PASS\n' "$label"
 }
 
@@ -348,4 +368,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned error-reporting: PASS (pinned musl static replacement source oracle; same-object static/static-PIE and dynamic PIE/non-PIE delivery; kernel/direct dynamic entry; source-permitted concurrent fragments, stderr orientation, errno text, ordinary exit, worker, and shared DSO public/local-edge resolution); evidence: %s\n' "$work"
+printf 'owned error-reporting: PASS (pinned musl static replacement source oracle and matching static/static-PIE application strerror/perror replacement; same-object static/static-PIE and dynamic PIE/non-PIE delivery; kernel/direct dynamic entry; source-permitted concurrent fragments, stderr orientation, errno text, ordinary exit, worker, and shared DSO public/local-edge resolution); evidence: %s\n' "$work"

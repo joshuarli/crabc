@@ -58,15 +58,22 @@ from loader_debug_abi_evidence import Elf
 SCHEMA = 'crabc.x86_64-owned-stdio-alias-receipt/v1'
 STATUS = {'component': 'verified', 'family_completion': False, 'runtime_qualification': False,
           'selection_closure': False, 'public_support': False}
-# Each group is a source-owned .set declaration surface.  Keep it separate
-# from targets: an extension alias may deliberately share a target defined by
-# another FILE source, but its own source still owns the alias declaration.
+# Each group is a source-owned .set declaration surface. An ELF `.set` alias
+# is defined only in the object that defines its target, and the static
+# archive emits one member per Rust module, so each alias is declared in the
+# module that defines its target.
 ALIAS_GROUPS = (
     ('owned_static_stdio', 'libc/src/c_abi/x86_64/owned_static_stdio.rs', (
         ('fdopen', '__fdopen'), ('fgetc_unlocked', 'getc_unlocked'),
         ('fputc_unlocked', 'putc_unlocked'), ('fread_unlocked', 'fread'),
         ('fwrite_unlocked', 'fwrite'), ('fseeko', '__fseeko'),
         ('ftello', '__ftello'), ('__getdelim', 'getdelim'),
+        ('fflush_unlocked', 'fflush'), ('fileno_unlocked', 'fileno'),
+        ('fgets_unlocked', 'fgets'), ('fputs_unlocked', 'fputs'),
+        ('clearerr_unlocked', 'clearerr'), ('feof_unlocked', 'feof'),
+        ('ferror_unlocked', 'ferror'), ('_IO_feof_unlocked', 'feof'),
+        ('_IO_ferror_unlocked', 'ferror'), ('_IO_getc', 'getc'), ('_IO_putc', 'putc'),
+        ('_IO_getc_unlocked', 'getc_unlocked'), ('_IO_putc_unlocked', 'putc_unlocked'),
     )),
     ('owned_wide_stdio', 'libc/src/c_abi/x86_64/owned_wide_stdio.rs', (
         ('fgetwc_unlocked', '__fgetwc_unlocked'), ('getwc_unlocked', '__fgetwc_unlocked'),
@@ -75,12 +82,7 @@ ALIAS_GROUPS = (
         ('getwchar_unlocked', 'getwchar'), ('putwchar_unlocked', 'putwchar'),
     )),
     ('owned_stdio_extensions', 'libc/src/c_abi/x86_64/owned_stdio_extensions.rs', (
-        ('fpurge', '__fpurge'), ('fflush_unlocked', 'fflush'), ('fileno_unlocked', 'fileno'),
-        ('fgets_unlocked', 'fgets'), ('fputs_unlocked', 'fputs'),
-        ('clearerr_unlocked', 'clearerr'), ('feof_unlocked', 'feof'),
-        ('ferror_unlocked', 'ferror'), ('_IO_feof_unlocked', 'feof'),
-        ('_IO_ferror_unlocked', 'ferror'), ('_IO_getc', 'getc'), ('_IO_putc', 'putc'),
-        ('_IO_getc_unlocked', 'getc_unlocked'), ('_IO_putc_unlocked', 'putc_unlocked'),
+        ('fpurge', '__fpurge'),
     )),
     ('stdio_format_scan', 'libc/src/c_abi/x86_64/stdio_format_scan.rs', (
         ('__isoc99_sscanf', 'sscanf'), ('__isoc99_vsscanf', 'vsscanf'),

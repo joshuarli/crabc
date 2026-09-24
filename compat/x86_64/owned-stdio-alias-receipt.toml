@@ -49,8 +49,8 @@ __isoc99_swscanf = 'swscanf'
 __isoc99_vswscanf = 'vswscanf'
 
 [owner_groups]
-owned_static_stdio = { source = 'libc/src/c_abi/x86_64/owned_static_stdio.rs', aliases = ['fdopen', 'fgetc_unlocked', 'fputc_unlocked', 'fread_unlocked', 'fwrite_unlocked', 'fseeko', 'ftello', '__getdelim'] }
+owned_static_stdio = { source = 'libc/src/c_abi/x86_64/owned_static_stdio.rs', aliases = ['fdopen', 'fgetc_unlocked', 'fputc_unlocked', 'fread_unlocked', 'fwrite_unlocked', 'fseeko', 'ftello', '__getdelim', 'fflush_unlocked', 'fileno_unlocked', 'fgets_unlocked', 'fputs_unlocked', 'clearerr_unlocked', 'feof_unlocked', 'ferror_unlocked', '_IO_feof_unlocked', '_IO_ferror_unlocked', '_IO_getc', '_IO_putc', '_IO_getc_unlocked', '_IO_putc_unlocked'] }
 owned_wide_stdio = { source = 'libc/src/c_abi/x86_64/owned_wide_stdio.rs', aliases = ['fgetwc_unlocked', 'getwc_unlocked', 'fputwc_unlocked', 'putwc_unlocked', 'fgetws_unlocked', 'fputws_unlocked', 'getwchar_unlocked', 'putwchar_unlocked'] }
-owned_stdio_extensions = { source = 'libc/src/c_abi/x86_64/owned_stdio_extensions.rs', aliases = ['fpurge', 'fflush_unlocked', 'fileno_unlocked', 'fgets_unlocked', 'fputs_unlocked', 'clearerr_unlocked', 'feof_unlocked', 'ferror_unlocked', '_IO_feof_unlocked', '_IO_ferror_unlocked', '_IO_getc', '_IO_putc', '_IO_getc_unlocked', '_IO_putc_unlocked'] }
+owned_stdio_extensions = { source = 'libc/src/c_abi/x86_64/owned_stdio_extensions.rs', aliases = ['fpurge'] }
 stdio_format_scan = { source = 'libc/src/c_abi/x86_64/stdio_format_scan.rs', aliases = ['__isoc99_sscanf', '__isoc99_vsscanf', '__isoc99_scanf', '__isoc99_vscanf', '__isoc99_fscanf', '__isoc99_vfscanf'] }
 owned_wide_format = { source = 'libc/src/c_abi/x86_64/owned_wide_format.rs', aliases = ['__isoc99_fwscanf', '__isoc99_vfwscanf', '__isoc99_wscanf', '__isoc99_vwscanf', '__isoc99_swscanf', '__isoc99_vswscanf'] }

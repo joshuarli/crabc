@@ -69,6 +69,22 @@ NATIVE_COMPILER_RT_MEMBER = re.compile(
     r"^[0-9a-f]+-(?:absv|addv|cmp|div|ffs|fp_mode|int_util|mul|neg|parity|popcount|subv|ucmp)"
     r"[a-z0-9_]*\.o$"
 )
+# Ordinary archive extraction needs libc providers in separate members: an
+# application that defines one libc function must not collide with the rest
+# of libc, as it does not with musl's one-object-per-source-file libc.a. The
+# workspace release profile's fat LTO with one codegen unit fuses all of libc
+# into one object. ThinLTO keeps cross-crate optimization and the stock
+# `core` closure (so no unwinding `core` member or personality escapes into
+# the archive) while emitting one member per codegen unit; a unit ceiling above
+# libc's module count gives each Rust module its own member, and rustc never
+# splits a module to reach it. Member names derive from crate and module
+# names, so their order stays deterministic.
+STATIC_ARCHIVE_PROFILE = (
+    "--config",
+    'profile.release.lto="thin"',
+    "--config",
+    "profile.release.codegen-units=65536",
+)
 REQUIRED_LIBC_SYMBOLS = frozenset(
     {
         "__crabc_x86_static_tls_bootstrap",
@@ -862,6 +878,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c",
         TARGET,
         "--target-dir",
         str(cargo_root),
+        *STATIC_ARCHIVE_PROFILE,
         "--",
         "--cfg",
         "crabc_owned_static_sysroot",
@@ -965,6 +982,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c",
             TARGET,
             "--target-dir",
             "$CRABC_X86_BUILD/cargo",
+            *STATIC_ARCHIVE_PROFILE,
             "--",
             "--cfg",
             "crabc_owned_static_sysroot",

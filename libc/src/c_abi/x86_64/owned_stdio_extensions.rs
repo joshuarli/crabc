@@ -218,19 +218,8 @@ core::arch::global_asm!(
     ".protected __overflow"
 );
 
-core::arch::global_asm!(
-    ".weak fpurge", ".set fpurge, __fpurge",
-    ".weak fflush_unlocked", ".set fflush_unlocked, fflush",
-    ".weak fileno_unlocked", ".set fileno_unlocked, fileno",
-    ".weak fgets_unlocked", ".set fgets_unlocked, fgets",
-    ".weak fputs_unlocked", ".set fputs_unlocked, fputs",
-    ".weak clearerr_unlocked", ".set clearerr_unlocked, clearerr",
-    ".weak feof_unlocked", ".set feof_unlocked, feof",
-    ".weak ferror_unlocked", ".set ferror_unlocked, ferror",
-    ".weak _IO_feof_unlocked", ".set _IO_feof_unlocked, feof",
-    ".weak _IO_ferror_unlocked", ".set _IO_ferror_unlocked, ferror",
-    ".weak _IO_getc", ".set _IO_getc, getc",
-    ".weak _IO_putc", ".set _IO_putc, putc",
-    ".weak _IO_getc_unlocked", ".set _IO_getc_unlocked, getc_unlocked",
-    ".weak _IO_putc_unlocked", ".set _IO_putc_unlocked, putc_unlocked"
-);
+// An ELF `.set` alias is defined only in the object that defines its target,
+// and the static archive emits one member per Rust module. `fpurge` names
+// this module's `__fpurge`; the parent stdio module, which owns the other
+// alias targets, carries their aliases.
+core::arch::global_asm!(".weak fpurge", ".set fpurge, __fpurge");

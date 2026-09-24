@@ -1111,6 +1111,19 @@ mod allocator {
 
     include!("../../allocator_mimalloc.rs");
 
+    // The static archive emits one member per Rust module and extracts a
+    // member only when a loaded object names one of its symbols. The C
+    // backend's lifecycle module is otherwise reached only through its
+    // `.init_array`/`.fini_array` entries, so without this relocation an
+    // application that allocates would leave mimalloc's process attach and
+    // detach out of the image. Naming the initializer from this allocator
+    // member extracts the lifecycle member with it; the pointer is never
+    // called.
+    #[cfg(crabc_owned_mimalloc_lifecycle)]
+    #[used]
+    static LIFECYCLE_MEMBER_ANCHOR: unsafe extern "C" fn() =
+        super::allocator_mimalloc_lifecycle::initialize;
+
     /// Internal owned allocation for source clients that use __libc_malloc.
     /// This composes exactly the existing C malloc wrapper's alignment and
     /// error translation with the same backend, without selecting an

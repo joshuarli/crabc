@@ -27,7 +27,9 @@ unsafe extern "C" {
     fn _mi_auto_process_done();
 }
 
-unsafe extern "C" fn initialize() {
+/// Visible to the allocator module only so its member anchors this one in
+/// the static archive; libc never calls it directly.
+pub(super) unsafe extern "C" fn initialize() {
     let saved_errno = unsafe { errno::get_errno() };
     unsafe { _mi_auto_process_init() };
     #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]

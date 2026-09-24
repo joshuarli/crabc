@@ -1624,6 +1624,26 @@ core::arch::global_asm!(
     ".set fwrite_unlocked, fwrite",
 );
 
+// Musl's weak unlocked and `_IO_` spellings of the locking bodies above. An
+// ELF `.set` alias is defined only in the object that defines its target, so
+// these stay in this module rather than in the `owned_stdio_extensions` child
+// that selects them: the static archive emits one member per Rust module.
+core::arch::global_asm!(
+    ".weak fflush_unlocked", ".set fflush_unlocked, fflush",
+    ".weak fileno_unlocked", ".set fileno_unlocked, fileno",
+    ".weak fgets_unlocked", ".set fgets_unlocked, fgets",
+    ".weak fputs_unlocked", ".set fputs_unlocked, fputs",
+    ".weak clearerr_unlocked", ".set clearerr_unlocked, clearerr",
+    ".weak feof_unlocked", ".set feof_unlocked, feof",
+    ".weak ferror_unlocked", ".set ferror_unlocked, ferror",
+    ".weak _IO_feof_unlocked", ".set _IO_feof_unlocked, feof",
+    ".weak _IO_ferror_unlocked", ".set _IO_ferror_unlocked, ferror",
+    ".weak _IO_getc", ".set _IO_getc, getc",
+    ".weak _IO_putc", ".set _IO_putc, putc",
+    ".weak _IO_getc_unlocked", ".set _IO_getc_unlocked, getc_unlocked",
+    ".weak _IO_putc_unlocked", ".set _IO_putc_unlocked, putc_unlocked"
+);
+
 /// # Safety
 /// Stream arguments must be live FILE pointers; string and byte ranges must
 /// be valid for the size specified by this C operation.

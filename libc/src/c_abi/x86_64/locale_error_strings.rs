@@ -46,5 +46,5 @@ core::arch::global_asm!(
 /// Returned storage is process-static and must not be modified or freed.
 #[no_mangle]
 pub unsafe extern "C" fn __strerror_l(error: c_int, _locale: *mut c_void) -> *mut c_char {
-    error_strings::strerror(error)
+    error_strings::error_message(error).as_ptr().cast_mut().cast::<c_char>()
 }

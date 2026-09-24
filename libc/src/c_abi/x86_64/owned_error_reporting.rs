@@ -33,10 +33,11 @@ use super::{stderr, StreamGuard, StandardStream};
 
 /// Namespaced declarations preserve the public source-call graph without
 /// importing sibling Rust implementations by a private path.  In particular,
-/// references remain ordinary strong C symbols. The owned static archive's
-/// single code-generation unit limits application replacement of individual
-/// providers, as recorded in `compat/x86_64/owned-error-reporting.md`. In a
-/// shared libc these edges bind locally, matching pinned musl, while external
+/// references remain ordinary strong C symbols. The owned static archive
+/// emits one member per Rust module, so `perror`, the `err.c` family, and
+/// `strerror` are separate members an application definition can replace;
+/// the called providers are never inlined across those edges. In a shared
+/// libc these edges bind locally, matching pinned musl, while external
 /// consumers retain ordinary public ELF lookup.
 mod source {
     use core::ffi::{c_char, c_int, c_void, VaList};
@@ -77,54 +78,65 @@ mod source {
 const PREFIX_FORMAT: &[u8] = b"%s: \0";
 const ERROR_SEPARATOR: &[u8] = b": \0";
 
-/// Emit `perror.c`'s saved message under one stderr lock and restore its
-/// orientation state on every normal return.
-unsafe fn emit_perror(message: *const c_char, error_message: *const c_char) {
-    // SAFETY: `stderr` remains the process-lifetime selected stream.  The
-    // source operation itself admits only valid C strings, as this boundary
-    // documents for its public caller below.
-    unsafe {
-        let stream = stderr;
-        let _guard = StreamGuard::acquire(stream);
-        let old_orientation = (*stream).orientation;
-        let old_wide_locale = (*stream).wide_locale;
+/// Musl's separate `perror.c` object. Its own module gives `perror` its own
+/// static archive member, apart from the `err.c` family below: an application
+/// that defines `perror` still links `warn`, whose public `perror(0)` edge
+/// then reaches the application's definition exactly as in musl.
+mod perror_source {
+    use core::ffi::{c_char, c_int, c_void};
 
-        if !message.is_null() && *message != 0 {
-            // This is `fwrite(msg, strlen(msg), 1, f)` from perror.c.  The
-            // direct selected strlen avoids expanding this diagnostic leaf's
-            // public call surface; the visible output calls remain source
-            // edges in `source`.
-            let length = super::super::byte_strings::strlen(message);
-            let _ = source::fwrite(message.cast::<c_void>(), length, 1, stream);
-            let _ = source::fputc(c_int::from(b':'), stream);
-            let _ = source::fputc(c_int::from(b' '), stream);
+    use super::{source, stderr, StreamGuard};
+
+    /// Emit `perror.c`'s saved message under one stderr lock and restore its
+    /// orientation state on every normal return.
+    unsafe fn emit_perror(message: *const c_char, error_message: *const c_char) {
+        // SAFETY: `stderr` remains the process-lifetime selected stream.  The
+        // source operation itself admits only valid C strings, as this boundary
+        // documents for its public caller below.
+        unsafe {
+            let stream = stderr;
+            let _guard = StreamGuard::acquire(stream);
+            let old_orientation = (*stream).orientation;
+            let old_wide_locale = (*stream).wide_locale;
+
+            if !message.is_null() && *message != 0 {
+                // This is `fwrite(msg, strlen(msg), 1, f)` from perror.c.  The
+                // direct selected strlen avoids expanding this diagnostic leaf's
+                // public call surface; the visible output calls remain source
+                // edges in `source`.
+                let length = super::super::super::byte_strings::strlen(message);
+                let _ = source::fwrite(message.cast::<c_void>(), length, 1, stream);
+                let _ = source::fputc(c_int::from(b':'), stream);
+                let _ = source::fputc(c_int::from(b' '), stream);
+            }
+            let error_length = super::super::super::byte_strings::strlen(error_message);
+            let _ = source::fwrite(error_message.cast::<c_void>(), error_length, 1, stream);
+            let _ = source::fputc(c_int::from(b'\n'), stream);
+
+            // perror.c restores both fields while still holding FLOCK(f).  The
+            // guard then releases this one operation's outer lock.
+            (*stream).orientation = old_orientation;
+            (*stream).wide_locale = old_wide_locale;
         }
-        let error_length = super::super::byte_strings::strlen(error_message);
-        let _ = source::fwrite(error_message.cast::<c_void>(), error_length, 1, stream);
-        let _ = source::fputc(c_int::from(b'\n'), stream);
-
-        // perror.c restores both fields while still holding FLOCK(f).  The
-        // guard then releases this one operation's outer lock.
-        (*stream).orientation = old_orientation;
-        (*stream).wide_locale = old_wide_locale;
     }
-}
 
-/// Report the current errno through the selected permanent stderr stream.
-///
-/// # Safety
-/// If non-null, `message` must designate a readable NUL-terminated C string
-/// for the duration of the call.  The current thread must have initialized
-/// selected errno and owned standard-stream state.  This routine is not
-/// async-signal-safe.
-#[no_mangle]
-pub unsafe extern "C" fn perror(message: *const c_char) {
-    // perror.c deliberately asks strerror before FLOCK(stderr).  Preserve a
-    // final-link source edge here rather than reading the private fixed table.
-    let error_message = unsafe { source::strerror(super::super::errno::get_errno()) };
-    // SAFETY: source strerror supplies a NUL-terminated message for the
-    // admitted errno domain; its caller string obligation passes through.
-    unsafe { emit_perror(message, error_message) };
+    /// Report the current errno through the selected permanent stderr stream.
+    ///
+    /// # Safety
+    /// If non-null, `message` must designate a readable NUL-terminated C string
+    /// for the duration of the call.  The current thread must have initialized
+    /// selected errno and owned standard-stream state.  This routine is not
+    /// async-signal-safe.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn perror(message: *const c_char) {
+        // perror.c deliberately asks strerror before FLOCK(stderr).  Preserve a
+        // final-link source edge here rather than reading the private fixed table.
+        let error_message = unsafe { source::strerror(super::super::super::errno::get_errno()) };
+        // SAFETY: source strerror supplies a NUL-terminated message for the
+        // admitted errno domain; its caller string obligation passes through.
+        unsafe { emit_perror(message, error_message) };
+    }
 }
 
 /// Report one errno-bearing formatted diagnostic under the current program

@@ -146,12 +146,23 @@ core::arch::global_asm!(
     ".set __xpg_strerror_r, strerror_r",
 );
 
-/// Return one immutable C-locale message for `error`.
-///
-/// The returned storage is process-static and must not be modified or freed.
-#[no_mangle]
-pub extern "C" fn strerror(error: c_int) -> *mut c_char {
-    error_message(error).as_ptr().cast_mut().cast::<c_char>()
+/// Musl's separate `strerror.c` object, kept in its own module so the static
+/// archive gives `strerror` its own member. An application that defines
+/// `strerror` then links against the other error-string users, which reach
+/// only the parent's `error_message` table, without a duplicate definition.
+mod strerror_source {
+    use core::ffi::{c_char, c_int};
+
+    /// Return one immutable C-locale message for `error`.
+    ///
+    /// The returned storage is process-static and must not be modified or
+    /// freed. Never inlined: `perror` reaches it through musl's public call
+    /// edge, which an application definition must be able to replace.
+    #[no_mangle]
+    #[inline(never)]
+    pub extern "C" fn strerror(error: c_int) -> *mut c_char {
+        super::error_message(error).as_ptr().cast_mut().cast::<c_char>()
+    }
 }
 
 /// Copy one immutable C-locale error message into caller-owned storage.

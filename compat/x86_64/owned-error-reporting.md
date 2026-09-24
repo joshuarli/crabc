@@ -25,12 +25,18 @@ stderr orientation restoration, normal `err`/`verr` exit with `atexit` flush,
 and concurrent source-permitted warning fragments. Dynamic products run by
 both kernel and direct interpreter entry.
 
-The probe also records the real provider rules. Pinned musl static archive
-members allow same-object strong replacement of `perror`'s `strerror` edge and
-`warn`'s `perror` edge. The installed static archive has a one-CGU product
-granularity, so it retains the selected strong providers but does not claim
-that arbitrary application definitions replace those internal references.
-This is an explicit static-product limitation, not a weakened symbol binding.
+The probe also records the real provider rules. Pinned musl's separate
+`strerror.lo`, `perror.lo`, and `err.lo` archive members let an application's
+strong `strerror` replace `perror`'s `strerror` edge and its strong `perror`
+replace `warn`'s `perror` edge. The installed static archive emits one member
+per Rust module (`scripts/build_x86_64_owned_sysroot.py`), and `strerror`
+(`error_strings::strerror_source`), `perror`
+(`owned_error_reporting::perror_source`), and the `err.c` family are separate
+modules whose called providers are never inlined across those edges. Static
+and static-PIE consumers of both replacement objects therefore link without a
+duplicate definition and match musl's output. Replacement is not a general
+guarantee for every libc function: it holds where the provider owns its
+member and its libc callers keep a public call edge.
 In a dynamic link, a provider DSO before `libc.so` resolves the consumer's
 public `strerror` or `perror` reference, while musl's internal libc edges stay
 local; the candidate is compared with that observed behavior in both dynamic

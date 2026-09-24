@@ -444,7 +444,7 @@ for mode in pie non-pie; do
 done
 
 # Allocator interposition compares each dynamic mode with the same pinned
-# musl executable kind; static archives cannot replace their one-CGU owners.
+# musl executable kind. Static malloc-family replacement is outside this runner.
 for mode in pie non-pie; do
     if [ "$mode" = pie ]; then
         oracle_flags=(-fPIE -pie)
