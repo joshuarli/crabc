@@ -173,6 +173,15 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
                     "link_trace": direct + [evidence.recorded_path(ROOT, "/workspace", archive)],
                     "campaign_complete": False,
                 }, sort_keys=True), encoding="utf-8")
+                base = str(sidecar)[:-len(".crabc-link.json")]
+                link_map = Path(base + ".crabc-link.map")
+                link_map.write_text(f"map {link['output']}\n", encoding="utf-8")
+                Path(base + ".crabc-elf.json").write_text(json.dumps({
+                    "schema": evidence._elf_inspection().SCHEMA, "format": product_contract.DYNAMIC_PRODUCT_FORMAT,
+                    "output_path": link["output"], "output_sha256": link["output_sha256"],
+                    "declared": {"mode": "shared" if kind == "shared" else "pie"}, "facts": {},
+                    "link_map": {"path": link["output"] + ".crabc-link.map", "sha256": sha256(link_map)},
+                }, sort_keys=True), encoding="utf-8")
             raw_index = 0
 
             def append_raw(argv: list[str], cwd: str, environment: dict[str, str], stdout: bytes = b"", stderr: bytes = b"") -> None:
@@ -504,6 +513,27 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         value["cases"]["dso-origin"]["execution_roots"]["candidate"] = evidence.loader_tree_seal(candidate)
         self._rewrite_loader_case(report, value, "dso-origin")
         with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "sidecar output differs"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
+    def _edit_search_path_inspection(self, edit) -> Path:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        candidate = report.parent / "cases" / "search-path" / "candidate-root"
+        edit(candidate / "runpath/libsearch.so.crabc-elf.json")
+        value["cases"]["search-path"]["execution_roots"]["candidate"] = evidence.loader_tree_seal(candidate)
+        self._rewrite_loader_case(report, value, "search-path")
+        return report
+
+    def test_loader_reader_requires_the_driver_inspection_moved_with_its_image(self) -> None:
+        report = self._edit_search_path_inspection(lambda path: path.unlink())
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError,
+                                    "candidate sidecar runpath/libsearch.so.crabc-elf.json is missing"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
+    def test_loader_reader_binds_the_driver_inspection_to_its_output(self) -> None:
+        report = self._edit_search_path_inspection(lambda path: path.write_text(json.dumps(
+            {**json.loads(path.read_text(encoding="utf-8")), "output_sha256": "0" * 64}), encoding="utf-8"))
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "ELF inspection sidecar output differs"):
             evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
 
     def test_loader_reader_rejects_a_changed_generated_hash_many_source(self) -> None:

@@ -737,9 +737,13 @@ def case_search_path(work: pathlib.Path, product: pathlib.Path, recorder: Record
             target = root / directory
             target.mkdir()
             image.replace(target / image.name)
-            receipt = pathlib.Path(str(image) + ".crabc-link.json")
-            if receipt.exists():
-                receipt.replace(target / receipt.name)
+            # The installed driver leaves a link receipt, ELF inspection and
+            # link map beside each output and never replaces one; move them
+            # with the image so the next link of this name starts clean.
+            for suffix in (".crabc-link.json", ".crabc-elf.json", ".crabc-link.map"):
+                sidecar = pathlib.Path(str(image) + suffix)
+                if sidecar.exists():
+                    sidecar.replace(target / sidecar.name)
     main = builder.role(FIXTURES / "search_main.c")
     oracle = builder.executable("oracle", oracle_root, "consumer-runpath", main, runpath="/runpath")
     candidate = builder.executable("candidate", candidate_root, "consumer-runpath", main, runpath="/runpath")

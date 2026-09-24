@@ -209,6 +209,15 @@ def _dynamic_receipt() -> Any:
     return _load_module("_owned_loader_corpus_dynamic_receipt", "compat/x86_64/owned_dynamic_receipt.py")
 
 
+def _elf_inspection() -> Any:
+    return _load_module("_owned_loader_corpus_elf_inspection", "compat/x86_64/owned_dynamic_elf.py")
+
+
+# The installed dynamic driver leaves these beside every link output: its
+# receipt, its pre-execution ELF inspection, and LLD's link map.
+DRIVER_OUTPUT_SIDECARS = (".crabc-link.json", ".crabc-elf.json", ".crabc-link.map")
+
+
 def _loader_cases() -> tuple[str, ...]:
     cases = tuple(_loader().CASES)
     _require(len(cases) == 21 and len(set(cases)) == len(cases), "current loader roster drifted")
@@ -753,6 +762,33 @@ def _loader_sidecar_command(linker: str, root: Path, source_mount: str, product:
     return command
 
 
+def _validate_loader_inspection(name: str, link: Mapping[str, Any], path: Path, link_map: Path) -> None:
+    """Bind a candidate artifact to the driver's pre-execution ELF inspection.
+
+    The driver inspected the output before it existed for any caller and
+    removes a rejected one. This binds the retained record to this link's
+    output bytes, mode and retained map; replaying its facts needs the real
+    image and is the product qualification's job.
+    """
+
+    elf = _elf_inspection()
+    record = _json(path, f"loader case {name} ELF inspection sidecar")
+    _require(set(record) == {"schema", "format", "output_path", "output_sha256", "declared", "facts", "link_map"},
+             f"loader case {name} ELF inspection sidecar fields differ")
+    _require((record["schema"], record["format"]) == (elf.SCHEMA, _product_reader().DYNAMIC_PRODUCT_FORMAT),
+             f"loader case {name} ELF inspection sidecar identity differs")
+    _require(record["output_path"] == link["output"] and _digest(
+        record["output_sha256"], f"loader case {name} inspected output") == link["output_sha256"],
+             f"loader case {name} ELF inspection sidecar output differs")
+    declared = record["declared"]
+    _require(isinstance(declared, dict) and declared.get("mode") == ("shared" if link["kind"] == "shared" else "pie"),
+             f"loader case {name} ELF inspection sidecar mode differs")
+    retained_map = _keys(record["link_map"], {"path", "sha256"}, f"loader case {name} inspected link map")
+    _require(retained_map["path"] == link["output"] + ".crabc-link.map" and _digest(
+        retained_map["sha256"], f"loader case {name} inspected link map") == _sha256(link_map),
+             f"loader case {name} ELF inspection sidecar link map differs")
+
+
 def _validate_loader_sidecar(root: Path, source_mount: str, product: Path, name: str,
                              link: Mapping[str, Any], path: Path, producer_linker: Mapping[str, str]) -> None:
     """Bind a candidate artifact to its v2 owned-driver link receipt."""
@@ -889,14 +925,19 @@ def _validate_loader_execution_root(checkout: Path, execution_root: Path, source
         _loader_require_file(entries, retained, link["output_sha256"],
                              f"loader case {name} {arm} linked artifact {retained}")
         if arm == "candidate":
-            sidecar = (original + ".crabc-link.json" if name == "dso-origin" and kind == "shared"
-                       else retained + ".crabc-link.json")
-            _require(sidecar not in expected, f"loader case {name} sidecar conflicts with a sealed root entry")
-            expected[sidecar] = "file"
-            _loader_add_parent_directories(expected, sidecar)
-            sidecar_path = execution_root / sidecar
-            _loader_require_file(entries, sidecar, None, f"loader case {name} candidate sidecar {sidecar}")
-            _validate_loader_sidecar(checkout, source_mount, product, name, link, sidecar_path, producer_linker)
+            # dso-origin moves only its images; every other case moves the
+            # driver sidecars with the image they describe.
+            base = original if name == "dso-origin" and kind == "shared" else retained
+            for suffix in DRIVER_OUTPUT_SIDECARS:
+                sidecar = base + suffix
+                _require(sidecar not in expected, f"loader case {name} sidecar conflicts with a sealed root entry")
+                expected[sidecar] = "file"
+                _loader_add_parent_directories(expected, sidecar)
+                _loader_require_file(entries, sidecar, None, f"loader case {name} candidate sidecar {sidecar}")
+            _validate_loader_sidecar(checkout, source_mount, product, name, link,
+                                     execution_root / (base + ".crabc-link.json"), producer_linker)
+            _validate_loader_inspection(name, link, execution_root / (base + ".crabc-elf.json"),
+                                        execution_root / (base + ".crabc-link.map"))
     _require(set(entries) == set(expected), f"loader case {name} {arm} root contains an unexpected or missing entry")
     for relative, kind in expected.items():
         _require(entries[relative]["kind"] == kind,
