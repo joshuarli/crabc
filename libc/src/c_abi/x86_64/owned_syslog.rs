@@ -34,7 +34,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 use super::{
     descriptor_entry, descriptor_io, errno, gmtime_r, locale_objects,
-    owned_strftime, process_context, pthread_cancel, raw_syscall,
+    owned_strftime, process_context, pthread_cancel,
     socket_transport, stdio_format_scan, time_observation, timegm::Tm,
 };
 
@@ -61,16 +61,12 @@ const EPIPE: c_int = 32;
 
 const MESSAGE_CAPACITY: usize = 1024;
 const IDENT_CAPACITY: usize = 32;
-const FUTEX_WAIT_PRIVATE: i64 = 128;
-const FUTEX_WAKE_PRIVATE: i64 = 129;
 
 // This is musl `__lock`'s one-word state representation.  The sign bit says
 // a task owns the lock; the remaining value tracks congestion.  The owned
 // runtime always takes this lock, including before the first created worker;
 // musl's `libc.need_locks` single-threaded elision has no observable logger
 // state effect and would only add another process-global state owner here.
-const LOCK_FLAG: i32 = i32::MIN;
-const LOCKED_ONE: i32 = LOCK_FLAG + 1;
 
 static SYSLOG_LOCK: AtomicI32 = AtomicI32::new(0);
 static mut LOG_IDENT: [c_char; IDENT_CAPACITY] = [0; IDENT_CAPACITY];
@@ -108,35 +104,6 @@ fn log_address() -> SyslogAddress {
     }
 }
 
-#[inline]
-unsafe fn futex_wait(value: i32) {
-    // SAFETY: SYSLOG_LOCK is process-private, aligned, and remains live for
-    // the process.  A spurious wake or signal only retries musl's lock loop.
-    let _ = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_FUTEX,
-            SYSLOG_LOCK.as_ptr() as i64,
-            FUTEX_WAIT_PRIVATE,
-            i64::from(value),
-            0,
-        )
-    };
-}
-
-#[inline]
-unsafe fn futex_wake() {
-    // SAFETY: SYSLOG_LOCK is the matching private futex word.  Waking one
-    // waiter is musl's `__unlock` policy for this congestion representation.
-    let _ = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_FUTEX,
-            SYSLOG_LOCK.as_ptr() as i64,
-            FUTEX_WAKE_PRIVATE,
-            1,
-        )
-    };
-}
-
 /// Acquire the pinned musl one-word logger lock.
 ///
 /// Cancellation is disabled by the callers that can otherwise reach a C
@@ -144,57 +111,13 @@ unsafe fn futex_wake() {
 /// lock without changing cancellation state.
 #[inline]
 unsafe fn lock() {
-    let mut current = SYSLOG_LOCK
-        .compare_exchange(0, LOCKED_ONE, Ordering::Acquire, Ordering::Relaxed)
-        .unwrap_or_else(|value| value);
-    if current == 0 {
-        return;
-    }
-
-    for _ in 0..10 {
-        if current < 0 {
-            current = current.wrapping_sub(LOCKED_ONE);
-        }
-        // `__lock.c` writes `INT_MIN + (current + 1)`: the low-order
-        // congestion count is separate from the locked-one fast-path value.
-        let desired = LOCK_FLAG.wrapping_add(current.wrapping_add(1));
-        match SYSLOG_LOCK.compare_exchange(
-            current,
-            desired,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return,
-            Err(value) => current = value,
-        }
-    }
-
-    current = SYSLOG_LOCK.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-    loop {
-        if current < 0 {
-            unsafe { futex_wait(current) };
-            current = current.wrapping_sub(LOCKED_ONE);
-        }
-        let desired = LOCK_FLAG.wrapping_add(current);
-        match SYSLOG_LOCK.compare_exchange(
-            current,
-            desired,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return,
-            Err(value) => current = value,
-        }
-    }
+    super::musl_lock::lock(&SYSLOG_LOCK);
 }
 
+/// Release the logger lock word as pinned musl `__unlock`.
 #[inline]
 unsafe fn unlock() {
-    if SYSLOG_LOCK.load(Ordering::Relaxed) < 0
-        && SYSLOG_LOCK.fetch_add(LOCKED_ONE.wrapping_neg(), Ordering::Release) != LOCKED_ONE
-    {
-        unsafe { futex_wake() };
-    }
+    super::musl_lock::unlock(&SYSLOG_LOCK);
 }
 
 #[inline]

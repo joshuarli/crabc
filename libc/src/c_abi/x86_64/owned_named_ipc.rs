@@ -32,10 +32,6 @@ const O_LARGEFILE: c_int = 0x8000;
 const OBJECT_FLAGS: c_int = 2 | 0x20000 | 0x80000 | 0x800; // RDWR/NOFOLLOW/CLOEXEC/NONBLOCK
 const SHM_FLAGS: c_int = 0x20000 | 0x80000 | 0x800;
 const AT_FDCWD: i64 = -100;
-const FUTEX_WAIT_PRIVATE: i64 = 128;
-const FUTEX_WAKE_PRIVATE: i64 = 129;
-const LOCK_FLAG: i32 = i32::MIN;
-const LOCKED_ONE: i32 = LOCK_FLAG + 1;
 static SEM_OPEN_LOCK: AtomicI32 = AtomicI32::new(0);
 
 #[repr(C)]
@@ -47,35 +43,6 @@ struct Entry {
 static TABLE: AtomicPtr<Entry> = AtomicPtr::new(core::ptr::null_mut());
 const RESERVED: *mut c_void = usize::MAX as *mut c_void;
 
-#[inline]
-unsafe fn futex_wait(value: i32) {
-    // SAFETY: SEM_OPEN_LOCK is process-private, aligned, and remains live for
-    // the process.  A spurious wake or signal only retries musl's lock loop.
-    let _ = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_FUTEX,
-            SEM_OPEN_LOCK.as_ptr() as i64,
-            FUTEX_WAIT_PRIVATE,
-            i64::from(value),
-            0,
-        )
-    };
-}
-
-#[inline]
-unsafe fn futex_wake() {
-    // SAFETY: SEM_OPEN_LOCK is the matching private futex word.  Waking one
-    // waiter is musl's `__unlock` policy for this congestion representation.
-    let _ = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_FUTEX,
-            SEM_OPEN_LOCK.as_ptr() as i64,
-            FUTEX_WAKE_PRIVATE,
-            1,
-        )
-    };
-}
-
 /// Acquire the pinned musl one-word semaphore registry lock.
 ///
 /// Cancellation is disabled by the callers that can otherwise reach a C
@@ -83,57 +50,13 @@ unsafe fn futex_wake() {
 /// lock without changing cancellation state.
 #[inline]
 unsafe fn lock() {
-    let mut current = SEM_OPEN_LOCK
-        .compare_exchange(0, LOCKED_ONE, Ordering::Acquire, Ordering::Relaxed)
-        .unwrap_or_else(|value| value);
-    if current == 0 {
-        return;
-    }
-
-    for _ in 0..10 {
-        if current < 0 {
-            current = current.wrapping_sub(LOCKED_ONE);
-        }
-        // `__lock.c` writes `INT_MIN + (current + 1)`: the low-order
-        // congestion count is separate from the locked-one fast-path value.
-        let desired = LOCK_FLAG.wrapping_add(current.wrapping_add(1));
-        match SEM_OPEN_LOCK.compare_exchange(
-            current,
-            desired,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return,
-            Err(value) => current = value,
-        }
-    }
-
-    current = SEM_OPEN_LOCK.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-    loop {
-        if current < 0 {
-            unsafe { futex_wait(current) };
-            current = current.wrapping_sub(LOCKED_ONE);
-        }
-        let desired = LOCK_FLAG.wrapping_add(current);
-        match SEM_OPEN_LOCK.compare_exchange(
-            current,
-            desired,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return,
-            Err(value) => current = value,
-        }
-    }
+    super::musl_lock::lock(&SEM_OPEN_LOCK);
 }
 
+/// Release the semaphore registry lock word as pinned musl `__unlock`.
 #[inline]
 unsafe fn unlock() {
-    if SEM_OPEN_LOCK.load(Ordering::Relaxed) < 0
-        && SEM_OPEN_LOCK.fetch_add(LOCKED_ONE.wrapping_neg(), Ordering::Release) != LOCKED_ONE
-    {
-        unsafe { futex_wake() };
-    }
+    super::musl_lock::unlock(&SEM_OPEN_LOCK);
 }
 
 /// Acquire musl's semaphore-table lock before the stdio/syslog/timezone locks.

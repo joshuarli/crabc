@@ -35,13 +35,9 @@ compile_error!("owned quick-exit support requires little-endian Linux/x86-64");
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use super::{immediate_termination, raw_syscall};
+use super::immediate_termination;
 
 const QUICK_EXIT_CAPACITY: usize = 32;
-const FUTEX_WAIT_PRIVATE: i64 = 128;
-const FUTEX_WAKE_PRIVATE: i64 = 129;
-const LOCK_FLAG: i32 = i32::MIN;
-const LOCKED_ONE: i32 = LOCK_FLAG + 1;
 type QuickExitFunction = unsafe extern "C" fn();
 
 // This is intentionally a private source-specific musl `__lock` word rather
@@ -52,86 +48,16 @@ static mut QUICK_EXIT_COUNT: usize = 0;
 static mut QUICK_EXIT_FUNCTIONS: [Option<QuickExitFunction>; QUICK_EXIT_CAPACITY] =
     [None; QUICK_EXIT_CAPACITY];
 
-#[inline]
-unsafe fn futex_wait(value: i32) {
-    // SAFETY: the registry guard is process-private, aligned, and remains live
-    // for the process. A signal or spurious wake restarts the source loop.
-    let _ = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_FUTEX,
-            QUICK_EXIT_LOCK.as_ptr() as i64,
-            FUTEX_WAIT_PRIVATE,
-            i64::from(value),
-            0,
-        )
-    };
-}
-
-#[inline]
-unsafe fn futex_wake() {
-    // SAFETY: this is the matching private futex word. Musl `__unlock` wakes
-    // one contender whenever its congestion value says one is present.
-    let _ = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_FUTEX,
-            QUICK_EXIT_LOCK.as_ptr() as i64,
-            FUTEX_WAKE_PRIVATE,
-            1,
-        )
-    };
-}
-
+/// Acquire the quick-exit registry lock word as pinned musl `__lock`.
 #[inline]
 unsafe fn lock_registry() {
-    let mut current = QUICK_EXIT_LOCK
-        .compare_exchange(0, LOCKED_ONE, Ordering::Acquire, Ordering::Relaxed)
-        .unwrap_or_else(|value| value);
-    if current == 0 {
-        return;
-    }
-
-    for _ in 0..10 {
-        if current < 0 {
-            current = current.wrapping_sub(LOCKED_ONE);
-        }
-        let desired = LOCK_FLAG.wrapping_add(current.wrapping_add(1));
-        match QUICK_EXIT_LOCK.compare_exchange(
-            current,
-            desired,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return,
-            Err(value) => current = value,
-        }
-    }
-
-    current = QUICK_EXIT_LOCK.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-    loop {
-        if current < 0 {
-            unsafe { futex_wait(current) };
-            current = current.wrapping_sub(LOCKED_ONE);
-        }
-        let desired = LOCK_FLAG.wrapping_add(current);
-        match QUICK_EXIT_LOCK.compare_exchange(
-            current,
-            desired,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return,
-            Err(value) => current = value,
-        }
-    }
+    super::musl_lock::lock(&QUICK_EXIT_LOCK);
 }
 
+/// Release the quick-exit registry lock word as pinned musl `__unlock`.
 #[inline]
 unsafe fn unlock_registry() {
-    if QUICK_EXIT_LOCK.load(Ordering::Relaxed) < 0
-        && QUICK_EXIT_LOCK.fetch_add(LOCKED_ONE.wrapping_neg(), Ordering::Release) != LOCKED_ONE
-    {
-        unsafe { futex_wake() };
-    }
+    super::musl_lock::unlock(&QUICK_EXIT_LOCK);
 }
 
 /// Register one C11 quick-exit callback in musl's fixed 32-slot table.

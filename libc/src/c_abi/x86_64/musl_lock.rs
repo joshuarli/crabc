@@ -15,8 +15,9 @@
 //! do: the elision has no observable effect for a single-threaded caller and
 //! would add a process-global threading-state owner here.
 //!
-//! This is the per-object form of the static-word copies retained by other
-//! owners (for example `owned_syslog.rs`); it adds no reusable mutex, fork
+//! Directory streams use one word per `DIR`; the syslog, quick-exit,
+//! BSD-random, and named-semaphore owners each lock one static word. Each
+//! owner keeps its own fork-child reset. This adds no reusable mutex, fork
 //! protocol, poisoning, or recursion. A word must be zero-initialized, stay at
 //! one address while any task can reach it, and be released only by the task
 //! that acquired it.

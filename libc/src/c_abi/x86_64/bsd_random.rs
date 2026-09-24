@@ -56,7 +56,6 @@
 use core::ffi::{c_char, c_long, c_uint};
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use super::raw_syscall;
 
 static mut RANDOM_INIT: [u32; 32] = [
     0x00000000, 0x5851f42d, 0xc0b18ccf, 0xcbb5f646, 0xc7033129, 0x30705b04,
@@ -66,11 +65,6 @@ static mut RANDOM_INIT: [u32; 32] = [
     0xc74a0364, 0xae533cc4, 0x04185faf, 0x6de3b115, 0x0cab8628, 0xf043bfa4,
     0x398150e9, 0x37521657,
 ];
-
-const FUTEX_WAIT_PRIVATE: i64 = 128;
-const FUTEX_WAKE_PRIVATE: i64 = 129;
-const LOCK_FLAG: i32 = i32::MIN;
-const LOCKED_ONE: i32 = LOCK_FLAG + 1;
 
 // This preserves musl `__lock`'s sign-bit ownership and congestion word,
 // including its bounded spin and private futex wait/wake path. A plain busy
@@ -103,88 +97,16 @@ impl Drop for RandomLock {
     }
 }
 
-#[inline]
-unsafe fn futex_wait(value: i32) {
-    // SAFETY: RANDOM_LOCK is the private static futex word. Signals and
-    // spurious wakeups return to the source lock acquisition loop.
-    let _ = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_FUTEX,
-            RANDOM_LOCK.as_ptr() as i64,
-            FUTEX_WAIT_PRIVATE,
-            i64::from(value),
-            0,
-        )
-    };
-}
-
-#[inline]
-unsafe fn futex_wake() {
-    // SAFETY: this wakes one contender on the matching private lock word.
-    let _ = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_FUTEX,
-            RANDOM_LOCK.as_ptr() as i64,
-            FUTEX_WAKE_PRIVATE,
-            1,
-        )
-    };
-}
-
 /// Pinned musl `src/thread/__lock.c` with `RANDOM_LOCK` as its source word.
 #[inline]
 unsafe fn lock_random() {
-    let mut current = RANDOM_LOCK
-        .compare_exchange(0, LOCKED_ONE, Ordering::Acquire, Ordering::Relaxed)
-        .unwrap_or_else(|value| value);
-    if current == 0 {
-        return;
-    }
-
-    for _ in 0..10 {
-        if current < 0 {
-            current = current.wrapping_sub(LOCKED_ONE);
-        }
-        let desired = LOCK_FLAG.wrapping_add(current.wrapping_add(1));
-        match RANDOM_LOCK.compare_exchange(
-            current,
-            desired,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return,
-            Err(value) => current = value,
-        }
-    }
-
-    current = RANDOM_LOCK.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-    loop {
-        if current < 0 {
-            unsafe { futex_wait(current) };
-            current = current.wrapping_sub(LOCKED_ONE);
-        }
-        let desired = LOCK_FLAG.wrapping_add(current);
-        match RANDOM_LOCK.compare_exchange(
-            current,
-            desired,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return,
-            Err(value) => current = value,
-        }
-    }
+    super::musl_lock::lock(&RANDOM_LOCK);
 }
 
-/// Pinned musl `src/thread/__lock.c::__unlock` with `RANDOM_LOCK` as its
-/// source word.
+/// Release the random-state lock word as pinned musl `__unlock`.
 #[inline]
 unsafe fn unlock_random() {
-    if RANDOM_LOCK.load(Ordering::Relaxed) < 0
-        && RANDOM_LOCK.fetch_add(LOCKED_ONE.wrapping_neg(), Ordering::Release) != LOCKED_ONE
-    {
-        unsafe { futex_wake() };
-    }
+    super::musl_lock::unlock(&RANDOM_LOCK);
 }
 
 #[inline]

@@ -6768,7 +6768,6 @@ esac
             "Copyright © 2005-2020 Rich Felker, et al.",
             "src/thread/__lock.c",
             "AtomicI32",
-            "FUTEX_WAIT_PRIVATE",
             "read_unaligned",
             "write_unaligned",
             "pub extern \"C\" fn random",
