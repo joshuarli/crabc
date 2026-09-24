@@ -20510,8 +20510,8 @@ oracle = [
 ]
 
 [[family.verified_slice]]
-id = "runtime.loader.general-initial-state"
-description = "Private native x86 selected-private `runtime.loader` state slice inside still-planned `ldso.dynamic-runtime`. The common graph/object/map-provenance owner in `x86_64_general_initial_loader_state.rs` retains one bounded general initial transaction across both direct general roots, with the explicit Vacant -> Discovering -> Prepared -> Reserved -> Ready lifecycle. All fallible graph work and constructor preflight finish before reservation; the common owner reserves before `ARCH_SET_FS`, restores Vacant on a pre-FS failure, and release-publishes the retained owner only through its non-fallible commit before dependency callbacks. The TLS route has only a TLS-only registry/allocation sidecar, which attaches to the common owner and carries no second graph or object store. The existing source-root and Cargo target-root native general-graph and general-TLS runners prove the bounded non-TLS dependency and ordinary PT_TLS diamonds, including graph constructor/cycle rejection and TLS malformed/capacity/overflow rejection; pinned musl remains only the initial Variant-II layout/value oracle, not a private owner oracle. This does not select RuntimeV1 descriptor, libc handoff, dynamic CRT, pthread/new-thread TLS, DTV growth/replacement, runtime mapping/dlopen/unload, a general process or DSO lifecycle, installed product, family promotion, or public x86 support."
+id = "runtime.loader"
+description = "Native x86 `runtime.loader` capability inside still-planned `ldso.dynamic-runtime`, through the installed owned dynamic product. The frozen mapping is `compat/crabc-rs/coverage.toml`'s 23 loader/runtime exports; `native-abi-selection.toml` routes each on x86. `_dlstart`, `__dls2b` and `__dls3` are replaced by the self-relocating interpreter `_start`, the kernel-main or direct-command (`x86_64_direct_entry.rs`) main image, and `run_with_initial_tls`: discovery, canonical libc selection, TLS planning, relocation, RELRO, registry and RuntimeV1 reservation, TLS commit and publication. The initial graph, its DT_NEEDED edges, every copied init/fini array and the initial DTV live in loader mappings sized from the graph (`LoaderVec`), so graph size, fan-out, callback-array length and initial TLS module count have no fixed table bound, as in musl. `__libc_start_main`, `_init` and `_fini` are the libc and CRT startup owners; constructors run dependency-first then main and finalizers in reverse construction-start order through `x86_64_runtime_registry.rs`. `__auxv` is libc's validated initial auxv; `__tls_get_addr` and the `__rc_*` pthread TLS entries are the loader's DTV owner and prepared worker TLS token; the four `__ldso_register_dl*` callbacks are direct runtime operations and `__ldso_register_mark_multithreaded` the always-atomic graph lock; `_dl_debug_state`/`_dl_debug_addr` publish `r_debug`; `__crabc_runtime_v1` is the private table recorded by the `runtime.private-facades` slice. Every cited command compares pinned musl 1.2.6 with the installed product in PIE and non-PIE executables through kernel and direct interpreter entry. Recorded differences: the owned CRT dispatches a main `DT_PREINIT_ARRAY` (musl does not), and after a direct interpreter command the owned loader rewrites the process auxv main-image entries (`AT_PHDR`, `AT_ENTRY`, `AT_BASE`, `AT_EXECFN`) that musl changes only in its private copy. Admitted pathnames remain bounded at 511 bytes. This does not complete the family or promote public x86 support."
 capabilities = ["runtime.loader"]
 source_owners = [
   "ldso/Cargo.toml",
@@ -20519,64 +20519,69 @@ source_owners = [
   "ldso/src/lib.rs",
   "ldso/src/x86_64_initial_graph.rs",
   "ldso/src/x86_64_initial_graph_state.rs",
-  "ldso/src/x86_64_initial_tls_registry.rs",
   "ldso/src/x86_64_general_initial_loader_state.rs",
   "ldso/src/x86_64_general_initial_graph.rs",
-  "ldso/src/x86_64_general_initial_graph_source_root.rs",
+  "ldso/src/x86_64_general_initial_lifecycle.rs",
   "ldso/src/x86_64_general_initial_tls_state.rs",
-  "ldso/src/x86_64_general_initial_tls_source_root.rs",
-  "compat/x86_64/ldso_initial_graph_start.S",
-  "compat/x86_64/ldso_general_initial_graph_main.c",
-  "compat/x86_64/ldso_general_initial_graph_left.c",
-  "compat/x86_64/ldso_general_initial_graph_right.c",
-  "compat/x86_64/ldso_general_initial_graph_shared.c",
-  "compat/x86_64/ldso_general_initial_graph_cycle_marker.h",
-  "compat/x86_64/ldso_general_initial_tls_main.c",
-  "compat/x86_64/ldso_general_initial_tls_left.c",
-  "compat/x86_64/ldso_general_initial_tls_right.c",
-  "compat/x86_64/ldso_general_initial_tls_shared.c",
-  "compat/x86_64/ldso_general_initial_tls_capacity.c",
-  "compat/x86_64/ldso_general_initial_tls_trace.c",
-  "compat/x86_64/run_ldso_general_initial_graph.sh",
-  "compat/x86_64/run_ldso_general_initial_graph_target_root.sh",
-  "compat/x86_64/run_ldso_general_initial_tls.sh",
-  "compat/x86_64/run_ldso_general_initial_tls_target_root.sh",
-  "compat/x86_64/loader-libc-tls-runtime-v1.toml",
-  "compat/x86_64/validate_loader_libc_tls_runtime_v1.py",
-  "compat/x86_64/tests/test_ldso_general_initial_tls_materialization.py",
-  "compat/x86_64/tests/test_loader_libc_tls_runtime_v1.py",
-  "compat/x86_64/tests/test_loader_libc_general_tls_runtime_v1.py",
-  "compat/x86_64/parity.toml",
-  "compat/x86_64/validate_parity_ledger.py",
-  "compat/x86_64/tests/test_parity_ledger.py",
-  "compat/x86_64/aarch64_parity_inventory.py",
-  "compat/x86_64/aarch64_parity_inventory.json",
-  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
-  "compat/x86_64/README.md",
-  "docs/evidence/x86-loader-libc-tls-runtime-v1.md",
-  "plan.md",
+  "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs",
+  "ldso/src/x86_64_general_relocation.rs",
+  "ldso/src/x86_64_deferred_relocations.rs",
+  "ldso/src/x86_64_initial_tls_registry.rs",
+  "ldso/src/x86_64_initial_worker_tls.rs",
+  "ldso/src/x86_64_runtime_tls_view.rs",
+  "ldso/src/x86_64_runtime_memory.rs",
+  "ldso/src/x86_64_runtime_lock.rs",
+  "ldso/src/x86_64_runtime_registry.rs",
+  "ldso/src/x86_64_direct_entry.rs",
+  "ldso/src/x86_64_library_search.rs",
+  "ldso/src/x86_64_conventional_startup_v1.rs",
+  "ldso/src/x86_64_debugger.rs",
+  "ldso/src/x86_64_image.rs",
+  "ldso/src/x86_64_relocation.rs",
+  "crt/src/x86_64_Scrt1.rs",
+  "crt/src/x86_64_crt1.rs",
+  "crt/src/x86_64_crti.rs",
+  "crt/src/x86_64_crtn.rs",
+  "crt/src/x86_64_dynamic_startup.rs",
+  "crt/src/x86_64_array_boundaries.rs",
+  "crt/build_x86_64.py",
+  "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs",
+  "libc/src/c_abi/x86_64/conventional_startup_v1.rs",
+  "libc/src/c_abi/x86_64/init_fini_defaults.rs",
+  "libc/src/c_abi/x86_64/auxv_observation.rs",
+  "libc/src/c_abi/x86_64/dynamic_tls.rs",
+  "libc/src/c_abi/x86_64/pthread_create_join.rs",
+  "libc/src/c_abi/x86_64/general_dlfcn.rs",
+  "libc/src/c_abi/x86_64/loader_debug_abi.rs",
+  "crt/x86_64_owned_dynamic_startup.py",
+  "crt/fixtures/owned_dynamic_startup_main.c",
+  "crt/fixtures/owned_dynamic_startup_dependency.c",
+  "crt/fixtures/owned_dynamic_startup_plugin.c",
+  "crt/fixtures/owned_dynamic_startup_wide.c",
+  "compat/x86_64/run_owned_crt_dynamic_startup.sh",
+  "scripts/build_x86_64_owned_dynamic_sysroot.py",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
-  "The Linux x86-64 PT_INTERP entry preserves the original argc/argv/envp/auxv stack and AT_BASE for the private interpreter. The bounded main -> left/right -> shared initial graph retains object identity, parent edges, complete Object records, and map provenance in one common owner; kernel-owned main mapping is never rollback or munmap eligible.",
-  "The common owner lifecycle is Vacant -> Discovering -> Prepared -> Reserved -> Ready. All graph mapping/relocation/RELRO, TLS registry/template work, and dependency constructor preflight are fallible before Reserved; `ARCH_SET_FS` occurs only after reservation, failure before its non-fallible commit restores Vacant, and readers acquire only Ready. The TLS sidecar retains registry/allocation attachment only and duplicates neither InitialGraphState nor the Object array.",
-  "The direct general roots admit only the already-scoped non-TLS dependency graph and ELF64 PT_TLS/Variant-II, DTPMOD64/DTPOFF64, and `ARCH_SET_FS` route. This selected state does not create a public loader ABI, RuntimeV1 descriptor, dynamic process lifecycle, runtime mapping, or DSO unload contract.",
+  "The Linux x86-64 PT_INTERP entry supplies the original argc/argv/envp/auxv stack and AT_BASE; the interpreter self-relocates its symbol-free RELA before Rust, then parses the kernel main image from AT_PHDR/AT_PHNUM/AT_ENTRY or, for a direct command, maps the named executable with MAP_FIXED_NOREPLACE for ET_EXEC and compacts argv.",
+  "Initial dependencies are admitted breadth-first by opened-file identity with musl load_deps/queue_ctors order, relocated with the selected RELA/RELR, GLOB_DAT/JUMP_SLOT/COPY/TLS encodings and scope rules, protected and RELRO-sealed before any callback. All fallible work, including callback-address preflight into exact-size loader mappings, precedes the `ARCH_SET_FS` commit.",
+  "The initial TLS generation is Variant II below `%fs`; its DTV holds a count word plus one slot per planned module and every worker receives the same geometry. RuntimeV1 and the conventional startup record carry the actual `dtv_words`, which libc validates before use.",
 ]
-x86_header_prerequisites = ["No installed x86 loader, RuntimeV1, dlfcn, pthread, TLS, libc.so, CRT, sysroot, or public C declaration is selected. The common owner and TLS sidecar are private freestanding loader-state evidence only."]
+x86_header_prerequisites = ["The executables compile against the installed include tree and pinned musl headers: dlfcn.h, link.h, pthread.h, stdio.h, stdlib.h, sys/auxv.h and unistd.h supply every declaration they use, including `struct r_debug` and `RTLD_DI_LINKMAP`. No installed header declares a loader-private symbol."]
 native_evidence = [
-  { state = "verified", command = "./scripts/dev-x86_64.sh ldso-general-initial-graph", scope = "Native x86 source-root evidence builds the private arbitrary bounded non-TLS main -> left/right -> shared dependency graph. It proves common-owner graph identity, complete object/map provenance, dependency-first constructor order, and pre-callback cycle or malformed-plan rejection. It does not select TLS, a general loader, installed dynamic product, promotion, or public support." },
-  { state = "verified", command = "./scripts/dev-x86_64.sh ldso-general-initial-target-root", scope = "Native x86 Cargo target-root evidence rebuilds only the feature-gated private non-TLS general interpreter, verifies its ET_DYN/no-DT_NEEDED/no-PT_TLS shape, and reruns the bounded graph positive and pre-callback rejection matrix. It does not install an interpreter or select a general runtime, product, family promotion, or public support." },
-  { state = "verified", command = "./scripts/dev-x86_64.sh ldso-general-initial-tls", scope = "Native x86 source-root evidence builds the private general-TLS interpreter and bounded PT_TLS main -> left/right -> shared diamond, compares ordinary initial Variant-II layout/value with pinned musl, and rejects malformed PT_TLS, unsupported relocation, capacity, and overflow paths before FS installation. It exercises the common-owner lifecycle and TLS sidecar without selecting a general loader, RuntimeV1, installed dynamic product, promotion, or public support." },
-  { state = "verified", command = "./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root", scope = "Native x86 Cargo target-root evidence rebuilds only the feature-gated private general-TLS interpreter, verifies its ET_DYN/no-DT_NEEDED/no-interpreter-PT_TLS shape, and reruns the bounded positive and pre-FS negative matrix. It does not install an interpreter or select a general runtime, product, family promotion, or public support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-crt-dynamic-startup", scope = "Builds a fresh installed dynamic product and compares pinned musl in 36 cells: dynamic PIE (Scrt1.o) and non-PIE (crt1.o) through kernel and direct entry. Eight scenarios check __libc_start_main, _init/_fini, init/fini arrays, dependency and dlopened-plugin constructor/finalizer order, exit/_Exit/exit from constructors, argv/envp/program names, AT_ENTRY/AT_PAGESZ/AT_RANDOM, stack alignment, TLS and errno in every callback. The wide graph adds 43 initial images with 21 and 20 DT_NEEDED edges, 24-entry arrays in the executable, a dependency and the plugin, 40 initial and 20 runtime TLS modules summed again by a worker, and the r_debug/_dl_debug_addr/_dl_debug_state view; its transcript and status equal musl's." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-loader-short-stack", scope = "Owned dynamic startup at libc-test's 100 KiB stack limit beside pinned musl." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-dynamic-pthread-exit", scope = "Installed main and last-thread exit through both entries: DSO TLS and finalizers, simultaneous last exit, main and worker cancellation." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-dynamic-fork", scope = "Loader, worker TLS and pthread fork transactions against pinned musl in every candidate entry." },
 ]
 oracle = [
-  { kind = "c-posix", source = "Pinned musl 1.2.6 x86-64 loader and libc.a", role = "Initial Variant-II TLS values/layout only; musl does not define this crabc-private common owner or sidecar topology." },
-  { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "PT_INTERP/PT_TLS, ELF object/map provenance, relocation, and Variant-II process-entry contract." },
-  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Initial stack, mmap/mprotect/munmap rollback, and ARCH_SET_FS transition boundary." },
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 ldso/dynlink.c, crt and src/env", role = "Separately launched startup, lifecycle, graph, TLS and debugger-view behavior oracle; never an ambient candidate input." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "PT_INTERP entry, dynamic tags, relocation, init/fini array, Variant-II TLS and r_debug contracts." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Initial stack and auxv, mmap/MAP_FIXED_NOREPLACE/mprotect/munmap, arch_prctl(ARCH_SET_FS), clone and exit_group." },
 ]
 
 [[family.verified_slice]]
-id = "runtime.private-facades.native-runtime-v1"
+id = "runtime.private-facades"
 description = "Private native x86 selected-private `runtime.private-facades` slice inside still-planned `ldso.dynamic-runtime`. The installed owned dynamic libc exports the frozen private `__crabc_runtime_v1` table (`crabc_core::runtime::RuntimeV1`) from `runtime_facade_v1.rs`, and `crabc_rs::{dl, runtime_thread, cfile}` consume it on x86-64 without target-specific code. Loader callbacks call the interpreter's private runtime open/symbol/close/address/information/iterate operations under the dlfcn cancellation guard, then copy musl-shaped diagnostics, recorded names, and a restart-on-publication image snapshot into caller-owned wire storage without consuming `dlerror`; thread callbacks call the selected pthread create/join/detach/identity/cancellation/TSD owners and transport positive pthread errors; memory-stream callbacks call the owned stream engine and restore the caller's errno. The runner requires the facade's normal graph to be exactly crabc-rs/crabc-core/bitflags and each release fat-LTO probe object to import only the private getter plus memory primitives. It runs the three unchanged frozen AArch64 probes plus x86 loader, thread, and memory-stream differentials against the same product's public dlfcn/pthread/stdio results in PIE and non-PIE executables through kernel and direct interpreter entry. This does not qualify the loader family, the dlfcn C ABI capabilities, a static-product table, a product cohort, or public x86 support."
 capabilities = ["runtime.private-facades"]
 source_owners = [
