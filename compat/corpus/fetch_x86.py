@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
-"""Fetch the finite native x86_64 corpus input into the runner's default boundary.
+"""Materialize the native x86_64 corpus input in this checkout.
 
-Downloads exactly the manifest's repository index and its 59 `archive_roster`
-APK URLs into `.work/x86_64/owned-package-corpus-input`, which is where
-`run_x86.py` reads them by default. Every archive must match its pinned
-SHA-256 before it is kept; an existing matching archive is not refetched. The
-index is a mutable upstream snapshot: an existing one is kept unless
-`--refresh-index` is given, and its signature is verified by the runner, not
-here. This helper runs on the host (the runner's container has no network) and
-never extracts or executes package content.
+Produces `.work/x86_64/owned-package-corpus-input/{apks,index}`, the default
+`--archive-dir`/`--index` of `run_x86.py`: exactly the manifest's 59
+`archive_roster` APKs and one repository index snapshot.
+
+Each archive must match its pinned SHA-256 before it is kept. A matching file
+already present is kept; otherwise it is copied from the primary checkout's
+same input directory when that copy matches (lane worktrees share one primary
+checkout), and only then downloaded from the manifest's exact repository URL.
+
+The index is a mutable upstream snapshot and is not digest-pinned. An existing
+snapshot is kept unless `--refresh-index` is given; otherwise the primary
+checkout's snapshot is copied when present, else the current index is
+downloaded. The runner authenticates it inside the pinned native image with
+the manifest's signing key alone and retains its observed digest. This host
+helper only moves and hashes bytes; it never extracts or executes packages.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -23,48 +32,95 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name("manifest-x86_64.toml")
-INPUT = ROOT / ".work/x86_64/owned-package-corpus-input"
-ARCHIVES = INPUT / "apks"
-INDEX = INPUT / "index/main-x86_64.APKINDEX.tar.gz"
+INPUT = Path(".work/x86_64/owned-package-corpus-input")
+INDEX_NAME = "index/main-x86_64.APKINDEX.tar.gz"
 
 
-def download(url: str, destination: Path, expected_sha256: str | None) -> str:
-    """Write `url` to `destination` atomically, returning the observed digest."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(dir=destination.parent, prefix=f".{destination.name}.")
+class FetchError(RuntimeError):
+    pass
+
+
+def sha256(path: Path) -> str | None:
+    if not path.is_file() or path.is_symlink():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def primary_input() -> Path | None:
+    """Return the primary checkout's input directory when this is a worktree."""
     try:
-        digest = hashlib.sha256()
-        with os.fdopen(handle, "wb") as output, urllib.request.urlopen(url, timeout=60) as response:
-            while chunk := response.read(1 << 20):
-                digest.update(chunk)
-                output.write(chunk)
-        observed = digest.hexdigest()
-        if expected_sha256 is not None and observed != expected_sha256:
-            raise SystemExit(f"{url}: SHA-256 {observed} differs from pinned {expected_sha256}")
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=ROOT,
+                                check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    primary = Path(common).parent
+    return None if primary == ROOT else primary / INPUT
+
+
+def install(relative: str, expected: str | None, url: str, seed: Path | None, refresh: bool = False) -> str:
+    """Place one file at INPUT/relative, returning how it was obtained.
+
+    `expected=None` admits any bytes (the unpinned index); otherwise the file
+    must match `expected` and a mismatching copy or download is never kept.
+    """
+    destination = ROOT / INPUT / relative
+    present = sha256(destination)
+    if not refresh and present is not None and (expected is None or present == expected):
+        return "present"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle, name = tempfile.mkstemp(dir=destination.parent, prefix=f".{destination.name}.")
+    temporary = Path(name)
+    try:
+        with os.fdopen(handle, "wb") as output:
+            seeded = None if seed is None or refresh else sha256(seed / relative)
+            if seeded is not None and (expected is None or seeded == expected):
+                with (seed / relative).open("rb") as source:
+                    shutil.copyfileobj(source, output)
+                origin = "primary checkout"
+            else:
+                with urllib.request.urlopen(url, timeout=60) as response:
+                    shutil.copyfileobj(response, output)
+                origin = "download"
+        observed = sha256(temporary)
+        if expected is not None and observed != expected:
+            raise FetchError(f"{url}: SHA-256 {observed} differs from pinned {expected}")
+        os.chmod(temporary, 0o644)
         os.replace(temporary, destination)
-        return observed
+        return origin
     finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+        temporary.unlink(missing_ok=True)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--refresh-index", action="store_true", help="replace an existing index snapshot")
-    arguments = parser.parse_args()
+    parser.add_argument("--refresh-index", action="store_true", help="download a new index snapshot")
+    arguments = parser.parse_args(argv)
     with MANIFEST.open("rb") as stream:
         manifest = tomllib.load(stream)
-    base = manifest["repository"]["base_url"].rstrip("/")
-    for name, expected in sorted(manifest["archive_roster"].items()):
-        archive = ARCHIVES / name
-        if archive.is_file() and not archive.is_symlink() \
-                and hashlib.sha256(archive.read_bytes()).hexdigest() == expected:
-            continue
-        download(f"{base}/{name}", archive, expected)
-    if arguments.refresh_index or not INDEX.is_file():
-        download(f"{base}/{manifest['repository']['index_filename']}", INDEX, None)
-    observed = hashlib.sha256(INDEX.read_bytes()).hexdigest()
-    print(f"x86 corpus input: {len(manifest['archive_roster'])} pinned archives; index snapshot {observed}", file=sys.stderr)
+    repository = manifest["repository"]
+    base = repository["base_url"].rstrip("/")
+    seed = primary_input()
+    origins: dict[str, int] = {}
+    try:
+        for name, expected in sorted(manifest["archive_roster"].items()):
+            origin = install(f"apks/{name}", expected, f"{base}/{name}", seed)
+            origins[origin] = origins.get(origin, 0) + 1
+        index_origin = install(INDEX_NAME, None, f"{base}/{repository['index_filename']}", seed,
+                               refresh=arguments.refresh_index)
+    except (FetchError, OSError) as error:
+        print(f"x86 corpus input: FAIL: {error}", file=sys.stderr)
+        return 1
+    extra = sorted(set(os.listdir(ROOT / INPUT / "apks")) - set(manifest["archive_roster"]))
+    if extra:
+        print(f"x86 corpus input: FAIL: unpinned archives present: {', '.join(extra)}", file=sys.stderr)
+        return 1
+    summary = ", ".join(f"{count} {origin}" for origin, count in sorted(origins.items()))
+    print(f"x86 corpus input: PASS ({len(manifest['archive_roster'])} pinned archives: {summary}; "
+          f"index snapshot {sha256(ROOT / INPUT / INDEX_NAME)} from {index_origin}); input: {INPUT}")
     return 0
 
 

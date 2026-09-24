@@ -83,15 +83,31 @@ class NativeManifestTests(unittest.TestCase):
         index = Path("/workspace/.work/owned-package-corpus/index/APKINDEX.tar.gz")
         identity = {"directory": str(archive_dir), "index": {"path": str(index)}}
         success = type("Completed", (), {"returncode": 0, "stdout": b"OK\n", "stderr": b""})()
+        self.observed_index_keys: list[str] = []
+
+        def record_keys(argv, **_kwargs):
+            if argv[-1] == str(index):
+                self.observed_index_keys = sorted(os.listdir(argv[2]))
+            return success
+
+        keys = tempfile.TemporaryDirectory()
+        self.addCleanup(keys.cleanup)
+        for name in (self.manifest.index_signing_key, "alpine-devel@lists.alpinelinux.org-other.rsa.pub"):
+            (Path(keys.name) / name).write_text("public key\n")
+        keys_patch = mock.patch.object(RUNNER, "KEYS", Path(keys.name))
+        keys_patch.start()
+        self.addCleanup(keys_patch.stop)
         with mock.patch.object(RUNNER, "input_identity", return_value=identity), \
              mock.patch.object(RUNNER, "apk_metadata", return_value={"pkgname": "other", "pkgver": "1"}), \
-             mock.patch.object(RUNNER.subprocess, "run", return_value=success) as verify:
+             mock.patch.object(RUNNER.subprocess, "run", side_effect=record_keys) as verify:
             RUNNER.verify_inputs(self.manifest, archive_dir, index)
         self.assertEqual(verify.call_count, 60)
-        self.assertEqual(
-            verify.call_args_list[-1].args[0],
-            [str(RUNNER.APK), "--keys-dir", str(RUNNER.KEYS), "verify", str(index)],
-        )
+        self.assertEqual(verify.call_args_list[0].args[0][:3], [str(RUNNER.APK), "--keys-dir", str(RUNNER.KEYS)])
+        index_argv = verify.call_args_list[-1].args[0]
+        self.assertEqual(index_argv[:2] + index_argv[3:], [str(RUNNER.APK), "--keys-dir", "verify", str(index)])
+        # The index is not digest-pinned, so its signature must come from the
+        # manifest's pinned signing key alone, not any key in the image.
+        self.assertEqual(self.observed_index_keys, [self.manifest.index_signing_key])
 
         def reject_index(argv, **_kwargs):
             return type("Completed", (), {

@@ -640,6 +640,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-calendar-component [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test installed time.clock-calendar rows with fixed IANA TZif fixtures
   owned-text-locale-numeric-component --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  test bounded installed numeric, locale, wide-conversion, and UTF iconv rows
   owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT [OPTIONS]  run the frozen native Alpine workloads with supplied package inputs
+  owned-package-corpus-input [--refresh-index]  materialize the pinned Alpine APKs and an index snapshot on the host (primary-checkout copy or exact download)
   owned-loader-synthetic DYNAMIC_SYSROOT  run all 21 frozen loader workloads through the supplied installed product
   owned-loader-inventory DYNAMIC_SYSROOT OUTPUT_JSON  retain compiler-selected source and native loader ELF inventory
   owned-loader-libc-identity DYNAMIC_SYSROOT  check copied-interpreter libc identity before startup callbacks
@@ -7254,7 +7255,7 @@ case "$command" in
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation|owned-protocol-database|owned-resolver-family) ;;
-    owned-package-corpus|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family) ;;
+    owned-package-corpus|owned-package-corpus-input|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family) ;;
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-static-dl-iterate-phdr|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
@@ -9700,6 +9701,11 @@ case "$command" in
     owned-text-locale-numeric-component)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_text_locale_numeric_component.sh "$@"
+        ;;
+    owned-package-corpus-input)
+        # Host-side: the corpus container has no network. Archives are hashed
+        # against the manifest pins here; the runner verifies all signatures.
+        python3 -B "$ROOT_DIR/compat/corpus/fetch_x86.py" "$@"
         ;;
     owned-package-corpus)
         [ "$#" -ge 2 ] || [ "${1:-}" = --help ] || fail "owned-package-corpus requires --dynamic-sysroot PATH"

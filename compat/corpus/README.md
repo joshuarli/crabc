@@ -81,12 +81,22 @@ libc bytes at `/lib/ld-musl-x86_64.so.1` and
 
 The APK archive digests are pinned; the repository index is not. Alpine
 regenerates the mutable v3.24 index, so an earlier snapshot can never be
-fetched again. Each run verifies the supplied index's signature and retains
-its observed SHA-256, and the post-execution identity must repeat it. Fetch
-the inputs on the host (the runner's container has no network) with
-`python3 -B compat/corpus/fetch_x86.py`; it keeps only archives that match
-their pins and writes them to `.work/x86_64/owned-package-corpus-input`, the
-runner's default `--archive-dir`/`--index` location. An existing index
+fetched again. Each run verifies the supplied index's signature against the
+manifest's `index_signing_key` alone, retains its observed SHA-256, and
+requires the post-execution identity to repeat it. It fails only on a bad
+signature, a missing or changed APK digest, or a roster change.
+
+Materialize the inputs on the host (the corpus container has no network):
+
+```sh
+./scripts/dev-x86_64.sh owned-package-corpus-input [--refresh-index]
+```
+
+`compat/corpus/fetch_x86.py` places exactly the 59 pinned archives and one
+index snapshot at `.work/x86_64/owned-package-corpus-input`, the runner's
+default `--archive-dir`/`--index`. Each archive must match its manifest digest;
+it is kept if already present, else copied from the primary checkout's same
+directory, else downloaded from the exact manifest URL. An existing index
 snapshot is kept unless `--refresh-index` is given.
 
 The package closure includes third-party application DSOs such as `libgcc_s`

@@ -88,6 +88,7 @@ class ManifestSpec:
     cases: tuple[CaseSpec, ...]
     direct_packages: Mapping[str, str]
     source_manifest: Path
+    index_signing_key: str
     image: str
 
 
@@ -307,6 +308,9 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
     base_image_files = raw.get("base_image_files")
     if not isinstance(roster, dict) or not isinstance(excluded, dict) or not isinstance(workload, dict) or not isinstance(direct, dict) or not isinstance(deltas, dict) or not isinstance(repository, dict) or not isinstance(payload, dict) or not isinstance(fixtures, dict) or not isinstance(base_image_files, dict):
         fail("native corpus manifest required tables are absent")
+    index_signing_key = repository.get("index_signing_key")
+    if not isinstance(index_signing_key, str) or not re.fullmatch(r"[A-Za-z0-9@._-]+\.rsa\.pub", index_signing_key):
+        fail("native corpus repository signing key is malformed")
     required_paths = payload.get("required_paths")
     library_dirs = payload.get("package_library_dirs")
     if not isinstance(required_paths, list) or not isinstance(library_dirs, list):
@@ -377,7 +381,7 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
         if not all(isinstance(identity.get(key), int) and identity[key] >= 0 for key in ("mode", "uid", "gid")):
             fail("native corpus base image metadata is malformed")
         checked_base_files[base_path] = dict(identity)
-    return ManifestSpec(raw_bytes, archive_roster, frozenset(excluded_values), libraries, required, base_fixtures, checked_base_files, cases, dict(direct), source_manifest, raw["image"])
+    return ManifestSpec(raw_bytes, archive_roster, frozenset(excluded_values), libraries, required, base_fixtures, checked_base_files, cases, dict(direct), source_manifest, index_signing_key, raw["image"])
 
 
 def select_cases(manifest: ManifestSpec, tiers: Sequence[str], case_ids: Sequence[str] = ()) -> tuple[CaseSpec, ...]:
@@ -764,7 +768,14 @@ def verify_inputs(manifest: ManifestSpec, archive_dir: Path, index: Path) -> dic
         if expected_direct_version is not None and metadata["pkgver"] != expected_direct_version:
             fail(f"direct package metadata differs from native manifest: {metadata['pkgname']}")
         verification[name] = {"metadata": metadata, "signature_stdout": result.stdout.decode("utf-8", "strict"), "signature_stderr": result.stderr.decode("utf-8", "strict")}
-    index_result = subprocess.run([str(APK), "--keys-dir", str(KEYS), "verify", str(index)], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # The index is not digest-pinned (Alpine regenerates it), so only the
+    # manifest's pinned signing key may authenticate it.
+    pinned_key = KEYS / manifest.index_signing_key
+    if pinned_key.is_symlink() or not pinned_key.is_file():
+        fail("pinned APK index signing key is absent from the image key roster")
+    with tempfile.TemporaryDirectory(prefix="crabc-index-key-") as index_keys:
+        shutil.copyfile(pinned_key, Path(index_keys) / manifest.index_signing_key)
+        index_result = subprocess.run([str(APK), "--keys-dir", index_keys, "verify", str(index)], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if index_result.returncode != 0:
         fail("APK index signature verification failed")
     return {
