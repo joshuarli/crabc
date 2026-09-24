@@ -26,8 +26,10 @@
 //! dispatch. Musl's native startup owns its array walk internally. The
 //! selected Rust x86 CRT instead passes already-bounded executable `init` and
 //! `fini` callbacks, matching its explicit linker-array ownership in
-//! `crt/src/x86_64_startup.rs`; `fini` is registered before application code
-//! so application handlers run first in the normal LIFO order.
+//! `crt/src/x86_64_startup.rs`. The default fixture registers `fini` before
+//! application code so application handlers run first in the normal LIFO
+//! order; the owned product instead calls it after every handler, as musl's
+//! `exit` calls `__libc_exit_fini`.
 //!
 //! It is not a general x86 libc startup implementation. In particular,
 //! `rtld_fini` is rejected because this static-only leaf has no loaded-object
@@ -101,12 +103,31 @@ unsafe fn startup_vectors(argc: c_int, argv: *const *const c_char) -> Option<Sta
 mod process_exit;
 pub use process_exit::{atexit, __cxa_atexit, __cxa_finalize, __funcs_on_exit};
 
+/// The executable's CRT `fini` callback in the owned static product.
+///
+/// Musl 1.2.6 `src/exit/exit.c` runs `__libc_exit_fini` only after
+/// `__funcs_on_exit` has finished, and `atexit.c` then refuses further
+/// registrations, so a handler registered by an ELF destructor never runs.
+/// Keeping `fini` out of the handler table preserves that order. The default
+/// fixture archive keeps its established pre-application `atexit` slot.
+#[cfg(crabc_x86_owned_runtime)]
+static mut EXECUTABLE_FINI: Option<LifecycleFunction> = None;
+
 /// Run the fixed ordinary-exit dispatch and terminate the whole process.
+///
+/// The owned product follows musl `exit`: handlers, then ELF finalizers,
+/// then buffered stdio, then `_Exit`.
 #[no_mangle]
 pub unsafe extern "C" fn exit(status: c_int) -> ! {
     unsafe { __funcs_on_exit() };
     #[cfg(crabc_x86_owned_runtime)]
-    unsafe { __stdio_exit() };
+    {
+        // SAFETY: ordinary exit is not concurrent or reentrant here (see
+        // __funcs_on_exit); take the callback so it runs at most once.
+        let fini = unsafe { core::ptr::replace(core::ptr::addr_of_mut!(EXECUTABLE_FINI), None) };
+        if let Some(fini) = fini { unsafe { fini() }; }
+        unsafe { __stdio_exit() };
+    }
     posix_exit::_exit(status)
 }
 
@@ -235,6 +256,11 @@ pub unsafe extern "C" fn __libc_start_main(
     // selecting an environment owner or dynamic-loader bridge.
     unsafe { process_globals::install(argc, argv) };
 
+    #[cfg(crabc_x86_owned_runtime)]
+    // SAFETY: startup is single-threaded and precedes every callback that
+    // could reach exit.
+    unsafe { core::ptr::write(core::ptr::addr_of_mut!(EXECUTABLE_FINI), fini) };
+    #[cfg(not(crabc_x86_owned_runtime))]
     if fini.is_some() && unsafe { atexit(fini) } != 0 {
         startup_reject();
     }
