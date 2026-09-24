@@ -270,13 +270,19 @@ def validate_combined(root: Path) -> dict:
 
 
 def validate_installation(root: Path) -> dict:
-    """Admit this driver's own product tree or a combined tree embedding it."""
+    """Admit this driver's own product tree or a combined tree embedding it.
+
+    Anything that does not identify a combined tree is left to the product
+    contract, which reports a missing or malformed manifest itself.
+    """
     manifest = root / MANIFEST
-    shared.require_regular(manifest, "dynamic manifest")
-    try:
-        identity = json.loads(manifest.read_text()).get("format")
-    except (ValueError, OSError, AttributeError) as error:
-        raise shared.DriverError(f"invalid dynamic manifest: {error}") from error
+    identity = None
+    if manifest.is_file() and not manifest.is_symlink():
+        try:
+            record = json.loads(manifest.read_text())
+        except (ValueError, OSError):
+            record = None
+        identity = record.get("format") if isinstance(record, dict) else None
     return validate_combined(root) if identity == COMBINED_FORMAT else validate(root)
 
 
