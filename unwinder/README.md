@@ -387,6 +387,39 @@ consumer qualification remains required, as do installed/extracted executable
 modes, broader initial/runtime DSO behavior, and complete malformed-metadata
 handling.
 
+## Consumer gate
+
+`compat/x86_64/consumer_rust_std_lto.py` is the `consumer.rust-std-lto` leaf.
+It builds one fresh provider from the authenticated vendor and links every
+frozen stock-std, dependency-bearing, build-std and LTO consumer through the
+Cargo origin of `owned_rust_link.py` (`link_cargo`). That origin keeps Rust's
+own `unwind` bindings rlib, whose members it audits as Rust objects only,
+omits Rust's `compiler_builtins`, and maps the `-lunwind`/`-lgcc_s` request to
+the provider archive placed after the Rust inputs and before `libc`. Its
+receipt records the provider members LLD extracted; the gate requires exactly
+`crabc-unwind.o`. `-static-pie` links use the static product's `rcrt1.o`;
+rustc's `-plugin-opt=O*`/`mcpu=` linker-plugin values are the only forwarded
+LTO options.
+
+The gate then runs this directory's full owned cleanup consumer
+(`owned_cleanup.run`) against the installed and the extracted product pair
+of the same cohort. Its receipt digests are part of the gate receipt.
+
+For each pair it also builds `fixtures/cross_dso`: `frame.c` is linked twice
+by the pair's installed `crabc-cc-dynamic --dynamic-shared-object`, once as
+the executable's `DT_NEEDED` dependency and once as a `dlopen`'d runtime DSO.
+A stock-std and a `-Zbuild-std=std,panic_unwind` executable each pass Rust
+callbacks through both C frames; the callback captures a backtrace, holds a
+`Drop` guard and panics, or catches and `resume_unwind`s, on the main thread
+and a worker. The panic must cross the C frame, run both sides' guards and
+keep its payload. The provider finds the C frame's FDE only through that
+DSO's `PT_GNU_EH_FRAME`, so the lane first reports a DSO the installed driver
+linked without `--eh-frame-hdr`.
+
+Finally it runs the six standalone malformed-metadata regressions above
+once and retains their receipts. They inject their own `dl_iterate_phdr`
+images in the pinned-musl harness and supplement the owned-product lanes.
+
 ## Source and ownership
 
 The owned consumer disables rustc's musl self-contained link inputs and

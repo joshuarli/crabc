@@ -1,0 +1,13 @@
+[package]
+name = "crabc-unwind-cross-dso"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[profile.release]
+codegen-units = 1
+debug = 0
+incremental = false
+panic = "unwind"

@@ -943,8 +943,8 @@ def parse_cargo_arguments(
             raise LinkError(f"unrecognized Rust link argument: {argument}")
     if output is None or rust_mode is None or not objects:
         raise LinkError("expected output, Rust executable mode, and Rust objects")
-    if "-lc" not in native_requests:
-        raise LinkError("missing Rust libc request")
+    # A no-std consumer may request no native library at all; the product's
+    # libc is part of every owned link command regardless.
     all_inputs = [*objects, *archives]
     if output in all_inputs or len(all_inputs) != len(set(all_inputs)):
         raise LinkError("output aliases or Rust repeats an application input")

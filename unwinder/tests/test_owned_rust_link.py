@@ -657,6 +657,11 @@ class CargoConsumerLinkContract(unittest.TestCase):
                 export_dynamic=False, rust_mode="static-pie",
             )
 
+    def test_no_std_graph_without_native_requests_still_links_the_product(self):
+        arguments = [item for item in self.arguments() if item not in {"-lgcc_s", "-lc"}]
+        parsed = self.parse(arguments)
+        self.assertEqual((parsed["native_requests"], parsed["unwind_requests"]), ([], []))
+
     def test_only_declared_application_dsos_satisfy_a_library_request(self):
         dso = Path(self.temporary.name) / "libcrabc_unwind_frame_initial.so"
         dso.write_bytes(b"dso")

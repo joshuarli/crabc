@@ -685,6 +685,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-crt-dynamic-startup [DYNAMIC_SYSROOT]  compare installed dynamic CRT entry, lifecycle and link interface with musl
   consumer-static-pie-lto  run the private no-std crabc-rs O3/full-LTO owned-runtime consumer
   consumer-native-facade-lto  run the private filesystem/pipe/eventfd crabc-rs full-LTO consumer
+  consumer-rust-std-lto-vendor OUTPUT  vendor the frozen Rust std/LTO fixtures' locked crates (network)
+  consumer-rust-std-lto run|validate ...  run or reread the consumer.rust-std-lto gate through installed owned products
   libc-pthread-create-join-tls  run the static x86 crabc-libc private create/exit/join TLS slice
   libc-native-mimalloc-shadow-pthread-teardown  run selected-native x86 worker attach/teardown evidence
   libc-pthread-identity  run the static x86 crabc-libc pthread/C11 identity alias slice
@@ -3886,6 +3888,31 @@ run_in_chroot_cap_container() {
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         "${execution_network[@]}" \
+        --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$IMAGE" "$@"
+}
+
+# The Rust std/LTO consumer gate builds offline from prepared vendors and runs
+# each consumer in a private chroot root; it needs no network namespace.
+run_in_consumer_rust_std_lto_container() {
+    prepare_work_dir
+    docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" \
+        --cap-add=SYS_CHROOT \
+        --network none \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
@@ -7229,6 +7256,7 @@ case "$command" in
     unwinder-build|unwinder-cleanup|unwinder-owned-cleanup|unwinder-metadata-bounds|unwinder-eh-frame-bounds|unwinder-dynamic-bounds|unwinder-indirect-personality-bounds|unwinder-metadata-target-bounds|unwinder-frame-bounds) ;;
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
     owned-crt-dynamic-startup) ;;
+    consumer-rust-std-lto|consumer-rust-std-lto-vendor) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     headers-layouts-aggregate) ;;
@@ -10070,6 +10098,16 @@ PY
         [ "$#" -eq 0 ] || fail "consumer-native-facade-lto takes no arguments"
         ensure_image
         run_consumer_native_facade_lto_probe
+        ;;
+    consumer-rust-std-lto-vendor)
+        [ "$#" -eq 1 ] || fail "usage: ./scripts/dev-x86_64.sh consumer-rust-std-lto-vendor OUTPUT"
+        ensure_image
+        run_in_container python3 -B /workspace/compat/x86_64/consumer_rust_std_lto.py prepare-vendor --output "$1"
+        ;;
+    consumer-rust-std-lto)
+        [ "$#" -ge 1 ] || fail "usage: ./scripts/dev-x86_64.sh consumer-rust-std-lto run|validate ..."
+        ensure_image
+        run_in_consumer_rust_std_lto_container python3 -B /workspace/compat/x86_64/consumer_rust_std_lto.py "$@"
         ;;
     libc-termios-control)
         [ "$#" -eq 0 ] || fail "libc-termios-control takes no arguments"

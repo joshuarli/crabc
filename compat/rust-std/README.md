@@ -64,3 +64,39 @@ The runner copies the application manifest (and `Cargo.lock` when supplied)
 into its temporary project, builds it with stock `std`, and records dependency
 presence in the structured report. The application is never linked against a
 crabc-specific Rust library or invoked through `libldso.so` as a program.
+
+## Native x86-64 consumer gate
+
+The frozen AArch64 runner above is paused. On native Linux/x86-64 both
+fixtures are reproduced unchanged by `compat/x86_64/consumer_rust_std_lto.py`,
+the leaf of the `consumer.rust-std-lto` qualification gate (it also covers the
+`compat/lto` gates):
+
+```sh
+./scripts/dev-x86_64.sh consumer-rust-std-lto-vendor .work/x86_64/RUN/fixture-vendor
+./scripts/dev-x86_64.sh consumer-rust-std-lto run \
+  --static-preparation .work/x86_64/STATIC/preparation.json \
+  --dynamic-qualification .work/x86_64/tmp/materialized-dynamic.XXXX/qualification.json \
+  --provider-vendor .work/x86_64/RUN/provider-vendor \
+  --dependency-vendor .work/x86_64/RUN/fixture-vendor \
+  --output .work/x86_64/RUN/consumer
+```
+
+The only networked step vendors the dependency-bearing and native-facade
+fixtures' locked crates; `dependency_vendor` rehashes every vendored file
+against those locks. The build itself is `--offline`, with Rust's own
+`library/vendor` and that fixture vendor composed by
+`owned_cleanup.compose_offline_cargo_sources`.
+
+The x86 purity contract changes one thing: the candidate is no longer the
+musl-linked image run with swapped runtime bytes. The same stock sources are
+built with `-Z build-std=std,panic_abort` twice. The candidate is linked by
+the Cargo origin of `unwinder/owned_rust_link.py` from the installed dynamic
+product and the fresh `libcrabc-unwind.a`, which Rust's `-lgcc_s` request
+selects by ordinary archive extraction; the control is linked by the pinned
+musl oracle compiler with the frozen `-L/usr/lib` libgcc path. Each runs by
+kernel `PT_INTERP` in a private chroot root. The roots share `/tmp`,
+`/dev/null`, a localhost `/etc/hosts` and a `/proc/self/exe` link for
+`current_exe()`, and differ only in runtime files (the installed product
+versus pinned musl plus `libgcc_s.so.1`). Status, stdout and stderr compare
+raw.

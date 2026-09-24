@@ -154,3 +154,35 @@ normalization. It explicitly records `lto_into_dynamic_libc_proven: false`:
 fat LTO evidence for the Rust application does not establish optimization
 inside the dynamically loaded C `libc.so`, and its musl CRT/link boundary is
 not candidate native-facade evidence.
+
+## Native x86-64 consumer gate
+
+`compat/x86_64/consumer_rust_std_lto.py` reproduces both matrices above on
+native Linux/x86-64 against one current-source installed product cohort (see
+`compat/rust-std/README.md` for the command). Its lanes keep the frozen flags:
+
+* A links `fixtures/static.c` with the pinned musl oracle compiler
+  (`-static -no-pie`) and requires its trace to select pinned `libc.a`;
+  B compiles and links the same source with the installed sealed
+  `bin/crabc-cc -static`, whose retained link trace must select only the
+  installed `libc.a`. Both print `lto-static-c:ok`, and their images differ.
+* C (build-std, dynamic product) and D (build-std, `lto=fat`,
+  `embed-bitcode=yes`, `linker-plugin-lto`, static PIE through the static
+  product's `rcrt1.o`) are linked by the Cargo origin of
+  `unwinder/owned_rust_link.py`. D's link receipt must show LLVM bitcode
+  inputs and rustc's `-plugin-opt` values forwarded to the pinned LLD, whose
+  LLVM version the toolchain record binds to rustc's. Both print the
+  independently computed workload value. The installed `libc.a` has no
+  bitcode, so `whole_program_lto_proven` stays false, as in the frozen gate.
+* `control-o3` and `fat-lto` build the no-std native-facade fixture against
+  the stock target `core` and the installed dynamic product. The x86 witness
+  must reach `getpid` (syscall 39) directly, `write` (1) must be direct, and
+  the witness must not branch to public `getpid`/`write` or `__errno_location`.
+  The fat lane also requires `.llvmbc` in the `crabc_rs`/`crabc_core` rlibs.
+* `stock-std-fat` builds the stock-std fixture with build-std and fat LTO for
+  both the installed product and the musl control, and compares them raw.
+
+Rust std's `_Unwind_*` references resolve from the provider archive in every
+std lane; no lane substitutes a dummy unwinder or suppresses unresolved
+symbols. The frozen `panic = "abort"` profiles remain the fixtures' contract;
+panic cleanup and resume are proved by the gate's separate unwind matrix.
