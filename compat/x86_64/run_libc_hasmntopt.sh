@@ -143,7 +143,7 @@ cd "$ROOT_DIR"
 mkdir "$reference_work" "$candidate_work"
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_hasmntopt_probe.c >/dev/null 2>"$header_trace"
-for header in mntent.h stdio.h stddef.h bits/alltypes.h; do
+for header in mntent.h stddef.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done

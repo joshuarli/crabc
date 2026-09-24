@@ -104,7 +104,7 @@ errno_disassembly="$work_dir/errno-location-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_sysconf_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h limits.h unistd.h features.h sys/types.h; do
+for header in errno.h limits.h unistd.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project $header"
 done

@@ -175,22 +175,11 @@ check_trace() {
     if trace_has_unapproved_path "$tree" "$trace"; then
         fail "$profile $tree trace escaped its declared header roots"
     fi
-    grep -Fq "$root/mntent.h" "$trace" ||
-        fail "$profile $tree trace omitted $root/mntent.h"
-    if [ "$tree" = candidate ]; then
-        # crabc's installed mntent header currently exposes FILE through its
-        # existing stdio include; musl's pinned mntent.h uses __NEED_FILE
-        # directly. Both declarations and the record ABI are checked here.
-        grep -Fq "$root/stdio.h" "$trace" ||
-            fail "$profile project trace omitted $root/stdio.h"
-        grep -Fq "$root/stddef.h" "$trace" ||
-            fail "$profile project trace omitted $root/stddef.h"
-        grep -Fq "$root/bits/alltypes.h" "$trace" ||
-            fail "$profile project trace omitted $root/bits/alltypes.h"
-    else
-        grep -Fq "$root/bits/alltypes.h" "$trace" ||
-            fail "$profile pinned-musl trace omitted $root/bits/alltypes.h"
-    fi
+    # Both mntent.h headers take FILE through __NEED_FILE and bits/alltypes.h.
+    for header in mntent.h bits/alltypes.h; do
+        grep -Fq "$root/$header" "$trace" ||
+            fail "$profile $tree trace omitted $root/$header"
+    done
 }
 
 check_cxx_symbol() {

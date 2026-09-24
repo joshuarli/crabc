@@ -106,7 +106,7 @@ if ! "$ORACLE_CC" -std=c11 -fno-builtin -I "$ROOT_DIR/include" -H \
     sed -n '1,160p' "$header_trace" >&2
     fail "project-header isatty fixture contract drifted"
 fi
-for header in errno.h fcntl.h unistd.h features.h sys/types.h \
+for header in errno.h fcntl.h unistd.h features.h bits/alltypes.h \
     sys/syscall.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"

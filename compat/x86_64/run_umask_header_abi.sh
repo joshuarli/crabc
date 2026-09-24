@@ -131,7 +131,7 @@ while IFS= read -r path; do
         *) fail "project strict header trace escaped its declared roots: $path" ;;
     esac
 done < <(trace_paths "$header_trace")
-for header in sys/stat.h sys/types.h time.h features.h bits/stat.h bits/alltypes.h; do
+for header in sys/stat.h features.h bits/stat.h bits/alltypes.h; do
     grep -Fq "$PROJECT_INCLUDE/$header" "$header_trace" ||
         fail "strict C probe did not use the project <$header>"
 done

@@ -130,7 +130,7 @@ readelf --symbols --wide "$musl_object" | grep -E '[[:space:]]gettid$' >/dev/nul
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_gettid_probe.c >/dev/null 2>"$header_trace"
-for header in unistd.h features.h sys/types.h stdint.h; do
+for header in unistd.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project $header"
 done
