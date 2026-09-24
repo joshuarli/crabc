@@ -179,6 +179,7 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
     def _write_product(product: Path) -> None:
         required = (
             "bin/crabc-cc-dynamic", "share/crabc/crabc_cc_static.py", "usr/include/stdint.h",
+            "share/crabc/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_elf.py",
             "lib/ld-crabc-x86_64.so.1", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o",
             "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o", "usr/lib/libc.so",
             "usr/lib/libcrabc-builtins.a",
@@ -190,7 +191,11 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)
             files[relative] = hashlib.sha256(payload).hexdigest()
-        (product / "bin/crabc-cc-dynamic").chmod(0o755)
+        # The installed product's source-bound modes.
+        for relative in required:
+            (product / relative).chmod(0o644)
+        for relative in ("bin/crabc-cc-dynamic", "usr/lib/libc.so", "lib/ld-crabc-x86_64.so.1"):
+            (product / relative).chmod(0o755)
         (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
         manifest = {
             "schema": 1,

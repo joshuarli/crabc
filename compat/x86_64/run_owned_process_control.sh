@@ -57,8 +57,6 @@ fi
 # mutable evidence.  The link receipts below bind each consumer to this exact
 # manifest again, including an extracted product in qualification.
 python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" "$provided_static" <<'PY'
-from hashlib import sha256
-import json
 from pathlib import Path
 import sys
 
@@ -69,19 +67,14 @@ if sys.argv[3]:
     product = Path(sys.argv[3]).resolve(strict=True)
     if not product.is_dir() or not product.is_relative_to(root / ".work"):
         raise SystemExit("process-control product must be a checkout .work directory")
-    manifest_path = product / "share/crabc/manifest.json"
-    if not manifest_path.is_file() or manifest_path.is_symlink():
-        raise SystemExit("process-control product lacks a regular manifest")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("format") != "crabc-x86-64-owned-dynamic-sysroot-v1":
-        raise SystemExit("process-control product has the wrong dynamic format")
-    for relative, digest in manifest.get("files", {}).items():
-        path = product / relative
-        if not path.is_file() or path.is_symlink() or sha256(path.read_bytes()).hexdigest() != digest:
-            raise SystemExit(f"process-control product payload drifted: {relative}")
-    for relative in ("bin/crabc-cc-dynamic", "usr/lib/libc.so", "lib/ld-crabc-x86_64.so.1"):
-        if not (product / relative).is_file():
-            raise SystemExit(f"process-control product lacks {relative}")
+    # The shared product reader admits a standalone dynamic product or a
+    # combined four-mode sysroot embedding it.
+    sys.path.insert(0, str(root / "compat/x86_64"))
+    import owned_posix_product_evidence as product_evidence
+    try:
+        product_evidence._validate_dynamic_product(product)
+    except product_evidence.ProductEvidenceError as error:
+        raise SystemExit(f"process-control dynamic product rejected: {error}")
 if sys.argv[4]:
     product = Path(sys.argv[4]).resolve(strict=True)
     if not product.is_dir() or not product.is_relative_to(root / ".work"):

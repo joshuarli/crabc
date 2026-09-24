@@ -204,45 +204,19 @@ def require_hash(value: object, actual: str, description: str) -> None:
 
 
 def product_manifest(product: Path) -> Path:
+    """Validate the exact supplied dynamic product and return its tree manifest.
+
+    The shared product reader admits a standalone dynamic product or a
+    combined four-mode sysroot embedding it; either way the returned manifest
+    is the one the installed driver binds into each link receipt.
+    """
     product = physical(product, "dynamic product", directory=True)
-    manifest = product / "share/crabc/manifest.json"
-    record = json_object(manifest, "dynamic product manifest")
-    if (record.get("schema"), record.get("format"), record.get("target")) != (1, PRODUCT_FORMAT, TARGET):
-        fail("dynamic product manifest identity drifted")
-    if record.get("symlinks") != {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}:
-        fail("dynamic product alias roster drifted")
-    files = record.get("files")
-    if not isinstance(files, dict):
-        fail("dynamic product manifest has no file roster")
-    required = {
-        "bin/crabc-cc-dynamic", "share/crabc/crabc_cc_static.py", "usr/include/stdint.h",
-        "lib/ld-crabc-x86_64.so.1", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o",
-        "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o", "usr/lib/libc.so",
-        "usr/lib/libcrabc-builtins.a",
-    }
-    if not required <= set(files):
+    try:
+        manifest, files = product_evidence._validate_dynamic_product(product)
+    except product_evidence.ProductEvidenceError as error:
+        raise EvidenceError(f"dynamic product rejected: {error}") from error
+    if "usr/include/stdint.h" not in files:
         fail("dynamic product manifest omits required payload")
-    observed_files: set[str] = set()
-    observed_links: dict[str, str] = {}
-    for path in product.rglob("*"):
-        relative = path.relative_to(product).as_posix()
-        mode = path.lstat().st_mode
-        if stat.S_ISDIR(mode):
-            continue
-        if stat.S_ISLNK(mode):
-            observed_links[relative] = os.readlink(path)
-            continue
-        if not stat.S_ISREG(mode):
-            fail(f"dynamic product has nonregular payload: {relative}")
-        if relative != "share/crabc/manifest.json":
-            observed_files.add(relative)
-    if observed_files != set(files) or observed_links != record["symlinks"]:
-        fail("dynamic product payload roster drifted")
-    for relative, expected in files.items():
-        candidate = Path(relative)
-        if not isinstance(relative, str) or candidate.is_absolute() or ".." in candidate.parts:
-            fail("dynamic product manifest has unsafe payload path")
-        require_hash(expected, digest(product / candidate), f"dynamic product payload {relative}")
     return manifest
 
 

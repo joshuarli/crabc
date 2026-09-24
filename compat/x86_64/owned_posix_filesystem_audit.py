@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import owned_dynamic_receipt as receipt_contract
+import owned_posix_product_evidence as product_evidence
 
 
 STATIC_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
@@ -193,30 +194,17 @@ def validate_static_product(product: Path) -> Path:
 
 
 def validate_dynamic_product(product: Path) -> Path:
-    """Validate the exact supplied dynamic payload before linking or running it."""
+    """Validate the exact supplied dynamic payload before linking or running it.
+
+    The shared product reader admits a standalone dynamic product or a
+    combined four-mode sysroot embedding it.
+    """
 
     root = require_directory(product, "dynamic product")
-    manifest_path = root / MANIFEST_RELATIVE
-    manifest = read_object(manifest_path, "dynamic manifest")
-    if manifest.get("schema") != 1 or manifest.get("format") != DYNAMIC_FORMAT:
-        fail("dynamic manifest schema or format drifted")
-    if manifest.get("target") != TARGET:
-        fail("dynamic manifest target drifted")
-    expected_symlinks = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
-    if manifest.get("symlinks") != expected_symlinks:
-        fail("dynamic manifest symlink contract drifted")
-    files = checked_files(manifest.get("files"), "dynamic manifest")
-    validate_payload(root, files, expected_symlinks, "dynamic product")
-    require_directory(root / "usr/include", "dynamic product headers")
-    require_directory(root / "usr/lib", "dynamic product libraries")
-    require_directory(root / "lib", "dynamic product loaders")
-    for relative in (
-        "bin/crabc-cc-dynamic", "usr/lib/libc.so", "usr/lib/crt1.o",
-        "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
-        "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a",
-        "lib/ld-crabc-x86_64.so.1",
-    ):
-        require_regular(root / relative, f"dynamic product required input {relative}")
+    try:
+        product_evidence._validate_dynamic_product(root)
+    except product_evidence.ProductEvidenceError as error:
+        raise AuditError(f"dynamic product rejected: {error}") from error
     return root
 
 

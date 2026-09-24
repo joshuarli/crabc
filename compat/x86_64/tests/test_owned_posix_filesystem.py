@@ -101,6 +101,14 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         ):
             self._write_file(root, f"usr/lib/{name}", name.encode("ascii"))
         self._write_file(root, "lib/ld-crabc-x86_64.so.1", b"owned loader\n")
+        for module in ("crabc_cc_static.py", "owned_dynamic_receipt.py", "owned_dynamic_elf.py"):
+            self._write_file(root, f"share/crabc/{module}", module.encode("ascii"))
+        # The installed product's source-bound modes: an executable driver
+        # and shared libc, and non-executable link objects.
+        for relative in ("bin/crabc-cc-dynamic", "usr/lib/libc.so", "lib/ld-crabc-x86_64.so.1"):
+            (root / relative).chmod(0o755)
+        for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o", "crabc-dynamic-attach.o", "libcrabc-builtins.a"):
+            (root / "usr/lib" / name).chmod(0o644)
         (root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
         files = {
             path.relative_to(root).as_posix(): auditor.digest(path)
@@ -233,7 +241,7 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
                     populate(product, auditor)
                     validate(product)
                     (product / payload).write_bytes(b"tampered\n")
-                    with self.assertRaisesRegex(auditor.AuditError, "payload hash drifted"):
+                    with self.assertRaisesRegex(auditor.AuditError, "payload hash drifted|hash differs"):
                         validate(product)
 
     def test_static_receipt_rejects_forged_workload_hash_and_trace(self) -> None:
