@@ -99,7 +99,13 @@ static int run_case(int list_mode)
 	if (aio_error(&first) != 0 || aio_return(&first) != 1 || first_byte != 'w')
 		return 7;
 	if (list_mode) {
+		/* musl 1.2.6 aio.c cleanup() wakes aio_cancel before it publishes
+		 * ECANCELED, so the final status is read once aio_suspend reports
+		 * the canceled request complete (main's alarm bounds that wait). */
+		const struct aiocb *canceled[] = { &second };
+
 		if (aio_cancel(second_pipe[0], &second) != AIO_CANCELED
+			|| aio_suspend(canceled, 1, 0)
 			|| aio_error(&second) != ECANCELED || aio_return(&second) != -1)
 			return 8;
 	}

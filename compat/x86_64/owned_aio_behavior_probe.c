@@ -8,6 +8,15 @@
  * timeout, interruption and cancellation of aio_suspend; and an active AIO
  * request across fork, where the parent remains usable and the child closes
  * inherited state before beginning fresh AIO work.
+ *
+ * The transcript compares only behavior pinned musl guarantees under any
+ * scheduling. musl 1.2.6 aio.c cleanup() wakes aio_cancel/close waiters
+ * before it publishes the request's final error, so a cancellation result is
+ * read only after aio_suspend reports the request complete. The same cleanup
+ * publishes completion before releasing the descriptor's queue, and a queue
+ * keeps the seekable/append classification of the file it was created for;
+ * owned_aio_fd_reuse_probe.c observes that incarnation defect separately, so
+ * every descriptor given to AIO here takes a number no earlier one used.
  */
 #define _GNU_SOURCE
 
@@ -53,7 +62,32 @@ static int completed(struct aiocb *control, ssize_t expected)
 
 static int canceled(struct aiocb *control)
 {
-	return aio_error(control) == ECANCELED && aio_return(control) == -1;
+	return wait_control(control) == 0
+		&& aio_error(control) == ECANCELED && aio_return(control) == -1;
+}
+
+/* Move a new descriptor to a number never used before in this process. */
+static int fresh_descriptor(int descriptor)
+{
+	static int next_number = 64;
+	int moved;
+
+	if (descriptor < 0)
+		return -1;
+	moved = fcntl(descriptor, F_DUPFD, next_number);
+	if (close(descriptor) || moved < 0)
+		return -1;
+	next_number = moved + 1;
+	return moved;
+}
+
+static int fresh_pipe(int descriptors[2])
+{
+	if (pipe(descriptors))
+		return -1;
+	descriptors[0] = fresh_descriptor(descriptors[0]);
+	descriptors[1] = fresh_descriptor(descriptors[1]);
+	return descriptors[0] < 0 || descriptors[1] < 0 ? -1 : 0;
 }
 
 static int fill_pipe(int descriptor)
@@ -96,7 +130,7 @@ static int positioned_append_nonseekable(void)
 	struct aiocb second_append = { 0 };
 	struct aiocb pipe_read = { 0 };
 
-	descriptor = open("/state/owned-aio-positioned", O_CREAT | O_TRUNC | O_RDWR, 0600);
+	descriptor = fresh_descriptor(open("/state/owned-aio-positioned", O_CREAT | O_TRUNC | O_RDWR, 0600));
 	if (descriptor < 0)
 		return -1;
 	stage = 2;
@@ -125,8 +159,8 @@ static int positioned_append_nonseekable(void)
 		goto failure;
 
 	stage = 5;
-	append_descriptor = open("/state/owned-aio-append",
-		O_CREAT | O_TRUNC | O_RDWR | O_APPEND, 0600);
+	append_descriptor = fresh_descriptor(open("/state/owned-aio-append",
+		O_CREAT | O_TRUNC | O_RDWR | O_APPEND, 0600));
 	if (append_descriptor < 0 || write(append_descriptor, "S", 1) != 1)
 		goto failure;
 	stage = 6;
@@ -148,7 +182,7 @@ static int positioned_append_nonseekable(void)
 		goto failure;
 
 	stage = 7;
-	if (pipe(descriptors) || write(descriptors[1], "N", 1) != 1)
+	if (fresh_pipe(descriptors) || write(descriptors[1], "N", 1) != 1)
 		goto failure;
 	stage = 8;
 	pipe_read.aio_fildes = descriptors[0];
@@ -175,7 +209,7 @@ static int queued_pipe_sequence(void)
 	struct aiocb first = { 0 };
 	struct aiocb second = { 0 };
 
-	if (pipe(descriptors) || fill_pipe(descriptors[1]))
+	if (fresh_pipe(descriptors) || fill_pipe(descriptors[1]))
 		return -1;
 	memset(first_bytes, '1', sizeof first_bytes);
 	memset(second_bytes, '2', sizeof second_bytes);
@@ -210,7 +244,7 @@ static int close_cancels_blocking_request(void)
 	int descriptors[2];
 	struct aiocb control = { 0 };
 
-	if (pipe(descriptors))
+	if (fresh_pipe(descriptors))
 		return -1;
 	control.aio_fildes = descriptors[0];
 	control.aio_buf = &byte;
@@ -278,7 +312,7 @@ static int suspend_timeout_interrupt_cancel(void)
 
 	if (aio_suspend(0, 0, &zero_timeout) != -1 || errno != EAGAIN)
 		return -1;
-	if (pipe(descriptors))
+	if (fresh_pipe(descriptors))
 		return -1;
 	control.aio_fildes = descriptors[0];
 	control.aio_buf = &byte;
@@ -290,7 +324,7 @@ static int suspend_timeout_interrupt_cancel(void)
 		|| close(descriptors[0]) || close(descriptors[1]))
 		return -1;
 
-	if (pipe(descriptors))
+	if (fresh_pipe(descriptors))
 		return -1;
 	memset(&control, 0, sizeof control);
 	control.aio_fildes = descriptors[0];
@@ -321,7 +355,7 @@ static int suspend_timeout_interrupt_cancel(void)
 		|| close(descriptors[0]) || close(descriptors[1]))
 		return -1;
 
-	if (pipe(descriptors))
+	if (fresh_pipe(descriptors))
 		return -1;
 	memset(&control, 0, sizeof control);
 	control.aio_fildes = descriptors[0];
@@ -415,7 +449,7 @@ static int notifications_lists_and_errors(void)
 	/* The LIO_NOWAIT notification follows the same partial-record contract. */
 	struct sigevent list_event;
 
-	descriptor = open("/state/owned-aio-notify", O_CREAT | O_TRUNC | O_RDWR, 0600);
+	descriptor = fresh_descriptor(open("/state/owned-aio-notify", O_CREAT | O_TRUNC | O_RDWR, 0600));
 	if (descriptor < 0)
 		return -1;
 	action.sa_sigaction = signal_notification;
@@ -457,7 +491,7 @@ static int notifications_lists_and_errors(void)
 		|| unlink("/state/owned-aio-notify"))
 		return -1;
 
-	descriptor = open("/state/owned-aio-list", O_CREAT | O_TRUNC | O_RDWR, 0600);
+	descriptor = fresh_descriptor(open("/state/owned-aio-list", O_CREAT | O_TRUNC | O_RDWR, 0600));
 	if (descriptor < 0)
 		return -1;
 	list_first.aio_fildes = descriptor;
@@ -502,7 +536,7 @@ static int notifications_lists_and_errors(void)
 		|| atomic_load_explicit(&list_state.count, memory_order_acquire) != 1)
 		return -1;
 
-	readonly_descriptor = open("/state/owned-aio-list", O_RDONLY);
+	readonly_descriptor = fresh_descriptor(open("/state/owned-aio-list", O_RDONLY));
 	if (readonly_descriptor < 0)
 		return -1;
 	list_error.aio_fildes = readonly_descriptor;
@@ -528,7 +562,7 @@ static int live_aio_fork(void)
 	pid_t child;
 	int status;
 
-	if (pipe(descriptors))
+	if (fresh_pipe(descriptors))
 		return -1;
 	parent_control.aio_fildes = descriptors[0];
 	parent_control.aio_buf = &parent_byte;
