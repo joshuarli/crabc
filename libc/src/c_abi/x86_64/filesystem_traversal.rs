@@ -49,6 +49,7 @@ const DIRECTORY_NAME_MAX: usize = 255;
 const LINUX_ERRNO_MAX: i64 = 4_095;
 
 const EACCES: c_int = 13;
+const EBADF: c_int = 9;
 const EINVAL: c_int = 22;
 const ENAMETOOLONG: c_int = 36;
 const ENOENT: c_int = 2;
@@ -272,15 +273,32 @@ unsafe fn root_base(path: *const u8, last: usize) -> c_int {
     cursor as c_int
 }
 
+/// Musl reaches `stat`/`lstat` through their C entries, so every failed
+/// probe publishes its errno even when the walk continues: an `FTW_SLN` or
+/// `FTW_NS` callback observes that `ENOENT` or `EACCES`, and a successful walk
+/// returns with the last such value still set.
+#[inline]
+unsafe fn path_metadata(
+    io_path: *const c_char,
+    follow: bool,
+) -> Result<stat_compat::PathMetadata, c_int> {
+    let metadata = unsafe { stat_compat::path_metadata(io_path, follow) };
+    if let Err(error) = metadata {
+        // SAFETY: the failed probe's checked Linux errno, as C `stat` sets it.
+        unsafe { errno::set_errno(error) };
+    }
+    metadata
+}
+
 unsafe fn classify(
     io_path: *const c_char,
     flags: c_int,
 ) -> Result<(stat_compat::PathMetadata, c_int), c_int> {
     let follow = flags & FTW_PHYS == 0;
-    let metadata = match unsafe { stat_compat::path_metadata(io_path, follow) } {
+    let metadata = match unsafe { path_metadata(io_path, follow) } {
         Ok(metadata) => metadata,
         Err(error) if follow && error == ENOENT => {
-            match unsafe { stat_compat::path_metadata(io_path, false) } {
+            match unsafe { path_metadata(io_path, false) } {
                 Ok(metadata) => return Ok((metadata, FTW_SLN)),
                 Err(lstat_error) if lstat_error == EACCES => {
                     return Ok((stat_compat::PathMetadata::zeroed(), FTW_NS));
@@ -450,6 +468,12 @@ unsafe fn walk(
             directory_error = unsafe { errno::get_errno() };
             if directory_error == EACCES {
                 kind = FTW_DNR;
+            }
+            if fd_limit <= 0 {
+                // Musl's `if (!fd_limit) close(dfd);` also runs for a failed
+                // open, so the callback observes close(-1)'s EBADF.
+                // SAFETY: this C ABI owns that source-visible errno.
+                unsafe { errno::set_errno(EBADF) };
             }
         } else if fd_limit <= 0 {
             // Musl probes every reached directory even when no descriptor

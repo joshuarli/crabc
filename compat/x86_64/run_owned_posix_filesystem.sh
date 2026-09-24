@@ -7,7 +7,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_posix_filesystem_probe.c"
 readonly AUDITOR="$ROOT/compat/x86_64/owned_posix_filesystem_audit.py"
-readonly cases=(aliases directory traversal temporary handles)
+readonly cases=(aliases directory traversal temporary handles comparators directory-edges directory-threads traversal-flags traversal-permissions legacy-edges handle-edges alias-edges)
 # The traversal transcript proves deferred cancellation ends as PTHREAD_CANCELED
 # after the callback gate releases; file-handle stdout preserves each raw
 # return/errno so filesystem support cannot compress a product difference.

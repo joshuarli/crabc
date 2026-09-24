@@ -65,6 +65,28 @@ state. It checks malformed and absent-name legacy temporary paths, `tmpnam`
 buffer ownership, `tempnam` allocation and length rejection, and the inherited
 `lchmod` symlink result.
 
+The wider-edge cases print exact transcripts wherever the observed value is
+the contract. `comparators` records `alphasort`/`versionsort` signs over byte,
+leading-zero, fractional, and digit-run pairs. `directory-edges` replays every
+`telldir` cookie through `seekdir`, requires `readdir_r` to leave a caller
+`errno` untouched, and checks `scandir` zero-result, unsorted, `versionsort`,
+copied-record, and `ENOTDIR` outcomes. `directory-threads` has four readers
+share one stream through `readdir_r`; musl's per-stream `__lock` makes them
+partition its records, so each name must arrive exactly once.
+`traversal-flags` prints sorted `nftw`/`ftw` records (path, kind, level, base,
+file type, and callback-visible `errno`) for following, physical, depth-first,
+mount, descriptor-limited, symlink-cycle, dangling, missing, non-directory,
+overlong, and callback-stop walks, and checks pre/post-order separately.
+`traversal-permissions` drops to an unprivileged identity so `FTW_DNR` and
+`FTW_NS` are real, including musl's `EBADF` from closing a failed open at an
+exhausted descriptor budget. `legacy-edges` covers invalid, seven-`X`,
+`ENOTDIR`, and missing-parent `mktemp` templates, `tempnam` exhaustion without
+`errno`, empty operands, and its exact `PATH_MAX` boundary, and the inherited
+`lchmod` regular-file, absent, and `ENOTDIR` results. `handle-edges` retains
+raw capacity-overflow, flag, `AT_EMPTY_PATH`, and oversized-handle results;
+`alias-edges` covers following, loops, empty paths, `O_PATH` descriptors, and
+`AT_EMPTY_PATH` through the historical stat aliases.
+
 File handles run only inside each disposable chroot. The fixture creates one
 regular file below `/work` and uses a readable pathname plus caller-owned,
 non-null variable-sized storage on every call. A successful handle is

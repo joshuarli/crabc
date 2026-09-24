@@ -53,12 +53,22 @@
 //! malformed kernel records report `EIO` before being exposed through the C
 //! ABI. Linux owns pathname races, descriptor state, directory mutation,
 //! opaque cookies, and all raw getdents record content.
+//!
+//! As in musl, each stream carries one `__lock` word. `readdir_r`, `seekdir`,
+//! and `rewinddir` hold it across their cursor update, so concurrent
+//! `readdir_r` callers on one stream partition its records; plain `readdir`
+//! stays unlocked, and its callers own their serialization. Stream state is
+//! therefore reached through raw field projections rather than a `&mut` to
+//! the whole stream, which another reader's lock-word access would alias.
 
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::mem::{align_of, offset_of, size_of};
 use core::ptr;
+use core::sync::atomic::AtomicI32;
 
-use super::{byte_strings, c_ssize_status, c_status, errno, raw_syscall, stat_compat};
+use super::{
+    byte_strings, c_ssize_status, c_status, errno, musl_lock, raw_syscall, stat_compat,
+};
 
 const DIRECTORY_BUFFER_SIZE: usize = 2_048;
 const DIRECTORY_MAPPING_SIZE: usize = 4_096;
@@ -115,6 +125,8 @@ pub(super) struct Dirent {
 pub(super) struct DirectoryStream {
     tell: c_long,
     file_descriptor: c_int,
+    /// Musl's `volatile int lock[1]`, zero while unlocked.
+    lock: AtomicI32,
     buffer_position: usize,
     buffer_end: usize,
     buffer: [u8; DIRECTORY_BUFFER_SIZE],
@@ -276,6 +288,7 @@ unsafe fn new_directory_stream(file_descriptor: c_int) -> *mut DirectoryStream {
         unsafe {
             (*stream).tell = 0;
             (*stream).file_descriptor = file_descriptor;
+            ptr::addr_of_mut!((*stream).lock).write(AtomicI32::new(0));
             (*stream).buffer_position = 0;
             (*stream).buffer_end = 0;
         }
@@ -324,15 +337,37 @@ unsafe fn adopt_directory_descriptor(file_descriptor: c_int) -> *mut DirectorySt
     stream
 }
 
-/// Refill and validate one private buffered Linux `getdents64` record.
+/// Borrow one stream's lock word without viewing the rest of its state.
+///
+/// # Safety
+///
+/// `stream` must be a live `DIR *` returned by this leaf.
 #[inline(always)]
-unsafe fn next_record(stream: &mut DirectoryStream) -> *mut Dirent {
-    if stream.buffer_position >= stream.buffer_end {
+unsafe fn stream_lock<'a>(stream: *mut DirectoryStream) -> &'a AtomicI32 {
+    // SAFETY: the word lives as long as the stream and is only accessed
+    // atomically; no other reference covers it.
+    unsafe { &*ptr::addr_of!((*stream).lock) }
+}
+
+/// Refill and validate one private buffered Linux `getdents64` record.
+///
+/// # Safety
+///
+/// `stream` must be a live `DIR *` returned by this leaf whose cursor and
+/// buffer no other task accesses for the duration of the call.
+#[inline(always)]
+unsafe fn next_record(stream: *mut DirectoryStream) -> *mut Dirent {
+    // SAFETY: the caller's exclusive cursor contract covers these field
+    // projections; none of them overlaps the concurrently accessed lock word.
+    let buffer = unsafe { ptr::addr_of_mut!((*stream).buffer).cast::<u8>() };
+    let position = unsafe { &mut *ptr::addr_of_mut!((*stream).buffer_position) };
+    let end = unsafe { &mut *ptr::addr_of_mut!((*stream).buffer_end) };
+    if *position >= *end {
         let result = unsafe {
             raw_syscall::syscall3(
                 raw_syscall::SYS_GETDENTS64,
-                i64::from(stream.file_descriptor),
-                stream.buffer.as_mut_ptr() as usize as i64,
+                i64::from((*stream).file_descriptor),
+                buffer as usize as i64,
                 DIRECTORY_BUFFER_SIZE as i64,
             )
         };
@@ -355,21 +390,21 @@ unsafe fn next_record(stream: &mut DirectoryStream) -> *mut Dirent {
             unsafe { errno::set_errno(EIO) };
             return ptr::null_mut();
         }
-        stream.buffer_position = 0;
-        stream.buffer_end = length;
+        *position = 0;
+        *end = length;
     }
 
-    let record = unsafe { stream.buffer.as_mut_ptr().add(stream.buffer_position) };
-    let remaining = stream.buffer_end - stream.buffer_position;
+    let record = unsafe { buffer.add(*position) };
+    let remaining = *end - *position;
     if remaining < LINUX_DIRENT64_HEADER_SIZE {
-        stream.buffer_position = stream.buffer_end;
+        *position = *end;
         // SAFETY: selected malformed-record handling owns the C errno result.
         unsafe { errno::set_errno(EIO) };
         return ptr::null_mut();
     }
     let record_length = unsafe { ptr::read_unaligned(record.add(16) as *const u16) } as usize;
     if record_length < LINUX_DIRENT64_HEADER_SIZE || record_length > remaining {
-        stream.buffer_position = stream.buffer_end;
+        *position = *end;
         // SAFETY: selected malformed-record handling owns the C errno result.
         unsafe { errno::set_errno(EIO) };
         return ptr::null_mut();
@@ -381,14 +416,16 @@ unsafe fn next_record(stream: &mut DirectoryStream) -> *mut Dirent {
         name_length += 1;
     }
     if name_length == name_limit || name_length > DIRECTORY_NAME_MAX {
-        stream.buffer_position = stream.buffer_end;
+        *position = *end;
         // SAFETY: selected malformed-record handling owns the C errno result.
         unsafe { errno::set_errno(EIO) };
         return ptr::null_mut();
     }
 
-    stream.buffer_position += record_length;
-    stream.tell = unsafe { ptr::read_unaligned(record.add(8) as *const i64) } as c_long;
+    *position += record_length;
+    unsafe {
+        (*stream).tell = ptr::read_unaligned(record.add(8) as *const i64) as c_long;
+    }
     record as *mut Dirent
 }
 
@@ -501,8 +538,8 @@ pub unsafe extern "C" fn readdir(stream: *mut DirectoryStream) -> *mut Dirent {
         return ptr::null_mut();
     }
     // SAFETY: the caller's documented live/exclusive stream requirement
-    // permits a temporary mutable view of its private state.
-    unsafe { next_record(&mut *stream) }
+    // covers the cursor state for this unlocked musl `readdir`.
+    unsafe { next_record(stream) }
 }
 
 /// Read one validated entry name without exposing the private `dirent` layout.
@@ -527,9 +564,9 @@ pub(super) unsafe fn next_entry_name(
     // A zero errno distinguishes normal exhaustion from a null result caused
     // by the selected raw-record/I/O failure path.
     unsafe { errno::set_errno(0) };
-    // SAFETY: the caller's live/exclusive stream contract permits a temporary
-    // mutable view of the same private state used by readdir.
-    let record = unsafe { next_record(&mut *stream) };
+    // SAFETY: the caller's live/exclusive stream contract covers the same
+    // private cursor state used by readdir.
+    let record = unsafe { next_record(stream) };
     let read_errno = unsafe { errno::get_errno() };
     if record.is_null() {
         if read_errno != 0 {
@@ -574,28 +611,38 @@ pub unsafe extern "C" fn readdir_r(
         return EBADF;
     }
     let saved_errno = unsafe { errno::get_errno() };
+    let lock = unsafe { stream_lock(stream) };
+    musl_lock::lock(lock);
     // SAFETY: a zero errno distinguishes normal exhaustion from readdir's
     // selected error result for this legacy C API.
     unsafe { errno::set_errno(0) };
-    let record = unsafe { readdir(stream) };
+    // SAFETY: the held stream lock serializes this cursor update with every
+    // other readdir_r, seekdir, and rewinddir caller.
+    let record = unsafe { next_record(stream) };
     let read_errno = unsafe { errno::get_errno() };
     if read_errno != 0 {
+        musl_lock::unlock(lock);
         return read_errno;
     }
     // SAFETY: normal EOF must leave the caller's previous errno observable.
     unsafe { errno::set_errno(saved_errno) };
-    if record.is_null() {
-        unsafe { *result = ptr::null_mut() };
-        return 0;
-    }
-    let record_length = unsafe { (*record).record_length } as usize;
-    // SAFETY: `next_record` validates that this raw record fits in the private
-    // buffer and in the public 280-byte dirent layout; the caller provides one
-    // complete output dirent and result pointer as documented above.
-    unsafe {
-        ptr::copy_nonoverlapping(record.cast::<u8>(), buffer.cast::<u8>(), record_length);
-        *result = buffer;
-    }
+    let published = if record.is_null() {
+        ptr::null_mut()
+    } else {
+        let record_length = unsafe { (*record).record_length } as usize;
+        // SAFETY: `next_record` validates that this raw record fits in the
+        // private buffer and in the public 280-byte dirent layout; the caller
+        // provides one complete output dirent. Musl copies it before unlocking
+        // because another reader may refill the buffer afterward.
+        unsafe {
+            ptr::copy_nonoverlapping(record.cast::<u8>(), buffer.cast::<u8>(), record_length)
+        };
+        buffer
+    };
+    musl_lock::unlock(lock);
+    // SAFETY: the caller provides writable result-pointer storage; musl
+    // publishes it after releasing the stream.
+    unsafe { *result = published };
     0
 }
 
@@ -828,6 +875,8 @@ pub unsafe extern "C" fn rewinddir(stream: *mut DirectoryStream) {
         unsafe { errno::set_errno(EBADF) };
         return;
     }
+    let lock = unsafe { stream_lock(stream) };
+    musl_lock::lock(lock);
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_LSEEK,
@@ -840,11 +889,13 @@ pub unsafe extern "C" fn rewinddir(stream: *mut DirectoryStream) {
         // SAFETY: the result was checked as Linux's errno encoding.
         unsafe { set_linux_error(result) };
     }
+    // SAFETY: the held stream lock serializes this cursor reset.
     unsafe {
         (*stream).buffer_position = 0;
         (*stream).buffer_end = 0;
         (*stream).tell = 0;
     }
+    musl_lock::unlock(lock);
 }
 
 /// Seek to one opaque directory cookie and discard buffered records.
@@ -861,6 +912,8 @@ pub unsafe extern "C" fn seekdir(stream: *mut DirectoryStream, offset: c_long) {
         unsafe { errno::set_errno(EBADF) };
         return;
     }
+    let lock = unsafe { stream_lock(stream) };
+    musl_lock::lock(lock);
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_LSEEK,
@@ -869,6 +922,7 @@ pub unsafe extern "C" fn seekdir(stream: *mut DirectoryStream, offset: c_long) {
             i64::from(SEEK_SET),
         )
     };
+    // SAFETY: the held stream lock serializes this cursor replacement.
     unsafe {
         if is_linux_error(result) {
             set_linux_error(result);
@@ -879,6 +933,7 @@ pub unsafe extern "C" fn seekdir(stream: *mut DirectoryStream, offset: c_long) {
         (*stream).buffer_position = 0;
         (*stream).buffer_end = 0;
     }
+    musl_lock::unlock(lock);
 }
 
 /// Return the last opaque directory cookie observed by this stream.

@@ -934,6 +934,8 @@ mod chown;
 mod lchown;
 #[path = "hasmntopt.rs"]
 mod hasmntopt;
+#[path = "musl_lock.rs"]
+mod musl_lock;
 #[path = "directory_streams.rs"]
 mod directory_streams;
 // Pinned-musl C filename matching and pathname expansion compose the selected
