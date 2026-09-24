@@ -9,6 +9,15 @@
  * text, and working new loads and TLS in a fresh child thread. Only
  * interleaving-independent counts are printed.
  *
+ * A fork may still land while the loader thread runs a committed
+ * libcc_ok*.so constructor: musl's __ldso_atfork does not hold init_fini_lock
+ * across constructor calls, and in the child ldso/dynlink.c dlopen refuses an
+ * object whose constructors were in flight with "State of %s is inconsistent
+ * due to multithreaded fork\n". Whether a fork hits that window is scheduling,
+ * so the child accepts exactly that diagnostic for such an object (and then
+ * skips its dependent TLS check) and counts every other outcome as a
+ * violation.
+ *
  * `constructor`: dlopen(libfk_ctor.so), whose constructor forks. The child
  * runs a failed load, reopens its still-constructing object and loads a new
  * TLS module before exiting; the parent constructor then completes.
@@ -53,6 +62,19 @@ static void *loader(void *argument)
 
 struct child_scan { int violations; int images; };
 
+/* True when the pending dlerror is musl's fork-inconsistency text for `name`;
+ * consumes the error either way. */
+static int fork_inconsistent(const char *name)
+{
+    static const char prefix[] = "State of ";
+    static const char suffix[] = " is inconsistent due to multithreaded fork\n";
+    const char *error = dlerror();
+    size_t length = strlen(name);
+    return error && !strncmp(error, prefix, sizeof prefix - 1)
+        && !strncmp(error + sizeof prefix - 1, name, length)
+        && !strcmp(error + sizeof prefix - 1 + length, suffix);
+}
+
 static int child_image(struct dl_phdr_info *info, size_t size, void *data)
 {
     struct child_scan *scan = data;
@@ -66,7 +88,11 @@ static int child_image(struct dl_phdr_info *info, size_t size, void *data)
     char symbol[32];
     snprintf(symbol, sizeof symbol, "cc_ok_value%d", index);
     void *handle = dlopen(base, RTLD_NOW | RTLD_NOLOAD);
-    int *value = handle ? dlsym(handle, symbol) : 0;
+    if (!handle) {
+        if (!fork_inconsistent(name)) ++scan->violations;
+        return 0;
+    }
+    int *value = dlsym(handle, symbol);
     if (!value || *value != 900 + index) ++scan->violations;
     return 0;
 }
@@ -86,7 +112,16 @@ static int child_checks(void)
     if (dlopen("libfr_root.so", RTLD_NOW | RTLD_GLOBAL)) ++violations;
     const char *error = dlerror();
     if (!error || strcmp(error, failure_text)) ++violations;
-    if (!dlopen("libcc_ok15.so", RTLD_NOW | RTLD_GLOBAL)) ++violations;
+    if (!dlopen("libcc_ok15.so", RTLD_NOW | RTLD_GLOBAL)) {
+        /* Its constructor was in flight at fork: musl names it by the path it
+         * was loaded under, and its TLS reader is not usable in this child. */
+        static const char suffix[] = "/libcc_ok15.so is inconsistent due to multithreaded fork\n";
+        const char *error = dlerror();
+        size_t length = error ? strlen(error) : 0;
+        if (!error || strncmp(error, "State of ", 9) || length < sizeof suffix - 1
+            || strcmp(error + length - (sizeof suffix - 1), suffix)) ++violations;
+        return violations;
+    }
     int value = 0;
     pthread_t thread;
     if (pthread_create(&thread, 0, child_thread, &value) || pthread_join(thread, 0) || value != 815) ++violations;
