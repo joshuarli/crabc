@@ -14,15 +14,25 @@ static LOCK: AtomicI32 = AtomicI32::new(0);
 // release it, finalizer bodies retain it, and fork acquires graph then callback.
 static CALLBACK_LOCK: AtomicI32 = AtomicI32::new(0);
 
+// Both locks use the three-state futex protocol: 0 is free, 1 is held with no
+// sleeper, and 2 is held with a possible sleeper. A contended acquirer always
+// publishes 2 before it sleeps, so an uncontended release (1 -> 0) needs no
+// FUTEX_WAKE and an uncontended acquire/release pair issues no syscall. This
+// is musl's `__lock`/`__unlock` waiter discipline for its loader locks.
+const FREE: i32 = 0;
+const HELD: i32 = 1;
+const CONTENDED: i32 = 2;
+
 fn acquire(lock: &AtomicI32) {
-    loop {
-        if lock.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed).is_ok() { return; }
-        unsafe { syscall6(202, lock as *const _ as i64, 128, 1, 0, 0, 0); }
+    if lock.compare_exchange(FREE, HELD, Ordering::Acquire, Ordering::Relaxed).is_ok() { return; }
+    while lock.swap(CONTENDED, Ordering::Acquire) != FREE {
+        unsafe { syscall6(202, lock as *const _ as i64, 128, CONTENDED as i64, 0, 0, 0); }
     }
 }
 fn release(lock: &AtomicI32) {
-    lock.store(0, Ordering::Release);
-    unsafe { syscall6(202, lock as *const _ as i64, 129, 1, 0, 0, 0); }
+    if lock.swap(FREE, Ordering::Release) == CONTENDED {
+        unsafe { syscall6(202, lock as *const _ as i64, 129, 1, 0, 0, 0); }
+    }
 }
 
 pub(super) struct CallbackGuard(core::marker::PhantomData<*mut ()>);
@@ -88,4 +98,39 @@ pub(super) unsafe fn isolated_mapping_probe(probe: unsafe fn(&RuntimeGuard) -> b
     } else { pid };
     drop(guard);
     assert!(pid > 0 && waited == pid && status == 0, "isolated mapping probe: pid={pid}, wait={waited}, status={status}");
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use core::sync::atomic::AtomicUsize;
+
+    // Contended acquirers must still exclude one another and wake after the
+    // uncontended fast path stopped issuing an unconditional FUTEX_WAKE.
+    #[test]
+    fn three_state_lock_excludes_contended_workers_and_returns_free() {
+        static TEST_LOCK: AtomicI32 = AtomicI32::new(FREE);
+        static INSIDE: AtomicUsize = AtomicUsize::new(0);
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        const WORKERS: usize = 4;
+        const ROUNDS: usize = 20_000;
+        let workers: std::vec::Vec<_> = (0..WORKERS).map(|_| std::thread::spawn(|| {
+            for round in 0..ROUNDS {
+                acquire(&TEST_LOCK);
+                assert_eq!(INSIDE.fetch_add(1, Ordering::Relaxed), 0, "two owners inside the lock");
+                let value = COUNT.load(Ordering::Relaxed);
+                if round % 64 == 0 { std::thread::yield_now(); }
+                COUNT.store(value + 1, Ordering::Relaxed);
+                INSIDE.fetch_sub(1, Ordering::Relaxed);
+                release(&TEST_LOCK);
+            }
+        })).collect();
+        for worker in workers { worker.join().unwrap(); }
+        assert_eq!(COUNT.load(Ordering::Relaxed), WORKERS * ROUNDS);
+        assert_eq!(TEST_LOCK.load(Ordering::Relaxed), FREE);
+        acquire(&TEST_LOCK);
+        assert_eq!(TEST_LOCK.load(Ordering::Relaxed), HELD, "an uncontended acquire records no sleeper");
+        release(&TEST_LOCK);
+    }
 }

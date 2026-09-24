@@ -89,54 +89,52 @@ enum SymbolLookup { Defined(Definition), UndefinedWeak, MissingStrong }
 
 pub(super) enum RuntimeSymbol { Address(u64), Tls { module: usize, offset: usize } }
 
-/// Read-only dlsym lookup over an explicitly owned scope. The same symbol
+/// Read-only dlsym lookup over an explicitly ordered scope. The same symbol
 /// eligibility and full-definition extent checks as relocation remain active.
+///
+/// Each scope member is examined as its own one-object table: dlsym needs no
+/// cross-object relocation context, so the caller can pass retained records
+/// directly instead of copying a whole-registry snapshot per call. A `None`
+/// member (an unavailable record) fails the lookup like a malformed table.
 /// # Safety
-/// Every record/table is retained and readable under the loader mutation lock;
-/// indices belong to this snapshot. Returned addresses borrow retained maps.
-pub(super) unsafe fn find_runtime_symbol(objects: &[Object], indices: &[usize], name: &[u8]) -> Option<RuntimeSymbol> {
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    {
-        for &owner in indices {
-            let Some(symbol) = (unsafe { lookup_exported(objects, owner, name) })? else {
-                continue;
-            };
-            if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
-                || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
-            { continue; }
-            if symbol.kind == 6 {
-                let object = objects.get(owner)?;
-                if object.tls_module_id == 0 || symbol.section >= 0xff00
-                    || symbol.value.checked_add(symbol.size)? > object.tls_memsz as u64
-                { return None; }
-                return Some(RuntimeSymbol::Tls { module: object.tls_module_id,
-                    offset: usize::try_from(symbol.value).ok()? });
+/// Every record/table is retained and readable under the loader mutation lock.
+/// Returned addresses borrow retained maps.
+pub(super) unsafe fn find_runtime_symbol<'a>(
+    scope: impl IntoIterator<Item = Option<&'a Object>>, name: &[u8],
+) -> Option<RuntimeSymbol> {
+    for object in scope {
+        let objects = core::slice::from_ref(object?);
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let Some(symbol) = (unsafe { lookup_exported(objects, 0, name) })? else {
+            continue;
+        };
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        let Some(symbol) = (|| -> Option<Option<Definition>> {
+            for index in 1..objects[0].symcount {
+                let symbol = unsafe { definition(objects, 0, index) }?;
+                if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
+                    || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
+                { continue; }
+                if unsafe { symbol_name(&objects[0], index) }? == name { return Some(Some(symbol)); }
             }
-            return Some(RuntimeSymbol::Address(unsafe { ordinary_address(objects, symbol) }?));
+            Some(None)
+        })()? else {
+            continue;
+        };
+        if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
+            || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
+        { continue; }
+        if symbol.kind == 6 {
+            let object = &objects[0];
+            if object.tls_module_id == 0 || symbol.section >= 0xff00
+                || symbol.value.checked_add(symbol.size)? > object.tls_memsz as u64
+            { return None; }
+            return Some(RuntimeSymbol::Tls { module: object.tls_module_id,
+                offset: usize::try_from(symbol.value).ok()? });
         }
-        return None;
+        return Some(RuntimeSymbol::Address(unsafe { ordinary_address(objects, symbol) }?));
     }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    for &owner in indices {
-        let object = objects.get(owner)?;
-        for index in 1..object.symcount {
-            let symbol = unsafe { definition(objects, owner, index) }?;
-            if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
-                || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
-            { continue; }
-            if unsafe { symbol_name(object, index) }? != name { continue; }
-            if symbol.kind == 6 {
-                if object.tls_module_id == 0 || symbol.section >= 0xff00
-                    || symbol.value.checked_add(symbol.size)? > object.tls_memsz as u64
-                { return None; }
-                return Some(RuntimeSymbol::Tls { module: object.tls_module_id,
-                    offset: usize::try_from(symbol.value).ok()? });
-            }
-            return Some(RuntimeSymbol::Address(unsafe { ordinary_address(objects, symbol) }?));
-        }
-    }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    { None }
+    None
 }
 
 unsafe fn definition(objects: &[Object], owner: usize, index: usize) -> Option<Definition> {

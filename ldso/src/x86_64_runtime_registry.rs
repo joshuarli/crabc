@@ -24,7 +24,7 @@ use super::x86_64_runtime_memory::{LoaderBuffer, LoaderVec};
 use super::x86_64_runtime_lock::{RuntimeGuard, CallbackGuard, wait_initialization, wake_initialization};
 use super::x86_64_general_relocation::deferred::{self, PendingRelocations, PreparedRetry};
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 #[cfg(test)]
 #[path = "x86_64_runtime_registry_tests.rs"]
@@ -88,6 +88,8 @@ struct RuntimeObject {
     short_name: bool,
     // Ordered DT_NEEDED nodes, in a loader mapping sized to the object.
     needed: LoaderVec<*mut RuntimeObject>,
+    // Lazily retained dlsym dependency order; see `dependency_scope`.
+    dependency_scope: Option<LoaderBuffer<*mut RuntimeObject>>,
     name: [u8; MAX_PATH],
     // Initializers then finalizers, copied once before the node can run
     // either. Musl's ELF arrays have no length bound, so this is sized to the
@@ -98,6 +100,11 @@ struct RuntimeObject {
     // Zero is queued, a positive kernel TID owns an executing constructor,
     // and negative values are terminal initialization/finalization phases.
     callback_state: AtomicI32,
+    // Set under the callback lock by a thread about to sleep on
+    // `callback_state`; every state change a sleeper waits for is also made
+    // under that lock, so the changer issues FUTEX_WAKE only when this was
+    // set. Uncontended constructors and finalizers then make no futex call.
+    callback_waiters: AtomicBool,
 }
 
 impl RuntimeObject {
@@ -109,9 +116,9 @@ impl RuntimeObject {
         let node = address as *mut Self;
         unsafe { core::ptr::write(node, Self { link_map: LinkMap { address: 0, name: core::ptr::null(), dynamic: core::ptr::null(), next: core::ptr::null_mut(), previous: core::ptr::null_mut() }, storage, identity, index,
             next: core::ptr::null_mut(), previous: core::ptr::null_mut(), symbol_next: core::ptr::null_mut(), fini_next: core::ptr::null_mut(), needed_by: core::ptr::null_mut(), global: false, short_name,
-            needed: LoaderVec::new(), name: [0; MAX_PATH],
+            needed: LoaderVec::new(), dependency_scope: None, name: [0; MAX_PATH],
             callbacks: None, initializer_count: 0, finalizer_count: 0,
-            callback_state: AtomicI32::new(0) });
+            callback_state: AtomicI32::new(0), callback_waiters: AtomicBool::new(false) });
             core::ptr::copy_nonoverlapping(name.as_ptr(), (*node).name.as_mut_ptr(), name.len());
             (*node).link_map.name = (*node).name.as_ptr();
             if let ObjectStorage::Runtime(object) = &(*node).storage {
@@ -432,6 +439,7 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
         let state = unsafe { (*node).callback_state.load(Ordering::Acquire) };
         if state < 0 || state == tid { return; }
         if state > 0 || registry.shutting_down {
+            unsafe { (*node).callback_waiters.store(true, Ordering::Relaxed); }
             drop(callbacks);
             drop(guard);
             unsafe { wait_initialization(&(*node).callback_state, state); }
@@ -454,9 +462,17 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
         let current_tid = unsafe { syscall1(186, 0) } as i32;
         unsafe {
             let _ = (*node).callback_state.compare_exchange(current_tid, INITIALIZED, Ordering::AcqRel, Ordering::Acquire);
-            wake_initialization(&(*node).callback_state);
+            wake_callback_waiters(node);
         }
         return;
+    }
+}
+
+/// Wake every sleeper on `node`'s callback state after a change made under
+/// the callback lock; see `RuntimeObject::callback_waiters`.
+unsafe fn wake_callback_waiters(node: *mut RuntimeObject) {
+    if unsafe { (*node).callback_waiters.swap(false, Ordering::Relaxed) } {
+        unsafe { wake_initialization(&(*node).callback_state); }
     }
 }
 
@@ -485,6 +501,7 @@ pub(super) unsafe fn finalize_process() {
     while !node.is_null() {
         let state = unsafe { (*node).callback_state.load(Ordering::Acquire) };
         if (state > 0 && state != tid) || state == CONSTRUCTOR_ABANDONED {
+            unsafe { (*node).callback_waiters.store(true, Ordering::Relaxed); }
             drop(callbacks);
             unsafe { wait_initialization(&(*node).callback_state, state); }
             callbacks = CallbackGuard::acquire();
@@ -500,7 +517,7 @@ pub(super) unsafe fn finalize_process() {
                 let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(address) };
                 unsafe { callback(); }
             }
-            unsafe { (*node).callback_state.store(FINALIZED, Ordering::Release); wake_initialization(&(*node).callback_state); }
+            unsafe { (*node).callback_state.store(FINALIZED, Ordering::Release); wake_callback_waiters(node); }
         }
         node = next;
     }
@@ -940,40 +957,64 @@ unsafe extern "C" fn runtime_close(handle: *mut c_void) -> i32 {
     if unsafe { validated_handle(registry, handle) }.is_some() { 0 } else { 1 }
 }
 
+/// Return `root`'s breadth-first dependency scope (musl's `p->deps`), built
+/// on first use and retained with the published node. A committed object's
+/// `needed` edges never change, so the cached order stays exact.
+/// # Safety
+/// The caller holds the runtime guard and `root` is a published registry node.
+unsafe fn dependency_scope<'a>(registry: &RuntimeRegistry, root: *mut RuntimeObject) -> Option<&'a [*mut RuntimeObject]> {
+    if unsafe { (*root).dependency_scope.is_none() } {
+        let snapshot = unsafe { ObjectSnapshot::collect(registry, &UnpublishedObjects::new()) }?;
+        let order = unsafe { breadth_first_scope(&snapshot, registry, root, false) }?;
+        let mut scope = LoaderBuffer::new(order.count, core::ptr::null_mut())?;
+        for (slot, &index) in scope.as_mut_slice().iter_mut().zip(order.as_slice()) {
+            *slot = snapshot.nodes.as_slice()[index];
+        }
+        unsafe { (*root).dependency_scope = Some(scope); }
+    }
+    unsafe { (*root).dependency_scope.as_ref() }.map(LoaderBuffer::as_slice)
+}
+
 unsafe extern "C" fn runtime_symbol(handle: *mut c_void, name: *const u8, caller: usize, error: *mut i32) -> *mut c_void {
     if error.is_null() || name.is_null() { return core::ptr::null_mut(); }
     unsafe { *error = 0; }
     let Some(length) = (unsafe { bounded_nul(name, MAX_PATH) }) else { unsafe { *error = ERROR_SYMBOL; } return core::ptr::null_mut(); };
     let name = unsafe { core::slice::from_raw_parts(name, length) };
+    // Musl's dlsym performs no allocation: it walks the global symbol list or
+    // the handle's load-time dependency list under its loader lock. Resolve
+    // over the retained records directly, and derive a handle's (immutable)
+    // breadth-first dependency scope once, rather than copying a registry
+    // snapshot and ordering buffers into fresh mappings on every call.
     let result = (|| -> Result<_, i32> {
         let _guard = RuntimeGuard::acquire();
         let registry = unsafe { &*REGISTRY.0.get() };
-        let snapshot = unsafe { ObjectSnapshot::collect(registry, &UnpublishedObjects::new()) }.ok_or(12)?;
-        let mut order = ObjectOrder { indices: LoaderBuffer::new(registry.count, 0).ok_or(12)?, count: 0 };
-        if handle.is_null() || handle.cast::<RuntimeObject>() == registry.head || handle as usize == usize::MAX {
-            let mut node = registry.symbols_head;
+        let found = if handle.is_null() || handle.cast::<RuntimeObject>() == registry.head || handle as usize == usize::MAX {
+            let mut first = registry.symbols_head;
             if handle as usize == usize::MAX {
                 let mut owner = registry.head;
-                for candidate in snapshot.nodes.as_slice() {
-                    let object = unsafe { (**candidate).object() }.ok_or(ERROR_HANDLE)?;
+                let mut candidate = registry.head;
+                while !candidate.is_null() {
+                    let object = unsafe { (*candidate).object() }.ok_or(ERROR_HANDLE)?;
                     if let Some(offset) = (caller as u64).checked_sub(object.base) {
-                        if unsafe { virtual_range_in_load(object.phdr, object.phnum, offset, 1) } { owner = *candidate; break; }
+                        if unsafe { virtual_range_in_load(object.phdr, object.phnum, offset, 1) } { owner = candidate; break; }
                     }
+                    candidate = unsafe { (*candidate).next };
                 }
                 // Musl starts at the caller's physical successor, then
                 // traverses that object's symbol-scope links.
-                node = unsafe { (*owner).next };
+                first = unsafe { (*owner).next };
             }
-            while !node.is_null() {
-                order.indices.as_mut_slice()[order.count] = unsafe { (*node).index };
-                order.count += 1;
-                node = unsafe { (*node).symbol_next };
-            }
+            let scope = core::iter::successors((!first.is_null()).then_some(first), |&node| {
+                let next = unsafe { (*node).symbol_next };
+                (!next.is_null()).then_some(next)
+            });
+            unsafe { x86_64_general_relocation::find_runtime_symbol(scope.map(|node| (*node).object()), name) }
         } else {
             let root = unsafe { validated_handle(registry, handle) }.ok_or(ERROR_HANDLE)?;
-            order = unsafe { breadth_first_scope(&snapshot, registry, root, false) }.ok_or(12)?;
-        }
-        unsafe { x86_64_general_relocation::find_runtime_symbol(snapshot.objects.as_slice(), order.as_slice(), name) }.ok_or(ERROR_SYMBOL)
+            let scope = unsafe { dependency_scope(registry, root) }.ok_or(12)?;
+            unsafe { x86_64_general_relocation::find_runtime_symbol(scope.iter().map(|&node| (*node).object()), name) }
+        };
+        found.ok_or(ERROR_SYMBOL)
     })();
     match result {
         Ok(x86_64_general_relocation::RuntimeSymbol::Address(address)) => address as *mut c_void,
