@@ -81,7 +81,7 @@ use crate::meta::{
     ChildMetadataTheapError, ChildThreadOwner, ChildThreadStartError, ChildThreadStartFailure,
     ChildThreadTeardownError, MetaError,
 };
-use crate::compiler_tls::{default_theap, set_cached_theap, set_default_theap, set_fast_slot};
+use crate::compiler_tls::{default_theap, set_default_theap, set_fast_slot};
 use crate::process_init::ProcessMainBackingBinding;
 use crate::subproc::registry::{SourceSubprocessRegistry, SourceSubprocessRegistryError};
 use crate::types::heap_registry::SourceHeapRegistryError;
@@ -507,6 +507,10 @@ pub(crate) enum ChildThreadDoneError {
     PagesRemain,
     /// Page drain or release could not run; the member is unchanged.
     PageEngine(ChildMetadataPageEngineError),
+    /// A Theap of a non-main Heap could not be drained or released: one with
+    /// a live block (which cannot be abandoned to a non-main Heap yet), or a
+    /// metadata failure. The member's state is terminal.
+    HeapTheap(crate::meta::ChildHeapTheapError),
     /// A teardown step after the roots were reset failed; the member is
     /// terminally retained.
     Teardown(ChildThreadTeardownError),
@@ -594,6 +598,11 @@ impl ChildThreadMember {
     #[inline]
     pub(crate) const fn thread(&self) -> crate::types::LiveThreadId { self.owner.thread() }
 
+    /// This member's thread owner, for the Heap operations of
+    /// `types::heap_registry::lifecycle`.
+    #[inline]
+    pub(crate) fn owner_mut(&mut self) -> &mut crate::meta::ChildThreadOwner { &mut self.owner }
+
     /// Projects the child subprocess image this thread belongs to.
     pub(crate) fn with_child_image<R>(
         &mut self,
@@ -625,6 +634,14 @@ impl ChildThreadMember {
         if !self.owner.belongs_to(child) {
             return Err(ChildThreadDoneError::WrongChild);
         }
+        // init.c:465 `_mi_thread_locals_thread_done`, then init.c:392-395 for
+        // the thread's Theaps of non-main Heaps.
+        let owner: *mut crate::meta::ChildThreadOwner = &mut self.owner;
+        let child_pointer: *mut ChildMainHeapContextOwner<'_> = child;
+        // SAFETY: forwarded current-thread obligations; neither pointer is
+        // otherwise borrowed for the call.
+        unsafe { crate::meta::ChildThreadOwner::drain_heap_theaps_for_thread_done(owner, child_pointer, binding) }
+            .map_err(ChildThreadDoneError::HeapTheap)?;
         // init.c:392-395 `_mi_theap_collect_abandon`: release the all-free
         // pages and hand every page with a live block to the child main Heap.
         // SAFETY: forwarded current-thread and quiescence obligations.
@@ -650,7 +667,10 @@ impl ChildThreadMember {
             core::ptr::NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr())
         };
         set_default_theap(empty);
-        set_cached_theap(empty);
+        // init.c:397 and 401-419 for the Theaps of non-main Heaps.
+        // SAFETY: forwarded; their pages are gone.
+        unsafe { self.owner.release_heap_theaps_for_thread_done(child, binding) }
+            .map_err(ChildThreadDoneError::HeapTheap)?;
         // init.c:401-419 and `mi_tld_free`.
         // SAFETY: forwarded obligations; the roots no longer name the Theap.
         unsafe { self.owner.teardown(child, binding) }.map_err(ChildThreadDoneError::Teardown)

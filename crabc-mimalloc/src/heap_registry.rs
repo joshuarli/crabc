@@ -449,6 +449,424 @@ impl Heap {
     }
 }
 
+/// Raw source transitions on the Theap, TLD, Heap, and Page images used by the
+/// per-thread Theaps of non-main child Heaps and by `mi_heap_destroy`
+/// (`src/theap.c:236-412`, `src/heap.c:162-251`, `src/arena.c:677-723,
+/// 1216-1298, 2531-2644`, `src/prim/prim-tls.c:211-229`). Each operates on
+/// individual fields; callers own the list or page state they change.
+impl super::Theap {
+    /// `_mi_theap_incref` (`theap.c:357-362`): a Theap with a freeable
+    /// image counts each cached reference.
+    ///
+    /// # Safety
+    /// `theap` is a live Theap image.
+    pub(crate) unsafe fn incref_at(theap: core::ptr::NonNull<Self>) {
+        // SAFETY: forwarded liveness; `refcount` and `memid` are read or
+        // updated field by field.
+        unsafe {
+            if (*theap.as_ptr()).memid.kind() == super::MemoryKind::Malloc {
+                (*theap.as_ptr()).refcount.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+    }
+
+    /// `_mi_theap_decref` (`theap.c:364-370`) up to `mi_theap_free_mem`:
+    /// `true` when this dropped the last reference, so the caller must free
+    /// the image (and count it out of `theaps` unless it is detached).
+    ///
+    /// # Safety
+    /// `theap` is a live Theap image holding the reference being dropped.
+    pub(crate) unsafe fn decref_at(theap: core::ptr::NonNull<Self>) -> bool {
+        // SAFETY: as for `incref_at`.
+        unsafe {
+            (*theap.as_ptr()).memid.kind() == super::MemoryKind::Malloc
+                && (*theap.as_ptr()).refcount.fetch_sub(1, Ordering::AcqRel) == 1
+        }
+    }
+
+    /// The Heap this Theap names (`_mi_theap_heap_peek`), or null.
+    ///
+    /// # Safety
+    /// `theap` is a live Theap image or the static empty Theap.
+    #[inline]
+    pub(crate) unsafe fn heap_at(theap: core::ptr::NonNull<Self>) -> *mut Heap {
+        // SAFETY: forwarded; an atomic field load.
+        unsafe { (*theap.as_ptr()).heap.load(Ordering::Acquire) }
+    }
+
+    /// The TLD this Theap names, or null once detached.
+    ///
+    /// # Safety
+    /// `theap` is a live Theap image.
+    #[inline]
+    pub(crate) unsafe fn tld_at(theap: core::ptr::NonNull<Self>) -> *mut super::ThreadLocalData {
+        // SAFETY: forwarded; a field read by the owning thread or under
+        // the caller's list exclusion.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*theap.as_ptr()).tld)) }
+    }
+
+    /// Whether this Theap is a detached (metadata) Theap, which the
+    /// `theaps` statistic does not count (`theap.c:290-292,350-352`).
+    ///
+    /// # Safety
+    /// `theap` is a live Theap image.
+    #[inline]
+    pub(crate) unsafe fn is_detached_at(theap: core::ptr::NonNull<Self>) -> bool {
+        // SAFETY: forwarded; immutable after initialization.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*theap.as_ptr()).is_detached)) }
+    }
+
+    /// The next Theap on this Theap's TLD list.
+    ///
+    /// # Safety
+    /// `theap` is a live Theap image and the caller excludes TLD-list changes.
+    #[inline]
+    pub(crate) unsafe fn tld_next_at(theap: core::ptr::NonNull<Self>) -> *mut Self {
+        // SAFETY: forwarded.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*theap.as_ptr()).tnext)) }
+    }
+}
+
+impl super::ThreadLocalData {
+    /// Source `_mi_tld_detach_theaps` (`theap.c:414-445`) and the list pass
+    /// of `mi_thread_theaps_done` (`init.c:401-415`) for one Theap of a
+    /// finishing thread: its statistics merge into its Heap and it leaves the
+    /// Heap's list (try-locking the Heap and backing off, counting
+    /// `heaps_delete_wait`, while a Heap operation holds it), its Heap
+    /// identity is cleared, then it leaves this TLD's list. The caller drops
+    /// its Heap reference next.
+    ///
+    /// # Safety
+    /// `tld` is the finishing thread's live TLD, `theap` a live member of its
+    /// list, and the Theap owns no page.
+    pub(crate) unsafe fn detach_theap_for_thread_done(
+        tld: core::ptr::NonNull<Self>,
+        theap: core::ptr::NonNull<super::Theap>,
+        subprocess: &SubprocessIdentity,
+    ) -> Result<(), SourceHeapRegistryError> {
+        let theap = theap.as_ptr();
+        loop {
+            // SAFETY: forwarded liveness; the Heap stays live while a Theap
+            // names it (a Heap free first detaches its Theaps).
+            let heap = unsafe { (*theap).heap.load(Ordering::Acquire) };
+            if heap.is_null() {
+                break;
+            }
+            let heap = unsafe { &*heap };
+            match heap.theaps_lock.try_lock() {
+                Some(guard) => {
+                    // SAFETY: the held Heap lock serializes its list.
+                    unsafe {
+                        heap.statistics.merge_from_and_reset(&(*theap).statistics);
+                        let (hnext, hprev) = (*(*theap).hnext.get(), *(*theap).hprev.get());
+                        if !hnext.is_null() { *(*hnext).hprev.get() = hprev; }
+                        if !hprev.is_null() {
+                            *(*hprev).hnext.get() = hnext;
+                        } else {
+                            core::ptr::addr_of!(heap.theaps).cast_mut().write(hnext);
+                        }
+                        *(*theap).hnext.get() = core::ptr::null_mut();
+                        *(*theap).hprev.get() = core::ptr::null_mut();
+                        (*theap).heap.store(core::ptr::null_mut(), Ordering::Release);
+                    }
+                    guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+                    break;
+                }
+                None => {
+                    subprocess.record_statistics_heap_delete_wait();
+                    let _ = crate::os::thread_yield();
+                }
+            }
+        }
+        // SAFETY: the TLD lock serializes this thread's list.
+        let guard = unsafe { (*tld.as_ptr()).theaps_lock.lock() }.map_err(SourceHeapRegistryError::ListLockAcquire)?;
+        unsafe {
+            let tld = tld.as_ptr();
+            let (tnext, tprev) = ((*theap).tnext, (*theap).tprev);
+            if !tnext.is_null() { (*tnext).tprev = tprev; }
+            if !tprev.is_null() { (*tprev).tnext = tnext; } else { (*tld).theaps = tnext; }
+            (*theap).tnext = core::ptr::null_mut();
+            (*theap).tprev = core::ptr::null_mut();
+            (*theap).tld = core::ptr::null_mut();
+        }
+        guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)
+    }
+
+    /// The first Theap on this TLD's list.
+    ///
+    /// # Safety
+    /// `tld` is live and the caller excludes TLD-list changes.
+    #[inline]
+    pub(crate) unsafe fn theaps_head_at(tld: core::ptr::NonNull<Self>) -> *mut super::Theap {
+        // SAFETY: forwarded.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*tld.as_ptr()).theaps)) }
+    }
+}
+
+impl Heap {
+    /// Source `_mi_heap_detach_theaps` (`theap.c:381-412`) then the list
+    /// hand-off of `mi_heap_free_theaps` (`heap.c:162-172`): every Theap of
+    /// this Heap leaves its TLD's list, taking that TLD's lock with a
+    /// try-lock and backing off (counting `heaps_delete_wait`) while a
+    /// finishing thread holds it; then the Heap list is emptied and returned
+    /// through `visit` in list order, with each Theap's Heap links cleared.
+    /// `visit` merges statistics and drops the Heap's reference.
+    ///
+    /// # Safety
+    /// The Heap and every listed Theap and TLD are live; the caller excludes
+    /// other Heap-list operations on this Heap. A thread that finishes
+    /// concurrently changes its TLD list only under that TLD's lock.
+    pub(crate) unsafe fn detach_and_take_theaps(
+        &self,
+        subprocess: &SubprocessIdentity,
+        mut visit: impl FnMut(core::ptr::NonNull<super::Theap>),
+    ) -> Result<(), SourceHeapRegistryError> {
+        loop {
+            let guard = self.theaps_lock.lock().map_err(SourceHeapRegistryError::ListLockAcquire)?;
+            let mut all_detached = true;
+            let mut current = self.theaps;
+            while let Some(theap) = core::ptr::NonNull::new(current) {
+                // SAFETY: the held Heap lock keeps the list and its members.
+                let theap = theap.as_ptr();
+                let next = unsafe { *(*theap).hnext.get() };
+                let tld = unsafe { (*theap).tld };
+                if !tld.is_null() {
+                    // SAFETY: a listed Theap's TLD is live while it names it.
+                    match unsafe { (*tld).theaps_lock.try_lock() } {
+                        Some(tld_guard) => {
+                            // SAFETY: the TLD lock serializes its list.
+                            unsafe {
+                                let (tnext, tprev) = ((*theap).tnext, (*theap).tprev);
+                                if !tnext.is_null() { (*tnext).tprev = tprev; }
+                                if !tprev.is_null() { (*tprev).tnext = tnext; } else { (*tld).theaps = tnext; }
+                                (*theap).tnext = core::ptr::null_mut();
+                                (*theap).tprev = core::ptr::null_mut();
+                                (*theap).tld = core::ptr::null_mut();
+                            }
+                            tld_guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+                        }
+                        None => all_detached = false,
+                    }
+                }
+                current = next;
+            }
+            guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+            if all_detached {
+                break;
+            }
+            subprocess.record_statistics_heap_delete_wait();
+            let _ = crate::os::thread_yield();
+        }
+        let guard = self.theaps_lock.lock().map_err(SourceHeapRegistryError::ListLockAcquire)?;
+        // SAFETY: the held lock serializes the Heap list; no TLD names these
+        // Theaps any longer.
+        let mut current = unsafe {
+            let head = self.theaps;
+            core::ptr::addr_of!(self.theaps).cast_mut().write(core::ptr::null_mut());
+            head
+        };
+        while let Some(theap) = core::ptr::NonNull::new(current) {
+            // SAFETY: as above.
+            unsafe {
+                current = *(*theap.as_ptr()).hnext.get();
+                *(*theap.as_ptr()).hnext.get() = core::ptr::null_mut();
+                *(*theap.as_ptr()).hprev.get() = core::ptr::null_mut();
+            }
+            visit(theap);
+        }
+        guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)
+    }
+
+    /// This Heap's subprocess identity (immutable after initialization).
+    #[inline]
+    pub(crate) fn subprocess_pointer(&self) -> *mut SubprocessIdentity { self.subprocess }
+
+    /// The Heap's slot for arena `arena_index` (`mi_heap_arena_pages`).
+    #[inline]
+    pub(crate) fn arena_pages_slot(&self, arena_index: usize) -> Option<core::ptr::NonNull<super::ArenaPages>> {
+        core::ptr::NonNull::new(self.arena_pages.get(arena_index)?.load(Ordering::Acquire))
+    }
+
+    /// One bitmap of this non-main Heap's `mi_arena_pages_t` for `arena`:
+    /// index 0 is `pages`, `1 + bin` is `pages_abandoned[bin]`.
+    ///
+    /// # Safety
+    /// The Heap's image for this arena, if any, stays live while the view is
+    /// used.
+    pub(crate) unsafe fn non_main_arena_pages_bitmap<'a>(
+        &self,
+        arena: &crate::arena::ArenaView<'a>,
+        bitmap: usize,
+    ) -> Option<crate::bitmap::BitmapView<'a>> {
+        if self.is_subprocess_main() {
+            return None;
+        }
+        let pages = self.arena_pages_slot(arena.arena().arena_index)?;
+        let layout = crate::arena::ArenaPagesLayout::for_slice_count(arena.arena().slice_count)?;
+        // SAFETY: an installed image was initialized with this exact layout
+        // before its Release publication.
+        let pointer = unsafe {
+            if bitmap == 0 { (*pages.as_ptr()).pages } else { *(*pages.as_ptr()).pages_abandoned.get(bitmap - 1)? }
+        };
+        // SAFETY: as above.
+        unsafe { crate::bitmap::BitmapView::attach(pointer, layout.bitmap_layout().byte_size(), layout.bitmap_layout()) }
+    }
+
+    /// Source `mi_heap_ensure_arena_pages` (`arena.c:699-723`) for a non-main
+    /// Heap: under the Heap's `arena_pages_lock`, `allocate` supplies a
+    /// zeroed, `BCHUNK_SIZE`-aligned block of the source `mi_arena_pages_t`
+    /// size for `arena` (source allocates it with `mi_heap_zalloc_aligned`
+    /// from the subprocess main Heap, `arena.c:1661-1672`), whose bitmaps are
+    /// initialized and whose header is Release-published into the slot.
+    ///
+    /// # Safety
+    /// `arena` is a live arena of this Heap's subprocess; `allocate` returns
+    /// an exclusively owned block of at least the requested size.
+    pub(crate) unsafe fn ensure_non_main_arena_pages(
+        &self,
+        arena: &crate::arena::ArenaView<'_>,
+        allocate: impl FnOnce(usize, usize) -> Option<core::ptr::NonNull<u8>>,
+    ) -> bool {
+        let index = arena.arena().arena_index;
+        if self.is_subprocess_main() || index >= self.arena_pages.len() {
+            return false;
+        }
+        if self.arena_pages_slot(index).is_some() {
+            return true;
+        }
+        let Some(layout) = crate::arena::ArenaPagesLayout::for_slice_count(arena.arena().slice_count) else {
+            return false;
+        };
+        let Ok(guard) = self.arena_pages_lock.lock() else { return false };
+        let installed = self.arena_pages_slot(index).is_some() || 'image: {
+            let Some(block) = allocate(layout.byte_size(), crate::bitmap::BCHUNK_SIZE) else { break 'image false };
+            let mut pointers = [core::ptr::null_mut(); crate::config::ARENA_BIN_COUNT + 1];
+            for (bitmap, slot) in pointers.iter_mut().enumerate() {
+                let Some(offset) = layout.bitmap_offset(bitmap) else { break 'image false };
+                // SAFETY: the block holds the complete layout.
+                let pointer = unsafe { block.as_ptr().add(offset) };
+                // SAFETY: a zeroed, exclusively owned bitmap image.
+                if unsafe {
+                    crate::bitmap::BitmapView::initialize_zeroed(pointer, layout.bitmap_layout().byte_size(), layout.bitmap_layout())
+                }.is_none() {
+                    break 'image false;
+                }
+                *slot = pointer;
+            }
+            // SAFETY: the header lies at the block start, written before
+            // the Release publication below.
+            unsafe {
+                block.as_ptr().cast::<super::ArenaPages>().write(super::ArenaPages {
+                    pages: pointers[0],
+                    pages_abandoned: core::array::from_fn(|bin| pointers[bin + 1]),
+                });
+            }
+            self.arena_pages[index].store(block.as_ptr().cast(), Ordering::Release);
+            true
+        };
+        guard.unlock().is_ok() && installed
+    }
+
+    /// Clears every `mi_arena_pages_t` slot of this non-main Heap and
+    /// returns each image through `free`, in arena order (`heap.c:185-194`).
+    pub(crate) fn take_non_main_arena_pages(&self, mut free: impl FnMut(core::ptr::NonNull<u8>) -> bool) -> bool {
+        if self.is_subprocess_main() {
+            return false;
+        }
+        let Ok(guard) = self.arena_pages_lock.lock() else { return false };
+        let mut freed = true;
+        for slot in &self.arena_pages {
+            let pages = slot.load(Ordering::Relaxed);
+            if let Some(pages) = core::ptr::NonNull::new(pages) {
+                slot.store(core::ptr::null_mut(), Ordering::Relaxed);
+                freed &= free(pages.cast());
+            }
+        }
+        guard.unlock().is_ok() && freed
+    }
+
+    /// Records one page leaving this Heap without a Theap
+    /// (`mi_heap_stat_decrease` of `page_bins[bin]` and `pages`).
+    #[inline]
+    pub(crate) fn record_page_released(&self, statistics_bin: usize) -> bool {
+        self.statistics.page_released(statistics_bin)
+    }
+}
+
+impl super::Page {
+    /// The Theap this page names (`page->theap`).
+    ///
+    /// # Safety
+    /// `page` is live page metadata whose owner does not change during the
+    /// read (for example, the page of a live block of the calling thread).
+    #[inline]
+    pub(crate) unsafe fn theap_at(page: core::ptr::NonNull<Self>) -> *mut super::Theap {
+        // SAFETY: forwarded; a raw field read.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).theap)) }
+    }
+
+    /// `mi_heap_delete_page`'s ownership steps for `mi_heap_destroy`
+    /// (`arena.c:2531-2552`, destroy arm): claim the page's low owner bit,
+    /// then, for a page that is not abandoned, clear its queue links and
+    /// abandon its identity (`mi_page_set_theap(page, NULL)`), and set
+    /// `used` to zero. Returns `false`, changing nothing further, for an
+    /// abandoned page, whose non-main unabandon route does not exist.
+    ///
+    /// # Safety
+    /// `page` is live page metadata of a Heap whose Theaps are all detached,
+    /// so no thread operates on the page, and it stays live until freed.
+    pub(crate) unsafe fn claim_for_heap_destroy(page: core::ptr::NonNull<Self>) -> bool {
+        let page = page.as_ptr();
+        // SAFETY: forwarded; atomic fields, then fields no thread uses.
+        unsafe {
+            (*page).xthread_free.fetch_or(1, Ordering::AcqRel);
+            let thread = (*page).xthread_id.load(Ordering::Relaxed) & !(super::PAGE_FLAG_MASK as usize);
+            if thread <= super::THREAD_ID_ABANDONED_MAPPED {
+                return false;
+            }
+            (*page).next = core::ptr::null_mut();
+            (*page).prev = core::ptr::null_mut();
+            (*page).theap = core::ptr::null_mut();
+            let mut old = (*page).xthread_id.load(Ordering::Relaxed);
+            loop {
+                let new = super::THREAD_ID_ABANDONED | (old & super::PAGE_FLAG_MASK as usize);
+                match (*page).xthread_id.compare_exchange_weak(old, new, Ordering::Release, Ordering::Relaxed) {
+                    Ok(_) => break,
+                    Err(current) => old = current,
+                }
+            }
+            (*page).used = 0;
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+impl super::Theap {
+    /// `(hnext, hprev, tnext, tprev, tld)` of a live Theap, for the pinned-C
+    /// list checks.
+    ///
+    /// # Safety
+    /// No list operation runs during the read.
+    pub(crate) unsafe fn test_list_links(
+        theap: core::ptr::NonNull<Self>,
+    ) -> (*mut Self, *mut Self, *mut Self, *mut Self, *mut super::ThreadLocalData) {
+        let theap = theap.as_ptr();
+        unsafe { (*(*theap).hnext.get(), *(*theap).hprev.get(), (*theap).tnext, (*theap).tprev, (*theap).tld) }
+    }
+}
+
+#[cfg(test)]
+impl Heap {
+    /// The head of this Heap's Theap list.
+    pub(crate) fn test_theaps_head(&self) -> *mut super::Theap { self.theaps }
+
+    /// How many per-arena page records this Heap has.
+    pub(crate) fn test_arena_page_record_count(&self) -> usize {
+        self.arena_pages.iter().filter(|slot| !slot.load(Ordering::Relaxed).is_null()).count()
+    }
+}
+
 #[cfg(test)]
 impl SubprocessHeapList {
     /// The list head, for the pinned-C list-order checks.

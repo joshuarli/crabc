@@ -1740,6 +1740,35 @@ pub(crate) struct ChildThreadOwner {
     state: ChildThreadOwnerState,
     pending_os_release: Option<crate::os_page::OsAlignedPageOwner>,
     page_engine: ChildPageEngineState,
+    /// This thread's regular dynamic thread-local slots
+    /// (`mi_thread_locals_t`), allocated from the child's metadata as
+    /// `mi_thread_locals_expand` does with `_mi_subproc()`, and installed in
+    /// the compiler-TLS dynamic root.
+    thread_locals: Option<ChildMetadataImageBlock>,
+}
+
+/// One child-thread Theap for a non-main Heap: the source `mi_theap_t` at
+/// offset zero, then this Theap's own page-engine state.
+///
+/// Source `_mi_theap_alloc` takes `sizeof(mi_theap_t)` from the Heap's
+/// subprocess metadata (`theap.c:307-328`). The image also carries the page
+/// engine state that the thread's main-Heap Theap keeps in its
+/// [`ChildThreadOwner`] (only the engine state: a retained raw-unmap retry
+/// owner would move the block out of the source size class, so a failed OS
+/// page release on this Theap latches the engine `Poisoned` and leaks that
+/// mapping instead of retaining it for a retry), because pinned `mi_arena_pages_alloc`
+/// (`arena.c:1661-1672`) allocates a non-main Heap's per-arena page record
+/// with `mi_heap_zalloc_aligned(heap_main, ...)` from inside a page
+/// allocation for that Heap (`mi_heap_ensure_arena_pages`, `arena.c:804`):
+/// the inner allocation runs a second page operation on the thread's
+/// main-Heap Theap while the outer one is still in progress on this Theap.
+/// Source page queues and their state are per Theap, so each engine owns its
+/// Theap's state. The larger block keeps the source size class
+/// (`heap_lifecycle::tests::child_heap_theap_image_keeps_the_theap_size_class`).
+#[repr(C)]
+pub(crate) struct ChildHeapTheapImage {
+    theap: Theap,
+    page_engine: ChildPageEngineState,
 }
 
 impl ChildThreadOwner {
@@ -1994,6 +2023,524 @@ impl ChildThreadOwner {
         }
         self.state = ChildThreadOwnerState::Complete;
         Ok(())
+    }
+}
+
+/// Why a child thread's Theap for a non-main Heap could not be found,
+/// created, or used.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildHeapTheapError {
+    /// The thread owner, Heap, or Theap is not in a usable state.
+    InvalidTransition,
+    /// The child metadata page engine could not run.
+    PageEngine(ChildMetadataPageEngineError),
+    /// The thread-local slot array could not grow (`mi_thread_locals_expand`).
+    ThreadLocals,
+    /// `_mi_theap_alloc` returned null.
+    TheapAllocation,
+    /// `_mi_theap_init` failed after the image was allocated; it is retained.
+    TheapInitialization(crate::types::TheapDynamicInitError),
+    /// A metadata image could not be freed.
+    Metadata(FreeError),
+}
+
+/// The regular thread-local key a Heap's Theaps use (`heap->theap`).
+fn heap_theap_key(heap: NonNull<Heap>) -> Option<crate::thread_local::ThreadLocalKey> {
+    // SAFETY: the caller's live Heap; an immutable field.
+    let raw = unsafe { heap.as_ref() }.regular_theap_slot() as u64;
+    let index = crate::thread_local::ThreadLocalSlotIndex::new((raw & crate::thread_local::TLS_INDEX_MASK) as usize)?;
+    crate::thread_local::ThreadLocalKey::from_parts(index, raw >> crate::thread_local::TLS_INDEX_BITS)
+}
+
+impl ChildThreadOwner {
+    #[inline]
+    fn tld_pointer(&self) -> Option<NonNull<ThreadLocalData>> {
+        self.tld.as_ref().map(|block| block.pointer.cast())
+    }
+
+    /// `_mi_thread_local_get` for a regular key (`threadlocal.c:169-190`).
+    fn thread_local_get(&self, key: crate::thread_local::ThreadLocalKey) -> *mut () {
+        let Some(block) = self.thread_locals.as_ref() else { return core::ptr::null_mut() };
+        // SAFETY: this owner retains the exact slot image it installed, and
+        // only this thread uses it.
+        let slots = unsafe { (*block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).slots_mut() };
+        crate::thread_local::ThreadLocalSlots::new(slots).get(key)
+    }
+
+    /// `_mi_thread_local_set` for a regular key (`threadlocal.c:103-166`):
+    /// a slot beyond the array grows it (`mi_thread_locals_expand`, 16 slots
+    /// first, then doubling) with a fresh zeroed child metadata block, the
+    /// old slots copied and the old block freed, as `_mi_meta_rezalloc`.
+    ///
+    /// # Safety
+    /// This runs on this owner's thread; `child` is its context.
+    unsafe fn thread_local_set(
+        &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        key: crate::thread_local::ThreadLocalKey,
+        value: *mut (),
+    ) -> Result<(), ChildHeapTheapError> {
+        let count = self.thread_locals.as_ref().map_or(0, |block| {
+            // SAFETY: the retained slot image.
+            unsafe { (*block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).count() }
+        });
+        let index = key.index().get();
+        if index >= count {
+            if value.is_null() {
+                return Ok(());
+            }
+            let new_count = crate::thread_local::expanded_slot_count(count, index)
+                .map_err(|_| ChildHeapTheapError::ThreadLocals)?;
+            let size = DynamicThreadLocalBacking::allocation_size(new_count)
+                .ok_or(ChildHeapTheapError::ThreadLocals)?;
+            let old = self.thread_locals.as_ref().map(|block| block.pointer);
+            let mut grown = None;
+            child
+                .with_metadata_page_engine(binding, |_child, engine| {
+                    let Some(block) = engine.allocate_zeroed(size) else { return };
+                    let image = block.cast::<DynamicThreadLocalBacking>().as_ptr();
+                    // SAFETY: a fresh zeroed block of the exact flexible size;
+                    // the old image, if any, holds `count` initialized slots.
+                    unsafe {
+                        (*image).initialize_owned_header(MemoryId::malloc(block.as_ptr(), size, true), new_count);
+                        if let Some(old) = old {
+                            let from = (*old.cast::<DynamicThreadLocalBacking>().as_ptr()).slots_mut().as_ptr();
+                            let to = (*image).slots_mut().as_mut_ptr();
+                            core::ptr::copy_nonoverlapping(from, to, count);
+                        }
+                    }
+                    grown = Some(block);
+                    if let Some(old) = old {
+                        // SAFETY: the exact old slot image, no longer used.
+                        if unsafe { engine.free(old) }.is_err() {
+                            grown = None;
+                        }
+                    }
+                })
+                .map_err(ChildHeapTheapError::PageEngine)?;
+            let block = grown.ok_or(ChildHeapTheapError::ThreadLocals)?;
+            crate::compiler_tls::install_dynamic_backing(block.cast());
+            self.thread_locals = Some(ChildMetadataImageBlock { pointer: block, size });
+        }
+        let block = self.thread_locals.as_ref().ok_or(ChildHeapTheapError::ThreadLocals)?;
+        // SAFETY: the retained slot image, now large enough.
+        let slots = unsafe { (*block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).slots_mut() };
+        crate::thread_local::ThreadLocalSlots::new(slots)
+            .set(key, value)
+            .map_err(|_| ChildHeapTheapError::ThreadLocals)
+    }
+
+    /// `_mi_thread_locals_thread_done` (`threadlocal.c:192-202`): free the
+    /// slot array and clear the compiler-TLS root.
+    ///
+    /// # Safety
+    /// As for [`Self::thread_local_set`]; no slot is used again.
+    unsafe fn free_thread_locals(
+        &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<(), ChildHeapTheapError> {
+        let Some(block) = self.thread_locals.as_ref().map(|block| block.pointer) else { return Ok(()) };
+        let mut freed = None;
+        child
+            .with_metadata_page_engine(binding, |_child, engine| {
+                // SAFETY: the exact slot image this owner installed.
+                freed = Some(unsafe { engine.free(block) });
+            })
+            .map_err(ChildHeapTheapError::PageEngine)?;
+        match freed {
+            Some(Ok(())) => {
+                crate::compiler_tls::clear_dynamic_backing();
+                self.thread_locals = None;
+                Ok(())
+            }
+            Some(Err(error)) => Err(ChildHeapTheapError::Metadata(error)),
+            None => Err(ChildHeapTheapError::InvalidTransition),
+        }
+    }
+
+    /// `_mi_theap_cached_set` (`prim-tls.c:211-229`): the cached Theap takes
+    /// a reference to `theap` and drops the one it held, freeing a Theap
+    /// whose last reference that was.
+    ///
+    /// # Safety
+    /// This runs on this owner's thread; `theap` is a live Theap of this
+    /// thread or the empty Theap; `child` is its context.
+    pub(crate) unsafe fn cached_set(
+        &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        theap: NonNull<Theap>,
+    ) -> Result<(), ChildHeapTheapError> {
+        let previous = crate::compiler_tls::cached_theap();
+        if previous == theap {
+            return Ok(());
+        }
+        crate::compiler_tls::set_cached_theap(theap);
+        // SAFETY: forwarded liveness of both Theaps.
+        unsafe {
+            Theap::incref_at(theap);
+            self.theap_decref(child, binding, previous)
+        }
+    }
+
+    /// `_mi_theap_decref` with `mi_theap_free_mem` (`theap.c:347-370`).
+    ///
+    /// # Safety
+    /// `theap` is a live Theap holding the reference being dropped; a Theap
+    /// freed here is on no list and no root names it.
+    pub(crate) unsafe fn theap_decref(
+        &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        theap: NonNull<Theap>,
+    ) -> Result<(), ChildHeapTheapError> {
+        // SAFETY: forwarded.
+        if !unsafe { Theap::decref_at(theap) } {
+            return Ok(());
+        }
+        // SAFETY: as above; the flag is immutable.
+        if !unsafe { Theap::is_detached_at(theap) } {
+            child.context.with_image(|image| image.identity().record_statistics_theap_unlinked());
+        }
+        let mut freed = None;
+        child
+            .with_metadata_page_engine(binding, |_child, engine| {
+                // SAFETY: the exact child metadata image of this Theap.
+                freed = Some(unsafe { engine.free(theap.cast()) });
+            })
+            .map_err(ChildHeapTheapError::PageEngine)?;
+        match freed {
+            Some(Ok(())) => Ok(()),
+            Some(Err(error)) => Err(ChildHeapTheapError::Metadata(error)),
+            None => Err(ChildHeapTheapError::InvalidTransition),
+        }
+    }
+
+    /// Pinned `_mi_heap_theap` (`prim-tls.h:389-397`) for a non-main Heap of
+    /// this thread's child: the cached Theap if it belongs to `heap`,
+    /// otherwise `_mi_heap_theap_get_or_init` (`heap.c:59-99`): the Theap on
+    /// the Heap's thread-local slot, or a fresh one from `_mi_theap_create`
+    /// (child metadata, `_mi_theap_init` at the head of this TLD's list and
+    /// of the Heap's, counted in `theaps`) stored on that slot; then it
+    /// becomes the cached Theap.
+    ///
+    /// # Safety
+    /// This runs on this owner's thread, `heap` is a live non-main Heap of
+    /// `child`, and no other operation on `child` runs.
+    pub(crate) unsafe fn heap_theap(
+        &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        heap: NonNull<Heap>,
+    ) -> Result<NonNull<Theap>, ChildHeapTheapError> {
+        let cached = crate::compiler_tls::cached_theap();
+        // SAFETY: the cached root names a live Theap or the empty Theap.
+        if unsafe { Theap::heap_at(cached) } == heap.as_ptr() {
+            return Ok(cached);
+        }
+        let key = heap_theap_key(heap).ok_or(ChildHeapTheapError::InvalidTransition)?;
+        let theap = match NonNull::new(self.thread_local_get(key).cast::<Theap>()) {
+            Some(theap) => theap,
+            None => {
+                // SAFETY: forwarded.
+                let theap = unsafe { self.create_heap_theap(child, binding, heap) }?;
+                // SAFETY: forwarded; `_mi_heap_theap_set`.
+                unsafe { self.thread_local_set(child, binding, key, theap.as_ptr().cast()) }?;
+                theap
+            }
+        };
+        // SAFETY: forwarded; `theap` is this thread's live Theap for `heap`.
+        unsafe { self.cached_set(child, binding, theap) }?;
+        Ok(theap)
+    }
+
+    /// `_mi_theap_create(heap, tld)` (`theap.c:307-341`) as a
+    /// [`ChildHeapTheapImage`] from the child metadata.
+    ///
+    /// # Safety
+    /// As for [`Self::heap_theap`].
+    unsafe fn create_heap_theap(
+        &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        heap: NonNull<Heap>,
+    ) -> Result<NonNull<Theap>, ChildHeapTheapError> {
+        if self.state != ChildThreadOwnerState::Attached {
+            return Err(ChildHeapTheapError::InvalidTransition);
+        }
+        let tld = self.tld_pointer().ok_or(ChildHeapTheapError::InvalidTransition)?;
+        let size = size_of::<ChildHeapTheapImage>();
+        let block = child
+            .with_metadata_page_engine(binding, |_child, engine| engine.allocate_zeroed(size))
+            .map_err(ChildHeapTheapError::PageEngine)?
+            .ok_or(ChildHeapTheapError::TheapAllocation)?;
+        let image = block.cast::<ChildHeapTheapImage>().as_ptr();
+        // SAFETY: a fresh, exclusively owned, zeroed image; the Rust state
+        // fields are written whole before the Theap is published. The TLD
+        // is this thread's and the Heap's lists take their own locks.
+        let initialized = unsafe {
+            core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
+            let theap = &mut (*image).theap;
+            if !theap.set_dynamic_metadata_memid(MemoryId::malloc(block.as_ptr(), size, true)) {
+                Err(crate::types::TheapDynamicInitError::InvalidInput)
+            } else {
+                theap.initialize_dynamic_metadata_on_tld(
+                    &mut *heap.as_ptr(),
+                    &mut *tld.as_ptr(),
+                    crate::types::TheapPageMode::OrdinaryAbandoning,
+                    true,
+                )
+            }
+        };
+        initialized.map_err(ChildHeapTheapError::TheapInitialization)?;
+        // theap.c:290-292: a non-detached Theap counts in its subprocess.
+        child.context.with_image(|image| image.identity().record_statistics_theap_linked());
+        Ok(block.cast())
+    }
+
+    /// Runs one page operation on this thread's Theap `theap` for a non-main
+    /// Heap, with that Theap's own page-engine state (see
+    /// [`ChildHeapTheapImage`]). When a fresh page first comes from an arena,
+    /// the Heap's per-arena page record is allocated from the child main
+    /// Heap through this thread's main-Heap Theap, which becomes the cached
+    /// Theap, as `mi_heap_zalloc_aligned(heap_main)` does in source.
+    ///
+    /// # Safety
+    /// `this` is the owner of the running thread, `theap` one of its live
+    /// Theaps for a non-main Heap of `child`, and `child` its context with
+    /// no other operation running. Neither pointer is otherwise borrowed for
+    /// the call.
+    pub(crate) unsafe fn with_heap_theap_page_engine<R>(
+        this: *mut Self,
+        child: *mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        theap: NonNull<Theap>,
+        operation: impl for<'session, 'image> FnOnce(
+            &mut crate::single_thread::ChildOrdinaryPageAllocator<'session, 'image, 'static>,
+        ) -> R,
+    ) -> Result<R, ChildMetadataPageEngineError> {
+        // SAFETY: short copies of this owner's immutable identity fields.
+        let (image, tld, thread, sequence, state, config, parent) = unsafe {
+            let owner = &*this;
+            (owner.image, owner.tld_pointer(), owner.thread, owner.sequence, owner.state, owner.config, owner.parent_subprocess)
+        };
+        let tld = tld.ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
+        if state != ChildThreadOwnerState::Attached
+            || !binding.is_active()
+            || !binding.is_allocation_ready()
+            || binding.process().main_subprocess().is_none_or(|main| !core::ptr::eq(main, parent))
+            || binding.page_map().memory_config().ok() != Some(config)
+        {
+            return Err(ChildMetadataPageEngineError::InvalidTransition);
+        }
+        // SAFETY: a live Theap of this thread.
+        let heap = NonNull::new(unsafe { Theap::heap_at(theap) }).ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
+        let theap_image = theap.cast::<ChildHeapTheapImage>().as_ptr();
+        // SAFETY: the Theap's own state field, used only by its engine.
+        let page_engine = unsafe { &mut (*theap_image).page_engine };
+        let mut pending_os_release = None;
+        // SAFETY: the owner's registration keeps the child image allocated.
+        let child_ref = unsafe { Pin::new_unchecked(image.as_ref()) };
+        let child_process = crate::os::ChildVmProcess::new(binding.process(), child_ref)
+            .map_err(ChildMetadataPageEngineError::ChildProcess)?;
+        let pair = crate::process_arena::ChildProcessPageArenaLease::join(binding.page_map(), child_process)
+            .map_err(ChildMetadataPageEngineError::BackingPair)?;
+        // SAFETY: this engine registers and unregisters only its own pages.
+        let page_map = unsafe { pair.page_map_for_owned_ranges() }
+            .map_err(ChildMetadataPageEngineError::BackingPair)?;
+        let mut allocate_arena_pages = |size: usize, alignment: usize| -> Option<NonNull<u8>> {
+            // SAFETY: the outer engine borrows neither the owner nor the
+            // child context; this nested operation runs on the thread's
+            // main-Heap Theap with that Theap's own engine state.
+            unsafe {
+                let owner = &mut *this;
+                let main = owner.theap_pointer()?;
+                owner.cached_set(&mut *child, binding, main).ok()?;
+                owner.with_page_engine(binding, |_image, engine| engine.allocate_aligned_zeroed(size, alignment))
+                    .ok()
+                    .flatten()
+            }
+        };
+        // SAFETY: the owner's images, this Theap's state, and the child stay
+        // live for the operation, which runs on this thread only.
+        let session = unsafe {
+            crate::types::metadata_session::ChildOrdinaryTheapPageSession::new_for_non_main_heap(
+                child_ref, tld, theap, heap, thread, sequence,
+                &mut pending_os_release, &mut *page_engine, &mut allocate_arena_pages,
+            )
+        }
+        .ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
+        let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
+        // SAFETY: the validated child pair and session are held through the
+        // complete operation.
+        let mut engine = unsafe {
+            crate::single_thread::ChildOrdinaryPageAllocator::activate_child_ordinary(
+                session, backing, page_map, sequence,
+            )
+        };
+        let value = operation(&mut engine);
+        // A refused finish's Drop transfers any unfinished OS release into
+        // `pending_os_release` and latches the engine state.
+        let finished = engine.finish_operation().map_err(drop).is_ok();
+        if let Some(owner) = pending_os_release.take() {
+            // See `ChildHeapTheapImage`: the mapping is leaked, not retried.
+            core::mem::forget(owner);
+            *page_engine = ChildPageEngineState::Poisoned;
+        }
+        if !finished {
+            return Err(ChildMetadataPageEngineError::EngineRetained);
+        }
+        Ok(value)
+    }
+
+    /// The first half of `_mi_thread_done` (`init.c:452-480`) for this
+    /// thread's Theaps of non-main Heaps: `_mi_thread_locals_thread_done`
+    /// frees the thread-local slot array, then each such Theap on the TLD
+    /// list, in list order, is collected with its all-free pages released
+    /// (`_mi_theap_collect_abandon`). A page with a live block cannot be
+    /// abandoned to a non-main Heap yet (its mapped bitmap has no owner), so
+    /// such a Theap returns [`ChildHeapTheapError::InvalidTransition`].
+    ///
+    /// # Safety
+    /// As for [`Self::with_heap_theap_page_engine`], on the finishing thread.
+    pub(crate) unsafe fn drain_heap_theaps_for_thread_done(
+        this: *mut Self,
+        child: *mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<(), ChildHeapTheapError> {
+        // SAFETY: forwarded; the owner and child are not otherwise borrowed.
+        unsafe { (*this).free_thread_locals(&mut *child, binding) }?;
+        // SAFETY: short reads of this owner's identities.
+        let (tld, main) = unsafe { ((*this).tld_pointer(), (*this).theap_pointer()) };
+        let tld = tld.ok_or(ChildHeapTheapError::InvalidTransition)?;
+        // SAFETY: this thread's live TLD; only this thread changes its list
+        // other than a Heap free, which the child record lock excludes.
+        let mut current = unsafe { ThreadLocalData::theaps_head_at(tld) };
+        while let Some(theap) = NonNull::new(current) {
+            // SAFETY: a live member of the list.
+            current = unsafe { Theap::tld_next_at(theap) };
+            if Some(theap) == main {
+                continue;
+            }
+            // SAFETY: forwarded; one of this thread's non-main Theaps.
+            let drained = unsafe {
+                Self::with_heap_theap_page_engine(this, child, binding, theap, |engine| engine.finish_pages_in_place())
+            }
+            .map_err(ChildHeapTheapError::PageEngine)?;
+            if !drained {
+                return Err(ChildHeapTheapError::InvalidTransition);
+            }
+        }
+        Ok(())
+    }
+
+    /// The `mi_thread_theaps_done` tail (`init.c:396-419`) for this thread's
+    /// Theaps of non-main Heaps: the cached Theap is reset to the empty Theap
+    /// (dropping its reference, which frees a Theap whose Heap was already
+    /// freed), then each such Theap leaves its Heap and the TLD
+    /// (`_mi_tld_detach_theaps`) and drops the Heap's reference. The
+    /// main-Heap Theap is left to [`Self::teardown`].
+    ///
+    /// # Safety
+    /// As for [`Self::drain_heap_theaps_for_thread_done`], after it succeeded
+    /// and the default root was reset.
+    pub(crate) unsafe fn release_heap_theaps_for_thread_done(
+        &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<(), ChildHeapTheapError> {
+        // SAFETY: the immutable source empty Theap is process-static.
+        let empty = unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) };
+        // SAFETY: forwarded.
+        unsafe { self.cached_set(child, binding, empty) }?;
+        let tld = self.tld_pointer().ok_or(ChildHeapTheapError::InvalidTransition)?;
+        let main = self.theap_pointer();
+        let identity = child
+            .context
+            .with_image(|image| NonNull::from(image.get_ref().identity()))
+            .ok_or(ChildHeapTheapError::InvalidTransition)?;
+        // SAFETY: as in the drain above.
+        let mut current = unsafe { ThreadLocalData::theaps_head_at(tld) };
+        while let Some(theap) = NonNull::new(current) {
+            // SAFETY: a live member of the list, read before it leaves.
+            current = unsafe { Theap::tld_next_at(theap) };
+            if Some(theap) == main {
+                continue;
+            }
+            // SAFETY: forwarded; the drained Theap owns no page.
+            unsafe { ThreadLocalData::detach_theap_for_thread_done(tld, theap, identity.as_ref()) }
+                .map_err(|_| ChildHeapTheapError::InvalidTransition)?;
+            // SAFETY: the Heap's reference, dropped once.
+            unsafe { self.theap_decref(child, binding, theap) }?;
+        }
+        Ok(())
+    }
+
+    /// The slot count of this thread's thread-local array (0 before the
+    /// first regular slot is set).
+    #[cfg(test)]
+    pub(crate) fn test_thread_local_count(&self) -> usize {
+        self.thread_locals.as_ref().map_or(0, |block| {
+            // SAFETY: the retained slot image.
+            unsafe { (*block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).count() }
+        })
+    }
+
+    /// This thread's value on `heap`'s thread-local slot.
+    #[cfg(test)]
+    pub(crate) fn test_heap_slot(&self, heap: NonNull<Heap>) -> *mut () {
+        heap_theap_key(heap).map_or(core::ptr::null_mut(), |key| self.thread_local_get(key))
+    }
+
+    /// Frees `block`, a live block observed through `binding`'s PageMap, on
+    /// this thread: through the owning engine when one of this thread's
+    /// Theaps owns its page, otherwise through the nonlocal route.
+    ///
+    /// # Safety
+    /// As for [`Self::with_heap_theap_page_engine`]; `block` is live and
+    /// freed once.
+    pub(crate) unsafe fn free_block(
+        this: *mut Self,
+        child: *mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        block: NonNull<u8>,
+    ) -> Result<(), ChildHeapTheapError> {
+        // SAFETY: forwarded exact-live-block contract.
+        let allocation = unsafe { binding.page_map().lookup_live_allocation(block) }
+            .ok()
+            .flatten()
+            .ok_or(ChildHeapTheapError::InvalidTransition)?;
+        // SAFETY: the live block keeps its page; a raw field read.
+        let owner_theap = unsafe { crate::types::Page::theap_at(allocation.page()) };
+        // SAFETY: short read of this owner's Theap and TLD identities.
+        let (main, tld) = unsafe { ((*this).theap_pointer(), (*this).tld_pointer()) };
+        let owner_theap = NonNull::new(owner_theap);
+        let current = crate::compiler_tls::current_thread_identity();
+        if current.is_some_and(|current| allocation.is_associated_with(current)) {
+            if owner_theap == main {
+                drop(allocation);
+                // SAFETY: the main-Heap Theap owns the page.
+                return unsafe { (*this).with_page_engine(binding, |_image, engine| unsafe { engine.free(block) }) }
+                    .map_err(ChildHeapTheapError::PageEngine)?
+                    .map_err(ChildHeapTheapError::Metadata);
+            }
+            if let Some(theap) = owner_theap.filter(|theap| unsafe { Theap::tld_at(*theap) } == tld.map_or(core::ptr::null_mut(), NonNull::as_ptr)) {
+                drop(allocation);
+                // SAFETY: one of this thread's non-main Theaps owns the page.
+                return unsafe {
+                    Self::with_heap_theap_page_engine(this, child, binding, theap, |engine| unsafe { engine.free(block) })
+                }
+                .map_err(ChildHeapTheapError::PageEngine)?
+                .map_err(ChildHeapTheapError::Metadata);
+            }
+        }
+        // SAFETY: forwarded; the page belongs to another owner or none.
+        match unsafe { crate::subproc::lifecycle::free_child_block_nonlocal(binding, allocation) } {
+            Some(crate::single_thread::ChildNonlocalFreeResult::Freed | crate::single_thread::ChildNonlocalFreeResult::Released) => Ok(()),
+            _ => Err(ChildHeapTheapError::InvalidTransition),
+        }
     }
 }
 
@@ -2630,6 +3177,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             config: self.context.config,
             pending_os_release: None,
             page_engine: ChildPageEngineState::Active,
+            thread_locals: None,
             tld: None,
             theap: None,
             registration: None,

@@ -188,6 +188,10 @@ pub(crate) struct ChildOrdinaryTheapPageSession<'session, 'image> {
     thread: LiveThreadId,
     pending_os_release: &'session mut Option<OsAlignedPageOwner>,
     page_engine: &'session mut crate::meta::ChildPageEngineState,
+    /// For a Theap of a non-main Heap, the allocation of that Heap's
+    /// per-arena `mi_arena_pages_t` from the subprocess main Heap
+    /// (`mi_arena_pages_alloc`): `(size, alignment)` to a zeroed block.
+    non_main_arena_pages: Option<&'session mut dyn FnMut(usize, usize) -> Option<NonNull<u8>>>,
     _image: PhantomData<&'image crate::subproc::ChildSubprocessImage>,
 }
 
@@ -230,6 +234,53 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
             thread,
             pending_os_release,
             page_engine,
+            non_main_arena_pages: None,
+            _image: PhantomData,
+        })
+    }
+
+    /// The session of a child thread's Theap for a non-main Heap of its
+    /// child. Like [`Self::new`], plus `arena_pages` allocates the Heap's
+    /// per-arena page record from the subprocess main Heap when a fresh
+    /// page first comes from an arena.
+    ///
+    /// # Safety
+    /// As for [`Self::new`], with `heap` a live non-main Heap of the child.
+    pub(crate) unsafe fn new_for_non_main_heap(
+        child: core::pin::Pin<&'image crate::subproc::ChildSubprocessImage>,
+        tld: NonNull<ThreadLocalData>,
+        theap: NonNull<Theap>,
+        heap: NonNull<Heap>,
+        thread: LiveThreadId,
+        sequence: crate::types::ThreadSequence,
+        pending_os_release: &'session mut Option<OsAlignedPageOwner>,
+        page_engine: &'session mut crate::meta::ChildPageEngineState,
+        arena_pages: &'session mut dyn FnMut(usize, usize) -> Option<NonNull<u8>>,
+    ) -> Option<Self> {
+        let identity = child.get_ref().identity();
+        // SAFETY: the caller retains all images for this bounded projection.
+        let (tld_ref, theap_ref, heap_ref) = unsafe { (tld.as_ref(), theap.as_ref(), heap.as_ref()) };
+        if !identity.is_registered()
+            || heap_ref.is_subprocess_main()
+            || !core::ptr::eq(heap_ref.subprocess_pointer(), identity.as_ptr())
+            || !tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
+            || !core::ptr::eq(theap_ref.heap.load(Ordering::Acquire), heap.as_ptr())
+            || !core::ptr::eq(theap_ref.tld, tld.as_ptr())
+            || theap_ref.is_detached()
+            || !theap_ref.is_initialized()
+            || pending_os_release.is_some()
+            || *page_engine != crate::meta::ChildPageEngineState::Active
+        {
+            return None;
+        }
+        Some(Self {
+            theap,
+            heap,
+            child: NonNull::from(identity),
+            thread,
+            pending_os_release,
+            page_engine,
+            non_main_arena_pages: Some(arena_pages),
             _image: PhantomData,
         })
     }
@@ -430,6 +481,12 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
     }
 
     fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, _config: MemoryConfig) -> bool {
+        if let Some(allocate) = self.non_main_arena_pages.as_mut() {
+            // `mi_heap_ensure_arena_pages` for a non-main Heap allocates its
+            // own `mi_arena_pages_t` from the subprocess main Heap.
+            // SAFETY: the session retains the Heap and the claimed arena.
+            return unsafe { self.heap.as_ref().ensure_non_main_arena_pages(arena, |size, alignment| allocate(size, alignment)) };
+        }
         // `mi_heap_ensure_arena_pages` points the child main Heap at the
         // arena's in-place `pages_main` (`arena.c:699-723`).
         // SAFETY: the session retains the child Heap and the claimed arena.
@@ -444,14 +501,26 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
     fn set_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
         let Some(memory) = memory.arena_memory() else { return false; };
         if memory.arena != core::ptr::from_ref(arena.arena()).cast_mut() { return false; }
-        unsafe { arena.pages() }
+        // SAFETY: the Heap's image for this arena was ensured before.
+        let pages = if self.non_main_arena_pages.is_some() {
+            unsafe { self.heap.as_ref().non_main_arena_pages_bitmap(arena, 0) }
+        } else {
+            unsafe { arena.pages() }
+        };
+        pages
             .and_then(|pages| pages.set_range(memory.slice_index as usize, 1))
             .is_some_and(|transition| transition.all_transitioned())
     }
     fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
         let Some(memory) = memory.arena_memory() else { return false; };
         if memory.arena != core::ptr::from_ref(arena.arena()).cast_mut() { return false; }
-        unsafe { arena.pages() }
+        // SAFETY: as above.
+        let pages = if self.non_main_arena_pages.is_some() {
+            unsafe { self.heap.as_ref().non_main_arena_pages_bitmap(arena, 0) }
+        } else {
+            unsafe { arena.pages() }
+        };
+        pages
             .and_then(|pages| pages.clear_range(memory.slice_index as usize, 1))
             == Some(true)
     }

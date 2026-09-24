@@ -14,7 +14,7 @@ import run as harness
 
 
 TEST = "types::heap_registry::lifecycle::tests::source_ordered_empty_heap_lifecycle_trace"
-FIELD_COUNT = 52
+FIELD_COUNT = 79
 
 
 def trace(output: str) -> list[int]:

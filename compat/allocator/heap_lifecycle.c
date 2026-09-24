@@ -11,9 +11,9 @@
 
 static void require(bool condition) { if (!condition) abort(); }
 
-static int64_t values[96];
+static int64_t values[128];
 static size_t value_count;
-static void push(int64_t value) { require(value_count < 96); values[value_count++] = value; }
+static void push(int64_t value) { require(value_count < 128); values[value_count++] = value; }
 
 static size_t list_length(mi_subproc_t* subproc) {
   size_t count = 0;
@@ -95,6 +95,52 @@ static void* worker_main(void* arg) {
   push_counts(subproc);
   mi_heap_delete(third);
   push_counts(subproc);
+
+  /* The first allocation from a Heap creates this thread's Theap for it
+     (heap.c:59-99, theap.c:236-341): at the head of the thread's TLD list,
+     on the Heap's dynamic thread-local slot, and as the cached Theap. */
+  mi_theap_t* const main_theap = _mi_theap_default();
+  mi_heap_t* const fourth = mi_heap_new();
+  require(fourth != NULL);
+  push(fourth->theaps == NULL);
+  push((int64_t)mi_thread_locals_peek()->count);
+  void* const a = mi_heap_malloc(fourth, 64);
+  require(a != NULL);
+  mi_theap_t* const theap = fourth->theaps;
+  push(theap != NULL && theap->hnext == NULL && theap->hprev == NULL && _mi_theap_heap(theap) == fourth);
+  push(theap->tld == main_theap->tld && main_theap->tld->theaps == theap
+       && theap->tnext == main_theap && main_theap->tprev == theap);
+  push((int64_t)mi_atomic_load_relaxed(&theap->refcount));
+  push(_mi_theap_cached() == theap);
+  push((int64_t)mi_thread_locals_peek()->count);
+  push(_mi_thread_local_get(fourth->theap) == theap);
+  push(subproc->stats.theaps.current);
+  push(subproc->stats.theaps.total);
+  push((int64_t)theap->page_count);
+  push(mi_heap_of(a) == fourth && mi_heap_contains(fourth, a) && !mi_heap_contains(main_heap, a));
+  size_t arena_page_images = 0;
+  for (size_t i = 0; i < MI_MAX_ARENAS; i++) {
+    if (mi_atomic_load_ptr_relaxed(mi_arena_pages_t, &fourth->arena_pages[i]) != NULL) arena_page_images++;
+  }
+  push((int64_t)arena_page_images);
+  void* const b = mi_heap_malloc(fourth, 1000);
+  void* const c = mi_heap_malloc(fourth, 64);
+  require(b != NULL && c != NULL);
+  push((int64_t)theap->page_count);
+  push(_mi_ptr_page(a) == _mi_ptr_page(c) && _mi_ptr_page(a) != _mi_ptr_page(b));
+  mi_free(c);
+  push((int64_t)_mi_ptr_page(a)->used);
+
+  /* mi_heap_destroy with two live blocks (heap.c:162-259, arena.c:2531-2644):
+     its Theaps leave their TLDs, its pages are freed, and the Theap stays
+     allocated while it is the cached Theap. */
+  mi_heap_destroy(fourth);
+  push(subproc->stats.theaps.current);
+  push(main_theap->tld->theaps == main_theap && main_theap->tprev == NULL);
+  push(_mi_theap_cached() == theap && theap->tld == NULL);
+  push((int64_t)mi_atomic_load_relaxed(&theap->refcount));
+  push_counts(subproc);
+  { mi_heap_t* const order[] = { main_heap }; push(list_is(subproc, order, 1)); }
   mi_thread_done();
   return NULL;
 }
@@ -111,6 +157,9 @@ int main(void) {
   require(pthread_create(&thread, NULL, &worker_main, child) == 0);
   require(pthread_join(thread, NULL) == 0);
   push((int64_t)list_length(child));
+  /* `_mi_thread_done` released the cached Theap. */
+  push(child->stats.theaps.current);
+  push(child->stats.theaps.total);
   mi_subproc_destroy(_mi_subproc_to_id(child));
   for (size_t i = 0; i < value_count; i++) {
     printf("m6.heap.lifecycle.%zu=%lld\n", i, (long long)values[i]);

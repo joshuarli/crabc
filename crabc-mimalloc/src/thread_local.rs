@@ -1541,7 +1541,7 @@ impl ThreadLocalBackingOwner {
 /// Implements `mi_thread_locals_expand`'s count transition before metadata
 /// allocation. `least_index` is an index, not a requested count.
 #[inline]
-fn expanded_slot_count(
+pub(crate) fn expanded_slot_count(
     old_count: usize,
     least_index: usize,
 ) -> Result<usize, ThreadLocalBackingError> {

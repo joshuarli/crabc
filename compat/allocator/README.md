@@ -79,9 +79,14 @@ under `x86_64/subprocess-lifecycle` in the allocator artifacts directory.
 ([`heap_lifecycle.c`](heap_lifecycle.c)) on a thread of a child subprocess
 with the Rust `types::heap_registry::lifecycle` on a child member thread: Heap
 list order and links, sequence numbers, dynamic thread-local keys and their
-index reuse, Heap counts and `heaps` statistics, and main-Heap refusal. The
-Heaps never allocate; per-thread Theaps and Heaps with pages are not covered
-yet. Logs live under `x86_64/heap-lifecycle` in the allocator artifacts
+index reuse, Heap counts and `heaps` statistics, and main-Heap refusal. A
+last section allocates from a Heap: the per-thread Theap the first
+`mi_heap_malloc` creates (list positions, thread-local slot, the cached-Theap
+reference counts that the nested allocation of the Heap's per-arena page
+record moves to the main-Heap Theap, `theaps` statistics), a local free, and
+`mi_heap_destroy` with live pages, whose cached Theap is released when the
+thread finishes. `mi_heap_delete` of a Heap with pages is not covered yet.
+Logs live under `x86_64/heap-lifecycle` in the allocator artifacts
 directory.
 
 `./compat/allocator/run-x86_64.sh allocator-m6` is the fail-closed Milestone 6

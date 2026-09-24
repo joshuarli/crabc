@@ -5791,6 +5791,26 @@ impl Theap {
         tld: &mut ThreadLocalData,
         page_mode: TheapPageMode,
     ) -> Result<(), TheapDynamicInitError> {
+        // SAFETY: forwarded; the TLD owns no Theap yet.
+        unsafe { self.initialize_dynamic_metadata_on_tld(heap, tld, page_mode, false) }
+    }
+
+    /// [`Self::initialize_dynamic_metadata`] for a TLD that may already own
+    /// Theaps: source `_mi_theap_init` pushes every new Theap at the head of
+    /// its TLD's list (`theap.c:260-272`), as a thread's Theap for a non-main
+    /// Heap joins the list that holds its main-Heap Theap.
+    ///
+    /// # Safety
+    /// As for [`Self::initialize_dynamic_metadata`]; every Theap already on
+    /// the TLD's list is live and owned by the same thread.
+    #[inline]
+    pub(crate) unsafe fn initialize_dynamic_metadata_on_tld(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+        page_mode: TheapPageMode,
+        tld_may_have_theaps: bool,
+    ) -> Result<(), TheapDynamicInitError> {
         let storage_matches_heap = match self.memid.kind() {
             MemoryKind::Malloc => heap.exclusive_arena.is_null(),
             MemoryKind::Arena => self.memid.initially_committed()
@@ -5801,7 +5821,8 @@ impl Theap {
         };
         if self.is_initialized()
             || !storage_matches_heap
-            || !tld.is_subprocess_attached_no_theap()
+            || tld.subprocess.is_null()
+            || (!tld_may_have_theaps && !tld.is_subprocess_attached_no_theap())
             || !tld.matches_owner(TheapOwner::Live(
                 LiveThreadId::new(tld.thread_id()).ok_or(TheapDynamicInitError::InvalidInput)?,
             ))

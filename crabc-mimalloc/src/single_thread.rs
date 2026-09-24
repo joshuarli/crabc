@@ -1515,6 +1515,87 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
     }
 }
 
+/// Source `_mi_heap_destroy_pages` (`arena.c:2640-2644`) for a non-main
+/// Heap of a child subprocess: `mi_heap_delete_page` with no target
+/// (`arena.c:2531-2560`) for every page on the Heap's per-arena page records,
+/// in arena and slice order. Each page's ownership is claimed, its queue
+/// links and Theap identity cleared, `used` set to zero, and it is released
+/// by `_mi_arenas_page_free(page, NULL)`: the Heap's `page_bins` and `pages`
+/// statistics, then the PageMap, the Heap's ordinary bit, metadata, and
+/// slices. Live blocks die with their page. Returns `false` at the first
+/// page it cannot release, which stays claimed; an abandoned page (which a
+/// non-main Heap cannot have yet) is such a page. Source also visits the
+/// Heap's OS-abandoned list, which a non-main child Heap never fills.
+///
+/// # Safety
+/// Every Theap of `heap` has been detached (`mi_heap_free_theaps`), so no
+/// thread operates on its pages; `registry` is the child's arena registry,
+/// `page_map` the process PageMap projected for these owned ranges, and
+/// `backing` pairs the child's arenas with it.
+pub(crate) unsafe fn destroy_non_main_heap_pages(
+    heap: NonNull<Heap>,
+    registry: &crate::arena::ArenaRegistry,
+    page_map: &PageMap,
+    backing: &impl PageBacking<'static>,
+) -> bool {
+    // SAFETY: the caller's live Heap.
+    let heap_ref = unsafe { heap.as_ref() };
+    for index in 0..registry.count() {
+        // SAFETY: the child arenas stay mapped.
+        let Some(arena) = (unsafe { registry.arena_at(index) }) else { continue };
+        // SAFETY: as above.
+        let Some(view) = (unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }) else {
+            return false;
+        };
+        // SAFETY: the Heap's record for this arena stays installed.
+        let Some(pages) = (unsafe { heap_ref.non_main_arena_pages_bitmap(&view, 0) }) else { continue };
+        for slice in 0..arena.slice_count {
+            if pages.is_set_range(slice, 1) != Some(true) {
+                continue;
+            }
+            let Some(slice_start) = view.slice_start(slice) else { return false };
+            // SAFETY: the page's own registered range.
+            let Some(page) = NonNull::new(unsafe { page_map.checked_lookup(slice_start) }) else {
+                return false;
+            };
+            // SAFETY: no thread operates on the page (caller contract).
+            if !unsafe { Page::claim_for_heap_destroy(page) } {
+                return false;
+            }
+            // SAFETY: the claimed page's metadata.
+            let page_ref = unsafe { page.as_ref() };
+            let Some(statistics_bin) = page_statistics_bin(page_ref) else { return false };
+            let memory = page_ref.memid();
+            let singleton = page_ref.reserved() == 1;
+            if !heap_ref.record_page_released(statistics_bin) {
+                return false;
+            }
+            let clear_ordinary = |arena: &ArenaView<'static>, slice_index: usize| {
+                // SAFETY: the Heap's installed record for this arena.
+                unsafe { heap_ref.non_main_arena_pages_bitmap(arena, 0) }
+                    .and_then(|pages| pages.clear_range(slice_index, 1))
+                    == Some(true)
+            };
+            // SAFETY: the claimed, queue-detached, zero-use page of `backing`.
+            let released = unsafe {
+                if singleton {
+                    release_claimed_process_arena_singleton_page_with_ordinary_clear(
+                        page_map, backing, page, memory, clear_ordinary,
+                    )
+                } else {
+                    release_claimed_process_regular_arena_page_with_ordinary_clear(
+                        page_map, backing, page, memory, clear_ordinary,
+                    )
+                }
+            };
+            if released != ClaimedProcessArenaTerminalRelease::Released {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// The mapped-abandoned capability of a child main Heap's arena page; the
 /// child counterpart of `select_process_main_mapped_abandoned_page`.
 fn select_child_main_mapped_abandoned_page(
@@ -1781,8 +1862,26 @@ enum ClaimedProcessArenaTerminalRelease {
 unsafe fn release_claimed_process_regular_arena_page(
     page_map: &PageMap,
     backing: &impl PageBacking<'static>,
+    page: NonNull<Page>,
+    expected_memory: MemoryId,
+) -> ClaimedProcessArenaTerminalRelease {
+    // SAFETY: forwarded; a main-Heap page's ordinary bit is `pages_main`.
+    unsafe {
+        release_claimed_process_regular_arena_page_with_ordinary_clear(page_map, backing, page, expected_memory, |arena, slice_index| {
+            arena.pages().and_then(|pages| pages.clear_range(slice_index, 1)) == Some(true)
+        })
+    }
+}
+
+/// [`release_claimed_process_regular_arena_page`] with the page's ordinary arena-pages bit cleared by
+/// `clear_ordinary`: `pages_main` for a subprocess main Heap, or the Heap's
+/// own `mi_arena_pages_t` for a non-main Heap (`arena.c:1252-1259`).
+unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear(
+    page_map: &PageMap,
+    backing: &impl PageBacking<'static>,
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
+    clear_ordinary: impl FnOnce(&ArenaView<'static>, usize) -> bool,
 ) -> ClaimedProcessArenaTerminalRelease {
     // SAFETY: the W07 terminal claim retains this exact arena MemoryId.
     let Some(arena) = (unsafe { backing.arena_for_memory(expected_memory) }) else {
@@ -1870,10 +1969,7 @@ unsafe fn release_claimed_process_regular_arena_page(
     }
     // The ordinary arena bit is separate from the mapped-abandoned identity
     // W07's source tail may already have cleared.
-    if unsafe { arena.pages() }
-        .and_then(|pages| pages.clear_range(slice_index, 1))
-        != Some(true)
-    {
+    if !clear_ordinary(&arena, slice_index) {
         return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
     // SAFETY: queue ownership ended during owner exit; no former Theap is
@@ -1903,8 +1999,26 @@ unsafe fn release_claimed_process_regular_arena_page(
 unsafe fn release_claimed_process_arena_singleton_page(
     page_map: &PageMap,
     backing: &impl PageBacking<'static>,
+    page: NonNull<Page>,
+    expected_memory: MemoryId,
+) -> ClaimedProcessArenaTerminalRelease {
+    // SAFETY: forwarded; a main-Heap page's ordinary bit is `pages_main`.
+    unsafe {
+        release_claimed_process_arena_singleton_page_with_ordinary_clear(page_map, backing, page, expected_memory, |arena, slice_index| {
+            arena.pages().and_then(|pages| pages.clear_range(slice_index, 1)) == Some(true)
+        })
+    }
+}
+
+/// [`release_claimed_process_arena_singleton_page`] with the page's ordinary arena-pages bit cleared by
+/// `clear_ordinary`: `pages_main` for a subprocess main Heap, or the Heap's
+/// own `mi_arena_pages_t` for a non-main Heap (`arena.c:1252-1259`).
+unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear(
+    page_map: &PageMap,
+    backing: &impl PageBacking<'static>,
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
+    clear_ordinary: impl FnOnce(&ArenaView<'static>, usize) -> bool,
 ) -> ClaimedProcessArenaTerminalRelease {
     // SAFETY: the W07 terminal claim retains this exact arena MemoryId.
     let Some(arena) = (unsafe { backing.arena_for_memory(expected_memory) }) else {
@@ -1976,10 +2090,7 @@ unsafe fn release_claimed_process_arena_singleton_page(
     if unsafe { page_map.unregister_range(slice_start, page_map_size) }.is_err() {
         return ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation;
     }
-    if unsafe { arena.pages() }
-        .and_then(|pages| pages.clear_range(slice_index, 1))
-        != Some(true)
-    {
+    if !clear_ordinary(&arena, slice_index) {
         return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
     // SAFETY: all queue/list/map predecessors completed under the exact W07
