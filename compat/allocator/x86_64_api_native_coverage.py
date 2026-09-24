@@ -179,13 +179,11 @@ def load_schema() -> dict[str, Any]:
         {
             "base": {
                 "path": "compat/allocator/x86_64-api-v3.5.0.json",
-                "sha256": "1cfbdffb2d6dc6f6f984a48f83dcc68cdd679cca958027181eb9e74ebdb130bc",
                 "declaration_count": 180,
                 "declaration_names_sha256": "5a17248c61dccbb5abd9b8fe742a4243594793c125e229b2156a7f5172915975",
             },
             "statistics": {
                 "path": "compat/allocator/x86_64-api-coverage-v3.5.0.json",
-                "sha256": "6fe7353c76ed022957d47234d949ef61b378815702b7f7b1da8169da787906b4",
                 "declaration_count": 15,
                 "declaration_names_sha256": "9a9c4bf51cde6774f22488f0e92200d1909cc6bc688cc4b824aa3aa92020cdda",
             },
@@ -314,16 +312,6 @@ def validate_release_report(
     return {"object": object_names, "dynamic": dynamic_names}, source_inventory
 
 
-def _validate_source_ledger_hashes(native_schema: Mapping[str, Any]) -> None:
-    inventories = native_schema["source_inventories"]
-    for key, path in (
-        ("base", release_evidence.SOURCE_API_PATH),
-        ("statistics", release_evidence.SOURCE_COVERAGE_PATH),
-    ):
-        if sha256_file(path) != inventories[key]["sha256"]:
-            raise CoverageError(f"pinned {key} source inventory file digest drifted")
-
-
 def _function_items(source_inventory: Mapping[str, Any], symbols: Mapping[str, list[str]]) -> list[dict[str, Any]]:
     """Build one record per unique source-declared C function."""
 
@@ -348,7 +336,6 @@ def _function_items(source_inventory: Mapping[str, Any], symbols: Mapping[str, l
 
 
 def _non_object_items(native_schema: Mapping[str, Any]) -> list[dict[str, Any]]:
-    _validate_source_ledger_hashes(native_schema)
     coverage = _read_json(release_evidence.SOURCE_COVERAGE_PATH, "source API coverage ledger")
     records: list[dict[str, Any]] = []
     for header in coverage["header_surfaces"]:

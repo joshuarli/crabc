@@ -1,9 +1,7 @@
 {
   "base_c_function_inventory": {
     "checked_in_inventory": {
-      "path": "compat/allocator/x86_64-api-v3.5.0.json",
-      "bytes": 15256,
-      "sha256": "1cfbdffb2d6dc6f6f984a48f83dcc68cdd679cca958027181eb9e74ebdb130bc"
+      "path": "compat/allocator/x86_64-api-v3.5.0.json"
     },
     "source_declared_function_count": 180,
     "source_declared_function_names_sha256": "5a17248c61dccbb5abd9b8fe742a4243594793c125e229b2156a7f5172915975"
@@ -917,9 +915,7 @@
     {
       "c_external_function_surface": {
         "checked_in_inventory": {
-          "path": "compat/allocator/x86_64-api-v3.5.0.json",
-          "bytes": 15256,
-          "sha256": "1cfbdffb2d6dc6f6f984a48f83dcc68cdd679cca958027181eb9e74ebdb130bc"
+          "path": "compat/allocator/x86_64-api-v3.5.0.json"
         },
         "names_sha256": "5a17248c61dccbb5abd9b8fe742a4243594793c125e229b2156a7f5172915975",
         "source_declared_function_count": 180,

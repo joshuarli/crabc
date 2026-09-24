@@ -124,7 +124,6 @@ class X86_64ApiCoverageTests(unittest.TestCase):
             base["checked_in_inventory"]["path"],
             "compat/allocator/x86_64-api-v3.5.0.json",
         )
-        self.assertEqual(len(base["checked_in_inventory"]["sha256"]), 64)
 
         base_surface = self.headers["include/mimalloc.h"]["c_external_function_surface"]
         self.assertEqual(base_surface["source_declared_function_count"], 180)

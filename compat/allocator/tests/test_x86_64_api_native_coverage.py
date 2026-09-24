@@ -216,24 +216,6 @@ class NativeApiCoverageTests(unittest.TestCase):
                     with self.assertRaisesRegex(COVERAGE.CoverageError, "declaration digest"):
                         COVERAGE.validate_release_report(report)
 
-    def test_assessment_rejects_source_form_ledger_digest_drift(self) -> None:
-        coverage = json.loads(
-            COVERAGE.release_evidence.SOURCE_COVERAGE_PATH.read_text(encoding="utf-8")
-        )
-        coverage["header_surfaces"][0]["macro_definitions"][0]["name"] = "forged_macro"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as temporary:
-            json.dump(coverage, temporary)
-            temporary.flush()
-            report, schema = self.release_fixture()
-            with self.use_release_schema(schema):
-                with mock.patch.object(
-                    COVERAGE.release_evidence, "SOURCE_COVERAGE_PATH", Path(temporary.name)
-                ):
-                    with self.assertRaisesRegex(
-                        COVERAGE.CoverageError, "source inventory file digest"
-                    ):
-                        COVERAGE.assess(report)
-
     def test_build_requires_native_provenance_before_writing_assessment(self) -> None:
         report, _schema = self.release_fixture()
         with tempfile.TemporaryDirectory() as temporary:

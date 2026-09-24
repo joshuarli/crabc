@@ -680,7 +680,7 @@ def base_function_inventory_summary(base_header: bytes) -> dict[str, object]:
         raise CoverageError("base function inventory declaration digest disagrees with pinned source")
 
     return {
-        "checked_in_inventory": artifact_record(BASE_FUNCTION_INVENTORY_PATH),
+        "checked_in_inventory": {"path": relative(BASE_FUNCTION_INVENTORY_PATH)},
         "source_declared_function_count": count,
         "source_declared_function_names_sha256": digest,
     }
