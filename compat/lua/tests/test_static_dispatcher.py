@@ -79,6 +79,15 @@ class NativeStaticDispatcherTests(unittest.TestCase):
             static_runner=runner,
         )
 
+    def test_published_latest_report_is_readable_by_other_users(self) -> None:
+        # The container publishes as root; host readers must still read it.
+        private = self.temporary / "private-report.json"
+        private.write_text("{}\n", encoding="utf-8")
+        private.chmod(0o600)
+        latest = RUNNER.publish_x86_static_dispatch_report(private, self.latest)
+        self.assertEqual(latest.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(latest.read_text(encoding="utf-8"), "{}\n")
+
     def test_two_concurrent_invocations_get_distinct_state_and_valid_latest_report(self) -> None:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             completed = list(executor.map(lambda _: self.dispatch(self.passing_runner), range(2)))

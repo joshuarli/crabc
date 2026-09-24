@@ -49,6 +49,15 @@ class NativeDynamicDispatcherTests(unittest.TestCase):
         if self.temporary.exists() and not self.temporary.is_symlink():
             shutil.rmtree(self.temporary, ignore_errors=True)
 
+    def test_published_latest_report_is_readable_by_other_users(self) -> None:
+        # The container publishes as root; host readers must still read it.
+        private = self.temporary / "private-report.json"
+        private.write_text("{}\n", encoding="utf-8")
+        private.chmod(0o600)
+        latest = RUNNER.publish_report(private, self.latest)
+        self.assertEqual(latest.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(latest.read_text(encoding="utf-8"), "{}\n")
+
     @staticmethod
     def lane(label: str, *, passed: bool) -> dict[str, object]:
         artifacts: dict[str, object] = {}

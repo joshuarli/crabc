@@ -2099,6 +2099,9 @@ def publish_x86_static_dispatch_report(
             prefix=".x86_64-static-latest.", dir=parent, delete=False
         ) as stream:
             temporary = Path(stream.name)
+            # NamedTemporaryFile creates 0600; the root-run container must
+            # publish a report the host user's readers can open.
+            os.fchmod(stream.fileno(), 0o644)
             stream.write(report.read_bytes())
             stream.flush()
             os.fsync(stream.fileno())
