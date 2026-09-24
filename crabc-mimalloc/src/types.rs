@@ -368,10 +368,10 @@ impl Heap {
     /// terminal and requires retaining both images.
     pub(crate) unsafe fn initialize_child_main(
         mut self: core::pin::Pin<&mut Self>,
-        subprocess: core::pin::Pin<&mut crate::subproc::ChildSubprocessImage>,
+        subprocess: core::pin::Pin<&crate::subproc::ChildSubprocessImage>,
         memory: MemoryId,
     ) -> Result<(), heap_registry::SourceHeapRegistryError> {
-        let identity = subprocess.as_ref().get_ref().identity();
+        let identity = subprocess.get_ref().identity();
         if identity.is_process_main()
             || !identity.is_registered()
             || !self.is_uninitialized_main_static_image()

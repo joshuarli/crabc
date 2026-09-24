@@ -936,7 +936,8 @@ impl SubprocessIdentity {
         !self.theap_meta.load(Ordering::Acquire).is_null()
     }
 
-    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    /// Source `thread_count`: TLDs registered and not yet freed. Child
+    /// destruction reads it under the operation that excludes admission.
     #[inline]
     pub(crate) fn live_thread_count(&self) -> usize {
         self.thread_count.load(Ordering::Relaxed)

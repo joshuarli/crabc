@@ -1357,10 +1357,14 @@ impl ChildContextOwner {
 
     /// Projects the initialized child image only for the duration of the
     /// closure. Its exact allocation capability remains external and live.
+    ///
+    /// The projection is shared: every child-image transition is atomic or
+    /// internally synchronized, so child threads may hold their own shared
+    /// projections concurrently.
     pub(crate) fn with_image<R>(
         &mut self,
         operation: impl for<'image> FnOnce(
-            Pin<&'image mut crate::subproc::ChildSubprocessImage>,
+            Pin<&'image crate::subproc::ChildSubprocessImage>,
         ) -> R,
     ) -> Option<R> {
         if self.terminal || !self.image_initialized { return None; }
@@ -1536,6 +1540,125 @@ impl ChildContextOwner {
     }
 }
 
+/// The parent user-Heap allocation holding one child main Heap image
+/// (`_mi_heap_new_for_subproc`: `mi_heap_zalloc(parent->heap_main)`).
+///
+/// `Parent` is minted by a later-main owner-local engine and must be freed
+/// by that same owner. `Native` is an ordinary allocation through the native
+/// runtime entry points, which source `_mi_free_subproc_safe` may free from
+/// any thread.
+pub(crate) enum ChildHeapStorage<'heap> {
+    Parent(crate::main_heap_page::ParentHeapAllocation<'heap>),
+    Native(NativeChildHeapImage),
+}
+
+impl ChildHeapStorage<'_> {
+    #[inline]
+    pub(crate) const fn pointer_for_identity(&self) -> NonNull<Heap> {
+        match self {
+            Self::Parent(allocation) => allocation.pointer_for_identity(),
+            Self::Native(image) => image.pointer,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        match self {
+            Self::Parent(allocation) => allocation.memory_id(),
+            Self::Native(image) => image.memory_id(),
+        }
+    }
+
+    fn initialize_empty_image(&mut self) -> bool {
+        match self {
+            Self::Parent(allocation) => allocation.initialize_empty_image(),
+            Self::Native(image) => image.initialize_empty_image(),
+        }
+    }
+
+    pub(crate) fn with_heap<R>(
+        &mut self,
+        operation: impl for<'image> FnOnce(Pin<&'image mut Heap>) -> R,
+    ) -> Option<R> {
+        match self {
+            Self::Parent(allocation) => allocation.with_heap(operation),
+            Self::Native(image) => image.with_heap(operation),
+        }
+    }
+}
+
+/// The free route for [`ChildHeapStorage`] at child destruction.
+pub(crate) enum ChildHeapRelease<'a, 'heap> {
+    Parent {
+        heap_owner: &'a mut crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine<'heap>,
+        attachment: &'a mut crate::main_heap_thread::MainHeapThreadAttachment<'heap>,
+    },
+    Native,
+}
+
+/// One zeroed, exact-size Heap image allocated through the native runtime.
+/// The token owns the allocation; dropping it frees nothing.
+#[must_use = "a child Heap image must be freed after child Heap teardown"]
+pub(crate) struct NativeChildHeapImage {
+    pointer: NonNull<Heap>,
+    initialized: bool,
+}
+
+impl NativeChildHeapImage {
+    /// `mi_heap_zalloc(parent->heap_main, sizeof(mi_heap_t))` on the calling
+    /// thread, through the native runtime's current owner.
+    pub(crate) fn allocate() -> Option<Self> {
+        match crate::runtime_lifecycle::native_allocate_aligned(
+            size_of::<Heap>(), core::mem::align_of::<Heap>(), true,
+        ) {
+            crate::runtime_lifecycle::NativePageAllocationResult::Allocated(pointer) => {
+                Some(Self { pointer: pointer.cast(), initialized: false })
+            }
+            _ => None,
+        }
+    }
+
+    #[inline]
+    const fn memory_id(&self) -> MemoryId {
+        MemoryId::malloc(self.pointer.as_ptr().cast(), size_of::<Heap>(), true)
+    }
+
+    fn initialize_empty_image(&mut self) -> bool {
+        if self.initialized || self.pointer.as_ptr().addr() % core::mem::align_of::<Heap>() != 0 {
+            return false;
+        }
+        // SAFETY: the token was minted from one successful exact-size zeroed
+        // allocation, is uniquely borrowed, and keeps its stable address.
+        unsafe { self.pointer.as_ptr().write(Heap::bootstrap_empty()) };
+        self.initialized = true;
+        true
+    }
+
+    fn with_heap<R>(
+        &mut self,
+        operation: impl for<'image> FnOnce(Pin<&'image mut Heap>) -> R,
+    ) -> Option<R> {
+        if !self.initialized { return None; }
+        // SAFETY: the linear token retains this exact allocation, no mutable
+        // projection escapes the HRTB closure, and its address is stable.
+        Some(operation(unsafe { Pin::new_unchecked(&mut *self.pointer.as_ptr()) }))
+    }
+
+    /// Frees the image through the native runtime (`_mi_free_subproc_safe`).
+    /// A refused free returns the token.
+    ///
+    /// # Safety
+    /// Child Heap teardown is complete: the Heap is off every list, no Theap
+    /// or page names it, and no projection of it remains.
+    pub(crate) unsafe fn free(self) -> Result<(), Self> {
+        // SAFETY: the token owns this exact live native allocation.
+        match unsafe { crate::runtime_lifecycle::native_free(self.pointer.cast()) } {
+            crate::runtime_lifecycle::NativePageFreeResult::Freed => Ok(()),
+            _ => Err(self),
+        }
+    }
+}
+
 /// A child context whose main Heap image is retained by the exact parent
 /// user-Heap allocation token. This owner spans registry admission through
 /// the represented Heap/Theap list transitions; it does not claim page
@@ -1543,7 +1666,7 @@ impl ChildContextOwner {
 #[must_use = "a parent-allocated child Heap owner must remain through terminal release"]
 pub(crate) struct ChildMainHeapContextOwner<'heap> {
     context: ChildContextOwner,
-    heap_storage: Option<crate::main_heap_page::ParentHeapAllocation<'heap>>,
+    heap_storage: Option<ChildHeapStorage<'heap>>,
     pending_os_release: Option<crate::os_page::OsAlignedPageOwner>,
     page_engine: ChildPageEngineState,
     metadata_pages_may_exist: bool,
@@ -1581,32 +1704,35 @@ pub(crate) enum ChildThreadTeardownError {
 }
 
 /// One ordinary child-thread TLD and regular Theap, with metadata allocations
-/// and the live subprocess registration retained outside their images. The
-/// mutable borrow prevents child Heap/context destruction until this owner
-/// tears down its list membership and releases both exact blocks.
+/// and the live subprocess registration retained outside their images.
+///
+/// The owner does not borrow its child context, so the context can be shared
+/// with other child threads while this thread allocates. Its registration
+/// lease keeps the child's live thread count raised until [`Self::teardown`],
+/// and child destruction refuses while that count is nonzero: this is what
+/// keeps the child image and main Heap alive for the owner. Dropping an owner
+/// that did not complete teardown leaves the count raised, so the child is
+/// retained rather than destroyed under its live TLD/Theap.
+///
+/// Each thread keeps its own page-engine state (pending raw unmap retry and
+/// engine poison), as source keeps page state per Theap.
 #[must_use = "retain a child TLD/Theap owner through page and thread teardown"]
-pub(crate) struct ChildThreadOwner<'owner, 'heap> {
-    parent: &'owner mut ChildMainHeapContextOwner<'heap>,
+pub(crate) struct ChildThreadOwner {
+    image: NonNull<crate::subproc::ChildSubprocessImage>,
+    heap: NonNull<Heap>,
+    parent_subprocess: &'static MainSubprocess,
+    config: MemoryConfig,
     tld: Option<ChildMetadataImageBlock>,
     theap: Option<ChildMetadataImageBlock>,
     registration: Option<crate::subproc::ChildThreadRegistrationLease>,
     thread: LiveThreadId,
     sequence: ThreadSequence,
     state: ChildThreadOwnerState,
+    pending_os_release: Option<crate::os_page::OsAlignedPageOwner>,
+    page_engine: ChildPageEngineState,
 }
 
-impl Drop for ChildThreadOwner<'_, '_> {
-    fn drop(&mut self) {
-        if self.state != ChildThreadOwnerState::Complete {
-            // Dropping an attached/partially torn-down owner would otherwise
-            // release the borrow that prevents child Heap destruction while
-            // its raw TLD/Theap blocks or intrusive links remain live.
-            self.parent.stage = ChildMainHeapStage::Terminal;
-        }
-    }
-}
-
-impl ChildThreadOwner<'_, '_> {
+impl ChildThreadOwner {
     #[inline]
     pub(crate) const fn sequence(&self) -> ThreadSequence { self.sequence }
 
@@ -1621,40 +1747,74 @@ impl ChildThreadOwner<'_, '_> {
         self.theap.as_ref().map(|block| block.pointer.cast())
     }
 
+    /// Whether `child` is the context owner that admitted this thread.
+    pub(crate) fn belongs_to(&self, child: &mut ChildMainHeapContextOwner<'_>) -> bool {
+        child.identity_pointer()
+            .is_some_and(|identity| identity == self.image.as_ptr().cast())
+    }
+
     /// Projects the child image that this thread's TLD names, for source
-    /// subprocess-scoped transitions such as thread statistics.
+    /// subprocess-scoped transitions such as thread statistics. It is
+    /// available only while the registration keeps the child alive.
     pub(crate) fn with_child_image<R>(
         &mut self,
         operation: impl for<'image> FnOnce(Pin<&'image crate::subproc::ChildSubprocessImage>) -> R,
     ) -> Option<R> {
-        self.parent.context.with_image(|child| operation(child.as_ref()))
+        self.registration.as_ref()?;
+        // SAFETY: the unreleased registration keeps the child's live thread
+        // count raised, and child destruction refuses while it is nonzero, so
+        // the pinned image stays allocated. Every image transition is atomic
+        // or internally synchronized, so this shared projection may overlap
+        // other threads' projections.
+        Some(operation(unsafe { Pin::new_unchecked(self.image.as_ref()) }))
     }
 
     /// Completes an already-accounted raw unmap retry retained by this
-    /// thread's child page operation. The parent context is inaccessible to
-    /// callers while this owner borrows it, so retry stays on this typed
-    /// child owner until it succeeds or retains the failure again.
+    /// thread's own page operation.
     ///
     /// # Safety
     /// The caller has stopped all operations using the failed page and keeps
-    /// this exact child-thread owner and context alive through the retry.
+    /// this exact child-thread owner alive through the retry.
     pub(crate) unsafe fn retry_pending_os_release(
         &mut self,
     ) -> Result<bool, crate::os_page::OsAlignedPageError> {
-        // SAFETY: the owner holds the unique mutable borrow of the matching
-        // parent context, and the caller satisfies the quiescence obligation.
-        unsafe { self.parent.retry_pending_os_release() }
+        if self.page_engine != ChildPageEngineState::RetryPending { return Ok(false); }
+        let Some(owner) = self.pending_os_release.take() else { return Ok(false); };
+        if !owner.raw_retry_ready() {
+            self.pending_os_release = Some(owner);
+            return Ok(false);
+        }
+        // SAFETY: this owner is the sole outstanding terminal mapping release
+        // right, and its registration keeps the child context alive.
+        match unsafe { owner.retry_release() } {
+            Ok(()) => {
+                let Some(next) = self.page_engine.complete_raw_retry() else {
+                    unreachable!("raw retry was admitted only in the retry-pending state");
+                };
+                self.page_engine = next;
+                Ok(true)
+            }
+            Err(failure) => {
+                let error = failure.error();
+                self.pending_os_release = Some(failure.into_owner());
+                Err(error)
+            }
+        }
     }
 
     /// Runs one ordinary child-thread page-engine operation using that
     /// thread's live TLD/Theap and the child's arena identity. Metadata pages
     /// continue to use `ChildMainHeapContextOwner::with_metadata_page_engine`.
     ///
+    /// Like the persistent later-main owner, the operation takes no PageMap
+    /// lifecycle lease: it registers and unregisters only the page ranges it
+    /// owns, which source updates with plain writes, and it does not borrow
+    /// the child context, so other child threads run concurrently.
+    ///
     /// # Safety
     /// This must run on the child thread represented by the owner, with no
-    /// competing mutation of its TLD/Theap. The child context, parent Heap
-    /// storage token, canonical PageMap lifecycle, and child arena binding
-    /// remain retained for the complete operation.
+    /// competing mutation of its TLD/Theap. The canonical PageMap and child
+    /// arena binding remain retained for the complete operation.
     pub(crate) unsafe fn with_page_engine<R>(
         &mut self,
         binding: crate::process_init::ProcessMainBackingBinding,
@@ -1663,93 +1823,64 @@ impl ChildThreadOwner<'_, '_> {
             &mut crate::single_thread::ChildOrdinaryPageAllocator<'session, 'child, 'static>,
         ) -> R,
     ) -> Result<R, ChildMetadataPageEngineError> {
-        if self.state != ChildThreadOwnerState::Attached {
-            return Err(ChildMetadataPageEngineError::InvalidTransition);
-        }
-        let child_owner = &mut *self.parent;
-        if child_owner.stage != ChildMainHeapStage::HeapReady
-            || child_owner.pending_os_release.is_some()
-            || child_owner.page_engine != ChildPageEngineState::Active
+        if self.state != ChildThreadOwnerState::Attached
+            || self.registration.is_none()
+            || self.pending_os_release.is_some()
+            || self.page_engine != ChildPageEngineState::Active
             || !binding.is_active()
             || !binding.is_allocation_ready()
             || binding.process().main_subprocess().is_none_or(|parent| {
-                !core::ptr::eq(parent, child_owner.context.parent_subprocess)
+                !core::ptr::eq(parent, self.parent_subprocess)
             })
-            || binding.page_map().memory_config().ok() != Some(child_owner.context.config)
+            || binding.page_map().memory_config().ok() != Some(self.config)
         {
             return Err(ChildMetadataPageEngineError::InvalidTransition);
         }
-
         let tld = self.tld.as_ref()
             .map(|block| block.pointer.cast::<ThreadLocalData>())
             .ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
         let theap = self.theap.as_ref()
             .map(|block| block.pointer.cast::<Theap>())
             .ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
-        let thread = self.thread;
-        let sequence = self.sequence;
-
-        let ChildMainHeapContextOwner {
-            context,
-            heap_storage,
-            pending_os_release,
-            page_engine,
-            ..
-        } = child_owner;
-        let heap_storage = heap_storage.as_ref()
-            .ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
-        let heap = heap_storage.pointer_for_identity();
-        let mut result = None;
-        let projected = context.with_image(|child| {
-            let child_ref = child.as_ref();
-            let child_process = crate::os::ChildVmProcess::new(binding.process(), child_ref)
-                .map_err(ChildMetadataPageEngineError::ChildProcess)?;
-            let pair = crate::process_arena::ChildProcessPageArenaLease::join(
-                binding.page_map(), child_process,
-            ).map_err(ChildMetadataPageEngineError::BackingPair)?;
-            let page_lifecycle = pair.begin_page_lifecycle()
-                .map_err(ChildMetadataPageEngineError::BackingPair)?;
-            // SAFETY: the pair owns the child's page ranges for this operation
-            // and the lifecycle lease excludes every other plain map writer.
-            let page_map = unsafe { pair.page_map_for_owned_ranges() }
-                .map_err(ChildMetadataPageEngineError::BackingPair)?;
-            // SAFETY: this owner retains the exact TLD/Theap metadata blocks,
-            // Heap token, child pin, and all session state until finish.
-            let session = unsafe {
-                crate::types::metadata_session::ChildOrdinaryTheapPageSession::new(
-                    child_ref, tld, theap, heap, thread, sequence,
-                    pending_os_release, page_engine,
-                )
-            }.ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
-            let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
-            // SAFETY: the validated child pair/session and map lifecycle are
-            // held through the complete operation.
-            let mut engine = unsafe {
-                crate::single_thread::ChildOrdinaryPageAllocator::activate_child_ordinary(
-                    session, backing, page_map, sequence,
-                )
-            };
-            let value = operation(child_ref, &mut engine);
-            let finished = if let Err(engine) = engine.finish_operation() {
-                drop(engine);
-                Err(ChildMetadataPageEngineError::EngineRetained)
-            } else {
-                Ok(value)
-            };
-            let lifecycle = page_lifecycle.finish()
-                .map_err(ChildMetadataPageEngineError::PageMapLifecycle);
-            result = Some(match (finished, lifecycle) {
-                (Err(error), _) => Err(error),
-                (Ok(_), Err(error)) => Err(error),
-                (Ok(value), Ok(())) => Ok(value),
-            });
-            Ok(())
-        });
-        match projected {
-            None => Err(ChildMetadataPageEngineError::InvalidTransition),
-            Some(Err(error)) => Err(error),
-            Some(Ok(())) => result.expect("projected child page operation records result"),
+        let Self { image, heap, thread, sequence, pending_os_release, page_engine, .. } = self;
+        // SAFETY: see `with_child_image`; the registration was checked above.
+        let child_ref = unsafe { Pin::new_unchecked(image.as_ref()) };
+        let child_process = crate::os::ChildVmProcess::new(binding.process(), child_ref)
+            .map_err(ChildMetadataPageEngineError::ChildProcess)?;
+        let pair = crate::process_arena::ChildProcessPageArenaLease::join(
+            binding.page_map(), child_process,
+        ).map_err(ChildMetadataPageEngineError::BackingPair)?;
+        // SAFETY: this engine registers and unregisters only the exact page
+        // ranges this Theap owns, and retains their page metadata until its
+        // local access is quiescent and the entries are removed. Other plain
+        // map writers may overlap only for disjoint owned ranges.
+        let page_map = unsafe { pair.page_map_for_owned_ranges() }
+            .map_err(ChildMetadataPageEngineError::BackingPair)?;
+        // SAFETY: this owner retains the exact TLD/Theap metadata blocks and
+        // its session state; the registration retains the child image and
+        // its main Heap.
+        let session = unsafe {
+            crate::types::metadata_session::ChildOrdinaryTheapPageSession::new(
+                child_ref, tld, theap, *heap, *thread, *sequence,
+                pending_os_release, page_engine,
+            )
+        }.ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
+        let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
+        // SAFETY: the validated child pair and session are held through the
+        // complete operation.
+        let mut engine = unsafe {
+            crate::single_thread::ChildOrdinaryPageAllocator::activate_child_ordinary(
+                session, backing, page_map, *sequence,
+            )
+        };
+        let value = operation(child_ref, &mut engine);
+        if let Err(engine) = engine.finish_operation() {
+            // Its Drop transfers an accounted OS retry owner and latches any
+            // other unfinished page-engine state in this thread owner.
+            drop(engine);
+            return Err(ChildMetadataPageEngineError::EngineRetained);
         }
+        Ok(value)
     }
 
     /// Drains this thread's now-unused pages, detaches its regular Theap from
@@ -1760,13 +1891,16 @@ impl ChildThreadOwner<'_, '_> {
     /// # Safety
     /// The caller has ended every client use of this thread allocator, has
     /// freed every allocation made through it, and calls on the same OS
-    /// thread that initialized this owner. Any error after page drain or list
-    /// mutation leaves this owner terminal and must retain it with the child.
+    /// thread that initialized this owner. `child` is the context owner that
+    /// admitted this thread, with no other operation on it running. Any error
+    /// after page drain or list mutation leaves this owner terminal and must
+    /// retain it with the child.
     pub(crate) unsafe fn teardown(
         &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildThreadTeardownError> {
-        if self.state != ChildThreadOwnerState::Attached {
+        if self.state != ChildThreadOwnerState::Attached || !self.belongs_to(child) {
             return Err(ChildThreadTeardownError::InvalidTransition);
         }
         // A live allocation leaves its page attached and the owner retryable.
@@ -1784,8 +1918,7 @@ impl ChildThreadOwner<'_, '_> {
         let theap_pointer = self.theap.as_ref()
             .ok_or(ChildThreadTeardownError::InvalidTransition)?
             .pointer.cast::<Theap>();
-        let child_owner = &mut *self.parent;
-        let detached = child_owner.heap_storage.as_mut()
+        let detached = child.heap_storage.as_mut()
             .and_then(|storage| storage.with_heap(|mut heap| {
                 // SAFETY: owner state is terminal; page drain completed; the
                 // exact TLD/Theap images remain retained in `self`.
@@ -1812,10 +1945,10 @@ impl ChildThreadOwner<'_, '_> {
             .ok_or(ChildThreadTeardownError::InvalidTransition)?;
         // This is `mi_tld_free`'s first source transition: live subprocess
         // count decreases before the TLD identity is invalidated.
-        // SAFETY: `self.parent` is the unique borrow of the context owner
-        // that issued this lease, so its parent-metadata allocation and pinned
-        // child image cannot be released before this call returns. Both Theap
-        // list edges were removed above, and the TLD identity is still valid.
+        // SAFETY: `child` is the context owner that issued this lease and is
+        // uniquely borrowed for this call, so its parent-metadata allocation
+        // and pinned child image cannot be released before it returns. Both
+        // Theap list edges were removed above, and the TLD identity is valid.
         unsafe { registration.release() };
         let tld = unsafe { &mut *tld_pointer.as_ptr() };
         tld.invalidate_attached_theap_for_teardown();
@@ -1824,22 +1957,20 @@ impl ChildThreadOwner<'_, '_> {
 
         let mut free_theap = None;
         let mut free_tld = None;
-        let release = unsafe {
-            child_owner.with_metadata_page_engine(binding, |_child, engine| {
-                // Both blocks are exact child metadata allocations. No typed
-                // projections remain after list removal and invalidation.
-                free_theap = Some(engine.free(theap_pointer.cast()));
-                if matches!(free_theap, Some(Ok(()))) {
-                    free_tld = Some(engine.free(tld_pointer.cast()));
-                }
-            })
-        };
+        let release = child.with_metadata_page_engine(binding, |_child, engine| {
+            // Both blocks are exact child metadata allocations. No typed
+            // projections remain after list removal and invalidation.
+            free_theap = Some(unsafe { engine.free(theap_pointer.cast()) });
+            if matches!(free_theap, Some(Ok(()))) {
+                free_tld = Some(unsafe { engine.free(tld_pointer.cast()) });
+            }
+        });
         release.map_err(ChildThreadTeardownError::PageEngine)?;
         match free_theap {
             Some(Ok(())) => {
                 self.theap = None;
                 // theap.c:350-352 `mi_theap_free_mem` for a non-detached Theap.
-                self.with_child_image(|image| {
+                child.context.with_image(|image| {
                     image.get_ref().identity().record_statistics_theap_unlinked();
                 });
             }
@@ -1870,10 +2001,10 @@ pub(crate) enum ChildThreadStartError {
 }
 
 #[must_use = "a failed child thread start may retain initialized TLD/Theap ownership"]
-pub(crate) enum ChildThreadStartFailure<'owner, 'heap> {
+pub(crate) enum ChildThreadStartFailure {
     Rejected(ChildThreadStartError),
     Retained {
-        owner: ChildThreadOwner<'owner, 'heap>,
+        owner: ChildThreadOwner,
         error: ChildThreadStartError,
     },
 }
@@ -1952,6 +2083,9 @@ pub(crate) enum ChildMetadataPageEngineError {
     SessionNotReady,
     EngineRetained,
     MetadataPagesRemain,
+    /// A child thread still holds its TLD registration; destruction would
+    /// free its TLD, Theap, and pages under it.
+    LiveThreads,
 }
 
 impl ChildPageEngineState {
@@ -1981,7 +2115,7 @@ pub(crate) enum ChildMainHeapBindError {
 #[must_use = "a failed child Heap bind retains both exact owners"]
 pub(crate) struct ChildMainHeapBindFailure<'heap> {
     pub(crate) context: ChildContextOwner,
-    pub(crate) heap: crate::main_heap_page::ParentHeapAllocation<'heap>,
+    pub(crate) heap: ChildHeapStorage<'heap>,
     pub(crate) error: ChildMainHeapBindError,
 }
 
@@ -2000,6 +2134,8 @@ pub(crate) enum ChildMainHeapReleaseError {
     ArenaDestroy(crate::arena::ArenaDestroyError),
     ArenaReleaseRetained,
     ParentHeap(crate::main_heap_page::ParentHeapAllocationReleaseError),
+    /// The native runtime refused to free a native child Heap image.
+    NativeHeapFree,
 }
 
 #[must_use = "a failed child Heap release retains its context and allocation state"]
@@ -2024,8 +2160,16 @@ impl ChildContextOwner {
     /// admission. The token is consumed by the new aggregate owner, so neither
     /// a raw owner pointer nor a release capability escapes separately.
     pub(crate) fn bind_parent_heap_storage<'heap>(
+        self,
+        heap: crate::main_heap_page::ParentHeapAllocation<'heap>,
+    ) -> Result<ChildMainHeapContextOwner<'heap>, ChildMainHeapBindFailure<'heap>> {
+        self.bind_heap_storage(ChildHeapStorage::Parent(heap))
+    }
+
+    /// [`Self::bind_parent_heap_storage`] for either child Heap storage.
+    pub(crate) fn bind_heap_storage<'heap>(
         mut self,
-        mut heap: crate::main_heap_page::ParentHeapAllocation<'heap>,
+        mut heap: ChildHeapStorage<'heap>,
     ) -> Result<ChildMainHeapContextOwner<'heap>, ChildMainHeapBindFailure<'heap>> {
         let parent = self.parent_subprocess;
         let registered = self.with_image(|image| {
@@ -2037,7 +2181,13 @@ impl ChildContextOwner {
         }).unwrap_or(false);
         let error = if self.terminal || !registered {
             Some(ChildMainHeapBindError::ChildNotRegistered)
-        } else if !heap.was_allocated_by(self.parent_subprocess.identity()) {
+        } else if !match &heap {
+            ChildHeapStorage::Parent(allocation) => {
+                allocation.was_allocated_by(self.parent_subprocess.identity())
+            }
+            // The native runtime allocates only in the process main subprocess.
+            ChildHeapStorage::Native(_) => self.parent_subprocess.is_process_main(),
+        } {
             Some(ChildMainHeapBindError::ParentMismatch)
         } else if !heap.initialize_empty_image() {
             Some(ChildMainHeapBindError::InvalidHeapAllocation)
@@ -2071,6 +2221,15 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// subprocess comparison of `mi_subproc_add_current_thread`.
     pub(crate) fn identity_pointer(&mut self) -> Option<*mut crate::subproc::SubprocessIdentity> {
         self.context.with_image(|child| child.identity().as_ptr())
+    }
+
+    /// Source `mi_subproc_visit_heaps` over this child (`subproc.c:303-313`)
+    /// under its Heap-list lock. `None` when the child image is gone.
+    pub(crate) fn visit_heaps(
+        &mut self,
+        visitor: impl FnMut(NonNull<Heap>) -> bool,
+    ) -> Option<Result<bool, crate::types::heap_registry::SourceHeapRegistryError>> {
+        self.context.with_image(|child| child.identity().heap_list().visit_heaps(visitor))
     }
 
     /// Runs source `mi_subproc_visit_heaps` over this child and counts the
@@ -2246,7 +2405,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     pub(crate) fn with_child_heap<R>(
         &mut self,
         operation: impl for<'context, 'heap_view> FnOnce(
-            Pin<&'context mut crate::subproc::ChildSubprocessImage>,
+            Pin<&'context crate::subproc::ChildSubprocessImage>,
             Pin<&'heap_view mut Heap>,
             MemoryId,
         ) -> R,
@@ -2358,7 +2517,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             // synchronization. Page publication records only its address.
             let heap = heap_storage
                 .as_ref()
-                .map(crate::main_heap_page::ParentHeapAllocation::pointer_for_identity)
+                .map(ChildHeapStorage::pointer_for_identity)
                 .ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
             // SAFETY: the locked entry supplies the exact child Theap/image;
             // owner fields retain its Heap allocation and pending-state slots
@@ -2403,17 +2562,18 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
 
     /// Creates the first ordinary child-thread TLD and regular Theap from
     /// the child's own metadata-Theap, then attaches that Theap to the child
-    /// main Heap and TLD. The returned owner blocks child-context teardown
-    /// until its pages and both intrusive memberships have been retired.
+    /// main Heap and TLD. The returned owner's registration blocks child
+    /// destruction until its pages and both intrusive memberships have been
+    /// retired.
     ///
     /// # Safety
-    /// The caller owns this child's sole current-thread TLD lifecycle. No
-    /// competing child thread is being initialized, and this owner remains
-    /// the exclusive route for the returned TLD/Theap until teardown.
-    pub(crate) unsafe fn begin_child_thread<'owner>(
-        &'owner mut self,
+    /// The caller owns the current thread's TLD lifecycle, and no other
+    /// operation on this child runs concurrently. The returned owner remains
+    /// the exclusive route for its TLD/Theap until teardown.
+    pub(crate) unsafe fn begin_child_thread(
+        &mut self,
         binding: crate::process_init::ProcessMainBackingBinding,
-    ) -> Result<ChildThreadOwner<'owner, 'heap>, ChildThreadStartFailure<'owner, 'heap>> {
+    ) -> Result<ChildThreadOwner, ChildThreadStartFailure> {
         if self.stage != ChildMainHeapStage::HeapReady
             || self.page_engine != ChildPageEngineState::Active
             || self.pending_os_release.is_some()
@@ -2428,8 +2588,21 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         let numa = i32::try_from(crate::os::numa_node()).map_err(|_| {
             ChildThreadStartFailure::Rejected(ChildThreadStartError::NumaNode)
         })?;
+        let (Some(heap), Some(image)) = (
+            self.heap_storage.as_ref().map(ChildHeapStorage::pointer_for_identity),
+            self.context.with_image(|child| NonNull::from(child.get_ref())),
+        ) else {
+            return Err(ChildThreadStartFailure::Rejected(
+                ChildThreadStartError::InvalidTransition,
+            ));
+        };
         let mut owner = ChildThreadOwner {
-            parent: self,
+            image,
+            heap,
+            parent_subprocess: self.context.parent_subprocess,
+            config: self.context.config,
+            pending_os_release: None,
+            page_engine: ChildPageEngineState::Active,
             tld: None,
             theap: None,
             registration: None,
@@ -2439,7 +2612,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         };
 
         let mut allocation_outcome = None;
-        let page_result = owner.parent.with_metadata_page_engine(binding, |child, engine| {
+        let page_result = self.with_metadata_page_engine(binding, |child, engine| {
             let outcome = Self::allocate_child_thread_images(child, engine, thread, numa);
             allocation_outcome = Some(outcome);
         });
@@ -2492,8 +2665,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 owner.sequence = sequence;
                 let tld_pointer = owner.tld.as_ref().expect("stored child TLD block").pointer;
                 let theap_pointer = owner.theap.as_ref().expect("stored child Theap block").pointer;
-                let initialize = owner
-                    .parent
+                let initialize = self
                     .heap_storage
                     .as_mut()
                     .and_then(|heap_storage| heap_storage.with_heap(|mut heap| {
@@ -2682,6 +2854,11 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         if self.stage != ChildMainHeapStage::HeapReady {
             return Err(ChildMetadataPageEngineError::InvalidTransition);
         }
+        // Source destroys a subprocess even while its threads are live; that
+        // leaves their TLDs and default Theaps dangling, so refuse instead.
+        if self.context.with_image(|child| child.identity().live_thread_count()) != Some(0) {
+            return Err(ChildMetadataPageEngineError::LiveThreads);
+        }
         if self.page_engine == ChildPageEngineState::RetryComplete {
             if self.pending_os_release.is_some() || self.metadata_pages_may_exist {
                 return Err(ChildMetadataPageEngineError::InvalidTransition);
@@ -2765,7 +2942,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         let memory = heap.memory_id();
         let initialized = heap.with_heap(|mut heap_image| {
             context.with_image(|mut child_image| unsafe {
-                heap_image.as_mut().initialize_child_main(child_image.as_mut(), memory)
+                heap_image.as_mut().initialize_child_main(child_image, memory)
             })
         }).flatten();
         match initialized {
@@ -2993,10 +3170,30 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// projections ended; and the supplied current parent attachment is the
     /// exact allocator owner that minted this token.
     pub(crate) unsafe fn release_after_empty_heap_teardown<'tracking>(
-        mut self,
+        self,
         tracking: &'tracking mut [usize],
         heap_owner: &mut crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine<'heap>,
         attachment: &mut crate::main_heap_thread::MainHeapThreadAttachment<'heap>,
+    ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
+        // SAFETY: forwarded caller obligations.
+        unsafe {
+            self.release_after_empty_heap_teardown_with(
+                tracking, ChildHeapRelease::Parent { heap_owner, attachment },
+            )
+        }
+    }
+
+    /// [`Self::release_after_empty_heap_teardown`] with the free route that
+    /// matches this child's Heap storage.
+    ///
+    /// # Safety
+    /// As for [`Self::release_after_empty_heap_teardown`]. A `Parent` route
+    /// is the owner-local engine that allocated the image; the `Native` route
+    /// may run on any thread with the native runtime active.
+    pub(crate) unsafe fn release_after_empty_heap_teardown_with<'tracking>(
+        mut self,
+        tracking: &'tracking mut [usize],
+        release: ChildHeapRelease<'_, 'heap>,
     ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
         let retained = |owner, stage, error| {
             Err(ChildMainHeapReleaseFailure::Retained { owner, stage, error })
@@ -3017,7 +3214,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         }
         if self.stage == ChildMainHeapStage::HeapListRemoved {
             let heap_pointer = self.heap_storage.as_ref()
-                .map(crate::main_heap_page::ParentHeapAllocation::pointer_for_identity);
+                .map(ChildHeapStorage::pointer_for_identity);
             let matches = self.context.with_image(|child| {
                 let identity = child.identity();
                 identity.has_published_metadata_theap()
@@ -3027,17 +3224,35 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 return retained(self, ChildMainHeapReleaseStage::Validate,
                     ChildMainHeapReleaseError::InvalidTransition);
             }
-            let allocation = self.heap_storage.take().expect("validated child Heap capability");
-            match unsafe { heap_owner.release_child_heap_storage_after_teardown(attachment, allocation) } {
-                Ok(()) => {}
-                Err(crate::main_heap_page::ParentHeapAllocationReleaseFailure::Retained { allocation, error }) => {
-                    self.heap_storage = Some(allocation);
-                    return retained(self, ChildMainHeapReleaseStage::ParentHeap,
-                        ChildMainHeapReleaseError::ParentHeap(error));
+            let storage = self.heap_storage.take().expect("validated child Heap capability");
+            match (storage, release) {
+                (ChildHeapStorage::Parent(allocation), ChildHeapRelease::Parent { heap_owner, attachment }) => {
+                    match unsafe { heap_owner.release_child_heap_storage_after_teardown(attachment, allocation) } {
+                        Ok(()) => {}
+                        Err(crate::main_heap_page::ParentHeapAllocationReleaseFailure::Retained { allocation, error }) => {
+                            self.heap_storage = Some(ChildHeapStorage::Parent(allocation));
+                            return retained(self, ChildMainHeapReleaseStage::ParentHeap,
+                                ChildMainHeapReleaseError::ParentHeap(error));
+                        }
+                        Err(crate::main_heap_page::ParentHeapAllocationReleaseFailure::Terminal(allocation)) => {
+                            self.stage = ChildMainHeapStage::Terminal;
+                            return Err(ChildMainHeapReleaseFailure::Terminal { owner: self, allocation });
+                        }
+                    }
                 }
-                Err(crate::main_heap_page::ParentHeapAllocationReleaseFailure::Terminal(allocation)) => {
-                    self.stage = ChildMainHeapStage::Terminal;
-                    return Err(ChildMainHeapReleaseFailure::Terminal { owner: self, allocation });
+                // SAFETY: the validated teardown above leaves no observer.
+                (ChildHeapStorage::Native(image), ChildHeapRelease::Native) => match unsafe { image.free() } {
+                    Ok(()) => {}
+                    Err(image) => {
+                        self.heap_storage = Some(ChildHeapStorage::Native(image));
+                        return retained(self, ChildMainHeapReleaseStage::ParentHeap,
+                            ChildMainHeapReleaseError::NativeHeapFree);
+                    }
+                },
+                (storage, _) => {
+                    self.heap_storage = Some(storage);
+                    return retained(self, ChildMainHeapReleaseStage::ParentHeap,
+                        ChildMainHeapReleaseError::InvalidTransition);
                 }
             }
             let parent = self.context.parent_subprocess;
@@ -3106,7 +3321,7 @@ impl ChildContextLease<'_> {
     pub(crate) fn with_image<R>(
         &mut self,
         operation: impl for<'image> FnOnce(
-            Pin<&'image mut crate::subproc::ChildSubprocessImage>,
+            Pin<&'image crate::subproc::ChildSubprocessImage>,
         ) -> R,
     ) -> Option<R> {
         if self.owner.terminal { return None; }
@@ -3114,7 +3329,7 @@ impl ChildContextLease<'_> {
             .owner
             .context
             .child_subprocess_image_mut()?;
-        Some(operation(image))
+        Some(operation(image.into_ref()))
     }
 
     #[inline]

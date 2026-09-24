@@ -847,6 +847,22 @@ impl ProcessMainInitializationStorage {
         Ok((owner, startup))
     }
 
+    /// The coordinator-issued process backing binding and the source
+    /// subprocess registry once startup is `READY`: the inputs of production
+    /// child subprocess creation (`mi_subproc_new`), which may run on any
+    /// thread after startup.
+    pub(crate) fn ready_child_subprocess_inputs(
+        &'static self,
+    ) -> Option<(ProcessMainBackingBinding, &'static crate::subproc::registry::SourceSubprocessRegistry)> {
+        if self.state.load(Ordering::Acquire) != READY {
+            return None;
+        }
+        // SAFETY: READY Release-publishes the process-lifetime subprocess.
+        let subprocess = unsafe { self.subprocess.load(Ordering::Acquire).as_ref() }?;
+        let binding = self.ready_lease(self.config(), subprocess).ok()?.process_backing().ok()?;
+        Some((binding, &self.source_subprocesses))
+    }
+
     /// Reobtains the immutable process-ready witness for the same frozen
     /// process inputs. It never creates a second ticket-zero attachment.
     pub(crate) fn ready_lease(

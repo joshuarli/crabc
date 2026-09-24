@@ -9,12 +9,12 @@
   "port_map_counts": {
     "differential_verified": 46,
     "exported": 4,
-    "implemented": 193,
-    "item_count": 190,
+    "implemented": 194,
+    "item_count": 191,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 193
+    "unit_verified": 194
   },
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_atomic_do_once-callsite-disposition-ledger": [
@@ -575,6 +575,10 @@
       "differential_verified"
     ],
     "item:src/subproc.c:detached-malloc-metadata-theap-checkpoint": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/subproc.c:native-child-subprocess-entry-points": [
       "implemented",
       "unit_verified"
     ],

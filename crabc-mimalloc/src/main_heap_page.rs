@@ -9600,7 +9600,7 @@ pub(crate) mod tests {
             assert_ne!(page_owner, 0);
             assert_eq!(parent.vm_statistics().snapshot(), parent_thread_stats_before,
                 "ordinary child page allocation does not charge parent statistics");
-            unsafe { child_thread.teardown(binding) }
+            unsafe { child_thread.teardown(&mut child, binding) }
                 .unwrap_or_else(|_| panic!("the drained child TLD/Theap detach and free"));
             drop(child_thread);
             assert!(child.finish_metadata_pages(binding)

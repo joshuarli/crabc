@@ -30,7 +30,19 @@
 //! gets an ordinary TLD and Theap from the child's metadata Theap and
 //! publishes that Theap as its default Theap, while a thread whose default
 //! Theap is already initialized is refused. [`ChildThreadMember::thread_done`]
-//! is the matching `_mi_thread_done`.
+//! is the matching `_mi_thread_done`. A member does not borrow its child:
+//! each admitted thread keeps its own page-engine state and runs page
+//! operations without a child or PageMap lock, and destruction refuses while
+//! any member's registration keeps the child's live thread count raised.
+//!
+//! [`native_subproc_new`], [`native_subproc_add_current_thread`],
+//! [`native_subproc_thread_done`], [`native_subproc_visit_heaps`], and
+//! [`native_subproc_destroy`] are the production entry points over one
+//! process-lived [`NativeChildSubprocess`] record per child. The child main
+//! Heap image is an ordinary native-runtime allocation, so destruction may
+//! run on any runtime thread that may free, as source
+//! `_mi_free_subproc_safe` does. Context operations serialize on the record
+//! lock, in place of source `theap_meta_lock` and `heaps_lock`.
 //!
 //! Not yet covered: non-main Heaps in the child, nested children, routing
 //! the native runtime's allocation entries through an admitted thread's
@@ -46,7 +58,8 @@ use crate::main_heap_page::{
 use crate::main_heap_thread::{MainHeapThreadAttachment, MainHeapThreadAttachmentError};
 use crate::meta::{
     ChildContextCreateFailure, ChildContextCreateStage, ChildContextOwner,
-    ChildMainHeapBindFailure, ChildMainHeapContextOwner, ChildMainHeapReleaseError,
+    ChildHeapRelease, ChildHeapStorage, ChildMainHeapBindFailure, ChildMainHeapContextOwner,
+    ChildMainHeapReleaseError,
     ChildMainHeapReleaseFailure, ChildMainHeapStage, ChildMetadataPageEngineError,
     ChildMetadataTheapError, ChildThreadOwner, ChildThreadStartError, ChildThreadStartFailure,
     ChildThreadTeardownError, MetaError,
@@ -132,14 +145,40 @@ pub(crate) unsafe fn new_child<'main>(
     attachment: &mut MainHeapThreadAttachment<'main>,
     heap_owner: &mut MainHeapThreadOwnerLocalPageEngine<'main>,
 ) -> Result<ChildMainHeapContextOwner<'main>, ChildSubprocessNewFailure<'main>> {
-    let released = |error| Err(ChildSubprocessNewFailure::Released(error));
     let (parent, config) = match (attachment.subprocess(), attachment.memory_config()) {
         (Ok(parent), Ok(config)) => (parent, config),
         (Err(error), _) | (_, Err(error)) => {
-            return released(ChildSubprocessNewError::Attachment(error));
+            return Err(ChildSubprocessNewFailure::Released(ChildSubprocessNewError::Attachment(error)));
         }
     };
     let metadata = attachment.parent_metadata_allocator();
+    // SAFETY: forwarded registry, thread, and exclusion obligations.
+    unsafe {
+        new_child_with(registry, metadata, parent, config, || {
+            match heap_owner.allocate_child_heap_storage(attachment) {
+                Ok(Some(storage)) => Ok(ChildHeapStorage::Parent(storage)),
+                Ok(None) => Err(ChildSubprocessNewError::HeapAllocation),
+                Err(error) => Err(ChildSubprocessNewError::ParentAccess(error)),
+            }
+        })
+    }
+}
+
+/// The body of [`new_child`] for either child Heap storage route.
+///
+/// # Safety
+/// `registry` holds `parent` as its initialized main member, `metadata` is
+/// `parent`'s metadata allocator, `allocate_heap` performs the source
+/// `mi_heap_zalloc(parent->heap_main)` on the calling thread, and no other
+/// child initializer or registry teardown races this creation.
+unsafe fn new_child_with<'heap>(
+    registry: &'static SourceSubprocessRegistry,
+    metadata: core::pin::Pin<&'static crate::meta::MetaAllocator>,
+    parent: &'static crate::subproc::MainSubprocess,
+    config: crate::os::MemoryConfig,
+    allocate_heap: impl FnOnce() -> Result<ChildHeapStorage<'heap>, ChildSubprocessNewError>,
+) -> Result<ChildMainHeapContextOwner<'heap>, ChildSubprocessNewFailure<'heap>> {
+    let released = |error| Err(ChildSubprocessNewFailure::Released(error));
 
     // subproc.c:161-172: child image, then metadata Theap (whose failure
     // frees the child image first; `allocate` performs that rollback).
@@ -183,12 +222,7 @@ pub(crate) unsafe fn new_child<'main>(
 
     // subproc.c:178 `_mi_heap_new_for_subproc(subproc, 0, true)`: the child
     // main Heap is zero-allocated from the parent's main Heap.
-    let heap_error = match heap_owner.allocate_child_heap_storage(attachment) {
-        Ok(Some(storage)) => Ok(storage),
-        Ok(None) => Err(ChildSubprocessNewError::HeapAllocation),
-        Err(error) => Err(ChildSubprocessNewError::ParentAccess(error)),
-    };
-    let storage = match heap_error {
+    let storage = match allocate_heap() {
         Ok(storage) => storage,
         Err(error) => {
             // subproc.c:179-182: free the unattached metadata Theap, then
@@ -203,7 +237,7 @@ pub(crate) unsafe fn new_child<'main>(
             };
         }
     };
-    let mut child = context.bind_parent_heap_storage(storage).map_err(|failure| {
+    let mut child = context.bind_heap_storage(storage).map_err(|failure| {
         ChildSubprocessNewFailure::Retained(ChildSubprocessRetained::HeapBind(failure))
     })?;
 
@@ -277,7 +311,7 @@ impl core::fmt::Debug for ChildSubprocessDestroyFailure<'_, '_> {
 /// destruction. `registry` admitted the child. The caller runs on the
 /// attachment thread whose owner-local engine allocated the child main Heap.
 pub(crate) unsafe fn destroy_child<'main, 'tracking>(
-    mut child: ChildMainHeapContextOwner<'main>,
+    child: ChildMainHeapContextOwner<'main>,
     registry: &'static SourceSubprocessRegistry,
     binding: ProcessMainBackingBinding,
     tracking: &'tracking mut [usize],
@@ -294,6 +328,31 @@ pub(crate) unsafe fn destroy_child<'main, 'tracking>(
         }
     };
     let metadata = attachment.parent_metadata_allocator();
+    // SAFETY: forwarded obligations; this attachment's engine allocated the
+    // child Heap image.
+    unsafe {
+        destroy_child_with(
+            child, registry, binding, tracking, metadata, config,
+            ChildHeapRelease::Parent { heap_owner, attachment },
+        )
+    }
+}
+
+/// The body of [`destroy_child`] for either child Heap storage route.
+///
+/// # Safety
+/// As for [`destroy_child`], with `metadata` the parent's metadata allocator
+/// and `release` the free route matching the child's Heap storage.
+unsafe fn destroy_child_with<'heap, 'tracking>(
+    mut child: ChildMainHeapContextOwner<'heap>,
+    registry: &'static SourceSubprocessRegistry,
+    binding: ProcessMainBackingBinding,
+    tracking: &'tracking mut [usize],
+    metadata: core::pin::Pin<&'static crate::meta::MetaAllocator>,
+    config: crate::os::MemoryConfig,
+    release: ChildHeapRelease<'_, 'heap>,
+) -> Result<(), ChildSubprocessDestroyFailure<'heap, 'tracking>> {
+    let mut release = Some(release);
     loop {
         let step = match child.stage() {
             // subproc.c:207-211: remove the child from the subprocess list.
@@ -326,12 +385,11 @@ pub(crate) unsafe fn destroy_child<'main, 'tracking>(
             | ChildMainHeapStage::HeapStorageReleased
             | ChildMainHeapStage::ArenaBackingDestroyed => {
                 // heap.c:223-226 Heap image free, then subproc.c:231-252.
-                // SAFETY: every list transition completed above and this
-                // attachment's engine allocated the child Heap image.
-                return unsafe {
-                    child.release_after_empty_heap_teardown(tracking, heap_owner, attachment)
-                }
-                .map_err(ChildSubprocessDestroyFailure::Release);
+                // SAFETY: every list transition completed above and the
+                // caller's route matches the child Heap storage.
+                let release = release.take().expect("the release route is consumed once");
+                return unsafe { child.release_after_empty_heap_teardown_with(tracking, release) }
+                    .map_err(ChildSubprocessDestroyFailure::Release);
             }
             ChildMainHeapStage::Registered | ChildMainHeapStage::Terminal => {
                 Err(ChildSubprocessDestroyError::InvalidState)
@@ -347,19 +405,20 @@ pub(crate) unsafe fn destroy_child<'main, 'tracking>(
 /// ordinary TLD and regular Theap on the child main Heap, installed as the
 /// thread's default Theap and the main-Heap fast slot.
 ///
-/// The member borrows the child owner, so the child cannot be destroyed
-/// while the thread belongs to it. Dropping a member without
-/// [`Self::thread_done`] leaves the roots installed and retains the child
-/// terminally, as dropping its `ChildThreadOwner` does.
+/// The member does not borrow the child, so other threads may use the child
+/// meanwhile; the member's registration keeps the child's live thread count
+/// raised, and destruction refuses until [`Self::thread_done`] completes.
+/// Dropping a member without `thread_done` leaves the roots installed and
+/// the child retained, as dropping its `ChildThreadOwner` does.
 #[must_use = "a child subprocess thread must finish through thread_done"]
-pub(crate) struct ChildThreadMember<'owner, 'main> {
-    owner: ChildThreadOwner<'owner, 'main>,
+pub(crate) struct ChildThreadMember {
+    owner: ChildThreadOwner,
 }
 
 /// Result of pinned `mi_subproc_add_current_thread`.
 #[must_use = "an admitted child thread must finish through thread_done"]
-pub(crate) enum ChildThreadAddOutcome<'owner, 'main> {
-    Added(ChildThreadMember<'owner, 'main>),
+pub(crate) enum ChildThreadAddOutcome {
+    Added(ChildThreadMember),
     /// The thread's default Theap is already initialized, so source returns
     /// without a change (`subproc.c:291-296`). Source warns only when that
     /// Theap belongs to another subprocess.
@@ -370,6 +429,8 @@ pub(crate) enum ChildThreadAddOutcome<'owner, 'main> {
 pub(crate) enum ChildThreadDoneError {
     /// Called on a thread other than the one the member admitted.
     WrongThread,
+    /// `child` is not the context that admitted the member.
+    WrongChild,
     /// A live block remains on one of the thread's pages. Source abandons
     /// such pages to the child main Heap; this port has no child abandonment
     /// route yet, so the member stays attached with its roots installed.
@@ -392,11 +453,11 @@ pub(crate) enum ChildThreadDoneError {
 /// # Safety
 /// The caller runs on the thread being admitted and owns its compiler-TLS
 /// default/cached/fast roots for the member's lifetime. No other operation on
-/// `child` runs concurrently.
-pub(crate) unsafe fn add_current_thread<'owner, 'main>(
-    child: &'owner mut ChildMainHeapContextOwner<'main>,
+/// `child` runs concurrently with this call.
+pub(crate) unsafe fn add_current_thread(
+    child: &mut ChildMainHeapContextOwner<'_>,
     binding: ProcessMainBackingBinding,
-) -> Result<ChildThreadAddOutcome<'owner, 'main>, ChildThreadStartFailure<'owner, 'main>> {
+) -> Result<ChildThreadAddOutcome, ChildThreadStartFailure> {
     // subproc.c:286-288: a child without a main Heap is ignored.
     if child.stage() != ChildMainHeapStage::HeapReady {
         return Err(ChildThreadStartFailure::Rejected(ChildThreadStartError::InvalidTransition));
@@ -434,7 +495,7 @@ pub(crate) unsafe fn add_current_thread<'owner, 'main>(
     Ok(ChildThreadAddOutcome::Added(ChildThreadMember { owner }))
 }
 
-impl ChildThreadMember<'_, '_> {
+impl ChildThreadMember {
     /// Runs one ordinary page-engine operation through this thread's Theap.
     ///
     /// # Safety
@@ -482,13 +543,18 @@ impl ChildThreadMember<'_, '_> {
     ///
     /// # Safety
     /// The caller is the admitted thread, no allocation through this member
-    /// is live or in progress, and no other operation on the child runs.
+    /// is live or in progress, `child` is the context that admitted it, and
+    /// no other operation on the child runs concurrently with this call.
     pub(crate) unsafe fn thread_done(
         &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
         binding: ProcessMainBackingBinding,
     ) -> Result<(), ChildThreadDoneError> {
         if crate::compiler_tls::current_thread_identity() != Some(self.owner.thread()) {
             return Err(ChildThreadDoneError::WrongThread);
+        }
+        if !self.owner.belongs_to(child) {
+            return Err(ChildThreadDoneError::WrongChild);
         }
         // Rust has no child page abandonment yet, so prove before the first
         // source step that every page drains; source `_mi_theap_collect_abandon`
@@ -517,8 +583,267 @@ impl ChildThreadMember<'_, '_> {
         set_cached_theap(empty);
         // init.c:401-419 and `mi_tld_free`.
         // SAFETY: forwarded obligations; the roots no longer name the Theap.
-        unsafe { self.owner.teardown(binding) }.map_err(ChildThreadDoneError::Teardown)
+        unsafe { self.owner.teardown(child, binding) }.map_err(ChildThreadDoneError::Teardown)
     }
+}
+
+/// One production child subprocess. Its address is the `mi_subproc_id_t`
+/// returned by [`native_subproc_new`].
+///
+/// Operations that need the child context (thread admission and finish,
+/// Heap visitation, destruction) serialize on `lock`, as source serializes
+/// them on `theap_meta_lock` and `heaps_lock`. An admitted thread's page
+/// operations do not take it.
+pub(crate) struct NativeChildSubprocess {
+    lock: crate::lock::PrivateLock,
+    owner: core::cell::UnsafeCell<Option<ChildMainHeapContextOwner<'static>>>,
+    /// This record's own parent-metadata block, moved out to free it.
+    storage: core::cell::UnsafeCell<Option<crate::meta::MetaAllocation<'static>>>,
+    registry: &'static SourceSubprocessRegistry,
+}
+
+// SAFETY: every access to the two cells happens with `lock` held, except the
+// creator's initialization before the id is returned and the destroyer's
+// final teardown after the owner is gone; the id contract excludes any other
+// operation on the record in both windows.
+unsafe impl Sync for NativeChildSubprocess {}
+
+/// Production `mi_subproc_id_t` for a child subprocess.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NativeSubprocessId(core::ptr::NonNull<NativeChildSubprocess>);
+
+// SAFETY: the id is an address; the record it names is `Sync`.
+unsafe impl Send for NativeSubprocessId {}
+// SAFETY: as above.
+unsafe impl Sync for NativeSubprocessId {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeSubprocessError {
+    /// The native runtime has not completed startup.
+    NotReady,
+    /// The record's parent-metadata block could not be allocated.
+    RecordAllocation(crate::meta::MetaError),
+    /// Source `mi_subproc_new` returned null; everything was released.
+    New(ChildSubprocessNewError),
+    /// A step failed after a transition that cannot be undone; its owners are
+    /// retained (leaked) rather than freed.
+    Retained,
+    /// The record lock failed.
+    Lock(crabc_core::Errno),
+    /// Destruction refused before any change: a thread still belongs to the
+    /// child, or another retryable step failed. The id stays valid.
+    DestroyRefused(ChildSubprocessDestroyError),
+    /// The child context is gone (already destroyed or terminally retained).
+    Gone,
+}
+
+impl NativeSubprocessId {
+    /// # Safety
+    /// The id was returned by [`native_subproc_new`] and has not been
+    /// destroyed.
+    unsafe fn record(self) -> &'static NativeChildSubprocess {
+        // SAFETY: forwarded id contract; the record lives until destroy.
+        unsafe { self.0.as_ref() }
+    }
+
+    /// Runs `operation` on the child context under the record lock.
+    ///
+    /// # Safety
+    /// As for [`Self::record`].
+    unsafe fn with_owner<R>(
+        self,
+        operation: impl FnOnce(&mut Option<ChildMainHeapContextOwner<'static>>) -> R,
+    ) -> Result<R, NativeSubprocessError> {
+        // SAFETY: forwarded id contract.
+        let record = unsafe { self.record() };
+        let guard = record.lock.lock().map_err(NativeSubprocessError::Lock)?;
+        // SAFETY: the held lock serializes every access to the owner cell.
+        let value = operation(unsafe { &mut *record.owner.get() });
+        guard.unlock().map_err(NativeSubprocessError::Lock)?;
+        Ok(value)
+    }
+}
+
+/// Production pinned `mi_subproc_new` (`subproc.c:158-194`) for a root
+/// child of the process main subprocess, on any runtime thread that may
+/// allocate: the child main Heap image is an ordinary allocation through
+/// the native runtime entry points, as source allocates it from the calling
+/// thread's Theap for the parent main Heap.
+pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubprocessError> {
+    let (binding, registry) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs()
+        .ok_or(NativeSubprocessError::NotReady)?;
+    let parent = crate::subproc::MainSubprocess::global();
+    if binding.process().main_subprocess().is_none_or(|main| !core::ptr::eq(main, parent)) {
+        return Err(NativeSubprocessError::NotReady);
+    }
+    let config = binding.page_map().memory_config().map_err(|_| NativeSubprocessError::NotReady)?;
+    let metadata = crate::meta::MetaAllocator::global();
+    // The Rust record is allocated first so that no child state exists when
+    // it fails; source has no such record.
+    let mut storage = metadata
+        .zalloc_for_main_subprocess(config, parent, core::mem::size_of::<NativeChildSubprocess>())
+        .map_err(NativeSubprocessError::RecordAllocation)?;
+    let record = storage.pointer().cast::<NativeChildSubprocess>();
+    if record.as_ptr().addr() % core::mem::align_of::<NativeChildSubprocess>() != 0 {
+        return match metadata.free(&mut storage) {
+            Ok(()) => Err(NativeSubprocessError::RecordAllocation(crate::meta::MetaError::InitializationRetained)),
+            Err(_) => Err(NativeSubprocessError::Retained),
+        };
+    }
+    // SAFETY: the registry holds `parent` as its main member once startup is
+    // READY; `metadata` is the parent's allocator; the native allocation runs
+    // on this thread; nothing else can observe the new child yet.
+    let child = unsafe {
+        new_child_with(registry, metadata, parent, config, || {
+            crate::meta::NativeChildHeapImage::allocate()
+                .map(ChildHeapStorage::Native)
+                .ok_or(ChildSubprocessNewError::HeapAllocation)
+        })
+    };
+    let child = match child {
+        Ok(child) => child,
+        Err(ChildSubprocessNewFailure::Released(error)) => {
+            return match metadata.free(&mut storage) {
+                Ok(()) => Err(NativeSubprocessError::New(error)),
+                Err(_) => Err(NativeSubprocessError::Retained),
+            };
+        }
+        // The retained owners are dropped without freeing anything.
+        Err(ChildSubprocessNewFailure::Retained(_)) => return Err(NativeSubprocessError::Retained),
+    };
+    // SAFETY: the block is exclusively owned, zeroed, large enough, and
+    // aligned for the record, which is written whole before the id escapes.
+    unsafe {
+        record.as_ptr().write(NativeChildSubprocess {
+            lock: crate::lock::PrivateLock::new(),
+            owner: core::cell::UnsafeCell::new(Some(child)),
+            storage: core::cell::UnsafeCell::new(Some(storage)),
+            registry,
+        });
+    }
+    Ok(NativeSubprocessId(record))
+}
+
+/// Production `mi_subproc_add_current_thread` for a child from
+/// [`native_subproc_new`]; see [`add_current_thread`].
+///
+/// # Safety
+/// The id is live. The caller runs on the thread being admitted and owns its
+/// compiler-TLS roots for the member's lifetime.
+pub(crate) unsafe fn native_subproc_add_current_thread(
+    id: NativeSubprocessId,
+) -> Result<Result<ChildThreadAddOutcome, ChildThreadStartFailure>, NativeSubprocessError> {
+    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs()
+        .ok_or(NativeSubprocessError::NotReady)?;
+    // SAFETY: forwarded id and current-thread obligations; the record lock
+    // excludes every other operation on the child context.
+    unsafe {
+        id.with_owner(|owner| match owner.as_mut() {
+            Some(child) => Ok(add_current_thread(child, binding)),
+            None => Err(NativeSubprocessError::Gone),
+        })
+    }?
+}
+
+/// Finishes a thread admitted by [`native_subproc_add_current_thread`];
+/// see [`ChildThreadMember::thread_done`].
+///
+/// # Safety
+/// The id is live, the caller is the admitted thread, and no allocation
+/// through the member is live or in progress.
+pub(crate) unsafe fn native_subproc_thread_done(
+    id: NativeSubprocessId,
+    member: &mut ChildThreadMember,
+) -> Result<Result<(), ChildThreadDoneError>, NativeSubprocessError> {
+    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs()
+        .ok_or(NativeSubprocessError::NotReady)?;
+    // SAFETY: forwarded obligations; the record lock excludes every other
+    // operation on the child context.
+    unsafe {
+        id.with_owner(|owner| match owner.as_mut() {
+            Some(child) => Ok(member.thread_done(child, binding)),
+            None => Err(NativeSubprocessError::Gone),
+        })
+    }?
+}
+
+/// Production `mi_subproc_visit_heaps` (`subproc.c:303-313`).
+///
+/// # Safety
+/// The id is live. `visitor` must not operate on this child.
+pub(crate) unsafe fn native_subproc_visit_heaps(
+    id: NativeSubprocessId,
+    mut visitor: impl FnMut(core::ptr::NonNull<crate::types::Heap>) -> bool,
+) -> Result<bool, NativeSubprocessError> {
+    // SAFETY: forwarded id contract.
+    unsafe {
+        id.with_owner(|owner| {
+            let visited: Result<bool, crate::types::heap_registry::SourceHeapRegistryError> = owner
+                .as_mut()
+                .and_then(|child| child.visit_heaps(&mut visitor))
+                .ok_or(NativeSubprocessError::Gone)?;
+            visited.map_err(|_| NativeSubprocessError::Retained)
+        })
+    }?
+}
+
+/// Production pinned `mi_subproc_destroy` for a child from
+/// [`native_subproc_new`], on any runtime thread that may free.
+///
+/// It refuses, leaving the id valid, while a thread still belongs to the
+/// child (source would destroy it under that thread). After success the id
+/// is invalid. A failure after the first irreversible step retains the
+/// remaining owners and returns `Retained`.
+///
+/// # Safety
+/// The id is live, no other operation on this id runs concurrently with
+/// the call, and no block of the child is used again.
+pub(crate) unsafe fn native_subproc_destroy(id: NativeSubprocessId) -> Result<(), NativeSubprocessError> {
+    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs()
+        .ok_or(NativeSubprocessError::NotReady)?;
+    let config = binding.page_map().memory_config().map_err(|_| NativeSubprocessError::NotReady)?;
+    let metadata = crate::meta::MetaAllocator::global();
+    // SAFETY: forwarded id contract.
+    let record = unsafe { id.record() };
+    let destroyed = unsafe {
+        id.with_owner(|owner| {
+            let child = owner.take().ok_or(NativeSubprocessError::Gone)?;
+            // SAFETY: the record lock excludes thread admission and finish,
+            // the unlink step refuses while a thread belongs to the child,
+            // and the caller never uses a child block again.
+            match destroy_child_with(
+                child, record.registry, binding, &mut [], metadata, config, ChildHeapRelease::Native,
+            ) {
+                Ok(()) => Ok(()),
+                Err(ChildSubprocessDestroyFailure::Retained { owner: child, error }) => {
+                    let refused = child.stage() == ChildMainHeapStage::HeapReady;
+                    *owner = Some(child);
+                    Err(if refused {
+                        NativeSubprocessError::DestroyRefused(error)
+                    } else {
+                        NativeSubprocessError::Retained
+                    })
+                }
+                Err(ChildSubprocessDestroyFailure::Release(ChildMainHeapReleaseFailure::Retained {
+                    owner: child, ..
+                })) => {
+                    *owner = Some(child);
+                    Err(NativeSubprocessError::Retained)
+                }
+                // The remaining owners are dropped without freeing anything.
+                Err(ChildSubprocessDestroyFailure::Release(_)) => Err(NativeSubprocessError::Retained),
+            }
+        })
+    }??;
+    // The child is gone and the lock is released; no other operation on this
+    // id may run (caller contract), so the record can be taken apart.
+    // SAFETY: exclusive by the id contract; the owner cell is empty.
+    let mut storage = unsafe { (*record.storage.get()).take() }.ok_or(NativeSubprocessError::Retained)?;
+    metadata.free(&mut storage).map_err(|_| NativeSubprocessError::Retained)
 }
 
 #[cfg(test)]
@@ -728,7 +1053,7 @@ mod tests {
                     ));
                     values.push(i64::from(page_owner == thread));
                     // SAFETY: the only block was freed; this is the admitted thread.
-                    unsafe { member.thread_done(binding) }.expect("the child thread finishes");
+                    unsafe { member.thread_done(child, binding) }.expect("the child thread finishes");
                     // SAFETY: the reset default root is the empty Theap.
                     values.push(i64::from(
                         unsafe { Theap::initialized_default_subprocess_at(default_theap()) }.is_none(),
@@ -811,5 +1136,117 @@ mod tests {
                 .finish_after_user_destructors()
                 .expect("the parent attachment completes after its children");
         });
+    }
+
+    unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+
+    fn native_backing() -> ProcessMainBackingBinding {
+        crate::process_init::ProcessMainInitializationStorage::global()
+            .ready_child_subprocess_inputs()
+            .expect("the isolated runtime is READY")
+            .0
+    }
+
+    /// The production entry points in a fresh runtime process: two fresh
+    /// threads admitted to one child allocate concurrently (their page
+    /// operations share no child or PageMap lock), destruction refuses while
+    /// they belong to the child, and a runtime worker other than the creator
+    /// destroys it after both finish.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_child_threads_allocate_concurrently_and_another_thread_destroys() {
+        use crate::runtime_lifecycle::{
+            attach_current_thread, finish_current_thread_native_after_user_destructors,
+            initialize_process, prepare_native_later_thread_arena, ThreadAttachResult,
+            ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_child_threads_allocate_concurrently_and_another_thread_destroys",
+            || {
+                assert!(initialize_process(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("the initial thread creates a child");
+                let mut heaps = 0;
+                assert_eq!(unsafe { native_subproc_visit_heaps(id, |_| { heaps += 1; true }) }, Ok(true));
+                assert_eq!(heaps, 1, "a new child has only its main Heap");
+
+                let admitted = std::sync::Barrier::new(3);
+                let holding = std::sync::Barrier::new(3);
+                let release = std::sync::Barrier::new(3);
+                std::thread::scope(|scope| {
+                    for _ in 0..2 {
+                        scope.spawn(|| {
+                            // SAFETY: a fresh thread owns its pristine roots.
+                            let outcome = unsafe { native_subproc_add_current_thread(id) }
+                                .expect("the child record is live");
+                            let Ok(ChildThreadAddOutcome::Added(mut member)) = outcome else {
+                                panic!("a fresh thread joins the child");
+                            };
+                            admitted.wait();
+                            let binding = native_backing();
+                            let mut kept = None;
+                            for round in 0..256 {
+                                // SAFETY: the admitted thread runs its own engine.
+                                unsafe {
+                                    member.with_page_engine(binding, |_image, engine| {
+                                        let block = engine.allocate(64 + round % 3 * 64, false)
+                                            .expect("the child thread allocates");
+                                        match kept.replace(block) {
+                                            // SAFETY: the previous exact live block.
+                                            Some(previous) => unsafe { engine.free(previous) }
+                                                .expect("the child thread frees"),
+                                            None => {}
+                                        }
+                                    })
+                                }
+                                .expect("concurrent child page operations are admitted");
+                            }
+                            holding.wait();
+                            release.wait();
+                            // SAFETY: the admitted thread frees its last block.
+                            unsafe {
+                                member.with_page_engine(binding, |_image, engine| {
+                                    unsafe { engine.free(kept.take().unwrap()) }.expect("last free");
+                                })
+                            }
+                            .expect("the child thread frees its last block");
+                            // SAFETY: nothing allocated through the member is live.
+                            let done = unsafe { native_subproc_thread_done(id, &mut member) }
+                                .expect("the child record is live");
+                            assert_eq!(done, Ok(()));
+                        });
+                    }
+                    admitted.wait();
+                    holding.wait();
+                    // SAFETY: the id is live; this is the only destroy.
+                    assert_eq!(
+                        unsafe { native_subproc_destroy(id) },
+                        Err(NativeSubprocessError::DestroyRefused(
+                            ChildSubprocessDestroyError::Registry(ChildMetadataPageEngineError::LiveThreads),
+                        )),
+                        "a child with live threads is not destroyed",
+                    );
+                    release.wait();
+                });
+
+                std::thread::scope(|scope| {
+                    scope.spawn(|| {
+                        let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                        assert!(unsafe {
+                            crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                        });
+                        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                        // SAFETY: the id is live and no child block is used again.
+                        assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+                        assert_eq!(
+                            finish_current_thread_native_after_user_destructors(),
+                            ThreadFinishResult::Finished,
+                        );
+                    }).join().expect("a runtime worker destroys the child");
+                });
+            },
+        );
     }
 }
