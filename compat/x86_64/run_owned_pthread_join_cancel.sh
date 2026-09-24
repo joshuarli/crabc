@@ -6,7 +6,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly musl_libc=/opt/musl-1.2.6/lib/libc.a
 readonly probe="$ROOT/compat/x86_64/owned_pthread_join_cancel_probe.c"
-readonly -a scenarios=(try-status timed-status timed-exited-invalid entry blocked disabled masked cleanup-rejoin timed-entry timed-blocked timed-disabled timed-masked try-pending-busy try-pending-exited)
+readonly -a scenarios=(try-status timed-status timed-exited-invalid tsd-exit entry blocked disabled masked cleanup-rejoin timed-entry timed-blocked timed-disabled timed-masked try-pending-busy try-pending-exited)
 # Aggregate dynamic gates supply an already built installed or extracted
 # product. The focused command builds and checks both static entries; the
 # pthread family supplies its sealed static product with --static-sysroot.
@@ -105,4 +105,4 @@ for mode in pie non-pie; do
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
-printf 'owned pthread join modes: PASS (one selected dynamic-product-built object through static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct entries; weak same-address GNU aliases, tryjoin busy/result preservation, timed deadline ordering and timeout, entry/blocked cancellation, disabled/masked states, cleanup and target reclamation); evidence: %s\n' "$work"
+printf 'owned pthread join modes: PASS (one selected dynamic-product-built object through static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct entries; weak same-address GNU aliases, tryjoin busy/result preservation, timed deadline ordering and timeout, entry/blocked cancellation, disabled/masked states, cleanup and target reclamation, cleanup-before-TSD exit order, destructor iterations and key limit); evidence: %s\n' "$work"

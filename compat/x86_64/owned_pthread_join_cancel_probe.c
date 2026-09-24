@@ -1,11 +1,13 @@
 #define _GNU_SOURCE
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <threads.h>
 #include <sched.h>
 #include <time.h>
 #include <unistd.h>
@@ -242,12 +244,83 @@ static int join_cancellation_case(const char *scenario)
     return 0;
 }
 
+/*
+ * Thread exit ordering: cleanup handlers run newest first before any TSD
+ * destructor; a destructor that rearms its value runs exactly
+ * PTHREAD_DESTRUCTOR_ITERATIONS times; a deleted key's destructor never
+ * runs; C11 tss keys behave the same. Key creation fails with EAGAIN only
+ * after PTHREAD_KEYS_MAX live keys.
+ */
+static char exit_trace[64];
+static atomic_int exit_trace_length;
+static pthread_key_t rearming_key, deleted_key;
+static tss_t c11_key;
+static void trace(char marker) { exit_trace[atomic_fetch_add(&exit_trace_length, 1)] = marker; }
+static void exit_cleanup(void *marker) { trace(*(char *)marker); }
+static void rearming_destructor(void *value)
+{
+    trace('d');
+    if ((uintptr_t)value < 10) pthread_setspecific(rearming_key, (void *)((uintptr_t)value + 1));
+}
+static void deleted_destructor(void *value) { (void)value; trace('X'); }
+static void c11_destructor(void *value) { (void)value; trace('t'); }
+static void *tsd_exit_body(void *unused)
+{
+    static char first = '1', second = '2';
+    (void)unused;
+    if (pthread_getspecific(rearming_key) || tss_get(c11_key)) return (void *)1;
+    if (pthread_setspecific(rearming_key, (void *)1) || pthread_setspecific(deleted_key, (void *)1) ||
+        tss_set(c11_key, (void *)1) != thrd_success) return (void *)2;
+    pthread_cleanup_push(exit_cleanup, &first);
+    pthread_cleanup_push(exit_cleanup, &second);
+    if (pthread_key_delete(deleted_key)) return (void *)3;
+    pthread_exit((void *)(uintptr_t)41);
+    pthread_cleanup_pop(0);
+    pthread_cleanup_pop(0);
+    return 0;
+}
+static int tsd_exit_case(void)
+{
+    void *result = 0;
+    if (pthread_key_create(&rearming_key, rearming_destructor) ||
+        pthread_key_create(&deleted_key, deleted_destructor) ||
+        tss_create(&c11_key, c11_destructor) != thrd_success) return 20;
+    if (pthread_create(&target, 0, tsd_exit_body, 0) || pthread_join(target, &result) ||
+        result != (void *)(uintptr_t)41) return 21;
+    /* Key iteration order is unspecified; report cleanup order, then counts. */
+    int length = atomic_load(&exit_trace_length), rearmed = 0, c11 = 0, deleted = 0;
+    for (int index = 2; index < length; index++) {
+        rearmed += exit_trace[index] == 'd';
+        c11 += exit_trace[index] == 't';
+        deleted += exit_trace[index] == 'X';
+    }
+    printf("thread exit cleanup %c%c then destructors %d rearming, %d c11, %d deleted of %d\n",
+           exit_trace[0], exit_trace[1], rearmed, c11, deleted, length - 2);
+    tss_delete(c11_key);
+    if (pthread_key_delete(rearming_key)) return 22;
+    pthread_key_t keys[PTHREAD_KEYS_MAX + 1];
+    int created = 0, result_code = 0;
+    errno = E2BIG;
+    while (created <= PTHREAD_KEYS_MAX && !(result_code = pthread_key_create(&keys[created], 0))) created++;
+    printf("keys created %d then %d errno-kept %d\n", created, result_code, errno == E2BIG);
+    while (created) if (pthread_key_delete(keys[--created])) return 23;
+    /* Musl resumes its search at the last created key, so an immediately
+     * deleted key is reused before any later vacancy. */
+    if (pthread_key_create(&keys[0], 0) || pthread_key_create(&keys[1], 0) ||
+        pthread_key_delete(keys[1]) || pthread_key_create(&keys[2], 0)) return 24;
+    printf("key reuse after delete %d\n", keys[2] == keys[1]);
+    if (pthread_key_delete(keys[0]) || pthread_key_delete(keys[2])) return 25;
+    puts("pthread cleanup-before-TSD exit order, destructor iterations, deleted keys, and key limit: PASS");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) return 1;
     if (!strcmp(argv[1], "try-status")) return tryjoin_status_case();
     if (!strcmp(argv[1], "timed-status")) return timed_status_case();
     if (!strcmp(argv[1], "timed-exited-invalid")) return timed_exited_invalid_deadline_case();
+    if (!strcmp(argv[1], "tsd-exit")) return tsd_exit_case();
     if (strcmp(argv[1], "entry") && strcmp(argv[1], "blocked") &&
         strcmp(argv[1], "disabled") && strcmp(argv[1], "masked") &&
         strcmp(argv[1], "cleanup-rejoin") && strcmp(argv[1], "timed-entry") &&

@@ -76,6 +76,39 @@ const THRD_ERROR: c_int = 2;
 const PTHREAD_KEYS_MAX: usize = 128;
 const PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4;
 
+/// Key slots, including the installed C allocator's one private slot.
+///
+/// Pinned musl's own malloc uses no key, so an application may create all
+/// `PTHREAD_KEYS_MAX` keys. The installed products' C mimalloc backend
+/// (`prim/unix/prim.c::_mi_prim_thread_init_auto_done`) instead creates one
+/// key through the public entry, storing it in its global
+/// `_mi_heap_default_key`, to observe thread exit. That creation receives
+/// slot [`ALLOCATOR_KEY`] beyond the application range, so the allocator
+/// neither consumes an application key nor needs a changed upstream source.
+/// Its destructor then runs after every application destructor in each pass,
+/// so allocator thread teardown follows application TSD teardown.
+/// The cfg is the one that links that C object's lifecycle bridge.
+#[cfg(all(crabc_owned_mimalloc_lifecycle, not(feature = "native-mimalloc-shadow")))]
+const TSD_SLOTS: usize = PTHREAD_KEYS_MAX + 1;
+#[cfg(not(all(crabc_owned_mimalloc_lifecycle, not(feature = "native-mimalloc-shadow"))))]
+const TSD_SLOTS: usize = PTHREAD_KEYS_MAX;
+#[cfg(all(crabc_owned_mimalloc_lifecycle, not(feature = "native-mimalloc-shadow")))]
+const ALLOCATOR_KEY: usize = PTHREAD_KEYS_MAX;
+
+#[cfg(all(crabc_owned_mimalloc_lifecycle, not(feature = "native-mimalloc-shadow")))]
+unsafe extern "C" {
+    // The C allocator's `pthread_key_t` word; only its address is used.
+    static _mi_heap_default_key: c_uint;
+}
+
+/// Whether `key` is the C allocator's own key-storage word.
+#[cfg(all(crabc_owned_mimalloc_lifecycle, not(feature = "native-mimalloc-shadow")))]
+#[inline]
+fn is_allocator_key_storage(key: *mut c_uint) -> bool {
+    // Taking the address reads no storage.
+    core::ptr::eq(unsafe { core::ptr::addr_of!(_mi_heap_default_key) }, key.cast_const())
+}
+
 const KEY_FREE: u8 = 0;
 const KEY_ALLOCATED: u8 = 1;
 
@@ -94,7 +127,7 @@ type TsdDestructor = unsafe extern "C" fn(*mut c_void);
 /// when a worker has become a detached-but-not-yet-reaped registry member.
 #[repr(C)]
 pub(super) struct SelectedTsdValues {
-    values: [AtomicUsize; PTHREAD_KEYS_MAX],
+    values: [AtomicUsize; TSD_SLOTS],
     // Mirrors musl's `tsd_used`: it avoids an otherwise pointless 128-slot
     // teardown scan for a worker that never changed any selected value, and
     // lets a destructor's rearm request the next bounded pass.
@@ -105,7 +138,7 @@ pub(super) struct SelectedTsdValues {
 impl SelectedTsdValues {
     pub(super) const fn empty() -> Self {
         Self {
-            values: [const { AtomicUsize::new(0) }; PTHREAD_KEYS_MAX],
+            values: [const { AtomicUsize::new(0) }; TSD_SLOTS],
             used: AtomicU8::new(0),
             teardown: AtomicU8::new(TSD_TEAR_DOWN_IDLE),
         }
@@ -138,8 +171,8 @@ impl SelectedTsdKey {
     }
 }
 
-static SELECTED_TSD_KEYS: [SelectedTsdKey; PTHREAD_KEYS_MAX] =
-    [const { SelectedTsdKey::empty() }; PTHREAD_KEYS_MAX];
+static SELECTED_TSD_KEYS: [SelectedTsdKey; TSD_SLOTS] =
+    [const { SelectedTsdKey::empty() }; TSD_SLOTS];
 static SELECTED_TSD_NEXT_KEY: AtomicUsize = AtomicUsize::new(0);
 static SELECTED_TSD_LOCK: AtomicU8 = AtomicU8::new(0);
 static MAIN_SELECTED_TSD_VALUES: SelectedTsdValues = SelectedTsdValues::empty();
@@ -200,7 +233,7 @@ pub(super) unsafe fn pthread_fork_child() {
 #[inline]
 fn key_index(key: c_uint) -> Option<usize> {
     let index = key as usize;
-    (index < PTHREAD_KEYS_MAX).then_some(index)
+    (index < TSD_SLOTS).then_some(index)
 }
 
 #[inline]
@@ -257,6 +290,19 @@ pub unsafe extern "C" fn pthread_key_create(
     }
 
     lock_selected_tsd();
+    #[cfg(all(crabc_owned_mimalloc_lifecycle, not(feature = "native-mimalloc-shadow")))]
+    if is_allocator_key_storage(key) && !key_is_allocated_locked(ALLOCATOR_KEY) {
+        SELECTED_TSD_KEYS[ALLOCATOR_KEY]
+            .destructor
+            .store(destructor.map_or(0, |function| function as usize), Ordering::Relaxed);
+        SELECTED_TSD_KEYS[ALLOCATOR_KEY]
+            .state
+            .store(KEY_ALLOCATED, Ordering::Release);
+        // SAFETY: the allocator's key word is writable global storage.
+        unsafe { core::ptr::write(key, ALLOCATOR_KEY as c_uint) };
+        unlock_selected_tsd();
+        return 0;
+    }
     let start = SELECTED_TSD_NEXT_KEY.load(Ordering::Relaxed);
     let mut index = start;
     loop {
@@ -267,7 +313,9 @@ pub unsafe extern "C" fn pthread_key_create(
             SELECTED_TSD_KEYS[index]
                 .state
                 .store(KEY_ALLOCATED, Ordering::Release);
-            SELECTED_TSD_NEXT_KEY.store((index + 1) % PTHREAD_KEYS_MAX, Ordering::Relaxed);
+            // Musl stores `next_key = j`: the next search starts at this
+            // key, so deleting it makes it the next key created.
+            SELECTED_TSD_NEXT_KEY.store(index, Ordering::Relaxed);
             // SAFETY: the public C boundary requires writable key storage.
             unsafe { core::ptr::write(key, index as c_uint) };
             unlock_selected_tsd();
@@ -437,7 +485,7 @@ pub(super) unsafe fn run_selected_worker_tsd_destructors(values: *const Selected
         if used == 0 {
             break;
         }
-        for index in 0..PTHREAD_KEYS_MAX {
+        for index in 0..TSD_SLOTS {
             lock_selected_tsd();
             // Musl clears every value while scanning, including values whose
             // key has no destructor or was deleted during a prior callback.
@@ -490,7 +538,7 @@ pub(super) unsafe fn run_selected_main_tsd_destructors() {
 pub(super) unsafe fn adopt_process_child_values(source: Option<*const SelectedTsdValues>) {
     let Some(source) = source else { return; };
     let source = unsafe { &*source };
-    for index in 0..PTHREAD_KEYS_MAX {
+    for index in 0..TSD_SLOTS {
         MAIN_SELECTED_TSD_VALUES.values[index].store(
             source.values[index].load(Ordering::Acquire), Ordering::Relaxed,
         );
@@ -526,7 +574,7 @@ pub(super) unsafe fn adopt_current_values_after_fork() -> bool {
     // sibling can be midway through key allocation/deletion, so these atomic
     // snapshots are the complete caller-owned TSD state to retain.
     let source = unsafe { &*source };
-    for index in 0..PTHREAD_KEYS_MAX {
+    for index in 0..TSD_SLOTS {
         MAIN_SELECTED_TSD_VALUES.values[index].store(
             source.values[index].load(Ordering::Acquire),
             Ordering::Relaxed,
