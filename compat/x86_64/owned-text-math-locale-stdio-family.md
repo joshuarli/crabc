@@ -72,26 +72,18 @@ not a host replay substitute.
 ./scripts/dev-x86_64.sh owned-stdio --static-sysroot "$static" "$dynamic"
 ./scripts/dev-x86_64.sh owned-stdio-file-engine --static-sysroot "$static" "$dynamic"
 ./scripts/dev-x86_64.sh owned-regex --static-sysroot "$static" "$dynamic"
+./scripts/dev-x86_64.sh owned-calendar-component --static-sysroot "$static" "$dynamic"
 ```
 
 The associated report files in those printed roots are, in order,
 `owned-locale-products.json`, `owned-numeric-calendar-products.json`,
 `owned-text-locale-numeric.json`, `owned-math-fenv-all-entry.json`,
 `owned-wordexp-products.json`, `owned-stdio-products.json`,
-`owned-stdio-file-engine.json`, and `owned-regex-products.json`. Calendar is
-the existing direct pinned-container producer; after the exact
-`prepare-tzif-input` command in
-[`owned-calendar-component.md`](owned-calendar-component.md), run it once per
-matching pair:
-
-```sh
-TMPDIR="$PWD/.work/x86_64/tmp" python3 -B compat/x86_64/run_owned_calendar_component.py \
-  --static-sysroot "$static" --dynamic-sysroot "$dynamic" --tzif-input "$tzif_input" \
-  --image-id sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d
-```
-
-Its report is `owned-calendar-products.json`. Wordexp also requires a distinct
-expected-input capture for each pair:
+`owned-stdio-file-engine.json`, `owned-regex-products.json`, and
+`owned-calendar-products.json`. The calendar command derives its own fresh
+TZif input in the observed pinned image (see
+[`owned-calendar-component.md`](owned-calendar-component.md)). Wordexp also
+requires a distinct expected-input capture for each pair:
 
 ```sh
 TMPDIR="$PWD/.work/x86_64/tmp" python3 -B compat/x86_64/owned_wordexp_evidence.py capture-expected-inputs \

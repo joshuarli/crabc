@@ -92,32 +92,31 @@ writable zero `timex`. The component neither changes nor claims a host clock.
 
 ## Collection and replay
 
-Collection requires supplied static and dynamic products below the current
-checkout's `.work/` tree and the immutable core image identity
-`sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d`:
+The dispatcher owns collection:
 
 ```sh
-python3 -B compat/x86_64/run_owned_calendar_component.py prepare-tzif-input \
-  --output .work/x86_64/calendar-tzif-input-2025b/prepared \
-  --tzcode-archive .work/x86_64/calendar-tzif-input-2025b/download/tzcode2025b.tar.gz \
-  --tzcode-signature .work/x86_64/calendar-tzif-input-2025b/download/tzcode2025b.tar.gz.asc \
-  --tzdata-archive .work/x86_64/calendar-tzif-input-2025b/download/tzdata2025b.tar.gz \
-  --tzdata-signature .work/x86_64/calendar-tzif-input-2025b/download/tzdata2025b.tar.gz.asc \
-  --image-id sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d
-
-python3 -B compat/x86_64/run_owned_calendar_component.py \
-  --static-sysroot .work/x86_64/public-data-products/static-REV/products/primary \
-  --dynamic-sysroot .work/x86_64/tmp/materialized-dynamic.REVISION/installed \
-  --tzif-input .work/x86_64/calendar-tzif-input-2025b/prepared \
-  --image-id sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d
+./scripts/dev-x86_64.sh owned-calendar-component
+./scripts/dev-x86_64.sh owned-calendar-component --static-sysroot "$static" "$dynamic"
 ```
 
-Run it only in the pinned native x86-64 container with a checkout-local
-`TMPDIR`; it never builds a product. The report retains source/product and
-tool seals before and after, every installed-header ELF object, exact compile,
-link, validation, chroot, and capability-boundary argv, public product-link
-reconstruction, raw stdout/stderr/status, and root fixture audits. Reconstruct
-it after the producer exits with:
+On the host it first retains the fixed IANA archive pair and detached
+signatures below `.work/x86_64/calendar-tzif-input-2025b/download/`, fetching
+only absent files and refusing archive bytes that differ from the tracked
+SHA-256 pins. It then resolves the core image's ID and runs
+`run_owned_calendar_component.sh` by that ID with only `SYS_CHROOT` added and
+`CRABC_X86_CALENDAR_IMAGE_ID` set to the observed identity. The launcher
+builds current static and dynamic products when no pair is supplied, derives a
+fresh TZif input with `prepare-tzif-input` in that image, and runs
+`run_owned_calendar_component.py`. The receipt reader admits only the pinned
+current core image,
+`sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`;
+reports from the retired `sha256:5990e55b…` image remain historical evidence.
+
+The producer itself never builds a product. The report retains source/product
+and tool seals before and after (including the launcher), every installed-header
+ELF object, exact compile, link, validation, chroot, and capability-boundary
+argv, public product-link reconstruction, raw stdout/stderr/status, and root
+fixture audits. Reconstruct it after the producer exits with:
 
 ```sh
 python3 -B compat/x86_64/owned_calendar_component_receipt.py validate-report \

@@ -631,6 +631,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-stdio-file-engine --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  replay eight installed FILE-engine rows
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
   owned-math-fenv-all-entry [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test the bounded installed C math/fenv all-entry component
+  owned-calendar-component [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test installed time.clock-calendar rows with fixed IANA TZif fixtures
   owned-text-locale-numeric-component --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  test bounded installed numeric, locale, wide-conversion, and UTF iconv rows
   owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT [OPTIONS]  run the frozen native Alpine workloads with supplied package inputs
   owned-loader-synthetic DYNAMIC_SYSROOT  run all 21 frozen loader workloads through the supplied installed product
@@ -3463,6 +3464,18 @@ prepare_owned_pthread_family_composition_arguments() {
     PTHREAD_COMPOSITION_ARGUMENTS=(--static-sysroot "$static_product" "$dynamic_product")
 }
 
+prepare_owned_calendar_component_arguments() {
+    local expected='usage: ./scripts/dev-x86_64.sh owned-calendar-component [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]'
+    CALENDAR_COMPONENT_ARGUMENTS=()
+    [ "$#" -eq 0 ] && return 0
+    [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] && [ -n "$2" ] && [ -n "$3" ] \
+        && [[ "$2" != -* ]] && [[ "$3" != -* ]] || fail "$expected"
+    local static_product dynamic_product
+    static_product="$(translate_owned_posix_product "$2")" || exit 2
+    dynamic_product="$(translate_owned_posix_product "$3")" || exit 2
+    CALENDAR_COMPONENT_ARGUMENTS=(--static-sysroot "$static_product" "$dynamic_product")
+}
+
 prepare_owned_text_locale_numeric_component_arguments() {
     local expected='usage: ./scripts/dev-x86_64.sh owned-text-locale-numeric-component --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT'
     [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] && [ -n "$2" ] && [ -n "$3" ] \
@@ -3826,6 +3839,34 @@ run_in_network_none_container() {
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
         "$IMAGE" "$@"
+}
+
+# The calendar producer records the image it ran in. Resolve that identity on
+# the host and run by ID so the recorded value is observed, never typed.
+run_in_owned_calendar_container() {
+    prepare_work_dir
+    local image_id
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve calendar component image identity"
+    docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" \
+        --cap-add=SYS_CHROOT \
+        --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --env CRABC_X86_CALENDAR_IMAGE_ID="$image_id" \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$image_id" "$@"
 }
 
 # These evidence callers enter private process roots. Each caller selects
@@ -7159,7 +7200,7 @@ case "$command" in
     native-thread-signal-abi) ;;
     owned-system-cancellation) ;;
     owned-rand) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-calendar-component|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-strfmon) ;;
     owned-process-globals) ;;
     owned-pthread-spin) ;;
@@ -7392,6 +7433,10 @@ case "$command" in
     owned-text-locale-numeric-component)
         prepare_owned_text_locale_numeric_component_arguments "$@"
         set -- "${TEXT_LOCALE_NUMERIC_COMPONENT_ARGUMENTS[@]}"
+        ;;
+    owned-calendar-component)
+        prepare_owned_calendar_component_arguments "$@"
+        set -- "${CALENDAR_COMPONENT_ARGUMENTS[@]}"
         ;;
     native-thread-signal-abi)
         [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] || \
@@ -9561,6 +9606,14 @@ case "$command" in
     owned-math-fenv-all-entry)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_math_fenv_all_entry.sh "$@"
+        ;;
+    owned-calendar-component)
+        ensure_image
+        # Retain the hash-pinned IANA archives below this checkout's work
+        # directory; the containerized launcher derives a fresh TZif input.
+        python3 -B "$ROOT_DIR/compat/x86_64/run_owned_calendar_component.py" fetch-tzif-archives \
+            --output "$WORK_DIR/calendar-tzif-input-2025b/download"
+        run_in_owned_calendar_container bash /workspace/compat/x86_64/run_owned_calendar_component.sh "$@"
         ;;
     owned-text-locale-numeric-component)
         ensure_image

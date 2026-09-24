@@ -6,6 +6,10 @@ already-qualified static and dynamic products; it never builds or mutates them.
 Each candidate cell gets a fresh chroot root containing a byte-bound copy of the
 product (for dynamic entries), the linked object consumer, and sealed TZif
 fixtures copied from the pinned image before the first execution.
+
+The separate host-side ``fetch-tzif-archives`` operation only retains the fixed
+IANA archives (hash-checked) and their unverified detached signatures below
+the checkout's ``.work`` tree for the containerized TZif preparation.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import sys
 import tarfile
 import tempfile
 from typing import Iterable
+import urllib.request
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -327,6 +332,43 @@ def prepare_tzif_input(args: argparse.Namespace) -> int:
         readable_tree(output)
 
 
+def fetch_tzif_archives(args: argparse.Namespace) -> int:
+    """Retain the fixed IANA archive pair without replacing an existing byte.
+
+    Archive bytes must equal the tracked SHA-256 pins before they are
+    published. Detached signatures have no tracked digest; like the prepared
+    manifest they remain ``retained-unverified`` and need only be nonempty.
+    """
+    output = Path(os.path.abspath(args.output))
+    if not output.is_relative_to(ROOT / ".work"):
+        fail(f"calendar TZif archive directory escapes checkout .work: {output}")
+    output.mkdir(parents=True, exist_ok=True)
+    physical_directory(output, "calendar TZif archive directory")
+    for name, pin in receipt.TZDATA_ARCHIVES.items():
+        filename = f"{name}{receipt.TZDATA_VERSION}.tar.gz"
+        for url, target, expected in ((pin["url"], output / filename, pin["sha256"]),
+                                      (pin["signature_url"], output / f"{filename}.asc", None)):
+            if not target.exists() and not target.is_symlink():
+                try:
+                    with urllib.request.urlopen(url, timeout=60) as response:
+                        data = response.read()
+                except OSError as error:
+                    raise RunnerError(f"cannot fetch fixed IANA input {url}") from error
+                partial = target.with_name(target.name + ".partial")
+                partial.write_bytes(data)
+                if expected is not None and receipt.digest(partial) != expected:
+                    partial.unlink()
+                    fail(f"fetched {name} archive hash differs from the tracked IANA pin")
+                os.replace(partial, target)
+                os.chmod(target, 0o644)
+            if expected is not None:
+                checked_archive(target, name)
+            else:
+                checked_signature(target, name)
+    print(f"owned calendar TZif archives: {output}")
+    return 0
+
+
 def prepare_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--static-sysroot", type=Path, required=True)
@@ -466,6 +508,10 @@ def collect_component(args: argparse.Namespace) -> int:
 
 if __name__ == "__main__":
     try:
+        if len(sys.argv) > 1 and sys.argv[1] == "fetch-tzif-archives":
+            parser = argparse.ArgumentParser(description="Retain the fixed IANA calendar archive pair.")
+            parser.add_argument("--output", type=Path, required=True)
+            raise SystemExit(fetch_tzif_archives(parser.parse_args(sys.argv[2:])))
         if len(sys.argv) > 1 and sys.argv[1] == "prepare-tzif-input":
             parser = argparse.ArgumentParser(description="Prepare the fixed test-only calendar TZif input.")
             parser.add_argument("--output", type=Path, required=True)

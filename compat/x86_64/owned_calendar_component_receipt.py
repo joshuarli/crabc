@@ -30,7 +30,9 @@ import owned_posix_product_evidence as products
 
 SCHEMA = "crabc.x86_64-owned-calendar-products/v1"
 SOURCE_MOUNT = "/workspace"
-PINNED_IMAGE_ID = "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+# The current core-evidence image after the nightly-2026-09-15 toolchain pin.
+# Reports from the retired image remain historical, not current admission.
+PINNED_IMAGE_ID = "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
 SCOPE = ("time.clock-calendar",)
 FULL_MODE = "full-six-mode"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
@@ -52,6 +54,7 @@ SOURCE_PATHS = {
     "legacy-clock-control": "compat/x86_64/owned_legacy_time_probe.c",
     "clock-adjtime-rejected": "compat/x86_64/libc_clock_adjtime_probe.c",
     "runner": "compat/x86_64/run_owned_calendar_component.py",
+    "launcher": "compat/x86_64/run_owned_calendar_component.sh",
     "reader": "compat/x86_64/owned_calendar_component_receipt.py",
 }
 ROLE_SPECS = (

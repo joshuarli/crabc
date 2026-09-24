@@ -230,6 +230,14 @@ ordered caller-fenv framing, installed-header/provider route, six execution
 modes, and the separate three-pair receipt boundary without completing a math
 family or claiming public support.
 
+`./scripts/dev-x86_64.sh owned-calendar-component` runs the installed
+`time.clock-calendar` component through all six product entry modes, building
+current products when no pair is supplied and deriving its test-only TZif input
+from the hash-pinned IANA archives in the observed core image. Its
+[component record](owned-calendar-component.md) fixes the five credited rows
+and the safe clock-control boundary. It is component evidence, not family
+completion.
+
 [owned-syscall-alias-contract.md](owned-syscall-alias-contract.md) records the
 focused musl-shaped weak syscall alias and interposition proof for supplied
 native static and dynamic products. It checks exact archive/shared ELF

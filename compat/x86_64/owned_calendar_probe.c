@@ -162,6 +162,12 @@ int main(int argc, char **argv) {
     char text[26]; struct tm tm;
     CHECK(gmtime_r(&epoch, &tm) && !strcmp(asctime_r(&tm, text), "Thu Jan  1 00:00:00 1970\n"));
     CHECK(gmtime(&epoch) && localtime(&epoch) && ctime_r(&epoch, text));
+    /* Musl's asctime and ctime share one static text buffer, while gmtime
+     * and localtime each own a distinct static struct tm. */
+    struct tm *utc = gmtime(&epoch);
+    CHECK(utc && utc != localtime(&epoch));
+    char *shared = asctime(utc);
+    CHECK(shared && !strcmp(shared, "Thu Jan  1 00:00:00 1970\n") && ctime(&epoch) == shared);
     pthread_t threads[2];
     CHECK(!pthread_create(threads, NULL, calendar_worker, NULL));
     CHECK(!pthread_create(threads+1, NULL, calendar_worker, NULL));
