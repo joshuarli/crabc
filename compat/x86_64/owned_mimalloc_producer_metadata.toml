@@ -127,6 +127,9 @@ producer = { static_section_alignment = 8 }
 [rust_root_imports]
 names = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"]
 
+[rust_root_data_references]
+names = ["_mi_heap_default_key"]
+
 [status_flags]
 family_completion = false
 promotion_ready = false

@@ -148,15 +148,19 @@ class EvidenceSet:
         return dict(self.inputs)
 
     def selection_arguments(self) -> dict[str, Path]:
-        return {
+        arguments = {
             "measurement_checkout": ROOT,
             "elf_report": self.reports["native_abi_elf_facts"],
             "base_inventory": self.reports["native_abi_inventory"],
             **self.product_arguments,
             "declaration_report": self.reports["header_declaration_inventory"],
-            "ordinary_link_report": self.reports["public_data_ordinary_link"],
             **self.companions,
         }
+        # Selection admits the ordinary-link receipt only paired with the
+        # loader-debug receipt for the shared-only `_dl_debug_addr` pointer.
+        if "loader_debug_report" in self.companions:
+            arguments["ordinary_link_report"] = self.reports["public_data_ordinary_link"]
+        return arguments
 
 
 def load(path: Path) -> EvidenceSet:

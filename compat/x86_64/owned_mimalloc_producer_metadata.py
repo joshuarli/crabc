@@ -53,6 +53,11 @@ EXPECTED_RUST_ROOT_IMPORTS = (
     "mi_usable_size",
     "mi_zalloc",
 )
+# The Rust root takes the address of one C allocator data object:
+# `pthread_tsd.rs` recognizes `_mi_heap_default_key` as the storage of the C
+# backend's own thread-exit key and gives it the private slot beyond
+# PTHREAD_KEYS_MAX. Only the address is used; the word stays C-owned.
+EXPECTED_RUST_ROOT_DATA_REFERENCES = ("_mi_heap_default_key",)
 EXPECTED_DATA_OBJECTS = (
     "_mi_cpu_has_popcnt",
     "_mi_heap_default_key",
@@ -246,6 +251,7 @@ def _validate_contract(value: object) -> dict[str, Any]:
             "shared_localization",
             "metadata",
             "rust_root_imports",
+            "rust_root_data_references",
             "status_flags",
             "boundaries",
         },
@@ -442,6 +448,11 @@ def _validate_contract(value: object) -> dict[str, Any]:
     imports = mapping(contract["rust_root_imports"], "Rust-root C imports", {"names"})
     import_names = names(imports["names"], "Rust-root C imports")
     require(tuple(import_names) == EXPECTED_RUST_ROOT_IMPORTS, "Rust-root C import roster differs")
+    references = mapping(contract["rust_root_data_references"], "Rust-root C data references", {"names"})
+    reference_names = names(references["names"], "Rust-root C data references")
+    require(tuple(reference_names) == EXPECTED_RUST_ROOT_DATA_REFERENCES
+            and set(reference_names) <= {item["name"] for item in data},
+            "Rust-root C data reference roster differs")
 
     status_flags = mapping(contract["status_flags"], "producer status flags", {"family_completion", "promotion_ready", "public_support"})
     require(all(type(status_flags[name]) is bool and status_flags[name] is False for name in status_flags),
@@ -479,6 +490,7 @@ def _validate_contract(value: object) -> dict[str, Any]:
             "tls_object": dict(tls),
         },
         "rust_root_imports": {"names": import_names},
+        "rust_root_data_references": {"names": reference_names},
         "status_flags": dict(status_flags),
         "boundaries": dict(boundaries),
     }
@@ -1070,11 +1082,12 @@ def _validate_rust_root_imports(
     c_rows = _symbol_tables(c_member.get("symbol_tables"), "static C provider", {".symtab"})[".symtab"]
     shared_rows = _symbol_tables(shared.get("symbol_tables"), "shared libc", {".dynsym", ".symtab"})[".symtab"]
     imports = contract["rust_root_imports"]["names"]
+    references = contract["rust_root_data_references"]["names"]
     observed_names = {
         row.get("name") for row in rust_rows
         if row.get("name") in set(members) and row.get("section_index") == "UND"
     }
-    require(observed_names == set(imports), "Rust-root import roster differs")
+    require(observed_names == set(imports) | set(references), "Rust-root import roster differs")
     joins: list[dict[str, Any]] = []
     for name in imports:
         matching = [dict(row) for row in rust_rows if row.get("name") == name]
@@ -1115,6 +1128,54 @@ def _validate_rust_root_imports(
     return joins
 
 
+def _validate_rust_root_data_references(
+    contract: Mapping[str, Any],
+    rust_member: Mapping[str, Any],
+    c_member: Mapping[str, Any],
+    shared: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Join each Rust-root address reference to its C data-object provider."""
+    rust_rows = _symbol_tables(rust_member.get("symbol_tables"), "static Rust root", {".symtab"})[".symtab"]
+    c_rows = _symbol_tables(c_member.get("symbol_tables"), "static C provider", {".symtab"})[".symtab"]
+    shared_rows = _symbol_tables(shared.get("symbol_tables"), "shared libc", {".dynsym", ".symtab"})[".symtab"]
+    data = {item["name"]: item for item in contract["metadata"]["data_objects"]}
+    joins: list[dict[str, Any]] = []
+    for name in contract["rust_root_data_references"]["names"]:
+        matching = [dict(row) for row in rust_rows if row.get("name") == name]
+        require(len(matching) == 1, f"static Rust root data reference repeats {name}")
+        reference = matching[0]
+        require(
+            reference.get("section_index") == "UND"
+            and reference.get("type") == "NOTYPE"
+            and reference.get("binding") == "GLOBAL"
+            and reference.get("visibility") == "DEFAULT"
+            and reference.get("version") is None
+            and reference.get("version_default") is False
+            and reference.get("size_bytes") == 0,
+            f"Rust-root data reference metadata differs for {name}",
+        )
+        joins.append({
+            "name": name,
+            "static_rust_reference": {
+                "type": reference["type"],
+                "binding": reference["binding"],
+                "visibility": reference["visibility"],
+                "section_index": reference["section_index"],
+            },
+            "static_c_provider": _symbol_metadata(
+                _named_row(c_rows, name, "static C provider for Rust-root data reference"),
+                data[name]["static"],
+                f"static C provider for Rust-root data reference {name}",
+            ),
+            "shared_c_final_provider": _symbol_metadata(
+                _named_row(shared_rows, name, "shared final C provider for Rust-root data reference"),
+                data[name]["shared"],
+                f"shared final C provider for Rust-root data reference {name}",
+            ),
+        })
+    return joins
+
+
 def account_producer_metadata(
     elf_facts: Mapping[str, Any],
     static_provenance: Mapping[str, Any],
@@ -1151,6 +1212,7 @@ def account_producer_metadata(
     shared = mapping(report["facts"]["candidate-shared"], "shared ELF facts")
     buckets = _validate_metadata_rows(contract, members, c_member, shared)
     joins = _validate_rust_root_imports(contract, members, rust_member, c_member, shared)
+    data_references = _validate_rust_root_data_references(contract, rust_member, c_member, shared)
     strong_names = {record["name"] for record in buckets["strong-functions"]["members"]}
     require(all(item["name"] in strong_names for item in joins),
             "Rust-root imports do not resolve through strong C providers")
@@ -1197,6 +1259,7 @@ def account_producer_metadata(
         "shared_product_binding": shared_artifact,
         "metadata_buckets": buckets,
         "rust_root_c_import_joins": joins,
+        "rust_root_c_data_reference_joins": data_references,
         "boundaries": {
             **contract["boundaries"],
             "all_members_private_in_shared_dynsym": True,

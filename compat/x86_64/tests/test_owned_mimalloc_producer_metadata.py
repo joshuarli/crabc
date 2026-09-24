@@ -156,9 +156,10 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         )
 
         imports = contract["rust_root_imports"]["names"]
+        references = contract["rust_root_data_references"]["names"]
         rust_rows = [
             symbol(name, kind="NOTYPE", section="UND", size=0)
-            for name in imports
+            for name in (*imports, *references)
         ]
         c_member = "b85de32113adef8e-static.o"
         rust_member = "fixture-rust.rcgu.o"
@@ -378,6 +379,10 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             [item["name"] for item in account["rust_root_c_import_joins"]],
             self.contract["rust_root_imports"]["names"],
         )
+        references = account["rust_root_c_data_reference_joins"]
+        self.assertEqual([item["name"] for item in references], ["_mi_heap_default_key"])
+        self.assertEqual(references[0]["static_c_provider"]["type"], "OBJECT")
+        self.assertEqual(references[0]["shared_c_final_provider"]["binding"], "LOCAL")
         weak = account["metadata_buckets"]["weak-null-fallback"]["members"][0]
         self.assertEqual(weak["static"]["binding"], "WEAK")
         self.assertEqual(weak["static"]["definition"], "defined")
