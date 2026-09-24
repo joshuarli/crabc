@@ -67,6 +67,27 @@ use crate::types::{
     TheapPageMode, ThreadLocalTheapListError,
 };
 
+/// Whether one attachment prevalidation re-observes this Theap's membership
+/// in the process-shared main Heap list.
+///
+/// Membership can change only through this attachment's own source teardown
+/// (`TLD::detach_one_theap_from_shared_main_heap` requires the owner's
+/// exclusive TLD) or through quiescent process destruction, which closes
+/// native admission before any operation could observe the result. The
+/// locked observation therefore belongs at the transitions that change or
+/// consume that list, not on every ordinary allocation: pinned
+/// `mi_malloc`/`mi_free` take no Heap lock on the local path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SharedHeapMembership {
+    /// Take the main Heap projection and list locks and re-check membership.
+    /// Drain, teardown, resume, and deferred-callback selection use this.
+    Observe,
+    /// Rely on the attachment invariant above. Only ordinary owner-local
+    /// page-session admission uses this, so independent owners never contend
+    /// on a process-global lock per operation.
+    AttachedInvariant,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MainHeapThreadAttachmentState {
     Preparing,
@@ -1385,6 +1406,34 @@ impl<'main> MainHeapThreadAttachment<'main> {
         self.prevalidate_page_drain_common_callback_reentry(false, expect_fast_owner)
     }
 
+    /// Validates one ordinary owner-local page operation on the persistent
+    /// engine.
+    ///
+    /// Outside a selected deferred-free callback this performs every check of
+    /// the non-callback path of
+    /// [`Self::prevalidate_owner_local_callback_reentry`] (attachment state,
+    /// suspension, current identity, Theap refcount/thread/subprocess, TLS
+    /// roots, and TLD-list membership) except the locked re-observation of
+    /// the shared main Heap list; see [`SharedHeapMembership`]. The rare
+    /// callback-reentry path keeps its complete observation.
+    fn prevalidate_owner_local_operation(
+        &mut self,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
+        if self.has_active_deferred_free_callback() {
+            return self.prevalidate_owner_local_callback_reentry();
+        }
+        if self.page_engine_suspended {
+            return Err(MainHeapThreadAttachmentError::PersistentPageEngineSuspended);
+        }
+        self.ensure_attached_current()?;
+        self.prevalidate_page_drain_common_with_tld_projection(
+            false,
+            true,
+            false,
+            SharedHeapMembership::AttachedInvariant,
+        )
+    }
+
     /// Validates the exact opposite half of the persistent-engine handoff.
     ///
     /// A suspended state token deliberately leaves the attachment's source
@@ -1454,6 +1503,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
             require_empty,
             expect_fast_owner,
             false,
+            SharedHeapMembership::Observe,
         )
     }
 
@@ -1469,6 +1519,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
             require_empty,
             expect_fast_owner,
             true,
+            SharedHeapMembership::Observe,
         )
     }
 
@@ -1477,6 +1528,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
         require_empty: bool,
         expect_fast_owner: bool,
         callback_reentry: bool,
+        membership: SharedHeapMembership,
     ) -> Result<(), MainHeapThreadAttachmentError> {
         if self.terminal_os_release.is_some() {
             return Err(MainHeapThreadAttachmentError::Poisoned);
@@ -1531,6 +1583,9 @@ impl<'main> MainHeapThreadAttachment<'main> {
         };
         if !has_exact_theap_member {
             return Err(MainHeapThreadAttachmentError::ListOwnership);
+        }
+        if membership == SharedHeapMembership::AttachedInvariant {
+            return Ok(());
         }
         let mut heap = self
             .main_heap
@@ -1787,7 +1842,7 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
             }
         }
         attachment
-            .prevalidate_owner_local_callback_reentry()
+            .prevalidate_owner_local_operation()
             .map_err(MainHeapThreadPageSessionError::Attachment)?;
         if attachment.terminal_os_release.is_some() {
             return Err(MainHeapThreadPageSessionError::Attachment(
@@ -2952,6 +3007,66 @@ mod tests {
         })
         .join()
         .expect("the focused callback admission test completes");
+    }
+
+    #[test]
+    fn owner_local_operation_admission_takes_no_shared_main_heap_lock() {
+        // Pinned `mi_malloc`/`mi_free` take no Heap lock on the local path.
+        // An attached owner's ordinary page-session admission must therefore
+        // complete while another thread holds the shared main Heap projection
+        // lock; only drain/teardown/resume transitions re-observe the list.
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its static heap");
+            let (attached_sender, attached_receiver) = mpsc::channel();
+            let (go_sender, go_receiver) = mpsc::channel::<()>();
+            let (result_sender, result_receiver) = mpsc::channel();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut attachment = unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    }
+                    .unwrap_or_else(|_| panic!("the focused attachment publishes its source pair"));
+                    attached_sender.send(()).expect("the coordinator observes attachment");
+                    go_receiver.recv().expect("the coordinator holds the Heap lock");
+                    result_sender
+                        .send(attachment.prevalidate_owner_local_operation())
+                        .expect("the coordinator receives the admission result");
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the no-page attachment drains after the lock is released");
+                });
+                attached_receiver.recv().expect("the worker attached");
+                let held = main_heap
+                    .lock_heap()
+                    .expect("the coordinator holds the shared main Heap projection lock");
+                go_sender.send(()).expect("the worker waits for the held lock");
+                let observed = result_receiver.recv_timeout(std::time::Duration::from_secs(10));
+                held.unlock().expect("the coordinator releases the shared main Heap lock");
+                assert_eq!(
+                    observed,
+                    Ok(Ok(())),
+                    "ordinary owner-local admission completes without the process-global Heap lock"
+                );
+                worker.join().expect("the focused worker stays on its source thread");
+            });
+            main.teardown()
+                .expect("ticket zero retires after the focused owner-local admission test");
+        })
+        .join()
+        .expect("the focused owner-local admission test completes");
     }
 
     #[test]
