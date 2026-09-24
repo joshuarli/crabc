@@ -238,6 +238,28 @@ pub unsafe fn setitimer_raw(
     .map(|_| ())
 }
 
+/// A validated kernel vDSO `clock_gettime` entry. It follows the kernel
+/// convention: zero on success or a negative Linux errno, and the vDSO itself
+/// issues the syscall for a clock ID its data page cannot serve.
+pub type VdsoClockGettime = unsafe extern "C" fn(i32, *mut u8) -> i32;
+
+/// Resolve the kernel vDSO `clock_gettime` entry from an explicit
+/// `AT_SYSINFO_EHDR` value.
+///
+/// This is for a runtime that already owns the process's initial auxiliary
+/// vector (the C library): it neither opens `/proc/self/auxv` nor shares the
+/// cache behind [`clock_gettime`]. `None` means the base is zero or the bounded
+/// ELF metadata does not validate; callers then use the direct syscall.
+///
+/// # Safety
+///
+/// `sysinfo_ehdr` must be zero or this process's kernel-supplied
+/// `AT_SYSINFO_EHDR` value, whose mapping the kernel keeps live until exit.
+pub unsafe fn vdso_clock_gettime(sysinfo_ehdr: usize) -> Option<VdsoClockGettime> {
+    // SAFETY: the caller supplies the kernel-owned vDSO base (or zero).
+    unsafe { crate::vdso::kernel_clock_gettime(sysinfo_ehdr) }
+}
+
 /// Reads one x86-64 Linux clock through the validated vDSO, with a direct
 /// syscall fallback when the process vDSO is unavailable or malformed.
 pub fn clock_gettime(clock_id: i32) -> Result<KernelTimespec> {

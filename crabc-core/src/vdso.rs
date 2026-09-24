@@ -218,6 +218,20 @@ unsafe extern "C" fn direct_gettimeofday(timeval: *mut u8, timezone: *mut u8) ->
         as i32
 }
 
+/// Resolve the validated kernel vDSO `clock_gettime` entry from a caller-owned
+/// `AT_SYSINFO_EHDR` value, without reading `/proc/self/auxv` or touching this
+/// module's cache. `None` means the image is absent or fails validation.
+///
+/// # Safety
+///
+/// `base` must be zero or this process's kernel-supplied `AT_SYSINFO_EHDR`.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn kernel_clock_gettime(base: usize) -> Option<ClockGettime> {
+    // SAFETY: the caller supplies the kernel-owned process vDSO base.
+    unsafe { resolve_kernel_clock_gettime(base) }
+        .and_then(|address| unsafe { validated_clock_gettime_function(address) })
+}
+
 #[inline]
 fn select_clock_gettime(base: Option<usize>) -> ClockGettime {
     base.and_then(|base| unsafe { resolve_kernel_clock_gettime(base) })
@@ -702,6 +716,31 @@ mod tests {
         );
         assert!(output.seconds >= 0);
         assert!((0..1_000_000).contains(&output.microseconds));
+    }
+
+    // The C library resolves from its own startup auxv, not this cache: the
+    // live kernel image must resolve and agree with the direct syscall.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn explicit_live_vdso_base_resolves_a_kernel_consistent_clock() {
+        assert!(unsafe { super::kernel_clock_gettime(0) }.is_none());
+        let base = crate::param::auxv_value(crate::param::AT_SYSINFO_EHDR)
+            .expect("x86-64 Linux supplies AT_SYSINFO_EHDR");
+        let vdso = unsafe { super::kernel_clock_gettime(base) }.expect("live vDSO validates");
+        let mut before = Timespec { seconds: 0, nanoseconds: 0 };
+        let mut during = Timespec { seconds: 0, nanoseconds: 0 };
+        let mut after = Timespec { seconds: 0, nanoseconds: 0 };
+        let direct = super::direct_clock_gettime;
+        unsafe {
+            assert_eq!(direct(1, (&mut before as *mut Timespec).cast()), 0);
+            assert_eq!(vdso(1, (&mut during as *mut Timespec).cast()), 0);
+            assert_eq!(direct(1, (&mut after as *mut Timespec).cast()), 0);
+            // A clock the vDSO data page cannot serve still reaches the kernel.
+            assert_eq!(vdso(2, (&mut Timespec { seconds: 0, nanoseconds: 0 } as *mut Timespec).cast()), 0);
+            assert_eq!(vdso(-1_000, (&mut Timespec { seconds: 0, nanoseconds: 0 } as *mut Timespec).cast()), -22);
+        }
+        let key = |t: &Timespec| (t.seconds, t.nanoseconds);
+        assert!(key(&before) <= key(&during) && key(&during) <= key(&after));
     }
 
     #[test]

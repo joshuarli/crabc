@@ -1,12 +1,14 @@
 //! Selected static Linux/x86-64 C clock-observation boundary.
 //!
-//! This leaf owns one bounded direct C time-query block: `clock`, `time`, C11
-//! `timespec_get`, `clock_getres`, and `gettimeofday`. It composes only the
-//! raw Linux x86-64 syscall ABI and the selected initial-TLS `errno` writer.
-//! The separate scalar `difftime` artifact has no syscall or clock-state
-//! dependency. This leaf is not calendar or timezone state, clock mutation,
-//! POSIX timers, pthread cancellation, a vDSO resolver, libc.so, CRT,
-//! dynamic TLS, loader, sysroot, allocator, or public x86 support.
+//! This leaf owns one bounded C time-query block: `clock`, `time`, C11
+//! `timespec_get`, `clock_getres`, and `gettimeofday`. Clock reads use the
+//! shared `clock_gettime` route (the kernel vDSO in owned runtimes, else the
+//! raw syscall); `clock_getres` stays a direct syscall. It writes only the
+//! selected initial-TLS `errno`. The separate scalar `difftime` artifact has
+//! no syscall or clock-state dependency. This leaf is not calendar or
+//! timezone state, clock mutation, POSIX timers, pthread cancellation,
+//! libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86
+//! support.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -17,10 +19,8 @@
 //! - `src/time/clock_getres.c` maps to [`clock_getres`].
 //! - `src/time/gettimeofday.c` maps to [`gettimeofday`].
 //!
-//! Musl may use its private vDSO resolver for the underlying clock calls.
-//! This dependency-free static artifact instead issues the Linux 5.10
-//! syscalls directly. That intentionally does not select a process-lifetime
-//! vDSO state owner.
+//! As in musl, `gettimeofday` is a `CLOCK_REALTIME` read truncated to
+//! microseconds; it never asks the kernel for obsolete timezone output.
 
 use core::ffi::{c_int, c_long, c_void};
 
@@ -67,14 +67,7 @@ const _: () = {
 #[inline]
 unsafe fn clock_status(clock_id: c_int, output: *mut Timespec) -> c_int {
     // SAFETY: the caller owns the raw clock ID and output pointer contract.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_CLOCK_GETTIME,
-            i64::from(clock_id),
-            output as usize as i64,
-        )
-    };
-    c_status(result)
+    c_status(unsafe { super::clock_gettime::clock_gettime_raw(clock_id, output.cast()) })
 }
 
 /// Return CPU time consumed by the calling process in microseconds.
@@ -172,14 +165,21 @@ pub unsafe extern "C" fn clock_getres(clock_id: c_int, output: *mut c_void) -> c
 /// timezone state or output contract.
 #[no_mangle]
 pub unsafe extern "C" fn gettimeofday(output: *mut c_void, _timezone: *mut c_void) -> c_int {
-    // SAFETY: the caller owns the optional timeval pointer contract. A null
-    // second word requests no obsolete timezone result from Linux.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_GETTIMEOFDAY,
-            output as usize as i64,
-            0,
-        )
-    };
-    c_status(result)
+    // Musl `src/time/gettimeofday.c`: a null timeval succeeds without a read.
+    if output.is_null() {
+        return 0;
+    }
+    let mut value = Timespec { seconds: 0, nanoseconds: 0 };
+    // SAFETY: `value` is writable exact timespec storage for this call.
+    if unsafe { clock_status(CLOCK_REALTIME, &mut value) } != 0 {
+        return -1;
+    }
+    // SAFETY: the caller supplied writable x86 `struct timeval` storage.
+    unsafe {
+        output.cast::<Timeval>().write(Timeval {
+            seconds: value.seconds,
+            microseconds: value.nanoseconds / 1000,
+        });
+    }
+    0
 }

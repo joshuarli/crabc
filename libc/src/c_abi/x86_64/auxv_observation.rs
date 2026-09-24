@@ -32,6 +32,8 @@ use super::errno;
 const MAX_AUXV_ENTRIES: usize = 4096;
 const AT_NULL: usize = 0;
 const AT_PAGESZ: usize = 6;
+#[cfg(crabc_x86_owned_runtime)]
+const AT_SYSINFO_EHDR: usize = 33;
 pub(super) const AT_EXECFN: usize = 31;
 const ENOENT: core::ffi::c_int = 2;
 
@@ -104,6 +106,14 @@ pub(super) fn initial_execfn() -> Option<*const core::ffi::c_char> {
     initial_value(AT_EXECFN)
         .filter(|value| *value != 0)
         .map(|value| value as *const core::ffi::c_char)
+}
+
+/// Return the kernel vDSO image base (`AT_SYSINFO_EHDR`) once startup has
+/// published the initial vector; `None` before publication or when absent.
+/// Only the owned clock route consumes it, as musl's `__vdsosym` does.
+#[cfg(crabc_x86_owned_runtime)]
+pub(super) fn initial_sysinfo_ehdr() -> Option<usize> {
+    initial_value(AT_SYSINFO_EHDR).filter(|base| *base != 0)
 }
 
 /// Return the startup-published `AT_PAGESZ` value without calling the public
