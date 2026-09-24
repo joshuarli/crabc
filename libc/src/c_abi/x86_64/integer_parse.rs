@@ -373,17 +373,26 @@ unsafe fn decimal_long_long(input: *const c_char) -> c_longlong {
     if negative { value } else { value.wrapping_neg() }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn atoi(input: *const c_char) -> c_int {
-    unsafe { decimal_i32(input) }
-}
+// Musl's `src/stdlib/atoi.c` object.
+static_archive_member! { atoi_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn atoi(input: *const c_char) -> c_int {
+        unsafe { decimal_i32(input) }
+    }
+}}
 
-#[no_mangle]
-pub unsafe extern "C" fn atol(input: *const c_char) -> c_long {
-    unsafe { decimal_long(input) }
-}
+// Musl's `src/stdlib/atol.c` object.
+static_archive_member! { atol_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn atol(input: *const c_char) -> c_long {
+        unsafe { decimal_long(input) }
+    }
+}}
 
-#[no_mangle]
-pub unsafe extern "C" fn atoll(input: *const c_char) -> c_longlong {
-    unsafe { decimal_long_long(input) }
-}
+// Musl's `src/stdlib/atoll.c` object.
+static_archive_member! { atoll_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn atoll(input: *const c_char) -> c_longlong {
+        unsafe { decimal_long_long(input) }
+    }
+}}

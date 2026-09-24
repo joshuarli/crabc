@@ -86,66 +86,75 @@ localized_classifier!(isxdigit_l, "__isxdigit_l", isxdigit);
 localized_classifier!(tolower_l, "__tolower_l", tolower);
 localized_classifier!(toupper_l, "__toupper_l", toupper);
 
-/// Compare two C strings after fixed-ASCII case folding.
-///
-/// # Safety
-///
-/// `left` and `right` must each designate a readable NUL-terminated byte
-/// sequence. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strcasecmp(left: *const c_char, right: *const c_char) -> c_int {
-    let mut left = left.cast::<u8>();
-    let mut right = right.cast::<u8>();
-    loop {
-        // SAFETY: the caller supplies both current C-string bytes.
-        let left_byte = unsafe { left.read() };
-        // SAFETY: the caller supplies both current C-string bytes.
-        let right_byte = unsafe { right.read() };
-        let left_folded = ctype::tolower(c_int::from(left_byte));
-        let right_folded = ctype::tolower(c_int::from(right_byte));
-        if left_byte == 0 || right_byte == 0 || left_folded != right_folded {
-            return left_folded - right_folded;
+// Musl's `src/string/strcasecmp.c` object.
+static_archive_member! { strcasecmp_source {
+    /// Compare two C strings after fixed-ASCII case folding.
+    ///
+    /// # Safety
+    ///
+    /// `left` and `right` must each designate a readable NUL-terminated byte
+    /// sequence. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strcasecmp(left: *const c_char, right: *const c_char) -> c_int {
+        let mut left = left.cast::<u8>();
+        let mut right = right.cast::<u8>();
+        loop {
+            // SAFETY: the caller supplies both current C-string bytes.
+            let left_byte = unsafe { left.read() };
+            // SAFETY: the caller supplies both current C-string bytes.
+            let right_byte = unsafe { right.read() };
+            let left_folded = ctype::tolower(c_int::from(left_byte));
+            let right_folded = ctype::tolower(c_int::from(right_byte));
+            if left_byte == 0 || right_byte == 0 || left_folded != right_folded {
+                return left_folded - right_folded;
+            }
+            // SAFETY: both bytes were non-NUL, so both following bytes exist.
+            left = unsafe { left.add(1) };
+            // SAFETY: both bytes were non-NUL, so both following bytes exist.
+            right = unsafe { right.add(1) };
         }
-        // SAFETY: both bytes were non-NUL, so both following bytes exist.
-        left = unsafe { left.add(1) };
-        // SAFETY: both bytes were non-NUL, so both following bytes exist.
-        right = unsafe { right.add(1) };
     }
-}
+}}
 
-/// Compare at most `count` C-string bytes after fixed-ASCII case folding.
-///
-/// # Safety
-///
-/// If `count` is nonzero, `left` and `right` must each be readable through
-/// either their first NUL or `count` bytes. Null pointers are valid only when
-/// `count` is zero.
-#[no_mangle]
-pub unsafe extern "C" fn strncasecmp(
-    left: *const c_char,
-    right: *const c_char,
-    count: usize,
-) -> c_int {
-    if count == 0 {
-        return 0;
-    }
-    let mut offset = 0usize;
-    loop {
-        // SAFETY: `offset < count` and the caller contract supply both bytes.
-        let left_byte = unsafe { left.cast::<u8>().add(offset).read() };
-        // SAFETY: `offset < count` and the caller contract supply both bytes.
-        let right_byte = unsafe { right.cast::<u8>().add(offset).read() };
-        let left_folded = ctype::tolower(c_int::from(left_byte));
-        let right_folded = ctype::tolower(c_int::from(right_byte));
-        if left_byte == 0 || right_byte == 0 || left_folded != right_folded {
-            return left_folded - right_folded;
-        }
-        offset += 1;
-        if offset == count {
+// Musl's `src/string/strncasecmp.c` object.
+static_archive_member! { strncasecmp_source {
+    /// Compare at most `count` C-string bytes after fixed-ASCII case folding.
+    ///
+    /// # Safety
+    ///
+    /// If `count` is nonzero, `left` and `right` must each be readable through
+    /// either their first NUL or `count` bytes. Null pointers are valid only when
+    /// `count` is zero.
+    ///
+    /// Never inlined: `strcasestr` reaches it through musl's public call edge.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn strncasecmp(
+        left: *const c_char,
+        right: *const c_char,
+        count: usize,
+    ) -> c_int {
+        if count == 0 {
             return 0;
         }
+        let mut offset = 0usize;
+        loop {
+            // SAFETY: `offset < count` and the caller contract supply both bytes.
+            let left_byte = unsafe { left.cast::<u8>().add(offset).read() };
+            // SAFETY: `offset < count` and the caller contract supply both bytes.
+            let right_byte = unsafe { right.cast::<u8>().add(offset).read() };
+            let left_folded = ctype::tolower(c_int::from(left_byte));
+            let right_folded = ctype::tolower(c_int::from(right_byte));
+            if left_byte == 0 || right_byte == 0 || left_folded != right_folded {
+                return left_folded - right_folded;
+            }
+            offset += 1;
+            if offset == count {
+                return 0;
+            }
+        }
     }
-}
+}}
 
 /// Compare two C strings through one explicit fixed locale object.
 ///
@@ -180,17 +189,20 @@ pub unsafe extern "C" fn strncasecmp_l(
     unsafe { strncasecmp(left, right, count) }
 }
 
-/// Collate two C strings by unsigned byte value.
-///
-/// # Safety
-///
-/// `left` and `right` must each designate a readable NUL-terminated byte
-/// sequence. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strcoll(left: *const c_char, right: *const c_char) -> c_int {
-    // SAFETY: unsigned-byte collation has exactly `strcmp`'s obligations.
-    unsafe { byte_strings::strcmp(left, right) }
-}
+// Musl's `src/locale/strcoll.c` object.
+static_archive_member! { strcoll_source {
+    /// Collate two C strings by unsigned byte value.
+    ///
+    /// # Safety
+    ///
+    /// `left` and `right` must each designate a readable NUL-terminated byte
+    /// sequence. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strcoll(left: *const c_char, right: *const c_char) -> c_int {
+        // SAFETY: unsigned-byte collation has exactly `strcmp`'s obligations.
+        unsafe { byte_strings::strcmp(left, right) }
+    }
+}}
 
 /// Collate two C strings through one explicit fixed locale object.
 ///
@@ -208,29 +220,32 @@ pub unsafe extern "C" fn strcoll_l(
     unsafe { strcoll(left, right) }
 }
 
-/// Form the fixed-locale byte collation key for one C string.
-///
-/// # Safety
-///
-/// `source` must designate a readable NUL-terminated byte sequence. When
-/// `count` is greater than the source length, `destination` must designate
-/// writable storage for the complete source and its NUL terminator. The two
-/// ranges must satisfy `strcpy`'s non-overlap contract in that case.
-#[no_mangle]
-pub unsafe extern "C" fn strxfrm(
-    destination: *mut c_char,
-    source: *const c_char,
-    count: usize,
-) -> usize {
-    // SAFETY: the source is one caller-supplied readable C string.
-    let length = unsafe { byte_strings::strlen(source) };
-    if count > length {
-        // SAFETY: the function contract supplies a complete writable,
-        // non-overlapping destination exactly in this branch.
-        unsafe { string_copy::strcpy(destination, source) };
+// Musl's `src/locale/strxfrm.c` object.
+static_archive_member! { strxfrm_source {
+    /// Form the fixed-locale byte collation key for one C string.
+    ///
+    /// # Safety
+    ///
+    /// `source` must designate a readable NUL-terminated byte sequence. When
+    /// `count` is greater than the source length, `destination` must designate
+    /// writable storage for the complete source and its NUL terminator. The two
+    /// ranges must satisfy `strcpy`'s non-overlap contract in that case.
+    #[no_mangle]
+    pub unsafe extern "C" fn strxfrm(
+        destination: *mut c_char,
+        source: *const c_char,
+        count: usize,
+    ) -> usize {
+        // SAFETY: the source is one caller-supplied readable C string.
+        let length = unsafe { byte_strings::strlen(source) };
+        if count > length {
+            // SAFETY: the function contract supplies a complete writable,
+            // non-overlapping destination exactly in this branch.
+            unsafe { string_copy::strcpy(destination, source) };
+        }
+        length
     }
-    length
-}
+}}
 
 /// Form a byte collation key through one explicit fixed locale object.
 ///

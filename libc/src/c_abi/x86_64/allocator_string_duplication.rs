@@ -16,9 +16,8 @@
 //!   readable range, allocate its terminator-inclusive length, copy only that
 //!   prefix, and append a terminator.
 //!
-//! Musl reaches the same `malloc` ABI after its `strlen`/`strnlen` helpers.
-//! This scalar Rust translation keeps every source read inside the caller's
-//! C-string or explicit `strndup` bound. The otherwise-unrepresentable
+//! Musl reaches the same `malloc` ABI after its public `strlen`/`strnlen`
+//! calls, which this translation keeps. The otherwise-unrepresentable
 //! terminator-inclusive `usize` overflow publishes `ENOMEM` before allocation;
 //! ordinary allocation failure is owned by the selected allocator wrapper.
 
@@ -35,6 +34,13 @@ const ENOMEM: c_int = 12;
 unsafe extern "C" {
     #[link_name = "malloc"]
     fn cabi_allocator_malloc(size: usize) -> *mut c_void;
+}
+
+// Musl measures with the public `strlen` and `strnlen`, so an application
+// definition of either reaches these callers too.
+unsafe extern "C" {
+    fn strlen(string: *const c_char) -> usize;
+    fn strnlen(string: *const c_char, limit: usize) -> usize;
 }
 
 /// Allocate and copy exactly `length` readable source bytes plus one NUL.
@@ -78,62 +84,42 @@ unsafe fn duplicate_prefix(source: *const u8, length: usize) -> *mut c_char {
     destination.cast::<c_char>()
 }
 
-/// Duplicate one complete caller-owned C string.
-///
-/// # Safety
-///
-/// `source` must designate a readable NUL-terminated C string.
-///
-/// This stays a distinct object-level C ABI boundary. Opt-in C clients such
-/// as `tempnam` must select this established duplication owner rather than
-/// absorbing its allocation implementation into their own feature object.
-#[inline(never)]
-#[no_mangle]
-pub unsafe extern "C" fn strdup(source: *const c_char) -> *mut c_char {
-    let mut cursor = source.cast::<u8>();
-    let mut length = 0usize;
-    loop {
-        // SAFETY: the C-string contract supplies this current byte.
-        if unsafe { cursor.read() } == 0 {
-            // SAFETY: the scan proved this exact readable prefix length.
-            return unsafe { duplicate_prefix(source.cast::<u8>(), length) };
-        }
-        // SAFETY: the observed non-NUL byte proves the following C-string byte.
-        cursor = unsafe { cursor.add(1) };
-        let Some(next_length) = length.checked_add(1) else {
-            // SAFETY: this is the selected C ABI's one calling-thread errno slot.
-            unsafe { errno::set_errno(ENOMEM) };
-            return core::ptr::null_mut();
-        };
-        length = next_length;
+// Musl's `src/string/strdup.c` object.
+static_archive_member! { strdup_source {
+    /// Duplicate one complete caller-owned C string.
+    ///
+    /// # Safety
+    ///
+    /// `source` must designate a readable NUL-terminated C string.
+    ///
+    /// This stays a distinct object-level C ABI boundary. Opt-in C clients such
+    /// as `tempnam` must select this established duplication owner rather than
+    /// absorbing its allocation implementation into their own feature object.
+    #[inline(never)]
+    #[no_mangle]
+    pub unsafe extern "C" fn strdup(source: *const c_char) -> *mut c_char {
+        // SAFETY: the caller supplies a readable C string, and its measured
+        // prefix is exactly readable.
+        unsafe { duplicate_prefix(source.cast::<u8>(), strlen(source)) }
     }
-}
+}}
 
-/// Duplicate at most `limit` bytes and always append one NUL terminator.
-///
-/// # Safety
-///
-/// If `limit` is nonzero, `source` must designate readable bytes through its
-/// first NUL or through the complete `limit` range. The caller retains the C
-/// API's pointer-validity obligation even when a zero limit performs no read.
-#[no_mangle]
-pub unsafe extern "C" fn strndup(source: *const c_char, limit: usize) -> *mut c_char {
-    let mut cursor = source.cast::<u8>();
-    let mut length = 0usize;
-    while length != limit {
-        // SAFETY: `length < limit` retains one readable input byte.
-        if unsafe { cursor.read() } == 0 {
-            break;
-        }
-        // SAFETY: the observed non-NUL byte lies inside the caller's retained
-        // bounded range, so the following iteration's byte exists only while
-        // `length` remains below `limit`.
-        cursor = unsafe { cursor.add(1) };
-        length += 1;
+// Musl's `src/string/strndup.c` object.
+static_archive_member! { strndup_source {
+    /// Duplicate at most `limit` bytes and always append one NUL terminator.
+    ///
+    /// # Safety
+    ///
+    /// If `limit` is nonzero, `source` must designate readable bytes through its
+    /// first NUL or through the complete `limit` range. The caller retains the C
+    /// API's pointer-validity obligation even when a zero limit performs no read.
+    #[no_mangle]
+    pub unsafe extern "C" fn strndup(source: *const c_char, limit: usize) -> *mut c_char {
+        // SAFETY: the caller supplies bytes through the first NUL or `limit`,
+        // so the bounded measured prefix is exactly readable.
+        unsafe { duplicate_prefix(source.cast::<u8>(), strnlen(source, limit)) }
     }
-    // SAFETY: the bounded scan established exactly `length` readable bytes.
-    unsafe { duplicate_prefix(source.cast::<u8>(), length) }
-}
+}}
 
 /// Link-time witness for the opt-in x86 string-duplication object.
 ///

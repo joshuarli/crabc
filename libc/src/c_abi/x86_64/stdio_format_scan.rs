@@ -485,6 +485,7 @@ unsafe fn parse_length(cursor: &mut *const u8) -> Length {
 }
 
 #[inline]
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe fn c_string_length(string: *const c_char, limit: Option<usize>) -> usize {
     let mut length = 0usize;
     while limit.is_none_or(|bound| length < bound)
@@ -590,6 +591,18 @@ unsafe fn write_string(
     } else {
         string.cast::<u8>()
     };
+    // Musl measures `%s` with the public `strnlen`, bounded by the precision,
+    // so an application definition reaches this caller in the owned runtimes.
+    #[cfg(crabc_x86_owned_runtime)]
+    let length = {
+        unsafe extern "C" {
+            fn strnlen(string: *const c_char, limit: usize) -> usize;
+        }
+        // SAFETY: the argument or fallback is readable through its NUL or
+        // through the precision bound.
+        unsafe { strnlen(source.cast::<c_char>(), precision.unwrap_or(usize::MAX)) }
+    };
+    #[cfg(not(crabc_x86_owned_runtime))]
     let length = unsafe { c_string_length(source.cast::<c_char>(), precision) };
     let padding = width.saturating_sub(length);
     if flags & FLAG_MINUS == 0 {

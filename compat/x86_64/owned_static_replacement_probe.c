@@ -15,6 +15,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <locale.h>
 #include <netdb.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -22,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 #include <wchar.h>
 
@@ -384,10 +386,121 @@ static int run_allocation_clients(void)
 }
 #endif
 
+#ifdef CRABC_REPLACE_STRINGS
+/*
+ * Counting definitions of `strlen` and `getenv`. Each computes the ordinary
+ * result itself, so libc callers keep working; the counters show which libc
+ * paths reach the public symbol.
+ */
+extern char **environ;
+static unsigned long strlen_calls;
+static unsigned long getenv_calls;
+
+size_t strlen(const char *string)
+{
+    size_t length = 0;
+
+    strlen_calls++;
+    while (string[length]) length++;
+    return length;
+}
+
+char *getenv(const char *name)
+{
+    size_t length = 0;
+    char **entry;
+
+    getenv_calls++;
+    while (name[length] && name[length] != '=') length++;
+    if (!length || name[length]) return 0;
+    for (entry = environ; entry && *entry; entry++) {
+        size_t index = 0;
+        while (index < length && (*entry)[index] == name[index]) index++;
+        if (index == length && (*entry)[length] == '=') return *entry + length + 1;
+    }
+    return 0;
+}
+
+static void report_calls(const char *operation, unsigned long strlen_mark, unsigned long getenv_mark)
+{
+    emit_flag(operation, "strlen", strlen_calls != strlen_mark);
+    emit_flag(operation, "getenv", getenv_calls != getenv_mark);
+}
+
+static int run_string_clients(void)
+{
+    unsigned long strlen_mark, getenv_mark;
+    char *text;
+    FILE *stream;
+
+#define MARK() (strlen_mark = strlen_calls, getenv_mark = getenv_calls)
+    MARK();
+    emit_flag("strlen", "value", strlen("replacement") == 11);
+    report_calls("strlen", strlen_mark, getenv_mark);
+
+    MARK();
+    text = strdup("duplicate");
+    report_calls("strdup", strlen_mark, getenv_mark);
+    free(text);
+
+    MARK();
+    text = strndup("duplicate", 3);
+    report_calls("strndup", strlen_mark, getenv_mark);
+    free(text);
+
+    MARK();
+    text = strcasestr("Needle in haystack", "IN");
+    report_calls("strcasestr", strlen_mark, getenv_mark);
+
+    stream = fopen("/replacement-strings", "w");
+    if (!stream) return 20;
+    MARK();
+    emit_flag("fputs", "status", fputs("line\n", stream) < 0);
+    report_calls("fputs", strlen_mark, getenv_mark);
+    MARK();
+    emit_flag("fprintf", "status", fprintf(stream, "%s\n", "formatted") != 10);
+    report_calls("fprintf", strlen_mark, getenv_mark);
+    if (fclose(stream)) return 21;
+
+    MARK();
+    emit_flag("setenv", "status", setenv("CRABC_REPLACEMENT", "value", 1) != 0);
+    report_calls("setenv", strlen_mark, getenv_mark);
+
+    MARK();
+    text = getenv("CRABC_REPLACEMENT");
+    emit_flag("getenv", "value", text && !strcmp(text, "value"));
+    report_calls("getenv", strlen_mark, getenv_mark);
+
+    MARK();
+    emit_flag("unsetenv", "status", unsetenv("CRABC_REPLACEMENT") != 0);
+    report_calls("unsetenv", strlen_mark, getenv_mark);
+
+    if (setenv("TZ", "UTC0", 1)) return 22;
+    MARK();
+    tzset();
+    report_calls("tzset", strlen_mark, getenv_mark);
+
+    /*
+     * Only the environment edge is compared: musl's setlocale also measures
+     * each category name with strlen while serializing its LC_ALL result,
+     * which the fixed-profile implementation returns prebuilt.
+     */
+    MARK();
+    emit_flag("setlocale", "status", setlocale(LC_ALL, "") == 0);
+    emit_flag("setlocale", "getenv", getenv_calls != getenv_mark);
+#undef MARK
+    return 0;
+}
+#endif
+
 int main(void)
 {
 #ifdef CRABC_REPLACE_MALLOC
     int status = run_allocation_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_STRINGS
+    int status = run_string_clients();
     if (status) return status;
 #endif
     emit("owned-static-replacement-ok\n");

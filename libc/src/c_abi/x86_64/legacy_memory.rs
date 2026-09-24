@@ -23,8 +23,13 @@
 )))]
 compile_error!("the x86 C legacy-memory leaf requires little-endian Linux/x86-64");
 
-core::arch::global_asm!(
-    r#"
+// Each adapter has its own static archive member, as musl's `bcopy.o` and
+// `bzero.o` do.
+
+// Musl's `src/string/bcopy.c` object.
+static_archive_member! { bcopy_source {
+    core::arch::global_asm!(
+        r#"
     .text
 
     /* bcopy(source, destination, length) is musl's memmove(destination,
@@ -36,6 +41,17 @@ bcopy:
     xchg rdi, rsi
     jmp memmove
     .size bcopy, .-bcopy
+
+    .section .note.GNU-stack,"",@progbits
+    "#
+    );
+}}
+
+// Musl's `src/string/bzero.c` object.
+static_archive_member! { bzero_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     /* bzero(destination, length) is musl's memset(destination, 0, length)
        adapter. Move its second argument before memset consumes sil. */
@@ -49,4 +65,5 @@ bzero:
 
     .section .note.GNU-stack,"",@progbits
     "#
-);
+    );
+}}

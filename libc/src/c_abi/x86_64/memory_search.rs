@@ -88,27 +88,30 @@ unsafe fn find_last_byte(memory: *const u8, target: u8, mut count: usize) -> *co
     null()
 }
 
-/// Locate `character` converted to `unsigned char` in an exact byte range.
-///
-/// # Safety
-///
-/// If `count` is nonzero, `memory` must designate at least `count` readable
-/// bytes for this call. A null pointer is permitted only when `count` is zero.
-#[no_mangle]
-pub unsafe extern "C" fn memchr(
-    memory: *const c_void,
-    character: c_int,
-    count: usize,
-) -> *mut c_void {
-    if count == 0 {
-        return null_mut();
+// Musl's `src/string/memchr.c` object.
+static_archive_member! { memchr_source {
+    /// Locate `character` converted to `unsigned char` in an exact byte range.
+    ///
+    /// # Safety
+    ///
+    /// If `count` is nonzero, `memory` must designate at least `count` readable
+    /// bytes for this call. A null pointer is permitted only when `count` is zero.
+    #[no_mangle]
+    pub unsafe extern "C" fn memchr(
+        memory: *const c_void,
+        character: c_int,
+        count: usize,
+    ) -> *mut c_void {
+        if count == 0 {
+            return null_mut();
+        }
+        // SAFETY: the public nonzero-range contract is exactly the private helper
+        // contract. Its result is either null or one pointer within that range.
+        unsafe { find_first_byte(memory.cast::<u8>(), character as u8, count) }
+            .cast_mut()
+            .cast()
     }
-    // SAFETY: the public nonzero-range contract is exactly the private helper
-    // contract. Its result is either null or one pointer within that range.
-    unsafe { find_first_byte(memory.cast::<u8>(), character as u8, count) }
-        .cast_mut()
-        .cast()
-}
+}}
 
 /// Locate the final `character` converted to `unsigned char` in an exact byte
 /// range.
@@ -392,65 +395,68 @@ unsafe fn two_way_memmem(
     }
 }
 
-/// Locate the first complete `needle` byte sequence in `haystack`.
-///
-/// # Safety
-///
-/// If `haystack_length` is nonzero, `haystack` must designate at least that
-/// many readable bytes. If `needle_length` is nonzero, `needle` must designate
-/// at least that many readable bytes. The ranges may overlap. A null pointer
-/// is permitted only with its corresponding zero length; an empty needle
-/// returns `haystack` without examining either range.
-#[no_mangle]
-pub unsafe extern "C" fn memmem(
-    haystack: *const c_void,
-    haystack_length: usize,
-    needle: *const c_void,
-    needle_length: usize,
-) -> *mut c_void {
-    if needle_length == 0 {
-        return haystack.cast_mut();
-    }
-    if haystack_length < needle_length {
-        return null_mut();
-    }
-
-    let needle = needle.cast::<u8>();
-    let mut remaining = haystack_length;
-    // SAFETY: the public contract supplies the first byte of this nonempty
-    // exact needle range.
-    let first = unsafe { needle.read() };
-    // SAFETY: the public haystack contract supplies the exact initial range.
-    let search_start = unsafe { find_first_byte(haystack.cast::<u8>(), first, remaining) };
-    if search_start.is_null() {
-        return null_mut();
-    }
-    // The first pointer lies within the original haystack. Count the consumed
-    // prefix without pointer subtraction so the remaining range stays explicit.
-    let mut cursor = haystack.cast::<u8>();
-    while cursor != search_start {
-        // SAFETY: search_start came from the exact haystack range, so this
-        // consumes only its known preceding prefix.
-        cursor = unsafe { cursor.add(1) };
-        remaining = remaining.wrapping_sub(1);
-    }
-    if needle_length == 1 {
-        return search_start.cast_mut().cast();
-    }
-    if remaining < needle_length {
-        return null_mut();
-    }
-
-    let found = match needle_length {
-        2..=4 => {
-            // SAFETY: the preceding check supplies all short-search ranges.
-            unsafe { short_memmem(search_start, remaining, needle, needle_length) }
+// Musl's `src/string/memmem.c` object.
+static_archive_member! { memmem_source {
+    /// Locate the first complete `needle` byte sequence in `haystack`.
+    ///
+    /// # Safety
+    ///
+    /// If `haystack_length` is nonzero, `haystack` must designate at least that
+    /// many readable bytes. If `needle_length` is nonzero, `needle` must designate
+    /// at least that many readable bytes. The ranges may overlap. A null pointer
+    /// is permitted only with its corresponding zero length; an empty needle
+    /// returns `haystack` without examining either range.
+    #[no_mangle]
+    pub unsafe extern "C" fn memmem(
+        haystack: *const c_void,
+        haystack_length: usize,
+        needle: *const c_void,
+        needle_length: usize,
+    ) -> *mut c_void {
+        if needle_length == 0 {
+            return haystack.cast_mut();
         }
-        _ => {
-            // SAFETY: the preceding check makes both long-search ranges exact,
-            // nonempty, and at least five bytes at the needle boundary.
-            unsafe { two_way_memmem(search_start, remaining, needle, needle_length) }
+        if haystack_length < needle_length {
+            return null_mut();
         }
-    };
-    found.cast_mut().cast()
-}
+
+        let needle = needle.cast::<u8>();
+        let mut remaining = haystack_length;
+        // SAFETY: the public contract supplies the first byte of this nonempty
+        // exact needle range.
+        let first = unsafe { needle.read() };
+        // SAFETY: the public haystack contract supplies the exact initial range.
+        let search_start = unsafe { find_first_byte(haystack.cast::<u8>(), first, remaining) };
+        if search_start.is_null() {
+            return null_mut();
+        }
+        // The first pointer lies within the original haystack. Count the consumed
+        // prefix without pointer subtraction so the remaining range stays explicit.
+        let mut cursor = haystack.cast::<u8>();
+        while cursor != search_start {
+            // SAFETY: search_start came from the exact haystack range, so this
+            // consumes only its known preceding prefix.
+            cursor = unsafe { cursor.add(1) };
+            remaining = remaining.wrapping_sub(1);
+        }
+        if needle_length == 1 {
+            return search_start.cast_mut().cast();
+        }
+        if remaining < needle_length {
+            return null_mut();
+        }
+
+        let found = match needle_length {
+            2..=4 => {
+                // SAFETY: the preceding check supplies all short-search ranges.
+                unsafe { short_memmem(search_start, remaining, needle, needle_length) }
+            }
+            _ => {
+                // SAFETY: the preceding check makes both long-search ranges exact,
+                // nonempty, and at least five bytes at the needle boundary.
+                unsafe { two_way_memmem(search_start, remaining, needle, needle_length) }
+            }
+        };
+        found.cast_mut().cast()
+    }
+}}

@@ -380,15 +380,18 @@ unsafe extern "C" fn qsort_wrap_cmp(
     unsafe { cmp(left, right) }
 }
 
-/// Sort caller-owned records through C qsort.
-///
-/// # Safety
-///
-/// For a nonzero nel-times-width product, base must address that many writable
-/// bytes as valid records. The multiplication must not overflow. cmp must be
-/// a non-null C-ABI callback that returns normally and imposes a consistent
-/// ordering. C++ exceptions and C longjmp may not cross this Rust code.
-#[no_mangle]
-pub unsafe extern "C" fn qsort(base: *mut c_void, nel: usize, width: usize, cmp: QsortCmp) {
-    unsafe { qsort_with_context(base, nel, width, qsort_wrap_cmp, cmp as *mut c_void) };
-}
+// Musl's `src/stdlib/qsort_nr.c` object.
+static_archive_member! { qsort_nr_source {
+    /// Sort caller-owned records through C qsort.
+    ///
+    /// # Safety
+    ///
+    /// For a nonzero nel-times-width product, base must address that many writable
+    /// bytes as valid records. The multiplication must not overflow. cmp must be
+    /// a non-null C-ABI callback that returns normally and imposes a consistent
+    /// ordering. C++ exceptions and C longjmp may not cross this Rust code.
+    #[no_mangle]
+    pub unsafe extern "C" fn qsort(base: *mut c_void, nel: usize, width: usize, cmp: QsortCmp) {
+        unsafe { qsort_with_context(base, nel, width, qsort_wrap_cmp, cmp as *mut c_void) };
+    }
+}}

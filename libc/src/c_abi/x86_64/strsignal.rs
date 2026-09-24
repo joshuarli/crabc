@@ -104,16 +104,19 @@ static SIGNAL_DESCRIPTIONS: [&[u8]; 65] = [
     b"RT64\0",
 ];
 
-/// Return musl's fixed x86 signal-description storage.
-///
-/// The process-static result has C's mutable pointer type for ABI
-/// compatibility, but callers must not modify or free it.
-#[no_mangle]
-pub extern "C" fn strsignal(signum: c_int) -> *mut c_char {
-    let description = if (1..=MAX_SIGNAL_NUMBER).contains(&signum) {
-        SIGNAL_DESCRIPTIONS[signum as usize]
-    } else {
-        SIGNAL_DESCRIPTIONS[0]
-    };
-    description.as_ptr().cast_mut().cast::<c_char>()
-}
+// Musl's `src/string/strsignal.c` object.
+static_archive_member! { strsignal_source {
+    /// Return musl's fixed x86 signal-description storage.
+    ///
+    /// The process-static result has C's mutable pointer type for ABI
+    /// compatibility, but callers must not modify or free it.
+    #[no_mangle]
+    pub extern "C" fn strsignal(signum: c_int) -> *mut c_char {
+        let description = if (1..=MAX_SIGNAL_NUMBER).contains(&signum) {
+            SIGNAL_DESCRIPTIONS[signum as usize]
+        } else {
+            SIGNAL_DESCRIPTIONS[0]
+        };
+        description.as_ptr().cast_mut().cast::<c_char>()
+    }
+}}

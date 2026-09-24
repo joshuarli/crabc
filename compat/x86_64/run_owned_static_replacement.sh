@@ -2,6 +2,12 @@
 # Pinned-musl differential for application replacement of libc functions in
 # the installed static archive.
 #
+# The link sweep (compat/x86_64/owned_static_replacement_sweep.py) links, for
+# every public function both archives define, a program that defines it and
+# names every other public symbol outside its musl member, and retains the
+# whole link-result table. Each function in `replaceable_functions` must link
+# with musl and with the candidate in both static modes.
+#
 # Each probe role (compat/x86_64/owned_static_replacement_probe.c) is compiled
 # once with the project headers and linked unchanged by static musl and by the
 # installed crabc driver in static ET_EXEC and static-PIE mode. Musl's libc.a
@@ -15,7 +21,17 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_static_replacement_probe.c"
-readonly roles=(MALLOC_TRIO MALLOC_FULL)
+readonly roles=(MALLOC_TRIO MALLOC_FULL STRINGS)
+readonly replaceable_functions=(
+    malloc calloc realloc free aligned_alloc posix_memalign memalign valloc
+    reallocarray malloc_usable_size strerror perror
+    strlen strcmp strncmp strverscmp strchr strrchr index rindex strcspn strspn
+    strpbrk strnlen strstr strcpy strncpy strcat strncat strlcpy strlcat
+    strdup strndup strerror_r strsignal strcasecmp strncasecmp strcasestr
+    strtok_r strcoll strxfrm dirname memchr memmem memcmp bcmp memset memmove
+    bcopy bzero explicit_bzero swab atoi atol atoll qsort
+    getenv setenv unsetenv clearenv
+)
 
 [ "$#" -le 1 ] || {
     printf 'usage: %s [STATIC_SYSROOT]\n' "$0" >&2
@@ -51,6 +67,15 @@ if [ -z "$product" ]; then
         --output "$product" >"$work/static-build.json"
 fi
 product="$(realpath -e "$product")"
+
+step=link-sweep
+required=()
+for function in "${replaceable_functions[@]}"; do
+    required+=(--require "$function")
+done
+python3 -B "$ROOT/compat/x86_64/owned_static_replacement_sweep.py" \
+    --oracle-cc "$oracle_cc" --oracle-archive /opt/musl-1.2.6/lib/libc.a \
+    --product "$product" --work "$work/sweep" "${required[@]}"
 
 # Run one linked role in its own empty chroot; retain status and streams.
 run_role() {
@@ -101,5 +126,5 @@ for role in "${roles[@]}"; do
     printf 'owned static replacement %s: PASS\n' "$name"
 done
 
-printf 'owned static replacement: PASS (roles: %s; pinned-musl static link and transcript matched in static and static-PIE); evidence: %s\n' \
-    "${roles[*]}" "$work"
+printf 'owned static replacement: PASS (%s required replaceable functions; roles: %s; pinned-musl static link and transcript matched in static and static-PIE); evidence: %s\n' \
+    "${#replaceable_functions[@]}" "${roles[*]}" "$work"

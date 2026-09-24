@@ -265,159 +265,177 @@ core::arch::global_asm!(
     ".set stpncpy, __stpncpy",
 );
 
-/// Copy one complete C string and return its destination start pointer.
-///
-/// # Safety
-///
-/// `source` must designate a readable NUL-terminated C string, `destination`
-/// must be writable through that terminator, and the two ranges must not
-/// overlap. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strcpy(
-    destination: *mut c_char,
-    source: *const c_char,
-) -> *mut c_char {
-    // SAFETY: this has exactly the strong provider's C-string-copy contract.
-    // Calling the Rust item binds the hidden `__stpcpy` body, never the
-    // application's replaceable weak `stpcpy` spelling.
-    unsafe { stpcpy(destination, source) };
-    destination
-}
+// Musl's `src/string/strcpy.c` object.
+static_archive_member! { strcpy_source {
+    /// Copy one complete C string and return its destination start pointer.
+    ///
+    /// # Safety
+    ///
+    /// `source` must designate a readable NUL-terminated C string, `destination`
+    /// must be writable through that terminator, and the two ranges must not
+    /// overlap. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strcpy(
+        destination: *mut c_char,
+        source: *const c_char,
+    ) -> *mut c_char {
+        // SAFETY: this has exactly the strong provider's C-string-copy contract.
+        // Calling the Rust item binds the hidden `__stpcpy` body, never the
+        // application's replaceable weak `stpcpy` spelling.
+        unsafe { stpcpy(destination, source) };
+        destination
+    }
+}}
 
-/// Copy at most `count` bytes, zero-filling any remaining destination bytes.
-///
-/// # Safety
-///
-/// `destination` must designate `count` writable bytes. If `count` is
-/// nonzero, `source` must designate readable bytes through either its first
-/// NUL or `count` bytes. The two ranges must not overlap; both pointers may be
-/// null only when `count` is zero.
-#[no_mangle]
-pub unsafe extern "C" fn strncpy(
-    destination: *mut c_char,
-    source: *const c_char,
-    count: usize,
-) -> *mut c_char {
-    // SAFETY: this has exactly the strong provider's bounded padded-copy
-    // contract and stays independent of a public `stpncpy` replacement.
-    unsafe { stpncpy(destination, source, count) };
-    destination
-}
+// Musl's `src/string/strncpy.c` object.
+static_archive_member! { strncpy_source {
+    /// Copy at most `count` bytes, zero-filling any remaining destination bytes.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must designate `count` writable bytes. If `count` is
+    /// nonzero, `source` must designate readable bytes through either its first
+    /// NUL or `count` bytes. The two ranges must not overlap; both pointers may be
+    /// null only when `count` is zero.
+    #[no_mangle]
+    pub unsafe extern "C" fn strncpy(
+        destination: *mut c_char,
+        source: *const c_char,
+        count: usize,
+    ) -> *mut c_char {
+        // SAFETY: this has exactly the strong provider's bounded padded-copy
+        // contract and stays independent of a public `stpncpy` replacement.
+        unsafe { stpncpy(destination, source, count) };
+        destination
+    }
+}}
 
-/// Append one complete C string and return the destination start pointer.
-///
-/// # Safety
-///
-/// `destination` must designate a readable NUL-terminated C string followed
-/// by writable capacity for every source byte and one new terminator. `source`
-/// must designate a readable NUL-terminated C string, and the ranges must not
-/// overlap. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strcat(
-    destination: *mut c_char,
-    source: *const c_char,
-) -> *mut c_char {
-    // SAFETY: the public destination C-string contract supplies its writable
-    // terminator slot, where the private full-string copy begins.
-    let end = unsafe { c_string_end(destination.cast::<u8>()) };
-    // SAFETY: the public appended-capacity and non-overlap obligations are
-    // exactly the helper's C-string-copy contract at that terminator.
-    unsafe { copy_c_string(end, source.cast::<u8>()) };
-    destination
-}
+// Musl's `src/string/strcat.c` object.
+static_archive_member! { strcat_source {
+    /// Append one complete C string and return the destination start pointer.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must designate a readable NUL-terminated C string followed
+    /// by writable capacity for every source byte and one new terminator. `source`
+    /// must designate a readable NUL-terminated C string, and the ranges must not
+    /// overlap. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strcat(
+        destination: *mut c_char,
+        source: *const c_char,
+    ) -> *mut c_char {
+        // SAFETY: the public destination C-string contract supplies its writable
+        // terminator slot, where the private full-string copy begins.
+        let end = unsafe { c_string_end(destination.cast::<u8>()) };
+        // SAFETY: the public appended-capacity and non-overlap obligations are
+        // exactly the helper's C-string-copy contract at that terminator.
+        unsafe { copy_c_string(end, source.cast::<u8>()) };
+        destination
+    }
+}}
 
-/// Append at most `count` non-NUL source bytes and always write a terminator.
-///
-/// # Safety
-///
-/// `destination` must designate a readable NUL-terminated C string followed
-/// by writable capacity for the appended prefix and one terminator. If `count`
-/// is nonzero, `source` must designate readable bytes through either its first
-/// NUL or `count` bytes. The ranges must not overlap; source may be null only
-/// when `count` is zero.
-#[no_mangle]
-pub unsafe extern "C" fn strncat(
-    destination: *mut c_char,
-    source: *const c_char,
-    mut count: usize,
-) -> *mut c_char {
-    // SAFETY: the public destination C-string contract supplies its writable
-    // terminator slot for the first append byte or replacement terminator.
-    let mut output = unsafe { c_string_end(destination.cast::<u8>()) };
-    let mut input = source.cast::<u8>();
-    while count != 0 {
-        // SAFETY: the public bounded-source contract supplies this input byte.
-        let byte = unsafe { input.read() };
-        if byte == 0 {
-            break;
+// Musl's `src/string/strncat.c` object.
+static_archive_member! { strncat_source {
+    /// Append at most `count` non-NUL source bytes and always write a terminator.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must designate a readable NUL-terminated C string followed
+    /// by writable capacity for the appended prefix and one terminator. If `count`
+    /// is nonzero, `source` must designate readable bytes through either its first
+    /// NUL or `count` bytes. The ranges must not overlap; source may be null only
+    /// when `count` is zero.
+    #[no_mangle]
+    pub unsafe extern "C" fn strncat(
+        destination: *mut c_char,
+        source: *const c_char,
+        mut count: usize,
+    ) -> *mut c_char {
+        // SAFETY: the public destination C-string contract supplies its writable
+        // terminator slot for the first append byte or replacement terminator.
+        let mut output = unsafe { c_string_end(destination.cast::<u8>()) };
+        let mut input = source.cast::<u8>();
+        while count != 0 {
+            // SAFETY: the public bounded-source contract supplies this input byte.
+            let byte = unsafe { input.read() };
+            if byte == 0 {
+                break;
+            }
+            // SAFETY: the public appended-capacity contract supplies this output.
+            unsafe { output.write(byte) };
+            // SAFETY: a non-NUL source byte has a following bounded byte whenever
+            // a later iteration retains a nonzero count.
+            input = unsafe { input.add(1) };
+            // SAFETY: the output capacity supplies this following terminator slot.
+            output = unsafe { output.add(1) };
+            count = count.wrapping_sub(1);
         }
-        // SAFETY: the public appended-capacity contract supplies this output.
-        unsafe { output.write(byte) };
-        // SAFETY: a non-NUL source byte has a following bounded byte whenever
-        // a later iteration retains a nonzero count.
-        input = unsafe { input.add(1) };
-        // SAFETY: the output capacity supplies this following terminator slot.
-        output = unsafe { output.add(1) };
-        count = count.wrapping_sub(1);
+        // SAFETY: the public output-capacity contract reserves the final NUL slot,
+        // including the original terminator when no source byte is appended.
+        unsafe { output.write(0) };
+        destination
     }
-    // SAFETY: the public output-capacity contract reserves the final NUL slot,
-    // including the original terminator when no source byte is appended.
-    unsafe { output.write(0) };
-    destination
-}
+}}
 
-/// Copy into at most `capacity` destination bytes and return source length.
-///
-/// # Safety
-///
-/// `source` must designate a readable NUL-terminated C string. If `capacity`
-/// is nonzero, `destination` must designate `capacity` writable bytes. The
-/// ranges must not overlap; destination may be null only when capacity is
-/// zero.
-#[no_mangle]
-pub unsafe extern "C" fn strlcpy(
-    destination: *mut c_char,
-    source: *const c_char,
-    capacity: usize,
-) -> usize {
-    // SAFETY: the public source/output/non-overlap contract maps directly to
-    // the private musl-shaped bounded-copy core.
-    unsafe { copy_with_limit(destination.cast::<u8>(), source.cast::<u8>(), capacity) }
-}
-
-/// Append within at most `capacity` destination bytes and return attempted size.
-///
-/// # Safety
-///
-/// `source` must designate a readable NUL-terminated C string. If `capacity`
-/// is nonzero, `destination` must designate `capacity` readable and writable
-/// bytes; it may lack a NUL in that bounded range. The ranges must not overlap;
-/// destination may be null only when capacity is zero.
-#[no_mangle]
-pub unsafe extern "C" fn strlcat(
-    destination: *mut c_char,
-    source: *const c_char,
-    capacity: usize,
-) -> usize {
-    // SAFETY: the public bounded destination contract is exactly this private
-    // bounded-length helper's contract.
-    let destination_length = unsafe { bounded_c_string_length(destination.cast::<u8>(), capacity) };
-    if destination_length == capacity {
-        // SAFETY: the public source C-string contract retains the full scan;
-        // zero capacity never examines the destination pointer.
-        return capacity.wrapping_add(unsafe { c_string_length(source.cast::<u8>()) });
+// Musl's `src/string/strlcpy.c` object.
+static_archive_member! { strlcpy_source {
+    /// Copy into at most `capacity` destination bytes and return source length.
+    ///
+    /// # Safety
+    ///
+    /// `source` must designate a readable NUL-terminated C string. If `capacity`
+    /// is nonzero, `destination` must designate `capacity` writable bytes. The
+    /// ranges must not overlap; destination may be null only when capacity is
+    /// zero.
+    #[no_mangle]
+    pub unsafe extern "C" fn strlcpy(
+        destination: *mut c_char,
+        source: *const c_char,
+        capacity: usize,
+    ) -> usize {
+        // SAFETY: the public source/output/non-overlap contract maps directly to
+        // the private musl-shaped bounded-copy core.
+        unsafe { copy_with_limit(destination.cast::<u8>(), source.cast::<u8>(), capacity) }
     }
-    // SAFETY: destination_length is inside the nonzero bounded output object,
-    // at its observed terminator, so this starts the available append suffix.
-    let append_start = unsafe { destination.cast::<u8>().add(destination_length) };
-    // SAFETY: the remaining capacity is nonzero and the public output/source
-    // contracts retain this private bounded copy at the terminator.
-    let source_length = unsafe {
-        copy_with_limit(
-            append_start,
-            source.cast::<u8>(),
-            capacity.wrapping_sub(destination_length),
-        )
-    };
-    destination_length.wrapping_add(source_length)
-}
+}}
+
+// Musl's `src/string/strlcat.c` object.
+static_archive_member! { strlcat_source {
+    /// Append within at most `capacity` destination bytes and return attempted size.
+    ///
+    /// # Safety
+    ///
+    /// `source` must designate a readable NUL-terminated C string. If `capacity`
+    /// is nonzero, `destination` must designate `capacity` readable and writable
+    /// bytes; it may lack a NUL in that bounded range. The ranges must not overlap;
+    /// destination may be null only when capacity is zero.
+    #[no_mangle]
+    pub unsafe extern "C" fn strlcat(
+        destination: *mut c_char,
+        source: *const c_char,
+        capacity: usize,
+    ) -> usize {
+        // SAFETY: the public bounded destination contract is exactly this private
+        // bounded-length helper's contract.
+        let destination_length = unsafe { bounded_c_string_length(destination.cast::<u8>(), capacity) };
+        if destination_length == capacity {
+            // SAFETY: the public source C-string contract retains the full scan;
+            // zero capacity never examines the destination pointer.
+            return capacity.wrapping_add(unsafe { c_string_length(source.cast::<u8>()) });
+        }
+        // SAFETY: destination_length is inside the nonzero bounded output object,
+        // at its observed terminator, so this starts the available append suffix.
+        let append_start = unsafe { destination.cast::<u8>().add(destination_length) };
+        // SAFETY: the remaining capacity is nonzero and the public output/source
+        // contracts retain this private bounded copy at the terminator.
+        let source_length = unsafe {
+            copy_with_limit(
+                append_start,
+                source.cast::<u8>(),
+                capacity.wrapping_sub(destination_length),
+            )
+        };
+        destination_length.wrapping_add(source_length)
+    }
+}}

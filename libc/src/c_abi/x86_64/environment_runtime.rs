@@ -348,172 +348,191 @@ pub(crate) unsafe fn install_initial(environment: *const *const c_char) {
     unsafe { set_environment_pointer(environment.cast_mut().cast()) };
 }
 
-/// Return a borrowed value for the first matching `NAME=` entry.
-///
-/// # Safety
-///
-/// `name` must be a valid NUL-terminated C string. The published environment
-/// vector and returned entry storage must remain valid until the caller stops
-/// using the returned pointer; concurrent mutation is a C data race.
-#[no_mangle]
-pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
-    let Some(name_length) = (unsafe { environment_name_length(name) }) else {
-        return ptr::null_mut();
-    };
-    let mut environment = unsafe { environment_pointer() };
-    if environment.is_null() {
-        return ptr::null_mut();
-    }
-    loop {
-        // SAFETY: the caller owns the published null-terminated vector.
-        let entry = unsafe { ptr::read(environment) };
-        if entry.is_null() {
+// Musl's `src/env/getenv.c` object.
+static_archive_member! { getenv_source {
+    /// Return a borrowed value for the first matching `NAME=` entry.
+    ///
+    /// # Safety
+    ///
+    /// `name` must be a valid NUL-terminated C string. The published environment
+    /// vector and returned entry storage must remain valid until the caller stops
+    /// using the returned pointer; concurrent mutation is a C data race.
+    ///
+    /// Never inlined: `tzset` and `setlocale` reach it through musl's public
+    /// call edge, which an application definition must be able to replace.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
+        let Some(name_length) = (unsafe { environment_name_length(name) }) else {
+            return ptr::null_mut();
+        };
+        let mut environment = unsafe { environment_pointer() };
+        if environment.is_null() {
             return ptr::null_mut();
         }
-        if unsafe { entry_matches_name(entry, name, name_length) } {
-            // SAFETY: a matched entry has its separator at `name_length`.
-            return unsafe { entry.add(name_length + 1) };
-        }
-        // SAFETY: the next slot remains inside the caller's terminated vector.
-        environment = unsafe { environment.add(1) };
-    }
-}
-
-/// Copy one `NAME=value` string and replace or append it.
-///
-/// # Safety
-///
-/// `name` and `value` must be valid NUL-terminated C strings. Callers must
-/// externally synchronize all environment access, including direct aliases.
-#[no_mangle]
-pub unsafe extern "C" fn setenv(
-    name: *const c_char,
-    value: *const c_char,
-    overwrite: c_int,
-) -> c_int {
-    let Some(name_length) = (unsafe { environment_name_length(name) }) else {
-        return unsafe { environment_failure(EINVAL) };
-    };
-    if overwrite == 0 && !unsafe { getenv(name) }.is_null() {
-        return 0;
-    }
-    let value_length = unsafe { c_string_length(value) };
-    let Some(allocation_size) = name_length
-        .checked_add(value_length)
-        .and_then(|size| size.checked_add(2))
-    else {
-        return unsafe { environment_failure(ENOMEM) };
-    };
-    // SAFETY: the established allocator owns ordinary allocation failure errno.
-    let replacement = unsafe { cabi_allocator_malloc(allocation_size).cast::<c_char>() };
-    if replacement.is_null() {
-        return -1;
-    }
-    // SAFETY: the exact allocation covers name, separator, value, and NUL.
-    unsafe {
-        ptr::copy_nonoverlapping(name.cast::<u8>(), replacement.cast::<u8>(), name_length);
-        ptr::write(replacement.cast::<u8>().add(name_length), b'=');
-        ptr::copy_nonoverlapping(
-            value.cast::<u8>(),
-            replacement.cast::<u8>().add(name_length + 1),
-            value_length + 1,
-        );
-        put_entry(replacement, name_length, replacement)
-    }
-}
-
-/// Retain a caller-owned `NAME=value` string, or route `NAME` removal to
-/// `unsetenv` exactly as musl does.
-///
-/// # Safety
-///
-/// `entry` must remain a valid writable NUL-terminated string while it is
-/// published through the environment. Callers synchronize direct mutation.
-#[no_mangle]
-pub unsafe extern "C" fn putenv(entry: *mut c_char) -> c_int {
-    if entry.is_null() {
-        return unsafe { environment_failure(EINVAL) };
-    }
-    let (key_length, has_separator) = unsafe { putenv_key_length(entry) };
-    if key_length == 0 || !has_separator {
-        // SAFETY: `entry` is a valid C string and unsetenv validates its key.
-        return unsafe { unsetenv(entry.cast_const()) };
-    }
-    unsafe { put_entry(entry, key_length, ptr::null_mut()) }
-}
-
-/// Remove every matching `NAME=` entry in place, preserving all nonmatching
-/// pointer order and freeing only tracked `setenv` strings.
-///
-/// # Safety
-///
-/// `name` and the currently published environment vector must be valid C
-/// objects. Callers synchronize all concurrent/direct access.
-#[no_mangle]
-pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
-    let Some(name_length) = (unsafe { environment_name_length(name) }) else {
-        return unsafe { environment_failure(EINVAL) };
-    };
-    let mut current = unsafe { environment_pointer() };
-    if current.is_null() {
-        return 0;
-    }
-    loop {
-        // SAFETY: the public vector is null terminated under the C contract.
-        let entry = unsafe { ptr::read(current) };
-        if entry.is_null() {
-            return 0;
-        }
-        if !unsafe { entry_matches_name(entry, name, name_length) } {
-            // SAFETY: the next vector slot remains valid through its terminator.
-            current = unsafe { current.add(1) };
-            continue;
-        }
-        let mut shift = current;
         loop {
-            // SAFETY: copying through the terminating null pointer compacts
-            // this caller-visible vector in place, exactly as musl does.
-            let next = unsafe { ptr::read(shift.add(1)) };
-            unsafe { ptr::write(shift, next) };
-            if next.is_null() {
-                break;
+            // SAFETY: the caller owns the published null-terminated vector.
+            let entry = unsafe { ptr::read(environment) };
+            if entry.is_null() {
+                return ptr::null_mut();
             }
-            // SAFETY: the next source slot remains before that terminator.
-            shift = unsafe { shift.add(1) };
+            if unsafe { entry_matches_name(entry, name, name_length) } {
+                // SAFETY: a matched entry has its separator at `name_length`.
+                return unsafe { entry.add(name_length + 1) };
+            }
+            // SAFETY: the next slot remains inside the caller's terminated vector.
+            environment = unsafe { environment.add(1) };
         }
-        // SAFETY: this releases only a matching tracked setenv allocation.
-        unsafe { update_owned_string(entry, ptr::null_mut()) };
-        // Do not advance `current`: the following entry just shifted into it.
     }
-}
+}}
 
-/// Publish an empty environment and release each tracked `setenv` string.
-///
-/// # Safety
-///
-/// The published environment vector must be valid and null terminated.
-/// Callers synchronize all concurrent/direct access.
-#[no_mangle]
-pub unsafe extern "C" fn clearenv() -> c_int {
-    let mut current = unsafe { environment_pointer() };
-    // SAFETY: publish null before invoking the ownership bookkeeping, matching
-    // musl's observable clear transition.
-    unsafe { set_environment_pointer(ptr::null_mut()) };
-    if current.is_null() {
-        return 0;
-    }
-    loop {
-        // SAFETY: the former published vector remains caller-valid here.
-        let entry = unsafe { ptr::read(current) };
-        if entry.is_null() {
+// Musl's `src/env/setenv.c` object.
+static_archive_member! { setenv_source {
+    /// Copy one `NAME=value` string and replace or append it.
+    ///
+    /// # Safety
+    ///
+    /// `name` and `value` must be valid NUL-terminated C strings. Callers must
+    /// externally synchronize all environment access, including direct aliases.
+    #[no_mangle]
+    pub unsafe extern "C" fn setenv(
+        name: *const c_char,
+        value: *const c_char,
+        overwrite: c_int,
+    ) -> c_int {
+        let Some(name_length) = (unsafe { environment_name_length(name) }) else {
+            return unsafe { environment_failure(EINVAL) };
+        };
+        if overwrite == 0 && !unsafe { getenv(name) }.is_null() {
             return 0;
         }
-        // SAFETY: only tracked setenv strings are released.
-        unsafe { update_owned_string(entry, ptr::null_mut()) };
-        // SAFETY: advance within the former null-terminated vector.
-        current = unsafe { current.add(1) };
+        let value_length = unsafe { c_string_length(value) };
+        let Some(allocation_size) = name_length
+            .checked_add(value_length)
+            .and_then(|size| size.checked_add(2))
+        else {
+            return unsafe { environment_failure(ENOMEM) };
+        };
+        // SAFETY: the established allocator owns ordinary allocation failure errno.
+        let replacement = unsafe { cabi_allocator_malloc(allocation_size).cast::<c_char>() };
+        if replacement.is_null() {
+            return -1;
+        }
+        // SAFETY: the exact allocation covers name, separator, value, and NUL.
+        unsafe {
+            ptr::copy_nonoverlapping(name.cast::<u8>(), replacement.cast::<u8>(), name_length);
+            ptr::write(replacement.cast::<u8>().add(name_length), b'=');
+            ptr::copy_nonoverlapping(
+                value.cast::<u8>(),
+                replacement.cast::<u8>().add(name_length + 1),
+                value_length + 1,
+            );
+            put_entry(replacement, name_length, replacement)
+        }
     }
-}
+}}
+
+// Musl's `src/env/putenv.c` object.
+static_archive_member! { putenv_source {
+    /// Retain a caller-owned `NAME=value` string, or route `NAME` removal to
+    /// `unsetenv` exactly as musl does.
+    ///
+    /// # Safety
+    ///
+    /// `entry` must remain a valid writable NUL-terminated string while it is
+    /// published through the environment. Callers synchronize direct mutation.
+    #[no_mangle]
+    pub unsafe extern "C" fn putenv(entry: *mut c_char) -> c_int {
+        if entry.is_null() {
+            return unsafe { environment_failure(EINVAL) };
+        }
+        let (key_length, has_separator) = unsafe { putenv_key_length(entry) };
+        if key_length == 0 || !has_separator {
+            // SAFETY: `entry` is a valid C string and unsetenv validates its key.
+            return unsafe { unsetenv(entry.cast_const()) };
+        }
+        unsafe { put_entry(entry, key_length, ptr::null_mut()) }
+    }
+}}
+
+// Musl's `src/env/unsetenv.c` object.
+static_archive_member! { unsetenv_source {
+    /// Remove every matching `NAME=` entry in place, preserving all nonmatching
+    /// pointer order and freeing only tracked `setenv` strings.
+    ///
+    /// # Safety
+    ///
+    /// `name` and the currently published environment vector must be valid C
+    /// objects. Callers synchronize all concurrent/direct access.
+    #[no_mangle]
+    pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
+        let Some(name_length) = (unsafe { environment_name_length(name) }) else {
+            return unsafe { environment_failure(EINVAL) };
+        };
+        let mut current = unsafe { environment_pointer() };
+        if current.is_null() {
+            return 0;
+        }
+        loop {
+            // SAFETY: the public vector is null terminated under the C contract.
+            let entry = unsafe { ptr::read(current) };
+            if entry.is_null() {
+                return 0;
+            }
+            if !unsafe { entry_matches_name(entry, name, name_length) } {
+                // SAFETY: the next vector slot remains valid through its terminator.
+                current = unsafe { current.add(1) };
+                continue;
+            }
+            let mut shift = current;
+            loop {
+                // SAFETY: copying through the terminating null pointer compacts
+                // this caller-visible vector in place, exactly as musl does.
+                let next = unsafe { ptr::read(shift.add(1)) };
+                unsafe { ptr::write(shift, next) };
+                if next.is_null() {
+                    break;
+                }
+                // SAFETY: the next source slot remains before that terminator.
+                shift = unsafe { shift.add(1) };
+            }
+            // SAFETY: this releases only a matching tracked setenv allocation.
+            unsafe { update_owned_string(entry, ptr::null_mut()) };
+            // Do not advance `current`: the following entry just shifted into it.
+        }
+    }
+}}
+
+// Musl's `src/env/clearenv.c` object.
+static_archive_member! { clearenv_source {
+    /// Publish an empty environment and release each tracked `setenv` string.
+    ///
+    /// # Safety
+    ///
+    /// The published environment vector must be valid and null terminated.
+    /// Callers synchronize all concurrent/direct access.
+    #[no_mangle]
+    pub unsafe extern "C" fn clearenv() -> c_int {
+        let mut current = unsafe { environment_pointer() };
+        // SAFETY: publish null before invoking the ownership bookkeeping, matching
+        // musl's observable clear transition.
+        unsafe { set_environment_pointer(ptr::null_mut()) };
+        if current.is_null() {
+            return 0;
+        }
+        loop {
+            // SAFETY: the former published vector remains caller-valid here.
+            let entry = unsafe { ptr::read(current) };
+            if entry.is_null() {
+                return 0;
+            }
+            // SAFETY: only tracked setenv strings are released.
+            unsafe { update_owned_string(entry, ptr::null_mut()) };
+            // SAFETY: advance within the former null-terminated vector.
+            current = unsafe { current.add(1) };
+        }
+    }
+}}
 
 /// Link-time witness for the opt-in allocator-backed environment owner.
 ///

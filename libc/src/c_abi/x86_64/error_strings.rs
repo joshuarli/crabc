@@ -138,14 +138,6 @@ pub(super) fn error_message(error: c_int) -> &'static [u8] {
     }
 }
 
-// Musl's weak_alias(strerror_r, __xpg_strerror_r) requires equal ELF symbol
-// values. A Rust wrapper would have a different address and would silently
-// weaken the pinned static-ABI contract.
-core::arch::global_asm!(
-    ".weak __xpg_strerror_r",
-    ".set __xpg_strerror_r, strerror_r",
-);
-
 /// Musl's separate `strerror.c` object, kept in its own module so the static
 /// archive gives `strerror` its own member. An application that defines
 /// `strerror` then links against the other error-string users, which reach
@@ -165,52 +157,64 @@ mod strerror_source {
     }
 }
 
-/// Copy one immutable C-locale error message into caller-owned storage.
-///
-/// # Safety
-///
-/// When `capacity` is nonzero, `buffer` must designate exactly `capacity`
-/// writable bytes. The destination must not overlap the process-static source
-/// message. A null buffer is permitted only when capacity is zero.
-#[no_mangle]
-pub unsafe extern "C" fn strerror_r(
-    error: c_int,
-    buffer: *mut c_char,
-    capacity: usize,
-) -> c_int {
-    let message = error_message(error);
-    let message_length = message.len().wrapping_sub(1);
-    if message_length >= capacity {
-        if capacity != 0 {
-            let copy_length = capacity.wrapping_sub(1);
-            let mut index = 0usize;
-            while index < copy_length {
-                // SAFETY: the message length is at least capacity, and the
-                // caller supplies the exact writable destination range.
-                unsafe {
-                    buffer
-                        .add(index)
-                        .write(message.as_ptr().add(index).read() as c_char);
-                }
-                index = index.wrapping_add(1);
-            }
-            // SAFETY: nonzero capacity makes its final byte writable.
-            unsafe { buffer.add(copy_length).write(0) };
-        }
-        return ERANGE;
-    }
+// Musl's `src/string/strerror_r.c` object.
+static_archive_member! { strerror_r_source {
+    // Musl's weak_alias(strerror_r, __xpg_strerror_r) requires equal ELF
+    // symbol values. A Rust wrapper would have a different address and would
+    // silently weaken the pinned static-ABI contract. The alias is defined
+    // beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak __xpg_strerror_r",
+        ".set __xpg_strerror_r, strerror_r",
+    );
 
-    let copy_length = message_length.wrapping_add(1);
-    let mut index = 0usize;
-    while index < copy_length {
-        // SAFETY: copy_length includes exactly the source NUL, and the caller
-        // supplies at least that many writable bytes on this success path.
-        unsafe {
-            buffer
-                .add(index)
-                .write(message.as_ptr().add(index).read() as c_char);
+    /// Copy one immutable C-locale error message into caller-owned storage.
+    ///
+    /// # Safety
+    ///
+    /// When `capacity` is nonzero, `buffer` must designate exactly `capacity`
+    /// writable bytes. The destination must not overlap the process-static source
+    /// message. A null buffer is permitted only when capacity is zero.
+    #[no_mangle]
+    pub unsafe extern "C" fn strerror_r(
+        error: c_int,
+        buffer: *mut c_char,
+        capacity: usize,
+    ) -> c_int {
+        let message = error_message(error);
+        let message_length = message.len().wrapping_sub(1);
+        if message_length >= capacity {
+            if capacity != 0 {
+                let copy_length = capacity.wrapping_sub(1);
+                let mut index = 0usize;
+                while index < copy_length {
+                    // SAFETY: the message length is at least capacity, and the
+                    // caller supplies the exact writable destination range.
+                    unsafe {
+                        buffer
+                            .add(index)
+                            .write(message.as_ptr().add(index).read() as c_char);
+                    }
+                    index = index.wrapping_add(1);
+                }
+                // SAFETY: nonzero capacity makes its final byte writable.
+                unsafe { buffer.add(copy_length).write(0) };
+            }
+            return ERANGE;
         }
-        index = index.wrapping_add(1);
+
+        let copy_length = message_length.wrapping_add(1);
+        let mut index = 0usize;
+        while index < copy_length {
+            // SAFETY: copy_length includes exactly the source NUL, and the caller
+            // supplies at least that many writable bytes on this success path.
+            unsafe {
+                buffer
+                    .add(index)
+                    .write(message.as_ptr().add(index).read() as c_char);
+            }
+            index = index.wrapping_add(1);
+        }
+        0
     }
-    0
-}
+}}

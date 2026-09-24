@@ -25,8 +25,16 @@ compile_error!("the x86 C memory leaf requires little-endian Linux/x86-64");
 // and `memmove`'s explicit direction-flag restoration after a backwards copy.
 // The routines use only the established x86 string/GPR instructions; there is
 // no feature dispatch, vector path, or alternate allocator/runtime dependency.
-core::arch::global_asm!(
-    r#"
+
+// Each routine has its own static archive member, as musl's objects do, so an
+// application may define any one of them and link against the rest.
+// `memmove` reaches memcpy's hidden `__memcpy_fwd` and `bcmp` tail-calls
+// `memcmp`, exactly as musl's objects do.
+
+// Musl's `src/string/x86_64/memcpy.s` object.
+static_archive_member! { memcpy_source {
+    core::arch::global_asm!(
+        r#"
     .text
 
     .global memcpy
@@ -58,6 +66,15 @@ __memcpy_fwd:
 .Lcrabc_x86_memcpy_done:
     ret
     .size memcpy, .-memcpy
+"#,
+    );
+}}
+
+// Musl's `src/string/memcmp.c` object.
+static_archive_member! { memcmp_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     /* Preserve musl's simple first-different-unsigned-byte result. This is
        intentionally scalar: it carries no feature dispatch or vector ABI. */
@@ -79,12 +96,30 @@ memcmp:
 .Lcrabc_x86_memcmp_done:
     ret
     .size memcmp, .-memcmp
+"#,
+    );
+}}
+
+// Musl's `src/string/bcmp.c` object.
+static_archive_member! { bcmp_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .global bcmp
     .type bcmp,@function
 bcmp:
     jmp memcmp
     .size bcmp, .-bcmp
+"#,
+    );
+}}
+
+// Musl's `src/string/x86_64/memset.s` object.
+static_archive_member! { memset_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .global memset
     .type memset,@function
@@ -162,6 +197,15 @@ memset:
     add rdi, rdx
     jmp .Lcrabc_x86_memset_words
     .size memset, .-memset
+"#,
+    );
+}}
+
+// Musl's `src/string/x86_64/memmove.s` object.
+static_archive_member! { memmove_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .global memmove
     .type memmove,@function
@@ -180,4 +224,5 @@ memmove:
     ret
     .size memmove, .-memmove
 "#,
-);
+    );
+}}

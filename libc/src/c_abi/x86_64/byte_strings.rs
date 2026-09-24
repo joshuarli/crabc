@@ -112,45 +112,56 @@ fn contains_byte(byte_set: &[u64; 4], byte: u8) -> bool {
     byte_set[byte as usize / 64] & (1u64 << (byte % 64)) != 0
 }
 
-/// Return the number of bytes before the first NUL in `string`.
-///
-/// # Safety
-///
-/// `string` must designate a readable NUL-terminated byte sequence for this
-/// call. A null pointer is never valid.
-#[no_mangle]
-pub unsafe extern "C" fn strlen(string: *const c_char) -> usize {
-    // SAFETY: the caller owns one readable NUL-terminated C string.
-    unsafe { offset_to_byte_or_nul(string.cast::<u8>(), 0) }
-}
-
-/// Compare two C strings with musl's unsigned-byte result convention.
-///
-/// # Safety
-///
-/// `left` and `right` must each designate readable NUL-terminated byte
-/// sequences for this call. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strcmp(left: *const c_char, right: *const c_char) -> c_int {
-    let mut left = left.cast::<u8>();
-    let mut right = right.cast::<u8>();
-    loop {
-        // SAFETY: the caller supplies both current C-string bytes.
-        let left_byte = unsafe { left.read() };
-        // SAFETY: the caller supplies both current C-string bytes.
-        let right_byte = unsafe { right.read() };
-        if left_byte != right_byte {
-            return i32::from(left_byte) - i32::from(right_byte);
-        }
-        if left_byte == 0 {
-            return 0;
-        }
-        // SAFETY: equal non-NUL bytes prove both following C-string bytes.
-        left = unsafe { left.add(1) };
-        // SAFETY: equal non-NUL bytes prove both following C-string bytes.
-        right = unsafe { right.add(1) };
+// Musl's `src/string/strlen.c` object.
+static_archive_member! { strlen_source {
+    /// Return the number of bytes before the first NUL in `string`.
+    ///
+    /// # Safety
+    ///
+    /// `string` must designate a readable NUL-terminated byte sequence for this
+    /// call. A null pointer is never valid.
+    ///
+    /// Never inlined: libc callers such as `strdup` and `strcasestr` reach it
+    /// through musl's public call edge, which an application definition must
+    /// be able to replace.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn strlen(string: *const c_char) -> usize {
+        // SAFETY: the caller owns one readable NUL-terminated C string.
+        unsafe { offset_to_byte_or_nul(string.cast::<u8>(), 0) }
     }
-}
+}}
+
+// Musl's `src/string/strcmp.c` object.
+static_archive_member! { strcmp_source {
+    /// Compare two C strings with musl's unsigned-byte result convention.
+    ///
+    /// # Safety
+    ///
+    /// `left` and `right` must each designate readable NUL-terminated byte
+    /// sequences for this call. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strcmp(left: *const c_char, right: *const c_char) -> c_int {
+        let mut left = left.cast::<u8>();
+        let mut right = right.cast::<u8>();
+        loop {
+            // SAFETY: the caller supplies both current C-string bytes.
+            let left_byte = unsafe { left.read() };
+            // SAFETY: the caller supplies both current C-string bytes.
+            let right_byte = unsafe { right.read() };
+            if left_byte != right_byte {
+                return i32::from(left_byte) - i32::from(right_byte);
+            }
+            if left_byte == 0 {
+                return 0;
+            }
+            // SAFETY: equal non-NUL bytes prove both following C-string bytes.
+            left = unsafe { left.add(1) };
+            // SAFETY: equal non-NUL bytes prove both following C-string bytes.
+            right = unsafe { right.add(1) };
+        }
+    }
+}}
 
 #[inline]
 fn is_decimal_digit(byte: u8) -> bool {
@@ -217,48 +228,54 @@ unsafe fn version_name_compare(left: *const u8, right: *const u8) -> c_int {
         - i32::from(unsafe { right.add(index).read() })
 }
 
-/// Compare two C strings with musl's GNU `strverscmp` state machine.
-///
-/// # Safety
-///
-/// `left` and `right` must each designate a readable NUL-terminated byte
-/// sequence. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strverscmp(left: *const c_char, right: *const c_char) -> c_int {
-    // SAFETY: the C entry retains exactly the helper's two readable
-    // NUL-terminated byte-string obligations.
-    unsafe { version_name_compare(left.cast(), right.cast()) }
-}
-
-/// Compare at most `count` C-string bytes with unsigned-byte differences.
-///
-/// # Safety
-///
-/// If `count` is nonzero, `left` and `right` must each designate readable
-/// byte sequences through either their first NUL or `count` bytes. Null
-/// pointers are valid only when `count` is zero.
-#[no_mangle]
-pub unsafe extern "C" fn strncmp(
-    left: *const c_char,
-    right: *const c_char,
-    count: usize,
-) -> c_int {
-    let mut offset = 0usize;
-    while offset < count {
-        // SAFETY: `offset < count` and the caller contract supply both bytes.
-        let left_byte = unsafe { left.cast::<u8>().add(offset).read() };
-        // SAFETY: `offset < count` and the caller contract supply both bytes.
-        let right_byte = unsafe { right.cast::<u8>().add(offset).read() };
-        if left_byte != right_byte {
-            return i32::from(left_byte) - i32::from(right_byte);
-        }
-        if left_byte == 0 {
-            return 0;
-        }
-        offset += 1;
+// Musl's `src/string/strverscmp.c` object.
+static_archive_member! { strverscmp_source {
+    /// Compare two C strings with musl's GNU `strverscmp` state machine.
+    ///
+    /// # Safety
+    ///
+    /// `left` and `right` must each designate a readable NUL-terminated byte
+    /// sequence. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strverscmp(left: *const c_char, right: *const c_char) -> c_int {
+        // SAFETY: the C entry retains exactly the helper's two readable
+        // NUL-terminated byte-string obligations.
+        unsafe { version_name_compare(left.cast(), right.cast()) }
     }
-    0
-}
+}}
+
+// Musl's `src/string/strncmp.c` object.
+static_archive_member! { strncmp_source {
+    /// Compare at most `count` C-string bytes with unsigned-byte differences.
+    ///
+    /// # Safety
+    ///
+    /// If `count` is nonzero, `left` and `right` must each designate readable
+    /// byte sequences through either their first NUL or `count` bytes. Null
+    /// pointers are valid only when `count` is zero.
+    #[no_mangle]
+    pub unsafe extern "C" fn strncmp(
+        left: *const c_char,
+        right: *const c_char,
+        count: usize,
+    ) -> c_int {
+        let mut offset = 0usize;
+        while offset < count {
+            // SAFETY: `offset < count` and the caller contract supply both bytes.
+            let left_byte = unsafe { left.cast::<u8>().add(offset).read() };
+            // SAFETY: `offset < count` and the caller contract supply both bytes.
+            let right_byte = unsafe { right.cast::<u8>().add(offset).read() };
+            if left_byte != right_byte {
+                return i32::from(left_byte) - i32::from(right_byte);
+            }
+            if left_byte == 0 {
+                return 0;
+            }
+            offset += 1;
+        }
+        0
+    }
+}}
 
 /// Locate `character` or the first terminating NUL in one C string.
 ///
@@ -283,222 +300,253 @@ core::arch::global_asm!(
     ".set strchrnul, __strchrnul",
 );
 
-/// Locate the first occurrence of `character` in one C string.
-///
-/// # Safety
-///
-/// `string` must designate a readable NUL-terminated byte sequence. A null
-/// pointer is never valid.
-#[no_mangle]
-pub unsafe extern "C" fn strchr(string: *const c_char, character: c_int) -> *mut c_char {
-    // SAFETY: the caller supplies the complete C-string input contract.
-    let found = unsafe { strchrnul(string, character) };
-    // SAFETY: the strong provider returns an in-string matching byte or its
-    // readable terminator.
-    if unsafe { found.cast::<u8>().read() } == character as u8 {
-        found
-    } else {
-        null_mut()
-    }
-}
-
-/// Locate the final occurrence of `character` in one C string.
-///
-/// # Safety
-///
-/// `string` must designate a readable NUL-terminated byte sequence. A null
-/// pointer is never valid.
-#[no_mangle]
-pub unsafe extern "C" fn strrchr(string: *const c_char, character: c_int) -> *mut c_char {
-    // SAFETY: the caller supplies the NUL-terminated string needed to size
-    // the private inclusive reverse-search range.
-    let length = unsafe { strlen(string) };
-    // SAFETY: the range is the string's bytes plus its readable terminator.
-    // The sibling item's Rust call selects musl's hidden `__memrchr` provider,
-    // preserving the source-local operation when public `memrchr` is replaced.
-    unsafe { memory_search::memrchr(string.cast(), character, length + 1) }.cast()
-}
-
-/// BSD-compatible forwarding alias for [`strchr`].
-///
-/// # Safety
-///
-/// `string` must designate a readable NUL-terminated byte sequence. A null
-/// pointer is never valid.
-#[no_mangle]
-pub unsafe extern "C" fn index(string: *const c_char, character: c_int) -> *mut c_char {
-    // SAFETY: this has exactly `strchr`'s C-string input contract.
-    unsafe { strchr(string, character) }
-}
-
-/// BSD-compatible forwarding alias for [`strrchr`].
-///
-/// # Safety
-///
-/// `string` must designate a readable NUL-terminated byte sequence. A null
-/// pointer is never valid.
-#[no_mangle]
-pub unsafe extern "C" fn rindex(string: *const c_char, character: c_int) -> *mut c_char {
-    // SAFETY: this has exactly `strrchr`'s C-string input contract.
-    unsafe { strrchr(string, character) }
-}
-
-/// Return the number of bytes before either `reject`'s first byte or NUL.
-///
-/// # Safety
-///
-/// `string` and `reject` must each designate readable NUL-terminated byte
-/// sequences. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strcspn(string: *const c_char, reject: *const c_char) -> usize {
-    let reject = reject.cast::<u8>();
-    // SAFETY: `reject` is a readable C string under the caller contract.
-    let first = unsafe { reject.read() };
-    if first == 0 {
-        // SAFETY: the caller supplies the input C string.
-        return unsafe { strlen(string) };
-    }
-    // SAFETY: a non-NUL first byte proves the next reject byte exists.
-    if unsafe { reject.add(1).read() } == 0 {
-        // SAFETY: both caller strings meet the helper's C-string contract.
-        return unsafe { offset_to_byte_or_nul(string.cast::<u8>(), first) };
-    }
-
-    let mut byte_set = [0u64; 4];
-    let mut reject_cursor = reject;
-    loop {
-        // SAFETY: each non-NUL byte proves the next reject byte exists.
-        let byte = unsafe { reject_cursor.read() };
-        if byte == 0 {
-            break;
+// Musl's `src/string/strchr.c` object.
+static_archive_member! { strchr_source {
+    /// Locate the first occurrence of `character` in one C string.
+    ///
+    /// # Safety
+    ///
+    /// `string` must designate a readable NUL-terminated byte sequence. A null
+    /// pointer is never valid.
+    #[no_mangle]
+    pub unsafe extern "C" fn strchr(string: *const c_char, character: c_int) -> *mut c_char {
+        // SAFETY: the caller supplies the complete C-string input contract.
+        let found = unsafe { strchrnul(string, character) };
+        // SAFETY: the strong provider returns an in-string matching byte or its
+        // readable terminator.
+        if unsafe { found.cast::<u8>().read() } == character as u8 {
+            found
+        } else {
+            null_mut()
         }
-        insert_byte(&mut byte_set, byte);
-        // SAFETY: the observed reject byte was non-NUL.
-        reject_cursor = unsafe { reject_cursor.add(1) };
     }
+}}
 
-    let mut string_cursor = string.cast::<u8>();
-    let mut length = 0usize;
-    loop {
-        // SAFETY: the caller supplies the current input C-string byte.
-        let byte = unsafe { string_cursor.read() };
-        if byte == 0 || contains_byte(&byte_set, byte) {
-            return length;
+// Musl's `src/string/strrchr.c` object.
+static_archive_member! { strrchr_source {
+    /// Locate the final occurrence of `character` in one C string.
+    ///
+    /// # Safety
+    ///
+    /// `string` must designate a readable NUL-terminated byte sequence. A null
+    /// pointer is never valid.
+    #[no_mangle]
+    pub unsafe extern "C" fn strrchr(string: *const c_char, character: c_int) -> *mut c_char {
+        // SAFETY: the caller supplies the NUL-terminated string needed to size
+        // the private inclusive reverse-search range.
+        let length = unsafe { strlen(string) };
+        // SAFETY: the range is the string's bytes plus its readable terminator.
+        // The sibling item's Rust call selects musl's hidden `__memrchr` provider,
+        // preserving the source-local operation when public `memrchr` is replaced.
+        unsafe { memory_search::memrchr(string.cast(), character, length + 1) }.cast()
+    }
+}}
+
+// Musl's `src/string/index.c` object.
+static_archive_member! { index_source {
+    /// BSD-compatible forwarding alias for [`strchr`].
+    ///
+    /// # Safety
+    ///
+    /// `string` must designate a readable NUL-terminated byte sequence. A null
+    /// pointer is never valid.
+    #[no_mangle]
+    pub unsafe extern "C" fn index(string: *const c_char, character: c_int) -> *mut c_char {
+        // SAFETY: this has exactly `strchr`'s C-string input contract.
+        unsafe { strchr(string, character) }
+    }
+}}
+
+// Musl's `src/string/rindex.c` object.
+static_archive_member! { rindex_source {
+    /// BSD-compatible forwarding alias for [`strrchr`].
+    ///
+    /// # Safety
+    ///
+    /// `string` must designate a readable NUL-terminated byte sequence. A null
+    /// pointer is never valid.
+    #[no_mangle]
+    pub unsafe extern "C" fn rindex(string: *const c_char, character: c_int) -> *mut c_char {
+        // SAFETY: this has exactly `strrchr`'s C-string input contract.
+        unsafe { strrchr(string, character) }
+    }
+}}
+
+// Musl's `src/string/strcspn.c` object.
+static_archive_member! { strcspn_source {
+    /// Return the number of bytes before either `reject`'s first byte or NUL.
+    ///
+    /// # Safety
+    ///
+    /// `string` and `reject` must each designate readable NUL-terminated byte
+    /// sequences. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strcspn(string: *const c_char, reject: *const c_char) -> usize {
+        let reject = reject.cast::<u8>();
+        // SAFETY: `reject` is a readable C string under the caller contract.
+        let first = unsafe { reject.read() };
+        if first == 0 {
+            // SAFETY: the caller supplies the input C string.
+            return unsafe { strlen(string) };
         }
-        // SAFETY: a non-NUL input byte proves the following byte exists.
-        string_cursor = unsafe { string_cursor.add(1) };
-        length += 1;
-    }
-}
+        // SAFETY: a non-NUL first byte proves the next reject byte exists.
+        if unsafe { reject.add(1).read() } == 0 {
+            // SAFETY: both caller strings meet the helper's C-string contract.
+            return unsafe { offset_to_byte_or_nul(string.cast::<u8>(), first) };
+        }
 
-/// Return the number of bytes in the initial span drawn from `accept`.
-///
-/// # Safety
-///
-/// `string` and `accept` must each designate readable NUL-terminated byte
-/// sequences. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strspn(string: *const c_char, accept: *const c_char) -> usize {
-    let accept = accept.cast::<u8>();
-    // SAFETY: `accept` is a readable C string under the caller contract.
-    let first = unsafe { accept.read() };
-    if first == 0 {
-        return 0;
+        let mut byte_set = [0u64; 4];
+        let mut reject_cursor = reject;
+        loop {
+            // SAFETY: each non-NUL byte proves the next reject byte exists.
+            let byte = unsafe { reject_cursor.read() };
+            if byte == 0 {
+                break;
+            }
+            insert_byte(&mut byte_set, byte);
+            // SAFETY: the observed reject byte was non-NUL.
+            reject_cursor = unsafe { reject_cursor.add(1) };
+        }
+
+        let mut string_cursor = string.cast::<u8>();
+        let mut length = 0usize;
+        loop {
+            // SAFETY: the caller supplies the current input C-string byte.
+            let byte = unsafe { string_cursor.read() };
+            if byte == 0 || contains_byte(&byte_set, byte) {
+                return length;
+            }
+            // SAFETY: a non-NUL input byte proves the following byte exists.
+            string_cursor = unsafe { string_cursor.add(1) };
+            length += 1;
+        }
     }
-    // SAFETY: a non-NUL first byte proves the next accept byte exists.
-    if unsafe { accept.add(1).read() } == 0 {
+}}
+
+// Musl's `src/string/strspn.c` object.
+static_archive_member! { strspn_source {
+    /// Return the number of bytes in the initial span drawn from `accept`.
+    ///
+    /// # Safety
+    ///
+    /// `string` and `accept` must each designate readable NUL-terminated byte
+    /// sequences. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strspn(string: *const c_char, accept: *const c_char) -> usize {
+        let accept = accept.cast::<u8>();
+        // SAFETY: `accept` is a readable C string under the caller contract.
+        let first = unsafe { accept.read() };
+        if first == 0 {
+            return 0;
+        }
+        // SAFETY: a non-NUL first byte proves the next accept byte exists.
+        if unsafe { accept.add(1).read() } == 0 {
+            let mut cursor = string.cast::<u8>();
+            let mut length = 0usize;
+            loop {
+                // SAFETY: the caller supplies the current input C-string byte.
+                if unsafe { cursor.read() } != first {
+                    return length;
+                }
+                // SAFETY: the matching byte is non-NUL because `first` is.
+                cursor = unsafe { cursor.add(1) };
+                length += 1;
+            }
+        }
+
+        let mut byte_set = [0u64; 4];
+        let mut accept_cursor = accept;
+        loop {
+            // SAFETY: each non-NUL byte proves the next accept byte exists.
+            let byte = unsafe { accept_cursor.read() };
+            if byte == 0 {
+                break;
+            }
+            insert_byte(&mut byte_set, byte);
+            // SAFETY: the observed accept byte was non-NUL.
+            accept_cursor = unsafe { accept_cursor.add(1) };
+        }
+
         let mut cursor = string.cast::<u8>();
         let mut length = 0usize;
         loop {
             // SAFETY: the caller supplies the current input C-string byte.
-            if unsafe { cursor.read() } != first {
+            let byte = unsafe { cursor.read() };
+            if byte == 0 || !contains_byte(&byte_set, byte) {
                 return length;
             }
-            // SAFETY: the matching byte is non-NUL because `first` is.
+            // SAFETY: the observed input byte was non-NUL.
             cursor = unsafe { cursor.add(1) };
             length += 1;
         }
     }
+}}
 
-    let mut byte_set = [0u64; 4];
-    let mut accept_cursor = accept;
-    loop {
-        // SAFETY: each non-NUL byte proves the next accept byte exists.
-        let byte = unsafe { accept_cursor.read() };
-        if byte == 0 {
-            break;
+// Musl's `src/string/strpbrk.c` object.
+static_archive_member! { strpbrk_source {
+    /// Locate the first byte in `string` present in `accept`.
+    ///
+    /// # Safety
+    ///
+    /// `string` and `accept` must each designate readable NUL-terminated byte
+    /// sequences. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strpbrk(
+        string: *const c_char,
+        accept: *const c_char,
+    ) -> *mut c_char {
+        // SAFETY: the caller supplies both complete C strings.
+        let offset = unsafe { strcspn(string, accept) };
+        // SAFETY: `strcspn`'s returned offset lies at or before the input NUL.
+        let found = unsafe { string.cast::<u8>().add(offset) };
+        // SAFETY: `found` is the input byte at the returned offset or its NUL.
+        if unsafe { found.read() } == 0 {
+            null_mut()
+        } else {
+            found.cast_mut().cast::<c_char>()
         }
-        insert_byte(&mut byte_set, byte);
-        // SAFETY: the observed accept byte was non-NUL.
-        accept_cursor = unsafe { accept_cursor.add(1) };
     }
+}}
 
-    let mut cursor = string.cast::<u8>();
-    let mut length = 0usize;
-    loop {
-        // SAFETY: the caller supplies the current input C-string byte.
-        let byte = unsafe { cursor.read() };
-        if byte == 0 || !contains_byte(&byte_set, byte) {
-            return length;
-        }
-        // SAFETY: the observed input byte was non-NUL.
-        cursor = unsafe { cursor.add(1) };
-        length += 1;
+// Musl's `src/string/strnlen.c` object.
+static_archive_member! { strnlen_source {
+    /// Return the bounded length before NUL, without examining byte `count`.
+    ///
+    /// # Safety
+    ///
+    /// If `count` is nonzero, `string` must designate at least `count` readable
+    /// bytes. A null pointer is valid only when `count` is zero.
+    ///
+    /// Never inlined, like `strlen`: `strndup` and `%s` formatting reach it
+    /// through musl's public call edge.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn strnlen(string: *const c_char, count: usize) -> usize {
+        // SAFETY: this is the private `memchr(string, 0, count)` source mapping.
+        unsafe { find_byte_in_range(string.cast::<u8>(), 0, count) }.unwrap_or(count)
     }
-}
+}}
 
-/// Locate the first byte in `string` present in `accept`.
-///
-/// # Safety
-///
-/// `string` and `accept` must each designate readable NUL-terminated byte
-/// sequences. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strpbrk(
-    string: *const c_char,
-    accept: *const c_char,
-) -> *mut c_char {
-    // SAFETY: the caller supplies both complete C strings.
-    let offset = unsafe { strcspn(string, accept) };
-    // SAFETY: `strcspn`'s returned offset lies at or before the input NUL.
-    let found = unsafe { string.cast::<u8>().add(offset) };
-    // SAFETY: `found` is the input byte at the returned offset or its NUL.
-    if unsafe { found.read() } == 0 {
-        null_mut()
-    } else {
-        found.cast_mut().cast::<c_char>()
+// Musl's `src/string/strstr.c` object.
+static_archive_member! { strstr_source {
+    /// Find the first occurrence of the C string `needle` in `haystack`.
+    ///
+    /// # Safety
+    ///
+    /// `haystack` and `needle` must each designate readable NUL-terminated byte
+    /// sequences for this call. Neither pointer may be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn strstr(
+        haystack: *const c_char,
+        needle: *const c_char,
+    ) -> *mut c_char {
+        // SAFETY: the caller supplies both C strings; the helper reads only their
+        // individually proved non-NUL prefixes and terminators.
+        unsafe { strstr_c_string(haystack.cast::<u8>(), needle.cast::<u8>()) }
+            .cast_mut()
+            .cast::<c_char>()
     }
-}
-
-/// Return the bounded length before NUL, without examining byte `count`.
-///
-/// # Safety
-///
-/// If `count` is nonzero, `string` must designate at least `count` readable
-/// bytes. A null pointer is valid only when `count` is zero.
-#[no_mangle]
-pub unsafe extern "C" fn strnlen(string: *const c_char, count: usize) -> usize {
-    // SAFETY: this is the private `memchr(string, 0, count)` source mapping.
-    unsafe { find_byte_in_range(string.cast::<u8>(), 0, count) }.unwrap_or(count)
-}
-
-/// Find the first occurrence of the C string `needle` in `haystack`.
-///
-/// # Safety
-///
-/// `haystack` and `needle` must each designate readable NUL-terminated byte
-/// sequences for this call. Neither pointer may be null.
-#[no_mangle]
-pub unsafe extern "C" fn strstr(
-    haystack: *const c_char,
-    needle: *const c_char,
-) -> *mut c_char {
-    // SAFETY: the caller supplies both C strings; the helper reads only their
-    // individually proved non-NUL prefixes and terminators.
-    unsafe { strstr_c_string(haystack.cast::<u8>(), needle.cast::<u8>()) }
-        .cast_mut()
-        .cast::<c_char>()
-}
+}}
 
 /// Page-safe raw-pointer translation of musl's two-way `strstr` search.
 ///

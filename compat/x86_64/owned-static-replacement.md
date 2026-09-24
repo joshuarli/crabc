@@ -15,6 +15,40 @@ project headers and linked unchanged by static musl and by the installed
 its run must pass; the candidate must link and reproduce musl's status,
 stdout and stderr byte for byte.
 
+## Link sweep
+
+`compat/x86_64/owned_static_replacement_sweep.py` measures the whole public
+surface. For every function that both archives define, it assembles a program
+that defines the function and names every other public symbol both archives
+define, except those in the function's own musl member, and links it with
+musl and with the candidate in both static modes. Musl links it unless its
+own objects need that member. The report (`sweep/report.json`) lists every
+result and each musl-replaceable function the candidate still rejects. Each
+function in the runner's `replaceable_functions` roster must link with musl
+and with the candidate.
+
+The installed archive emits one member per Rust module. Leaf files that
+group several C entries place each musl object's entries in
+`static_archive_member!` (`libc/src/c_abi/x86_64/static_archive_member.rs`),
+which becomes a child module only in the installed static build; libc.so and
+the per-leaf fixture archives, whose runners pin one object per leaf, keep
+the items inline. The roster covers the malloc family, the string, memory and
+environment entries, `strerror`/`perror`, `atoi`/`atol`/`atoll`, and `qsort`.
+
+## String role
+
+`STRINGS` defines counting `strlen` and `getenv`. Musl reaches them from
+`strdup`, `strcasestr`, `fputs`, `setenv`, `getenv` callers `tzset` and
+`setlocale`, and not from `strndup` or `%s` formatting, which use `strnlen`.
+The candidate keeps those public edges: `strlen`, `strnlen`, `strncasecmp`
+and `getenv` are never inlined into libc callers, `strdup`/`strndup` measure
+with the public `strlen`/`strnlen`, owned `strcasestr` follows musl's
+`strlen`/`strncasecmp` source (which also makes `strcasestr("", "")` return
+null, as musl's does), and owned `%s` formatting measures with `strnlen`.
+Musl's `setlocale` also measures each category name with `strlen` while
+serializing an `LC_ALL` result; the fixed-profile implementation returns
+prebuilt names, so the role compares only its environment edge.
+
 ## Allocator roles
 
 The allocator roles define a bump arena whose `free` terminates the program
@@ -59,6 +93,6 @@ mallocng is linked, and a program pointer then crashes it; the trio role
 therefore links no aligned entry, which would pull mallocng in.
 
 This is focused private x86 evidence. It does not claim replacement of every
-libc function, dynamic interposition (see
+libc function (the sweep report measures the remainder), dynamic interposition (see
 [owned-c-allocation-interposition.md](owned-c-allocation-interposition.md)),
 or public x86 support.
