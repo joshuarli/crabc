@@ -25,6 +25,13 @@ product; naming it here does not manufacture an execution receipt.
 | Existing `signal-helpers` | `__sysv_signal`, `bsd_signal`, `psiginfo`, `psignal`, `sighold`, `sigignore`, `sigrelse`, `sigset` | Alias identity, action/mask transactions, interruption bookkeeping, cancellation, reporting bytes, FILE orientation/locale, partial writes and errors. |
 | Existing `io-cancellation` | `sigtimedwait`, `sigwait`, `sigwaitinfo` | Pending/blocked/disabled cancellation, queued success, EINTR retry without errno mutation, output preservation and cleanup state. |
 
+The additional `waits` scenario runs the three `io-cancellation` spellings
+through the same six installed cells: pending and queued success with
+`si_code`/value, `sigwait`'s returned signal with unchanged errno,
+zero/short timeouts returning EAGAIN, invalid `tv_nsec` returning EINVAL, and
+EINTR restart after an unselected handled signal interrupts `sigtimedwait` or
+`sigwait`. Its cancellation behavior stays with `io-cancellation`.
+
 The existing `pthread-signal` and `posix-timers` cases remain additional positive
 evidence for worker and timer delivery. Signal operations used by spawn, process,
 PTY, fcntl, and other cases remain supporting evidence as described in
@@ -77,7 +84,7 @@ code before pending/blocked cancellation; a `siginterrupt` change left a forced
 futex EINTR turning into ETIMEDOUT; and a 2048-byte alternate stack succeeded
 where musl returned ENOMEM, with SS_ONSTACK also exposing size-validation order.
 The retained subcases are the regressions for those owned corrections. All ten
-scenarios subsequently match musl in all six installed entry cells. The three
+scenarios, and later the added `waits` scenario, match musl in all six installed entry cells. The three
 corrected entries are owned-static replacement callables; their frozen default
 providers and public spelling roster remain unchanged.
 
@@ -89,8 +96,8 @@ builds both products. A positional dynamic product alone retains the four
 existing dynamic cells. Supplying only `--static-sysroot` builds the dynamic
 product used for compilation; supplying both products invokes neither producer.
 Either static form runs ordinary static and static PIE alongside dynamic PIE
-and non-PIE through kernel and direct interpreter entry: all ten scenarios in
-six candidate cells. The public dispatcher retains its existing positional
+and non-PIE through kernel and direct interpreter entry: all eleven scenarios
+in six candidate cells. The public dispatcher retains its existing positional
 `./scripts/dev-x86_64.sh owned-posix-signals [DYNAMIC_SYSROOT]` interface.
 
 Supplied products must be physical directories under this checkout's `.work`

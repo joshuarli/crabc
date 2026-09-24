@@ -19,7 +19,7 @@ CONTRACT = HERE / "owned-posix-signals.toml"
 ORACLE = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 REQUIRED_SCENARIOS = ("sets", "actions-masks", "queue-delivery", "suspend-delivery",
                       "sigpause-cancellation", "sigsuspend-cancellation", "interrupt-bookkeeping",
-                      "alternate-stack", "alternate-minimum", "signalfd")
+                      "alternate-stack", "alternate-minimum", "signalfd", "waits")
 import crabc_cc_static as compiler_contract
 import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as product_evidence

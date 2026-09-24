@@ -19,8 +19,9 @@
 #include "owned_cancellation_proc_witness.h"
 
 /* Residual process.signal evidence. The frozen helper/reporting spellings
- * remain owned by owned_signal_helpers_probe.c, and the three wait APIs'
- * cancellation behavior by owned_signal_wait_cancellation_probe.c. */
+ * remain owned by owned_signal_helpers_probe.c; the `waits` scenario owns the
+ * three wait APIs' results, while their cancellation behavior stays in
+ * owned_signal_wait_cancellation_probe.c. */
 #define CHECK(x) do { if (!(x)) { dprintf(2,"signal-full:%d errno=%d\n",__LINE__,errno); _exit(1); } } while (0)
 #define OBS(x) do { errno=90; long result=(x); int error=errno; printf("%s: result=%ld errno=%d\n",#x,result,error); } while (0)
 static unsigned long word(const sigset_t *set) { unsigned long value; memcpy(&value,set,sizeof value); return value; }
@@ -222,6 +223,47 @@ static void signal_descriptor(void) {
     OBS(signalfd(fd,&set,0)); OBS(read(fd,&info,sizeof info)); CHECK(info.ssi_signo==(unsigned)SIGRTMIN && info.ssi_int==789);
     CHECK(!close(fd));
 }
+static volatile sig_atomic_t interruptions;
+static void interrupting_handler(int signal_number) { if (signal_number==SIGALRM) interruptions++; }
+struct interrupter { pthread_t target; };
+/* Interrupt the waiting thread with an unselected handled signal, then send a
+ * selected one. Musl retries EINTR with the original relative timeout. */
+static void *interrupt_then_signal(void *opaque) {
+    struct interrupter *state=opaque; const struct timespec delay={0,20000000};
+    CHECK(!nanosleep(&delay,NULL)); CHECK(!pthread_kill(state->target,SIGALRM));
+    CHECK(!nanosleep(&delay,NULL)); CHECK(!kill(getpid(),SIGUSR1));
+    return NULL;
+}
+static void waits(void) {
+    sigset_t set; empty(&set); CHECK(!sigaddset(&set,SIGUSR1)); CHECK(!sigaddset(&set,SIGUSR2));
+    CHECK(!sigprocmask(SIG_SETMASK,&set,NULL));
+    int received=-1; CHECK(!raise(SIGUSR2));
+    errno=90; int result=sigwait(&set,&received),error=errno;
+    printf("sigwait: result=%d errno=%d signal=%d\n",result,error,received); CHECK(!result && received==SIGUSR2);
+    union sigval value={.sival_int=515}; CHECK(!sigqueue(getpid(),SIGUSR1,value));
+    siginfo_t info; memset(&info,0x5a,sizeof info);
+    errno=90; result=sigwaitinfo(&set,&info); error=errno;
+    printf("sigwaitinfo: result=%d errno=%d signal=%d code=%d value=%d\n",result,error,info.si_signo,info.si_code,info.si_value.sival_int);
+    CHECK(result==SIGUSR1 && info.si_code==SI_QUEUE && info.si_value.sival_int==515);
+    struct timespec zero={0,0},short_wait={0,1000000},invalid={0,1000000000};
+    memset(&info,0x5a,sizeof info); OBS(sigtimedwait(&set,&info,&zero));
+    OBS(sigtimedwait(&set,NULL,&short_wait)); OBS(sigtimedwait(&set,NULL,&invalid));
+    invalid.tv_nsec=-1; OBS(sigtimedwait(&set,NULL,&invalid));
+    CHECK(!raise(SIGUSR2)); OBS(sigtimedwait(&set,NULL,&zero));
+    struct sigaction action; memset(&action,0,sizeof action); action.sa_handler=interrupting_handler; empty(&action.sa_mask);
+    CHECK(!sigaction(SIGALRM,&action,NULL));
+    struct interrupter state={pthread_self()}; pthread_t thread;
+    CHECK(!pthread_create(&thread,NULL,interrupt_then_signal,&state));
+    struct timespec bounded={5,0};
+    errno=90; result=sigtimedwait(&set,&info,&bounded); error=errno; CHECK(!pthread_join(thread,NULL));
+    printf("interrupted-sigtimedwait: result=%d errno=%d interruptions=%d code=%d\n",result,error,interruptions,info.si_code);
+    CHECK(result==SIGUSR1 && interruptions==1 && info.si_code==SI_USER);
+    state.target=pthread_self(); interruptions=0;
+    CHECK(!pthread_create(&thread,NULL,interrupt_then_signal,&state));
+    errno=90; result=sigwait(&set,&received); error=errno; CHECK(!pthread_join(thread,NULL));
+    printf("interrupted-sigwait: result=%d errno=%d interruptions=%d signal=%d\n",result,error,interruptions,received);
+    CHECK(!result && interruptions==1 && received==SIGUSR1);
+}
 int main(int argc,char **argv) {
     CHECK(argc==2); CHECK(!setvbuf(stdout,NULL,_IONBF,0));
     sigset_t baseline; empty(&baseline); CHECK(!sigprocmask(SIG_SETMASK,&baseline,NULL));
@@ -235,6 +277,7 @@ int main(int argc,char **argv) {
     else if (!strcmp(argv[1],"alternate-stack")) alternate_stack(0);
     else if (!strcmp(argv[1],"alternate-minimum")) alternate_stack(1);
     else if (!strcmp(argv[1],"signalfd")) signal_descriptor();
+    else if (!strcmp(argv[1],"waits")) waits();
     else CHECK(0);
     puts("owned-posix-signals-ok"); return 0;
 }

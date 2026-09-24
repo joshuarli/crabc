@@ -27,10 +27,12 @@ class OwnedPosixSignalsTests(unittest.TestCase):
             static, dynamic = base / "static", base / "dynamic"
             static.mkdir()
             dynamic.mkdir()
-            cases = ((["--static-sysroot", str(static), str(dynamic)], 0, 4, 70),
-                     ([str(dynamic)], 0, 2, 50),
-                     (["--static-sysroot", str(static)], 1, 4, 70),
-                     ([], 2, 4, 70))
+            # Oracle plus six (static) or four (dynamic-only) candidate modes.
+            scenarios = len(signals.REQUIRED_SCENARIOS)
+            cases = ((["--static-sysroot", str(static), str(dynamic)], 0, 4, 7 * scenarios),
+                     ([str(dynamic)], 0, 2, 5 * scenarios),
+                     (["--static-sysroot", str(static)], 1, 4, 7 * scenarios),
+                     ([], 2, 4, 7 * scenarios))
             for arguments, producers, links, observations in cases:
                 with patch.dict("os.environ", {"TMPDIR": str(base)}), \
                      patch.object(signals, "command") as command, \
@@ -58,7 +60,7 @@ class OwnedPosixSignalsTests(unittest.TestCase):
                 self.assertEqual(audit.call_count, links)
                 self.assertEqual(observe.call_count, observations)
                 record = json.loads((compile_workload.call_args.args[1] / "signal-full.json").read_text())
-                self.assertEqual(len(record["comparisons"]), observations - 10)
+                self.assertEqual(len(record["comparisons"]), observations - scenarios)
                 self.assertEqual(len(record["links"]), links)
                 self.assertEqual(record["static_product_manifest_sha256"], "a" * 64 if links == 4 else None)
 
