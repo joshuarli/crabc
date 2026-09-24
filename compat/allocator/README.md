@@ -1987,7 +1987,9 @@ in all six native-shadow entry modes and requires the pinned-musl transcript:
   allocator;
 - `calloc` and `reallocarray` reach it;
 - libc-owned storage (stdio, environment, regex, threads) stays coherent.
-The contract and its one difference from musl are in `known-differences.md`.
+Dynamic modes also run the same client with the allocator built alone as an
+initial DSO that preempts libc.so. The contract and its one difference from
+musl are in `known-differences.md`.
 
 A separate dynamic OS-aligned singleton owner-exit route is available on native
 x86-64:

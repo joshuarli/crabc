@@ -5,7 +5,8 @@
 # complete malloc family (`full`) or only malloc/free/realloc (`trio`), and
 # rejects any pointer it did not allocate. Each native-shadow static,
 # static-PIE and dynamic PIE/non-PIE (kernel and direct loader) product mode
-# must link it and reproduce the musl transcript. Without supplied products
+# must link it and reproduce the musl transcript. Dynamic modes also take the
+# replacement from an initial DSO. Without supplied products
 # the runner builds both native-shadow sysroots.
 set -euo pipefail
 ulimit -c 0
@@ -119,4 +120,29 @@ for scenario in "${scenarios[@]}"; do
             "/consumer-$mode-$scenario"
     done
 done
-printf 'owned allocator override: PASS (musl + native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; full-family and malloc/free/realloc replacement); evidence: %s\n' "$work"
+
+# A dynamic process may take its replacement from an initial DSO instead:
+# the allocator alone is a DT_NEEDED library that preempts libc.so, and the
+# executable holds only the client.
+mkdir "$work/oracle-dso"
+for scenario in "${scenarios[@]}"; do
+    mapfile -t flags < <(scenario_flags "$scenario")
+    library="liboverride-$scenario.so"
+    "$oracle_cc" -shared -fPIC -std=c11 -pthread "${flags[@]}" -DOVERRIDE_PROVIDER_ONLY "$probe" \
+        -Wl,-soname,"$library" -o "$work/oracle-dso/$library"
+    "$oracle_cc" -std=c11 -pthread "${flags[@]}" -DOVERRIDE_CLIENT_ONLY "$probe" -L"$work/oracle-dso" \
+        -Wl,-rpath,"$work/oracle-dso" -l:"$library" -o "$work/oracle-dso-$scenario.exe"
+    run_case oracle "dso-$scenario" "$work/oracle-dso-$scenario.exe"
+    "$dynamic_sysroot/bin/crabc-cc-dynamic" --dynamic-shared-object -std=c11 -pthread "${flags[@]}" \
+        -DOVERRIDE_PROVIDER_ONLY "$probe" -o "$work/$library"
+    cp "$work/$library" "$work/execution-root/usr/lib/"
+    for mode in pie non-pie; do
+        "$dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 -pthread "${flags[@]}" \
+            -DOVERRIDE_CLIENT_ONLY "$probe" --application-dso "$work/$library" \
+            -o "$work/execution-root/consumer-dso-$mode-$scenario"
+        run_case "kernel-$mode" "dso-$scenario" chroot "$work/execution-root" "/consumer-dso-$mode-$scenario"
+        run_case "direct-$mode" "dso-$scenario" chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
+            "/consumer-dso-$mode-$scenario"
+    done
+done
+printf 'owned allocator override: PASS (musl + native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; full-family and malloc/free/realloc replacement from the executable, and from an initial DSO in dynamic modes); evidence: %s\n' "$work"

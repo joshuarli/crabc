@@ -12,10 +12,16 @@
  * reallocarray must then allocate through the application's malloc/realloc.
  * Both scenarios exercise libc interfaces that return caller-owned storage
  * or grow a caller buffer, and libc interfaces whose storage libc owns.
+ *
+ * By default one image holds both the allocator and the client. For a
+ * dynamic process the runner also builds the allocator alone
+ * (-DOVERRIDE_PROVIDER_ONLY) as an initial DSO that preempts libc.so, and
+ * the client alone (-DOVERRIDE_CLIENT_ONLY) as the executable.
  */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <limits.h>
+#include <malloc.h>
 #include <pthread.h>
 #include <regex.h>
 #include <stdarg.h>
@@ -29,29 +35,34 @@
 
 #define CHECK(c) do { if (!(c)) fail(__LINE__); } while (0)
 
-static void fail(int line) {
+static __attribute__((unused)) void fail(int line) {
     char text[64];
     int length = snprintf(text, sizeof text, "allocator override line %d errno %d\n", line, errno);
     (void)!write(2, text, (size_t)length);
     _exit(1);
 }
 
+/* The provider's arena ownership and call counters, visible to the client. */
+int override_owned(const void *pointer);
+extern unsigned long provider_calls, provider_frees;
+
+#ifndef OVERRIDE_CLIENT_ONLY
 /* A bump arena with a 32-byte header; freed blocks are poisoned, not reused. */
 #define ARENA_SIZE (64u << 20)
 static _Alignas(4096) unsigned char arena[ARENA_SIZE];
 static size_t arena_used;
 static pthread_mutex_t arena_lock = PTHREAD_MUTEX_INITIALIZER;
-static unsigned long provider_calls, provider_frees;
+unsigned long provider_calls, provider_frees;
 struct header { size_t size; size_t live; size_t magic; size_t pad; };
 #define MAGIC ((size_t)0x6f76657272696465)
 
-static int owned(const void *pointer) {
+int override_owned(const void *pointer) {
     uintptr_t address = (uintptr_t)pointer;
     return address >= (uintptr_t)arena + sizeof(struct header)
         && address < (uintptr_t)arena + ARENA_SIZE;
 }
 static struct header *header_of(void *pointer) {
-    if (!owned(pointer)) {
+    if (!override_owned(pointer)) {
         static const char text[] = "allocator override: foreign pointer reached the application allocator\n";
         (void)!write(2, text, sizeof text - 1);
         _exit(3);
@@ -120,6 +131,10 @@ int posix_memalign(void **result, size_t alignment, size_t size) {
 void *memalign(size_t alignment, size_t size) { return aligned_alloc(alignment, size); }
 size_t malloc_usable_size(void *pointer) { return pointer ? header_of(pointer)->size : 0; }
 #endif
+#endif
+
+#ifndef OVERRIDE_PROVIDER_ONLY
+#define owned override_owned
 
 /* The application releases each caller-owned result itself. */
 static void release_owned(void *pointer) { CHECK(owned(pointer)); free(pointer); }
@@ -236,3 +251,4 @@ int main(void) {
     CHECK(provider_frees > 0);
     return 0;
 }
+#endif
