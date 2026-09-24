@@ -630,7 +630,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   wordexp-paths-private  run the private wordexp pathname and passwd fixture
   wordexp-result-private  test wordexp partial-result ownership with result allocation failures
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
-  owned-stdio-file-engine --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  replay eight installed FILE-engine rows
+  owned-stdio-file-engine [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  replay the installed FILE-engine rows; builds current products without a supplied pair
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
   owned-math-fenv-all-entry [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test the installed C math/fenv all-entry component; builds current products without a supplied pair
   owned-calendar-component [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test installed time.clock-calendar rows with fixed IANA TZif fixtures
@@ -7477,10 +7477,12 @@ case "$command" in
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
     owned-stdio-file-engine)
-        [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] && [ -n "$2" ] && [ -n "$3" ] ||
-            fail "usage: ./scripts/dev-x86_64.sh owned-stdio-file-engine --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT"
-        prepare_owned_posix_replay_arguments "$command" "$@"
-        set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
+        [ "$#" -eq 0 ] || { [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] && [ -n "$2" ] && [ -n "$3" ]; } ||
+            fail "usage: ./scripts/dev-x86_64.sh owned-stdio-file-engine [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]"
+        if [ "$#" -ne 0 ]; then
+            prepare_owned_posix_replay_arguments "$command" "$@"
+            set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
+        fi
         ;;
     owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy|owned-regex)
         prepare_owned_posix_replay_arguments "$command" "$@"
@@ -9637,7 +9639,8 @@ case "$command" in
         ;;
     owned-stdio-file-engine)
         ensure_image
-        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_stdio_file_engine.sh "$2" "$3"
+        # The runner takes the translated pair positionally, or nothing.
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_stdio_file_engine.sh ${2:+"$2" "$3"}
         ;;
     owned-numeric-calendar)
         ensure_image

@@ -61,8 +61,15 @@ class OwnedStdioFileEngineDispatchTests(unittest.TestCase):
             "/workspace/.work/x86_64/static-product", "/workspace/.work/x86_64/dynamic-product",
         ])
 
-    def test_full_supplied_pair_is_required_before_docker(self) -> None:
-        for arguments in ((), (str(self.dynamic),), ("--static-sysroot", str(self.static))):
+    def test_no_pair_lets_the_runner_build_current_products(self) -> None:
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        runs = [argv for argv in map(json.loads, self.capture.read_text().splitlines()) if argv[0] == "run"]
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0][-2:], ["bash", "/workspace/compat/x86_64/run_owned_stdio_file_engine.sh"])
+
+    def test_a_partial_pair_is_rejected_before_docker(self) -> None:
+        for arguments in ((str(self.dynamic),), ("--static-sysroot", str(self.static))):
             with self.subTest(arguments=arguments):
                 result = self.invoke(*arguments)
                 self.assertEqual(result.returncode, 2, result.stderr)

@@ -1,12 +1,13 @@
 # Installed FILE-engine receipt
 
-`run_owned_stdio_file_engine.sh STATIC_SYSROOT DYNAMIC_SYSROOT` records a
+`run_owned_stdio_file_engine.sh [STATIC_SYSROOT DYNAMIC_SYSROOT]` records a
 finite installed-header FILE-engine replay. It compiles one unchanged object
 for each of eight frozen probes with the selected dynamic product's
 headers, links that same object once with pinned musl and once in every
-supplied product linkage, and retains raw compiler, linker, run, copied-root,
-and seal evidence. It requires a supplied static and dynamic product; it never
-builds replacement products.
+product linkage, and retains raw compiler, linker, run, copied-root,
+and seal evidence. Without a supplied pair it first builds current static and
+dynamic products from the checkout into its evidence directory, so one command
+replays every row against the checkout's own source.
 
 The closed rows are `stdio.file-backends`, `stdio.process-streams`,
 `stdio.wide-stream`, `stdio.wide-format`, `stdio.file-extensions`,

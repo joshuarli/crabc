@@ -17,31 +17,32 @@ readonly COMMON_FLAGS=(-std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-p
 readonly CONTROL_FLAGS=(-std=c11 -fno-builtin -fno-stack-protector)
 
 usage() {
-    printf 'usage: %s STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
+    printf 'usage: %s [STATIC_SYSROOT DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
 fail() {
     printf 'owned FILE engine: %s\n' "$*" >&2
     exit 1
 }
-[ "$#" -eq 2 ] || usage
-readonly STATIC_PRODUCT="$1"
-readonly DYNAMIC_PRODUCT="$2"
+case "$#" in
+    0) supplied_static='' supplied_dynamic='' ;;
+    2) supplied_static="$1" supplied_dynamic="$2" ;;
+    *) usage ;;
+esac
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires checkout-local TMPDIR'
 [ -x "$ORACLE_CC" ] && [ -x "$CONTROL_BUSYBOX" ] && [ -x "$CONTROL_LOADER" ] &&
     [ -x "$CONTROL_MOUNT" ] && [ -x "$CONTROL_UMOUNT" ] || fail 'missing pinned control tool'
-[ -x "$STATIC_PRODUCT/bin/crabc-cc" ] && [ -x "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" ] ||
-    fail 'missing supplied installed product driver'
 [ -f "$READER" ] && [ -f "$COPIES" ] || fail 'missing receipt reader or payload auditor'
 command -v chroot >/dev/null || fail 'missing chroot'
 command -v timeout >/dev/null || fail 'missing timeout'
 
-python3 -B - "$ROOT" "$TMPDIR" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" <<'PY'
+python3 -B - "$ROOT" "$TMPDIR" "$supplied_static" "$supplied_dynamic" <<'PY'
 from pathlib import Path
 import stat, sys
 root, temporary, static, dynamic = map(Path, sys.argv[1:])
+products = [] if str(static) == '.' else [(static, 'static product'), (dynamic, 'dynamic product')]
 root = root.resolve(strict=True)
 def shared_worktree(checkout):
     for parent in (checkout, *checkout.parents):
@@ -49,7 +50,7 @@ def shared_worktree(checkout):
             return parent.parent / '.work'
     return checkout / '.work'
 worktree = shared_worktree(root)
-for item, label in ((temporary, 'TMPDIR'), (static, 'static product'), (dynamic, 'dynamic product')):
+for item, label in ((temporary, 'TMPDIR'), *products):
     item = item.absolute()
     if '..' in item.parts or not item.is_relative_to(worktree):
         raise SystemExit(f'owned FILE engine {label} must stay below checkout .work')
@@ -66,6 +67,21 @@ readonly WORK="$(mktemp -d "$TMPDIR/owned-stdio-file-engine.XXXXXX")"
 chmod a+rx "$WORK"
 trap 'chmod -R a+rX "$WORK"' EXIT
 printf 'owned FILE engine evidence: %s\n' "$WORK"
+
+# Without a supplied pair, build current static and dynamic products so the
+# single command replays every row against the checkout's own source.
+if [ -z "$supplied_dynamic" ]; then
+    supplied_static="$WORK/static-product"
+    supplied_dynamic="$WORK/dynamic-product"
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$supplied_static" \
+        >"$WORK/static-build.json"
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$supplied_dynamic" \
+        >"$WORK/dynamic-build.json"
+fi
+readonly STATIC_PRODUCT="$supplied_static"
+readonly DYNAMIC_PRODUCT="$supplied_dynamic"
+[ -x "$STATIC_PRODUCT/bin/crabc-cc" ] && [ -x "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" ] ||
+    fail 'missing supplied installed product driver'
 
 capture() {
     local stem="$1"
