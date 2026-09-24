@@ -519,36 +519,53 @@ def _static_link_plan(root: Path, linkage: str) -> list[str]:
     ]
 
 
-def _validate_static_trace(trace: Path, root: Path, workload: Path, linkage: str) -> None:
-    mode = LINKAGES[linkage]
-    library = root / "usr/lib"
-    direct = {
-        str(library / mode["crt"]), str(library / "crti.o"), str(workload), str(library / "crtn.o"),
-    }
-    archives = {str(library / "libc.a"), str(library / "libcrabc-builtins.a")}
+def _declared_static_inputs(contract: list[str], workload: str) -> tuple[set[str], str, set[str]]:
+    """Classify the sealed static link contract's inputs as LLD traces them.
+
+    Direct objects (the CRT objects and the application) are always loaded.
+    LLD traces an archive only when it extracts a member: `libc.a` always
+    does, since it defines the CRT entry's startup target, while every other
+    declared archive (the compiler-helper archive) is admitted but
+    conditional. A Rust-only native-shadow `libc.a` references no helper, so
+    a helper-free application extracts nothing from it.
+    """
+    inputs = contract[contract.index("_start") + 1:contract.index("-o")]
+    direct = {workload if item == "<application-objects>" else item
+              for item in inputs if not item.endswith(".a")}
+    archives = [item for item in inputs if item.endswith(".a")]
+    libc = next((item for item in archives if Path(item).name == "libc.a"), None)
+    if libc is None:
+        _fail("static link contract declares no libc archive")
+    return direct, libc, set(archives) - {libc}
+
+
+def _check_static_trace_lines(lines: list[str], contract: list[str], workload: str,
+                              description: str) -> None:
+    direct, libc, conditional = _declared_static_inputs(contract, workload)
+    archives = {libc, *conditional}
     seen: set[str] = set()
-    try:
-        lines = trace.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError) as error:
-        raise ProductEvidenceError(f"static link trace is unreadable: {trace}") from error
     for line in lines:
         if not line:
             continue
         if line in direct:
             seen.add(line)
             continue
-        archive_input = False
-        for archive in archives:
-            if line == archive or (line.startswith(archive + "(") and line.endswith(")")):
-                seen.add(archive)
-                archive_input = True
-                break
-        if archive_input:
-            continue
-        _fail(f"static link trace names an unowned input: {line}")
-    missing = sorted((direct | archives) - seen)
+        archive = next((archive for archive in archives
+                        if line == archive or (line.startswith(archive + "(") and line.endswith(")"))), None)
+        if archive is None:
+            _fail(f"{description} names an unowned input: {line}")
+        seen.add(archive)
+    missing = sorted((direct | {libc}) - seen)
     if missing:
-        _fail(f"static link trace omits an owned input: {missing[0]}")
+        _fail(f"{description} omits an owned input: {missing[0]}")
+
+
+def _validate_static_trace(trace: Path, root: Path, workload: Path, linkage: str) -> None:
+    try:
+        lines = trace.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise ProductEvidenceError(f"static link trace is unreadable: {trace}") from error
+    _check_static_trace_lines(lines, _static_link_plan(root, linkage), str(workload), "static link trace")
 
 
 def _validate_static_receipt(
@@ -836,36 +853,14 @@ def _retained_static_plan(root: Path, source_mount: str, product: Path, linkage:
 
 def _validate_retained_static_trace(trace: Path, root: Path, source_mount: str, product: Path,
                                     workload: Path, linkage: str) -> None:
-    mode, library = LINKAGES[linkage], product / "usr/lib"
-    direct = {
-        _retained_recorded(root, source_mount, library / mode["crt"], "static CRT"),
-        _retained_recorded(root, source_mount, library / "crti.o", "static CRT"),
-        _retained_recorded(root, source_mount, workload, "static workload"),
-        _retained_recorded(root, source_mount, library / "crtn.o", "static CRT"),
-    }
-    archives = {
-        _retained_recorded(root, source_mount, library / "libc.a", "static libc"),
-        _retained_recorded(root, source_mount, library / "libcrabc-builtins.a", "static builtins"),
-    }
-    seen: set[str] = set()
     try:
         lines = trace.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as error:
         raise ProductEvidenceError(f"retained static link trace is unreadable: {trace}") from error
-    for line in lines:
-        if not line:
-            continue
-        if line in direct:
-            seen.add(line)
-        elif any(line == archive or (line.startswith(archive + "(") and line.endswith(")"))
-                 for archive in archives):
-            seen.add(next(archive for archive in archives
-                          if line == archive or (line.startswith(archive + "(") and line.endswith(")"))))
-        else:
-            _fail("retained static link trace names an unowned input")
-    missing = sorted((direct | archives) - seen)
-    if missing:
-        _fail("retained static link trace omits an owned input")
+    _check_static_trace_lines(
+        lines, _retained_static_plan(root, source_mount, product, linkage),
+        _retained_recorded(root, source_mount, workload, "static workload"), "retained static link trace",
+    )
 
 
 def _validate_retained_static_receipt(root: Path, source_mount: str, product: Path, workload: Path,

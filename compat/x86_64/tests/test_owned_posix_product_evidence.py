@@ -401,7 +401,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         }
         self.write_json(manifest_path, manifest)
 
-    def static_receipt(self, linkage: str = "static") -> Path:
+    def static_receipt(self, linkage: str = "static", *, omitted: tuple[str, ...] = ()) -> Path:
         self.executable.write_bytes(sealed_elf(linkage))
         mode = {
             "static": ("static-et-exec", "ET_EXEC", "crt1.o"),
@@ -414,7 +414,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         runtime = self.static / "usr/lib"
         trace_path.write_text(
             "\n".join(
-                (
+                line for line in (
                     str(runtime / mode[2]),
                     str(runtime / "crti.o"),
                     str(self.workload),
@@ -422,6 +422,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                     str(runtime / "libcrabc-builtins.a") + "(builtins.o)",
                     str(runtime / "crtn.o"),
                 )
+                if not any(line.startswith(str(runtime / name)) for name in omitted)
             ) + "\n",
             encoding="utf-8",
         )
@@ -524,6 +525,9 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
 
         receipt = (self.static_receipt(linkage) if linkage in {"static", "static-pie"}
                    else self.dynamic_receipt(linkage, export_dynamic=export_dynamic))
+        return self.retained_receipt_from(receipt)
+
+    def retained_receipt_from(self, receipt: Path) -> tuple[Path, dict[str, str]]:
         record = json.loads(receipt.read_text(encoding="utf-8"))
         host = str(self.root)
 
@@ -562,6 +566,35 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                         receipt, linkage, linker,
                     )
                 self.assertEqual(identity["linkage"], linkage)
+
+    def test_static_trace_follows_the_declared_conditional_helper_archive(self) -> None:
+        # The driver declares the compiler-helper archive conditional: LLD
+        # traces an archive only when it extracts a member, and a Rust-only
+        # native-shadow libc.a references no helper.
+        for linkage in ("static", "static-pie"):
+            with self.subTest(linkage=linkage):
+                receipt = self.static_receipt(linkage, omitted=("libcrabc-builtins.a",))
+                self.assertEqual(self.validate(linkage, receipt)["linkage"], linkage)
+                receipt = self.static_receipt(linkage, omitted=("libcrabc-builtins.a",))
+                retained, linker = self.retained_receipt_from(receipt)
+                identity = evidence.validate_retained_link(
+                    self.root, "/workspace", self.static, self.workload, self.executable,
+                    retained, linkage, linker,
+                )
+                self.assertEqual(identity["linkage"], linkage)
+
+    def test_static_trace_still_requires_libc_and_every_direct_object(self) -> None:
+        for omitted in ("libc.a", "crti.o", "crtn.o", "crt1.o"):
+            with self.subTest(omitted=omitted):
+                receipt = self.static_receipt("static", omitted=(omitted,))
+                with self.assertRaisesRegex(evidence.ProductEvidenceError, "omits an owned input"):
+                    self.validate("static", receipt)
+                retained, linker = self.retained_receipt_from(self.static_receipt("static", omitted=(omitted,)))
+                with self.assertRaisesRegex(evidence.ProductEvidenceError, "omits an owned input"):
+                    evidence.validate_retained_link(
+                        self.root, "/workspace", self.static, self.workload, self.executable,
+                        retained, "static", linker,
+                    )
 
     def test_retained_reader_rejects_changed_source_mount_or_linker(self) -> None:
         receipt, linker = self.retained_receipt("pie")
