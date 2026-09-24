@@ -6402,7 +6402,9 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
     let vm_policy = process_backing.process().policy();
     let ready_memory_config_has_transparent_huge_pages =
         ready.memory_config().ok()?.has_transparent_huge_pages();
-    let vm_policy_allow_thp_raw = vm_policy.options().value(VmOption::AllowThp)?;
+    // The x86 process policy reads the process option table; an image
+    // policy keeps its resolved slot. Both answer the source read point.
+    let vm_policy_allow_thp_raw = vm_policy.source_option_value(VmOption::AllowThp.source());
     let startup_regular_reservation_outcome = match ready.startup_reservation_outcomes().ok()?.regular {
         None => 0,
         Some(Ok(())) => 1,
@@ -6455,10 +6457,8 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
         vm_policy_allow_thp_raw,
         ready_memory_config_has_transparent_huge_pages,
         vm_policy_allow_thp: usize::from(vm_policy_allow_thp_raw != 0),
-        vm_policy_arena_is_numa_local: vm_policy
-            .options()
-            .value(VmOption::ArenaIsNumaLocal)?,
-        vm_policy_use_numa_nodes: vm_policy.options().value(VmOption::UseNumaNodes)?,
+        vm_policy_arena_is_numa_local: vm_policy.source_option_value(VmOption::ArenaIsNumaLocal.source()),
+        vm_policy_use_numa_nodes: vm_policy.source_option_value(VmOption::UseNumaNodes.source()),
         vm_policy_numa_node_count_cache: vm_policy.native_runtime_test_numa_node_count_cache(),
         ticket_zero_tld_numa_node: RUNTIME_PROCESS.initial_tld_numa_node.load(Ordering::Acquire),
         process_arena_numa_node: process_arena.numa_node,
