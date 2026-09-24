@@ -145,7 +145,11 @@ int main(int argc,char **argv) {
     initial_state=!strncmp(scenario,"masked",6)?PTHREAD_CANCEL_MASKED:
                   !strncmp(scenario,"disabled",8)?PTHREAD_CANCEL_DISABLE:PTHREAD_CANCEL_ENABLE;
     cancel_before_tcp=!strcmp(scenario,"masked-udp-to-tcp") || !strcmp(scenario,"masked-tcp-socket-failure") || !strcmp(scenario,"masked-dual-mixed-tcp");
-    dual_mixed_later_errno_case=!strcmp(scenario,"masked-dual-mixed-tcp") && !strcmp(api,"modern-dual");
+    /* In the two-request batch both cells cancel the witnessed poll, then send
+       the truncated A and the paired AAAA as separate datagrams, so the
+       drain after the consumed MASKED request may find the AAAA not yet
+       queued and end on EAGAIN. */
+    dual_mixed_later_errno_case=(!strcmp(scenario,"masked-dual-mixed-tcp") || !strcmp(scenario,"masked-udp-to-tcp")) && !strcmp(api,"modern-dual");
     /* This dedicated source-shaped cell proves that a consumed MASKED request
        need not retain ECANCELED if a later nonblocking UDP drain finds the
        socket empty. It is intentionally admitted only for the two-request

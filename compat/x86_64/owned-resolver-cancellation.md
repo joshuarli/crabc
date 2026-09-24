@@ -249,14 +249,16 @@ Pending-entry tests queue cancellation while disabled, set the requested
 state, call the API, join, and inspect the UDP socket for a transmitted packet.
 No client sleep or scheduler-sensitive delay determines cancellation timing.
 
-The original `modern-dual` / `masked-dual-mixed-tcp` stimulus remains unchanged:
+The original `modern-dual` / `masked-dual-mixed-tcp` stimulus remains unchanged,
+and `modern-dual` / `masked-udp-to-tcp` drives the same sequence:
 the server requests cancellation at a witnessed blocked poll, then sends the
 truncated A and paired AAAA replies. In musl `__res_msend_rc`, a consumed MASKED
 request can be followed by a later nonblocking UDP `recvmsg` from the same
 drain. If that later receive finds no packet, its `EAGAIN` remains the raw final
 errno; otherwise `ECANCELED` remains visible. Independent oracle and owned
-runs therefore admit only `{ECANCELED, EAGAIN}` for this exact API/scenario
-pair. They still require byte-identical stderr and exact equality of canceled,
+runs therefore admit only `{ECANCELED, EAGAIN}` for these two exact
+API/scenario pairs; the pinned musl oracle itself reported `EAGAIN` for
+`masked-udp-to-tcp` under host load. They still require byte-identical stderr and exact equality of canceled,
 returned, cleanup, cleanup-fd, leak, cancellation-state, transmission, and
 success observations. No other consumed-MASKED cell receives this exception.
 

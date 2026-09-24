@@ -30,13 +30,16 @@ CASES = tuple((api, scenario) for api in APIS for scenario in SCENARIOS) + (POST
 # errno differences are outside this slice; lifecycle and success still match.
 ORDINARY_ERRNO_DIFFERENCES = frozenset(('disabled', 'disabled-udp', 'disabled-tcp',
                                       'kernel-canceled', 'normal-tcp'))
-# This one source-specific cell has a scheduler-dependent final syscall
-# residue. `res_msend.c` can consume MASKED cancellation, then hit a later
-# empty nonblocking UDP recvmsg. It is deliberately not an ordinary errno
+# These two source-specific cells share one stimulus and a scheduler-dependent
+# final syscall residue: in the two-request batch the server cancels the
+# witnessed poll, then sends the truncated A and the paired AAAA as separate
+# datagrams. `res_msend.c` can consume MASKED cancellation, then hit a later
+# empty nonblocking UDP recvmsg before the AAAA is queued. It is deliberately not an ordinary errno
 # exclusion: both oracle and owned values must stay in this exact finite set,
 # while every non-errno observation remains identical.
 SOURCE_LATER_ERRNOS = {
     ('modern-dual', 'masked-dual-mixed-tcp'): frozenset((errno.ECANCELED, errno.EAGAIN)),
+    ('modern-dual', 'masked-udp-to-tcp'): frozenset((errno.ECANCELED, errno.EAGAIN)),
 }
 PROVIDERS = frozenset(('res_query', 'res_send', 'gethostbyname_r', 'getaddrinfo', 'getnameinfo'))
 

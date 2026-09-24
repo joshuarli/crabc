@@ -74,7 +74,7 @@ class ResolverCancellationObservationContractTests(unittest.TestCase):
 
     def test_probe_limits_the_original_cell_and_preserves_its_reply_order(self) -> None:
         source = PROBE.read_text(encoding='utf-8')
-        self.assertIn('dual_mixed_later_errno_case=!strcmp(scenario,"masked-dual-mixed-tcp") && !strcmp(api,"modern-dual");', source)
+        self.assertIn('dual_mixed_later_errno_case=(!strcmp(scenario,"masked-dual-mixed-tcp") || !strcmp(scenario,"masked-udp-to-tcp")) && !strcmp(api,"modern-dual");', source)
         self.assertIn('CHECK(result_errno==ECANCELED || result_errno==EAGAIN);', source)
         paired_reply = source.index('if(!post_tcp_later_eagain_case) {')
         accept = source.index('accepted=accept(tcp,0,0)')
