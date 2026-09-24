@@ -152,10 +152,17 @@ class M7GateContractTests(unittest.TestCase):
         summary = self.validate(contract)
         results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
         self.assertEqual(gate.gate_report(contract, summary, results)["overall_status"], "passed")
-        results["differential:error-message"] = {"status": "failed"}
+        results["differential:error-reporting-sites"] = {"status": "failed"}
         report = gate.gate_report(contract, summary, results)
         self.assertEqual(report["overall_status"], "unmet")
         self.assertEqual(self.gate_record(report, "m7.callbacks")["status"], "failed")
+
+
+    def test_evidence_commands_bind_only_their_fresh_scratch_directory(self) -> None:
+        command = self.contract["evidence"]["differential:diagnostic-output-owner"]["command"]
+        bound = gate.evidence_command(command, Path("/scratch/run"))
+        self.assertIn("/scratch/run/diagnostic-output-owner.json", bound)
+        self.assertEqual(gate.evidence_command(["python3", "x.py"], Path("/s")), ["python3", "x.py"])
 
 
 class M7OptionsTraceTests(unittest.TestCase):
@@ -168,6 +175,9 @@ class M7OptionsTraceTests(unittest.TestCase):
                 f"scenario.{scenario}.option.show_errors=0,1,0",
                 f"scenario.{scenario}.lazy_messages=",
             ]
+        for scenario in gate.OPTIONS_ERROR_SCENARIOS:
+            lines += [f"error.{scenario}.environment=", f"error.{scenario}.results=0/0/12",
+                      f"error.{scenario}.messages="]
         lines += ["api.print=7631", gate.OPTIONS_TRACE_END]
         return "\n".join(line for line in lines if line != drop) + "\n"
 
@@ -176,7 +186,8 @@ class M7OptionsTraceTests(unittest.TestCase):
         # libtest prints the test name before captured stdout on the same line.
         libtest = "running 1 test\ntest tests::trace ... " + self.trace() + "ok\n"
         self.assertEqual(gate.parse_options_trace(libtest, "Rust"), gate.parse_options_trace(self.trace(), "C"))
-        for drop in ("scenario.guarded_boolean.messages=", "scenario.cap.option.show_errors=0,1,0"):
+        for drop in ("scenario.guarded_boolean.messages=", "scenario.cap.option.show_errors=0,1,0",
+                     "error.capped.results=0/0/12"):
             with self.assertRaisesRegex(harness.HarnessError, "lacks"):
                 gate.require_complete_options_trace(
                     gate.parse_options_trace(self.trace(drop=drop), "trace"), "trace"

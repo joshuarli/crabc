@@ -41,6 +41,8 @@ use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 const INITIAL_MAX_WARNING_COUNT: isize = 16;
+/// `mi_max_error_count`'s static initializer (`src/options.c:15`).
+const INITIAL_MAX_ERROR_COUNT: isize = 16;
 const DELAYED_OUTPUT_BYTES: usize = 16 * 1024;
 const SOURCE_FORMAT_STORAGE_BYTES: usize = 992;
 const SOURCE_FORMAT_PAYLOAD_BYTES: usize = SOURCE_FORMAT_STORAGE_BYTES - 2;
@@ -54,6 +56,8 @@ const THREAD_WARNING_PREFIX_BYTES: usize = 64;
 /// `_mi_verbose_message`'s prefix, delivered as its own `_mi_fputs` fragment.
 const VERBOSE_PREFIX: &CStr = c"mimalloc: ";
 const WARNING_PREFIX_HEAD: &[u8] = b"mimalloc: warning: thread 0x";
+/// `mi_show_error_message`'s `"mimalloc: error: "` thread prefix head.
+const ERROR_PREFIX_HEAD: &[u8] = b"mimalloc: error: thread 0x";
 const WARNING_PREFIX_TAIL: &[u8] = b": ";
 const FINAL_NOT_ALL_FREED: &[u8] = b"not all freed";
 const FINAL_EXPLICIT_EMPTY_NOT_OK: &[u8] = b"";
@@ -794,28 +798,33 @@ struct ThreadWarningPrefix {
 impl ThreadWarningPrefix {
     #[inline]
     fn new(thread_identity: usize) -> Self {
-        let mut bytes = [0; THREAD_WARNING_PREFIX_BYTES];
-        let mut length = WARNING_PREFIX_HEAD.len();
-        bytes[..length].copy_from_slice(WARNING_PREFIX_HEAD);
+        Self::with_head(WARNING_PREFIX_HEAD, thread_identity)
+    }
 
-        if thread_identity == 0 {
-            bytes[length] = b'0';
+    /// `mi_vfprintf_thread`'s `"%sthread 0x%tx: "` for one fixed source
+    /// prefix; both selected heads are within its 32-byte predicate.
+    #[inline]
+    fn with_head(head: &[u8], thread_identity: usize) -> Self {
+        let mut bytes = [0; THREAD_WARNING_PREFIX_BYTES];
+        let mut length = head.len();
+        bytes[..length].copy_from_slice(head);
+
+        // A widthless `%tx` has the source minimum width two with zero fill
+        // (`src/libc.c:391-394`), so identities below 0x10 keep two digits.
+        let mut reversed = [b'0'; core::mem::size_of::<usize>() * 2];
+        let mut value = thread_identity;
+        let mut digits = 0;
+        while value != 0 {
+            let digit = (value & 0x0f) as u8;
+            reversed[digits] = if digit < 10 { b'0' + digit } else { b'A' + digit - 10 };
+            digits += 1;
+            value >>= 4;
+        }
+        digits = digits.max(2);
+        while digits != 0 {
+            digits -= 1;
+            bytes[length] = reversed[digits];
             length += 1;
-        } else {
-            let mut reversed = [0; core::mem::size_of::<usize>() * 2];
-            let mut value = thread_identity;
-            let mut digits = 0;
-            while value != 0 {
-                let digit = (value & 0x0f) as u8;
-                reversed[digits] = if digit < 10 { b'0' + digit } else { b'A' + digit - 10 };
-                digits += 1;
-                value >>= 4;
-            }
-            while digits != 0 {
-                digits -= 1;
-                bytes[length] = reversed[digits];
-                length += 1;
-            }
         }
 
         bytes[length..length + WARNING_PREFIX_TAIL.len()].copy_from_slice(WARNING_PREFIX_TAIL);
@@ -837,6 +846,24 @@ impl ThreadWarningPrefix {
 /// No public ABI uses this alias yet. The callback receives one NUL-terminated
 /// fragment at a time, so a warning emits its prefix and body in two calls.
 pub(crate) type OutputCallback = unsafe extern "C" fn(*const c_char, *mut c_void);
+
+/// The source `mi_error_fun` shape (`include/mimalloc.h:190`), a private boundary
+/// like [`OutputCallback`]. It receives the source error code, not errno.
+pub(crate) type ErrorCallback = unsafe extern "C" fn(core::ffi::c_int, *mut c_void);
+
+/// What remains after `_mi_error_message` has shown its message.
+///
+/// The engine reports the source error code; errno belongs to libc.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceErrorDisposition {
+    /// A registered `mi_error_fun` received the code and owns any effect.
+    Handled,
+    /// `mi_error_default` of the selected release profile (no `MI_DEBUG`,
+    /// `MI_SECURE`, or `MI_XMALLOC` abort): when errno is zero, the libc
+    /// boundary stores this value, which is `EINVAL` for `EINVAL` and
+    /// `ENOMEM` for every other code (`src/options.c:566-589`).
+    DefaultErrno(Errno),
+}
 
 /// Private source-shaped `_mi_prim_out_stderr` primitive.
 ///
@@ -877,6 +904,10 @@ pub(crate) struct OutputOwner {
     argument: AtomicPtr<c_void>,
     warning_count: AtomicUsize,
     max_warning_count: isize,
+    error_count: AtomicUsize,
+    max_error_count: isize,
+    error_handler: AtomicPtr<()>,
+    error_argument: AtomicPtr<c_void>,
     source_options: UnsafeCell<core::mem::MaybeUninit<ProcessSourceOptions>>,
     source_options_ready: AtomicU8,
     source_options_lock: PrivateLock,
@@ -890,8 +921,18 @@ unsafe impl Sync for OutputOwner {}
 const PENDING_SOURCE_WARNINGS: usize = 4;
 
 struct PendingSourceWarning {
+    kind: SourceMessageKind,
     options: DiagnosticOptionSnapshot,
     message: SourceFormattedMessage,
+}
+
+/// The two gated message families of `options.c`: `_mi_warning_message`
+/// and `mi_show_error_message` read the same descriptors but keep separate
+/// counters, caps, and prefixes.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SourceMessageKind {
+    Warning,
+    Error,
 }
 
 /// Fixed stack staging between the descriptor lock and source output. It is
@@ -918,8 +959,12 @@ impl PendingSourceWarnings {
     }
 
     fn push(&mut self, options: DiagnosticOptionSnapshot, message: SourceFormattedMessage) {
+        self.push_kind(SourceMessageKind::Warning, options, message);
+    }
+
+    fn push_kind(&mut self, kind: SourceMessageKind, options: DiagnosticOptionSnapshot, message: SourceFormattedMessage) {
         debug_assert!(self.length < PENDING_SOURCE_WARNINGS);
-        self.entries[self.length].write(PendingSourceWarning { options, message });
+        self.entries[self.length].write(PendingSourceWarning { kind, options, message });
         self.length += 1;
     }
 
@@ -931,7 +976,10 @@ impl PendingSourceWarnings {
             // SAFETY: source descriptor serialization ended before this
             // dispatch; caller-supplied callback lifetime obligations remain
             // exactly those of OutputOwner::warning.
-            unsafe { output.warning(entry.options, entry.message) };
+            match entry.kind {
+                SourceMessageKind::Warning => unsafe { output.warning(entry.options, entry.message) },
+                SourceMessageKind::Error => unsafe { output.error(entry.options, entry.message) },
+            }
         }
     }
 }
@@ -955,6 +1003,10 @@ impl OutputOwner {
             argument: AtomicPtr::new(core::ptr::null_mut()),
             warning_count: AtomicUsize::new(0),
             max_warning_count: INITIAL_MAX_WARNING_COUNT,
+            error_count: AtomicUsize::new(0),
+            max_error_count: INITIAL_MAX_ERROR_COUNT,
+            error_handler: AtomicPtr::new(core::ptr::null_mut()),
+            error_argument: AtomicPtr::new(core::ptr::null_mut()),
             source_options: UnsafeCell::new(core::mem::MaybeUninit::uninit()),
             source_options_ready: AtomicU8::new(0),
             source_options_lock: PrivateLock::new(),
@@ -1017,11 +1069,11 @@ impl OutputOwner {
             // options initialization; no source-options lock is held here.
             unsafe { pending.deliver(self) };
         }
-        // `_mi_options_init` assigns the global warning cap only after its
-        // complete descriptor loop. A warning above therefore used the
-        // source initial cap of 16 before this write. The matching
-        // `mi_max_error_count` assignment has no reader until the source
-        // error-message route exists; its descriptor was initialized above.
+        // `_mi_options_init` assigns the global error and warning caps only
+        // after its complete descriptor loop. A warning above therefore used
+        // the source initial cap of 16 before this write.
+        // SAFETY: the exclusive startup borrow still excludes other access.
+        self.max_error_count = unsafe { self.source_options_ref_unlocked() }.value(SourceOption::MaxErrors) as isize;
         self.max_warning_count = unsafe { self.source_option_snapshot_unlocked() }.max_warnings;
     }
 
@@ -1301,7 +1353,13 @@ impl OutputOwner {
     }
 
     unsafe fn source_option_snapshot_unlocked(&self) -> DiagnosticOptionSnapshot {
-        unsafe { (&*self.source_options.get()).assume_init_ref() }.snapshot()
+        unsafe { self.source_options_ref_unlocked() }.snapshot()
+    }
+
+    /// The installed table while the caller has exclusive startup ownership
+    /// or `source_options_lock`.
+    unsafe fn source_options_ref_unlocked(&self) -> &ProcessSourceOptions {
+        unsafe { (&*self.source_options.get()).assume_init_ref() }
     }
 
     unsafe fn source_option_set_value_unlocked(&self, option: SourceOption, value: i64) {
@@ -1351,12 +1409,24 @@ impl OutputOwner {
         message: SourceFormattedMessage,
         pending: &mut PendingSourceWarnings,
     ) {
+        unsafe { self.collect_gated_message_unlocked(SourceMessageKind::Warning, message, pending) };
+    }
+
+    /// The descriptor reads shared by `_mi_warning_message` and
+    /// `mi_show_error_message`: `verbose` first and, only when disabled,
+    /// `show_errors`. The counter gate runs at delivery.
+    unsafe fn collect_gated_message_unlocked(
+        &self,
+        kind: SourceMessageKind,
+        message: SourceFormattedMessage,
+        pending: &mut PendingSourceWarnings,
+    ) {
         let (verbose, verbose_warnings) = unsafe { self.source_option_get_unlocked(SourceOption::Verbose) };
         unsafe {
             self.collect_source_option_init_warnings_unlocked(SourceOption::Verbose, verbose_warnings, pending)
         };
         if verbose != 0 {
-            pending.push(unsafe { self.source_option_snapshot_unlocked() }, message);
+            pending.push_kind(kind, unsafe { self.source_option_snapshot_unlocked() }, message);
             return;
         }
 
@@ -1369,7 +1439,7 @@ impl OutputOwner {
             )
         };
         if show_errors != 0 {
-            pending.push(unsafe { self.source_option_snapshot_unlocked() }, message);
+            pending.push_kind(kind, unsafe { self.source_option_snapshot_unlocked() }, message);
         }
     }
 
@@ -1640,27 +1710,95 @@ impl OutputOwner {
         options: DiagnosticOptionSnapshot,
         message: SourceFormattedMessage,
     ) {
+        self.gated_output(options, &self.warning_count, self.max_warning_count, WARNING_PREFIX_HEAD, message);
+    }
+
+    /// Emits the selected `mi_show_error_message` path: the warning gate with
+    /// the error counter, cap, and prefix (`src/options.c:532-538`).
+    ///
+    /// # Safety
+    ///
+    /// The same obligations as [`Self::warning`] apply.
+    #[inline]
+    unsafe fn error(&self, options: DiagnosticOptionSnapshot, message: SourceFormattedMessage) {
+        self.gated_output(options, &self.error_count, self.max_error_count, ERROR_PREFIX_HEAD, message);
+    }
+
+    fn gated_output(
+        &self,
+        options: DiagnosticOptionSnapshot,
+        count: &AtomicUsize,
+        max_count: isize,
+        prefix_head: &[u8],
+        message: SourceFormattedMessage,
+    ) {
         if !options.verbose_enabled() {
             if !options.show_errors_enabled() {
                 return;
             }
-            if self.max_warning_count >= 0 {
+            if max_count >= 0 {
                 // Pinned `mi_atomic_increment_acq_rel` is a C11 `fetch_add`,
                 // so this comparison intentionally observes the old count.
                 // A nonnegative source cap therefore admits values 0 through
-                // the cap before suppressing the next warning.
-                let count = self.warning_count.fetch_add(1, Ordering::AcqRel);
-                if (count as isize) > self.max_warning_count {
+                // the cap before suppressing the next message.
+                let count = count.fetch_add(1, Ordering::AcqRel);
+                if (count as isize) > max_count {
                     return;
                 }
             }
         }
 
-        // The selected static warning prefix satisfies the source's 32-byte
+        // The selected static prefixes satisfy the source's 32-byte
         // `mi_vfprintf_thread` predicate. Preserve its one stack prefix and
         // separate prefix/body callback deliveries.
-        let prefix = ThreadWarningPrefix::new(thread_pointer_identity());
+        let prefix = ThreadWarningPrefix::with_head(prefix_head, thread_pointer_identity());
         self.fputs_default(Some(prefix.as_c_str()), message.as_c_str());
+    }
+
+    /// Installs the source's one `mi_error_fun` handler, or clears it.
+    ///
+    /// # Safety
+    ///
+    /// A non-null `handler` and the objects reachable from `argument` must
+    /// remain valid for every later [`Self::error_message`] until a
+    /// serialized replacement is installed and in-flight reports finish. As
+    /// in `mi_register_error`, the handler and argument are stored separately,
+    /// so registration must not race a report.
+    pub(crate) unsafe fn register_error(&self, handler: Option<ErrorCallback>, argument: *mut c_void) {
+        let handler = handler.map_or(core::ptr::null_mut(), |handler| handler as *const () as *mut ());
+        self.error_handler.store(handler, Ordering::Release);
+        self.error_argument.store(argument, Ordering::Release);
+    }
+
+    /// `_mi_error_message(err, ...)` (`src/options.c:596-608`) after source
+    /// formatting: show the message through the descriptor gate, then call
+    /// the registered handler or report the default errno policy.
+    ///
+    /// # Safety
+    ///
+    /// The obligations of [`Self::warning_from_source_options`] apply to the
+    /// message, and a registered handler must satisfy
+    /// [`Self::register_error`]'s contract.
+    pub(crate) unsafe fn error_message(&self, error: Errno, message: SourceFormattedMessage) -> SourceErrorDisposition {
+        debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
+        let mut pending = PendingSourceWarnings::new();
+        if self.source_options_ready.load(Ordering::Acquire) == 1 {
+            if let Ok(_guard) = self.source_options_lock.lock() {
+                // SAFETY: the descriptor lock serializes lazy retries.
+                unsafe { self.collect_gated_message_unlocked(SourceMessageKind::Error, message, &mut pending) };
+            }
+        }
+        // SAFETY: descriptor locking ended above.
+        unsafe { pending.deliver(self) };
+        let handler = self.error_handler.load(Ordering::Acquire);
+        if handler.is_null() {
+            return SourceErrorDisposition::DefaultErrno(if error == Errno::INVAL { Errno::INVAL } else { Errno::NOMEM });
+        }
+        // SAFETY: only `register_error` stores a non-null `ErrorCallback`.
+        let handler: ErrorCallback = unsafe { core::mem::transmute(handler) };
+        // SAFETY: the registration contract keeps handler and argument live.
+        unsafe { handler(error.raw(), self.error_argument.load(Ordering::Acquire)) };
+        SourceErrorDisposition::Handled
     }
 
     fn fputs_default(&self, prefix: Option<&CStr>, message: &CStr) {
@@ -2082,8 +2220,13 @@ unsafe fn render_final_statistics(output: &OutputOwner, view: FinalProcessDiagno
 unsafe fn render_final_verbose_tail(output: &OutputOwner, page_record_bytes: usize) {
     let mut line = FinalOutputLine::new();
     let _ = write!(line, "mimalloc: process done {page_record_bytes}\n");
-    // SAFETY: `_mi_verbose_message` dispatches its one complete message
-    // directly. Unlike statistics it has no 255-byte buffered wrapper.
+    // Known divergence (an m7.callbacks gate blocker): source
+    // `_mi_verbose_message` delivers the `mimalloc: ` prefix and the body as
+    // two `_mi_fputs` fragments, as `VERBOSE_PREFIX` does for `process init`.
+    // This joined line stays until the runtime-destroy final-output fixture
+    // and the diagnostic-output-owner expected trace move with it.
+    // SAFETY: unlike statistics this has no 255-byte buffered wrapper; the
+    // caller owns the current output phase.
     unsafe { output.raw_message(line.as_message()) };
 }
 
@@ -2185,7 +2328,7 @@ mod tests {
 
     use super::{
         DiagnosticOptionSnapshot, FinalDiagnosticOutputError, FinalProcessDiagnosticView, FinalProcessInfo,
-        FinalStatisticsOutputPermit, OutputCallback, OutputOwner, SourceFormattedMessage,
+        FinalStatisticsOutputPermit, OutputCallback, OutputOwner, SourceErrorDisposition, SourceFormattedMessage,
         ThreadWarningPrefix,
     };
     use crate::{
@@ -2985,8 +3128,9 @@ mod tests {
     }
 
     #[test]
-    fn thread_warning_prefix_uses_source_zero_minimal_uppercase_and_64_byte_bounds() {
-        assert_eq!(ThreadWarningPrefix::new(0).as_c_str().to_bytes(), b"mimalloc: warning: thread 0x0: ");
+    fn thread_warning_prefix_uses_source_two_digit_minimum_uppercase_and_64_byte_bounds() {
+        assert_eq!(ThreadWarningPrefix::new(0).as_c_str().to_bytes(), b"mimalloc: warning: thread 0x00: ");
+        assert_eq!(ThreadWarningPrefix::new(0xA).as_c_str().to_bytes(), b"mimalloc: warning: thread 0x0A: ");
         assert_eq!(
             ThreadWarningPrefix::new(0x00a_bC0d).as_c_str().to_bytes(),
             b"mimalloc: warning: thread 0xABC0D: ",
@@ -3926,7 +4070,113 @@ mod tests {
         .unwrap();
         std::println!("api.print={}", normalized_capture(&print));
         std::println!("api.messages={}", normalized_capture(&capture));
+        drop(owner);
+
+        for (scenario, entries) in error_trace_scenarios() {
+            let environment: std::vec::Vec<std::string::String> =
+                entries.iter().map(|entry| hex(&entry[..entry.len() - 1])).collect();
+            std::println!("error.{scenario}.environment={}", environment.join(":"));
+            install_option_trace_environment(&entries);
+            let capture = Capture::new();
+            let owner = initialized_option_owner(&capture);
+            capture.reset();
+            let results: std::vec::Vec<std::string::String> = error_trace_reports(&owner)
+                .iter()
+                .map(|(code, argument, errno)| std::format!("{code}/{argument}/{errno}"))
+                .collect();
+            std::println!("error.{scenario}.results={}", results.join(","));
+            std::println!("error.{scenario}.messages={}", normalized_capture(&capture));
+        }
+        for (name, identity) in [("zero", 0), ("small", 0xA), ("wide", 0xA_BC0D)] {
+            std::println!(
+                "format.thread_prefix.{name}={}",
+                hex(ThreadWarningPrefix::new(identity).as_c_str().to_bytes()),
+            );
+        }
         std::println!("CRABC_MI_M7_OPTIONS_TRACE_END");
+    }
+
+    /// Environment images for the `_mi_error_message` gate, mirrored by the
+    /// pinned C probe.
+    fn error_trace_scenarios() -> std::vec::Vec<(&'static str, std::vec::Vec<std::vec::Vec<u8>>)> {
+        std::vec![
+            ("hidden", environment_entries(&[])),
+            ("capped", environment_entries(&[b"mimalloc_show_errors=1", b"mimalloc_max_errors=1"])),
+            ("verbose", environment_entries(&[b"mimalloc_verbose=1", b"mimalloc_max_errors=0"])),
+        ]
+    }
+
+    static ERROR_HANDLER_CODE: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+    static ERROR_HANDLER_ARGUMENT: AtomicUsize = AtomicUsize::new(0);
+    static ERROR_HANDLER_SENTINEL: u8 = 0;
+
+    unsafe extern "C" fn record_error(code: core::ffi::c_int, argument: *mut c_void) {
+        ERROR_HANDLER_CODE.store(code, Ordering::Relaxed);
+        ERROR_HANDLER_ARGUMENT.store(argument as usize, Ordering::Relaxed);
+    }
+
+    /// The fixed report sequence: two default-policy reports, one through a
+    /// registered handler, and one after clearing it. Each result is the
+    /// handler's code (0 when uncalled), whether it saw the registered
+    /// argument, and the errno a zero-errno libc boundary would then hold.
+    fn error_trace_reports(owner: &OutputOwner) -> std::vec::Vec<(i32, u8, i32)> {
+        let sentinel = core::ptr::addr_of!(ERROR_HANDLER_SENTINEL).cast_mut().cast::<c_void>();
+        let mut results = std::vec::Vec::new();
+        let steps: [(Errno, &CStr, bool); 5] = [
+            (Errno::NOMEM, c"first report\n", false),
+            (Errno::INVAL, c"second report\n", false),
+            (Errno::OVERFLOW, c"third report\n", false),
+            (Errno::FAULT, c"handled report\n", true),
+            (Errno::AGAIN, c"cleared report\n", false),
+        ];
+        for (error, message, handled) in steps {
+            ERROR_HANDLER_CODE.store(0, Ordering::Relaxed);
+            ERROR_HANDLER_ARGUMENT.store(0, Ordering::Relaxed);
+            // SAFETY: the handler is a static function with a static
+            // argument, and reports below are serialized with registration.
+            unsafe { owner.register_error(handled.then_some(record_error as _), sentinel) };
+            // SAFETY: the capture outlives this synchronous report.
+            let disposition = unsafe {
+                owner.error_message(error, SourceFormattedMessage::from_source_formatted(message))
+            };
+            let errno = match disposition {
+                SourceErrorDisposition::Handled => 0,
+                SourceErrorDisposition::DefaultErrno(errno) => errno.raw(),
+            };
+            let argument = u8::from(ERROR_HANDLER_ARGUMENT.load(Ordering::Relaxed) == sentinel as usize);
+            results.push((ERROR_HANDLER_CODE.load(Ordering::Relaxed), argument, errno));
+        }
+        // SAFETY: no report is in flight.
+        unsafe { owner.register_error(None, core::ptr::null_mut()) };
+        results
+    }
+
+    #[test]
+    fn error_message_uses_its_own_cap_prefix_and_handler_or_default_errno() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        // `max_errors=1` admits the old counts 0 and 1; `max_warnings=0`
+        // would have suppressed a second warning, proving separate caps.
+        let entries = environment_entries(&[
+            b"mimalloc_show_errors=1", b"mimalloc_max_errors=1", b"mimalloc_max_warnings=0",
+        ]);
+        install_option_trace_environment(&entries);
+        let capture = Capture::new();
+        let owner = initialized_option_owner(&capture);
+        capture.reset();
+        assert_eq!(error_trace_reports(&owner), std::vec![
+            (0, 0, Errno::NOMEM.raw()),
+            (0, 0, Errno::INVAL.raw()),
+            (0, 0, Errno::NOMEM.raw()),
+            (Errno::FAULT.raw(), 1, 0),
+            (0, 0, Errno::NOMEM.raw()),
+        ]);
+        assert_eq!(capture.count(), 4, "two admitted reports, each prefix then body");
+        let prefix = std::format!("mimalloc: error: thread 0x{:02X}: ", thread_pointer_identity());
+        assert_eq!(capture.message(0), prefix.as_bytes());
+        assert_eq!(capture.message(1), b"first report\n");
+        assert_eq!(capture.message(3), b"second report\n");
     }
 
     fn source_option_clamp_for_test(value: i64, min: i64, max: i64) -> i64 {

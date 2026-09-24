@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -50,6 +51,9 @@ GATE_IDS = (
 # Cross-cutting gates own behavior rather than interface items or modes.
 ITEMLESS_GATE_IDS = frozenset({"m7.option-effects", "m7.visitation", "m7.baseline"})
 EVIDENCE_TIMEOUT_SECONDS = 3600
+# An evidence command argument may name this run's fresh per-evidence
+# directory, for runners that refuse to replace an existing receipt.
+SCRATCH_PLACEHOLDER = "{scratch}"
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m7-gate"
 
 OPTIONS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_options_oracle.c"
@@ -62,6 +66,7 @@ OPTIONS_SCENARIOS = (
     "empty", "canonical", "legacy", "invalid", "verbose", "guarded_boolean",
     "guarded_numeric", "size_without_digits", "cap", "overlong",
 )
+OPTIONS_ERROR_SCENARIOS = ("hidden", "capped", "verbose")
 RUST_TARGET = "x86_64-unknown-linux-musl"
 
 
@@ -297,13 +302,26 @@ def gate_report(
     }
 
 
+def evidence_command(command: Sequence[str], scratch: Path) -> list[str]:
+    """Bind the one `{scratch}` placeholder to this run's fresh directory."""
+
+    return [argument.replace(SCRATCH_PLACEHOLDER, str(scratch)) for argument in command]
+
+
 def run_evidence(runnable: Mapping[str, Sequence[str]], artifacts: Path) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
     for evidence_id, command in runnable.items():
+        name = evidence_id.replace(":", "-")
+        # Evidence that refuses to overwrite its own receipt gets a directory
+        # that this gate run alone owns.
+        scratch = artifacts / name
+        shutil.rmtree(scratch, ignore_errors=True)
+        scratch.mkdir(parents=True)
+        command = evidence_command(command, scratch)
         record = harness.command_record(
-            list(command), cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+            command, cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
         )
-        log = artifacts / f"{evidence_id.replace(':', '-')}.log"
+        log = artifacts / f"{name}.log"
         log.write_text(str(record["stdout"]) + str(record["stderr"]))
         results[evidence_id] = {
             "command": list(command),
@@ -358,6 +376,10 @@ def require_complete_options_trace(trace: Mapping[str, str], description: str) -
         for name in names:
             if not re.fullmatch(r"-?[0-9]+,[012],[0-9]+", trace.get(f"scenario.{scenario}.option.{name}", "")):
                 raise harness.HarnessError(f"{description} lacks a valid {scenario} record for {name}")
+    for scenario in OPTIONS_ERROR_SCENARIOS:
+        for suffix in ("environment", "results", "messages"):
+            if f"error.{scenario}.{suffix}" not in trace:
+                raise harness.HarnessError(f"{description} lacks error.{scenario}.{suffix}")
     if not trace.get("api.print"):
         raise harness.HarnessError(f"{description} lacks the options print")
 

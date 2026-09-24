@@ -13,6 +13,7 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
 #endif
+#include <errno.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -130,6 +131,73 @@ static void record(const char* step, long value) { printf("api.%s=%ld\n", step, 
 
 static void image(const char* step, mi_option_t option) {
   printf("api.%s=%ld,%d\n", step, mi_options[option].value, (int)mi_options[option].init);
+}
+
+/* `_mi_error_message` (src/options.c:596-608): two default-policy reports,
+   one through a registered handler, and one after clearing it. Each result
+   is the handler's code (0 when uncalled), whether it saw the registered
+   argument, and errno after a report that started with errno 0. */
+static int handler_code;
+static void* handler_argument;
+static char handler_sentinel;
+
+static void record_error(int code, void* argument) {
+  handler_code = code;
+  handler_argument = argument;
+}
+
+static void run_error_scenario(const char* scenario, const char* const* entries, size_t count) {
+  static capture_t capture;
+  static const struct { int code; const char* message; bool handled; } steps[] = {
+    { ENOMEM, "first report\n", false },
+    { EINVAL, "second report\n", false },
+    { EOVERFLOW, "third report\n", false },
+    { EFAULT, "handled report\n", true },
+    { EAGAIN, "cleared report\n", false },
+  };
+  printf("error.%s.environment=", scenario);
+  for (size_t i = 0; i < count; i++) {
+    if (i != 0) printf(":");
+    print_hex(entries[i], strlen(entries[i]));
+    scenario_vector[i] = (char*)entries[i];
+  }
+  printf("\n");
+  scenario_vector[count] = NULL;
+  environ = scenario_vector;
+  reset_options();
+  memset(&capture, 0, sizeof(capture));
+  mi_register_output(&capture_output, &capture);
+  initialize_options();
+  capture.count = 0;
+  printf("error.%s.results=", scenario);
+  for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++) {
+    handler_code = 0;
+    handler_argument = NULL;
+    mi_register_error(steps[i].handled ? &record_error : NULL, &handler_sentinel);
+    errno = 0;
+    _mi_error_message(steps[i].code, "%s", steps[i].message);
+    printf("%s%d/%d/%d", i == 0 ? "" : ",", handler_code,
+           handler_argument == &handler_sentinel ? 1 : 0, errno);
+  }
+  printf("\n");
+  mi_register_error(NULL, NULL);
+  printf("error.%s.messages=", scenario);
+  print_capture(&capture);
+}
+
+#define ERROR_RUN(name, ...) do { \
+  static const char* const entries[] = { __VA_ARGS__ }; \
+  const size_t count = sizeof(entries) / sizeof(entries[0]); \
+  run_error_scenario(name, entries, (count == 1 && entries[0] == NULL) ? 0 : count); \
+} while (0)
+
+/* `mi_vfprintf_thread`'s `"%sthread 0x%tx: "` prefix for fixed identities. */
+static void print_thread_prefix(const char* name, uintptr_t identity) {
+  char prefix[64];
+  _mi_snprintf(prefix, sizeof(prefix), "%sthread 0x%tx: ", "mimalloc: warning: ", identity);
+  printf("format.thread_prefix.%s=", name);
+  print_hex(prefix, strlen(prefix));
+  printf("\n");
 }
 
 int main(void) {
@@ -317,6 +385,12 @@ int main(void) {
     printf("api.messages=");
     print_capture(&capture);
   }
+  ERROR_RUN("hidden", NULL);
+  ERROR_RUN("capped", "mimalloc_show_errors=1", "mimalloc_max_errors=1");
+  ERROR_RUN("verbose", "mimalloc_verbose=1", "mimalloc_max_errors=0");
+  print_thread_prefix("zero", 0);
+  print_thread_prefix("small", 0xA);
+  print_thread_prefix("wide", 0xABC0D);
   printf("CRABC_MI_M7_OPTIONS_TRACE_END\n");
   return 0;
 }

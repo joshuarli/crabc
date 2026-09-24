@@ -44,7 +44,7 @@
   "evidence": {
     "differential:options-environment": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--options-differential"],
-      "scope": "Separate pinned-C and Rust processes install the same environment images and compare every descriptor's name, legacy spelling, KiB unit, value, init state, and mi_option_get_size; the TID-normalized deprecated/invalid warning fragments in table order; the boolean-versus-mi_option_set store path (guarded coupling); the clamp, size, set_default, enable/disable, and out-of-range results; and the complete mi_options_print_out output."
+      "scope": "Separate pinned-C and Rust processes install the same environment images and compare every descriptor's name, legacy spelling, KiB unit, value, init state, and mi_option_get_size; the TID-normalized deprecated/invalid warning fragments in table order; the boolean-versus-mi_option_set store path (guarded coupling); the clamp, size, set_default, enable/disable, and out-of-range results; the complete mi_options_print_out output; the _mi_error_message gate (verbose bypass, show_errors, max_errors cap, error prefix), handler argument and code, and default errno result; and the thread-prefix formatting."
     },
     "differential:deferred-free-callback": {
       "command": ["python3", "compat/allocator/x86_64_deferred_free_callback_evidence.py", "--offline"],
@@ -53,13 +53,14 @@
     "differential:diagnostic-output-owner": {
       "command": [
         "python3", "compat/allocator/x86_64_diagnostic_output_owner_evidence.py", "collect",
-        "--archive", ".work/allocator-x86_64/allocator-cache/mimalloc-3.5.0.tar.gz"
+        "--archive", ".work/allocator-x86_64/allocator-cache/mimalloc-3.5.0.tar.gz",
+        "--report", "{scratch}/diagnostic-output-owner.json"
       ],
       "scope": "Pinned C and Rust agree on output registration, delayed-buffer flushing, NULL registration, post-init stderr routing, the warning cap, and final-statistics output."
     },
-    "differential:error-message": {
+    "differential:error-reporting-sites": {
       "command": null,
-      "scope": "Pinned C and Rust agree on mi_register_error, the verbose/show_errors/max_errors gate of mi_show_error_message, the error prefix, handler invocation, and the source error code handed to the libc errno boundary."
+      "scope": "Pinned C and Rust report the same error code and message at each selected-source _mi_error_message site (for example oversized or overflowing allocation, invalid or double free, corrupted free lists, and arena/PageMap failures), and the libc boundary applies the default errno result."
     },
     "differential:option-effects": {
       "command": null,
@@ -186,8 +187,7 @@
       ],
       "blocked_by": [
         "`VmPolicy` reads its separately resolved `VmOptions` image rather than the process descriptor table, so a later `mi_option_set` cannot reach arena_eager_commit, purge_decommits, allow_large_os_pages, reserve_huge_os_pages, reserve_huge_os_pages_at, reserve_os_memory, purge_delay, use_numa_nodes, disallow_os_alloc, destroy_on_exit, arena_reserve, arena_purge_mult, disallow_arena_alloc, generic_collect, page_commit_on_demand, allow_thp, minimal_purge_size, arena_max_object_size, or arena_is_numa_local.",
-        "The engine fixes the release default of page_reclaim_on_free (src/theap.c:229, src/free.c:500), page_full_retain (src/theap.c:230-231), page_max_candidates (src/page.c:805), max_vabits (src/page-map.c:41,273), pagemap_commit (src/page-map.c:61,299), page_max_reclaim, and page_cross_thread_max_reclaim (src/free.c:455,462) instead of reading the descriptor.",
-        "`max_errors` has no reader until the `_mi_error_message` route exists (m7.callbacks)."
+        "The engine fixes the release default of page_reclaim_on_free (src/theap.c:229, src/free.c:500), page_full_retain (src/theap.c:230-231), page_max_candidates (src/page.c:805), max_vabits (src/page-map.c:41,273), pagemap_commit (src/page-map.c:61,299), page_max_reclaim, and page_cross_thread_max_reclaim (src/free.c:455,462) instead of reading the descriptor."
       ]
     },
     {
@@ -201,14 +201,16 @@
       "compile_time_modes": [
         "MI_XMALLOC"
       ],
-      "acceptance": "Deferred-free heartbeat/force timing (src/page.c:987-1004) runs outside owner/engine/TLD/Theap projections; `mi_register_output` flushes the delayed buffer and switches routes as in src/options.c; `mi_register_error` and `_mi_error_message` report through the source verbose/show_errors/max_errors gate and either call the registered handler or return the source error code for libc's errno policy; `MI_XMALLOC` aborts on allocation failure.",
+      "acceptance": "Deferred-free heartbeat/force timing (src/page.c:987-1004) runs outside owner/engine/TLD/Theap projections; `mi_register_output` flushes the delayed buffer and switches routes as in src/options.c, delivering each source prefix and body as separate fragments; `mi_register_error` and every selected `_mi_error_message` site report through the source verbose/show_errors/max_errors gate and either call the registered handler or return the default errno result to libc's errno policy; `MI_XMALLOC` aborts on allocation failure.",
       "evidence": [
         "differential:deferred-free-callback",
         "differential:diagnostic-output-owner",
-        "differential:error-message"
+        "differential:options-environment",
+        "differential:error-reporting-sites"
       ],
       "blocked_by": [
-        "`mi_register_error`, `_mi_error_message`, `mi_show_error_message`, and the default error policy are absent.",
+        "No engine path reports through `OutputOwner::error_message`: the selected source's 37 `_mi_error_message` sites outside src/options.c (alloc, aligned, posix, arena, free, heap, init, libc, os, page-map, page, theap, threadlocal) are unported, and the libc boundary does not apply `SourceErrorDisposition::DefaultErrno`.",
+        "The verbose `process done` line reaches output as one fragment instead of the source `mimalloc: ` prefix and body (`render_final_verbose_tail`); splitting it requires the `runtime_destroy` final-output fixture and the diagnostic-output-owner expected trace to follow.",
         "The `MI_XMALLOC` abort-on-allocation-failure profile is absent.",
         "`mi_register_output` and `mi_register_deferred_free` have no public or prefixed C ABI mapping, and deferred-free has no `mi_collect` invocation evidence."
       ]
