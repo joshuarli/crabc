@@ -1782,15 +1782,18 @@ pub(crate) struct ProcessMainAllocationLease {
 }
 
 impl ProcessMainAllocationLease {
+    /// Rechecks only the storage's allocation-ready state.
+    ///
+    /// Both constructors bind the lease to the exact configuration,
+    /// subprocess, and PageMap tuple that `storage` records before its
+    /// allocation-ready Release publication, and the storage never replaces
+    /// that tuple afterward (see the `Sync` justification above). Comparing
+    /// the multi-word `MemoryConfig` and subprocess again on every use (twice
+    /// per free through `page_map`) could not observe a different value; the
+    /// state load is the part that can change, to `RETAINED`.
+    #[inline]
     fn ensure_valid(self) -> Result<(), ProcessMainInitError> {
-        self.storage.ensure_allocation_ready()?;
-        if self.storage.config() != self.config {
-            return Err(ProcessMainInitError::ConfigurationMismatch);
-        }
-        if self.storage.subprocess.load(Ordering::Acquire) != self.subprocess.owner_ptr() {
-            return Err(ProcessMainInitError::SubprocessMismatch);
-        }
-        Ok(())
+        self.storage.ensure_allocation_ready()
     }
 
     pub(crate) fn memory_config(self) -> Result<MemoryConfig, ProcessMainInitError> {
