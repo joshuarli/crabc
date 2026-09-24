@@ -663,6 +663,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-loader-short-stack  compare owned dynamic startup with musl at libc-test's 100 KiB stack limit
   general-dynamic-dlopen [--entry-mode dynamic-pie|dynamic-non-pie] DYNAMIC_SYSROOT  run bounded runtime loader dlfcn evidence against one supplied product
   owned-dynamic-sysroot  qualify both clean dynamic builds and extracted runtime
+  owned-combined-sysroot  compose, reproduce, package and extract the combined four-mode sysroot
   owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
   owned-dynamic-fork  test installed loader, TLS and pthread fork transactions
   runtime-private-facades [DYNAMIC_SYSROOT]  run crabc-rs RuntimeV1 dl/thread/cfile facades through an installed dynamic product
@@ -7176,7 +7177,7 @@ case "$command" in
     lua-dynamic-source-build) ;;
     lua-source-build-admission) ;;
     libc-owned-wordexp) ;;
-    owned-loader-short-stack|owned-dynamic-sysroot) ;;
+    owned-loader-short-stack|owned-dynamic-sysroot|owned-combined-sysroot) ;;
     owned-dynamic-pthread-exit) ;;
     owned-dynamic-fork) ;;
     runtime-private-facades) ;;
@@ -9880,6 +9881,11 @@ PY
         [ "$#" -eq 0 ] || fail "owned-dynamic-sysroot takes no arguments"
         ensure_image
         run_owned_dynamic_sysroot_probe
+        ;;
+    owned-combined-sysroot)
+        [ "$#" -eq 0 ] || fail "owned-combined-sysroot takes no arguments"
+        ensure_image
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_combined_sysroot.sh
         ;;
     owned-dynamic-fork)
         [ "$#" -eq 0 ] || fail "owned-dynamic-fork takes no arguments"
