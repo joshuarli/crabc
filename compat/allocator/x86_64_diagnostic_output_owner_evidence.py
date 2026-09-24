@@ -193,7 +193,9 @@ EXPECTED_RUST_FINAL_STATISTICS_TRACE = tuple(
         b"  elapsed   :    12.345 s\n",
         b"  process   : user: 5.678 s, system: 91.011 s, faults: 12, peak rss: 4.0 KiB, peak commit: 2.0 KiB\n",
         b"\n",
-        b"mimalloc: process done 97\n",
+        # `_mi_verbose_message` delivers its prefix and body as two fragments.
+        b"mimalloc: ",
+        b"process done 97\n",
     )
 )
 FINAL_STATIC_PREFIX_COUNT = 31
@@ -459,7 +461,7 @@ def validate_final_statistics_trace(c_trace: Sequence[str], rust_trace: Sequence
             raise EvidenceError("pinned C final-statistics process row drifted")
     if c_trace[FINAL_STATIC_PREFIX_COUNT + len(FINAL_PROCESS_ROWS)] != b"\n".hex():
         raise EvidenceError("pinned C final-statistics separator/order drifted")
-    if c_trace[-1] != b"mimalloc: process done 97\n".hex():
+    if tuple(c_trace[-2:]) != (b"mimalloc: ".hex(), b"process done 97\n".hex()):
         raise EvidenceError("pinned C final-statistics verbose-tail order drifted")
 
 
@@ -795,7 +797,11 @@ def validate_report(report: object) -> None:
     if {
         scenario: b"".join(bytes.fromhex(fragment) for fragment in fragments).decode("ascii")
         for scenario, fragments in rust_default_stderr.items()
-    } != EXPECTED_C_STDERR:
+    } != {
+        # The final-statistics scenario has no default-stderr Rust trace.
+        scenario: stream for scenario, stream in EXPECTED_C_STDERR.items()
+        if scenario != FINAL_STATISTICS_SCENARIO
+    }:
         raise EvidenceError("diagnostic-output C/Rust default-stderr reconstruction drifted")
 
 

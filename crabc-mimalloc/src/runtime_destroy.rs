@@ -458,7 +458,9 @@ mod tests {
                     matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable),
                     Ordering::Release,
                 );
-            } else if message.starts_with(b"mimalloc: process done ") {
+            } else if message.starts_with(b"process done ") {
+                // The body fragment after `_mi_verbose_message`'s separate
+                // `mimalloc: ` prefix fragment.
                 self.process_done_tails.fetch_add(1, Ordering::AcqRel);
                 self.process_done_root_unmapped
                     .store(!self.page_map_root_is_mapped(), Ordering::Release);

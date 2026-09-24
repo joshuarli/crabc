@@ -414,7 +414,7 @@ class RetainedStreamReaderTests(unittest.TestCase):
         report = self.complete_report()
         final = report["c_oracle"]["runs"][EVIDENCE.FINAL_STATISTICS_SCENARIO]
         final["stdout"] = final["stdout"].replace(
-            "6d696d616c6c6f633a2070726f6365737320646f6e652039370a",
+            "70726f6365737320646f6e652039370a",
             "0a",
         )
         with self.assertRaisesRegex(EVIDENCE.EvidenceError, "verbose-tail order"):

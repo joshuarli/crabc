@@ -2220,15 +2220,11 @@ unsafe fn render_final_statistics(output: &OutputOwner, view: FinalProcessDiagno
 
 unsafe fn render_final_verbose_tail(output: &OutputOwner, page_record_bytes: usize) {
     let mut line = FinalOutputLine::new();
-    let _ = write!(line, "mimalloc: process done {page_record_bytes}\n");
-    // Known divergence (an m7.callbacks gate blocker): source
-    // `_mi_verbose_message` delivers the `mimalloc: ` prefix and the body as
-    // two `_mi_fputs` fragments, as `VERBOSE_PREFIX` does for `process init`.
-    // This joined line stays until the runtime-destroy final-output fixture
-    // and the diagnostic-output-owner expected trace move with it.
-    // SAFETY: unlike statistics this has no 255-byte buffered wrapper; the
-    // caller owns the current output phase.
-    unsafe { output.raw_message(line.as_message()) };
+    let _ = write!(line, "process done {page_record_bytes}\n");
+    // `_mi_verbose_message` hands `_mi_fputs` its `mimalloc: ` prefix and the
+    // formatted body as two fragments. Unlike statistics it has no 255-byte
+    // buffered wrapper; the caller owns the current output phase.
+    output.fputs_default(Some(VERBOSE_PREFIX), line.as_message().as_c_str());
 }
 
 /// `"environment option mimalloc_%s has an invalid value.\n"`
@@ -2937,9 +2933,11 @@ mod tests {
         // SAFETY: this is the later init.c common-tail phase, after statistics.
         assert_eq!(unsafe { owner.final_process_done_message(97) }, Ok(true));
         assert_eq!(statistics_lines, 35);
-        assert_eq!(capture.count(), statistics_lines + 1);
+        // `_mi_verbose_message` delivers its prefix and body separately.
+        assert_eq!(capture.count(), statistics_lines + 2);
         assert_eq!(capture.message(statistics_lines - 1), b"\n");
-        assert_eq!(capture.message(statistics_lines), b"mimalloc: process done 97\n");
+        assert_eq!(capture.message(statistics_lines), b"mimalloc: ");
+        assert_eq!(capture.message(statistics_lines + 1), b"process done 97\n");
     }
 
     #[test]

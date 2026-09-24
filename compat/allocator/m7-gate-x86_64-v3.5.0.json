@@ -210,7 +210,6 @@
       ],
       "blocked_by": [
         "No engine path reports through `OutputOwner::error_message`: the selected source's 37 `_mi_error_message` sites outside src/options.c (alloc, aligned, posix, arena, free, heap, init, libc, os, page-map, page, theap, threadlocal) are unported, and the libc boundary does not apply `SourceErrorDisposition::DefaultErrno`.",
-        "The verbose `process done` line reaches output as one fragment instead of the source `mimalloc: ` prefix and body (`render_final_verbose_tail`); splitting it requires the `runtime_destroy` final-output fixture and the diagnostic-output-owner expected trace to follow.",
         "The `MI_XMALLOC` abort-on-allocation-failure profile is absent.",
         "`mi_register_output` and `mi_register_deferred_free` have no public or prefixed C ABI mapping, and deferred-free has no `mi_collect` invocation evidence."
       ]
