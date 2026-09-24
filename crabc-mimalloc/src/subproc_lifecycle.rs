@@ -378,30 +378,40 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
     let mut release = Some(release);
     loop {
         let step = match child.stage() {
-            // subproc.c:207-211: remove the child from the subprocess list.
+            // subproc.c:207-221: remove the child from the subprocess list,
+            // then force-destroy each non-main Heap. Rust destroys the
+            // non-main Heaps first: their page releases go through the
+            // child's page backing, which requires its registry membership,
+            // and nothing in that destruction reads the subprocess list. A
+            // destroy that the live-thread check refuses changes nothing.
             // SAFETY: forwarded quiescence and exact-registry obligations.
             ChildMainHeapStage::HeapReady if terminal => unsafe {
-                child
-                    .unlink_registry_and_detach_pages_terminal(registry, binding)
-                    .map_err(ChildSubprocessDestroyError::Registry)
+                destroy_non_main_heaps(&mut child, binding).and_then(|()| {
+                    child
+                        .unlink_registry_and_detach_pages_terminal(registry, binding)
+                        .map_err(ChildSubprocessDestroyError::Registry)
+                })
             },
             // SAFETY: as above.
             ChildMainHeapStage::HeapReady => unsafe {
-                child
-                    .unlink_registry_and_finish_metadata_pages(registry, binding)
-                    .map_err(ChildSubprocessDestroyError::Registry)
+                if child.with_child_image(|image| image.get_ref().identity().live_thread_count()) != Some(0) {
+                    Err(ChildSubprocessDestroyError::Registry(ChildMetadataPageEngineError::LiveThreads))
+                } else {
+                    destroy_non_main_heaps(&mut child, binding).and_then(|()| {
+                        child
+                            .unlink_registry_and_finish_metadata_pages(registry, binding)
+                            .map_err(ChildSubprocessDestroyError::Registry)
+                    })
+                }
             },
-            // subproc.c:215-221 force-destroys each non-main Heap, then
             // heap.c:151-155 `_mi_heap_detach_theaps` of the main Heap: the
             // remaining child-thread Theaps, then the metadata Theap.
             // SAFETY: registry unlink succeeded, terminal quiescence holds for
             // the terminal steps, and `metadata` attached the metadata Theap.
             ChildMainHeapStage::RegistryUnlinked => unsafe {
                 let threads = if terminal {
-                    destroy_non_main_heaps_terminal(&mut child).and_then(|()| {
-                        child.detach_child_thread_theaps_terminal()
-                            .map_err(ChildSubprocessDestroyError::ChildThreadTheapDetach)
-                    })
+                    child.detach_child_thread_theaps_terminal()
+                        .map_err(ChildSubprocessDestroyError::ChildThreadTheapDetach)
                 } else {
                     Ok(())
                 };
@@ -444,12 +454,14 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
 }
 
 /// `_mi_heap_force_destroy` of every non-main Heap of `child`
-/// (`subproc.c:215-221`) at process destruction, in list order.
+/// (`subproc.c:215-221`), in list order, just before its registry unlink.
 ///
 /// # Safety
-/// Permanent terminal quiescence, after the child's registry unlink.
-unsafe fn destroy_non_main_heaps_terminal(
+/// No thread uses the child again (all its threads finished, or permanent
+/// terminal quiescence).
+unsafe fn destroy_non_main_heaps(
     child: &mut ChildMainHeapContextOwner<'_>,
+    binding: ProcessMainBackingBinding,
 ) -> Result<(), ChildSubprocessDestroyError> {
     let main = child.main_heap_pointer().ok_or(ChildSubprocessDestroyError::InvalidState)?;
     loop {
@@ -466,7 +478,7 @@ unsafe fn destroy_non_main_heaps_terminal(
         }
         let Some(heap) = first else { return Ok(()) };
         // SAFETY: forwarded quiescence; `heap` is a non-main Heap of `child`.
-        unsafe { crate::types::heap_registry::lifecycle::child_heap_force_destroy_terminal(child, heap) }
+        unsafe { crate::types::heap_registry::lifecycle::child_heap_force_destroy_for_subprocess_destroy(child, binding, heap) }
             .map_err(ChildSubprocessDestroyError::NonMainHeapDestroy)?;
     }
 }
@@ -999,7 +1011,26 @@ pub(crate) unsafe fn native_child_thread_free_local(
     use crate::runtime_lifecycle::NativePageFreeResult;
     // SAFETY: current-thread slot, no other reference live.
     let current = unsafe { current_child_member() }.as_mut()?;
-    let binding = current.binding;
+    let (id, binding) = (current.id, current.binding);
+    // SAFETY: the live block keeps its page.
+    let owner_theap = unsafe { binding.page_map().lookup_live_allocation(block) }
+        .ok()
+        .flatten()
+        .map(|allocation| unsafe { crate::types::Page::theap_at(allocation.page()) });
+    if owner_theap.is_some_and(|theap| Some(theap) != current.member.theap_pointer().map(core::ptr::NonNull::as_ptr)) {
+        // A page of this thread's Theap for a non-main Heap: its engine runs
+        // under the record lock, as the Heap operations do.
+        let owner: *mut crate::meta::ChildThreadOwner = current.member.owner_mut();
+        // SAFETY: the admitted thread; the record lock excludes every other
+        // context operation.
+        let freed = unsafe {
+            id.with_owner(|child| match child.as_mut() {
+                Some(child) => crate::meta::ChildThreadOwner::free_block(owner, child, binding, block).is_ok(),
+                None => false,
+            })
+        };
+        return Some(if freed == Ok(true) { NativePageFreeResult::Freed } else { NativePageFreeResult::Retained });
+    }
     // SAFETY: the admitted thread frees its own live block.
     let freed = unsafe {
         current.member.with_page_engine(binding, |_child, engine| unsafe { engine.free(block) })
@@ -1008,6 +1039,35 @@ pub(crate) unsafe fn native_child_thread_free_local(
         Ok(Ok(())) => NativePageFreeResult::Freed,
         Ok(Err(_)) | Err(_) => NativePageFreeResult::Retained,
     })
+}
+
+/// Production `mi_heap_malloc(heap, size)` on the current child thread; see
+/// `types::heap_registry::lifecycle::child_heap_allocate`. `None` when the
+/// current thread is not a child member.
+///
+/// # Safety
+/// `heap` is a live non-main Heap of the current thread's child.
+pub(crate) unsafe fn native_child_heap_allocate(
+    heap: core::ptr::NonNull<crate::types::Heap>,
+    size: usize,
+) -> Option<Option<core::ptr::NonNull<u8>>> {
+    // SAFETY: current-thread slot, no other reference live.
+    let current = unsafe { current_child_member() }.as_mut()?;
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return Some(None);
+    };
+    let (id, binding) = (current.id, current.binding);
+    let member = &mut current.member;
+    // SAFETY: forwarded; the record lock excludes every other context operation.
+    let allocated = unsafe {
+        id.with_owner(|child| match child.as_mut() {
+            Some(child) => crate::types::heap_registry::lifecycle::child_heap_allocate(child, member, binding, heap, size, false)
+                .ok()
+                .flatten(),
+            None => None,
+        })
+    };
+    Some(allocated.ok().flatten())
 }
 
 /// Frees a block on a page of a child subprocess's main Heap that the
@@ -1024,7 +1084,7 @@ pub(crate) unsafe fn free_child_block_nonlocal(
 ) -> Option<crate::single_thread::ChildNonlocalFreeResult> {
     use crate::single_thread::ChildNonlocalFreeResult;
     // SAFETY: the live block keeps its page and Heap alive.
-    let (heap, identity) = unsafe { crate::types::Heap::child_main_heap_of_page(allocation.page()) }?;
+    let (heap, identity) = unsafe { crate::types::Heap::child_heap_of_page(allocation.page()) }?;
     // `ChildSubprocessImage` is `repr(C)` with its identity first, and the
     // live block keeps its child allocated for the call.
     // SAFETY: as above; the image is pinned in its parent metadata block.

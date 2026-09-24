@@ -11426,7 +11426,7 @@ fn native_free_pointer_first_nonlocal(
     // route: its abandoned pages belong to the child main Heap and arenas,
     // never to the process-main W03 tail below.
     // SAFETY: the exact live allocation keeps its page and Heap alive.
-    if unsafe { crate::types::Heap::child_main_heap_of_page(allocation.page()) }.is_some() {
+    if unsafe { crate::types::Heap::child_heap_of_page(allocation.page()) }.is_some() {
         use crate::single_thread::ChildNonlocalFreeResult;
         let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
             .ready_child_subprocess_inputs()

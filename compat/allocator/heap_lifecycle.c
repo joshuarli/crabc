@@ -57,6 +57,10 @@ static bool visit_count(mi_heap_t* heap, void* arg) {
   return true;
 }
 
+/* The Heap and block that outlive the worker thread. */
+static mi_heap_t* sixth;
+static void* sixth_block;
+
 static void* worker_main(void* arg) {
   mi_subproc_t* const subproc = (mi_subproc_t*)arg;
   mi_subproc_add_current_thread(_mi_subproc_to_id(subproc));
@@ -141,6 +145,42 @@ static void* worker_main(void* arg) {
   push((int64_t)mi_atomic_load_relaxed(&theap->refcount));
   push_counts(subproc);
   { mi_heap_t* const order[] = { main_heap }; push(list_is(subproc, order, 1)); }
+
+  /* The next Heap image is allocated from the main Heap through
+     `_mi_heap_theap(heap_main)`, which moves the cached Theap to the main
+     Heap's Theap and so frees the destroyed Heap's Theap. */
+  mi_heap_t* const fifth = mi_heap_new();
+  require(fifth != NULL);
+  push(_mi_theap_cached() == main_theap);
+  push(subproc->stats.theaps.current);
+
+  /* mi_heap_delete with live pages (heap.c:228-238, arena.c:2531-2638):
+     the pages move to the main Heap as abandoned pages. */
+  void* const d = mi_heap_malloc(fifth, 64);
+  void* const e = mi_heap_malloc(fifth, 1000);
+  require(d != NULL && e != NULL);
+  mi_page_t* const d_page = _mi_ptr_page(d);
+  mi_page_t* const e_page = _mi_ptr_page(e);
+  mi_heap_delete(fifth);
+  push(mi_page_heap(d_page) == main_heap && mi_page_heap(e_page) == main_heap);
+  push(mi_page_is_abandoned(d_page));
+  push(mi_page_is_abandoned_mapped(d_page));
+  push((int64_t)mi_atomic_load_relaxed(&main_heap->abandoned_count[_mi_bin(mi_page_block_size(d_page))]));
+  push((int64_t)mi_atomic_load_relaxed(&main_heap->abandoned_count[_mi_bin(mi_page_block_size(e_page))]));
+  push((int64_t)d_page->used);
+  push(subproc->stats.theaps.current);
+  push_counts(subproc);
+  /* The last block of a moved page frees it (free.c:372-379). */
+  const size_t d_bin = _mi_bin(mi_page_block_size(d_page));
+  mi_free(d);
+  push((int64_t)mi_atomic_load_relaxed(&main_heap->abandoned_count[d_bin]));
+
+  /* A thread that finishes with a live block on a non-main Heap's page
+     abandons that page to the Heap (theap.c:95-156, arena.c:1304-1356). */
+  sixth = mi_heap_new();
+  require(sixth != NULL);
+  sixth_block = mi_heap_malloc(sixth, 64);
+  require(sixth_block != NULL);
   mi_thread_done();
   return NULL;
 }
@@ -160,6 +200,12 @@ int main(void) {
   /* `_mi_thread_done` released the cached Theap. */
   push(child->stats.theaps.current);
   push(child->stats.theaps.total);
+  mi_page_t* const sixth_page = _mi_ptr_page(sixth_block);
+  push(mi_page_heap(sixth_page) == sixth && sixth->theaps == NULL);
+  push(mi_page_is_abandoned_mapped(sixth_page));
+  push((int64_t)mi_atomic_load_relaxed(&sixth->abandoned_count[_mi_bin(mi_page_block_size(sixth_page))]));
+  /* mi_subproc_destroy force-destroys the non-main Heap with its abandoned
+     page and live block (subproc.c:215-221). */
   mi_subproc_destroy(_mi_subproc_to_id(child));
   for (size_t i = 0; i < value_count; i++) {
     printf("m6.heap.lifecycle.%zu=%lld\n", i, (long long)values[i]);

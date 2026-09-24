@@ -88,8 +88,10 @@ last section allocates from a Heap: the per-thread Theap the first
 `mi_heap_malloc` creates (list positions, thread-local slot, the cached-Theap
 reference counts that the nested allocation of the Heap's per-arena page
 record moves to the main-Heap Theap, `theaps` statistics), a local free, and
-`mi_heap_destroy` with live pages, whose cached Theap is released when the
-thread finishes. `mi_heap_delete` of a Heap with pages is not covered yet.
+`mi_heap_destroy` with live pages, whose cached Theap is released by the next
+main-Heap allocation, `mi_heap_delete` moving live pages to the main Heap as
+abandoned pages, a thread finishing with a live block on a non-main Heap's
+page, and `mi_subproc_destroy` of that Heap with its abandoned page.
 Logs live under `x86_64/heap-lifecycle` in the allocator artifacts
 directory.
 

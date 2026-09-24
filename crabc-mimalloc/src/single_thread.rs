@@ -1419,7 +1419,8 @@ pub(crate) enum ChildNonlocalFreeResult {
 
 /// Pinned `mi_free_block_mt(page, block, allow_collect = true)` and
 /// `mi_free_try_collect_mt` (`free.c:372-514`) for a block on a page of a
-/// child subprocess's main Heap that the freeing thread does not own.
+/// child subprocess's Heap (main or not) that the freeing thread does not
+/// own.
 ///
 /// A page with a live owner receives the block on its thread-free list. An
 /// abandoned page is claimed by the publication; this free then collects it
@@ -1433,8 +1434,8 @@ pub(crate) enum ChildNonlocalFreeResult {
 /// OS-backed singleton pages are retained rather than released.
 ///
 /// # Safety
-/// `allocation` is an exact live allocation on a page of the child whose
-/// main Heap is `heap`, observed through the process PageMap that
+/// `allocation` is an exact live allocation on a page of `heap`, a Heap of
+/// the child, observed through the process PageMap that
 /// `page_map` projects for owned ranges; `backing` pairs that child's arenas
 /// with the same PageMap. The child stays alive through the call.
 pub(crate) unsafe fn free_child_page_block_nonlocal(
@@ -1458,8 +1459,9 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
             abandoned::continue_post_owner_exit_singleton_remote_claim(claim, |release| {
                 match release.backing() {
                     abandoned::ClaimedPostOwnerExitSingletonBacking::Arena => {
-                        match release_claimed_process_arena_singleton_page(
+                        match release_claimed_process_arena_singleton_page_with_ordinary_clear(
                             page_map, backing, release.page(), release.memory(),
+                            |arena, slice_index| clear_child_heap_ordinary_bit(heap, arena, slice_index),
                         ) {
                             ClaimedProcessArenaTerminalRelease::Released => {
                                 abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released
@@ -1495,12 +1497,13 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
             |memory, block_size| {
                 let arena = backing.arena_for_memory(memory)
                     .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)?;
-                select_child_main_mapped_abandoned_page(&arena, heap, memory, block_size)
+                select_child_mapped_abandoned_page(&arena, heap, memory, block_size)
             },
             |page| abandoned::collect_post_owner_exit_local_free_false(page),
             |_candidate| abandoned::ReclaimOnFreeOutcome::Declined,
-            |release| match release_claimed_process_regular_arena_page(
+            |release| match release_claimed_process_regular_arena_page_with_ordinary_clear(
                 page_map, backing, release.page(), release.memory(),
+                |arena, slice_index| clear_child_heap_ordinary_bit(heap, arena, slice_index),
             ) {
                 ClaimedProcessArenaTerminalRelease::Released => {
                     abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Released
@@ -1523,25 +1526,42 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
     }
 }
 
-/// Source `_mi_heap_destroy_pages` (`arena.c:2640-2644`) for a non-main
-/// Heap of a child subprocess: `mi_heap_delete_page` with no target
-/// (`arena.c:2531-2560`) for every page on the Heap's per-arena page records,
-/// in arena and slice order. Each page's ownership is claimed, its queue
-/// links and Theap identity cleared, `used` set to zero, and it is released
-/// by `_mi_arenas_page_free(page, NULL)`: the Heap's `page_bins` and `pages`
-/// statistics, then the PageMap, the Heap's ordinary bit, metadata, and
-/// slices. Live blocks die with their page. Returns `false` at the first
-/// page it cannot release, which stays claimed; an abandoned page (which a
-/// non-main Heap cannot have yet) is such a page. Source also visits the
-/// Heap's OS-abandoned list, which a non-main child Heap never fills.
+/// Where [`delete_non_main_heap_pages`] moves the pages that still hold live
+/// blocks: `heap_target` with `theap_target` (`mi_heap_delete_visit_info_t`).
+#[derive(Clone, Copy)]
+pub(crate) struct NonMainHeapPageTarget {
+    pub(crate) heap: NonNull<Heap>,
+    pub(crate) theap: NonNull<Theap>,
+}
+
+/// Source `mi_heap_delete_pages` (`arena.c:2608-2638`) for a non-main Heap of
+/// a child subprocess: `mi_heap_delete_page` (`arena.c:2531-2604`) for every
+/// page on the Heap's per-arena page records, in arena and slice order.
+///
+/// Each page's low owner bit is claimed; a live-owned page loses its queue
+/// links and Theap identity (`mi_page_set_theap(page, NULL)`), and an
+/// abandoned page is unabandoned from the Heap's own bitmap
+/// (`_mi_arenas_page_unabandon`). A page without live blocks is then freed
+/// (`_mi_arenas_page_free(page, NULL)`: the Heap's `page_bins` and `pages`
+/// statistics, PageMap, the Heap's ordinary bit, metadata, slices). A page
+/// with live blocks is freed with them when `target` is `None`
+/// (`mi_heap_destroy`, `used = 0`), or else moved (`mi_heap_delete`): it
+/// leaves the Heap's ordinary bitmap and statistics, joins the target main
+/// Heap's `pages_main` with `page->heap` changed and the target Theap's
+/// statistics, and is abandoned there (mapped unless full or a singleton).
+/// Returns `false` at the first page it cannot handle, which stays claimed.
+/// Source also visits the Heap's OS-abandoned list, which a non-main child
+/// Heap never fills (OS-backed child pages are not abandoned).
 ///
 /// # Safety
 /// Every Theap of `heap` has been detached (`mi_heap_free_theaps`), so no
 /// thread operates on its pages; `registry` is the child's arena registry,
 /// `page_map` the process PageMap projected for these owned ranges, and
-/// `backing` pairs the child's arenas with it.
-pub(crate) unsafe fn destroy_non_main_heap_pages(
+/// `backing` pairs the child's arenas with it. A target is the live child
+/// main Heap and the calling thread's Theap for it.
+pub(crate) unsafe fn delete_non_main_heap_pages(
     heap: NonNull<Heap>,
+    target: Option<NonMainHeapPageTarget>,
     registry: &crate::arena::ArenaRegistry,
     page_map: &PageMap,
     backing: &impl PageBacking<'static>,
@@ -1567,36 +1587,95 @@ pub(crate) unsafe fn destroy_non_main_heap_pages(
                 return false;
             };
             // SAFETY: no thread operates on the page (caller contract).
-            if !unsafe { Page::claim_for_heap_destroy(page) } {
-                return false;
+            let was_abandoned = unsafe { Page::claim_for_heap_delete(page) };
+            // SAFETY: the claimed page's metadata.
+            let (memory, block_size, singleton) = {
+                let page_ref = unsafe { page.as_ref() };
+                (page_ref.memid(), page_ref.block_size(), page_ref.reserved() == 1)
+            };
+            // SAFETY: as above.
+            if was_abandoned && unsafe { Page::is_abandoned_mapped_at(page) } {
+                // `_mi_arenas_page_unabandon(page, NULL)`, mapped arm.
+                let Some(bin) = size_class::bin(block_size) else { return false };
+                let Some(map) = Heap::non_main_abandoned_page(heap, &view, bin) else { return false };
+                if !abandoned::MappedAbandonedPages::clear_once_set(&map, slice) {
+                    return false;
+                }
+                // SAFETY: the claimed page's bit is gone.
+                unsafe { Page::clear_abandoned_mapped_at(page) };
+                if !abandoned::MappedAbandonedPages::decrement_after_identity_clear(&map) {
+                    return false;
+                }
             }
             // SAFETY: the claimed page's metadata.
-            let page_ref = unsafe { page.as_ref() };
-            let Some(statistics_bin) = page_statistics_bin(page_ref) else { return false };
-            let memory = page_ref.memid();
-            let singleton = page_ref.reserved() == 1;
-            if !heap_ref.record_page_released(statistics_bin) {
+            let Some(statistics_bin) = page_statistics_bin(unsafe { page.as_ref() }) else { return false };
+            // SAFETY: as above.
+            let used = unsafe { Page::used_at_claimed(page) };
+            let release = used == 0 || target.is_none();
+            if release {
+                // SAFETY: as above; a destroy discards the live blocks.
+                unsafe { Page::discard_used_for_heap_destroy(page) };
+                if !heap_ref.record_page_released(statistics_bin) {
+                    return false;
+                }
+                let clear_ordinary = |arena: &ArenaView<'static>, slice_index: usize| {
+                    clear_child_heap_ordinary_bit(heap, arena, slice_index)
+                };
+                // SAFETY: the claimed, queue-detached, zero-use page of `backing`.
+                let released = unsafe {
+                    if singleton {
+                        release_claimed_process_arena_singleton_page_with_ordinary_clear(
+                            page_map, backing, page, memory, clear_ordinary,
+                        )
+                    } else {
+                        release_claimed_process_regular_arena_page_with_ordinary_clear(
+                            page_map, backing, page, memory, clear_ordinary,
+                        )
+                    }
+                };
+                if released != ClaimedProcessArenaTerminalRelease::Released {
+                    return false;
+                }
+                continue;
+            }
+            let Some(target) = target else { return false };
+            // Move arm (`arena.c:2562-2603`): leave this Heap first.
+            if !clear_child_heap_ordinary_bit(heap, &view, slice) || !heap_ref.record_page_released(statistics_bin) {
                 return false;
             }
-            let clear_ordinary = |arena: &ArenaView<'static>, slice_index: usize| {
-                // SAFETY: the Heap's installed record for this arena.
-                unsafe { heap_ref.non_main_arena_pages_bitmap(arena, 0) }
-                    .and_then(|pages| pages.clear_range(slice_index, 1))
-                    == Some(true)
+            // SAFETY: the live target main Heap of this child.
+            let target_heap = unsafe { target.heap.as_ref() };
+            // SAFETY: the arena's in-place main record; `mi_heap_ensure_arena_pages`.
+            let installed = unsafe {
+                target_heap.ensure_child_main_arena_pages(view.arena().arena_index, NonNull::from(&view.arena().pages_main))
             };
-            // SAFETY: the claimed, queue-detached, zero-use page of `backing`.
-            let released = unsafe {
-                if singleton {
-                    release_claimed_process_arena_singleton_page_with_ordinary_clear(
-                        page_map, backing, page, memory, clear_ordinary,
-                    )
-                } else {
-                    release_claimed_process_regular_arena_page_with_ordinary_clear(
-                        page_map, backing, page, memory, clear_ordinary,
-                    )
+            // SAFETY: the in-place main bitmap of a live arena.
+            let joined = installed && unsafe { view.pages() }
+                .and_then(|pages| pages.set_range(slice, 1))
+                .is_some_and(|transition| transition.all_transitioned());
+            if !joined {
+                return false;
+            }
+            // SAFETY: the claimed page; the target Heap outlives it.
+            unsafe { Page::set_heap_for_move(page, target.heap) };
+            // SAFETY: the calling thread's live Theap for the target Heap.
+            if !unsafe { target.theap.as_ref() }.record_page_registered(statistics_bin) {
+                return false;
+            }
+            // `_mi_arenas_page_abandon(page, theap_target)`.
+            // SAFETY: the claimed page with its abandoned identity; `map` is
+            // the target main Heap's pair for this arena and bin.
+            let abandoned = unsafe {
+                let full = Page::used_at_claimed(page) == usize::from(page.as_ref().reserved());
+                match size_class::bin(block_size).filter(|&bin| bin < ARENA_BIN_COUNT && !full && !singleton) {
+                    Some(bin) => {
+                        let Some(map) = view.main_heap_abandoned_page(target.heap, bin) else { return false };
+                        abandoned::abandon_owned_abandoned_page(page, Some(&map))
+                    }
+                    None => abandoned::abandon_owned_abandoned_page(page, None::<&MainArenaMappedAbandonedPage<'_>>),
                 }
             };
-            if released != ClaimedProcessArenaTerminalRelease::Released {
+            if !matches!(abandoned, Ok(abandoned::AbandonResult::UnownedMapped | abandoned::AbandonResult::UnownedUnmapped)) {
                 return false;
             }
         }
@@ -1604,14 +1683,62 @@ pub(crate) unsafe fn destroy_non_main_heap_pages(
     true
 }
 
-/// The mapped-abandoned capability of a child main Heap's arena page; the
+/// The mapped-abandoned capability of a child Heap's arena page: the arena's
+/// `pages_main` pair for the child main Heap, or the Heap's own record for a
+/// non-main Heap.
+enum ChildMappedAbandonedPage {
+    Main(MainArenaMappedAbandonedPage<'static>),
+    NonMain(crate::types::heap_registry::NonMainArenaMappedAbandonedPage),
+}
+
+impl abandoned::MappedAbandonedPages for ChildMappedAbandonedPage {
+    fn bin(&self) -> usize {
+        match self { Self::Main(map) => map.bin(), Self::NonMain(map) => map.bin() }
+    }
+    fn page_slice_index(&self, memory: MemoryId) -> Option<usize> {
+        match self { Self::Main(map) => map.page_slice_index(memory), Self::NonMain(map) => map.page_slice_index(memory) }
+    }
+    fn is_clear(&self, slice_index: usize) -> bool {
+        match self { Self::Main(map) => map.is_clear(slice_index), Self::NonMain(map) => map.is_clear(slice_index) }
+    }
+    fn publish(&self, slice_index: usize) -> bool {
+        match self { Self::Main(map) => map.publish(slice_index), Self::NonMain(map) => map.publish(slice_index) }
+    }
+    fn try_claim<F>(&self, thread_sequence: usize, claim: F) -> abandoned::MappedAbandonedClaim
+    where
+        F: FnMut(usize) -> crate::bitmap::AbandonedBitmapClaim,
+    {
+        match self {
+            Self::Main(map) => map.try_claim(thread_sequence, claim),
+            Self::NonMain(map) => map.try_claim(thread_sequence, claim),
+        }
+    }
+    fn clear_once_set(&self, slice_index: usize) -> bool {
+        match self { Self::Main(map) => map.clear_once_set(slice_index), Self::NonMain(map) => map.clear_once_set(slice_index) }
+    }
+    fn decrement_after_identity_clear(&self) -> bool {
+        match self { Self::Main(map) => map.decrement_after_identity_clear(), Self::NonMain(map) => map.decrement_after_identity_clear() }
+    }
+}
+
+/// Clears `slice_index` in the ordinary `pages` bitmap of `heap`'s record
+/// for `arena`: `pages_main` for a subprocess main Heap, else its own.
+fn clear_child_heap_ordinary_bit(heap: NonNull<Heap>, arena: &ArenaView<'static>, slice_index: usize) -> bool {
+    // SAFETY: the Heap owns a page in this arena, so it and its record live.
+    let pages = unsafe {
+        if heap.as_ref().is_subprocess_main() { arena.pages() } else { heap.as_ref().non_main_arena_pages_bitmap(arena, 0) }
+    };
+    pages.and_then(|pages| pages.clear_range(slice_index, 1)) == Some(true)
+}
+
+/// The mapped-abandoned capability of a child Heap's arena page; the
 /// child counterpart of `select_process_main_mapped_abandoned_page`.
-fn select_child_main_mapped_abandoned_page(
+fn select_child_mapped_abandoned_page(
     arena: &ArenaView<'static>,
     heap: NonNull<Heap>,
     memory: MemoryId,
     block_size: usize,
-) -> Result<MainArenaMappedAbandonedPage<'static>, AbandonError> {
+) -> Result<ChildMappedAbandonedPage, AbandonError> {
     let Some(arena_memory) = memory.arena_memory() else {
         return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
     };
@@ -1632,7 +1759,13 @@ fn select_child_main_mapped_abandoned_page(
     if bin >= ARENA_BIN_COUNT || bin == BIN_FULL {
         return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
     }
-    arena.main_heap_abandoned_page(heap, bin).ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+    // SAFETY: the caller's live Heap.
+    if unsafe { heap.as_ref() }.is_subprocess_main() {
+        arena.main_heap_abandoned_page(heap, bin).map(ChildMappedAbandonedPage::Main)
+    } else {
+        Heap::non_main_abandoned_page(heap, arena, bin).map(ChildMappedAbandonedPage::NonMain)
+    }
+    .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
 }
 
 /// Consumes a coherent PageMap pointer observation through the source
@@ -42425,7 +42558,16 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         // The outer one-way drain already proved this current worker's
         // attachment is in `DrainingPages`.  Preserve source PageMap clear ->
         // `pages_main` clear order without retaining an attachment borrow.
-        unsafe { arena.pages() }
+        // A non-main Heap's ordinary bit lives in its own record.
+        // SAFETY: the live Heap of this Theap and its installed record.
+        let pages = unsafe {
+            if self.heap.as_ref().is_subprocess_main() {
+                arena.pages()
+            } else {
+                self.heap.as_ref().non_main_arena_pages_bitmap(&arena, 0)
+            }
+        };
+        pages
             .and_then(|pages| pages.clear_range(arena_memory.slice_index as usize, 1))
             == Some(true)
     }
@@ -42661,13 +42803,22 @@ impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for Production
             // SAFETY: the detached page retains its exact source arena claim.
             let arena = unsafe { self.arena.arena_for_memory(state.memid) }
                 .ok_or(ProductionOwnerExitError::UnsupportedPage)?;
-            let map = arena
-                .main_heap_abandoned_page(self.heap, bin)
-                .ok_or(ProductionOwnerExitError::UnsupportedPage)?;
-            // SAFETY: source order is force -> false -> queue/direct/count
-            // detach -> mapped identity/bit/count -> unown. `map` is the
-            // exact static-main bitmap/count pair for this arena and bin.
-            unsafe { abandoned::abandon_after_collect(page, Some(&map)) }
+            // SAFETY: the live Heap of this Theap.
+            if unsafe { self.heap.as_ref() }.is_subprocess_main() {
+                let map = arena
+                    .main_heap_abandoned_page(self.heap, bin)
+                    .ok_or(ProductionOwnerExitError::UnsupportedPage)?;
+                // SAFETY: source order is force -> false -> queue/direct/count
+                // detach -> mapped identity/bit/count -> unown. `map` is the
+                // exact main-Heap bitmap/count pair for this arena and bin.
+                unsafe { abandoned::abandon_after_collect(page, Some(&map)) }
+            } else {
+                // A non-main Heap's own `pages_abandoned[bin]` and count.
+                let map = Heap::non_main_abandoned_page(self.heap, &arena, bin)
+                    .ok_or(ProductionOwnerExitError::UnsupportedPage)?;
+                // SAFETY: as above, with the non-main Heap's pair.
+                unsafe { abandoned::abandon_after_collect(page, Some(&map)) }
+            }
         } else if memory_kind.is_os() {
             // `arena.c` links a non-arena page only after abandoned identity
             // is visible and before the common low-bit unown loop.

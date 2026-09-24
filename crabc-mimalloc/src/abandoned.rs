@@ -3109,10 +3109,45 @@ pub(crate) unsafe fn abandon_after_collect_with_before_unown<
     map: Option<&M>,
     before_unown: F,
 ) -> Result<AbandonResult, AbandonError> {
+    // SAFETY: forwarded.
+    unsafe { abandon_after_collect_inner(page, map, before_unown, false) }
+}
+
+/// `arena.c:_mi_arenas_page_abandon` for a page whose abandoned identity is
+/// already installed and whose low owner bit the caller holds: the move arm
+/// of `mi_heap_delete_page` (`arena.c:2562-2604`) sets the identity with
+/// `mi_page_set_theap(page, NULL)` before it hands the page to its target
+/// Heap. Otherwise as [`abandon_after_collect`].
+///
+/// # Safety
+/// As for [`abandon_after_collect`], except that the page is abandoned
+/// rather than live-associated, and `map` pairs the target Heap.
+pub(crate) unsafe fn abandon_owned_abandoned_page<M: MappedAbandonedPages + ?Sized>(
+    page: NonNull<Page>,
+    map: Option<&M>,
+) -> Result<AbandonResult, AbandonError> {
+    // SAFETY: forwarded.
+    unsafe { abandon_after_collect_inner(page, map, || Ok(()), true) }
+}
+
+unsafe fn abandon_after_collect_inner<
+    M: MappedAbandonedPages + ?Sized,
+    F: FnOnce() -> Result<(), AbandonError>,
+>(
+    page: NonNull<Page>,
+    map: Option<&M>,
+    before_unown: F,
+    identity_already_abandoned: bool,
+) -> Result<AbandonResult, AbandonError> {
     // SAFETY: caller retains the page lifecycle proof and has collected the
     // pre-abandon remote list. This projects raw fields only.
     let state = unsafe { Page::abandonment_state_at(page) };
-    if !is_owned(&state) || !is_live_associated(&state) {
+    let identity_ok = if identity_already_abandoned {
+        source_thread_identity(&state) == THREAD_ID_ABANDONED
+    } else {
+        is_live_associated(&state)
+    };
+    if !is_owned(&state) || !identity_ok {
         return Err(AbandonError::NotOwnedAssociated);
     }
     if state.reserved == 0 || state.block_size == 0 {
@@ -3146,7 +3181,9 @@ pub(crate) unsafe fn abandon_after_collect_with_before_unown<
         None
     };
 
-    set_abandoned_identity(&state);
+    if !identity_already_abandoned {
+        set_abandoned_identity(&state);
+    }
     if let Some((map, slice_index)) = mapped_slice {
         // Source order is significant: readers can only use a published bit
         // after the mapped abandoned identity exists.

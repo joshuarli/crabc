@@ -822,7 +822,7 @@ mod tests {
 
     /// Source destroys a child under the threads that still belong to it.
     /// A registered thread joins a child, keeps a live block and a non-main
-    /// Heap, and never finishes. Process destruction force-destroys that
+    /// Heap with a live block on its own Theap's page, and never finishes. Process destruction force-destroys that
     /// Heap, detaches the thread's Theap and pages, merges the child
     /// statistics (the thread still counted live) into main, and completes;
     /// the thread's later allocation is refused without touching the
@@ -856,8 +856,12 @@ mod tests {
                         let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(96, 16, false)
                             else { panic!("child allocation"); };
                         unsafe { block.as_ptr().write_bytes(0x5a, 96); }
-                        let _heap = native_child_heap_new().expect("a child member").expect("the child record is live")
+                        let heap = native_child_heap_new().expect("a child member").expect("the child record is live")
                             .expect("the child thread creates a Heap");
+                        // A live block on the non-main Heap's own Theap page.
+                        let heap_block = unsafe { crate::subproc::lifecycle::native_child_heap_allocate(heap, 64) }
+                            .expect("a child member").expect("the Heap allocates");
+                        unsafe { heap_block.as_ptr().write_bytes(0x6b, 64); }
                         ready.store(true, Ordering::Release);
                         while !stop.load(Ordering::Acquire) { std::thread::yield_now(); }
                         assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
@@ -876,9 +880,10 @@ mod tests {
                     assert_eq!(after.threads.current, before.threads.current + 1, "the member never finished");
                     // The child main and non-main Heaps, then main's own, are freed.
                     assert_eq!((after.heaps.total, after.heaps.current), (before.heaps.total + 2, 0));
-                    // The member Theap is counted and freed in the child.
+                    // The member's main-Heap Theap and its Theap for the
+                    // non-main Heap are counted and freed in the child.
                     assert_eq!((after.theaps.total, after.theaps.current),
-                        (before.theaps.total + 1, before.theaps.current));
+                        (before.theaps.total + 2, before.theaps.current));
                     let owners = unsafe { &*DESTROY_OWNERS.0.get() };
                     assert!(owners.failure.is_none());
                     assert!(owners.arenas.as_ref().unwrap().is_released());

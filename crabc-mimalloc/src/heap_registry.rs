@@ -361,14 +361,14 @@ impl Heap {
         guard.unlock().is_ok() && installed
     }
 
-    /// The child subprocess whose main Heap owns `page`, or `None` for a page
-    /// of the process main subprocess. Only the page's `heap` identity and
-    /// that Heap's immutable subprocess identity are read.
+    /// The Heap of `page` and its child subprocess, or `None` for a page of
+    /// the process main subprocess. Only the page's `heap` identity and that
+    /// Heap's immutable subprocess identity are read.
     ///
     /// # Safety
     /// `page` is live page metadata (for example, the page of a live block),
     /// and its Heap stays live for the call.
-    pub(crate) unsafe fn child_main_heap_of_page(
+    pub(crate) unsafe fn child_heap_of_page(
         page: core::ptr::NonNull<super::Page>,
     ) -> Option<(core::ptr::NonNull<Heap>, core::ptr::NonNull<SubprocessIdentity>)> {
         // SAFETY: a raw field read; the page's Heap identity is immutable
@@ -378,7 +378,7 @@ impl Heap {
         let heap_ref = unsafe { heap.as_ref() };
         let subprocess = core::ptr::NonNull::new(heap_ref.subprocess)?;
         // SAFETY: a Heap's subprocess outlives the Heap.
-        if unsafe { subprocess.as_ref() }.is_process_main() || !heap_ref.is_subprocess_main() {
+        if unsafe { subprocess.as_ref() }.is_process_main() {
             return None;
         }
         Some((heap, subprocess))
@@ -793,6 +793,131 @@ impl Heap {
     }
 }
 
+/// The mapped-abandoned capability of one arena page of a non-main Heap:
+/// that Heap's `mi_arena_pages_t.pages_abandoned[bin]` for the arena, paired
+/// with the Heap's `abandoned_count[bin]` (`arena.c:1304-1337,1383-1409`).
+/// Every access requires the Heap's ordinary `pages` bit for the slice, as
+/// `mi_page_arena_pages` asserts.
+pub(crate) struct NonMainArenaMappedAbandonedPage {
+    heap: core::ptr::NonNull<Heap>,
+    arena: core::ptr::NonNull<super::Arena>,
+    bin: usize,
+}
+
+impl NonMainArenaMappedAbandonedPage {
+    fn view(&self) -> Option<crate::arena::ArenaView<'_>> {
+        // SAFETY: construction proved a live arena of the Heap's subprocess,
+        // which outlives every page of the Heap.
+        unsafe { crate::arena::ArenaView::from_ptr(self.arena.as_ptr()) }
+    }
+
+    fn with_bitmap<R>(&self, bitmap: usize, operation: impl FnOnce(&crate::bitmap::BitmapView<'_>) -> R) -> Option<R> {
+        let view = self.view()?;
+        // SAFETY: the Heap's record for this arena stays installed while
+        // the Heap owns a page in it.
+        let pages = unsafe { self.heap.as_ref().non_main_arena_pages_bitmap(&view, bitmap) }?;
+        Some(operation(&pages))
+    }
+
+    fn ordinary_is_set(&self, slice_index: usize) -> bool {
+        self.with_bitmap(0, |pages| pages.is_set_range(slice_index, 1) == Some(true)) == Some(true)
+    }
+}
+
+impl crate::abandoned::MappedAbandonedPages for NonMainArenaMappedAbandonedPage {
+    fn bin(&self) -> usize { self.bin }
+
+    fn page_slice_index(&self, memory: super::MemoryId) -> Option<usize> {
+        let memory = memory.arena_memory()?;
+        if memory.arena != self.arena.as_ptr() {
+            return None;
+        }
+        // SAFETY: the live arena of this capability.
+        let slice_count = unsafe { self.arena.as_ref() }.slice_count;
+        let index = memory.slice_index as usize;
+        (index < slice_count).then_some(index)
+    }
+
+    fn is_clear(&self, slice_index: usize) -> bool {
+        self.ordinary_is_set(slice_index)
+            && self.with_bitmap(1 + self.bin, |pages| pages.is_clear_range(slice_index, 1) == Some(true)) == Some(true)
+    }
+
+    fn publish(&self, slice_index: usize) -> bool {
+        if !self.ordinary_is_set(slice_index) {
+            return false;
+        }
+        let published = self.with_bitmap(1 + self.bin, |pages| {
+            pages.set_range(slice_index, 1).is_some_and(|transition| transition.all_transitioned())
+        }) == Some(true);
+        if published {
+            // SAFETY: the live Heap; an atomic counter.
+            unsafe { self.heap.as_ref() }.increment_abandoned_count(self.bin);
+        }
+        published
+    }
+
+    fn try_claim<F>(&self, thread_sequence: usize, claim: F) -> crate::abandoned::MappedAbandonedClaim
+    where
+        F: FnMut(usize) -> crate::bitmap::AbandonedBitmapClaim,
+    {
+        let mut claim = claim;
+        let claimed = self.with_bitmap(1 + self.bin, |pages| {
+            pages.try_find_and_claim_abandoned(thread_sequence, |slice_index| {
+                if self.ordinary_is_set(slice_index) {
+                    claim(slice_index)
+                } else {
+                    crate::bitmap::AbandonedBitmapClaim::KeepSet
+                }
+            })
+        });
+        let Some(Some(slice_index)) = claimed else {
+            return crate::abandoned::MappedAbandonedClaim::None;
+        };
+        // SAFETY: as in `publish`.
+        if unsafe { self.heap.as_ref() }.decrement_abandoned_count(self.bin) {
+            crate::abandoned::MappedAbandonedClaim::Claimed(slice_index)
+        } else {
+            crate::abandoned::MappedAbandonedClaim::CountDecrementFailed(slice_index)
+        }
+    }
+
+    fn clear_once_set(&self, slice_index: usize) -> bool {
+        // SAFETY: the Heap's subprocess outlives it.
+        let Some(subprocess) = (unsafe { self.heap.as_ref().subprocess.as_ref() }) else { return false };
+        self.with_bitmap(1 + self.bin, |pages| pages.clear_once_set(subprocess, slice_index) == Some(())) == Some(true)
+    }
+
+    fn decrement_after_identity_clear(&self) -> bool {
+        // SAFETY: as in `publish`.
+        unsafe { self.heap.as_ref() }.decrement_abandoned_count(self.bin)
+    }
+}
+
+impl Heap {
+    /// The mapped-abandoned capability for `bin` of this non-main Heap's
+    /// record for `arena`, if the Heap has one.
+    pub(crate) fn non_main_abandoned_page(
+        heap: core::ptr::NonNull<Heap>,
+        arena: &crate::arena::ArenaView<'_>,
+        bin: usize,
+    ) -> Option<NonMainArenaMappedAbandonedPage> {
+        // SAFETY: the caller's live Heap.
+        let heap_ref = unsafe { heap.as_ref() };
+        if heap_ref.is_subprocess_main()
+            || bin >= crate::config::ARENA_BIN_COUNT
+            || heap_ref.arena_pages_slot(arena.arena().arena_index).is_none()
+        {
+            return None;
+        }
+        Some(NonMainArenaMappedAbandonedPage {
+            heap,
+            arena: core::ptr::NonNull::from(arena.arena()),
+            bin,
+        })
+    }
+}
+
 impl super::Page {
     /// The Theap this page names (`page->theap`).
     ///
@@ -805,24 +930,24 @@ impl super::Page {
         unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).theap)) }
     }
 
-    /// `mi_heap_delete_page`'s ownership steps for `mi_heap_destroy`
-    /// (`arena.c:2531-2552`, destroy arm): claim the page's low owner bit,
-    /// then, for a page that is not abandoned, clear its queue links and
-    /// abandon its identity (`mi_page_set_theap(page, NULL)`), and set
-    /// `used` to zero. Returns `false`, changing nothing further, for an
-    /// abandoned page, whose non-main unabandon route does not exist.
+    /// `mi_heap_delete_page`'s first steps (`arena.c:2531-2546`): claim the
+    /// page's low owner bit; a page that is not abandoned then has its queue
+    /// links and Theap identity cleared (`mi_page_set_theap(page, NULL)`).
+    /// Returns whether the page was already abandoned, which the caller then
+    /// unabandons.
     ///
     /// # Safety
     /// `page` is live page metadata of a Heap whose Theaps are all detached,
-    /// so no thread operates on the page, and it stays live until freed.
-    pub(crate) unsafe fn claim_for_heap_destroy(page: core::ptr::NonNull<Self>) -> bool {
+    /// so no thread operates on the page, and it stays live until the caller
+    /// frees or moves it.
+    pub(crate) unsafe fn claim_for_heap_delete(page: core::ptr::NonNull<Self>) -> bool {
         let page = page.as_ptr();
         // SAFETY: forwarded; atomic fields, then fields no thread uses.
         unsafe {
             (*page).xthread_free.fetch_or(1, Ordering::AcqRel);
             let thread = (*page).xthread_id.load(Ordering::Relaxed) & !(super::PAGE_FLAG_MASK as usize);
             if thread <= super::THREAD_ID_ABANDONED_MAPPED {
-                return false;
+                return true;
             }
             (*page).next = core::ptr::null_mut();
             (*page).prev = core::ptr::null_mut();
@@ -835,9 +960,55 @@ impl super::Page {
                     Err(current) => old = current,
                 }
             }
-            (*page).used = 0;
         }
-        true
+        false
+    }
+
+    /// Whether the page has the mapped-abandoned identity.
+    ///
+    /// # Safety
+    /// `page` is live page metadata.
+    pub(crate) unsafe fn is_abandoned_mapped_at(page: core::ptr::NonNull<Self>) -> bool {
+        // SAFETY: an atomic field load.
+        let thread = unsafe { (*page.as_ptr()).xthread_id.load(Ordering::Relaxed) };
+        thread & !(super::PAGE_FLAG_MASK as usize) == super::THREAD_ID_ABANDONED_MAPPED
+    }
+
+    /// `mi_page_clear_abandoned_mapped` (`internal.h:1036-1039`).
+    ///
+    /// # Safety
+    /// The caller holds the page's low owner bit and removed its bitmap bit.
+    pub(crate) unsafe fn clear_abandoned_mapped_at(page: core::ptr::NonNull<Self>) {
+        // SAFETY: an atomic field update.
+        unsafe { (*page.as_ptr()).xthread_id.fetch_and(super::PAGE_FLAG_MASK as usize, Ordering::Relaxed) };
+    }
+
+    /// Destroy arm of `mi_heap_delete_page`: `page->used = 0`.
+    ///
+    /// # Safety
+    /// The caller holds the page's low owner bit and no block is used again.
+    pub(crate) unsafe fn discard_used_for_heap_destroy(page: core::ptr::NonNull<Self>) {
+        // SAFETY: forwarded.
+        unsafe { (*page.as_ptr()).used = 0 };
+    }
+
+    /// Move arm of `mi_heap_delete_page`: `page->heap = heap_target`.
+    ///
+    /// # Safety
+    /// The caller holds the page's low owner bit; `heap` is live.
+    pub(crate) unsafe fn set_heap_for_move(page: core::ptr::NonNull<Self>, heap: core::ptr::NonNull<Heap>) {
+        // SAFETY: forwarded.
+        unsafe { (*page.as_ptr()).heap = heap.as_ptr() };
+    }
+
+    /// The number of live blocks of a page whose low owner bit the caller
+    /// holds.
+    ///
+    /// # Safety
+    /// As above.
+    pub(crate) unsafe fn used_at_claimed(page: core::ptr::NonNull<Self>) -> usize {
+        // SAFETY: forwarded.
+        unsafe { (*page.as_ptr()).used }
     }
 }
 

@@ -40,7 +40,7 @@
     },
     "differential:public-heap-lifecycle": {
       "runner": "compat/allocator/heap_lifecycle.py",
-      "scope": "Pinned-C/Rust traces of non-main Heaps on a child-subprocess thread: mi_heap_new list push order and links, Heap sequence numbers, dynamic thread-local keys and their index reuse, Heap counts and heaps statistics, main-Heap delete/destroy refusal, delete/destroy of Heaps that never allocate, the per-thread Theap a first mi_heap_malloc creates (TLD and Heap list position, dynamic thread-local slot, cached-Theap reference counts moved by the nested per-arena page-record allocation, theaps statistics, arena page records), local frees, and mi_heap_destroy with live pages (Theaps leave their TLDs; a cached Theap outlives its Heap until the thread finishes)."
+      "scope": "Pinned-C/Rust traces of non-main Heaps on a child-subprocess thread: mi_heap_new list push order and links, Heap sequence numbers, dynamic thread-local keys and their index reuse, Heap counts and heaps statistics, main-Heap delete/destroy refusal, delete/destroy of Heaps that never allocate, the per-thread Theap a first mi_heap_malloc creates (TLD and Heap list position, dynamic thread-local slot, cached-Theap reference counts moved by the nested per-arena page-record allocation, theaps statistics, arena page records), local frees, mi_heap_destroy with live pages (Theaps leave their TLDs; a cached Theap outlives its Heap until the next main-Heap allocation or thread finish), mi_heap_delete moving live pages to the main Heap as abandoned pages, non-main page abandonment at thread finish, and mi_subproc_destroy of a non-main Heap with an abandoned live page."
     },
     "differential:public-theap": {
       "runner": null,
@@ -121,7 +121,7 @@
         "unit:heap-lifecycle"
       ],
       "blocked_by": [
-        "`types::heap_registry::lifecycle` creates non-main Heaps, allocates from them through per-thread Theaps (`_mi_heap_theap_get_or_init`), and destroys them with their pages (`_mi_heap_destroy_pages`), only on a thread of a child subprocess and crate-privately: `mi_heap_delete` of a Heap with pages (`_mi_heap_move_pages`), abandoning a non-main Heap's pages at thread finish, exclusive arenas, `mi_heap_set_numa_affinity`, `mi_heap_collect`, `mi_heap_theap`, public symbols, and Heaps of the process main subprocess do not exist."
+        "`types::heap_registry::lifecycle` creates non-main Heaps, allocates from them through per-thread Theaps (`_mi_heap_theap_get_or_init`), destroys them with their pages (`_mi_heap_destroy_pages`), and deletes them moving their pages to the main Heap (`_mi_heap_move_pages`), only on a thread of a child subprocess and crate-privately: exclusive arenas, reclaiming abandoned pages, `mi_heap_set_numa_affinity`, `mi_heap_collect`, `mi_heap_theap`, public symbols, and Heaps of the process main subprocess do not exist."
       ]
     },
     {

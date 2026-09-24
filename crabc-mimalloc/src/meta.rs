@@ -1745,6 +1745,10 @@ pub(crate) struct ChildThreadOwner {
     /// `mi_thread_locals_expand` does with `_mi_subproc()`, and installed in
     /// the compiler-TLS dynamic root.
     thread_locals: Option<ChildMetadataImageBlock>,
+    /// The one retained raw-unmap retry of this thread's Theaps for non-main
+    /// Heaps, with the Theap whose engine it latched `RetryPending` (`None`
+    /// once that Theap is freed); see [`ChildHeapTheapImage`].
+    heap_theap_pending_os_release: Option<(Option<NonNull<Theap>>, crate::os_page::OsAlignedPageOwner)>,
 }
 
 /// One child-thread Theap for a non-main Heap: the source `mi_theap_t` at
@@ -1753,18 +1757,19 @@ pub(crate) struct ChildThreadOwner {
 /// Source `_mi_theap_alloc` takes `sizeof(mi_theap_t)` from the Heap's
 /// subprocess metadata (`theap.c:307-328`). The image also carries the page
 /// engine state that the thread's main-Heap Theap keeps in its
-/// [`ChildThreadOwner`] (only the engine state: a retained raw-unmap retry
-/// owner would move the block out of the source size class, so a failed OS
-/// page release on this Theap latches the engine `Poisoned` and leaks that
-/// mapping instead of retaining it for a retry), because pinned `mi_arena_pages_alloc`
+/// [`ChildThreadOwner`], because pinned `mi_arena_pages_alloc`
 /// (`arena.c:1661-1672`) allocates a non-main Heap's per-arena page record
 /// with `mi_heap_zalloc_aligned(heap_main, ...)` from inside a page
 /// allocation for that Heap (`mi_heap_ensure_arena_pages`, `arena.c:804`):
 /// the inner allocation runs a second page operation on the thread's
 /// main-Heap Theap while the outer one is still in progress on this Theap.
 /// Source page queues and their state are per Theap, so each engine owns its
-/// Theap's state. The larger block keeps the source size class
-/// (`heap_lifecycle::tests::child_heap_theap_image_keeps_the_theap_size_class`).
+/// Theap's state. Only the engine state fits: the block keeps the source size
+/// class (`heap_lifecycle::tests::child_heap_theap_image_keeps_the_theap_size_class`),
+/// which a retained raw-unmap retry owner (`OsAlignedPageOwner`) would break,
+/// so that owner lives in the thread's [`ChildThreadOwner`] instead (one slot
+/// for all of the thread's non-main Theaps; a second concurrent retry is
+/// leaked with its Theap's engine poisoned).
 #[repr(C)]
 pub(crate) struct ChildHeapTheapImage {
     theap: Theap,
@@ -1806,6 +1811,38 @@ impl ChildThreadOwner {
         // or internally synchronized, so this shared projection may overlap
         // other threads' projections.
         Some(operation(unsafe { Pin::new_unchecked(self.image.as_ref()) }))
+    }
+
+    /// Completes the raw unmap retry retained by one of this thread's Theaps
+    /// for a non-main Heap, as [`Self::retry_pending_os_release`] does for
+    /// its main-Heap Theap. `Ok(false)` when there is none or it is not ready.
+    ///
+    /// # Safety
+    /// As for [`Self::retry_pending_os_release`]; the Theap is still live.
+    pub(crate) unsafe fn retry_heap_theap_pending_os_release(
+        &mut self,
+    ) -> Result<bool, crate::os_page::OsAlignedPageError> {
+        let Some((theap, owner)) = self.heap_theap_pending_os_release.take() else { return Ok(false) };
+        if !owner.raw_retry_ready() {
+            self.heap_theap_pending_os_release = Some((theap, owner));
+            return Ok(false);
+        }
+        // SAFETY: the sole outstanding release right of that mapping.
+        match unsafe { owner.retry_release() } {
+            Ok(()) => {
+                if let Some(theap) = theap {
+                    // SAFETY: a named Theap is still allocated (a free clears it).
+                    let state = unsafe { &mut (*theap.cast::<ChildHeapTheapImage>().as_ptr()).page_engine };
+                    *state = state.complete_raw_retry().unwrap_or(ChildPageEngineState::Poisoned);
+                }
+                Ok(true)
+            }
+            Err(failure) => {
+                let error = failure.error();
+                self.heap_theap_pending_os_release = Some((theap, failure.into_owner()));
+                Err(error)
+            }
+        }
     }
 
     /// Completes an already-accounted raw unmap retry retained by this
@@ -2200,6 +2237,11 @@ impl ChildThreadOwner {
         if !unsafe { Theap::decref_at(theap) } {
             return Ok(());
         }
+        if let Some((named @ Some(_), _)) = self.heap_theap_pending_os_release.as_mut() {
+            if *named == Some(theap) {
+                *named = None;
+            }
+        }
         // SAFETY: as above; the flag is immutable.
         if !unsafe { Theap::is_detached_at(theap) } {
             child.context.with_image(|image| image.identity().record_statistics_theap_unlinked());
@@ -2385,9 +2427,15 @@ impl ChildThreadOwner {
         // `pending_os_release` and latches the engine state.
         let finished = engine.finish_operation().map_err(drop).is_ok();
         if let Some(owner) = pending_os_release.take() {
-            // See `ChildHeapTheapImage`: the mapping is leaked, not retried.
-            core::mem::forget(owner);
-            *page_engine = ChildPageEngineState::Poisoned;
+            // See `ChildHeapTheapImage`: the thread keeps one retry slot.
+            // SAFETY: the engine is gone; the owner is not otherwise borrowed.
+            let slot = unsafe { &mut (*this).heap_theap_pending_os_release };
+            if slot.is_none() && *page_engine == ChildPageEngineState::RetryPending {
+                *slot = Some((Some(theap), owner));
+            } else {
+                core::mem::forget(owner);
+                *page_engine = ChildPageEngineState::Poisoned;
+            }
         }
         if !finished {
             return Err(ChildMetadataPageEngineError::EngineRetained);
@@ -2398,10 +2446,10 @@ impl ChildThreadOwner {
     /// The first half of `_mi_thread_done` (`init.c:452-480`) for this
     /// thread's Theaps of non-main Heaps: `_mi_thread_locals_thread_done`
     /// frees the thread-local slot array, then each such Theap on the TLD
-    /// list, in list order, is collected with its all-free pages released
-    /// (`_mi_theap_collect_abandon`). A page with a live block cannot be
-    /// abandoned to a non-main Heap yet (its mapped bitmap has no owner), so
-    /// such a Theap returns [`ChildHeapTheapError::InvalidTransition`].
+    /// list, in list order, is collected (`_mi_theap_collect_abandon`): its
+    /// all-free pages are released and pages with live blocks are abandoned
+    /// to that Heap's own records. An OS-backed page cannot be abandoned and
+    /// returns [`ChildHeapTheapError::InvalidTransition`].
     ///
     /// # Safety
     /// As for [`Self::with_heap_theap_page_engine`], on the finishing thread.
@@ -2426,7 +2474,9 @@ impl ChildThreadOwner {
             }
             // SAFETY: forwarded; one of this thread's non-main Theaps.
             let drained = unsafe {
-                Self::with_heap_theap_page_engine(this, child, binding, theap, |engine| engine.finish_pages_in_place())
+                Self::with_heap_theap_page_engine(this, child, binding, theap, |engine| unsafe {
+                    engine.collect_abandon_for_thread_done()
+                })
             }
             .map_err(ChildHeapTheapError::PageEngine)?;
             if !drained {
@@ -2486,6 +2536,21 @@ impl ChildThreadOwner {
             // SAFETY: the retained slot image.
             unsafe { (*block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).count() }
         })
+    }
+
+    /// Whether one of this thread's non-main Theaps retains a raw unmap retry.
+    #[cfg(test)]
+    pub(crate) fn test_has_heap_theap_pending_os_release(&self) -> bool {
+        self.heap_theap_pending_os_release.is_some()
+    }
+
+    /// The page-engine state of this thread's Theap `theap` for a non-main Heap.
+    ///
+    /// # Safety
+    /// `theap` is a live such Theap.
+    #[cfg(test)]
+    pub(crate) unsafe fn test_heap_theap_engine_state(theap: NonNull<Theap>) -> ChildPageEngineState {
+        unsafe { (*theap.cast::<ChildHeapTheapImage>().as_ptr()).page_engine }
     }
 
     /// This thread's value on `heap`'s thread-local slot.
@@ -3178,6 +3243,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             pending_os_release: None,
             page_engine: ChildPageEngineState::Active,
             thread_locals: None,
+            heap_theap_pending_os_release: None,
             tld: None,
             theap: None,
             registration: None,
