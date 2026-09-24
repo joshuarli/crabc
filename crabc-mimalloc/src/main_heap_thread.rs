@@ -1407,31 +1407,49 @@ impl<'main> MainHeapThreadAttachment<'main> {
     }
 
     /// Validates one ordinary owner-local page operation on the persistent
-    /// engine.
+    /// engine and returns the attachment's exact Theap.
     ///
-    /// Outside a selected deferred-free callback this performs every check of
-    /// the non-callback path of
-    /// [`Self::prevalidate_owner_local_callback_reentry`] (attachment state,
-    /// suspension, current identity, Theap refcount/thread/subprocess, TLS
-    /// roots, and TLD-list membership) except the locked re-observation of
-    /// the shared main Heap list; see [`SharedHeapMembership`]. The rare
-    /// callback-reentry path keeps its complete observation.
+    /// Pinned `mi_malloc`/`mi_free` select `_mi_theap_default()` and then
+    /// touch only that Theap's pages; they re-derive nothing else per call.
+    /// Outside a selected deferred-free callback this checks exactly the state
+    /// that can differ between two operations of an attached owner: the
+    /// attachment's own state/thread/suspension/terminal flags, its retained
+    /// dynamic-Theap metadata, and the four TLS roots through which source
+    /// selects that Theap (fixed fast slot, default and cached Theap, dynamic
+    /// backing), which other same-thread lifecycle code may rewrite.
+    ///
+    /// The Theap refcount/thread/subprocess image and the TLD lifecycle and
+    /// list membership are established by `initialize_and_publish` before
+    /// the state becomes `Attached`, and only transitions that first leave
+    /// `Attached` (drain, teardown, transfer, vanished-child retirement) or
+    /// the selected-callback path change them; the latter keeps its complete
+    /// observation below. Re-deriving those facts on every allocation and
+    /// free cost ~230 instructions per operation. `prevalidate_attached_*`
+    /// transition boundaries still perform the complete check, including the
+    /// locked shared-Heap membership (see [`SharedHeapMembership`]).
     fn prevalidate_owner_local_operation(
         &mut self,
-    ) -> Result<(), MainHeapThreadAttachmentError> {
+    ) -> Result<NonNull<Theap>, MainHeapThreadAttachmentError> {
         if self.has_active_deferred_free_callback() {
-            return self.prevalidate_owner_local_callback_reentry();
+            self.prevalidate_owner_local_callback_reentry()?;
+            return self.local_theap_pointer();
         }
         if self.page_engine_suspended {
             return Err(MainHeapThreadAttachmentError::PersistentPageEngineSuspended);
         }
         self.ensure_attached_current()?;
-        self.prevalidate_page_drain_common_with_tld_projection(
-            false,
-            true,
-            false,
-            SharedHeapMembership::AttachedInvariant,
-        )
+        if self.terminal_os_release.is_some() {
+            return Err(MainHeapThreadAttachmentError::Poisoned);
+        }
+        let theap = self.local_theap_pointer()?;
+        if !matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing))
+            || fast_slot_peek().map(NonNull::cast::<Theap>) != Some(theap)
+            || default_theap() != theap
+            || !core::ptr::eq(cached_theap().as_ptr(), empty_default_theap_ptr())
+        {
+            return Err(MainHeapThreadAttachmentError::RootOwnership);
+        }
+        Ok(theap)
     }
 
     /// Validates the exact opposite half of the persistent-engine handoff.
@@ -1791,6 +1809,12 @@ impl<'main> MainHeapThreadAttachment<'main> {
 /// heap-local image for this later Theap.
 pub(crate) struct MainHeapThreadPageSession<'attachment, 'main> {
     attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    /// The attachment's dynamic Theap, validated once when the session
+    /// begins. The exclusive attachment borrow keeps that metadata image
+    /// installed for the session's lifetime: no session method takes or
+    /// replaces `attachment.theap`, and consuming transitions such as
+    /// `begin_thread_exit_drain` end the session first.
+    theap: NonNull<Theap>,
 }
 
 impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
@@ -1817,7 +1841,10 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
         {
             return Err(MainHeapThreadPageSessionError::FirstTicket);
         }
-        Ok(Self { attachment })
+        let theap = attachment
+            .local_theap_pointer()
+            .map_err(MainHeapThreadPageSessionError::Attachment)?;
+        Ok(Self { attachment, theap })
     }
 
     fn begin_owner_local(
@@ -1841,14 +1868,9 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
                 ));
             }
         }
-        attachment
+        let theap = attachment
             .prevalidate_owner_local_operation()
             .map_err(MainHeapThreadPageSessionError::Attachment)?;
-        if attachment.terminal_os_release.is_some() {
-            return Err(MainHeapThreadPageSessionError::Attachment(
-                MainHeapThreadAttachmentError::Poisoned,
-            ));
-        }
         if attachment
             .tld
             .as_ref()
@@ -1865,7 +1887,7 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
         // remains. Publish the synchronous borrow only now, so a rejection
         // leaves the persistent engine idle and retryable.
         set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Borrowed);
-        Ok(Self { attachment })
+        Ok(Self { attachment, theap })
     }
 
     /// Re-forms one normal page session from the only suspended persistent
@@ -1883,7 +1905,10 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
         attachment
             .resume_persistent_page_engine()
             .map_err(MainHeapThreadPageSessionError::Attachment)?;
-        Ok(Self { attachment })
+        let theap = attachment
+            .local_theap_pointer()
+            .map_err(MainHeapThreadPageSessionError::Attachment)?;
+        Ok(Self { attachment, theap })
     }
 
     /// Detaches this Rust borrow while retaining the source page owner in the
@@ -1933,18 +1958,17 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
 
     #[inline]
     fn theap(&self) -> &Theap {
-        self.attachment
-            .theap
-            .as_ref()
-            .and_then(MetaAllocation::dynamic_theap)
-            .expect("a validated later-thread page session retains its typed Theap")
+        // SAFETY: `self.theap` is the original metadata pointer of the
+        // initialized dynamic Theap that session construction validated; the
+        // exclusive attachment borrow keeps that image installed and live for
+        // `&self` (see the field). Like `MetaAllocation::dynamic_theap`, this
+        // forms only a shared projection.
+        unsafe { self.theap.as_ref() }
     }
 
     #[inline]
     fn local_theap_pointer(&self) -> NonNull<Theap> {
-        self.attachment
-            .local_theap_pointer()
-            .expect("a validated later-thread page session retains its typed Theap")
+        self.theap
     }
 
     /// Consumes the normal later-thread page session into the post-fast-slot
@@ -3042,7 +3066,7 @@ mod tests {
                     attached_sender.send(()).expect("the coordinator observes attachment");
                     go_receiver.recv().expect("the coordinator holds the Heap lock");
                     result_sender
-                        .send(attachment.prevalidate_owner_local_operation())
+                        .send(attachment.prevalidate_owner_local_operation().map(|_| ()))
                         .expect("the coordinator receives the admission result");
                     attachment
                         .finish_after_user_destructors()
