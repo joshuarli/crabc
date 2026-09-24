@@ -231,6 +231,42 @@ static lifecycle_claim_t object(lifecycle_owner_t* owner, size_t size, size_t al
   return result;
 }
 
+/* Source `_mi_theap_alloc` for `heap->exclusive_arena` with a caller TLD's
+   thread sequence and NUMA node: the result, the same claim record as
+   `object` (minus errno, which the caller only reports), and the registry. */
+static lifecycle_claim_t theap_alloc(lifecycle_owner_t* owner, mi_arena_t* exclusive, int numa_node) {
+  const lifecycle_stats_t before = stats_of(owner);
+  const size_t arenas_before = mi_arenas_get_count(&owner->subproc);
+  mi_tld_t tld;
+  memset(&tld, 0, sizeof(tld));
+  tld.subproc = &owner->subproc;
+  tld.thread_seq = 0;
+  tld.numa_node = numa_node;
+  owner->heap.exclusive_arena = exclusive;
+  mi_theap_t* const theap = _mi_theap_alloc(&owner->heap, &tld);
+  owner->heap.exclusive_arena = NULL;
+  lifecycle_claim_t result = { theap, theap != NULL ? theap->memid : _mi_memid_none(), 0 };
+  emit(theap != NULL);
+  emit((int64_t)mi_arenas_get_count(&owner->subproc));
+  if (theap != NULL) {
+    mi_arena_t* const arena = result.memid.mem.arena.arena;
+    require(result.memid.memkind == MI_MEM_ARENA && arena == exclusive);
+    require(result.start == mi_arena_slice_start(arena, result.memid.mem.arena.slice_index));
+    result.slices = result.memid.mem.arena.slice_count;
+    emit((int64_t)result.memid.mem.arena.slice_index);
+    emit((int64_t)result.slices);
+    emit(result.memid.initially_committed);
+    emit(result.memid.initially_zero);
+    emit(mi_bitmap_is_setN(arena->slices_committed, result.memid.mem.arena.slice_index, result.slices));
+  }
+  else {
+    for (int i = 0; i < 5; i++) emit(-1);
+  }
+  emit_stats_delta(owner, before);
+  emit_arenas_from(owner, arenas_before);
+  return result;
+}
+
 /* One of eight concurrent workers in scenario 14: source `mi_arenas_try_alloc`
    of one slice with its own thread sequence, then release after the parent
    has recorded the combined result. */
@@ -678,6 +714,37 @@ int main(void) {
     for (size_t i = 0; i < filled; i++) release(owner, &fillers[i]);
   }
 
+  /* 15. `_mi_theap_alloc` in a reserved exclusive arena: its commit fails
+         once. With a negative NUMA node the one requested-arena pass
+         refuses; with a nonnegative node the second source pass repeats the
+         same parent and commits. disallow_arena_alloc refuses before any
+         search, and every refusal skips the OS (the arena is requested). */
   emit_marker(15);
+  {
+    configure(true, 32 * 1024, 0, false);
+    lifecycle_owner_t* const owner = fresh_owner();
+    mi_arena_id_t exclusive_id = _mi_arena_id_none();
+    require(mi_reserve_os_memory_ex2(&owner->subproc, MI_ARENA_MIN_SIZE, false, false, true, &exclusive_id) == 0);
+    mi_arena_t* const exclusive = _mi_arena_from_id(exclusive_id);
+    mprotect_calls = 0;
+    fail_mprotect_ordinal = 1;
+    lifecycle_claim_t one_pass = theap_alloc(owner, exclusive, -1);
+    emit((int64_t)mprotect_calls);
+    fail_mprotect_ordinal = 0;
+    require(one_pass.start == NULL);
+    mprotect_calls = 0;
+    fail_mprotect_ordinal = 1;
+    lifecycle_claim_t second_pass = theap_alloc(owner, exclusive, 0);
+    emit((int64_t)mprotect_calls);
+    fail_mprotect_ordinal = 0;
+    require(second_pass.start != NULL);
+    mi_option_set(mi_option_disallow_arena_alloc, 1);
+    lifecycle_claim_t disallowed = theap_alloc(owner, exclusive, 0);
+    mi_option_set(mi_option_disallow_arena_alloc, 0);
+    require(disallowed.start == NULL);
+    release(owner, &second_pass);
+  }
+
+  emit_marker(16);
   return 0;
 }

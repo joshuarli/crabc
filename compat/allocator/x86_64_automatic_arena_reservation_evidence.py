@@ -105,7 +105,8 @@ TRACE_VALUES = {
     "trace.automatic_arena.concurrent.workers_ready_with_distinct_request_inputs": 8,
     "trace.automatic_arena.concurrent.workers_observed_exhausted_existing_ranges": 1,
     "trace.automatic_arena.concurrent.eight_new_arena_claims_live": 1,
-    "trace.automatic_arena.concurrent.one_new_arena_reserved": 1,
+    "trace.automatic_arena.concurrent.one_to_eight_fresh_arenas_reserved": 1,
+    "trace.automatic_arena.concurrent.claims_in_fresh_arenas": 1,
     "trace.automatic_arena.concurrent.new_ranges_distinct": 1,
     "trace.automatic_arena.concurrent.retained_live_ranges_released": 1,
     "trace.automatic_arena.concurrent.released_ranges_free": 1,
@@ -380,7 +381,12 @@ static bool concurrent_phase(void) {
     return false;
   }
 
-  bool roots = true, misses = true, claims = true, same_new_arena = true, distinct = true;
+  // The unchanged-count check under `arena_reserve_lock` serializes
+  // reservation without making it unique: a worker whose search missed
+  // before another's publication, but whose count read follows it, reserves
+  // again. Only interleaving-independent relations are checked.
+  const size_t fresh = mi_arenas_get_count(subprocess) - baseline_count;
+  bool roots = true, misses = true, claims = true, in_fresh = true, distinct = true;
   for (size_t left = 0; left < CONCURRENT_WORKERS; left++) {
     roots = roots && states[left].root_valid;
     misses = misses && states[left].preclaim_miss;
@@ -391,15 +397,18 @@ static bool concurrent_phase(void) {
           || (states[left].arena == states[right].arena
               && !(states[left].slice_index + 1 <= states[right].slice_index
                    || states[right].slice_index + 1 <= states[left].slice_index))) distinct = false;
-      if (states[left].arena != states[right].arena) same_new_arena = false;
     }
+    bool found = false;
+    for (size_t index = baseline_count; index < baseline_count + fresh; index++) {
+      found = found || (states[left].arena == mi_arena_from_index(subprocess, index));
+    }
+    in_fresh = in_fresh && found && states[left].arena != filler_arena;
   }
-  const bool one_new_arena = (mi_arenas_get_count(subprocess) == baseline_count + 1
-      && subprocess->stats.arena_count.total == baseline_high_water + 1
-      && states[0].arena != filler_arena);
-  if (!roots || !misses || !claims || !same_new_arena || !distinct || !one_new_arena) {
-    fprintf(stderr, "automatic-arena concurrent reservation roots=%d misses=%d claims=%d same-new=%d distinct=%d one-new=%d registry=%zu high-water=%lld\\n",
-            roots, misses, claims, same_new_arena, distinct, one_new_arena,
+  const bool fresh_bounded = (fresh >= 1 && fresh <= CONCURRENT_WORKERS
+      && subprocess->stats.arena_count.total == baseline_high_water + (int64_t)fresh);
+  if (!roots || !misses || !claims || !in_fresh || !distinct || !fresh_bounded) {
+    fprintf(stderr, "automatic-arena concurrent reservation roots=%d misses=%d claims=%d in-fresh=%d distinct=%d fresh-bounded=%d registry=%zu high-water=%lld\\n",
+            roots, misses, claims, in_fresh, distinct, fresh_bounded,
             mi_arenas_get_count(subprocess), (long long)subprocess->stats.arena_count.total);
     return false;
   }
@@ -419,7 +428,8 @@ static bool concurrent_phase(void) {
   emit("trace.automatic_arena.concurrent.workers_ready_with_distinct_request_inputs", CONCURRENT_WORKERS);
   emit("trace.automatic_arena.concurrent.workers_observed_exhausted_existing_ranges", 1);
   emit("trace.automatic_arena.concurrent.eight_new_arena_claims_live", 1);
-  emit("trace.automatic_arena.concurrent.one_new_arena_reserved", 1);
+  emit("trace.automatic_arena.concurrent.one_to_eight_fresh_arenas_reserved", 1);
+  emit("trace.automatic_arena.concurrent.claims_in_fresh_arenas", 1);
   emit("trace.automatic_arena.concurrent.new_ranges_distinct", 1);
   emit("trace.automatic_arena.concurrent.retained_live_ranges_released", 1);
   emit("trace.automatic_arena.concurrent.released_ranges_free", 1);

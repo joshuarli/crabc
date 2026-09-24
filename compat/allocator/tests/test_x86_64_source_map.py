@@ -1966,7 +1966,7 @@ class X86_64SourceMapTests(unittest.TestCase):
             },
         )
         self.assertIn("99-value native C/Rust differential", units["arena-lifecycle"]["difference"])
-        self.assertIn("21-value native C/Rust differential starts from an OS-disallow clean miss", units["arena-lifecycle"]["difference"])
+        self.assertIn("22-value native C/Rust differential starts from an OS-disallow clean miss", units["arena-lifecycle"]["difference"])
         self.assertIn("crabc_mimalloc::arena_purge", units["arena-lifecycle"]["rust_modules"])
         self.assertIn("compat/allocator/m2_arena_owned_x86_64.c", units["arena-lifecycle"]["evidence"])
         self.assertIn("compat/allocator/x86_64_automatic_arena_reservation_evidence.py", units["arena-lifecycle"]["evidence"])

@@ -1202,6 +1202,45 @@ impl ProcessArenaBacking {
         Err(Errno::NOMEM)
     }
 
+    /// Source `_mi_theap_alloc`'s exclusive-arena arm for a process-owned
+    /// requested parent: `_mi_arenas_alloc(heap, align_up(sizeof(mi_theap_t),
+    /// MI_ARENA_MIN_OBJ_SIZE), true, true, heap->exclusive_arena,
+    /// tld->thread_seq, tld->numa_node, &memid)`, routed through
+    /// [`Self::try_allocate_requested_arena_object`]. That keeps the source
+    /// `disallow_arena_alloc` gate, both requested-arena search passes for a
+    /// nonnegative NUMA node, the owning allocation's commit accounting, and
+    /// the refusing OS fallback (`ENOMEM`). `subprocess` must be the main
+    /// subprocess named by `process`; any other identity is `EINVAL`.
+    ///
+    /// # Safety
+    /// Same obligations as [`Self::try_allocate_requested_arena_object`];
+    /// `exclusive_arena` must be a live parent published by this backing.
+    pub(crate) unsafe fn try_reserve_exclusive_theap<'subprocess>(
+        &self, process: VmProcess<'_>, config: MemoryConfig,
+        subprocess: &'subprocess crate::subproc::MainSubprocess, exclusive_arena: ArenaId,
+        thread_sequence: crate::types::ThreadSequence, numa_node: i32,
+    ) -> Result<super::ExclusiveArenaTheapReservation<'_, 'subprocess>, Errno> {
+        if exclusive_arena.as_ptr().is_null()
+            || !process.main_subprocess().is_some_and(|main| core::ptr::eq(main, subprocess))
+        {
+            return Err(Errno::INVAL);
+        }
+        let size = core::mem::size_of::<crate::types::Theap>()
+            .next_multiple_of(crate::config::ARENA_MIN_OBJ_SIZE);
+        let search = ArenaSearch {
+            heap_sequence: 0,
+            heap_count: 1,
+            thread_sequence: thread_sequence.get(),
+            numa_node,
+            requested: exclusive_arena,
+            allow_pinned: true,
+        };
+        // SAFETY: forwarded caller obligations.
+        let claim = unsafe { self.try_allocate_requested_arena_object(process, config, search,
+            size, crate::config::ARENA_SLICE_SIZE, 0, true) }?;
+        Ok(super::ExclusiveArenaTheapReservation { claim, subprocess })
+    }
+
     /// Child-only regular arena allocation through the parent-bound VM policy
     /// and this exact child's arena group. Every claim borrows the backing;
     /// retained mapping callbacks keep a raw identity pair until the external
@@ -2670,7 +2709,13 @@ mod tests {
         // calls. The paired C setup reaches the equivalent state after its
         // worker TLD/Theap metadata allocation. The gates retain all new
         // claims for the parent observation but do not claim a simultaneous
-        // internal reserve-lock miss or lock coalescing.
+        // internal reserve-lock miss or lock coalescing. The source's
+        // unchanged-count check under `arena_reserve_lock` serializes
+        // reservation without making it unique: a worker whose search missed
+        // before another's publication, but whose count read follows it,
+        // reserves again. Only interleaving-independent relations are
+        // recorded: one to eight fresh arenas, statistics that agree with
+        // the registry, and every claim in a fresh arena.
         let concurrent_process = process_with_options(options(false));
         let shared: &'static ProcessArenaBacking = backing();
         let existing = install(shared, concurrent_process, MapAccess::Reserved);
@@ -2729,21 +2774,25 @@ mod tests {
         }
         claims_ready.wait();
         let workers: std::vec::Vec<_> = workers;
-        assert_eq!(shared.registry().count(), 2);
-        assert_eq!(concurrent_process.subprocess().arena_statistics().snapshot().arena_count - before.arena_count, 1);
+        let fresh = shared.registry().count() - 1;
+        assert!((1..=8).contains(&fresh), "one to eight fresh arenas, got {fresh}");
+        assert_eq!(concurrent_process.subprocess().arena_statistics().snapshot().arena_count
+            - before.arena_count, fresh as _);
+        let fresh_arenas: std::vec::Vec<usize> = (1..=fresh)
+            .map(|index| unsafe { shared.registry().arena_at(index) }.unwrap() as *const Arena as usize)
+            .collect();
         releases_start.wait();
         let workers: std::vec::Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
         assert!(workers.iter().all(|worker| worker.0));
-        assert!(workers.iter().all(|worker| worker.1 == workers[0].1));
-        assert_ne!(workers[0].1, existing.as_ptr() as usize);
+        assert!(workers.iter().all(|worker| fresh_arenas.contains(&worker.1)
+            && worker.1 != existing.as_ptr() as usize), "every claim lies in a fresh arena");
         for (index, worker) in workers.iter().enumerate() {
             assert!(workers.iter().skip(index + 1).all(|other| {
                 worker.1 != other.1 || worker.2 + 1 <= other.2 || other.2 + 1 <= worker.2
             }), "new-arena live claims retain disjoint half-open source slice ranges");
         }
-        let new_arena = unsafe { ArenaId::from_arena(workers[0].1 as *mut Arena) }.unwrap();
-        let new_view = unsafe { ArenaView::from_ptr(new_arena.as_ptr()) }.unwrap();
-        for (_, _, start) in &workers {
+        for (_, arena, start) in &workers {
+            let new_view = unsafe { ArenaView::from_ptr(*arena as *mut Arena) }.unwrap();
             assert_eq!(unsafe { new_view.slices_free() }.unwrap().is_set_range(*start, 1), Some(true));
         }
         for filler in fillers { assert!(filler.release()); }
@@ -2755,7 +2804,8 @@ mod tests {
             ("trace.automatic_arena.concurrent.workers_ready_with_distinct_request_inputs", 8),
             ("trace.automatic_arena.concurrent.workers_observed_exhausted_existing_ranges", 1),
             ("trace.automatic_arena.concurrent.eight_new_arena_claims_live", 1),
-            ("trace.automatic_arena.concurrent.one_new_arena_reserved", 1),
+            ("trace.automatic_arena.concurrent.one_to_eight_fresh_arenas_reserved", 1),
+            ("trace.automatic_arena.concurrent.claims_in_fresh_arenas", 1),
             ("trace.automatic_arena.concurrent.new_ranges_distinct", 1),
             ("trace.automatic_arena.concurrent.retained_live_ranges_released", 1),
             ("trace.automatic_arena.concurrent.released_ranges_free", 1),
@@ -3739,6 +3789,48 @@ mod tests {
         LifecycleClaim { claim: result.ok(), slices }
     }
 
+    /// Rust receiver of the fixture's `theap_alloc`: the source
+    /// `_mi_theap_alloc` exclusive-arena arm through the process backing.
+    fn lifecycle_theap(
+        trace: &mut LifecycleTrace, owner: LifecycleOwner, process: VmProcess<'static>,
+        exclusive: ArenaId, numa_node: i32,
+    ) -> LifecycleClaim {
+        let before = lifecycle_stats(owner);
+        let arenas_before = owner.backing.registry().count();
+        let subprocess = process.main_subprocess().expect("fixture process is main");
+        // SAFETY: the fixture group and exclusive parent live for the test.
+        let result = unsafe { owner.backing.try_reserve_exclusive_theap(process, owner.config,
+            subprocess, exclusive, crate::types::ThreadSequence::from_previous_total_count(0), numa_node) };
+        trace.emit_bool(result.is_ok());
+        trace.emit(owner.backing.registry().count() as i64);
+        let mut slices = 0;
+        let claim = match result {
+            Ok(reservation) => {
+                let memory = reservation.memory_id();
+                let arena_memory = memory.arena_memory().unwrap();
+                assert_eq!(arena_memory.arena, exclusive.as_ptr());
+                let view = unsafe { ArenaView::from_ptr(arena_memory.arena) }.unwrap();
+                let slice_index = arena_memory.slice_index as usize;
+                slices = arena_memory.slice_count as usize;
+                trace.emit(slice_index as i64);
+                trace.emit(slices as i64);
+                trace.emit_bool(memory.initially_committed());
+                trace.emit_bool(memory.initially_zero());
+                trace.emit_bool(unsafe { view.slices_committed() }.unwrap()
+                    .is_set_range(slice_index, slices) == Some(true));
+                Some(reservation.into_claim())
+            }
+            Err(error) => {
+                assert_eq!(error, Errno::NOMEM);
+                for _ in 0..5 { trace.emit(-1); }
+                None
+            }
+        };
+        emit_lifecycle_stats_delta(trace, owner, before);
+        emit_lifecycle_arenas_from(trace, owner, arenas_before);
+        LifecycleClaim { claim, slices }
+    }
+
     fn lifecycle_release(trace: &mut LifecycleTrace, owner: LifecycleOwner, item: &mut LifecycleClaim) {
         let claim = item.claim.take().expect("live lifecycle claim");
         let before = lifecycle_stats(owner);
@@ -4148,7 +4240,36 @@ mod tests {
             for claim in &mut fillers { lifecycle_release(&mut trace, owner, claim); }
         }
 
+        // 15. `_mi_theap_alloc` in a reserved exclusive arena whose commit
+        // fails once: one pass refuses, a nonnegative NUMA node's second pass
+        // commits, and disallow_arena_alloc refuses before any search.
         trace.marker(15);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let p = owner.process;
+            let exclusive = unsafe { owner.backing.reserve_os_memory_for_process(p, owner.config,
+                ARENA_MIN_SIZE, MapAccess::Reserved, false, true, None) }.unwrap();
+            fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+            let one_pass = lifecycle_theap(&mut trace, owner, p, exclusive, -1);
+            trace.emit(fault.observed() as i64);
+            fault.set(fault::Plan::disabled());
+            assert!(!one_pass.is_some());
+            fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+            let mut second_pass = lifecycle_theap(&mut trace, owner, p, exclusive, 0);
+            trace.emit(fault.observed() as i64);
+            fault.set(fault::Plan::disabled());
+            assert!(second_pass.is_some());
+            let mut options = lifecycle_options(32 * 1024, 0, false, false);
+            options.set(VmOption::DisallowArenaAlloc, 1);
+            let policy = Box::leak(Box::new(VmPolicy::new(options).unwrap()));
+            policy.finish_preloading();
+            let disallowing = VmProcess::new(policy, p.subprocess());
+            let disallowed = lifecycle_theap(&mut trace, owner, disallowing, exclusive, 0);
+            assert!(!disallowed.is_some());
+            lifecycle_release(&mut trace, owner, &mut second_pass);
+        }
+
+        trace.marker(16);
     }
 }
 

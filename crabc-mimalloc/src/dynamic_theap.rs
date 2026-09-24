@@ -1074,14 +1074,8 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 let tld = attachment.tld.as_mut().unwrap().current_mut().unwrap();
                 let sequence = tld.thread_sequence();
                 let numa_node = tld.numa_node();
-                let reservation = if arena_allocation_allowed {
-                    arena.try_reserve_exclusive_theap(subprocess, sequence).or_else(|| {
-                        // Source mi_forall_suitable_arenas repeats the exact
-                        // requested parent on its unrestricted NUMA pass.
-                        if numa_node >= 0 { arena.try_reserve_exclusive_theap(subprocess, sequence) }
-                        else { None }
-                    })
-                } else { None };
+                let reservation = arena.try_reserve_exclusive_theap(
+                    subprocess, !arena_allocation_allowed, sequence, numa_node);
                 reservation
                     .map(|reservation| DynamicTheapStorage::Arena {
                         // SAFETY: this fresh exclusive claim contains no live

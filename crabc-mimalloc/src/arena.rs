@@ -1670,6 +1670,13 @@ impl<'arena, 'subprocess> ExclusiveArenaTheapReservation<'arena, 'subprocess> {
         self.claim.slice_index()
     }
 
+    /// Returns the plain claim so a fixture can release it through the same
+    /// path as its other arena claims.
+    #[cfg(test)]
+    pub(crate) fn into_claim(self) -> ArenaSliceClaim<'arena> {
+        self.claim
+    }
+
     #[inline]
     pub(crate) fn slice_count(&self) -> usize {
         self.claim.slice_count()
@@ -2525,21 +2532,28 @@ impl<'arena> ArenaView<'arena> {
         })
     }
 
-    /// Reserves the one source slice used by the requested-parent-arena arm
-    /// of `_mi_theap_alloc`.
+    /// Source `_mi_theap_alloc`'s exclusive-arena arm:
+    /// `_mi_arenas_alloc(heap, align_up(sizeof(mi_theap_t),
+    /// MI_ARENA_MIN_OBJ_SIZE), true, true, heap->exclusive_arena,
+    /// tld->thread_seq, tld->numa_node, &memid)`.
     ///
     /// This models a caller-selected direct parent as the source
     /// `heap->exclusive_arena` value; it neither binds nor inspects a
-    /// [`Heap`]. No registry search, child-arena selection, metadata
-    /// allocation, or OS fallback is admitted here. This is only the first
-    /// requested-parent pass: pinned
-    /// `mi_forall_arenas` visits a non-null requested parent once, and
-    /// `mi_arena_is_suitable` accepts that exact parent before consulting
-    /// `is_exclusive`. A source TLD with a nonnegative NUMA node makes a
-    /// separate second requested-parent pass; this reservation has no NUMA
-    /// input and deliberately does not model it. Therefore this accepts either
-    /// value of `Arena::is_exclusive`, but rejects a subarena and a foreign
-    /// subprocess before any bitmap mutation.
+    /// [`Heap`]. `thread_sequence` and `numa_node` are the caller TLD's
+    /// source fields and `disallow_arena_alloc` is the caller policy's
+    /// `mi_option_disallow_arena_alloc` value. The `_mi_arenas_alloc_aligned`
+    /// arena arm runs only when that option is off (the one-minimum-object size
+    /// always lies within `mi_arena_max_object_size`). Its
+    /// `mi_forall_suitable_arenas` search visits the non-null requested parent
+    /// once per pass, and `mi_arena_is_suitable_ex` skips the NUMA predicate
+    /// for a requested arena, so a nonnegative `numa_node` repeats the same
+    /// claim once more after a first-pass miss (for example a failed commit
+    /// callback). `allow_large` is true, so a pinned parent remains suitable,
+    /// and the exact parent is accepted whatever its `is_exclusive` value.
+    /// Requested-arena `mi_arenas_try_alloc` never reserves a fresh arena and
+    /// `mi_arena_os_alloc_aligned` refuses a requested arena, so every miss
+    /// returns `None` without OS memory. A subarena or foreign subprocess is
+    /// rejected before any bitmap mutation.
     ///
     /// The returned reservation carries only the one-slice arena claim and
     /// `MemoryId`; source Theap construction, `theap->memid` storage,
@@ -2549,22 +2563,28 @@ impl<'arena> ArenaView<'arena> {
     pub(crate) fn try_reserve_exclusive_theap<'subprocess>(
         &self,
         subprocess: &'subprocess MainSubprocess,
+        disallow_arena_alloc: bool,
         thread_sequence: ThreadSequence,
+        numa_node: i32,
     ) -> Option<ExclusiveArenaTheapReservation<'arena, 'subprocess>> {
         let arena = self.arena();
         if !arena.parent.is_null() || !core::ptr::eq(arena.subprocess, subprocess.as_ptr()) {
+            return None;
+        }
+        if disallow_arena_alloc {
             return None;
         }
         // SAFETY: `ArenaView` proves this exact candidate is live and
         // registry-published. The preceding parent test makes its source ID
         // the requested parent form rather than a subarena identity.
         let requested = unsafe { ArenaId::from_arena(self.arena.as_ptr()) }?;
-        let claim = self.try_claim_suitable_slices(
+        let passes = if numa_node < 0 { 1 } else { 2 };
+        let claim = (0..passes).find_map(|_| self.try_claim_suitable_slices(
             requested,
             ARENA_MIN_OBJ_SLICES,
             true,
             thread_sequence.get(),
-        )?;
+        ))?;
         Some(ExclusiveArenaTheapReservation { claim, subprocess })
     }
 
@@ -3279,7 +3299,7 @@ mod tests {
 
         assert!(
             selected_view
-                .try_reserve_exclusive_theap(foreign, sequence)
+                .try_reserve_exclusive_theap(foreign, false, sequence, -1)
                 .is_none(),
             "a foreign subprocess must fail before the source free bitmap changes"
         );
@@ -3295,7 +3315,7 @@ mod tests {
         );
 
         let reservation = selected_view
-            .try_reserve_exclusive_theap(selected, sequence)
+            .try_reserve_exclusive_theap(selected, false, sequence, -1)
             .expect("the selected requested parent supplies one Theap reservation");
         assert_eq!(reservation.slice_index(), first);
         assert_eq!(reservation.slice_count(), ARENA_MIN_OBJ_SLICES);
@@ -3335,7 +3355,7 @@ mod tests {
         );
 
         let retry = selected_view
-            .try_reserve_exclusive_theap(selected, sequence)
+            .try_reserve_exclusive_theap(selected, false, sequence, -1)
             .expect("the same requested parent slice becomes available again");
         assert_eq!(retry.slice_index(), first);
         assert!(
@@ -3349,7 +3369,7 @@ mod tests {
             .expect("the selected parent has one complete usable span");
         assert!(
             selected_view
-                .try_reserve_exclusive_theap(selected, sequence)
+                .try_reserve_exclusive_theap(selected, false, sequence, -1)
                 .is_none(),
             "a requested-parent failure must not search the unrelated arena or fall back to OS memory"
         );
@@ -3443,7 +3463,7 @@ mod tests {
             );
             assert!(
                 selected_view
-                    .try_reserve_exclusive_theap(foreign, thread_sequence)
+                    .try_reserve_exclusive_theap(foreign, false, thread_sequence, -1)
                     .is_none(),
                 "a foreign subprocess cannot consume the selected parent before prefix construction"
             );
@@ -3453,8 +3473,21 @@ mod tests {
                 "foreign refusal leaves the selected parent bitmap untouched"
             );
 
-            let reservation = selected_view
-                .try_reserve_exclusive_theap(selected, thread_sequence)
+            let mut disallowing = crate::config::VmOptions::uninitialized();
+            disallowing.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            disallowing.set(crate::config::VmOption::DisallowArenaAlloc, 1);
+            let disallowing = crate::os::VmPolicy::new(disallowing).unwrap();
+            assert!(matches!(
+                main.reserve_requested_parent_arena_theap(&selected_view, &disallowing),
+                Err(RequestedParentArenaTheapError::TheapArenaUnavailable)
+            ), "the source disallow_arena_alloc gate refuses the exclusive-arena Theap");
+            assert_eq!(selected_free.is_set_range(first_slice, 1), Some(true));
+            let mut defaults = crate::config::VmOptions::uninitialized();
+            defaults.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            let defaults = crate::os::VmPolicy::new(defaults).unwrap();
+            let reservation = main
+                .reserve_requested_parent_arena_theap(&selected_view, &defaults)
+                .ok()
                 .expect("only the requested parent supplies the Theap slice");
             let mut owner = match main.attach_requested_parent_arena_theap(heap.as_mut(), reservation) {
                 Ok(owner) => owner,
@@ -3510,7 +3543,7 @@ mod tests {
             drop(owner);
             let mut rejected_heap = Box::pin(Heap::bootstrap_empty());
             let rejected_reservation = selected_view
-                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .try_reserve_exclusive_theap(selected, false, thread_sequence, -1)
                 .expect("the selected parent provides the unchanged pre-materialization claim");
             let rejected_slice = rejected_reservation.slice_index();
             assert_eq!(selected_free.is_clear_range(rejected_slice, 1), Some(true));
@@ -3557,7 +3590,7 @@ mod tests {
                     )
             });
             let retry = selected_view
-                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .try_reserve_exclusive_theap(selected, false, thread_sequence, -1)
                 .expect("the exact selected slice is reusable for a second Theap lifecycle");
             assert_eq!(retry.slice_index(), first_slice);
             assert!(
@@ -3592,7 +3625,7 @@ mod tests {
                     )
             });
             let terminal_reservation = selected_view
-                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .try_reserve_exclusive_theap(selected, false, thread_sequence, -1)
                 .expect("the selected returned slice remains claimable before the terminal-owner check");
             let terminal_slice = terminal_reservation.slice_index();
             let mut terminal_owner = match main.attach_requested_parent_arena_theap(
@@ -3724,6 +3757,85 @@ mod tests {
         assert!(!retry.memory_id().initially_zero());
         assert!(retry.release());
         assert_eq!(script.calls.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
+
+    /// Source `_mi_theap_alloc`'s exclusive-arena arm: `disallow_arena_alloc`
+    /// refuses before any claim, and a nonnegative TLD NUMA node repeats the
+    /// requested parent once after a first-pass miss (here a failed commit).
+    #[test]
+    fn exclusive_theap_reservation_honors_disallow_and_the_second_numa_pass() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let subprocess = MainSubprocess::test_static_owner();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let script = CommitScript::new(false);
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                false,
+                false,
+                true,
+                -1,
+                true,
+                Some(CommitHook::new(
+                    scripted_commit,
+                    (&script as *const CommitScript).cast_mut().cast(),
+                )),
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let index = view.arena().info_slices;
+        let free = unsafe { view.slices_free() }.unwrap();
+        let sequence = ThreadSequence::from_previous_total_count(0);
+        // Managing the region already committed its metadata slices.
+        let managed_calls = script.calls.load(std::sync::atomic::Ordering::Relaxed);
+        let calls = || script.calls.load(std::sync::atomic::Ordering::Relaxed) - managed_calls;
+
+        assert!(view.try_reserve_exclusive_theap(subprocess, true, sequence, 0).is_none());
+        assert_eq!(calls(), 0, "disallow_arena_alloc refuses before the commit callback");
+        assert_eq!(free.is_set_range(index, 1), Some(true));
+
+        script.fail.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(view.try_reserve_exclusive_theap(subprocess, false, sequence, -1).is_none());
+        assert_eq!(calls(), 1, "a negative NUMA node makes one requested-arena pass");
+        assert!(view.try_reserve_exclusive_theap(subprocess, false, sequence, 0).is_none());
+        assert_eq!(calls(), 3, "a nonnegative NUMA node repeats the requested parent");
+        assert_eq!(free.is_set_range(index, 1), Some(true));
+
+        // Fail only the first-pass commit: the second pass then succeeds.
+        struct FailFirst { calls: std::sync::atomic::AtomicUsize, armed: std::sync::atomic::AtomicBool }
+        unsafe extern "C" fn fail_first(commit: bool, _start: *mut u8, _size: usize,
+            is_zero: *mut bool, argument: *mut c_void) -> bool {
+            let script = unsafe { &*argument.cast::<FailFirst>() };
+            let call = script.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if !commit || (call == 0 && script.armed.load(std::sync::atomic::Ordering::Relaxed)) {
+                return false;
+            }
+            if !is_zero.is_null() { unsafe { is_zero.write(false) }; }
+            true
+        }
+        let mut second_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let first_fail = FailFirst { calls: std::sync::atomic::AtomicUsize::new(0),
+            armed: std::sync::atomic::AtomicBool::new(false) };
+        let second = unsafe {
+            manage_external_in_place(&registry, second_region.as_ptr(), ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(), false, false, true, -1, true,
+                Some(CommitHook::new(fail_first,
+                    (&first_fail as *const FailFirst).cast_mut().cast())))
+        }
+        .unwrap();
+        let second_view = unsafe { ArenaView::from_ptr(second.arena_id().as_ptr()) }.unwrap();
+        first_fail.calls.store(0, std::sync::atomic::Ordering::Relaxed);
+        first_fail.armed.store(true, std::sync::atomic::Ordering::Relaxed);
+        let reservation = second_view
+            .try_reserve_exclusive_theap(subprocess, false, sequence, 3)
+            .expect("the second requested-arena pass commits after the first fails");
+        assert_eq!(first_fail.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert!(reservation.memory_id().initially_committed());
+        assert!(matches!(reservation.release(), Ok(true)));
     }
 
     #[test]

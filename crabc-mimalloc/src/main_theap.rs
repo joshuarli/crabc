@@ -1148,6 +1148,27 @@ impl MainStaticTheapAttachment {
         Ok(tld)
     }
 
+    /// Source `_mi_theap_alloc`'s exclusive-arena arm for this exact live
+    /// default TLD: `_mi_arenas_alloc(heap, ..., heap->exclusive_arena,
+    /// tld->thread_seq, tld->numa_node, &memid)`.
+    ///
+    /// The TLD supplies the source thread sequence and NUMA node; `policy`
+    /// supplies `disallow_arena_alloc`. Every refusal (option, exhaustion
+    /// after both source passes, commit failure, subarena, or foreign
+    /// subprocess) is the source `NULL` theap result and leaves no claim.
+    pub(crate) fn reserve_requested_parent_arena_theap<'arena>(
+        &mut self,
+        arena: &ArenaView<'arena>,
+        policy: &crate::os::VmPolicy,
+    ) -> Result<ExclusiveArenaTheapReservation<'arena, 'static>, RequestedParentArenaTheapError> {
+        let subprocess = self.subprocess;
+        let tld = self.tld().map_err(RequestedParentArenaTheapError::Main)?;
+        arena
+            .try_reserve_exclusive_theap(subprocess, policy.disallow_arena_alloc(),
+                tld.thread_sequence(), tld.numa_node())
+            .ok_or(RequestedParentArenaTheapError::TheapArenaUnavailable)
+    }
+
     /// Creates one bounded requested-parent Arena Theap on this exact live
     /// default TLD.
     ///
@@ -1669,6 +1690,8 @@ enum RequestedParentArenaTheapState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RequestedParentArenaTheapError {
     Main(MainStaticTheapError),
+    /// Source `_mi_theap_alloc` returned `NULL` from its exclusive arena.
+    TheapArenaUnavailable,
     RootOwnership,
     HeapBinding,
     ArenaMemory,

@@ -1,5 +1,5 @@
 {
-  "c_probe_sha256": "479e520d9c0231008e7c6cf8243d8110c7c4c6509c43eb78d94b22e2383559fa",
+  "c_probe_sha256": "0283bf15b8dc282cd22049e35289feb2fe5459703fa2086050391fcb8db0da11",
   "compile_definitions": [
     "-DMI_SHARED_LIB",
     "-DMI_SHARED_LIB_EXPORT",
@@ -104,9 +104,10 @@
     "begin": "CRABC_MI_AUTOMATIC_ARENA_RESERVATION_TRACE_BEGIN",
     "end": "CRABC_MI_AUTOMATIC_ARENA_RESERVATION_TRACE_END",
     "expected_values": {
+      "trace.automatic_arena.concurrent.claims_in_fresh_arenas": 1,
       "trace.automatic_arena.concurrent.eight_new_arena_claims_live": 1,
       "trace.automatic_arena.concurrent.new_ranges_distinct": 1,
-      "trace.automatic_arena.concurrent.one_new_arena_reserved": 1,
+      "trace.automatic_arena.concurrent.one_to_eight_fresh_arenas_reserved": 1,
       "trace.automatic_arena.concurrent.released_ranges_free": 1,
       "trace.automatic_arena.concurrent.retained_live_ranges_released": 1,
       "trace.automatic_arena.concurrent.workers_observed_exhausted_existing_ranges": 1,
