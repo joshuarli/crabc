@@ -51,7 +51,7 @@ for source in regression/raise-race common/print; do
     "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c99 -D_POSIX_C_SOURCE=200809L -fno-builtin --application-quote-include-dir "$work/libc-test-source/src/common" -c "$work/libc-test-source/src/$source.c" -o "$work/${source##*/}.o"
 done
 sha256sum "$ROOT/compat/x86_64/owned_signal_handler_fork_probe.c" "$work/workload.o" "$work/raise-race.o" "$work/print.o" >"$work/input.sha256"
-readonly cases=(direct handler raw queued queued-raw default-mask explicit-mask c11-mask clone-failure)
+readonly cases=(direct handler raw queued queued-raw default-mask explicit-mask c11-mask clone-failure kill-during-fork)
 observe() {
     local label="$1" status
     shift
@@ -93,4 +93,4 @@ for mode in pie non-pie; do
     compare "$mode-direct" "/dynamic-$mode" "/dynamic-$mode-raise-race" /lib/ld-crabc-x86_64.so.1
 done
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
-printf 'owned signal-handler fork: PASS (early delivery, inherited masks, clone failure, pinned raise-race); evidence: %s\n' "$work"
+printf 'owned signal-handler fork: PASS (early delivery, inherited masks, clone failure, kill during fork, pinned raise-race); evidence: %s\n' "$work"

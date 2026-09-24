@@ -93,7 +93,7 @@ compile_error!("the x86 pthread create/join leaf requires little-endian Linux/x8
 
 use core::ffi::{c_int, c_long, c_void};
 use core::mem::{align_of, size_of};
-use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 #[cfg(feature = "native-mimalloc-shadow")]
 use core::ptr::NonNull;
 #[cfg(feature = "native-mimalloc-shadow")]
@@ -652,10 +652,18 @@ static SELECTED_WORKER_REGISTRY_HEAD: AtomicUsize = AtomicUsize::new(0);
 // The lock covers every registry mutation and the complete scan-to-publish
 // interval. It is deliberately held only for bounded local atomics: never
 // across clone, callback execution, futex wait, exit, munmap, or another
-// syscall. Signal-handler/reentrant pthread_exit behavior is outside this
-// private artifact because a signal interrupting a holder could otherwise
-// deadlock here.
-static SELECTED_WORKER_REGISTRY_LOCK: AtomicU8 = AtomicU8::new(0);
+// syscall, except that raw fork keeps a shared hold across its one syscall.
+// Signal-handler/reentrant pthread_exit behavior is outside this private
+// artifact because a signal interrupting a holder could otherwise deadlock
+// here.
+//
+// Exclusive holders own `SELECTED_WORKER_REGISTRY_WRITER`; the low bits count
+// shared holders. Only the raw-fork snapshot and signal-target lookup hold it
+// shared. Neither mutates the list, so a pthread_kill need not wait for
+// another task's fork syscall. Musl gets the same independence from its
+// separate per-thread kill lock and thread-list lock.
+static SELECTED_WORKER_REGISTRY_LOCK: AtomicU32 = AtomicU32::new(0);
+const SELECTED_WORKER_REGISTRY_WRITER: u32 = 1 << 31;
 
 // The bootstrapped initial task is not backed by a worker control mapping,
 // but participates in the same locked last-thread transition in both owned
@@ -777,21 +785,58 @@ fn current_linux_thread_group_id() -> Option<c_int> {
     Some(result as c_int)
 }
 
-/// Acquire the bounded registry lock without entering a broader pthread lock.
+/// Acquire the bounded registry lock exclusively, for any mutation or
+/// scan-to-publish decision, without entering a broader pthread lock.
+///
+/// A claimed writer bit stops new shared holders before the writer waits for
+/// existing ones, so a stream of signal lookups cannot starve a mutation.
 fn lock_selected_worker_registry() {
-    while SELECTED_WORKER_REGISTRY_LOCK
-        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        while SELECTED_WORKER_REGISTRY_LOCK.load(Ordering::Relaxed) != 0 {
-            core::hint::spin_loop();
+    loop {
+        let state = SELECTED_WORKER_REGISTRY_LOCK.load(Ordering::Relaxed);
+        if state & SELECTED_WORKER_REGISTRY_WRITER == 0
+            && SELECTED_WORKER_REGISTRY_LOCK
+                .compare_exchange_weak(
+                    state,
+                    state | SELECTED_WORKER_REGISTRY_WRITER,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            break;
         }
+        core::hint::spin_loop();
+    }
+    while SELECTED_WORKER_REGISTRY_LOCK.load(Ordering::Acquire) != SELECTED_WORKER_REGISTRY_WRITER {
+        core::hint::spin_loop();
     }
 }
 
 /// Release the bounded registry lock after its local identity operation.
 fn unlock_selected_worker_registry() {
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+}
+
+/// Hold the registry shared: every mutation is excluded, other shared
+/// holders are not. The caller only reads links and updates per-control
+/// atomics that a list mutator never reinitializes while the control is linked.
+fn lock_selected_worker_registry_shared() {
+    loop {
+        let state = SELECTED_WORKER_REGISTRY_LOCK.load(Ordering::Relaxed);
+        if state & SELECTED_WORKER_REGISTRY_WRITER == 0
+            && SELECTED_WORKER_REGISTRY_LOCK
+                .compare_exchange_weak(state, state + 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+        {
+            return;
+        }
+        core::hint::spin_loop();
+    }
+}
+
+/// Release one shared registry hold.
+fn unlock_selected_worker_registry_shared() {
+    SELECTED_WORKER_REGISTRY_LOCK.fetch_sub(1, Ordering::Release);
 }
 
 /// Acquire one worker's private source-shaped kill/exit exclusion lock.
@@ -952,16 +997,19 @@ pub(super) fn fork_has_other_runtime_tasks() -> bool {
 /// Lock the selected worker list for one raw-fork transaction.
 ///
 /// The caller must pair this with exactly one parent or child completion. The
-/// lock serializes list publication/withdrawal with the fork snapshot, but is
-/// never held across user callbacks, allocation, clone, join wait, or any
-/// operation other than the one raw fork syscall.
+/// shared hold serializes list publication/withdrawal with the fork snapshot,
+/// but is never held across user callbacks, allocation, clone, join wait, or
+/// any operation other than the one raw fork syscall. It deliberately admits
+/// concurrent signal-target lookups: like musl's thread-list lock, it must
+/// not make another task's pthread_kill wait for this fork. The sole child
+/// discards the copied lock word with the rest of the inherited registry.
 pub(super) fn pthread_fork_prepare() {
-    lock_selected_worker_registry();
+    lock_selected_worker_registry_shared();
 }
 
 /// Release the parent-side selected-worker fork transaction.
 pub(super) unsafe fn pthread_fork_parent() {
-    unlock_selected_worker_registry();
+    unlock_selected_worker_registry_shared();
 }
 
 /// Install the child's clear-child-TID address inside the all-signal-blocked
@@ -1344,12 +1392,14 @@ pub(super) unsafe fn with_selected_pthread_signal_target(
         INITIAL_SIGNAL_TARGET_LOCK.store(0, Ordering::Release);
         return Some(result);
     }
-    lock_selected_worker_registry();
+    // A shared hold still excludes withdrawal, so the lease below is taken
+    // before any reclaimer can start draining leases for this control.
+    lock_selected_worker_registry_shared();
     let control = selected_worker_by_thread_pointer_locked(thread as usize);
     if let Some(control) = control {
         unsafe { (*control).signal_target_leases.fetch_add(1, Ordering::AcqRel) };
     }
-    unlock_selected_worker_registry();
+    unlock_selected_worker_registry_shared();
     let control = control?;
     // SAFETY: this lease survives withdrawal and pins the target lock and
     // cancellation state until the final decrement below.
@@ -1496,7 +1546,10 @@ fn visit_selected_native_allocator_descriptors(
 /// borrows the worker-list lock that [`pthread_fork_prepare`] already holds
 /// rather than taking a second pin: that lock stays held across the raw
 /// syscall and into the child, which is the lifetime the returned interval
-/// needs. Refusal reopens the exact epoch and issues no syscall.
+/// needs. The hold is shared, which still excludes every list mutation;
+/// concurrent shared holders are signal-target lookups, which only take
+/// per-control leases and never touch allocator descriptors. Refusal reopens
+/// the exact epoch and issues no syscall.
 ///
 /// # Safety
 /// The caller is the full `fork` path after public prepare hooks and every

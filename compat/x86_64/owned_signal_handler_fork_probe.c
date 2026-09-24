@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <threads.h>
 #include <stdint.h>
+#include <time.h>
 
 static volatile sig_atomic_t called, child_pid, fork_error;
 static int raw, direct, queued;
@@ -84,9 +85,58 @@ static int mask_case(const char *mode) {
     printf("mask=%s parent-restored=1 callback-ready=%d\n",mode,!failure);
     return 0;
 }
+/* A pthread_kill targeting a thread that is inside fork must not wait for
+   that fork: musl's pthread_kill takes only the target's kill lock, never the
+   thread-list lock that fork holds across its syscall. A seccomp listener
+   parks the target's raw fork at syscall entry, so the forking thread holds
+   every fork-transaction lock while an already-created sender signals it. */
+static volatile int fork_listener=-1, kill_go, kill_done, kill_result=-1;
+static pthread_t fork_target;
+static void *fork_under_listener(void *unused) {
+    (void)unused;
+    struct filter { unsigned short code;unsigned char yes,no;unsigned value; } instructions[]={
+        {0x20,0,0,0},{0x15,0,1,SYS_fork},{0x06,0,0,0x7fc00000},{0x06,0,0,0x7fff0000}};
+    struct { unsigned short count;struct filter *instructions; } program={4,instructions};
+    if(syscall(SYS_prctl,38,1,0,0,0)) _exit(40);
+    long listener=syscall(SYS_seccomp,1,8,&program);
+    if(listener<0) _exit(41);
+    fork_listener=(int)listener;
+    pid_t child=fork();
+    if(child==0) _exit(0);
+    int status=-1;
+    if(child<0 || waitpid(child,&status,0)!=child || status!=0) return (void *)1;
+    return NULL;
+}
+static void *kill_forking_target(void *unused) {
+    (void)unused;
+    while(!kill_go) ;
+    kill_result=pthread_kill(fork_target,0);
+    kill_done=1;
+    return NULL;
+}
+static int kill_during_fork_case(void) {
+    pthread_t sender;
+    if(pthread_create(&sender,NULL,kill_forking_target,NULL))return 42;
+    if(pthread_create(&fork_target,NULL,fork_under_listener,NULL))return 43;
+    while(fork_listener<0) ;
+    struct { uint64_t id;uint32_t pid,flags;int nr;uint32_t arch;uint64_t pc,args[6]; } notification;
+    memset(&notification,0,sizeof notification);
+    if(syscall(SYS_ioctl,fork_listener,0xc0502100UL,&notification) || notification.nr!=SYS_fork)return 44;
+    kill_go=1;
+    struct timespec pause={0,1000000};
+    for(int waited=0;waited<2000 && !kill_done;waited++) nanosleep(&pause,NULL);
+    int completed_while_forking=kill_done;
+    struct { uint64_t id;int64_t value;int32_t error;uint32_t flags; } response={notification.id,0,0,1};
+    if(syscall(SYS_ioctl,fork_listener,0xc0182101UL,&response))return 45;
+    void *result;
+    if(pthread_join(sender,&result) || result || pthread_join(fork_target,&result) || result)return 46;
+    printf("kill-during-fork completed-while-forking=%d result=%d\n",completed_while_forking,kill_result);
+    return completed_while_forking && !kill_result ? 0 : 47;
+}
 int main(int argc,char **argv) {
     if(argc!=2) return 2;
     if(strstr(argv[1],"mask") || !strcmp(argv[1],"clone-failure"))return mask_case(argv[1]);
+    if(!strcmp(argv[1],"kill-during-fork"))return kill_during_fork_case();
     raw=!strcmp(argv[1],"raw") || !strcmp(argv[1],"queued-raw");direct=!strcmp(argv[1],"direct");
     queued=!strcmp(argv[1],"queued") || !strcmp(argv[1],"queued-raw");
     struct rlimit limit;if(getrlimit(RLIMIT_NPROC,&limit)) return 3;
