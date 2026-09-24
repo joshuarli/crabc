@@ -2,7 +2,7 @@
 # Prepare a fresh lane worktree for offline native runs: fetch the locked
 # registry closure into its own .work/x86_64/cargo, vendor that closure where
 # the source-runtime libc builder authenticates it, and seed the allocator's
-# verified mimalloc archive cache from the primary checkout when absent.
+# verified mimalloc archive caches from the primary checkout when absent.
 # The allocator runner re-verifies the copied archive before use.
 set -eu
 root=$(git rev-parse --show-toplevel)
@@ -15,9 +15,14 @@ if [ ! -d "$root/$vendor" ]; then
     "$here/rust-check.sh" cargo vendor --locked --offline --versioned-dirs \
         "/workspace/$vendor" >/dev/null
 fi
-cache=.work/allocator-cache
-if [ ! -f "$root/$cache/mimalloc-3.5.0.tar.gz" ] && [ "$primary" != "$root" ] &&
-    [ -f "$primary/$cache/mimalloc-3.5.0.tar.gz" ]; then
-    mkdir -p "$root/$cache"
-    cp "$primary/$cache/mimalloc-3.5.0.tar.gz" "$primary/$cache/mimalloc-3.5.0.tag.json" "$root/$cache/"
-fi
+# The host runner caches under .work/allocator-cache (with its tag record);
+# the x86 container launcher caches under .work/allocator-x86_64.
+for cache in .work/allocator-cache .work/allocator-x86_64/allocator-cache; do
+    if [ ! -f "$root/$cache/mimalloc-3.5.0.tar.gz" ] && [ "$primary" != "$root" ] &&
+        [ -f "$primary/$cache/mimalloc-3.5.0.tar.gz" ]; then
+        mkdir -p "$root/$cache"
+        for file in "$primary/$cache"/mimalloc-3.5.0.*; do
+            cp "$file" "$root/$cache/"
+        done
+    fi
+done
