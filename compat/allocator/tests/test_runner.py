@@ -4605,9 +4605,16 @@ class ContractTests(unittest.TestCase):
 
     def test_x86_m2_report_fails_closed_for_the_six_unqualified_components(self) -> None:
         from test_x86_64_m2_bitmaps import NativeBitmapAssemblyTests
-        report = RUNNER.m2_x86_64_memory_substrate_report(
-            **NativeBitmapAssemblyTests().report_arguments()
-        )
+        arguments = NativeBitmapAssemblyTests().report_arguments()
+        initialization_checks = arguments.pop('_initialization_checks')
+        fault_checks = arguments.pop('_fault_checks')
+        arena_checks = arguments.pop('_arena_checks')
+        with mock.patch.object(
+            RUNNER, '_m2_x86_64_initialization_check_records', return_value=initialization_checks
+        ), mock.patch.object(RUNNER, '_m2_x86_64_fault_check_records', return_value=fault_checks), mock.patch.object(
+            RUNNER, '_m2_x86_64_process_arena_collect_check_records', return_value=arena_checks
+        ):
+            report = RUNNER.m2_x86_64_memory_substrate_report(**arguments)
         self.assertEqual(report["milestone"]["status"], "partial")
         self.assertEqual(
             report["milestone"]["unmet_component_ids"],
