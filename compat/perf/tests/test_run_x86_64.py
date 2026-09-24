@@ -508,7 +508,7 @@ class RosterBoundaryTests(unittest.TestCase):
                 _report_path, report = runner.run_attempt(args)
         self.assertFalse(environment.called)
         self.assertEqual(report["status"], "failed")
-        self.assertIn("capability.accounting: planned", report["failure"])
+        self.assertIn("capability.accounting: ready, no qualification execution receipt", report["failure"])
 
     def test_smoke_roster_binds_its_completed_smoke_predecessor(self) -> None:
         """A roster's predecessor is complete at the roster's own budget."""

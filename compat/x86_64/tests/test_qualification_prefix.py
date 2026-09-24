@@ -120,7 +120,9 @@ class QualificationPrefixTests(unittest.TestCase):
                 self.assertEqual(json.loads(path.read_text()), receipt)
         self.assertEqual(executed, list(manifest.CHAIN[:4]))
         self.assertEqual(receipt['outcome'], 'failed')
-        self.assertIn(f'{manifest.CHAIN[3]}/gate-conditions did not pass', receipt['error'])
+        failed_gate = report['promotion_chain'][3]
+        failed_case = manifest.load_json(ROOT / failed_gate['case_manifest'], 'case manifest')['cases'][0]['id']
+        self.assertIn(f'{manifest.CHAIN[3]}/{failed_case} did not pass', receipt['error'])
         self.assertEqual(receipt['qualified_gates'], list(manifest.CHAIN[:3]))
         self.assertFalse(receipt['complete_chain'])
 

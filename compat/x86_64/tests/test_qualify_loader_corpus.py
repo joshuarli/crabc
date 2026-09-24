@@ -207,7 +207,7 @@ class LoaderCorpusCaseTests(unittest.TestCase):
 
 
 class LoaderCorpusDeclarationTests(unittest.TestCase):
-    def test_checked_in_gate_pins_only_this_case_and_stays_blocked_by_planned_predecessors(self) -> None:
+    def test_checked_in_gate_pins_only_this_case_and_reruns_every_predecessor(self) -> None:
         import generate_qualification_manifest as manifest
         import run_qualification_manifest as prefix
 
@@ -220,8 +220,11 @@ class LoaderCorpusDeclarationTests(unittest.TestCase):
             [("loader-corpus-frozen-roster", ["python3", "compat/x86_64/qualify_loader_corpus.py"], qualify.PASS_MARKER)],
         )
         self.assertFalse(report["promotion_ready"])
-        with self.assertRaisesRegex(prefix.QualificationRunError, "planned dependencies: compat.abi-differential"):
-            prefix.select_promotion_prefix(report, "compat.loader-corpus")
+        # The gate never runs alone: its prefix re-executes every ordered
+        # predecessor in the same invocation, and each fails closed on its own
+        # unmet conditions until the prerequisite families verify.
+        selected = prefix.select_promotion_prefix(report, "compat.loader-corpus")
+        self.assertEqual([row["id"] for row in selected], list(manifest.CHAIN[:4]))
 
 
 if __name__ == "__main__":

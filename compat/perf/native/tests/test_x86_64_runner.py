@@ -311,7 +311,7 @@ class RawReportTests(unittest.TestCase):
 
 class AdmissionAndPathTests(unittest.TestCase):
     def test_full_mode_waits_for_every_ordered_predecessor_gate(self) -> None:
-        with self.assertRaisesRegex(native_x86.RunnerError, "capability.accounting: planned"):
+        with self.assertRaisesRegex(native_x86.RunnerError, "capability.accounting: ready, no qualification execution receipt"):
             native_x86.require_admitted_mode("full", ROOT)
         admitted = {"status": "available", "owner": "ordered chain", "unmet": []}
         with unittest.mock.patch.object(native_x86, "correctness_admission", return_value=admitted):
@@ -322,7 +322,7 @@ class AdmissionAndPathTests(unittest.TestCase):
         with contextlib.redirect_stderr(stderr):
             self.assertEqual(native_x86.main(["--mode", "full", "--report", "/unused.json"]), 2)
         self.assertIn("full mode is unavailable pending", stderr.getvalue())
-        self.assertIn("compat.abi-differential: planned", stderr.getvalue())
+        self.assertIn("compat.abi-differential: ready, no qualification execution receipt", stderr.getvalue())
 
     def test_full_admission_query_fails_closed_and_names_open_gates(self) -> None:
         stdout = io.StringIO()
@@ -330,7 +330,7 @@ class AdmissionAndPathTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             self.assertEqual(native_x86.main(["--full-admission"]), 2)
         self.assertEqual(json.loads(stdout.getvalue())["status"], "unavailable")
-        self.assertIn("capability.accounting: planned", stderr.getvalue())
+        self.assertIn("capability.accounting: ready, no qualification execution receipt", stderr.getvalue())
 
     def test_timed_invocations_follow_correctness_and_alternate_backend_order(self) -> None:
         self.assertEqual(native_x86.invocation_roster(1), [
