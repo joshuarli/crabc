@@ -35,7 +35,9 @@ fn current_page_size() -> usize {
 /// copied sentinels are the corresponding PageMap-derived page facts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct QuiescentPageState {
-    page_map_registered_entry_count: usize,
+    /// Registered entries excluding the detached metadata Theap's retained
+    /// pages; see `quiescent_application_page_map_entry_count`.
+    application_page_map_entry_count: usize,
     page_map_published_submap_count: usize,
     arena_registry_count: usize,
     main_heap_abandoned_page_count: usize,
@@ -48,7 +50,10 @@ fn quiescent_page_state() -> QuiescentPageState {
     let audit = native_runtime_lifecycle_test_audit()
         .expect("all participating workers joined before the scalar state audit");
     QuiescentPageState {
-        page_map_registered_entry_count: audit.page_map_registered_entry_count,
+        // SAFETY: callers sample only after every participating worker joined.
+        application_page_map_entry_count: unsafe {
+            native_runtime_test_support::quiescent_application_page_map_entry_count()
+        },
         page_map_published_submap_count: audit.page_map_published_submap_count,
         arena_registry_count: audit.arena_registry_count,
         main_heap_abandoned_page_count: audit.main_heap_abandoned_page_count,
@@ -68,7 +73,7 @@ fn assert_released_to_baseline(
     context: &str,
 ) {
     assert_eq!(
-        after.page_map_registered_entry_count, baseline.page_map_registered_entry_count,
+        after.application_page_map_entry_count, baseline.application_page_map_entry_count,
         "{context}: all old and replacement PageMap entries return to baseline"
     );
     assert_eq!(
@@ -198,8 +203,8 @@ fn native_pointer_first_nonlocal_reallocate_audits_failure_and_one_old_consumpti
     );
     let before_failure = quiescent_page_state();
     assert!(
-        before_failure.page_map_registered_entry_count
-            > baseline.page_map_registered_entry_count,
+        before_failure.application_page_map_entry_count
+            > baseline.application_page_map_entry_count,
         "A's live post-exit page remains registered before a nonlocal replacement attempt"
     );
     assert_eq!(
@@ -245,8 +250,8 @@ fn native_pointer_first_nonlocal_reallocate_audits_failure_and_one_old_consumpti
     );
     let before_success = quiescent_page_state();
     assert!(
-        before_success.page_map_registered_entry_count
-            > baseline.page_map_registered_entry_count,
+        before_success.application_page_map_entry_count
+            > baseline.application_page_map_entry_count,
         "the fresh old page remains registered until B's replacement consumes it"
     );
 

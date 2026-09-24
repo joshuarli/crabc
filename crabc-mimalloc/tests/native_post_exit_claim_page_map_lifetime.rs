@@ -40,6 +40,9 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
     #[cfg(feature = "native-runtime-test-audit")]
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the prepared process exposes a PageMap scalar baseline");
+    // SAFETY: no worker has started; this thread performs only the observation.
+    #[cfg(feature = "native-runtime-test-audit")]
+    let baseline_application_entries = unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() };
 
     let clients = publish_exited_owner_clients();
     #[cfg(feature = "native-runtime-test-audit")]
@@ -168,8 +171,9 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
         let after = native_runtime_lifecycle_test_audit()
             .expect("all source producers joined before the terminal PageMap audit");
         assert_eq!(
-            after.page_map_registered_entry_count,
-            baseline.page_map_registered_entry_count,
+            // SAFETY: every source producer joined before this observation.
+            unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() },
+            baseline_application_entries,
             "the terminal release begins only after every exact source client has completed"
         );
     }

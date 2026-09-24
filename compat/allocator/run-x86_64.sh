@@ -77,6 +77,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-heap-lifecycle
   allocator-m6 [--check|--reader-tests]
   allocator-unit [--filter module::tests::exact_test_name] | allocator-core-unit
+  allocator-native-integration
 
 This launcher rejects emulation and does not provide x86 crabc runtime,
 libc, ldso, crabc-rs, sysroot, generic cargo, or shell commands.
@@ -363,7 +364,7 @@ case "$command" in
         usage
         exit 0
         ;;
-    allocator-dynamic-full-direct-small-unmapped-reabandon|image|allocator|allocator-m1|allocator-m2|allocator-m7|allocator-tls|allocator-lifecycle|allocator-startup-regular-arena|allocator-initialization-tld|allocator-fault|allocator-fault-seam-inventory|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-live-owner-full-medium-remote-release|allocator-live-owner-full-medium-one-remote-unfull-reuse|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-regular-mapped-reclaim|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-direct-small-unmapped-reabandon|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-unmapped-reabandon|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-medium-unmapped-reabandon|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-unmapped-reabandon|allocator-dynamic-full-large-homogeneous-aggregate|allocator-dynamic-full-medium-homogeneous-aggregate|allocator-dynamic-full-singleton-homogeneous-aggregate|allocator-dynamic-full-non-direct-small-homogeneous-aggregate|allocator-later-thread-exit-full-direct-small-pages|allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate|allocator-automatic-pthread-destructor|allocator-cancellation-pthread-destructor|allocator-process-done-pthread-key|allocator-automatic-arena-reservation|allocator-dynamic-os-aligned-singleton|allocator-dynamic-arena-singleton-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-deferred-free-callback|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-perf-engine|allocator-codegen-audit|allocator-huge-registry|allocator-huge-reservation|allocator-huge-numa-qualification|allocator-arena-destroy|allocator-m2-arena-lifecycle|allocator-heap-destroy|allocator-subprocess-lifecycle|allocator-heap-lifecycle|allocator-m6|allocator-unit|allocator-core-unit)
+    allocator-dynamic-full-direct-small-unmapped-reabandon|image|allocator|allocator-m1|allocator-m2|allocator-m7|allocator-tls|allocator-lifecycle|allocator-startup-regular-arena|allocator-initialization-tld|allocator-fault|allocator-fault-seam-inventory|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-live-owner-full-medium-remote-release|allocator-live-owner-full-medium-one-remote-unfull-reuse|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-regular-mapped-reclaim|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-direct-small-unmapped-reabandon|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-unmapped-reabandon|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-medium-unmapped-reabandon|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-unmapped-reabandon|allocator-dynamic-full-large-homogeneous-aggregate|allocator-dynamic-full-medium-homogeneous-aggregate|allocator-dynamic-full-singleton-homogeneous-aggregate|allocator-dynamic-full-non-direct-small-homogeneous-aggregate|allocator-later-thread-exit-full-direct-small-pages|allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate|allocator-automatic-pthread-destructor|allocator-cancellation-pthread-destructor|allocator-process-done-pthread-key|allocator-automatic-arena-reservation|allocator-dynamic-os-aligned-singleton|allocator-dynamic-arena-singleton-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-deferred-free-callback|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-perf-engine|allocator-codegen-audit|allocator-huge-registry|allocator-huge-reservation|allocator-huge-numa-qualification|allocator-arena-destroy|allocator-m2-arena-lifecycle|allocator-heap-destroy|allocator-subprocess-lifecycle|allocator-heap-lifecycle|allocator-m6|allocator-unit|allocator-native-integration|allocator-core-unit)
         ;;
     allocator-init-recursion)
         ;;
@@ -835,6 +836,17 @@ case "$command" in
         else
             run_in_container python3 compat/allocator/run_unit_x86_64.py "$2"
         fi
+        ;;
+    allocator-native-integration)
+        [ "$#" -eq 0 ] || fail "allocator-native-integration takes no arguments"
+        ensure_image
+        # Every direct `crabc-mimalloc/tests/native_*` runtime witness, with
+        # the default-off scalar audit and next-munmap fault seams those
+        # targets require. Each target is a separate process; run them all
+        # and report every failure.
+        run_in_container cargo test --locked --target x86_64-unknown-linux-musl -p crabc-mimalloc \
+            --no-default-features --features native-runtime-test-audit,native-runtime-test-fault \
+            --no-fail-fast --test 'native_*'
         ;;
     allocator-core-unit)
         [ "$#" -eq 0 ] || fail "allocator-core-unit takes no arguments"

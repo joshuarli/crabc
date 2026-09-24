@@ -82,9 +82,25 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
         prepare_native_later_thread_arena(),
         "the initial persistent owner prepares the later-worker source arena"
     );
+    // Pinned `page.c::_mi_page_retire` keeps ticket zero's only small page
+    // registered once its bookkeeping client below is freed. Materialize that
+    // retained all-free page before the baseline, so the final audit counts
+    // only A's and B's registrations.
+    let calibration = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        _ => panic!("ticket zero calibrates its retained bookkeeping page"),
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(calibration) },
+        TicketZeroPageFreeResult::Freed,
+        "ticket zero returns its calibration client to its retained page"
+    );
     #[cfg(feature = "native-runtime-test-audit")]
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the initialized process exposes a quiescent source-state baseline");
+    // SAFETY: no worker has started; this thread performs only the observation.
+    #[cfg(feature = "native-runtime-test-audit")]
+    let baseline_application_entries = unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() };
 
     let (owner_sender, owner_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
@@ -306,8 +322,9 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
         let after = native_runtime_lifecycle_test_audit()
             .expect("every owner and releaser joined before the final source-state audit");
         assert_eq!(
-            after.page_map_registered_entry_count,
-            baseline.page_map_registered_entry_count,
+            // SAFETY: every owner and releaser joined before this observation.
+            unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() },
+            baseline_application_entries,
             "A's sources and B's local successor release their PageMap registrations"
         );
         assert_eq!(

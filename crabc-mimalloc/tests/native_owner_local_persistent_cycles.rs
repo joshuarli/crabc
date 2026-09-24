@@ -120,7 +120,8 @@ fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
         "ordinary local C operations never enter the per-call parked compatibility bridge"
     );
     assert_eq!(after.page_owner_ready, 1);
-    assert_eq!(after.page_map_registered_entry_count, 0);
+    // SAFETY: the worker joined before this observation.
+    assert_eq!(unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() }, 0);
 
     let resumed = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,

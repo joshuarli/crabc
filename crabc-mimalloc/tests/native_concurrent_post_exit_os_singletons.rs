@@ -238,6 +238,8 @@ fn concurrent_os_singleton_post_exit_frees_complete_without_retention() {
     );
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the prepared initial owner exposes a quiescent lifecycle baseline");
+    // SAFETY: no worker has started; this thread performs only the observation.
+    let baseline_application_entries = unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() };
 
     let inputs = publish_os_singleton_sources();
     let after_owner_exit = native_runtime_lifecycle_test_audit()
@@ -288,7 +290,8 @@ fn concurrent_os_singleton_post_exit_frees_complete_without_retention() {
     let after = native_runtime_lifecycle_test_audit()
         .expect("every synchronized B joins before the final OS-singleton lifecycle audit");
     assert_eq!(
-        after.page_map_registered_entry_count, baseline.page_map_registered_entry_count,
+        // SAFETY: every B joined before this observation.
+        unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() }, baseline_application_entries,
         "all sixteen terminal frees return their PageMap registrations to baseline"
     );
     assert_eq!(

@@ -101,3 +101,33 @@ pub(crate) fn attach_current_thread() -> crabc_mimalloc::__crabc_runtime::Thread
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) use crabc_mimalloc::__crabc_runtime::attach_current_thread;
+
+/// Counts PageMap registrations held by application pages at one quiescent
+/// point, excluding pages of the detached source metadata Theap.
+///
+/// Pinned `init.c::mi_tld_free` and `theap.c` return a worker's TLD and Theap
+/// blocks through `_mi_meta_free`; they never destroy `mi_process_theap_meta`,
+/// which `init.c:204` configures with `page_full_retain = 2`. Its reusable
+/// pages therefore stay registered after every worker has finished. A test
+/// that proves application pages return to baseline must compare this count,
+/// not the raw registration total, so a leaked application registration
+/// still fails while retained metadata capacity does not.
+///
+/// # Safety
+///
+/// Every participating worker must have joined or otherwise stopped entering
+/// the allocator; the calling thread performs only this observation, as
+/// `native_runtime_metadata_page_map_test_audit` requires.
+#[cfg(feature = "native-runtime-test-audit")]
+#[allow(dead_code)]
+pub(crate) unsafe fn quiescent_application_page_map_entry_count() -> usize {
+    let audit = crabc_mimalloc::__crabc_runtime::native_runtime_lifecycle_test_audit()
+        .expect("the quiescent runtime is auditable");
+    // SAFETY: forwarded from this function's quiescence contract.
+    let metadata = unsafe { crabc_mimalloc::__crabc_runtime::native_runtime_metadata_page_map_test_audit() }
+        .expect("the quiescent runtime retains its metadata identity");
+    audit
+        .page_map_registered_entry_count
+        .checked_sub(metadata)
+        .expect("metadata registrations are a subset of all registrations")
+}

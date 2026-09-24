@@ -93,6 +93,8 @@ fn native_owner_exit_collection_retries_live_page_map_publishers_at_one_two_four
 fn run_owner_exit_collection_race(producer_count: usize) {
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the prepared process exposes a quiescent scalar lifecycle baseline");
+    // SAFETY: no worker has started; this thread performs only the observation.
+    let baseline_application_entries = unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() };
     let (clients_sender, clients_receiver) = mpsc::sync_channel(0);
     let (publisher_ready_sender, publisher_ready_receiver) = mpsc::channel();
     let (begin_exit_sender, begin_exit_receiver) = mpsc::sync_channel(0);
@@ -308,7 +310,8 @@ fn run_owner_exit_collection_race(producer_count: usize) {
         "the source owner-ready state returns to its prepared baseline"
     );
     assert_eq!(
-        after.page_map_registered_entry_count, baseline.page_map_registered_entry_count,
+        // SAFETY: every producer and A joined before this observation.
+        unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() }, baseline_application_entries,
         "the seed and exact {producer_count} racing clients release their PageMap registrations"
     );
     assert_eq!(

@@ -334,6 +334,8 @@ fn concurrent_mixed_post_exit_pointer_operations_complete_through_page_state() {
     );
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the prepared initial owner exposes a quiescent lifecycle baseline");
+    // SAFETY: no worker has started; this thread performs only the observation.
+    let baseline_application_entries = unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() };
 
     let sources = publish_mixed_sources();
     let after_owner_exit = native_runtime_lifecycle_test_audit()
@@ -417,7 +419,8 @@ fn concurrent_mixed_post_exit_pointer_operations_complete_through_page_state() {
     let after = native_runtime_lifecycle_test_audit()
         .expect("every concurrent survivor joins before the final lifecycle audit");
     assert_eq!(
-        after.page_map_registered_entry_count, baseline.page_map_registered_entry_count,
+        // SAFETY: every survivor joined before this observation.
+        unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() }, baseline_application_entries,
         "every exact source and the medium replacement release PageMap registrations"
     );
     assert_eq!(

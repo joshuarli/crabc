@@ -60,6 +60,8 @@ fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_th
 
     let before_initial_repeat = native_runtime_lifecycle_test_audit()
         .expect("the initial live client establishes a quiescent scalar baseline");
+    // SAFETY: no worker has started; this thread performs only the observation.
+    let baseline_application_entries = unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() };
     assert_eq!(
         unsafe { native_usable_size(initial) },
         Some(initial_usable),
@@ -137,8 +139,9 @@ fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_th
     let after_later_owner = native_runtime_lifecycle_test_audit()
         .expect("the released later owner leaves the initial page audit readable");
     assert_eq!(
-        after_later_owner.page_map_registered_entry_count,
-        before_initial_repeat.page_map_registered_entry_count,
+        // SAFETY: the later observer joined before this observation.
+        unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() },
+        baseline_application_entries,
         "the later owner releases its source page while foreign usable-size observations add no PageMap registration"
     );
 
@@ -158,8 +161,9 @@ fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_th
         "pointer-only usable-size observations do not enter the parked compatibility bridge"
     );
     assert_eq!(
-        after.page_map_registered_entry_count,
-        before_initial_repeat.page_map_registered_entry_count,
+        // SAFETY: every observer joined before this observation.
+        unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() },
+        baseline_application_entries,
         "the initial all-free page stays resident while both pointer-only observers leave no extra PageMap registration"
     );
 }

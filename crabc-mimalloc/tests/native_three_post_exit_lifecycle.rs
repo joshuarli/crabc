@@ -121,9 +121,17 @@ fn three_exited_native_owners_free_aggregates_through_page_state_in_non_fifo_ord
         "the initial owner prepares the immutable process pair before the exited owners begin"
     );
 
+    // Pinned `page.c::_mi_page_retire` keeps ticket zero's only small page
+    // registered once its roundtrip client is freed. Materialize that
+    // retained all-free page before the baseline, so the final audit counts
+    // only the exited owners' registrations.
+    assert_ticket_zero_roundtrip();
     #[cfg(feature = "native-runtime-test-audit")]
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the prepared initial owner exposes a quiescent lifecycle audit");
+    // SAFETY: no worker has started; this thread performs only the observation.
+    #[cfg(feature = "native-runtime-test-audit")]
+    let baseline_application_entries = unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() };
 
     let first = publish_exited_owner();
     let second = publish_exited_owner();
@@ -331,7 +339,9 @@ fn three_exited_native_owners_free_aggregates_through_page_state_in_non_fifo_ord
             .expect("all exited-owner clients leave a quiescent lifecycle audit");
         assert_eq!(after.process_active, 1);
         assert_eq!(
-            after.page_map_registered_entry_count, 0,
+            // SAFETY: every owner and B joined before this observation.
+            unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() },
+            baseline_application_entries,
             "every freed exited-owner client releases its PageMap registration"
         );
         assert_eq!(

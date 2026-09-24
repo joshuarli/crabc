@@ -242,7 +242,9 @@ fn split_releasers_free_mixed_post_exit_clients_through_page_state() {
         let after = native_runtime_lifecycle_test_audit()
             .expect("every releaser joined before the final source-state audit");
         assert_eq!(
-            after.page_map_registered_entry_count,
+            // SAFETY: every releaser joined before this observation. The
+            // expected total was sampled before any worker had a metadata TLD.
+            unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() },
             expected_final_page_map_entries,
             "all split post-exit clients release their PageMap registrations without draining ticket zero's retained local page"
         );

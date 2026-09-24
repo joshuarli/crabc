@@ -117,6 +117,8 @@ fn run_width(width: usize) {
 
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the worker owner-selection audit starts from a quiescent initial source");
+    // SAFETY: no worker has started; this thread performs only the observation.
+    let baseline_application_entries = unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() };
     let (ready_sender, ready_receiver) = mpsc::sync_channel(width);
     let start = Arc::new(Barrier::new(width + 1));
     let mut workers = Vec::with_capacity(width);
@@ -169,7 +171,8 @@ fn run_width(width: usize) {
         "installed later owners never use the parked compatibility bridge for local allocation"
     );
     assert_eq!(
-        after.page_map_registered_entry_count, baseline.page_map_registered_entry_count,
+        // SAFETY: every worker joined before this observation.
+        unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() }, baseline_application_entries,
         "every local worker releases its exact clients before the final audit"
     );
     assert_eq!(after.shared_later_theap_count, baseline.shared_later_theap_count);

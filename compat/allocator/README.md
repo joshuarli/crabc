@@ -23,6 +23,11 @@ raw output. Zero matching tests, an ignored test, or a failed test returns a
 failure. Omit `--filter` for the full library unit suite. These commands do not
 produce M1/M2 qualification receipts.
 
+`./compat/allocator/run-x86_64.sh allocator-native-integration` runs every
+`crabc-mimalloc/tests/native_*` runtime integration target with its default-off
+audit and fault features; each test registers its std worker threads' allocator
+descriptors as libc's x86 pthread start does before attaching.
+
 `./compat/allocator/run-x86_64.sh allocator-arena-destroy` runs the pinned-C
 and Rust development differential for the persistent arena group's quiescent
 retirement. It checks regular/reserved full-map accounting, external retention,

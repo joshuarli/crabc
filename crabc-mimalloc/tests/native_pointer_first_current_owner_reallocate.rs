@@ -152,12 +152,17 @@ fn native_current_owner_reallocate_keeps_aligned_initial_and_later_paths_direct(
 
     let after_later = native_runtime_lifecycle_test_audit()
         .expect("the joined later owner leaves a quiescent scalar audit");
+    // Pinned `alloc.c:399-413` reuses a fitting block after only comparing
+    // the pointer-derived page's heap with the current Theap's heap; it
+    // mutates no owner state. The in-place realloc therefore consumes the
+    // PageMap observation directly and does not cross the owner-local seam,
+    // while the allocation and free each do.
     assert!(
         after_later
             .native_owner_local_operation_count
             .saturating_sub(later_baseline.native_owner_local_operation_count)
-            >= 3,
-        "the later allocation, realloc, and free all use its retained local owner"
+            >= 2,
+        "the later allocation and free use its retained local owner"
     );
     assert_eq!(
         after_later
