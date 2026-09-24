@@ -7,6 +7,11 @@
 # allocator-interposition object replaces the public malloc family in the
 # executable and links against dynamic pinned musl and both owned dynamic
 # modes. Every compared run retains raw status, stdout, and stderr.
+#
+# owned_c_abi_provider_closure.py compares the frozen rosters of the six
+# capabilities exercised here with pinned musl's libc.a/libc.so provider
+# type, binding, visibility, version, archive extraction, and whole-library
+# storage identity.
 set -euo pipefail
 ulimit -c 0
 
@@ -16,7 +21,18 @@ readonly probe="$ROOT/compat/x86_64/owned_c_abi_compat_probe.c"
 readonly interposition_probe="$ROOT/compat/x86_64/owned_c_abi_compat_interposition_probe.c"
 readonly interpreter=/lib/ld-crabc-x86_64.so.1
 readonly musl_interpreter=/lib/ld-musl-x86_64.so.1
-readonly -a scenarios=(search qsort gettext diagnostics allocation)
+readonly closure="$ROOT/compat/x86_64/owned_c_abi_provider_closure.py"
+readonly musl_lib=/opt/musl-1.2.6/lib
+readonly -a closure_capabilities=(
+    --capability catalog.gettext --capability error.reporting-termination
+    --capability legacy.misc --capability numeric.qsort-helper
+    --capability search.hash-table --capability search.tree-intrusive
+)
+readonly -a scenarios=(search qsort gettext diagnostics allocation identity reporting)
+# Terminating scenarios and the status each must end with under musl.
+readonly -a termination_scenarios=(
+    exit:11 quick-exit:12 _exit:13 _Exit:14 fork:0 err:4 errx:5 verr:6 verrx:7 assert:134
+)
 readonly -a interposition_scenarios=(tree hash gettext)
 # The documented crabc profile limits have no pinned-musl comparison: musl
 # implements DES and file-backed message catalogs, crabc selects neither.
@@ -133,8 +149,12 @@ trap 'printf "owned C ABI compatibility failed near %s; evidence: %s\\n" "${step
 # Every target runs in a clean environment with one known variable so
 # secure_getenv's ordinary-process result is observable.
 run_capture() {
-    local output="$1" status
+    local output="$1" status expected=0
     shift
+    if [ "$1" = --status ]; then
+        expected="$2"
+        shift 2
+    fi
 
     step="run ${output##*/}"
     if timeout 30 env -i PATH="$PATH" CRABC_PROBE=present "$@" \
@@ -146,7 +166,43 @@ run_capture() {
     printf '%s\n' "$status" >"${output%.stdout}.status"
     # Equal oracle/candidate failures are never evidence; stop at the first
     # failed target after retaining its raw streams.
-    [ "$status" -eq 0 ] || fail "expected success, got ${status}: $*"
+    [ "$status" -eq "$expected" ] || fail "expected status ${expected}, got ${status}: $*"
+}
+
+# Run every terminating scenario of one target and compare it with musl.
+run_terminations() {
+    local prefix="$1" oracle_prefix="$2" item scenario expected
+    shift 2
+
+    for item in "${termination_scenarios[@]}"; do
+        scenario="${item%%:*}"
+        expected="${item##*:}"
+        run_capture "$prefix-terminate-$scenario.stdout" --status "$expected" "$@" "terminate-$scenario"
+        [ -n "$oracle_prefix" ] || continue
+        compare_oracle "$oracle_prefix-terminate-$scenario" "$prefix-terminate-$scenario"
+    done
+}
+
+audit_static_closure() {
+    local product="$1"
+
+    step='audit static provider closure'
+    readelf --symbols --wide "$product/usr/lib/libc.a" >"$work/owned-libc.a.symbols"
+    nm --print-armap "$product/usr/lib/libc.a" 2>"$work/owned-libc.a.nm.stderr" |
+        sed -n '/^Archive index:/,/^$/p' >"$work/owned-libc.a.index"
+    python3 -B "$closure" "${closure_capabilities[@]}" static \
+        "$work/owned-libc.a.symbols" "$work/owned-libc.a.index" \
+        "$work/musl-libc.a.symbols" "$work/musl-libc.a.index" >"$work/static-closure.json"
+}
+
+audit_shared_closure() {
+    local product="$1"
+
+    step='audit shared provider closure'
+    readelf --dyn-syms --wide "$product/usr/lib/libc.so" >"$work/owned-libc.so.symbols"
+    python3 -B "$closure" "${closure_capabilities[@]}" shared \
+        "$work/owned-libc.so.symbols" "$work/musl-libc.so.symbols" \
+        "$work/musl-libc.a.symbols" >"$work/shared-closure.json"
 }
 
 compare_oracle() {
@@ -303,6 +359,13 @@ fi
 readonly installed="$(realpath "$provided_dynamic")"
 validate_product_payload "$installed" dynamic
 
+step='read pinned musl providers'
+python3 -B "$closure" "${closure_capabilities[@]}" roster >"$work/roster.json"
+readelf --symbols --wide "$musl_lib/libc.a" >"$work/musl-libc.a.symbols"
+nm --print-armap "$musl_lib/libc.a" 2>"$work/musl-libc.a.nm.stderr" |
+    sed -n '/^Archive index:/,/^$/p' >"$work/musl-libc.a.index"
+readelf --dyn-syms --wide "$musl_lib/libc.so" >"$work/musl-libc.so.symbols"
+
 step='compile workloads'
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$probe" -o "$work/workload.o"
@@ -321,6 +384,7 @@ for scenario in "${scenarios[@]}"; do
     grep -qx "owned-c-abi-compat-$scenario-ok" "$work/oracle-$scenario.stdout" ||
         fail "pinned musl did not complete $scenario"
 done
+run_terminations "$work/oracle" '' chroot "$work/oracle-root" /consumer
 
 static_product=''
 if [ "$static_was_supplied" -eq 1 ]; then
@@ -350,6 +414,7 @@ if [ -n "$static_product" ]; then
             run_capture "$work/static-$mode-$scenario.stdout" chroot "$root" /consumer "$scenario"
             compare_oracle "$work/oracle-$scenario" "$work/static-$mode-$scenario"
         done
+        run_terminations "$work/static-$mode" "$work/oracle" chroot "$root" /consumer
         run_capture "$work/static-$mode-profile.stdout" chroot "$root" /consumer profile
         check_profile "$work/static-$mode-profile"
     done
@@ -372,6 +437,7 @@ for mode in pie non-pie; do
                 chroot "$root" "${command[@]}" "$scenario"
             compare_oracle "$work/oracle-$scenario" "$work/dynamic-$mode-$entry-$scenario"
         done
+        run_terminations "$work/dynamic-$mode-$entry" "$work/oracle" chroot "$root" "${command[@]}"
         run_capture "$work/dynamic-$mode-$entry-profile.stdout" chroot "$root" "${command[@]}" profile
         check_profile "$work/dynamic-$mode-$entry-profile"
     done
@@ -417,6 +483,11 @@ for mode in pie non-pie; do
     done
 done
 
+# Structural closure follows execution so a provider defect never hides a
+# behavior difference that the same run would also have reported.
+audit_shared_closure "$installed"
+[ -z "$static_product" ] || audit_static_closure "$static_product"
+
 if [ -n "$static_product" ]; then
     retain_link_identities static static-pie pie non-pie
     matrix='static/static-PIE plus dynamic PIE/non-PIE kernel/direct'
@@ -425,5 +496,5 @@ else
     matrix='dynamic PIE/non-PIE kernel/direct'
 fi
 trap - ERR
-printf 'owned C ABI compatibility: PASS (installed objects through pinned musl; %s; search/queue/hash, qsort helper, gettext, diagnostics, allocation policy, documented DES/catalog profile, and dynamic public-allocator interposition traces); evidence: %s\n' \
+printf 'owned C ABI compatibility: PASS (installed objects through pinned musl; %s; frozen six-capability provider closure, search/queue/hash, qsort helper, gettext, diagnostics, function identity, err/perror/errno reporting, exit/quick-exit/immediate-exit/_Fork/err/assert termination, allocation policy, documented DES/catalog profile, and dynamic public-allocator interposition traces); evidence: %s\n' \
     "$matrix" "$work"

@@ -7,9 +7,9 @@
 # PIE/non-PIE mode, and every run's stdout, stderr, and status must equal musl
 # for the same object and link class. Dynamic candidates run through kernel
 # and direct-interpreter entry; kernel entry also runs with an empty argv.
-# owned_process_globals.py separately compares the 31 provider rows of the
-# owned libc.a/libc.so with musl's libc.a/libc.so and requires executable COPY
-# storage in both non-PIE dynamic consumers.
+# owned_c_abi_provider_closure.py separately compares the 31 provider rows of
+# the owned libc.a/libc.so with musl's libc.a/libc.so and requires executable
+# COPY storage in both non-PIE dynamic consumers.
 set -euo pipefail
 ulimit -c 0
 
@@ -18,7 +18,8 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_LIB=/opt/musl-1.2.6/lib
 readonly PROBE="$ROOT/compat/x86_64/owned_process_globals_probe.c"
 readonly LAUNCHER="$ROOT/compat/x86_64/libc_process_globals_empty_argv_launcher.c"
-readonly AUDIT="$ROOT/compat/x86_64/owned_process_globals.py"
+readonly AUDIT="$ROOT/compat/x86_64/owned_c_abi_provider_closure.py"
+readonly -a CLOSURE=(--capability process.globals)
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 declare -a link_identity_records=()
 
@@ -87,7 +88,7 @@ for tool in chroot cmp cp ln nm python3 readelf realpath sed sha256sum timeout; 
     command -v "$tool" >/dev/null 2>&1 || fail "requires $tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
-python3 -B "$AUDIT" roster >"$work/roster.json"
+python3 -B "$AUDIT" "${CLOSURE[@]}" roster >"$work/roster.json"
 
 run_capture() {
     local output="$1"
@@ -155,8 +156,9 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(sys.argv[1]) / "compat" / "x86_64"))
-from owned_process_globals import ROSTER, parse_symbols
+from owned_c_abi_provider_closure import frozen_roster, parse_symbols
 
+ROSTER = frozen_roster(["process.globals"]).names
 transcript = Path(sys.argv[2]).read_text(encoding="utf-8")
 defined = {row.name for row in parse_symbols(transcript)}
 missing = sorted(set(ROSTER) - defined)
@@ -187,12 +189,12 @@ nm --print-armap "$static_product/usr/lib/libc.a" 2>"$work/owned-libc.a.nm.stder
 readelf --symbols --wide "$MUSL_LIB/libc.a" >"$work/musl-libc.a.symbols"
 nm --print-armap "$MUSL_LIB/libc.a" 2>"$work/musl-libc.a.nm.stderr" | sed -n '/^Archive index:/,/^$/p' \
     >"$work/musl-libc.a.index"
-python3 -B "$AUDIT" static "$work/owned-libc.a.symbols" "$work/owned-libc.a.index" \
+python3 -B "$AUDIT" "${CLOSURE[@]}" static "$work/owned-libc.a.symbols" "$work/owned-libc.a.index" \
     "$work/musl-libc.a.symbols" "$work/musl-libc.a.index" >"$work/static-closure.json"
 readelf --dyn-syms --wide "$installed/usr/lib/libc.so" >"$work/owned-libc.so.symbols"
 readelf --dyn-syms --wide "$MUSL_LIB/libc.so" >"$work/musl-libc.so.symbols"
-python3 -B "$AUDIT" shared "$work/owned-libc.so.symbols" "$work/musl-libc.so.symbols" \
-    >"$work/shared-closure.json"
+python3 -B "$AUDIT" "${CLOSURE[@]}" shared "$work/owned-libc.so.symbols" \
+    "$work/musl-libc.so.symbols" "$work/musl-libc.a.symbols" >"$work/shared-closure.json"
 
 # One object per code model, both from the installed dynamic driver.
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
@@ -264,8 +266,9 @@ run_class musl-pie "$work/musl-pie-root" ''
 run_class musl-non-pie "$work/musl-non-pie-root" ''
 readelf --dyn-syms --wide "$work/musl-non-pie" >"$work/musl-non-pie.dynsyms"
 readelf --relocs --wide "$work/musl-non-pie" >"$work/musl-non-pie.relocs"
-python3 -B "$AUDIT" copy musl-non-pie "$work/musl-non-pie.dynsyms" \
-    "$work/musl-non-pie.relocs" "$work/musl-libc.so.symbols" >"$work/musl-non-pie.copy.json"
+python3 -B "$AUDIT" "${CLOSURE[@]}" copy musl-non-pie "$work/musl-non-pie.dynsyms" \
+    "$work/musl-non-pie.relocs" "$work/musl-libc.so.symbols" "$work/musl-libc.so.symbols" \
+    >"$work/musl-non-pie.copy.json"
 
 # Owned static ET_EXEC and static PIE through the sealed static driver.
 for mode in static static-pie; do
@@ -295,8 +298,9 @@ for mode in pie non-pie; do
 done
 readelf --dyn-syms --wide "$work/consumer-non-pie" >"$work/owned-non-pie.dynsyms"
 readelf --relocs --wide "$work/consumer-non-pie" >"$work/owned-non-pie.relocs"
-python3 -B "$AUDIT" copy owned-non-pie "$work/owned-non-pie.dynsyms" \
-    "$work/owned-non-pie.relocs" "$work/owned-libc.so.symbols" >"$work/owned-non-pie.copy.json"
+python3 -B "$AUDIT" "${CLOSURE[@]}" copy owned-non-pie "$work/owned-non-pie.dynsyms" \
+    "$work/owned-non-pie.relocs" "$work/owned-libc.so.symbols" "$work/musl-libc.so.symbols" \
+    >"$work/owned-non-pie.copy.json"
 
 python3 -B - "$work/link-identities.json" "${link_identity_records[@]}" <<'PY'
 import json
@@ -318,4 +322,4 @@ Path(sys.argv[1]).write_text(
 )
 PY
 
-printf 'owned process globals: PASS (31-name roster: owned libc.a/libc.so provider type, binding, visibility, object size, unversioned alias partition and archive extraction equal pinned musl; PIE and non-PIE objects through musl and sealed owned static/static-PIE/dynamic PIE/non-PIE kernel, direct and empty-argv entry with identical stdout/stderr/status; non-PIE dynamic COPY storage in both runtimes); evidence: %s\n' "$work"
+printf 'owned process globals: PASS (31-name roster: owned libc.a/libc.so provider type, binding, visibility, object size, unversioned whole-library storage identity and archive extraction equal pinned musl; PIE and non-PIE objects through musl and sealed owned static/static-PIE/dynamic PIE/non-PIE kernel, direct and empty-argv entry with identical stdout/stderr/status; non-PIE dynamic COPY storage in both runtimes); evidence: %s\n' "$work"

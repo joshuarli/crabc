@@ -6,18 +6,26 @@
 // and every owned product mode; each compared scenario prints only facts that
 // musl defines, never pointer values, allocator placement, or host totals.
 //
+// The termination scenarios end the process through the selected exit,
+// quick-exit, immediate-exit, err(3), and assertion entries; the runner
+// requires each one's status, stdout, and stderr to equal musl's.
+//
 // The `profile` scenario is candidate-only. It records the documented crabc
 // limits (inert setkey/encrypt and the no-catalog catgets/catclose profile)
 // that pinned musl implements differently, so it is never compared.
 #define _GNU_SOURCE
+#include <err.h>
 #include <errno.h>
+#include <fmtmsg.h>
 #include <libintl.h>
 #include <locale.h>
 #include <malloc.h>
 #include <netdb.h>
 #include <sched.h>
 #include <nl_types.h>
+#include <pthread.h>
 #include <search.h>
+#include <stdarg.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -25,12 +33,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/sysinfo.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 // Musl's uninstalled context-sort helper. Its static archive definition is a
 // hidden global and the frozen crabc shared ABI exports it; the public
 // qsort_r is its weak same-definition alias.
 void __qsort_r(void *, size_t, size_t, int (*)(const void *, const void *, void *), void *);
+// Musl's assert() expansion target; <assert.h> declares it only as the
+// macro's implementation, so name it directly with musl's signature.
+_Noreturn void __assert_fail(const char *, const char *, int, const char *);
+int __xpg_strerror_r(int, char *, size_t);
+pid_t _Fork(void);
 
 static int failures;
 
@@ -332,7 +346,6 @@ static void scenario_diagnostics(void)
     memset(buffer, 'x', sizeof buffer);
     status = strerror_r(ENOENT, buffer, 0);
     printf("strerror_r-zero=%d,%c\n", status, buffer[0]);
-    int __xpg_strerror_r(int, char *, size_t);
     status = __xpg_strerror_r(EINVAL, buffer, sizeof buffer);
     printf("__xpg_strerror_r=%d,%s\n", status, buffer);
 
@@ -483,6 +496,178 @@ static void scenario_allocation(void)
     printf("live-set=%d\n", usable);
 }
 
+// Function identity: C gives distinct functions distinct addresses. Only
+// musl's own same-definition aliases may compare equal. Loads go through
+// volatile storage so the compiler cannot fold any comparison.
+typedef void (*entry_point)(void);
+#define ENTRY(name) { #name, (entry_point)name }
+static const struct {
+    const char *name;
+    entry_point address;
+} entries[] = {
+    ENTRY(bind_textdomain_codeset), ENTRY(bindtextdomain), ENTRY(catclose), ENTRY(catgets),
+    ENTRY(catopen), ENTRY(dcgettext), ENTRY(dcngettext), ENTRY(dgettext), ENTRY(dngettext),
+    ENTRY(gettext), ENTRY(ngettext), ENTRY(textdomain),
+    ENTRY(_Exit), ENTRY(_Fork), ENTRY(__assert_fail), ENTRY(__errno_location),
+    ENTRY(__xpg_strerror_r), ENTRY(_exit), ENTRY(at_quick_exit), ENTRY(atexit), ENTRY(err),
+    ENTRY(errx), ENTRY(exit), ENTRY(herror), ENTRY(hstrerror), ENTRY(perror),
+    ENTRY(quick_exit), ENTRY(secure_getenv), ENTRY(strerror), ENTRY(strerror_r),
+    ENTRY(strsignal), ENTRY(verr), ENTRY(verrx), ENTRY(vwarn), ENTRY(vwarnx), ENTRY(warn),
+    ENTRY(warnx),
+    ENTRY(encrypt), ENTRY(fmtmsg), ENTRY(get_avphys_pages), ENTRY(get_nprocs),
+    ENTRY(get_nprocs_conf), ENTRY(get_phys_pages), ENTRY(issetugid), ENTRY(setkey),
+    ENTRY(__qsort_r), ENTRY(qsort_r), ENTRY(qsort),
+    ENTRY(hcreate), ENTRY(hcreate_r), ENTRY(hdestroy), ENTRY(hdestroy_r), ENTRY(hsearch),
+    ENTRY(hsearch_r),
+    ENTRY(insque), ENTRY(remque), ENTRY(tdelete), ENTRY(tdestroy), ENTRY(tfind),
+    ENTRY(tsearch), ENTRY(twalk),
+};
+
+static void scenario_identity(void)
+{
+    static entry_point volatile addresses[sizeof entries / sizeof entries[0]];
+    size_t count = sizeof entries / sizeof entries[0];
+    size_t left, right;
+
+    for (left = 0; left < count; left++)
+        addresses[left] = entries[left].address;
+    for (left = 0; left < count; left++)
+        for (right = left + 1; right < count; right++)
+            if (addresses[left] == addresses[right])
+                printf("same-entry %s=%s\n", entries[left].name, entries[right].name);
+    printf("entries=%zu\n", count);
+}
+
+static void report_vwarn(int with_errno, const char *format, ...)
+{
+    va_list arguments;
+    va_start(arguments, format);
+    if (with_errno)
+        vwarn(format, arguments);
+    else
+        vwarnx(format, arguments);
+    va_end(arguments);
+}
+
+static _Noreturn void report_verr(int with_errno, int status, const char *format, ...)
+{
+    va_list arguments;
+    va_start(arguments, format);
+    if (with_errno)
+        verr(status, format, arguments);
+    verrx(status, format, arguments);
+}
+
+static int errno_worker_value;
+static int *errno_worker_location;
+static void *errno_worker(void *unused)
+{
+    (void)unused;
+    errno = 91;
+    errno_worker_location = __errno_location();
+    errno_worker_value = errno;
+    return 0;
+}
+
+// Diagnostics that return: err(3) warnings, perror, and errno ownership.
+static void scenario_reporting(void)
+{
+    fflush(stdout);
+    errno = ENOENT;
+    warn("warn %d", 1);
+    printf("warn-errno=%d\n", errno);
+    errno = EACCES;
+    warn(0);
+    warnx("warnx %s", "text");
+    warnx(0);
+    errno = EINVAL;
+    report_vwarn(1, "vwarn %d", 3);
+    report_vwarn(0, "vwarnx %d", 4);
+    errno = EBADF;
+    perror("perror");
+    errno = EPERM;
+    perror("");
+    errno = ERANGE;
+    perror(0);
+    printf("perror-errno=%d\n", errno);
+    fflush(stderr);
+
+    int *main_location = __errno_location();
+    printf("errno-location-main=%d\n", main_location == &errno);
+    errno = 17;
+    pthread_t thread;
+    check(pthread_create(&thread, 0, errno_worker, 0) == 0, "errno worker create");
+    check(pthread_join(thread, 0) == 0, "errno worker join");
+    printf("errno-location-thread=%d,%d,%d\n", errno_worker_location != main_location,
+           errno_worker_value, errno);
+}
+
+static void exit_handler_one(void) { printf("atexit one\n"); }
+static void exit_handler_nested(void) { printf("atexit nested\n"); }
+static void exit_handler_two(void)
+{
+    printf("atexit two\n");
+    check(atexit(exit_handler_nested) == 0, "nested atexit");
+}
+static void exit_handler_three(void) { printf("atexit three\n"); }
+static void exit_handler_forbidden(void) { printf("atexit must not run\n"); }
+static void quick_handler_one(void) { printf("at_quick_exit one\n"); fflush(stdout); }
+static void quick_handler_two(void) { printf("at_quick_exit two\n"); fflush(stdout); }
+
+// Each scenario prints its buffered prologue and then terminates; the
+// runner compares the resulting status and streams with musl.
+static _Noreturn void scenario_termination(const char *name)
+{
+    if (!strcmp(name, "exit")) {
+        check(atexit(exit_handler_one) == 0 && atexit(exit_handler_two) == 0 &&
+              atexit(exit_handler_three) == 0, "atexit");
+        printf("exit buffered\n");
+        exit(11);
+    }
+    if (!strcmp(name, "quick-exit")) {
+        check(atexit(exit_handler_forbidden) == 0, "atexit before quick_exit");
+        check(at_quick_exit(quick_handler_one) == 0 && at_quick_exit(quick_handler_two) == 0,
+              "at_quick_exit");
+        printf("quick-exit buffered\n");
+        quick_exit(12);
+    }
+    if (!strcmp(name, "_exit") || !strcmp(name, "_Exit")) {
+        check(atexit(exit_handler_forbidden) == 0, "atexit before immediate exit");
+        // Musl's stdout starts line-buffered and switches to full buffering
+        // on its first write to a non-terminal, so only the first line
+        // reaches the file before the immediate exit discards the second.
+        printf("immediate exit first line\n");
+        printf("immediate exit discards this buffered line\n");
+        if (name[1] == 'e')
+            _exit(13);
+        _Exit(14);
+    }
+    if (!strcmp(name, "fork")) {
+        pid_t parent = getpid();
+        fflush(stdout);
+        pid_t child = _Fork();
+        if (child == 0)
+            _exit(getppid() == parent && getpid() != parent ? 21 : 22);
+        int status = 0;
+        check(child > 0 && waitpid(child, &status, 0) == child, "_Fork wait");
+        printf("_Fork child=%d,%d\n", WIFEXITED(status), WEXITSTATUS(status));
+        exit(failures ? 1 : 0);
+    }
+    fflush(stdout);
+    errno = ENOENT;
+    if (!strcmp(name, "err"))
+        err(4, "err %d", 1);
+    if (!strcmp(name, "errx"))
+        errx(5, "errx %s", "text");
+    if (!strcmp(name, "verr"))
+        report_verr(1, 6, "verr %d", 2);
+    if (!strcmp(name, "verrx"))
+        report_verr(0, 7, "verrx %d", 3);
+    if (!strcmp(name, "assert"))
+        __assert_fail("left == right", "owned_c_abi_compat_probe.c", 42, "scenario_termination");
+    exit(2);
+}
+
 // Candidate-only documented profile limits. Pinned musl implements DES and
 // file-backed message catalogs; crabc deliberately does neither.
 static void scenario_profile(void)
@@ -515,6 +700,12 @@ int main(int argc, char **argv)
         scenario_diagnostics();
     else if (!strcmp(argv[1], "allocation"))
         scenario_allocation();
+    else if (!strcmp(argv[1], "identity"))
+        scenario_identity();
+    else if (!strcmp(argv[1], "reporting"))
+        scenario_reporting();
+    else if (!strncmp(argv[1], "terminate-", 10))
+        scenario_termination(argv[1] + 10);
     else if (!strcmp(argv[1], "profile"))
         scenario_profile();
     else
