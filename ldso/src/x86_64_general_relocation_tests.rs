@@ -799,3 +799,36 @@ fn initial_exec_and_dynamic_offsets_share_retained_module_coordinates_and_checke
     objects[1].tls_offset_below_tp = 8192; objects[1].tls_module_id = 0;
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());
 }
+
+// The batched referenced-record check must agree exactly with the per-span
+// scan it replaces in preflight, including empty spans strictly inside a
+// record, spans reaching in from below, and records at a span boundary.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn batched_referenced_record_check_matches_the_per_span_scan() {
+    let mut image = MappedImage::new();
+    for index in [1, 3] { image.symbol(index, b"s", 1, 1, 0, 1); }
+    image.rela(R_64, 1, 0);
+    image.rela(R_64, 3, 0);
+    let object = image.object(true);
+    let records: std::vec::Vec<(u64, u64)> = [1u64, 3].iter()
+        .map(|index| (object.symtab as u64 + 24 * index, 24)).collect();
+    let brute = |spans: &[WriteSpan]| spans.iter().any(|span| records.iter().any(|&(record, length)|
+        ranges_overlap(object.base + span.start, span.length, record, length).unwrap()));
+    let symtab = MappedImage::SYMTAB as u64;
+    let mut candidates = std::vec::Vec::new();
+    for start in (symtab..symtab + 5 * 24).step_by(4) {
+        for length in [0u64, 1, 4, 8, 23, 24, 40] { candidates.push(WriteSpan { start, length }); }
+    }
+    for first in &candidates {
+        let single = [*first];
+        assert_eq!(unsafe { referenced_records_overlap_spans(&object, &single) }, Some(brute(&single)),
+            "span {:#x}+{}", first.start, first.length);
+        // Pair it with a later disjoint span, as sorted preflight spans are.
+        for second in candidates.iter().filter(|second| second.start >= first.start + first.length.max(1)) {
+            let pair = [*first, *second];
+            assert_eq!(unsafe { referenced_records_overlap_spans(&object, &pair) }, Some(brute(&pair)),
+                "spans {:#x}+{} {:#x}+{}", first.start, first.length, second.start, second.length);
+        }
+    }
+}

@@ -544,6 +544,20 @@ impl Drop for RelocationScratch {
 unsafe fn write_span(
     object: &Object, start: u64, length: u64, word: bool, symbol_index: Option<usize>,
 ) -> Option<WriteSpan> {
+    unsafe { checked_write_span(object, start, length, word, symbol_index, ReferencedRecords::Scan) }
+}
+
+/// Whether one write-span check also scans every relocation-referenced
+/// symbol/VERSYM record. That scan is linear in the relocation count, so a
+/// caller that checks every relocation of an object instead defers it to one
+/// sorted pass, [`referenced_records_overlap_spans`], over all its spans.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReferencedRecords { Scan, Deferred }
+
+unsafe fn checked_write_span(
+    object: &Object, start: u64, length: u64, word: bool, symbol_index: Option<usize>,
+    referenced: ReferencedRecords,
+) -> Option<WriteSpan> {
     if (word && start & 7 != 0)
         || !unsafe { virtual_range_in_writable_load(object.phdr, object.phnum, start, length) }
     { return None; }
@@ -559,9 +573,11 @@ unsafe fn write_span(
         }
     }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    if unsafe { overlaps_relocation_metadata(object, address, length) }? {
+    if unsafe { overlaps_relocation_metadata(object, address, length, referenced) }? {
         return None;
     }
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+    let _ = referenced;
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if let Some(index) = symbol_index {
         let symbol = unsafe { direct_symbol(object, index) }?;
@@ -590,6 +606,7 @@ unsafe fn overlaps_relocation_metadata(
     object: &Object,
     address: u64,
     length: u64,
+    referenced: ReferencedRecords,
 ) -> Option<bool> {
     let overlaps = |table: *const u8, bytes: usize| -> Option<bool> {
         if bytes == 0 { return Some(false); }
@@ -631,6 +648,7 @@ unsafe fn overlaps_relocation_metadata(
     // relocation request now, while relocation tables are still immutable,
     // and protect the exact symbol and VERSYM words each later application
     // may reread. R_NONE is an inert table entry and consumes no symbol.
+    if referenced == ReferencedRecords::Deferred { return Some(false); }
     for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
         if bytes == 0 { continue; }
         if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
@@ -690,14 +708,17 @@ unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], 
                 8
             };
             *spans.get_mut(count)? = unsafe {
-                write_span(object, offset, length, kind != R_COPY, (symbol != 0).then_some(symbol))
+                checked_write_span(object, offset, length, kind != R_COPY, (symbol != 0).then_some(symbol),
+                    ReferencedRecords::Deferred)
             }?;
             count += 1;
         }
     }
     let relr_count = unsafe { preflight_relr_table(object, relr_targets, 0) }?;
     for &offset in &relr_targets[..relr_count] {
-        *spans.get_mut(count)? = unsafe { write_span(object, offset, 8, true, None) }?;
+        *spans.get_mut(count)? = unsafe {
+            checked_write_span(object, offset, 8, true, None, ReferencedRecords::Deferred)
+        }?;
         count += 1;
     }
     spans[..count].sort_unstable_by_key(|span| span.start);
@@ -707,7 +728,65 @@ unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], 
         if span.start < end { return None; }
         end = span.start.checked_add(span.length)?;
     }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if unsafe { referenced_records_overlap_spans(object, &spans[..count]) }? { return None; }
     Some(())
+}
+
+/// The deferred half of [`overlaps_relocation_metadata`] for one object's
+/// complete write set: does any span overlap a symbol or VERSYM record that a
+/// relocation names? `spans` is sorted by start and its nonzero spans are
+/// pairwise disjoint, so each record is tested by binary search instead of
+/// rescanning every relocation per span (quadratic in the relocation count).
+/// Overlap has exactly `ranges_overlap`'s meaning, including a zero-length
+/// span strictly inside a record.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn referenced_records_overlap_spans(object: &Object, spans: &[WriteSpan]) -> Option<bool> {
+    // Span runtime addresses were admitted by `checked_write_span`.
+    let span_address = |span: &WriteSpan| runtime_address(object.base, span.start);
+    // Index of the first span whose runtime start is at or after `address`.
+    let first_at_or_after = |address: u64| -> Option<usize> {
+        let (mut low, mut high) = (0, spans.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if span_address(&spans[middle])? < address { low = middle + 1; } else { high = middle; }
+        }
+        Some(low)
+    };
+    let overlaps = |record: u64, length: u64| -> Option<bool> {
+        let from_record = first_at_or_after(record)?;
+        let after_record = first_at_or_after(record.checked_add(length)?)?;
+        // A span starting inside the record overlaps it, except an empty
+        // span exactly at the record start.
+        for span in &spans[from_record..after_record] {
+            if span_address(span)? > record || span.length != 0 { return Some(true); }
+        }
+        // Of the spans starting before the record, only the last nonempty
+        // one can reach into it.
+        for span in spans[..from_record].iter().rev() {
+            if span.length == 0 { continue; }
+            return ranges_overlap(span_address(span)?, span.length, record, length);
+        }
+        Some(false)
+    };
+    for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
+        if bytes == 0 { continue; }
+        if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
+        for offset in 0..bytes / ELF64_RELA_SIZE {
+            let entry = unsafe { table.add(offset * ELF64_RELA_SIZE) };
+            let info = unsafe { read_u64(entry.add(8)) };
+            if info as u32 == R_NONE { continue; }
+            let index = (info >> 32) as usize;
+            if index == 0 { continue; }
+            let symbol = unsafe { direct_symbol(object, index) }?;
+            if overlaps(symbol as u64, 24)? { return Some(true); }
+            if !object.versym.is_null() {
+                let version = unsafe { object.versym.add(index.checked_mul(2)?) };
+                if overlaps(version as u64, 2)? { return Some(true); }
+            }
+        }
+    }
+    Some(false)
 }
 
 unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], owner: usize) -> Option<()> {
