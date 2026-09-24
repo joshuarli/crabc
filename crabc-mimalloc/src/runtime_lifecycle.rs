@@ -10237,6 +10237,11 @@ pub fn native_allocate_aligned(
     {
         return NativePageAllocationResult::AllocationFailed;
     }
+    // A thread admitted to a child subprocess allocates from its own child
+    // Theap, as source `mi_malloc` does through that thread's default Theap.
+    if let Some(result) = crate::subproc::lifecycle::native_child_thread_allocate(request, alignment, zero) {
+        return result;
+    }
     // Pinned `mi_heap_malloc` receives an already-selected heap/theap before
     // it enters its allocation control flow. Mirror that selection here: an
     // installed compiler-TLS cell is the current source owner, so ordinary
@@ -10314,7 +10319,9 @@ unsafe fn native_live_allocation_for_pointer_reallocation(
 fn native_reallocate_prepare_caller_persistent_owner(
     current: LiveThreadId,
 ) -> Result<(), NativePageAllocationResult> {
-    if RUNTIME_PROCESS.initial_live_thread_identity() == Some(current) {
+    if RUNTIME_PROCESS.initial_live_thread_identity() == Some(current)
+        || crate::subproc::lifecycle::current_thread_is_child_member()
+    {
         return Ok(());
     }
 
@@ -10464,6 +10471,16 @@ fn native_reallocate_pointer_first_local(
             }
         };
     }
+    // SAFETY: the revalidated old block is local to the current child thread.
+    if let Some(result) = unsafe { crate::subproc::lifecycle::native_child_thread_free_local(block) } {
+        return match result {
+            NativePageFreeResult::Freed => NativePageAllocationResult::Allocated(replacement),
+            _ => {
+                native_reallocate_release_unpublished_replacement(replacement);
+                NativePageAllocationResult::Retained
+            }
+        };
+    }
     let released = with_current_thread_native_persistent_pointer(block, |allocator| {
         // SAFETY: the renewed exact-current lookup above and this helper's
         // second owner check keep the old block current until its source free.
@@ -10540,6 +10557,11 @@ fn native_reallocate_initialize_replacement(
 /// must not describe this fallback as a successful cleanup or return the
 /// replacement while the old source remains live.
 fn native_reallocate_release_unpublished_replacement(replacement: core::ptr::NonNull<u8>) {
+    // SAFETY: the unpublished replacement was just allocated by this child
+    // thread through its own Theap.
+    if unsafe { crate::subproc::lifecycle::native_child_thread_free_local(replacement) }.is_some() {
+        return;
+    }
     if RUNTIME_PROCESS.is_on_initial_allocation_thread() {
         let _ = native_initial_thread_free_pointer_first(replacement);
         return;
@@ -10927,6 +10949,17 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
     // complete pointer-derived state capture. Do not select a former owner,
     // route, or current-thread ledger before this comparison.
     if allocation.is_associated_with(current) {
+        if crate::subproc::lifecycle::current_thread_is_child_member() {
+            let block = allocation.client();
+            drop(allocation);
+            // SAFETY: the PageMap observation above associated this exact
+            // live block with the current child thread's own page.
+            if let Some(result) = unsafe { crate::subproc::lifecycle::native_child_thread_free_local(block) } {
+                return result;
+            }
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageFreeResult::Retained;
+        }
         return native_free_pointer_first_local(allocation, current);
     }
 
@@ -16525,6 +16558,17 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
 /// point therefore shares the ordinary finalizer.
 #[doc(hidden)]
 pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResult {
+    // A thread admitted to a child subprocess runs that child's
+    // `_mi_thread_done`; it holds no main-subprocess attachment.
+    if let Some(done) = crate::subproc::lifecycle::native_child_thread_done() {
+        return match done {
+            Ok(()) => {
+                admission::mark_current_source_retired();
+                ThreadFinishResult::Finished
+            }
+            Err(_) => ThreadFinishResult::Retained,
+        };
+    }
     let result = finish_current_thread_after_user_destructors();
     if matches!(result, ThreadFinishResult::Finished | ThreadFinishResult::AlreadyFinished | ThreadFinishResult::NotAttached) {
         admission::mark_current_source_retired();

@@ -2813,8 +2813,13 @@ impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> 
         Ok(())
     }
 
+    /// The all-free part of source `_mi_theap_collect_abandon` for a
+    /// finishing child thread: force-collect every page's remote and local
+    /// frees, release each page that becomes empty, then require that no
+    /// page is left. A page with a live block remains attached and the
+    /// result is `false`; child pages have no abandonment route yet.
     pub(crate) fn finish_pages_in_place(&mut self) -> bool {
-        self.finish_quiescent_in_place()
+        self.collect_all_pages_for_allocation_retry() && self.finish_quiescent_in_place()
     }
 }
 

@@ -36,17 +36,25 @@
 //! any member's registration keeps the child's live thread count raised.
 //!
 //! [`native_subproc_new`], [`native_subproc_add_current_thread`],
-//! [`native_subproc_thread_done`], [`native_subproc_visit_heaps`], and
-//! [`native_subproc_destroy`] are the production entry points over one
-//! process-lived [`NativeChildSubprocess`] record per child. The child main
-//! Heap image is an ordinary native-runtime allocation, so destruction may
-//! run on any runtime thread that may free, as source
-//! `_mi_free_subproc_safe` does. Context operations serialize on the record
-//! lock, in place of source `theap_meta_lock` and `heaps_lock`.
+//! [`native_subproc_visit_heaps`], and [`native_subproc_destroy`] are the
+//! production entry points over one process-lived [`NativeChildSubprocess`]
+//! record per child. The child main Heap image is an ordinary native-runtime
+//! allocation, so destruction may run on any runtime thread that may free,
+//! as source `_mi_free_subproc_safe` does. Context operations serialize on
+//! the record lock, in place of source `theap_meta_lock` and `heaps_lock`.
 //!
-//! Not yet covered: non-main Heaps in the child, nested children, routing
-//! the native runtime's allocation entries through an admitted thread's
-//! default Theap, and abandoning a finishing child thread's live pages. Live
+//! An admitted thread's [`ChildThreadMember`] moves into that thread's
+//! `CURRENT_CHILD_MEMBER` slot. The native runtime entry points in
+//! `runtime_lifecycle` test the slot first and route the thread's
+//! allocation, local free, and reallocation through its own child Theap
+//! ([`native_child_thread_allocate`], [`native_child_thread_free_local`]),
+//! as source reaches them through the thread's default Theap; a free of a
+//! block owned by another thread takes the ordinary remote-free route. The
+//! runtime thread-exit entry runs [`native_child_thread_done`].
+//!
+//! Not yet covered: nested children, deferred-free callbacks on the child
+//! allocation route, and abandoning a finishing child thread's live pages
+//! (such a thread stays a member and keeps its child alive). Live
 //! child metadata blocks at destruction are released with the child arenas,
 //! as in source. The source `_mi_thread_locals_thread_done` call in
 //! `mi_subproc_destroy` releases the destroying thread's dynamic thread-local
@@ -725,104 +733,233 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
     Ok(NativeSubprocessId(record))
 }
 
+/// The child membership of the current thread, set by
+/// [`native_subproc_add_current_thread`] and cleared by
+/// [`native_child_thread_done`]. The native runtime allocation entry points
+/// route an admitted thread's allocations and local frees through `member`.
+struct CurrentChildMember {
+    id: NativeSubprocessId,
+    binding: ProcessMainBackingBinding,
+    member: ChildThreadMember,
+}
+
+#[thread_local]
+static CURRENT_CHILD_MEMBER: core::cell::UnsafeCell<Option<CurrentChildMember>> =
+    core::cell::UnsafeCell::new(None);
+
+/// The current thread's child membership slot.
+///
+/// # Safety
+/// The caller is on the current thread and forms no other reference to the
+/// slot while the returned one is live; native entry points are not
+/// reentrant within one child page operation.
+#[inline]
+unsafe fn current_child_member() -> &'static mut Option<CurrentChildMember> {
+    // SAFETY: a `#[thread_local]` is reachable only from its own thread;
+    // the caller guarantees exclusive use.
+    unsafe { &mut *CURRENT_CHILD_MEMBER.get() }
+}
+
+/// Whether the current thread belongs to a child subprocess. This is the
+/// native entry points' one-load routing test.
+#[inline]
+pub(crate) fn current_thread_is_child_member() -> bool {
+    // SAFETY: a short read of the current thread's own slot.
+    unsafe { (*CURRENT_CHILD_MEMBER.get()).is_some() }
+}
+
+/// Result of [`native_subproc_add_current_thread`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeChildThreadAdd {
+    /// The thread now allocates from the child.
+    Added,
+    /// The thread's default Theap was already initialized; nothing changed.
+    AlreadyInitialized { in_other_subprocess: bool },
+    /// Admission failed; see [`ChildThreadStartFailure`]. A retained partial
+    /// owner is dropped without freeing anything and the child stays alive.
+    Failed(ChildThreadStartError),
+}
+
 /// Production `mi_subproc_add_current_thread` for a child from
-/// [`native_subproc_new`]; see [`add_current_thread`].
+/// [`native_subproc_new`]; see [`add_current_thread`]. On success the
+/// member moves into the current thread's slot, so the native runtime
+/// allocation entry points route this thread to the child.
 ///
 /// # Safety
 /// The id is live. The caller runs on the thread being admitted and owns its
-/// compiler-TLS roots for the member's lifetime.
+/// compiler-TLS roots until [`native_child_thread_done`].
 pub(crate) unsafe fn native_subproc_add_current_thread(
     id: NativeSubprocessId,
-) -> Result<Result<ChildThreadAddOutcome, ChildThreadStartFailure>, NativeSubprocessError> {
+) -> Result<NativeChildThreadAdd, NativeSubprocessError> {
+    // SAFETY: current-thread slot, no other reference live.
+    if unsafe { current_child_member() }.is_some() {
+        // Source finds the default Theap initialized and returns.
+        return Ok(NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess: false });
+    }
     let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs()
         .ok_or(NativeSubprocessError::NotReady)?;
     // SAFETY: forwarded id and current-thread obligations; the record lock
     // excludes every other operation on the child context.
-    unsafe {
+    let outcome = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
             Some(child) => Ok(add_current_thread(child, binding)),
             None => Err(NativeSubprocessError::Gone),
         })
-    }?
+    }??;
+    Ok(match outcome {
+        Ok(ChildThreadAddOutcome::Added(member)) => {
+            // SAFETY: current-thread slot, checked empty above.
+            *unsafe { current_child_member() } = Some(CurrentChildMember { id, binding, member });
+            NativeChildThreadAdd::Added
+        }
+        Ok(ChildThreadAddOutcome::AlreadyInitialized { in_other_subprocess }) => {
+            NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess }
+        }
+        Err(ChildThreadStartFailure::Rejected(error) | ChildThreadStartFailure::Retained { error, .. }) => {
+            NativeChildThreadAdd::Failed(error)
+        }
+    })
 }
 
-/// Finishes a thread admitted by [`native_subproc_add_current_thread`];
-/// see [`ChildThreadMember::thread_done`].
-///
-/// # Safety
-/// The id is live, the caller is the admitted thread, and no allocation
-/// through the member is live or in progress.
-pub(crate) unsafe fn native_subproc_thread_done(
-    id: NativeSubprocessId,
-    member: &mut ChildThreadMember,
-) -> Result<Result<(), ChildThreadDoneError>, NativeSubprocessError> {
-    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
-        .ready_child_subprocess_inputs()
-        .ok_or(NativeSubprocessError::NotReady)?;
-    // SAFETY: forwarded obligations; the record lock excludes every other
-    // operation on the child context.
-    unsafe {
+/// Finishes the current child thread (`_mi_thread_done`); see
+/// [`ChildThreadMember::thread_done`]. The slot is cleared only on success.
+/// Returns `None` when the thread is not a child member.
+pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadDoneError>> {
+    // SAFETY: current-thread slot, no other reference live.
+    let slot = unsafe { current_child_member() };
+    let current = slot.as_mut()?;
+    let id = current.id;
+    let binding = current.binding;
+    let member = &mut current.member;
+    // SAFETY: this is the admitted thread; its caller has ended every use of
+    // its allocations (thread exit), and the record lock excludes every
+    // other context operation.
+    let done = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
-            Some(child) => Ok(member.thread_done(child, binding)),
-            None => Err(NativeSubprocessError::Gone),
+            Some(child) => unsafe { member.thread_done(child, binding) }
+                .map_err(NativeChildThreadDoneError::Done),
+            None => Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Gone)),
         })
-    }?
+    };
+    let result = match done {
+        Ok(result) => result,
+        Err(error) => Err(NativeChildThreadDoneError::Subprocess(error)),
+    };
+    if result.is_ok() {
+        *slot = None;
+    }
+    Some(result)
 }
 
-/// Production `mi_heap_new` on a thread admitted to the child `id`; see
-/// `types::heap_registry::lifecycle::child_heap_new`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeChildThreadDoneError {
+    Done(ChildThreadDoneError),
+    Subprocess(NativeSubprocessError),
+}
+
+/// The allocation branch of the native runtime entry points: allocates for
+/// an admitted child thread through its own Theap. `None` when the current
+/// thread is not a child member. Deferred-free callbacks are not invoked on
+/// this route yet.
+pub(crate) fn native_child_thread_allocate(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> Option<crate::runtime_lifecycle::NativePageAllocationResult> {
+    use crate::runtime_lifecycle::NativePageAllocationResult;
+    // SAFETY: current-thread slot, no other reference live.
+    let current = unsafe { current_child_member() }.as_mut()?;
+    let binding = current.binding;
+    // SAFETY: this is the admitted thread operating on its own Theap.
+    let block = unsafe {
+        current.member.with_page_engine(binding, |_child, engine| match zero {
+            true => engine.allocate_aligned_zeroed(request, alignment),
+            false => engine.allocate_aligned(request, alignment),
+        })
+    };
+    Some(match block {
+        Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
+        Ok(None) => NativePageAllocationResult::AllocationFailed,
+        Err(_) => NativePageAllocationResult::Retained,
+    })
+}
+
+/// The local-free branch of the native runtime entry points: frees a block
+/// of a page that the current child thread owns. `None` when the current
+/// thread is not a child member.
 ///
 /// # Safety
-/// The id is live and the caller is the thread `member` admitted to it.
-pub(crate) unsafe fn native_subproc_heap_new(
-    id: NativeSubprocessId,
-    member: &mut ChildThreadMember,
-) -> Result<
-    Result<core::ptr::NonNull<crate::types::Heap>, crate::types::heap_registry::lifecycle::HeapNewError>,
-    NativeSubprocessError,
+/// `block` is a live native allocation on a page the current thread owns.
+pub(crate) unsafe fn native_child_thread_free_local(
+    block: core::ptr::NonNull<u8>,
+) -> Option<crate::runtime_lifecycle::NativePageFreeResult> {
+    use crate::runtime_lifecycle::NativePageFreeResult;
+    // SAFETY: current-thread slot, no other reference live.
+    let current = unsafe { current_child_member() }.as_mut()?;
+    let binding = current.binding;
+    // SAFETY: the admitted thread frees its own live block.
+    let freed = unsafe {
+        current.member.with_page_engine(binding, |_child, engine| unsafe { engine.free(block) })
+    };
+    Some(match freed {
+        Ok(Ok(())) => NativePageFreeResult::Freed,
+        Ok(Err(_)) | Err(_) => NativePageFreeResult::Retained,
+    })
+}
+
+/// Production `mi_heap_new` on the current child thread; see
+/// `types::heap_registry::lifecycle::child_heap_new`. `None` when the
+/// current thread is not a child member.
+pub(crate) fn native_child_heap_new() -> Option<
+    Result<
+        Result<core::ptr::NonNull<crate::types::Heap>, crate::types::heap_registry::lifecycle::HeapNewError>,
+        NativeSubprocessError,
+    >,
 > {
-    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
-        .ready_child_subprocess_inputs()
-        .ok_or(NativeSubprocessError::NotReady)?;
+    // SAFETY: current-thread slot, no other reference live.
+    let current = unsafe { current_child_member() }.as_mut()?;
+    let (id, binding) = (current.id, current.binding);
+    let member = &mut current.member;
     let keys = crate::types::heap_registry::lifecycle::HeapKeySource::global();
-    // SAFETY: forwarded obligations; the record lock excludes every other
-    // context operation, in place of source `heaps_lock`.
-    unsafe {
+    // SAFETY: this is the admitted thread; the record lock excludes every
+    // other context operation, in place of source `heaps_lock`.
+    Some(unsafe {
         id.with_owner(|owner| match owner.as_mut() {
             Some(child) => Ok(crate::types::heap_registry::lifecycle::child_heap_new(
                 child, member, binding, keys,
             )),
             None => Err(NativeSubprocessError::Gone),
         })
-    }?
+    }.and_then(|result| result))
 }
 
-/// Production `mi_heap_delete` (or, with `destroy`, `mi_heap_destroy`) on a
-/// thread admitted to the child `id`; see
-/// `types::heap_registry::lifecycle::child_heap_delete`.
+/// Production `mi_heap_delete` (or, with `destroy`, `mi_heap_destroy`) on
+/// the current child thread; see
+/// `types::heap_registry::lifecycle::child_heap_delete`. `None` when the
+/// current thread is not a child member.
 ///
 /// # Safety
-/// The id is live, the caller is the thread `member` admitted to it, and
-/// `heap` is the child's main Heap or a Heap created for it that no thread
-/// uses.
-pub(crate) unsafe fn native_subproc_heap_release(
-    id: NativeSubprocessId,
-    member: &mut ChildThreadMember,
+/// `heap` is the current child's main Heap or a Heap created for it that no
+/// thread uses.
+pub(crate) unsafe fn native_child_heap_release(
     heap: core::ptr::NonNull<crate::types::Heap>,
     destroy: bool,
-) -> Result<
+) -> Option<
     Result<
-        crate::types::heap_registry::lifecycle::HeapReleaseOutcome,
-        crate::types::heap_registry::lifecycle::HeapReleaseError,
+        Result<
+            crate::types::heap_registry::lifecycle::HeapReleaseOutcome,
+            crate::types::heap_registry::lifecycle::HeapReleaseError,
+        >,
+        NativeSubprocessError,
     >,
-    NativeSubprocessError,
 > {
-    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
-        .ready_child_subprocess_inputs()
-        .ok_or(NativeSubprocessError::NotReady)?;
+    // SAFETY: current-thread slot, no other reference live.
+    let current = unsafe { current_child_member() }.as_mut()?;
+    let (id, binding) = (current.id, current.binding);
+    let member = &mut current.member;
     // SAFETY: forwarded obligations; the record lock serializes the list.
-    unsafe {
+    Some(unsafe {
         id.with_owner(|owner| match owner.as_mut() {
             Some(child) if destroy => Ok(crate::types::heap_registry::lifecycle::child_heap_destroy(
                 child, member, binding, heap,
@@ -832,7 +969,7 @@ pub(crate) unsafe fn native_subproc_heap_release(
             )),
             None => Err(NativeSubprocessError::Gone),
         })
-    }?
+    }.and_then(|result| result))
 }
 
 /// Production `mi_subproc_visit_heaps` (`subproc.c:303-313`).
@@ -1222,19 +1359,45 @@ pub(crate) mod tests {
             .0
     }
 
-    /// The production entry points in a fresh runtime process: two fresh
-    /// threads admitted to one child allocate concurrently (their page
-    /// operations share no child or PageMap lock), destruction refuses while
-    /// they belong to the child, and a runtime worker other than the creator
-    /// destroys it after both finish.
+    /// The production entry points in a fresh runtime process. Two fresh
+    /// registered threads join one child and then allocate, reallocate, and
+    /// free through the ordinary native runtime entry points, which route
+    /// them to their own child Theaps: concurrently, with blocks freed across
+    /// child threads and between the child and the main subprocess. A child
+    /// thread creates and deletes a non-main Heap. Destruction refuses while
+    /// the threads belong to the child; they finish through the runtime's
+    /// thread-exit entry, and a runtime worker other than the creator
+    /// destroys the child.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn native_child_threads_allocate_concurrently_and_another_thread_destroys() {
         use crate::runtime_lifecycle::{
             attach_current_thread, finish_current_thread_native_after_user_destructors,
+            native_allocate_aligned, native_free, native_reallocate, native_usable_size,
             prepare_native_later_thread_arena, test_initialize_process_from_host_environment,
-            ThreadAttachResult, ThreadFinishResult,
+            NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
+            ThreadFinishResult,
         };
+        use core::sync::atomic::{AtomicPtr, Ordering};
+
+        fn allocate(size: usize) -> core::ptr::NonNull<u8> {
+            match native_allocate_aligned(size, 16, false) {
+                NativePageAllocationResult::Allocated(block) => block,
+                _ => panic!("native allocation failed"),
+            }
+        }
+        fn free(block: core::ptr::NonNull<u8>) {
+            // SAFETY: each block is a live native allocation freed once.
+            assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+        }
+        fn register() {
+            let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+            // SAFETY: the fresh thread registers its own descriptor once.
+            assert!(unsafe {
+                crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+            });
+        }
+
         crate::test_process::run_in_fresh_process(
             "subproc::lifecycle::tests::native_child_threads_allocate_concurrently_and_another_thread_destroys",
             || {
@@ -1246,63 +1409,68 @@ pub(crate) mod tests {
                 let mut heaps = 0;
                 assert_eq!(unsafe { native_subproc_visit_heaps(id, |_| { heaps += 1; true }) }, Ok(true));
                 assert_eq!(heaps, 1, "a new child has only its main Heap");
+                // A main-subprocess block that a child thread frees.
+                let main_block = allocate(48);
+                let main_block_slot = AtomicPtr::new(main_block.as_ptr());
+                // Blocks each child thread hands to the other, and one to main.
+                let handoff = [AtomicPtr::new(core::ptr::null_mut()), AtomicPtr::new(core::ptr::null_mut())];
+                let to_main = AtomicPtr::new(core::ptr::null_mut());
 
                 let admitted = std::sync::Barrier::new(3);
+                let exchanged = std::sync::Barrier::new(3);
                 let holding = std::sync::Barrier::new(3);
                 let release = std::sync::Barrier::new(3);
                 std::thread::scope(|scope| {
-                    for _ in 0..2 {
-                        scope.spawn(|| {
+                    for index in 0..2 {
+                        let (admitted, exchanged, holding, release) = (&admitted, &exchanged, &holding, &release);
+                        let (handoff, to_main, main_block_slot) = (&handoff, &to_main, &main_block_slot);
+                        scope.spawn(move || {
+                            register();
                             // SAFETY: a fresh thread owns its pristine roots.
-                            let outcome = unsafe { native_subproc_add_current_thread(id) }
-                                .expect("the child record is live");
-                            let Ok(ChildThreadAddOutcome::Added(mut member)) = outcome else {
-                                panic!("a fresh thread joins the child");
-                            };
+                            assert_eq!(unsafe { native_subproc_add_current_thread(id) },
+                                Ok(NativeChildThreadAdd::Added));
+                            assert_eq!(unsafe { native_subproc_add_current_thread(id) },
+                                Ok(NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess: false }));
                             admitted.wait();
-                            let binding = native_backing();
-                            let mut kept = None;
-                            for round in 0..256 {
-                                // SAFETY: the admitted thread runs its own engine.
-                                unsafe {
-                                    member.with_page_engine(binding, |_image, engine| {
-                                        let block = engine.allocate(64 + round % 3 * 64, false)
-                                            .expect("the child thread allocates");
-                                        match kept.replace(block) {
-                                            // SAFETY: the previous exact live block.
-                                            Some(previous) => unsafe { engine.free(previous) }
-                                                .expect("the child thread frees"),
-                                            None => {}
-                                        }
-                                    })
-                                }
-                                .expect("concurrent child page operations are admitted");
+                            let mut kept = allocate(64);
+                            for round in 0..256usize {
+                                let next = allocate(64 + round % 3 * 64);
+                                // SAFETY: `next` holds at least 64 bytes.
+                                unsafe { next.as_ptr().write_bytes(round as u8, 64) };
+                                free(core::mem::replace(&mut kept, next));
                             }
+                            // SAFETY: `kept` is live; the result replaces it.
+                            let grown = match unsafe { native_reallocate(Some(kept), 4096) } {
+                                NativePageAllocationResult::Allocated(block) => block,
+                                _ => panic!("child reallocation failed"),
+                            };
+                            assert_eq!(unsafe { *grown.as_ptr() }, 255, "reallocation keeps the prefix");
+                            assert!(unsafe { native_usable_size(grown) }.is_some_and(|size| size >= 4096));
                             // A non-main Heap lives and dies on this thread.
-                            // SAFETY: the admitted thread; the Heap is unused.
-                            let heap = unsafe { native_subproc_heap_new(id, &mut member) }
-                                .expect("the child record is live")
+                            let heap = native_child_heap_new()
+                                .expect("a child member").expect("the child record is live")
                                 .expect("the child thread creates a Heap");
                             assert_eq!(
-                                unsafe { native_subproc_heap_release(id, &mut member, heap, false) },
-                                Ok(Ok(crate::types::heap_registry::lifecycle::HeapReleaseOutcome::Released)),
+                                unsafe { native_child_heap_release(heap, false) },
+                                Some(Ok(Ok(crate::types::heap_registry::lifecycle::HeapReleaseOutcome::Released))),
                             );
+                            handoff[index].store(allocate(32).as_ptr(), Ordering::Release);
+                            if index == 0 {
+                                to_main.store(allocate(32).as_ptr(), Ordering::Release);
+                                free(core::ptr::NonNull::new(main_block_slot.swap(core::ptr::null_mut(), Ordering::AcqRel)).unwrap());
+                            }
+                            exchanged.wait();
+                            // Free the other child thread's block remotely.
+                            free(core::ptr::NonNull::new(handoff[1 - index].swap(core::ptr::null_mut(), Ordering::AcqRel)).unwrap());
                             holding.wait();
                             release.wait();
-                            // SAFETY: the admitted thread frees its last block.
-                            unsafe {
-                                member.with_page_engine(binding, |_image, engine| {
-                                    unsafe { engine.free(kept.take().unwrap()) }.expect("last free");
-                                })
-                            }
-                            .expect("the child thread frees its last block");
-                            // SAFETY: nothing allocated through the member is live.
-                            let done = unsafe { native_subproc_thread_done(id, &mut member) }
-                                .expect("the child record is live");
-                            assert_eq!(done, Ok(()));
+                            free(grown);
+                            assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
                         });
                     }
                     admitted.wait();
+                    exchanged.wait();
+                    free(core::ptr::NonNull::new(to_main.swap(core::ptr::null_mut(), Ordering::AcqRel)).unwrap());
                     holding.wait();
                     // SAFETY: the id is live; this is the only destroy.
                     assert_eq!(
@@ -1317,10 +1485,7 @@ pub(crate) mod tests {
 
                 std::thread::scope(|scope| {
                     scope.spawn(|| {
-                        let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
-                        assert!(unsafe {
-                            crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
-                        });
+                        register();
                         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
                         // SAFETY: the id is live and no child block is used again.
                         assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
@@ -1333,4 +1498,5 @@ pub(crate) mod tests {
             },
         );
     }
+
 }
