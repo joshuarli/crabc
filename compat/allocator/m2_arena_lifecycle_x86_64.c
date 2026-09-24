@@ -63,7 +63,7 @@ typedef struct lifecycle_owner_s {
   mi_heap_t heap;
 } lifecycle_owner_t;
 
-static lifecycle_owner_t owners[16];
+static lifecycle_owner_t owners[32];
 static size_t owner_count;
 
 static lifecycle_owner_t* fresh_owner(void) {
@@ -399,6 +399,33 @@ int main(void) {
     release(owner, &in_parent);
   }
 
+  /* 10. Registry exhaustion: explicit reservations fill all MI_MAX_ARENAS
+         entries, the next one fails after mapping, and an automatic
+         reservation is refused once more than MI_MAX_ARENAS - 4 exist. */
   emit_marker(10);
+  {
+    configure(true, 32 * 1024, 0, false);
+    lifecycle_owner_t* const owner = fresh_owner();
+    size_t reserved = 0;
+    int err = 0;
+    lifecycle_stats_t before = stats_of(owner);
+    while (reserved <= MI_MAX_ARENAS) {
+      before = stats_of(owner);
+      err = mi_reserve_os_memory_ex2(&owner->subproc, MI_ARENA_MIN_SIZE, false, false, false, NULL);
+      if (err != 0) break;
+      reserved++;
+    }
+    emit((int64_t)reserved);
+    emit(err);
+    emit((int64_t)mi_arenas_get_count(&owner->subproc));
+    emit_stats_delta(owner, before);
+    lifecycle_claim_t refused = claim(owner, MI_BCHUNK_BITS, false, NULL, -1);
+    require(refused.start == NULL);
+    lifecycle_claim_t fits = claim(owner, 1, false, NULL, -1);
+    require(fits.start != NULL);
+    release(owner, &fits);
+  }
+
+  emit_marker(11);
   return 0;
 }

@@ -9,7 +9,7 @@
 //! free would violate Rust lifetime rules. Registry clears and primitive frees
 //! still occur in source index order; snapshots cause no observable VM action.
 
-use super::{ArenaBacking, OwnedArenaAllocation, ProcessArenaBacking, DESTROYED, PUBLISHED};
+use super::{ArenaBacking, OwnedArenaAllocation, ProcessArenaBacking, ARENA_SLOT_COUNT, DESTROYED, PUBLISHED};
 use crate::config::MAX_ARENAS;
 use crate::os::{HugeOsRawReleaseRetry, HugeOsReleaseFailure, Mapping};
 use core::sync::atomic::Ordering;
@@ -32,10 +32,10 @@ enum FailedArenaRelease<'tracking> {
 /// Dropping this value never retries syscalls; callers must retain it until
 /// explicit raw retry succeeds. Its huge-page bitmaps borrow storage supplied
 /// before destruction, so no metadata allocation/free can recurse into a
-/// retiring allocator. The fixed array is bounded by the source MAX_ARENAS.
+/// retiring allocator. The fixed array is indexed by allocation-owner slot.
 #[must_use = "retain failed arena releases until explicit raw retry succeeds"]
 pub(crate) struct DestroyedArenas<'tracking> {
-    failures: [Option<FailedArenaRelease<'tracking>>; MAX_ARENAS],
+    failures: [Option<FailedArenaRelease<'tracking>>; ARENA_SLOT_COUNT],
 }
 
 impl DestroyedArenas<'_> {
@@ -123,7 +123,7 @@ impl ProcessArenaBacking {
         }
         let count = self.registry.count();
         let mut release_slots = [None; MAX_ARENAS];
-        let mut seen = [false; MAX_ARENAS];
+        let mut seen = [false; ARENA_SLOT_COUNT];
         let mut required_words = 0usize;
         let tracking_start = tracking.as_ptr().addr();
         let tracking_end = tracking_start + core::mem::size_of_val(tracking);
@@ -161,7 +161,7 @@ impl ProcessArenaBacking {
             return Err(ArenaDestroyError::TrackingCapacity { required_words });
         }
         self.destroyed.store(true, Ordering::Release);
-        let mut destroyed = DestroyedArenas { failures: [const { None }; MAX_ARENAS] };
+        let mut destroyed = DestroyedArenas { failures: [const { None }; ARENA_SLOT_COUNT] };
         for (index, slot_index) in release_slots.into_iter().enumerate().take(count) {
             self.registry.arenas[index].store(core::ptr::null_mut(), Ordering::Release);
             let Some(slot_index) = slot_index else { continue; };

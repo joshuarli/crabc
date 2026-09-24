@@ -71,6 +71,14 @@ pub(crate) enum FirstRegularStartupArenaSelection {
     ExistingOutsideFirstRegularCapability,
 }
 
+/// Allocation-owner slots: one per publishable arena mapping plus one spare.
+/// Source `mi_reserve_os_memory_ex2` maps and initializes a fresh arena (its
+/// metadata commit is counted) before `mi_arenas_add` can report a full
+/// registry, and only then frees the mapping. The spare lets that attempt run
+/// when every registry entry is already published, and retains the exact
+/// mapping if its cleanup unmap fails.
+const ARENA_SLOT_COUNT: usize = MAX_ARENAS + 1;
+
 struct ArenaAllocationSlot {
     state: AtomicU8,
     value: UnsafeCell<MaybeUninit<OwnedArenaAllocation>>,
@@ -473,7 +481,7 @@ pub(crate) struct ProcessArenaBacking {
     huge_cleanup_retained: AtomicBool,
     huge_cleanup: UnsafeCell<Option<huge::PendingHugeCleanup>>,
     registry: ArenaRegistry,
-    slots: [ArenaAllocationSlot; MAX_ARENAS],
+    slots: [ArenaAllocationSlot; ARENA_SLOT_COUNT],
     purge_expire: crate::atomic::AtomicI64Value,
 }
 
@@ -495,7 +503,7 @@ impl ProcessArenaBacking {
             huge_cleanup_retained: AtomicBool::new(false),
             huge_cleanup: UnsafeCell::new(None),
             registry: ArenaRegistry::new(core::ptr::null_mut()),
-            slots: [const { ArenaAllocationSlot::new() }; MAX_ARENAS],
+            slots: [const { ArenaAllocationSlot::new() }; ARENA_SLOT_COUNT],
             purge_expire: crate::atomic::AtomicI64Value::new(0),
         }
     }
@@ -3842,7 +3850,34 @@ mod tests {
             lifecycle_release(&mut trace, owner, &mut in_parent);
         }
 
+        // 10. Registry exhaustion and the automatic-reservation arena cap.
         trace.marker(10);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let p = owner.process;
+            let mut reserved = 0usize;
+            let mut error = 0i64;
+            let mut before = lifecycle_stats(owner);
+            while reserved <= MAX_ARENAS {
+                before = lifecycle_stats(owner);
+                match unsafe { owner.backing.reserve_os_memory_for_process(p, owner.config,
+                    ARENA_MIN_SIZE, MapAccess::Reserved, false, false, None) } {
+                    Ok(_) => reserved += 1,
+                    Err(failure) => { error = i64::from(failure.raw()); break; }
+                }
+            }
+            trace.emit(reserved as i64);
+            trace.emit(error);
+            trace.emit(owner.backing.registry().count() as i64);
+            emit_lifecycle_stats_delta(&mut trace, owner, before);
+            let refused = lifecycle_claim(&mut trace, owner, p, chunk, false, none, -1);
+            assert!(!refused.is_some());
+            let mut fits = lifecycle_claim(&mut trace, owner, p, 1, false, none, -1);
+            assert!(fits.is_some());
+            lifecycle_release(&mut trace, owner, &mut fits);
+        }
+
+        trace.marker(11);
     }
 }
 
