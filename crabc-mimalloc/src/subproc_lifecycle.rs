@@ -643,6 +643,9 @@ pub(crate) enum NativeSubprocessError {
     DestroyRefused(ChildSubprocessDestroyError),
     /// The child context is gone (already destroyed or terminally retained).
     Gone,
+    /// Native allocator admission is closed (process destruction or a
+    /// thread that is not registered with the runtime).
+    Closed,
 }
 
 impl NativeSubprocessId {
@@ -678,6 +681,8 @@ impl NativeSubprocessId {
 /// the native runtime entry points, as source allocates it from the calling
 /// thread's Theap for the parent main Heap.
 pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubprocessError> {
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+        .ok_or(NativeSubprocessError::Closed)?;
     let (binding, registry) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs()
         .ok_or(NativeSubprocessError::NotReady)?;
@@ -730,6 +735,12 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
             registry,
         });
     }
+    // SAFETY: the record was written whole above and nothing else can reach
+    // the new child yet.
+    let owner = unsafe { &mut *record.as_ref().owner.get() };
+    let published = owner.as_mut()
+        .and_then(|child| child.with_child_image(|image| image.get_ref().publish_native_record(record)));
+    debug_assert_eq!(published, Some(true), "a new child publishes its record once");
     Ok(NativeSubprocessId(record))
 }
 
@@ -791,6 +802,8 @@ pub(crate) enum NativeChildThreadAdd {
 pub(crate) unsafe fn native_subproc_add_current_thread(
     id: NativeSubprocessId,
 ) -> Result<NativeChildThreadAdd, NativeSubprocessError> {
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+        .ok_or(NativeSubprocessError::Closed)?;
     // SAFETY: current-thread slot, no other reference live.
     if unsafe { current_child_member() }.is_some() {
         // Source finds the default Theap initialized and returns.
@@ -829,6 +842,9 @@ pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadD
     // SAFETY: current-thread slot, no other reference live.
     let slot = unsafe { current_child_member() };
     let current = slot.as_mut()?;
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Closed)));
+    };
     let id = current.id;
     let binding = current.binding;
     let member = &mut current.member;
@@ -919,6 +935,9 @@ pub(crate) fn native_child_heap_new() -> Option<
 > {
     // SAFETY: current-thread slot, no other reference live.
     let current = unsafe { current_child_member() }.as_mut()?;
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return Some(Err(NativeSubprocessError::Closed));
+    };
     let (id, binding) = (current.id, current.binding);
     let member = &mut current.member;
     let keys = crate::types::heap_registry::lifecycle::HeapKeySource::global();
@@ -956,6 +975,9 @@ pub(crate) unsafe fn native_child_heap_release(
 > {
     // SAFETY: current-thread slot, no other reference live.
     let current = unsafe { current_child_member() }.as_mut()?;
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return Some(Err(NativeSubprocessError::Closed));
+    };
     let (id, binding) = (current.id, current.binding);
     let member = &mut current.member;
     // SAFETY: forwarded obligations; the record lock serializes the list.
@@ -980,6 +1002,8 @@ pub(crate) unsafe fn native_subproc_visit_heaps(
     id: NativeSubprocessId,
     mut visitor: impl FnMut(core::ptr::NonNull<crate::types::Heap>) -> bool,
 ) -> Result<bool, NativeSubprocessError> {
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+        .ok_or(NativeSubprocessError::Closed)?;
     // SAFETY: forwarded id contract.
     unsafe {
         id.with_owner(|owner| {
@@ -1004,6 +1028,60 @@ pub(crate) unsafe fn native_subproc_visit_heaps(
 /// The id is live, no other operation on this id runs concurrently with
 /// the call, and no block of the child is used again.
 pub(crate) unsafe fn native_subproc_destroy(id: NativeSubprocessId) -> Result<(), NativeSubprocessError> {
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+        .ok_or(NativeSubprocessError::Closed)?;
+    // SAFETY: forwarded id contract; the native runtime is admitted.
+    unsafe { destroy_record(id, ChildHeapRelease::Native) }
+}
+
+/// Pinned `_mi_subprocs_unsafe_destroy_all`'s child walk
+/// (`subproc.c:265-277`) at process destruction: each child still in the
+/// source subprocess list, in list order, is destroyed as by
+/// `mi_subproc_unsafe_destroy` before the process main subprocess. Each
+/// child is reached from the list through the production record that
+/// [`native_subproc_new`] published in its image.
+///
+/// The native entry points are closed, so the child main Heap image is left
+/// on its process-main page for the main-subprocess destruction that follows
+/// (see [`ChildHeapRelease::Terminal`]). A child that a thread still belongs
+/// to is refused (`DestroyRefused`) with it and every later child retained:
+/// its member Theaps would need a terminal detach that is not ported yet. A
+/// list member without a production record, or a failed step, returns
+/// `Retained`. Every error stops the walk; process destruction then retains
+/// the main subprocess too.
+///
+/// # Safety
+/// Permanent terminal admission holds: every native entry point and child
+/// context operation has drained and none can start, the process coordinator
+/// is still ready, and no child block is used again. The caller destroys the
+/// main subprocess next.
+pub(crate) unsafe fn destroy_all_native_children_terminal() -> Result<(), NativeSubprocessError> {
+    let (_, registry) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs()
+        .ok_or(NativeSubprocessError::NotReady)?;
+    loop {
+        // SAFETY: terminal admission excludes every other list user.
+        let child = unsafe { registry.first_child_terminal() }.map_err(|_| NativeSubprocessError::Retained)?;
+        let Some(child) = child else { return Ok(()) };
+        // SAFETY: a linked child stays allocated until its destruction below.
+        let record = unsafe { child.as_ref() }.native_record().ok_or(NativeSubprocessError::Retained)?;
+        // SAFETY: a published record lives until its child is destroyed, and
+        // terminal admission excludes every other operation on it.
+        unsafe { destroy_record(NativeSubprocessId(record), ChildHeapRelease::Terminal) }?;
+    }
+}
+
+/// Pinned `mi_subproc_unsafe_destroy` for one production record, then the
+/// record itself. `release` is `Native` inside native admission and
+/// `Terminal` under permanent terminal admission.
+///
+/// # Safety
+/// The id is live, no other operation on it runs concurrently, and no block
+/// of the child is used again.
+unsafe fn destroy_record(
+    id: NativeSubprocessId,
+    release: ChildHeapRelease<'_, 'static>,
+) -> Result<(), NativeSubprocessError> {
     let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs()
         .ok_or(NativeSubprocessError::NotReady)?;
@@ -1018,7 +1096,7 @@ pub(crate) unsafe fn native_subproc_destroy(id: NativeSubprocessId) -> Result<()
             // the unlink step refuses while a thread belongs to the child,
             // and the caller never uses a child block again.
             match destroy_child_with(
-                child, record.registry, binding, &mut [], metadata, config, ChildHeapRelease::Native,
+                child, record.registry, binding, &mut [], metadata, config, release,
             ) {
                 Ok(()) => Ok(()),
                 Err(ChildSubprocessDestroyFailure::Retained { owner: child, error }) => {

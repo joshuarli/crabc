@@ -1594,6 +1594,16 @@ pub(crate) enum ChildHeapRelease<'a, 'heap> {
         attachment: &'a mut crate::main_heap_thread::MainHeapThreadAttachment<'heap>,
     },
     Native,
+    /// Process destruction (`_mi_subprocs_unsafe_destroy_all`) under
+    /// permanent terminal quiescence, when the native entry points are
+    /// closed. The `Native` image is not freed block by block: it stays a
+    /// live block on its process-main page, which the main-subprocess
+    /// destruction that follows treats like every other main page (released
+    /// with the main arenas, or retained if OS-backed). Source frees
+    /// it with `_mi_free_subproc_safe` just before; in the release statistics
+    /// profile that free changes no statistic unless it empties a page that
+    /// is not its queue's only page, which is then freed early.
+    Terminal,
 }
 
 /// One zeroed, exact-size Heap image allocated through the native runtime.
@@ -3257,6 +3267,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                         }
                     }
                 }
+                // The main-subprocess destruction that follows releases the
+                // block with its page; the token frees nothing on drop.
+                (ChildHeapStorage::Native(image), ChildHeapRelease::Terminal) => drop(image),
                 // SAFETY: the validated teardown above leaves no observer.
                 (ChildHeapStorage::Native(image), ChildHeapRelease::Native) => match unsafe { image.free() } {
                     Ok(()) => {}

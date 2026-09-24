@@ -1,6 +1,6 @@
 // Copyright (c) 2018-2026 Microsoft Research, Daan Leijen
 // SPDX-License-Identifier: MIT
-// Source: mimalloc v3.5.0 src/subproc.c:14-15,141-156,202-212,316-325.
+// Source: mimalloc v3.5.0 src/subproc.c:14-15,141-156,202-212,265-277,316-325.
 
 //! Source subprocess list ownership for process-main initialization and child
 //! membership. Main still uses its canonical static image; child registration
@@ -217,6 +217,39 @@ impl SourceSubprocessRegistry {
         // retired node's own links or making the subprocess reusable.
         unsafe { *self.head.get() = *member.next.get(); }
         guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
+    }
+
+    /// The first non-main member from the head of the source list: one step
+    /// of the `_mi_subprocs_unsafe_destroy_all` walk (`subproc.c:265-277`).
+    /// Source saves `next` and destroys each child in list order; the caller
+    /// destroys (and so unlinks) the returned child before asking again,
+    /// which visits the same children in the same order.
+    ///
+    /// # Safety
+    /// Permanent terminal admission excludes every other list user. A linked
+    /// child registered through [`Self::initialize_child`], whose identity is
+    /// the image at offset zero, stays allocated until the caller destroys it.
+    pub(crate) unsafe fn first_child_terminal(
+        &self,
+    ) -> Result<Option<NonNull<ChildSubprocessImage>>, SourceSubprocessRegistryError> {
+        let guard = self.lock.lock().map_err(SourceSubprocessRegistryError::Lock)?;
+        // SAFETY: the held list lock excludes link/unlink; linked members
+        // remain allocated until after their locked removal.
+        let mut current = unsafe { *self.head.get() };
+        let mut child = None;
+        while let Some(identity) = NonNull::new(current) {
+            // SAFETY: a linked member is allocated (above).
+            let member = unsafe { identity.as_ref() };
+            if !member.is_process_main() {
+                // `ChildSubprocessImage` is `repr(C)` with its identity first,
+                // and `initialize_child` linked exactly that image's identity.
+                child = Some(identity.cast::<ChildSubprocessImage>());
+                break;
+            }
+            current = unsafe { *member.source_membership.next.get() };
+        }
+        guard.unlock().map_err(SourceSubprocessRegistryError::Lock)?;
+        Ok(child)
     }
 
     /// Removes one non-main subprocess at the source's first destroy step.

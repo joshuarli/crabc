@@ -10211,6 +10211,26 @@ pub fn prepare_native_later_thread_arena() -> bool {
     prepare_current_thread_native_initial_persistent_owner_for_later_thread()
 }
 
+/// Native allocator admission for one child-subprocess context operation
+/// (creation, thread admission and finish, Heap creation and release,
+/// visitation, destruction), so that fork and terminal quiescence exclude it
+/// as they exclude the allocation entry points. Hold it for the whole
+/// operation on the current thread.
+pub(crate) struct NativeSubprocessOperation {
+    #[cfg(target_arch = "x86_64")]
+    _operation: admission::NativeAllocatorOperationGuard,
+}
+
+impl NativeSubprocessOperation {
+    /// `None` when admission is closed or the thread is unregistered.
+    pub(crate) fn enter() -> Option<Self> {
+        Some(Self {
+            #[cfg(target_arch = "x86_64")]
+            _operation: admission::NativeAllocatorOperationGuard::enter().ok()?,
+        })
+    }
+}
+
 /// Allocates one C-facing native-shadow block on the current thread.
 ///
 /// The initial process thread uses its continuously stored static-source

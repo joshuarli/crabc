@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Native explicit process destruction: init.c:605,626-647 and subproc.c:202-255.
+//! Native explicit process destruction: init.c:605,626-647 and subproc.c:202-277.
 //! Default process-done remains the retaining path. This caller is selected
 //! only by the signed source destroy option after full native admission closes.
 //! External ownership tracking survives both successful bulk release and every
@@ -69,6 +69,7 @@ pub enum NativeProcessDestroyError {
 /// dispatch reports the stage without exporting a capability to retired memory.
 enum RetainedDestroyFailure {
     Storage(crabc_core::Errno),
+    ChildSubprocess(crate::subproc::lifecycle::NativeSubprocessError),
     Subprocess(ProcessMainInitError),
     Heap(MainHeapDestroyError),
     Metadata(crate::meta::MetaCloseError),
@@ -218,6 +219,12 @@ impl NativePreparedProcessDestroy {
         let owners = unsafe { &mut *DESTROY_OWNERS.0.get() };
         let process = self.ready.vm_process().map_err(|_| NativeProcessDestroyError::Coordinator)?;
         let config = self.ready.memory_config().map_err(|_| NativeProcessDestroyError::Coordinator)?;
+        // Source subproc.c:265-277 destroys every child subprocess before the
+        // main one, while the coordinator still admits child page sessions.
+        // Main tracking is sized after the children merged into main.
+        unsafe { crate::subproc::lifecycle::destroy_all_native_children_terminal() }.map_err(|error| {
+            owners.failure = Some(RetainedDestroyFailure::ChildSubprocess(error)); NativeProcessDestroyError::Subprocess
+        })?;
         let tracking_len = {
             let mut guard = self.heap.lock_heap().map_err(|_| NativeProcessDestroyError::Heap)?;
             unsafe { guard.heap_mut().terminal_tracking_len() }.map_err(|error| {
@@ -758,6 +765,56 @@ mod tests {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::destroy::tests::physical_destroy_final_output_keeps_page_map_live_for_signed_verbose_then_releases_it",
             || physical_destroy_fixture(false, false, FinalOutputFixtureMode::SignedVerbose),
+        );
+    }
+
+    /// Pinned `_mi_subprocs_unsafe_destroy_all` destroys every child
+    /// subprocess before the process main subprocess. Two children created
+    /// through the production entry point and never destroyed by the program
+    /// are destroyed by process destruction: the child statistics (one
+    /// finished child thread) merge into main, and main then unlinks as the
+    /// only list member and completes its own destruction.
+    #[test]
+    fn physical_destroy_destroys_live_native_children_before_main() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::destroy::tests::physical_destroy_destroys_live_native_children_before_main",
+            || {
+                use crate::subproc::lifecycle::{native_subproc_add_current_thread, native_subproc_new, NativeChildThreadAdd};
+                unsafe { std::env::set_var("mimalloc_destroy_on_exit", "1"); }
+                assert!(test_initialize_process_from_host_environment(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
+                assert!(prepare_native_later_thread_arena());
+                let older = native_subproc_new().expect("the initial thread creates a child");
+                let _newer = native_subproc_new().expect("the initial thread creates a second child");
+                std::thread::scope(|scope| {
+                    scope.spawn(|| {
+                        let current = admission::current_native_allocator_thread_descriptor();
+                        assert!(unsafe { admission::register_current_native_allocator_worker_descriptor(current) });
+                        // SAFETY: a fresh thread owns its pristine roots.
+                        assert_eq!(unsafe { native_subproc_add_current_thread(older) }, Ok(NativeChildThreadAdd::Added));
+                        let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(64, 16, false)
+                            else { panic!("child allocation"); };
+                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                    }).join().expect("a child thread allocates and finishes");
+                });
+                let main = crate::subproc::MainSubprocess::global();
+                let threads_before = main.statistics().final_output_snapshot().threads.total;
+                let request = capture_native_process_destroy_request().expect("source capture precedes registry pin");
+                let no_worker = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+                let registry = PinnedFixtureRegistry {
+                    initial: admission::native_allocator_initial_thread_descriptor().unwrap(), worker: &no_worker,
+                };
+                let prepared = unsafe { prepare_native_process_destroy(request, &registry) }
+                    .expect("the initial owner transfers");
+                assert_eq!(unsafe { prepared.finish() }, Ok(()), "every child is destroyed before main");
+                assert!(RUNTIME_PROCESS.logical_process_done_is_complete());
+                assert_eq!(main.statistics().final_output_snapshot().threads.total, threads_before + 1,
+                    "the child statistics merged into main");
+                let owners = unsafe { &*DESTROY_OWNERS.0.get() };
+                assert!(owners.failure.is_none());
+                assert!(owners.arenas.as_ref().unwrap().is_released());
+                assert!(!crate::process_page_map::ProcessPageMapStorage::global().test_has_published_root());
+            },
         );
     }
 

@@ -194,9 +194,16 @@ unsafe impl Sync for MainSubprocess {}
 /// at allocation offset zero, while its pinned role wrapper prevents safe
 /// movement after the source registry or intrusive Heap/Theap lists publish
 /// this address. Child metadata capabilities remain in its external owner.
-#[repr(transparent)]
+///
+/// `native_record` is Rust state with no source counterpart: the production
+/// [`lifecycle::NativeChildSubprocess`] record that owns this child, set once
+/// by `lifecycle::native_subproc_new`, so that process destruction can reach
+/// each child's owner from the source subprocess list as
+/// `_mi_subprocs_unsafe_destroy_all` reaches each `mi_subproc_t`.
+#[repr(C)]
 pub(crate) struct ChildSubprocessImage {
     identity: SubprocessIdentity,
+    native_record: core::sync::atomic::AtomicPtr<lifecycle::NativeChildSubprocess>,
     _pin: PhantomPinned,
 }
 
@@ -210,12 +217,30 @@ impl ChildSubprocessImage {
     pub(crate) const fn new() -> Self {
         Self {
             identity: SubprocessIdentity::new_with_role(SubprocessRole::Child),
+            native_record: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
             _pin: PhantomPinned,
         }
     }
 
     #[inline]
     pub(crate) fn identity(&self) -> &SubprocessIdentity { &self.identity }
+
+    /// Publishes the production record that owns this child. Only the first
+    /// publication succeeds.
+    pub(crate) fn publish_native_record(
+        &self,
+        record: core::ptr::NonNull<lifecycle::NativeChildSubprocess>,
+    ) -> bool {
+        self.native_record
+            .compare_exchange(core::ptr::null_mut(), record.as_ptr(), Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// The production record published for this child, if any.
+    #[inline]
+    pub(crate) fn native_record(&self) -> Option<core::ptr::NonNull<lifecycle::NativeChildSubprocess>> {
+        core::ptr::NonNull::new(self.native_record.load(Ordering::Acquire))
+    }
 
     /// Issues the exact old source child `thread_total_count` value. Child
     /// sequence zero is always metadata-backed; only `MainSubprocess` owns
