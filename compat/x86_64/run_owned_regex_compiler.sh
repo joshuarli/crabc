@@ -10,7 +10,6 @@
 # spellings from one Rust object, so their presence in this compiler-focused
 # link is intentionally not a failure; execution behavior has its own runner.
 set -euo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -72,6 +71,13 @@ cmp -s "$SOURCE_STATIC_C_ABI" "$ROOT_DIR/libc/src/c_abi/x86_64/static_c_abi.rs" 
 
 (
     cd "$source_root"
+    # The owned-regex routing exists only in this copy, and the helper builds
+    # the checkout that contains it, so source the copy's helper and give the
+    # copy the checkout's authenticated vendor, which it re-verifies.
+    . "$source_root/compat/x86_64/source_runtime_libc.sh"
+    mkdir -p "$source_root/.work/x86_64/cargo"
+    cp -a "$ROOT_DIR/.work/x86_64/cargo/native-static-source-runtime-vendor" \
+        "$source_root/.work/x86_64/cargo/"
     build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 )
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
