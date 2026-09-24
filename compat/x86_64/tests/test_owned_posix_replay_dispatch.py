@@ -13,7 +13,7 @@ COMMANDS = (
     "owned-posix-filesystem", "owned-process-control", "owned-posix-signals",
     "owned-posix-composition", "owned-credentials-profile", "owned-environment-lifecycle",
     "owned-kernel-residual", "owned-linux-control", "owned-dynamic-spawn",
-    "owned-process-trio", "owned-underscore-fork", "owned-utmpx", "owned-account-files", "owned-syslog", "owned-crypt-runtime", "owned-system-cancellation",
+    "owned-process-trio", "owned-underscore-fork", "owned-native-allocator-fork", "owned-utmpx", "owned-account-files", "owned-syslog", "owned-crypt-runtime", "owned-system-cancellation",
     "owned-signal-helpers", "owned-pthread-signal", "owned-posix-timers", "owned-regex",
     "owned-dynamic-io-cancellation", "project-header-extension-policy", "owned-locale", "owned-math-fenv-all-entry", "owned-wordexp", "owned-wordexp-expected-inputs", "owned-stdio", "owned-aio", "owned-numeric-calendar", "owned-rand",
 )

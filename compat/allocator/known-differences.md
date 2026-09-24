@@ -100,10 +100,22 @@ initial descriptor, while a vanished initial attachment becomes detached
 without unmapping its static storage or removing the canonical process Heap.
 An unprepared raw copy repairs nothing; from a worker it retains the copied
 initial descriptor so later prepared-fork or terminal writers in that child
-refuse. The contract and exact APIs are described in
-`docs/design/allocator.md`; source-aware libc fork wiring, installed behavior,
-and performance qualification remain required. Allocator-level live-client
-fork tests do not replace those gates or qualify automatic destruction.
+refuse.
+
+The native-shadow libc `fork` drains every owner after all libc fork locks
+and repairs the child before any allocation, so the child and its handlers
+allocate normally. Two observable differences from musl follow. `fork` fails
+with `EAGAIN`, after running parent handlers, when a prepared preflight
+refuses: another thread is inside a foreign allocator diagnostic or
+deferred-free callback (which may need a libc lock this fork holds), or an
+owner is retained. Musl's `fork` has no such refusal. `_Fork` and non-VM
+`clone` copy an unprepared image, like musl, so a multithreaded caller's
+child keeps only async-signal-safe operations; unlike musl, a later `fork` in
+that child from a worker-origin copy fails with `EAGAIN`. The contract and
+exact APIs are described in `docs/design/allocator.md`, with installed
+evidence from `./scripts/dev-x86_64.sh owned-native-allocator-fork`.
+Performance qualification remains required, and neither the allocator-level
+tests nor the installed probe qualifies automatic destruction.
 
 ### Metadata release provenance and exclusive-arena Theaps
 

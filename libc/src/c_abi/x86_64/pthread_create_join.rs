@@ -105,8 +105,10 @@ use crabc_mimalloc::__crabc_runtime::{
     native_allocator_descriptor_retirement,
     native_allocator_initial_thread_descriptor,
     register_current_native_allocator_worker_descriptor,
-    NativeAllocatorDescriptorRetirement, NativeAllocatorPinnedThreadRegistry,
-    NativeAllocatorThreadDescriptor,
+    begin_native_allocator_source_fork_quiescence,
+    NativeAllocatorChildRetainedThreadRegistry, NativeAllocatorDescriptorRetirement,
+    NativeAllocatorForkQuiescence, NativeAllocatorPinnedThreadRegistry,
+    NativeAllocatorQuiescenceError, NativeAllocatorThreadDescriptor,
 };
 
 use super::{
@@ -1428,29 +1430,100 @@ unsafe impl NativeAllocatorPinnedThreadRegistry for SelectedWorkerNativeAllocato
         &self,
         visitor: &mut dyn FnMut(NonNull<NativeAllocatorThreadDescriptor>),
     ) {
-        // The allocator publishes this only from selected process
-        // initialization. It has no `ThreadControl`, is not reclaimable, and
-        // appears exactly once ahead of every linked worker descriptor.
-        if let Some(initial) = native_allocator_initial_thread_descriptor() {
-            visitor(initial);
+        visit_selected_native_allocator_descriptors(visitor);
+    }
+}
+
+// SAFETY: only the sole child of a prepared `fork` names this view, between
+// the raw syscall and its registry reset. The surviving caller still owns the
+// copied worker-list lock, so the unchanged copied list and every linked
+// control mapping stay in place; the visit never reacquires that lock. It is
+// the same atomic-only traversal as the pinned view and allocates nothing.
+#[cfg(feature = "native-mimalloc-shadow")]
+unsafe impl NativeAllocatorChildRetainedThreadRegistry for SelectedWorkerNativeAllocatorRegistry {
+    fn visit_descriptors(
+        &self,
+        visitor: &mut dyn FnMut(NonNull<NativeAllocatorThreadDescriptor>),
+    ) {
+        visit_selected_native_allocator_descriptors(visitor);
+    }
+}
+
+/// The initial descriptor followed by each linked worker's descriptor. The
+/// caller holds the worker-list lock (or, in the sole fork child, its copy).
+#[cfg(feature = "native-mimalloc-shadow")]
+fn visit_selected_native_allocator_descriptors(
+    visitor: &mut dyn FnMut(NonNull<NativeAllocatorThreadDescriptor>),
+) {
+    // The allocator publishes this only from selected process
+    // initialization. It has no `ThreadControl`, is not reclaimable, and
+    // appears exactly once ahead of every linked worker descriptor.
+    if let Some(initial) = native_allocator_initial_thread_descriptor() {
+        visitor(initial);
+    }
+    let mut control = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire)
+        as *mut ThreadControl;
+    while !control.is_null() {
+        // SAFETY: membership under this lock pins `control`; an acquire
+        // observes the child's descriptor store before its registration
+        // release. A null value means this pre-clone/early child has not
+        // registered and cannot have entered source state.
+        let descriptor = unsafe {
+            (*control).native_allocator_descriptor.load(Ordering::Acquire)
+        };
+        if let Some(descriptor) = NonNull::new(descriptor) {
+            visitor(descriptor);
         }
-        let mut control = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire)
-            as *mut ThreadControl;
-        while !control.is_null() {
-            // SAFETY: membership under this lock pins `control`; an acquire
-            // observes the child's descriptor store before its registration
-            // release. A null value means this pre-clone/early child has not
-            // registered and cannot have entered source state.
-            let descriptor = unsafe {
-                (*control).native_allocator_descriptor.load(Ordering::Acquire)
-            };
-            if let Some(descriptor) = NonNull::new(descriptor) {
-                visitor(descriptor);
-            }
-            // SAFETY: the lock keeps the intrusive next link and successor
-            // mapping valid for this bounded atomic-only traversal.
-            control = unsafe { (*control).registry_next };
-        }
+        // SAFETY: the lock keeps the intrusive next link and successor
+        // mapping valid for this bounded atomic-only traversal.
+        control = unsafe { (*control).registry_next };
+    }
+}
+
+/// Drain and preflight every native allocator owner for one prepared `fork`.
+///
+/// This is the source-aware counterpart of `_Fork`'s unprepared raw copy. It
+/// borrows the worker-list lock that [`pthread_fork_prepare`] already holds
+/// rather than taking a second pin: that lock stays held across the raw
+/// syscall and into the child, which is the lifetime the returned interval
+/// needs. Refusal reopens the exact epoch and issues no syscall.
+///
+/// # Safety
+/// The caller is the full `fork` path after public prepare hooks and every
+/// outer libc fork lock, holds the worker-list lock through
+/// [`pthread_fork_prepare`], has all signals blocked, and is outside every
+/// allocator operation. Between success and parent/child completion the only
+/// permitted operation is the raw fork syscall: nothing may allocate.
+#[cfg(feature = "native-mimalloc-shadow")]
+pub(super) unsafe fn begin_prepared_fork_native_allocator_quiescence(
+) -> Result<NativeAllocatorForkQuiescence<'static>, NativeAllocatorQuiescenceError> {
+    static REGISTRY: SelectedWorkerNativeAllocatorRegistry = SelectedWorkerNativeAllocatorRegistry;
+    // SAFETY: the held worker-list lock is the documented registry pin; the
+    // caller supplies the outer lock order and no-allocation interval.
+    unsafe { begin_native_allocator_source_fork_quiescence(&REGISTRY) }
+}
+
+/// Repair every vanished native allocator owner in the sole prepared-fork
+/// child and reopen allocation. `false` means the child must fail-stop:
+/// entry stays permanently closed with the exact residual owner retained.
+///
+/// # Safety
+/// Call first in the child, immediately after the raw syscall returned zero:
+/// before caller adoption, registry reset, lock completion, signal restore,
+/// hooks or any allocation. The copied worker-list lock and every inherited
+/// control/TLS mapping are unchanged. Repair acquires no libc lock and emits
+/// no foreign output, so the copied fork locks this task owns cannot block it.
+#[cfg(feature = "native-mimalloc-shadow")]
+pub(super) unsafe fn repair_prepared_fork_native_allocator_child(
+    interval: NativeAllocatorForkQuiescence<'static>,
+) -> bool {
+    // SAFETY: the caller supplies the sole-child ordering above; the copied
+    // registry view is the same graph the parent pinned before the copy.
+    match unsafe { interval.into_child_repair().into_unlocked_continuation() } {
+        Ok(continuation) => unsafe {
+            continuation.repair_source_owners(&SelectedWorkerNativeAllocatorRegistry)
+        }.is_ok(),
+        Err(_) => false,
     }
 }
 

@@ -780,9 +780,9 @@ pub struct NativeAllocatorForkChildRepair<'registry> {
     interval: NativeAllocatorForkQuiescence<'registry>,
 }
 
-/// Child-only access to the unchanged libc descriptor graph after its copied
-/// locks have been released. This is the existing registry, not a snapshot or
-/// a second ownership list.
+/// Child-only access to the unchanged libc descriptor graph, whether or not
+/// its copied locks have been released yet. This is the existing registry,
+/// not a snapshot or a second ownership list.
 ///
 /// # Safety
 /// The sole child keeps signals blocked and runs no user hooks, registry reset,
@@ -821,11 +821,13 @@ impl NativeAllocatorForkChildRepair<'_> {
     ///
     /// # Safety
     /// Called only in the sole child before any registry reset or caller
-    /// adoption. After this returns, libc must release its copied registry and
-    /// other outer locks before source repair. Signals remain blocked and no
-    /// hooks, thread creation or descriptor/TLS retirement may occur until the
-    /// continuation completes. The unchanged registry graph must remain
-    /// available through `NativeAllocatorChildRetainedThreadRegistry`.
+    /// adoption. Signals remain blocked and no hooks, allocation, thread
+    /// creation or descriptor/TLS retirement may occur until the continuation
+    /// completes. The unchanged registry graph must remain available through
+    /// `NativeAllocatorChildRetainedThreadRegistry`. Source repair acquires no
+    /// libc lock and emits no foreign output (diagnostics outside an ordinary
+    /// entry are refused), so libc may repair while the surviving caller still
+    /// owns its copied fork locks, or after releasing them.
     pub unsafe fn into_unlocked_continuation(mut self)
         -> Result<NativeAllocatorForkChildContinuation, NativeAllocatorQuiescenceError> {
         let survivor = current_native_allocator_thread_descriptor();
@@ -853,9 +855,9 @@ impl NativeAllocatorForkChildContinuation {
     ///
     /// # Safety
     /// The sole child retains every original descriptor/control/TLS mapping.
-    /// All copied libc outer locks are released; signals remain blocked and
-    /// no hooks, reset, adoption, creation, source entry or foreign callback
-    /// can run until this returns. `registry` visits the exact graph borrowed
+    /// Copied libc outer locks are either released or owned by this surviving
+    /// caller; signals remain blocked and no hooks, reset, adoption, creation,
+    /// source entry or foreign callback can run until this returns. `registry` visits the exact graph borrowed
     /// before fork, including the same survivor once, with no escaping source
     /// references. On error no graph storage may be retired or user code run:
     /// fail-stop the child. This method's Drop preserves permanent exclusion.
@@ -990,8 +992,7 @@ pub unsafe fn begin_native_allocator_source_fork_quiescence(
 /// consumes `into_unlocked_continuation`. That child capability then retains
 /// the same graph while copied locks are released and source owners repaired;
 /// never relock through the general scoped registry accessor. The raw fork
-/// syscall is the sole syscall allowed within this prepared interval. Child
-/// repair must be implemented and preflighted before enabling a product caller.
+/// syscall is the sole syscall allowed within this prepared interval.
 pub unsafe fn begin_native_allocator_fork_quiescence(
     registry: &dyn NativeAllocatorPinnedThreadRegistry,
 ) -> Result<NativeAllocatorForkQuiescence<'_>, NativeAllocatorQuiescenceError> {

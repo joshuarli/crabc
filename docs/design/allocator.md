@@ -114,10 +114,11 @@ be suspended, and the writer checks markers throughout draining.
 
 In the child, `NativeAllocatorForkChildContinuation` retains authority over the
 same copied descriptor/control/TLS graph without pretending that the released
-registry lock still exists. Libc must keep signals and hooks excluded, release
-all copied outer locks, and postpone registry reset, caller adoption, unmapping,
-and thread creation until `repair_source_owners` returns. No source reference
-escapes a registry visit. The survivor is identified exactly once and is never
+registry lock still exists. Libc must keep signals and hooks excluded and
+postpone allocation, registry reset, caller adoption, unmapping, and thread
+creation until `repair_source_owners` returns. Repair takes no libc lock and
+emits no foreign output, so it may run while the surviving caller still owns
+its copied fork locks. No source reference escapes a registry visit. The survivor is identified exactly once and is never
 retired. Each vanished owner runs the existing retired-page, remote-free,
 queue-detach and abandonment algorithms through the non-Copy, borrow-scoped
 `TheapCollectAbandonFieldAccess`, then retires its Theap/TLD capabilities and
@@ -135,6 +136,20 @@ exactly once. Any partial failure keeps its exact residual owners and
 mappings, never re-roots, seals entry, and requires child fail-stop. This is
 crabc runtime integration around pinned source collection algorithms;
 mimalloc v3.5.0 has no Linux atfork owner-repair transition to port.
+
+The native-shadow libc wires this in `libc/src/c_abi/x86_64/pthread_atfork.rs`
+(`NativeAllocatorCopy`) and `pthread_create_join.rs`. Full `fork`, for both
+static and dynamic products, runs public prepare handlers, takes every libc
+fork lock including the selected worker-list lock, and then closes the
+allocator epoch as the last step before the syscall. The held worker-list lock
+is the registry pin, and nothing allocates until completion. The parent reopens
+the exact generation right after the syscall, including on syscall failure. The
+child repairs first, before caller adoption, lock completion, registry reset,
+signal restore and hooks; failure calls `_Exit(127)`. Public parent and child
+handlers therefore run with allocation open. A refused preflight (a retained
+owner, or another thread inside a foreign diagnostic or deferred-free
+callback) unwinds the internal locks and makes `fork` fail with `EAGAIN`
+after its parent handlers, without issuing the syscall.
 
 `begin_native_allocator_raw_fork_copy` is the separate unprepared image used by
 `_Fork` and non-VM `clone`. Nothing drained the other owners, so the raw child
@@ -156,7 +171,16 @@ admission claim, free PageMap lifecycle, exact thread statistics and the
 unchanged parent. A joined-worker fixture carries the permanent legal-C
 exit-before-free regression across the copy. Injected preflight and child-repair
 faults prove refusal without owner change and fail-stop with exactly one
-retained owner. Neither path enables automatic physical process destruction.
+retained owner. `./scripts/dev-x86_64.sh owned-native-allocator-fork` runs
+`compat/x86_64/owned_native_allocator_fork_probe.c` through installed
+native-shadow static, static-PIE and dynamic PIE/non-PIE (kernel and direct
+loader) products against pinned musl: forks from the initial thread, a worker
+and after a joined worker with live clients of every class and concurrent
+churn, 64 repeated forks under three-thread cross-thread churn, allocating
+handler ordering, and a `_Fork` that runs no handler. A product whose `fork`
+took only the raw copy hangs in the repeated case, since its child inherits
+allocator locks held by vanished threads. Neither path enables automatic
+physical process destruction.
 
 Worker attachment has a separate Rust borrow boundary in
 `runtime_lifecycle.rs::attach_current_thread`: a compiler-TLS entry claim

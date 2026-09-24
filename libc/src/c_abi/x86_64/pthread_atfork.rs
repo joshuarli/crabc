@@ -32,9 +32,12 @@
 //! owned products add named-semaphore, stdio/syslog/timezone, and inner
 //! process-creation locks.
 //! The owned dynamic adapter adds the loader's graph/callback transaction and
-//! surviving TLS-root adoption around those same libc owners. Foreign threads,
-//! AIO, allocator-wide fork state, and arbitrary application locks remain
-//! excluded. No user callback may recurse
+//! surviving TLS-root adoption around those same libc owners. With the native
+//! allocator selected, full `fork` then drains every allocator owner as the
+//! last step before the syscall and repairs vanished owners first in the
+//! child, so child hooks and the child may allocate normally; `_Fork` and
+//! clone take the unprepared allocator image. Foreign threads, AIO, and
+//! arbitrary application locks remain excluded. No user callback may recurse
 //! into `fork`, `pthread_atfork`, `exit`, `atexit`, or `__funcs_on_exit`;
 //! callbacks must return normally. Dynamic fork preserves the surviving FS
 //! image and loader-owned runtime TLS view, while translating constructor
@@ -56,7 +59,10 @@ use super::{
     signal_execution, static_tls,
 };
 #[cfg(feature = "native-mimalloc-shadow")]
-use crabc_mimalloc::__crabc_runtime::begin_native_allocator_raw_fork_copy;
+use crabc_mimalloc::__crabc_runtime::{
+    begin_native_allocator_raw_fork_copy, NativeAllocatorForkQuiescence,
+    NativeAllocatorRawForkCopyGuard,
+};
 
 #[cfg(not(crabc_x86_owned_runtime))]
 const ATFORK_CAPACITY: usize = 32;
@@ -269,40 +275,105 @@ pub unsafe extern "C" fn __ldso_atfork(_who: c_int) {}
 #[linkage = "weak"]
 pub unsafe extern "C" fn __aio_atfork(_who: c_int) {}
 
+/// How the native allocator crosses one raw process copy.
+///
+/// `_Fork` takes an unprepared image: one ordinary epoch entry keeps terminal
+/// transfer from racing the copy, and the child repairs no vanished owner, so
+/// a multithreaded caller's child keeps only POSIX's async-signal-safe
+/// operations. Full `fork` instead drains and preflights every allocator
+/// owner under its held worker-list lock, then repairs every vanished owner
+/// in the child before anything can allocate, so all ordinary allocation
+/// works in the child and in its child hooks. Both are allocation-free.
+#[cfg(feature = "native-mimalloc-shadow")]
+enum NativeAllocatorCopy {
+    Unprepared(NativeAllocatorRawForkCopyGuard),
+    Prepared(NativeAllocatorForkQuiescence<'static>),
+}
+
+#[cfg(feature = "native-mimalloc-shadow")]
+impl NativeAllocatorCopy {
+    /// Refusal (a closing terminal writer, or a prepared owner that is
+    /// retained or inside a foreign diagnostic/deferred-free callback) means
+    /// the caller must complete its paired locks and report `EAGAIN` without
+    /// issuing the syscall.
+    ///
+    /// # Safety
+    /// All signals are blocked and the process lock is held. `prepared`
+    /// requires the full `fork` lock sequence, including the worker-list lock.
+    unsafe fn begin(prepared: bool) -> Option<Self> {
+        if prepared {
+            unsafe { pthread_create_join::begin_prepared_fork_native_allocator_quiescence() }
+                .ok().map(Self::Prepared)
+        } else {
+            unsafe { begin_native_allocator_raw_fork_copy() }.ok().map(Self::Unprepared)
+        }
+    }
+
+    /// Reopen allocation in the parent (including raw syscall failure)
+    /// before any parent lock is released or hook runs.
+    fn complete_parent(self) {
+        match self {
+            Self::Unprepared(copy) => copy.complete_parent(),
+            // Reopening an exact closed generation fails only once the epoch
+            // counter is exhausted; the allocator then stays sealed and later
+            // allocation reports ENOMEM rather than resuming unrepaired.
+            Self::Prepared(interval) => { let _ = unsafe { interval.resume_parent() }; }
+        }
+    }
+
+    /// Completes the copy in the sole child. Call first after the syscall
+    /// returns zero, while the copied caller control and worker registry are
+    /// unchanged. `false` requires immediate fail-stop.
+    unsafe fn complete_child(self) -> bool {
+        match self {
+            // Drop the copied admission while its current descriptor is still
+            // mapped: caller adoption may discard copied TLS/list roots.
+            Self::Unprepared(copy) => unsafe { copy.complete_child() }.is_ok(),
+            Self::Prepared(interval) => unsafe {
+                pthread_create_join::repair_prepared_fork_native_allocator_child(interval)
+            },
+        }
+    }
+}
+
 /// Musl 1.2.6 `src/process/_Fork.c`: all-signal/abort-lock transaction.
 /// The captured control belongs to this executing task, so child adoption
 /// never waits on or traverses a possibly interrupted worker registry. The
 /// child keeps its FS image and copies only caller-owned TSD representation;
-/// copied key, allocator, loader and application locks are not repaired here.
+/// copied key, loader and application locks are not repaired here.
+///
+/// `prepared_allocator` is true only for full `fork`, whose caller already
+/// holds the worker-list lock, and selects the native allocator's prepared
+/// copy and child repair. `_Fork` passes false: its child repairs no
+/// allocator owner (see [`NativeAllocatorCopy`]).
 #[cfg(crabc_x86_owned_runtime)]
-unsafe fn fork_without_handlers() -> i64 {
+unsafe fn fork_without_handlers(
+    #[cfg_attr(not(feature = "native-mimalloc-shadow"), allow(unused_variables))]
+    prepared_allocator: bool,
+) -> i64 {
     let mut saved = 0_u64;
     unsafe { signal_execution::block_all_signals(&mut saved) };
     let caller = unsafe { pthread_create_join::capture_process_child_caller() };
     unsafe { super::owned_process_lock::pthread_fork_prepare() };
-    // The process owner admits this existing raw-copy interval as one ordinary
-    // epoch operation. Refusal is a synthetic raw-fork error: complete the
-    // source abort-lock/signal pair and let a full `fork` take its unchanged
-    // outer parent-handler route. Do not call the syscall after refusal.
+    // The allocator copy interval is the last step before the syscall.
+    // Refusal is a synthetic raw-fork error: complete the source
+    // abort-lock/signal pair and let a full `fork` take its unchanged outer
+    // parent-handler route. Do not call the syscall after refusal.
     #[cfg(feature = "native-mimalloc-shadow")]
-    let raw_copy = match unsafe { begin_native_allocator_raw_fork_copy() } {
-        Ok(guard) => guard,
-        Err(_) => {
-            unsafe {
-                super::owned_process_lock::pthread_fork_parent();
-                signal_execution::restore_application_signals(&saved);
-            }
-            return -EAGAIN;
+    let Some(allocator_copy) = (unsafe { NativeAllocatorCopy::begin(prepared_allocator) }) else {
+        unsafe {
+            super::owned_process_lock::pthread_fork_parent();
+            signal_execution::restore_application_signals(&saved);
         }
+        return -EAGAIN;
     };
     let result = unsafe { raw_selected_fork() };
     if result == 0 {
-        // Drop the copied admission while its current descriptor is still
-        // mapped. `adopt_process_child_caller` may discard copied TLS/list
-        // roots, so completing it later would dereference stale ownership.
-        // A failed copied-state validation may not continue into child repair.
+        // Complete the allocator copy first, while the copied caller control
+        // and worker registry are unchanged: `adopt_process_child_caller`
+        // may discard copied TLS/list roots. Failure may not continue.
         #[cfg(feature = "native-mimalloc-shadow")]
-        if unsafe { raw_copy.complete_child() }.is_err() {
+        if !unsafe { allocator_copy.complete_child() } {
             unsafe { super::immediate_termination::_Exit(127) }
         }
         unsafe {
@@ -314,7 +385,7 @@ unsafe fn fork_without_handlers() -> i64 {
         }
     } else {
         #[cfg(feature = "native-mimalloc-shadow")]
-        raw_copy.complete_parent();
+        allocator_copy.complete_parent();
         unsafe { super::owned_process_lock::pthread_fork_parent() };
     }
     unsafe { signal_execution::restore_application_signals(&saved) };
@@ -333,25 +404,23 @@ unsafe fn fork_without_handlers_deferred_registry_reset(
     unsafe { signal_execution::block_all_signals(&mut saved) };
     let caller = unsafe { pthread_create_join::capture_process_child_caller() };
     unsafe { super::owned_process_lock::pthread_fork_prepare() };
-    // Match `_Fork`'s ordinary copy admission exactly. The full dynamic
-    // parent/error route below owns loader and atfork completion after this
-    // inner process-lock/signal pair has been restored.
+    // Full `fork` holds the worker-list lock, so it takes the prepared
+    // allocator copy. The full dynamic parent/error route below owns loader
+    // and atfork completion after this inner process-lock/signal pair has
+    // been restored.
     #[cfg(feature = "native-mimalloc-shadow")]
-    let raw_copy = match unsafe { begin_native_allocator_raw_fork_copy() } {
-        Ok(guard) => guard,
-        Err(_) => {
-            unsafe {
-                super::owned_process_lock::pthread_fork_parent();
-                signal_execution::restore_application_signals(&saved);
-            }
-            return (-EAGAIN, None);
+    let Some(allocator_copy) = (unsafe { NativeAllocatorCopy::begin(true) }) else {
+        unsafe {
+            super::owned_process_lock::pthread_fork_parent();
+            signal_execution::restore_application_signals(&saved);
         }
+        return (-EAGAIN, None);
     };
     let result = unsafe { raw_selected_fork() };
     let mut deferred = None;
     if result == 0 {
         #[cfg(feature = "native-mimalloc-shadow")]
-        if unsafe { raw_copy.complete_child() }.is_err() {
+        if !unsafe { allocator_copy.complete_child() } {
             unsafe { super::immediate_termination::_Exit(127) }
         }
         unsafe {
@@ -363,7 +432,7 @@ unsafe fn fork_without_handlers_deferred_registry_reset(
         }
     } else {
         #[cfg(feature = "native-mimalloc-shadow")]
-        raw_copy.complete_parent();
+        allocator_copy.complete_parent();
         unsafe { super::owned_process_lock::pthread_fork_parent() };
     }
     unsafe { signal_execution::restore_application_signals(&saved) };
@@ -383,7 +452,7 @@ unsafe fn fork_without_handlers_deferred_registry_reset(
 #[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn _Fork() -> c_int {
-    c_status(unsafe { fork_without_handlers() })
+    c_status(unsafe { fork_without_handlers(false) })
 }
 
 /// Register one callback triple in the frozen private fixed-capacity table.
@@ -517,7 +586,7 @@ pub unsafe extern "C" fn fork() -> c_int {
         fork_without_handlers_deferred_registry_reset()
     };
     #[cfg(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)))]
-    let result = unsafe { fork_without_handlers() };
+    let result = unsafe { fork_without_handlers(true) };
     #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe { raw_selected_fork() };
     if result == 0 {
