@@ -2068,6 +2068,16 @@ PROCESS_GLOBALS_GETOPT_SYMBOLS = (
     "program_invocation_short_name",
 )
 
+# Frozen AArch64 `process.globals` ledger roster, sorted.
+PROCESS_GLOBALS_SYMBOLS = tuple(sorted((
+    "___environ", "__daylight", "__environ", "__h_errno_location", "__optpos",
+    "__optreset", "__progname", "__progname_full", "__signgam", "__timezone",
+    "__tzname", "_environ", "__posix_getopt", "daylight", "environ", "getenv",
+    "getopt", "getopt_long", "getopt_long_only", "h_errno", "optarg", "opterr",
+    "optind", "optopt", "optreset", "program_invocation_name",
+    "program_invocation_short_name", "putenv", "signgam", "timezone", "tzname",
+)))
+
 SEARCH_TREE_INTRUSIVE_SYMBOLS = (
     "tdelete",
     "tdestroy",
@@ -55291,6 +55301,129 @@ def require_allocator_basic_runtime_slice(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_process_globals_slice(family: Mapping[str, Any]) -> None:
+    """Bind the process.globals selection to its exact roster and gates.
+
+    The selection is carried by one owned-product provider/behavior gate plus
+    the retained freestanding static getopt artifact. The roster is the frozen
+    ledger's, and the gate's reader must name the same 31 spellings.
+    """
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        family.get("status", ""),
+        list(family.get("capabilities", [])),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "process.globals"]
+    require(len(matching) == 1, "libc.c-abi-compat needs one process.globals slice")
+    require(
+        family.get("status") == "planned",
+        "process.globals selection must not promote libc.c-abi-compat",
+    )
+    selected = matching[0]
+    require(
+        selected["capabilities"] == ["process.globals"],
+        "process.globals slice must select exactly process.globals",
+    )
+
+    coverage = load_toml(ROOT / "compat" / "crabc-rs" / "coverage.toml")
+    coverage_records = coverage.get("capability")
+    require(isinstance(coverage_records, list), "coverage capability records are missing")
+    coverage_entry = next(
+        (
+            entry
+            for entry in coverage_records
+            if isinstance(entry, Mapping) and entry.get("id") == "process.globals"
+        ),
+        None,
+    )
+    require(
+        isinstance(coverage_entry, Mapping)
+        and isinstance(coverage_entry.get("symbols"), list)
+        and tuple(sorted(coverage_entry["symbols"])) == PROCESS_GLOBALS_SYMBOLS,
+        "process.globals frozen symbol set drifted",
+    )
+    description = selected["description"]
+    assert isinstance(description, str)
+    for symbol in PROCESS_GLOBALS_SYMBOLS:
+        require(f"`{symbol}`" in description, f"process.globals description omits {symbol}")
+    for phrase in (
+        "still-planned `libc.c-abi-compat`",
+        "exact 31-spelling ABI-only roster",
+        "same-storage alias partition",
+        "archive index",
+        "`dynamic.list`",
+        "R_X86_64_COPY",
+        "`__optpos` remains ABI-only",
+        "family completion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"process.globals description omits {phrase}")
+
+    owners = set(nonempty_strings(selected["source_owners"], "process.globals.source_owners"))
+    for owner in (
+        "compat/crabc-rs/coverage.toml",
+        "libc/src/c_abi/x86_64/process_globals.rs",
+        "libc/src/getopt_exports.rs",
+        "libc/src/c_abi/x86_64/environment_runtime.rs",
+        "libc/src/c_abi/x86_64/h_errno.rs",
+        "libc/src/c_abi/x86_64/math_special_musl_x86_64.S",
+        "libc/src/c_abi/x86_64/owned_timezone.rs",
+        "libc/src/c_abi/x86_64/owned_dynamic.list",
+        "compat/x86_64/owned_process_globals.py",
+        "compat/x86_64/owned_process_globals_probe.c",
+        "compat/x86_64/run_owned_process_globals.sh",
+        "compat/x86_64/run_libc_process_globals_getopt.sh",
+        "compat/x86_64/tests/test_owned_process_globals.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"process.globals source owners omit {owner}")
+
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    evidence_by_command = {
+        entry.get("command"): entry for entry in evidence if isinstance(entry, Mapping)
+    }
+    require(
+        set(evidence_by_command)
+        == {
+            "./scripts/dev-x86_64.sh libc-process-globals-getopt",
+            "./scripts/dev-x86_64.sh owned-process-globals",
+        }
+        and len(evidence) == 2,
+        "process.globals must use its static getopt and owned-product commands",
+    )
+    product_scope = evidence_by_command["./scripts/dev-x86_64.sh owned-process-globals"].get("scope")
+    require(
+        isinstance(product_scope, str)
+        and all(
+            phrase in product_scope
+            for phrase in (
+                "31-name roster",
+                "pinned musl libc.a/libc.so",
+                "archive-index extraction",
+                "static, static PIE, dynamic PIE, and dynamic non-PIE",
+                "direct-interpreter",
+                "stdout, stderr, and status must equal musl",
+                "R_X86_64_COPY",
+                "public x86 support",
+            )
+        ),
+        "process.globals product evidence must retain its provider, mode, and COPY boundary",
+    )
+
+    reader = (ROOT / "compat" / "x86_64" / "owned_process_globals.py").read_text(encoding="utf-8")
+    for symbol in PROCESS_GLOBALS_SYMBOLS:
+        require(f'"{symbol}"' in reader, f"process.globals reader omits {symbol}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "    owned-process-globals) ;;\n",
+        "run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_globals.sh",
+        "    libc-process-globals-getopt)\n",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet.strip()}")
+
+
 def require_crypt_profile_slice(family: Mapping[str, Any]) -> None:
     """Keep the dependency-backed password-hash profile private and bounded."""
     slices = require_verified_slices(
@@ -80729,6 +80862,7 @@ def _validate_ledger(
     require_crypt_profile_slice(by_id["libc.c-abi-compat"])
     require_crypt_allocator_composition_artifact(by_id["libc.c-abi-compat"])
     require_alloca_builtin_artifact(by_id["libc.c-abi-compat"])
+    require_process_globals_slice(by_id["libc.c-abi-compat"])
     require_getsubopt_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_locale_slice(by_id["libc.text-math-locale-stdio"])

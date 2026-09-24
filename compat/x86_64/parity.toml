@@ -19077,6 +19077,55 @@ oracle = [
 ]
 capabilities = ["crypto.crypt", "crypto.crypt-helpers"]
 
+[[family.verified_slice]]
+id = "process.globals"
+description = "Private native x86 selected-private completion of the frozen AArch64 `process.globals` capability inside still-planned `libc.c-abi-compat`. Its exact 31-spelling ABI-only roster is `___environ`, `__daylight`, `__environ`, `__h_errno_location`, `__optpos`, `__optreset`, `__progname`, `__progname_full`, `__signgam`, `__timezone`, `__tzname`, `_environ`, `__posix_getopt`, `daylight`, `environ`, `getenv`, `getopt`, `getopt_long`, `getopt_long_only`, `h_errno`, `optarg`, `opterr`, `optind`, `optopt`, `optreset`, `program_invocation_name`, `program_invocation_short_name`, `putenv`, `signgam`, `timezone`, and `tzname`. The installed owned static `libc.a` and shared `libc.so` each define every spelling exactly once with pinned musl's type, binding, default visibility, object size, unversioned dynamic symbol, and same-storage alias partition; each static provider is reachable through the archive index for ordinary demand-driven extraction, and shared data stays preemptible through the musl `dynamic.list`. One installed-driver PIE object and one non-PIE object prove startup environment and program-name publication, putenv and direct `environ`/`__environ` replacement, short/long/long-only option parsing with both reset spellings and byte-identical diagnostics, main/worker `h_errno` storage, `lgamma` versus `lgamma_r` sign publication, and POSIX-TZ `tzset` publication through static, static PIE, dynamic PIE, and dynamic non-PIE products with kernel, direct-interpreter, and empty-argv launcher entry against pinned musl. The dynamic non-PIE consumers of both runtimes read executable R_X86_64_COPY storage, so libc publishes into and consumes the executable's copy. `__optpos` remains ABI-only: in musl and crabc libc.so it binds locally, so an executable COPY is observed but not updated. The independent static archive gate retains the freestanding program-name and `__optpos` cursor proof. This selection does not claim secure-execution policy, a general thread-safe environment lifecycle, resolver or netdb behavior, math or timezone family completion, strong application overrides or DSO interposition beyond COPY storage, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/crabc-rs/coverage.toml",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/process_globals.rs",
+  "libc/src/c_abi/x86_64/auxv_observation.rs",
+  "libc/src/getopt_exports.rs",
+  "libc/src/c_abi/x86_64/environment_runtime.rs",
+  "libc/src/c_abi/x86_64/h_errno.rs",
+  "libc/src/c_abi/x86_64/math_special_musl_x86_64.S",
+  "libc/src/c_abi/x86_64/owned_timezone.rs",
+  "libc/src/c_abi/x86_64/owned_dynamic.list",
+  "scripts/build_x86_64_owned_sysroot.py",
+  "scripts/build_x86_64_owned_dynamic_sysroot.py",
+  "compat/x86_64/owned_process_globals.py",
+  "compat/x86_64/owned_process_globals_probe.c",
+  "compat/x86_64/run_owned_process_globals.sh",
+  "compat/x86_64/libc_process_globals_empty_argv_launcher.c",
+  "compat/x86_64/run_libc_process_globals_getopt.sh",
+  "compat/x86_64/tests/test_owned_process_globals.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "SysV AMD64 LP64 storage: `__environ` and its three weak aliases, `__progname`, `__progname_full`, and `optarg` are eight-byte pointers; `__timezone` is an eight-byte long; `__tzname` is sixteen bytes of two name pointers; `opterr`, `optind`, `optopt`, `__optpos`, `__optreset`, `__signgam`, `__daylight`, and `h_errno` are four-byte ints. `getenv`/`putenv` take rdi and return in rax; the getopt family receives argc/argv/optstring (and long options/index) in edi/rsi/rdx/rcx/r8; `__h_errno_location` returns an int pointer in rax.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps the roster to `src/env/__environ.c`, `src/env/getenv.c`, `src/env/putenv.c`, `src/env/__libc_start_main.c`, `src/internal/libc.c`, `src/misc/getopt.c`, `src/misc/getopt_long.c`, `src/network/h_errno.c`, `src/math/signgam.c`, and `src/time/__tz.c`. Its x86 `libc.a` and `libc.so` are the provider oracle: weak `environ`/`_environ`/`___environ`, `optreset`, `program_invocation_name`, `program_invocation_short_name`, `__posix_getopt`, `signgam`, `timezone`, `daylight`, and `tzname` share storage or entry with their strong canonical spelling; every other roster name is strong and distinct.",
+  "The owned shared libc links with the byte-checked musl `dynamic.list`, keeping `environ`, `__environ`, the getopt state, program names, timezone, signgam, and `h_errno` preemptible for copy relocations while `__optpos`, `_environ`, and `___environ` bind locally as in musl. Dynamic non-PIE consumers of both runtimes carry R_X86_64_COPY storage for every data group; lld and the musl oracle's linker define the copied aliases in the executable.",
+]
+x86_header_prerequisites = [
+  "The probe compiles through the installed dynamic driver against installed `errno.h`, `getopt.h`, `math.h`, `netdb.h`, `pthread.h`, `stdio.h`, `stdlib.h`, `sys/auxv.h`, `time.h`, and `unistd.h` under `_GNU_SOURCE`; `h_errno` is the netdb accessor macro and the ABI-only spellings are declared by the probe. Strict/POSIX/X/Open/C++ feature-profile visibility and linkage for the public spellings remain owned by the existing all-header declaration matrices, not by this runtime selection.",
+]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh libc-process-globals-getopt", scope = "Pinned-musl static reference plus a true freestanding x86 `-nostdlib -static` candidate linked through the selected default archive. It proves constructor-before-main program-name publication, an empty-argv launch (Linux 5.18 and newer substitute one empty argv[0]; older supported kernels reach the validated AT_EXECFN fallback), weak same-address `optreset`/`program_invocation_name`/`program_invocation_short_name`/`__posix_getopt` aliases, the `__optpos` parser cursor, short/GNU-long/long-only parsing, and initial-TLS errno without dynamic TLS. It does not own environment, timezone, signgam, or h_errno storage." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-process-globals", scope = "Builds or accepts one owned static and dynamic product pair and compares the 31-name roster's owned libc.a/libc.so type, binding, visibility, object size, version, alias partition, and archive-index extraction with pinned musl libc.a/libc.so. One installed-driver PIE object and one non-PIE object run through pinned musl and sealed owned static, static PIE, dynamic PIE, and dynamic non-PIE links with kernel, direct-interpreter, and empty-argv launcher entry; stdout, stderr, and status must equal musl for the same object and link class. Both non-PIE dynamic consumers must own R_X86_64_COPY storage for every data group. It does not claim strong application overrides, DSO interposition beyond COPY storage, secure execution, resolver/netdb, math/timezone family completion, promotion, or public x86 support." },
+]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, x86 libc.a/libc.so provider metadata, and same-object static/dynamic execution oracle for environment, program-name, getopt, h_errno, signgam, and timezone globals, including COPY-relocated executable storage and ABI-only `__optpos` binding." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "LP64 object sizes, strong/weak same-address aliases, unversioned dynamic symbols, archive-index extraction, and R_X86_64_COPY executable storage for preemptible shared-library data." },
+]
+capabilities = ["process.globals"]
+
 [[family.verified_artifact]]
 id = "static-c-crypt-allocator-composition"
 description = "Private native x86 aggregate evidence inside still-planned `libc.c-abi-compat` for the named `x86-crypt-allocator-composition` feature. It composes the already selected bounded SHA-crypt adapter and private allocator wrapper/backend without selecting another C callable or capability. The manual `x86-crypt,x86-allocator-runtime` selection remains rejected: this explicit feature is the only topology that may join them. Its one mixed static candidate extracts the selected crypt object plus the same selected crabc allocator wrapper, initial-TLS errno owner, and bundled backend; the candidate proves the adapter's current RustCrypto `malloc` relocation plus the fixture's direct `aligned_alloc`/`free`, heap-backed crypt/crypt_r/private-SHA calls all resolve through that same selected crabc allocator wrapper/backend rather than pinned musl. It keeps the standalone crypt artifact's pinned-musl provider boundary intact. This aggregate does not add a C export or capability, allocator lifecycle, interposition, full CRT/runtime/sysroot product closure, family completion, promotion, or public x86 support."

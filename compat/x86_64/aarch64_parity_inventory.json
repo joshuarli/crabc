@@ -854,7 +854,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "process.globals",
       "x86_family": "libc.c-abi-compat"
     },
@@ -1347,8 +1347,8 @@
   ],
   "capability_state_counts": {
     "implemented-foundation": 180,
-    "missing": 10,
-    "selected-private": 33
+    "missing": 9,
+    "selected-private": 34
   },
   "families": [
     {
@@ -1484,7 +1484,7 @@
       "contract_state": "selected-private",
       "id": "libc.c-abi-compat",
       "verified_artifact_count": 30,
-      "verified_slice_count": 9
+      "verified_slice_count": 10
     },
     {
       "aarch64_gates": [
@@ -3208,7 +3208,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "4c774b50acb3aea5cb9a5e6be2af4ac1dfae50e377f3d113d66a9d47375ce875",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "9afa724123b256097c19fdd824ca8e96048a525db16209cb80518d39c0d841ff",
+    "x86_parity_ledger": "32dd6d4d577fad32dbb33c9de2c0ff19737ab8956a255a4b1ab03b57266b1d01",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "3698b538aea4c357f0536bacf340bf4c0c520a6b8cc6d34a8e119b4ce1c655b3"
   },

@@ -129,8 +129,8 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             report["capability_state_counts"],
             {
                 "implemented-foundation": 180,
-                "missing": 10,
-                "selected-private": 33,
+                "missing": 9,
+                "selected-private": 34,
             },
         )
         self.assertEqual(len(report["families"]), 26)
@@ -223,7 +223,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["capabilities"] if row["id"] == "process.globals"
         )
         self.assertEqual(process_globals["x86_family"], "libc.c-abi-compat")
-        self.assertEqual(process_globals["contract_state"], "missing")
+        self.assertEqual(process_globals["contract_state"], "selected-private")
         runtime_loader = next(
             row for row in report["capabilities"] if row["id"] == "runtime.loader"
         )
@@ -263,7 +263,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         c_abi_compat = next(
             row for row in report["families"] if row["id"] == "libc.c-abi-compat"
         )
-        self.assertEqual(c_abi_compat["verified_slice_count"], 9)
+        self.assertEqual(c_abi_compat["verified_slice_count"], 10)
         self.assertEqual(c_abi_compat["verified_artifact_count"], 30)
         self.assertIn(
             {"family": "libc.c-abi-compat", "id": "native-thread-signal-c-abi"},
@@ -365,7 +365,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
-            55,
+            56,
         )
         self.assertNotIn(
             {"family": "libc.posix-runtime", "id": "static-c-environment"},

@@ -104,6 +104,21 @@ class X86ParityLedgerTests(unittest.TestCase):
                     records[entry["id"]] = entry
         return records
 
+    @classmethod
+    def select_process_globals_elsewhere(
+        cls, data: dict[str, object], displaced: list[str]
+    ) -> None:
+        """Give the process.globals slice another slice's capabilities.
+
+        Each c-abi-compat capability is selected once, so a test that points
+        one slice at process.globals must swap, not duplicate, the selection
+        to reach that slice's own exact-capability check.
+        """
+        slices = cls.family(data, "libc.c-abi-compat")["verified_slice"]
+        assert isinstance(slices, list)
+        target = next(entry for entry in slices if entry["id"] == "process.globals")
+        target["capabilities"] = displaced
+
     @staticmethod
     def family(data: dict[str, object], identifier: str) -> dict[str, object]:
         entries = data["family"]
@@ -1294,6 +1309,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("src/string/strsignal.c", oracle[0]["role"])
 
         selected["capabilities"] = ["process.globals"]
+        self.select_process_globals_elsewhere(data, ["error.reporting-termination"])
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "strsignal slice must select exactly error.reporting-termination",
@@ -1995,6 +2011,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, runtime["scope"])
 
         selected["capabilities"] = ["process.globals"]
+        self.select_process_globals_elsewhere(data, ["crypto.crypt", "crypto.crypt-helpers"])
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "crypt profile slice must select exactly crypto.crypt and crypto.crypt-helpers",
@@ -30130,6 +30147,68 @@ class X86ParityLedgerTests(unittest.TestCase):
                 self.family(changed_command, "libc.posix-runtime")
             )
 
+    def test_process_globals_slice_selects_the_frozen_roster_through_owned_products(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "process.globals"
+        )
+        self.assertEqual(selected["capabilities"], ["process.globals"])
+        self.assertEqual(len(ledger.PROCESS_GLOBALS_SYMBOLS), 31)
+        for symbol in ledger.PROCESS_GLOBALS_SYMBOLS:
+            self.assertIn(f"`{symbol}`", selected["description"])
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list)
+        self.assertEqual(
+            [entry["command"] for entry in evidence],
+            [
+                "./scripts/dev-x86_64.sh libc-process-globals-getopt",
+                "./scripts/dev-x86_64.sh owned-process-globals",
+            ],
+        )
+
+        changed = self.data()
+        target = next(
+            entry
+            for entry in self.family(changed, "libc.c-abi-compat")["verified_slice"]
+            if entry["id"] == "process.globals"
+        )
+        target["native_evidence"] = target["native_evidence"][:1]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "process.globals must use its static getopt and owned-product commands",
+        ):
+            ledger.require_process_globals_slice(self.family(changed, "libc.c-abi-compat"))
+
+        changed = self.data()
+        target = next(
+            entry
+            for entry in self.family(changed, "libc.c-abi-compat")["verified_slice"]
+            if entry["id"] == "process.globals"
+        )
+        target["description"] = target["description"].replace("`___environ`, ", "")
+        with self.assertRaisesRegex(ledger.LedgerError, "process.globals description omits ___environ"):
+            ledger.require_process_globals_slice(self.family(changed, "libc.c-abi-compat"))
+
+        changed = self.data()
+        target = next(
+            entry
+            for entry in self.family(changed, "libc.c-abi-compat")["verified_slice"]
+            if entry["id"] == "process.globals"
+        )
+        target["capabilities"] = ["legacy.misc"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "process.globals slice must select exactly process.globals"
+        ):
+            ledger.require_process_globals_slice(self.family(changed, "libc.c-abi-compat"))
+
     def test_process_globals_getopt_artifact_stays_disjoint_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
@@ -30226,6 +30305,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, evidence[0]["scope"])
 
         selected["capabilities"] = ["process.globals"]
+        self.select_process_globals_elsewhere(data, ["numeric.qsort-helper"])
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "qsort helper slice must select exactly numeric.qsort-helper",
@@ -30282,6 +30362,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, evidence[0]["scope"])
 
         selected["capabilities"] = ["process.globals"]
+        self.select_process_globals_elsewhere(data, ["search.tree-intrusive"])
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "tree slice must select exactly search.tree-intrusive",
@@ -30336,6 +30417,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, evidence[0]["scope"])
 
         selected["capabilities"] = ["process.globals"]
+        self.select_process_globals_elsewhere(data, ["search.hash-table"])
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "hash-table slice must select exactly search.hash-table",
@@ -31737,6 +31819,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, evidence[0]["scope"])
 
         selected["capabilities"] = ["process.globals"]
+        self.select_process_globals_elsewhere(data, ["catalog.gettext"])
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "gettext slice must select exactly catalog.gettext",

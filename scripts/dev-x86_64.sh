@@ -577,6 +577,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-quick-exit  qualify installed C11 at_quick_exit/quick_exit semantics against musl
   owned-legacy-time  qualify installed legacy interval-timer and safe clock-adjustment C behavior
   owned-environment-lifecycle [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed POSIX environment lifecycle against musl
+  owned-process-globals [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  qualify the frozen process.globals roster and provider closure against musl
   owned-linux-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test owned Linux C mechanisms and kernel error translation
   owned-kernel-residual [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify residual system.kernel-admin C APIs against musl
   owned-vm-mechanisms  test owned VM remap, break, and legacy remap mechanisms
@@ -6977,6 +6978,7 @@ case "$command" in
     owned-rand) ;;
     owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-strfmon) ;;
+    owned-process-globals) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
@@ -7217,6 +7219,13 @@ case "$command" in
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
     owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy|owned-regex)
+        prepare_owned_posix_replay_arguments "$command" "$@"
+        set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
+        ;;
+    owned-process-globals)
+        # The roster is one static-and-shared closure: supply both or neither.
+        [ "$#" -eq 0 ] || { [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ]; } ||
+            fail "usage: ./scripts/dev-x86_64.sh owned-process-globals [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]"
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
@@ -9486,6 +9495,10 @@ PY
     owned-environment-lifecycle)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_environment_lifecycle.sh "$@"
+        ;;
+    owned-process-globals)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_globals.sh "$@"
         ;;
     owned-linux-control)
         ensure_image
