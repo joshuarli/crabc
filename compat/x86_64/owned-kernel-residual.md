@@ -25,11 +25,14 @@ query/set behavior; and Linux UTS setter argument order. It does not select
 musl's old-kernel membarrier fallback, scheduler policy, host identity policy,
 or a Rust administration facade.
 
-`owned_system_configuration.rs` is selected only by
-`x86-owned-static-runtime`. It preserves the frozen
-`system_configuration.rs` module outside that aggregate, then adds musl
-`sysconf.c`'s `AT_MINSIGSTKSZ` calculation for `_SC_MINSIGSTKSZ` and
-`_SC_SIGSTKSZ`. Linux 5.10 x86 does not emit that auxv tag; upstream kernel
+`owned_system_configuration.rs` is selected only by the owned runtime
+aggregate. It preserves the frozen `system_configuration.rs` module outside
+that aggregate and ports musl `sysconf.c`'s complete selector table: direct
+and zero entries, `RLIMIT_NPROC`/`RLIMIT_NOFILE` soft limits (`-1` for
+`RLIM_INFINITY`), the affinity-mask processor count and `sysinfo` page counts
+shared with `system_information.rs`, and the `AT_MINSIGSTKSZ` calculation for
+`_SC_MINSIGSTKSZ` and `_SC_SIGSTKSZ`. Absent, zero and negative selectors
+are `EINVAL`. Linux 5.10 x86 does not emit that auxv tag; upstream kernel
 commit `1c33bb0507508af24fd754dd7123bd8e997fab2f` added x86 emission in Linux
 5.14. On the baseline, musl's `__getauxval` returns zero and sets `ENOENT`,
 then `sysconf.c` clamps the frame size to 1024, adds 1024 bytes of application
@@ -41,7 +44,12 @@ Run `./scripts/dev-x86_64.sh owned-kernel-residual` for the focused evidence.
 Before the owned configuration selection, the same installed-driver C object
 passed the pinned musl reference and failed the candidate only at the
 signal-stack `sysconf` selector with `EINVAL`; that isolated regression is
-retained as the reason for the aggregate-only configuration module.
+retained as the reason for the aggregate-only configuration module. The
+`sysconf-table` selector prints every selector from -3 through 260 with its
+errno, which the product must reproduce byte for byte; `_SC_AVPHYS_PAGES`,
+which moves between processes, is bracketed by the probe's own `sysinfo`
+samples, and a child checks finite and infinite resource limits. Before the
+full table the owned products returned `EINVAL` for 136 of those selectors.
 `run_owned_kernel_residual.sh` compiles that object once with installed
 project headers, links it unchanged to pinned musl and owned static
 `ET_EXEC`/static PIE plus dynamic PIE/non-PIE applications, and compares raw

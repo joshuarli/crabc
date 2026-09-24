@@ -40,7 +40,7 @@ const CPUSET_BYTES: usize = 128;
 /// preserves stale errno on both success and raw failure and retains the
 /// defined one-CPU fallback when the kernel leaves the initialized mask alone.
 #[inline(always)]
-fn nprocs() -> c_int {
+pub(super) fn nprocs() -> c_int {
     let mut mask = [0u8; CPUSET_BYTES];
     mask[0] = 1;
     // SAFETY: Linux/x86-64 sched_getaffinity=204 takes current task zero,
@@ -71,7 +71,7 @@ fn nprocs() -> c_int {
 /// order. A page count above the public signed `long` range saturates at
 /// `LONG_MAX` rather than becoming negative.
 #[inline(always)]
-fn page_count(available: bool) -> c_long {
+pub(super) fn page_count(available: bool) -> c_long {
     let mut info = MaybeUninit::<system_observation::SysInfo>::zeroed();
     // SAFETY: the private all-zero Rust record is a valid complete x86 public
     // sysinfo object. Linux writes its ABI prefix; the zero initialization

@@ -19,6 +19,7 @@
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
+#include <sys/sysinfo.h>
 #include <sys/wait.h>
 #include <ulimit.h>
 #include <unistd.h>
@@ -182,6 +183,86 @@ static int sysconf_signal_stack_case(void)
     errno = E2BIG;
     CHECK(sysconf(INT_MAX) == -1 && errno == EINVAL);
     return 0;
+}
+
+static int child_result(int (*body)(void));
+
+/* musl's page arithmetic over one sysinfo sample. */
+static unsigned long long sysinfo_pages(int available)
+{
+    struct sysinfo info;
+    unsigned long long memory;
+
+    if (sysinfo(&info)) return 0;
+    if (!info.mem_unit) info.mem_unit = 1;
+    memory = available ? info.freeram + info.bufferram : info.totalram;
+    return memory * info.mem_unit / 4096;
+}
+
+/* Rlimit-derived selectors, in a child so lowered limits cannot reach later
+ * selectors: a finite soft limit is returned as is, and RLIM_INFINITY is -1
+ * without touching errno. */
+static int sysconf_rlimit_child(void)
+{
+    struct rlimit limit;
+
+    CHECK(getrlimit(RLIMIT_NOFILE, &limit) == 0);
+    limit.rlim_cur = 77;
+    CHECK(setrlimit(RLIMIT_NOFILE, &limit) == 0);
+    errno = E2BIG;
+    CHECK(sysconf(_SC_OPEN_MAX) == 77 && errno == E2BIG);
+    CHECK(getrlimit(RLIMIT_NPROC, &limit) == 0);
+    if (limit.rlim_max == RLIM_INFINITY) {
+        limit.rlim_cur = RLIM_INFINITY;
+        CHECK(setrlimit(RLIMIT_NPROC, &limit) == 0);
+        errno = E2BIG;
+        CHECK(sysconf(_SC_CHILD_MAX) == -1 && errno == E2BIG);
+        printf("sysconf child-max infinite\n");
+    } else {
+        printf("sysconf child-max bounded %lld\n", (long long)limit.rlim_max);
+    }
+    return 0;
+}
+
+/* Print every sysconf selector's raw result and errno so each product's
+ * complete musl table is compared with pinned musl in the same container.
+ * Free memory moves between processes, so _SC_AVPHYS_PAGES is instead
+ * bracketed by samples taken in this process. */
+static int sysconf_table_case(void)
+{
+    unsigned long long before;
+    unsigned long long after;
+    long value;
+    int name;
+
+    for (name = -3; name <= 260; name++) {
+        if (name == _SC_AVPHYS_PAGES) continue;
+        errno = E2BIG;
+        value = sysconf(name);
+        printf("sysconf %d %ld %d\n", name, value, errno);
+    }
+    errno = E2BIG;
+    CHECK(sysconf(INT_MIN) == -1 && errno == EINVAL);
+    errno = E2BIG;
+    CHECK(sysconf(INT_MAX) == -1 && errno == EINVAL);
+
+    before = sysinfo_pages(1);
+    errno = E2BIG;
+    value = sysconf(_SC_AVPHYS_PAGES);
+    CHECK(errno == E2BIG);
+    after = sysinfo_pages(1);
+    if (after < before) {
+        unsigned long long swap = before;
+        before = after;
+        after = swap;
+    }
+    /* Allow 1/64 of physical memory of churn around the two samples. */
+    CHECK(value > 0 && (unsigned long long)value <= sysinfo_pages(0)
+        && (unsigned long long)value + sysinfo_pages(0) / 64 >= before
+        && (unsigned long long)value <= after + sysinfo_pages(0) / 64);
+    printf("sysconf avphys bracketed\n");
+
+    return child_result(sysconf_rlimit_child);
 }
 
 static int hostid_and_membarrier_case(void)
@@ -430,6 +511,7 @@ static int run_selected(const char *selector)
     if (!strcmp(selector, "cpucount")) return cpucount_case();
     if (!strcmp(selector, "configuration")) return configuration_case();
     if (!strcmp(selector, "sysconf-signal-stack")) return sysconf_signal_stack_case();
+    if (!strcmp(selector, "sysconf-table")) return sysconf_table_case();
     if (!strcmp(selector, "hostid-membarrier")) return hostid_and_membarrier_case();
     if (!strcmp(selector, "personality")) return personality_case();
     if (!strcmp(selector, "prctl")) return prctl_case();
@@ -445,6 +527,7 @@ static int run_selected(const char *selector)
     return cpucount_case()
         || configuration_case()
         || sysconf_signal_stack_case()
+        || sysconf_table_case()
         || hostid_and_membarrier_case()
         || personality_case()
         || prctl_case()

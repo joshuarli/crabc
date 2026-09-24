@@ -18,6 +18,7 @@ readonly CASES=(
     cpucount
     configuration
     sysconf-signal-stack
+    sysconf-table
     hostid-membarrier
     personality
     prctl
