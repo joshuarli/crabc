@@ -690,6 +690,34 @@ compares the resulting oracle executable before accepting any output trace.
 source-owner groups. This section does not add allocator metadata or Rust
 unwinder identities.
 
+### Private implementation bodies
+
+The `private-*` owner groups give exact source owners to hidden implementation
+spellings. These spellings exist because Rust `export_name`/`no_mangle` bodies
+and global assembly labels cross module boundaries inside the single libc
+object. Each group lists exact names and the source files that define them. It
+selects `candidate-static` as `GLOBAL HIDDEN` and `candidate-shared` as the
+localized `.symtab` definition, `LOCAL HIDDEN`. The four NOTYPE code labels
+(`__memcpy_fwd` and the three cancellable-syscall window labels) use NOTYPE.
+The static-only `__crabc_x86_fixed_graph_dlfcn_record` trampoline has no shared
+placement. The musl-named bodies among them (`__pthread_*`, `__stpcpy`,
+`__strchrnul`, `__memrchr`, `__mkostemps`, `__mremap`, `__ptsname_r`,
+`__dn_expand`, `__inet_aton`, `__fesetround`, `__tsearch_balance`) have the same
+hidden static shape as pinned musl. The rest are crabc seams such as C
+allocation shims, cancellation and clone bridges, timer dispatch, the signal
+restorer, and translated printf/scanf helpers. No member is a frozen project
+identity or a header provider.
+
+Selecting a private body grants no public identity. A shared `.dynsym`
+definition of any member is still a metadata mismatch and remains a closure
+blocker, so this selection cannot hide an export leak. The public weak aliases
+of these bodies keep their separate feature-alias and component-receipt
+requirements. Private spellings whose candidate exposure differs from musl stay
+unselected until their owning lane repairs the export. Examples are the
+exported `__aio_atfork`, `__execvpe`, `__futimesat`, `__ldso_atfork` and
+`__membarrier_init`, and the default-visibility static `__stdio_exit` and
+`__init_ssp`.
+
 The existing weak static `dl_iterate_phdr` placement also has an owned-startup
 consumer contract: [owned static executable enumeration](owned-static-dl-iterate-phdr.md).
 It reports main-image metadata and the calling thread's TLS without requiring

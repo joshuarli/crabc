@@ -438,6 +438,93 @@ class SourceOwnerPolicyTests(unittest.TestCase):
         self.assertNotIn('__crabc_x86_64_owned_crt_handoff', CRT_OWNER_NAMES)
 
 
+PRIVATE_BODY_NAMES = frozenset('''
+__pthread_cond_timedwait __pthread_create __pthread_exit __pthread_join __pthread_key_create
+__pthread_key_delete __pthread_mutex_lock __pthread_mutex_timedlock __pthread_mutex_trylock
+__pthread_mutex_unlock __pthread_once __pthread_rwlock_rdlock __pthread_rwlock_timedrdlock
+__pthread_rwlock_timedwrlock __pthread_rwlock_tryrdlock __pthread_rwlock_trywrlock
+__pthread_rwlock_unlock __pthread_rwlock_wrlock __pthread_setcancelstate __pthread_testcancel
+__pthread_timedjoin_np __pthread_tryjoin_np
+__crabc_x86_pthread_clone __crabc_x86_cancel __crabc_x86_syscall_cp_asm __crabc_x86_timer_dispatch
+__crabc_x86_timer_invoke __crabc_x86_cp_begin __crabc_x86_cp_cancel __crabc_x86_cp_end
+__mkostemps __mremap __ptsname_r __crabc_owned_clone_raw __crabc_owned_vfork_result
+__crabc_x86_aio_cabi_free __crabc_x86_aio_cabi_malloc __crabc_x86_scandir_cabi_free
+__crabc_x86_scandir_cabi_malloc __crabc_x86_scandir_cabi_realloc crabc_x86_64_signal_restorer
+__crabc_owned_printf_float __crabc_owned_printf_promote __crabc_owned_scan __crabc_owned_wide_format
+crabc_owned_scan_floatscan crabc_owned_scan_intscan crabc_owned_scan_shgetc crabc_owned_scan_shlim
+crabc_owned_scan_vfscanf crabc_owned_vfwprintf crabc_owned_vfwscanf __crabc_x86_stdio_cabi_free
+__crabc_x86_stdio_cabi_malloc __crabc_x86_stdio_cabi_realloc __crabc_x86_regex_cabi_calloc
+__crabc_x86_regex_cabi_free __crabc_x86_regex_cabi_malloc __crabc_x86_regex_cabi_realloc __fesetround
+__stpcpy __stpncpy __strchrnul __memrchr __memcpy_fwd
+__dn_expand __inet_aton __crabc_x86_host_cache_cabi_free __crabc_x86_host_cache_cabi_malloc
+__tsearch_balance __crabc_x86_passwd_cabi_free __crabc_x86_shadow_cabi_malloc
+__crabc_x86_fixed_graph_dlfcn_record
+'''.split())
+PRIVATE_NOTYPE_LABELS = frozenset({'__crabc_x86_cp_begin', '__crabc_x86_cp_cancel', '__crabc_x86_cp_end', '__memcpy_fwd'})
+
+
+class PrivateImplementationBodyPolicyTests(unittest.TestCase):
+    """Hidden implementation spellings get exact source owners, never public ABI."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.contract = selection.load_contract()
+        cls.inputs = selection.load_source_inputs(cls.contract, selection.CONTRACT_PATH)
+        cls.records = {record['identity']['name']: record
+                       for record in selection.expand_obligations(cls.contract, cls.inputs)}
+        cls.groups = [group for group in cls.contract['owner_groups'] if group['id'].startswith('private-')]
+
+    def test_private_body_roster_is_finite_and_outside_public_provider_routes(self):
+        members = [name for group in self.groups for name in group['members']]
+        self.assertEqual(len(members), len(set(members)))
+        self.assertEqual(set(members), PRIVATE_BODY_NAMES)
+        self.assertFalse(PRIVATE_BODY_NAMES & set(self.inputs['frozen_names']))
+        self.assertFalse(PRIVATE_BODY_NAMES & set(self.inputs['provider_names']))
+        for group in self.groups:
+            self.assertEqual((group['selector'], group['disposition'], group['static_metadata_rule']),
+                             ('explicit', 'private-provider', 'explicit'))
+            self.assertTrue(group['sources'] and all(path.startswith('libc/src/c_abi/x86_64/') for path in group['sources']))
+
+    def test_private_bodies_select_hidden_archive_and_local_shared_placements_only(self):
+        for name in PRIVATE_BODY_NAMES:
+            record = self.records[name]
+            kind = 'NOTYPE' if name in PRIVATE_NOTYPE_LABELS else 'FUNC'
+            self.assertEqual(record['selection']['disposition'], 'private-provider', name)
+            self.assertEqual(record['unresolved'], [], name)
+            placements = {row['artifact_key']: row['metadata'] for row in record['expected_placements']}
+            self.assertEqual(placements['candidate-static'], {'type': kind, 'binding': 'GLOBAL', 'visibility': 'HIDDEN'}, name)
+            if name == '__crabc_x86_fixed_graph_dlfcn_record':
+                self.assertEqual(set(placements), {'candidate-static'})
+            else:
+                self.assertEqual(placements['candidate-shared'], {'type': kind, 'binding': 'LOCAL', 'visibility': 'HIDDEN'}, name)
+
+    def test_selected_private_body_cannot_hide_a_shared_dynsym_export(self):
+        def facts_with(shared_rows):
+            facts = empty_facts()
+            facts['facts']['candidate-static'][0]['symbol_tables'][0]['rows'] = [
+                symbol('__pthread_once', visibility='HIDDEN')]
+            member = facts['facts']['candidate-shared']
+            member['symbol_tables'] = [
+                {'name': '.dynsym', 'section_index': 2, 'rows': [row for table, row in shared_rows if table == '.dynsym']},
+                {'name': '.symtab', 'section_index': 3, 'rows': [row for table, row in shared_rows if table == '.symtab']},
+            ]
+            return facts
+
+        record = copy.deepcopy(self.records['__pthread_once'])
+        local = symbol('__pthread_once', binding='LOCAL', visibility='HIDDEN')
+        report = selection.account_placements([copy.deepcopy(record)], facts_with([('.symtab', local)]))
+        joined = {row['artifact_key']: row['placement_observed'] for row in report['placement_joins']}
+        self.assertEqual(joined, {'candidate-static': True, 'candidate-shared': True})
+        self.assertFalse([row for row in report['blockers'] if row['identity']['name'] == '__pthread_once'])
+
+        leaked = symbol('__pthread_once')
+        leaked['row_index'] = 2
+        report = selection.account_placements([copy.deepcopy(record)], facts_with([('.symtab', local), ('.dynsym', leaked)]))
+        self.assertIn({'code': 'identity-unresolved', 'identity': identity('__pthread_once'),
+                       'reason': 'missing, ambiguous or mismatched selected provider placement: candidate-shared'},
+                      report['blockers'])
+
+
 class PhysicalAccountingTests(unittest.TestCase):
     def test_hidden_static_definition_is_bindable_and_named_weak_und_is_an_import(self):
         rows = [symbol('__asctime_r', visibility='HIDDEN'),

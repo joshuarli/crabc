@@ -715,6 +715,166 @@ placement_metadata = {"static-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", 
 reason = "Raw kernel/interpreter entry in all five ET_REL CRT objects. It is a process entrypoint, not a C-callable provider."
 static_metadata_rule = "explicit"
 
+[[owner_groups]]
+id = "private-pthread-implementation-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-pthread-private-bodies"
+family = "libc.pthread-tls"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_pthread_cond.rs", "libc/src/c_abi/x86_64/pthread_create_join.rs", "libc/src/c_abi/x86_64/pthread_tsd.rs", "libc/src/c_abi/x86_64/pthread_mutex.rs", "libc/src/c_abi/x86_64/pthread_once.rs", "libc/src/c_abi/x86_64/pthread_rwlock.rs", "libc/src/c_abi/x86_64/pthread_cancel.rs"]
+members = ["__pthread_cond_timedwait", "__pthread_create", "__pthread_exit", "__pthread_join", "__pthread_key_create", "__pthread_key_delete", "__pthread_mutex_lock", "__pthread_mutex_timedlock", "__pthread_mutex_trylock", "__pthread_mutex_unlock", "__pthread_once", "__pthread_rwlock_rdlock", "__pthread_rwlock_timedrdlock", "__pthread_rwlock_timedwrlock", "__pthread_rwlock_tryrdlock", "__pthread_rwlock_trywrlock", "__pthread_rwlock_unlock", "__pthread_rwlock_wrlock", "__pthread_setcancelstate", "__pthread_testcancel", "__pthread_timedjoin_np", "__pthread_tryjoin_np"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden pthread implementation bodies behind their public weak aliases, as in pinned musl. The static archive retains GLOBAL HIDDEN definitions and the shared libc localizes them; alias, override and pthread semantics stay with the pthread component receipts."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "private-thread-runtime-seams"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-thread-runtime-private-seams"
+family = "libc.pthread-tls"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/pthread_create_join.rs", "libc/src/c_abi/x86_64/owned_spawn.rs", "libc/src/c_abi/x86_64/owned_syscall_cancel.rs", "libc/src/c_abi/x86_64/owned_posix_timers.rs"]
+members = ["__crabc_x86_cancel", "__crabc_x86_pthread_clone", "__crabc_x86_syscall_cp_asm", "__crabc_x86_timer_dispatch", "__crabc_x86_timer_invoke"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden cross-module thread seams: the pthread clone bridge also used by spawn, the cancellable-syscall entry and its cancel target, and the timer notification dispatch/invoke bodies. None is an installed C identity."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "private-thread-cancellation-labels"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-thread-runtime-private-seams"
+family = "libc.pthread-tls"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_syscall_cancel.rs"]
+members = ["__crabc_x86_cp_begin", "__crabc_x86_cp_cancel", "__crabc_x86_cp_end"]
+members_file = ""
+expected_type = ""
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "NOTYPE", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "NOTYPE", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden NOTYPE code labels inside the cancellable-syscall entry. They bound the cancellation program-counter window and are never callable providers."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "private-posix-runtime-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-posix-runtime-private-bodies"
+family = "libc.posix-runtime"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/temporary_objects.rs", "libc/src/c_abi/x86_64/owned_vm_mechanisms.rs", "libc/src/c_abi/x86_64/owned_pty.rs", "libc/src/c_abi/x86_64/owned_process_trio.rs", "libc/src/c_abi/x86_64/owned_aio.rs", "libc/src/c_abi/x86_64/directory_streams.rs", "libc/src/c_abi/x86_64/signal_foundation.rs"]
+members = ["__crabc_owned_clone_raw", "__crabc_owned_vfork_result", "__crabc_x86_aio_cabi_free", "__crabc_x86_aio_cabi_malloc", "__crabc_x86_scandir_cabi_free", "__crabc_x86_scandir_cabi_malloc", "__crabc_x86_scandir_cabi_realloc", "__mkostemps", "__mremap", "__ptsname_r", "crabc_x86_64_signal_restorer"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden POSIX runtime implementation bodies and allocation shims: pinned-musl-shaped __mkostemps/__mremap/__ptsname_r bodies, the owned process-trio clone/vfork helpers, the aio and scandir C allocation shims, and the rt_sigreturn restorer. None is an installed C identity."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "private-text-stdio-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-text-stdio-private-bodies"
+family = "libc.text-math-locale-stdio"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_printf_float.rs", "libc/src/c_abi/x86_64/owned_printf_float_musl_x86_64.S", "libc/src/c_abi/x86_64/owned_scanf.rs", "libc/src/c_abi/x86_64/owned_scanf_musl_x86_64.S", "libc/src/c_abi/x86_64/owned_wide_format.rs", "libc/src/c_abi/x86_64/owned_wide_format_musl_x86_64.S", "libc/src/c_abi/x86_64/owned_static_stdio.rs", "libc/src/c_abi/x86_64/owned_regex/mod.rs", "libc/src/c_abi/x86_64/fenv.rs"]
+members = ["__crabc_owned_printf_float", "__crabc_owned_printf_promote", "__crabc_owned_scan", "__crabc_owned_wide_format", "__crabc_x86_regex_cabi_calloc", "__crabc_x86_regex_cabi_free", "__crabc_x86_regex_cabi_malloc", "__crabc_x86_regex_cabi_realloc", "__crabc_x86_stdio_cabi_free", "__crabc_x86_stdio_cabi_malloc", "__crabc_x86_stdio_cabi_realloc", "__fesetround", "crabc_owned_scan_floatscan", "crabc_owned_scan_intscan", "crabc_owned_scan_shgetc", "crabc_owned_scan_shlim", "crabc_owned_scan_vfscanf", "crabc_owned_vfwprintf", "crabc_owned_vfwscanf"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden text, stdio, regex and fenv implementation bodies: the translated musl printf/scanf/wide-format entry and helper bodies, stdio and regex C allocation shims, and the pinned-musl-shaped __fesetround body. None is an installed C identity."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "private-string-memory-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-string-memory-private-bodies"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/string_copy.rs", "libc/src/c_abi/x86_64/byte_strings.rs", "libc/src/c_abi/x86_64/memory_search.rs"]
+members = ["__memrchr", "__stpcpy", "__stpncpy", "__strchrnul"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden string and memory bodies behind their public weak aliases, as in pinned musl. Public alias and override behavior remain separate requirements."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "private-memory-forward-copy-label"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-string-memory-private-bodies"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/memory.rs"]
+members = ["__memcpy_fwd"]
+members_file = ""
+expected_type = ""
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "NOTYPE", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "NOTYPE", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden NOTYPE same-address label for the memcpy body, used by forward-copy callers as in pinned musl memcpy.s. It is not an installed C identity."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "private-resolver-netdb-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-resolver-netdb-private-bodies"
+family = "libc.resolver"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/inet_address.rs", "libc/src/c_abi/x86_64/owned_classic_netdb.rs"]
+members = ["__crabc_x86_host_cache_cabi_free", "__crabc_x86_host_cache_cabi_malloc", "__dn_expand", "__inet_aton"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden resolver and netdb bodies: pinned-musl-shaped __dn_expand and __inet_aton behind their public weak aliases, and the classic host-cache C allocation shims."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "private-c-compat-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-c-compat-private-bodies"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/search_tree_intrusive.rs", "libc/src/c_abi/x86_64/owned_passwd.rs", "libc/src/c_abi/x86_64/owned_shadow.rs"]
+members = ["__crabc_x86_passwd_cabi_free", "__crabc_x86_shadow_cabi_malloc", "__tsearch_balance"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Hidden C-compatibility bodies: the pinned-musl-shaped tsearch rebalance helper and the passwd/shadow C allocation shims."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "private-static-fixed-graph-dlfcn-record"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-static-dlfcn-private-bodies"
+family = "ldso.dynamic-runtime"
+artifacts = ["candidate-static"]
+sources = ["libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs"]
+members = ["__crabc_x86_fixed_graph_dlfcn_record"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}}
+reason = "Hidden static-product trampoline returning the unavailable fixed-graph dlfcn record. The shared libc defines no such spelling; its loader-backed dlfcn route is separate."
+static_metadata_rule = "explicit"
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]
