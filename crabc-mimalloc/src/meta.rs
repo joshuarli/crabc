@@ -2883,9 +2883,104 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         }
         // Source destroys a subprocess even while its threads are live; that
         // leaves their TLDs and default Theaps dangling, so refuse instead.
+        // Only process destruction takes that route, through
+        // `unlink_registry_and_detach_pages_terminal`.
         if self.context.with_image(|child| child.identity().live_thread_count()) != Some(0) {
             return Err(ChildMetadataPageEngineError::LiveThreads);
         }
+        // SAFETY: forwarded obligations; no thread belongs to the child.
+        unsafe { self.unlink_registry_and_detach_metadata_pages(registry, binding) }
+    }
+
+    /// Process-destruction form of
+    /// [`Self::unlink_registry_and_finish_metadata_pages`], for a child that
+    /// threads may still belong to, as source `_mi_subprocs_unsafe_destroy_all`
+    /// destroys it. First every page of each child-thread Theap on the child
+    /// main Heap is detached from its queues and the process PageMap, live
+    /// blocks included and none released, exactly as the metadata pages are
+    /// next; the pages go with the child arenas. Those threads' TLDs,
+    /// Theaps, and compiler-TLS roots then name child memory that no longer
+    /// exists; process destruction never reopens the native entry points
+    /// that could reach them.
+    ///
+    /// A member page that cannot be detached (an OS-backed page, or an
+    /// unprovable span) leaves this owner terminal and the child registered.
+    ///
+    /// # Safety
+    /// Permanent terminal quiescence: no thread, client, or producer reaches
+    /// the child again, no child operation or registry user runs, and
+    /// `registry` admitted the child.
+    pub(crate) unsafe fn unlink_registry_and_detach_pages_terminal(
+        &mut self,
+        registry: &'static crate::subproc::registry::SourceSubprocessRegistry,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<(), ChildMetadataPageEngineError> {
+        if self.stage != ChildMainHeapStage::HeapReady {
+            return Err(ChildMetadataPageEngineError::InvalidTransition);
+        }
+        // SAFETY: forwarded terminal quiescence.
+        if let Err(error) = unsafe { self.detach_member_pages_terminal(binding) } {
+            self.stage = ChildMainHeapStage::Terminal;
+            return Err(error);
+        }
+        // SAFETY: forwarded obligations.
+        unsafe { self.unlink_registry_and_detach_metadata_pages(registry, binding) }
+    }
+
+    /// Detaches the pages of every child-thread Theap on the child main
+    /// Heap; see [`Self::unlink_registry_and_detach_pages_terminal`].
+    ///
+    /// # Safety
+    /// As for [`Self::unlink_registry_and_detach_pages_terminal`].
+    unsafe fn detach_member_pages_terminal(
+        &mut self,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<(), ChildMetadataPageEngineError> {
+        if !binding.is_active()
+            || !binding.is_allocation_ready()
+            || binding.process().main_subprocess().is_none_or(|parent| {
+                !core::ptr::eq(parent, self.context.parent_subprocess)
+            })
+            || binding.page_map().memory_config().ok() != Some(self.context.config)
+        {
+            return Err(ChildMetadataPageEngineError::InvalidTransition);
+        }
+        let heap = self.main_heap_pointer().ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
+        let metadata_theap = self.context.metadata_theap.as_ref()
+            .and_then(MetaAllocation::dynamic_theap_pointer);
+        let mut result = Ok(());
+        let visited = self.context.with_image(|child| {
+            // SAFETY: terminal quiescence keeps the Theap list unchanged and
+            // every listed Theap and TLD allocated for this walk; the visitor
+            // below changes page queues only, never either list.
+            unsafe {
+                (*heap.as_ptr()).visit_theaps_quiescent(|theap, tld| {
+                    if Some(theap) == metadata_theap {
+                        return true;
+                    }
+                    // SAFETY: forwarded terminal quiescence.
+                    result = unsafe { detach_child_thread_pages_terminal(child, binding, heap, theap, tld) };
+                    result.is_ok()
+                })
+            }
+        });
+        match visited {
+            Some(_) => result,
+            None => Err(ChildMetadataPageEngineError::InvalidTransition),
+        }
+    }
+
+    /// The registry unlink and metadata-page detach shared by the ordinary
+    /// and terminal destroy prefixes.
+    ///
+    /// # Safety
+    /// As for [`Self::unlink_registry_and_finish_metadata_pages`], except
+    /// that under terminal quiescence threads may still belong to the child.
+    unsafe fn unlink_registry_and_detach_metadata_pages(
+        &mut self,
+        registry: &'static crate::subproc::registry::SourceSubprocessRegistry,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<(), ChildMetadataPageEngineError> {
         if self.page_engine == ChildPageEngineState::RetryComplete {
             if self.pending_os_release.is_some() || self.metadata_pages_may_exist {
                 return Err(ChildMetadataPageEngineError::InvalidTransition);
@@ -3042,6 +3137,68 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             ChildMainHeapStage::Terminal
         };
         result
+    }
+
+    /// Source `_mi_heap_detach_theaps` and `mi_heap_free_theaps`
+    /// (`theap.c:381-411`, `heap.c:162-182`) for the child-thread Theaps
+    /// still on the child main Heap at process destruction: each leaves the
+    /// Heap list and its TLD's list, merges its statistics into the Heap, and
+    /// is counted out of the child's `theaps` statistic, as `_mi_theap_decref`
+    /// frees it (a main-Heap Theap is never cached, so its count reaches
+    /// zero). The Theap and TLD blocks are not freed one by one: they are
+    /// live child metadata blocks, released with the child arenas. The TLDs
+    /// keep their live registration, as source never runs `mi_tld_free` for
+    /// them. The metadata Theap is detached next, as before.
+    ///
+    /// Any list failure leaves this owner terminal.
+    ///
+    /// # Safety
+    /// Registry unlink and the terminal page detach succeeded, and permanent
+    /// terminal quiescence excludes every other Heap, TLD, and Theap user.
+    pub(crate) unsafe fn detach_child_thread_theaps_terminal(
+        &mut self,
+    ) -> Result<(), ChildMainHeapReleaseError> {
+        if self.stage != ChildMainHeapStage::RegistryUnlinked {
+            return Err(ChildMainHeapReleaseError::InvalidTransition);
+        }
+        let metadata_theap = self.context.metadata_theap.as_ref()
+            .and_then(MetaAllocation::dynamic_theap_pointer);
+        loop {
+            let Some(storage) = self.heap_storage.as_mut() else {
+                self.stage = ChildMainHeapStage::Terminal;
+                return Err(ChildMainHeapReleaseError::InvalidTransition);
+            };
+            let detached = storage.with_heap(|mut heap| {
+                // SAFETY: terminal quiescence (caller contract).
+                let Some((theap, tld)) = (unsafe { heap.first_theap_other_than_quiescent(metadata_theap) }) else {
+                    return Ok(false);
+                };
+                let Some(tld) = NonNull::new(tld) else { return Err(()) };
+                // SAFETY: the listed TLD is allocated and, under quiescence,
+                // exclusively ours; no other reference to it exists.
+                let tld = unsafe { &mut *tld.as_ptr() };
+                // SAFETY: the Heap image is exclusively ours under quiescence.
+                let heap = unsafe { heap.as_mut().get_unchecked_mut() };
+                tld.detach_one_theap_from_heap(heap, theap.as_ptr()).map_err(|_| ())?;
+                tld.detach_one_theap_from_tld(theap.as_ptr()).map_err(|_| ())?;
+                // heap.c:173-181, then theap.c:350-352.
+                // SAFETY: the detached Theap stays allocated in child metadata.
+                heap.merge_detached_theap_statistics(unsafe { theap.as_ref() });
+                Ok(true)
+            });
+            match detached {
+                Some(Ok(true)) => {
+                    self.context.with_image(|image| {
+                        image.get_ref().identity().record_statistics_theap_unlinked();
+                    });
+                }
+                Some(Ok(false)) => return Ok(()),
+                Some(Err(())) | None => {
+                    self.stage = ChildMainHeapStage::Terminal;
+                    return Err(ChildMainHeapReleaseError::InvalidTransition);
+                }
+            }
+        }
     }
 
     /// Detaches the child metadata Theap using the parent's actual detached
@@ -3339,6 +3496,70 @@ impl<'heap, 'tracking> ChildMainHeapReleaseFailure<'heap, 'tracking> {
         drop(destroyed);
         Ok(owner)
     }
+}
+
+/// Detaches every page of one child-thread Theap for process destruction
+/// through an ordinary child page engine over that Theap, built from the
+/// listed Theap and TLD instead of the thread's own owner (which lives in
+/// that thread's storage). The engine starts with fresh page-engine state:
+/// a pending raw unmap retry of the thread is not visible here, and its page
+/// would make the detach refuse.
+///
+/// # Safety
+/// Permanent terminal quiescence: the thread neither runs an allocator
+/// operation nor ever will, `theap` and `tld` are a listed child-thread
+/// Theap of the child main Heap `heap` and its TLD, and no other PageMap or
+/// page writer runs.
+unsafe fn detach_child_thread_pages_terminal(
+    child: Pin<&crate::subproc::ChildSubprocessImage>,
+    binding: crate::process_init::ProcessMainBackingBinding,
+    heap: NonNull<Heap>,
+    theap: NonNull<Theap>,
+    tld: *mut ThreadLocalData,
+) -> Result<(), ChildMetadataPageEngineError> {
+    let tld = NonNull::new(tld).ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
+    let (thread, sequence) = {
+        // SAFETY: a listed TLD is allocated; this reads two scalars.
+        let tld = unsafe { tld.as_ref() };
+        (LiveThreadId::new(tld.thread_id()), tld.thread_sequence())
+    };
+    let thread = thread.ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
+    let child_process = crate::os::ChildVmProcess::new(binding.process(), child)
+        .map_err(ChildMetadataPageEngineError::ChildProcess)?;
+    let pair = crate::process_arena::ChildProcessPageArenaLease::join(binding.page_map(), child_process)
+        .map_err(ChildMetadataPageEngineError::BackingPair)?;
+    let page_lifecycle = pair.begin_page_lifecycle().map_err(ChildMetadataPageEngineError::BackingPair)?;
+    // SAFETY: the lifecycle capability above excludes every other plain
+    // PageMap mutation for this operation.
+    let page_map = unsafe { pair.page_map_for_owned_ranges() }
+        .map_err(ChildMetadataPageEngineError::BackingPair)?;
+    let mut pending_os_release = None;
+    let mut page_engine = ChildPageEngineState::Active;
+    // SAFETY: quiescence makes this the sole user of the Theap and TLD, the
+    // child image, Heap, and blocks stay allocated through the operation.
+    let session = unsafe {
+        crate::types::metadata_session::ChildOrdinaryTheapPageSession::new(
+            child, tld, theap, heap, thread, sequence, &mut pending_os_release, &mut page_engine,
+        )
+    }
+    .ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
+    let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
+    // SAFETY: the validated child pair and session are held through the
+    // complete operation.
+    let mut engine = unsafe {
+        crate::single_thread::ChildOrdinaryPageAllocator::activate_child_ordinary(
+            session, backing, page_map, sequence,
+        )
+    };
+    // SAFETY: forwarded quiescence; the child arenas are destroyed next.
+    let detached = unsafe { engine.detach_pages_for_subprocess_destroy() };
+    let finished = engine.finish_operation().map_err(drop);
+    let lifecycle = page_lifecycle.finish();
+    if !detached {
+        return Err(ChildMetadataPageEngineError::MetadataPagesRemain);
+    }
+    finished.map_err(|()| ChildMetadataPageEngineError::EngineRetained)?;
+    lifecycle.map_err(ChildMetadataPageEngineError::PageMapLifecycle)
 }
 
 impl ChildContextLease<'_> {

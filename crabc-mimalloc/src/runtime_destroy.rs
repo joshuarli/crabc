@@ -818,6 +818,75 @@ mod tests {
         );
     }
 
+    /// Source destroys a child under the threads that still belong to it.
+    /// A registered thread joins a child, keeps a live block and a non-main
+    /// Heap, and never finishes. Process destruction force-destroys that
+    /// Heap, detaches the thread's Theap and pages, merges the child
+    /// statistics (the thread still counted live) into main, and completes;
+    /// the thread's later allocation is refused without touching the
+    /// released child memory.
+    #[test]
+    fn physical_destroy_destroys_a_native_child_under_its_live_thread() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::destroy::tests::physical_destroy_destroys_a_native_child_under_its_live_thread",
+            || {
+                use crate::subproc::lifecycle::{
+                    native_child_heap_new, native_subproc_add_current_thread, native_subproc_new, NativeChildThreadAdd,
+                };
+                unsafe { std::env::set_var("mimalloc_destroy_on_exit", "1"); }
+                assert!(test_initialize_process_from_host_environment(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
+                assert!(prepare_native_later_thread_arena());
+                let child = native_subproc_new().expect("the initial thread creates a child");
+                let main = crate::subproc::MainSubprocess::global();
+                let before = main.statistics().final_output_snapshot();
+                let descriptor = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+                let ready = core::sync::atomic::AtomicBool::new(false);
+                let stop = core::sync::atomic::AtomicBool::new(false);
+                std::thread::scope(|scope| {
+                    let _release_worker = ReleaseFlag(&stop);
+                    let worker = scope.spawn(|| {
+                        let _publish_failure = ReleaseFlag(&ready);
+                        let current = admission::current_native_allocator_thread_descriptor();
+                        descriptor.store(current.as_ptr(), Ordering::Release);
+                        assert!(unsafe { admission::register_current_native_allocator_worker_descriptor(current) });
+                        // SAFETY: a fresh thread owns its pristine roots.
+                        assert_eq!(unsafe { native_subproc_add_current_thread(child) }, Ok(NativeChildThreadAdd::Added));
+                        let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(96, 16, false)
+                            else { panic!("child allocation"); };
+                        unsafe { block.as_ptr().write_bytes(0x5a, 96); }
+                        let _heap = native_child_heap_new().expect("a child member").expect("the child record is live")
+                            .expect("the child thread creates a Heap");
+                        ready.store(true, Ordering::Release);
+                        while !stop.load(Ordering::Acquire) { std::thread::yield_now(); }
+                        assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
+                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Retained);
+                    });
+                    while !ready.load(Ordering::Acquire) { std::thread::yield_now(); }
+                    let request = capture_native_process_destroy_request().expect("source capture precedes registry pin");
+                    let registry = PinnedFixtureRegistry {
+                        initial: admission::native_allocator_initial_thread_descriptor().unwrap(), worker: &descriptor,
+                    };
+                    let prepared = unsafe { prepare_native_process_destroy(request, &registry) }
+                        .expect("the initial owner transfers and the child member is quiescent");
+                    assert_eq!(unsafe { prepared.finish() }, Ok(()), "the child is destroyed under its thread");
+                    let after = main.statistics().final_output_snapshot();
+                    assert_eq!(after.threads.total, before.threads.total + 1, "child statistics merged into main");
+                    assert_eq!(after.threads.current, before.threads.current + 1, "the member never finished");
+                    // The child main and non-main Heaps, then main's own, are freed.
+                    assert_eq!((after.heaps.total, after.heaps.current), (before.heaps.total + 2, 0));
+                    // The member Theap is counted and freed in the child.
+                    assert_eq!((after.theaps.total, after.theaps.current),
+                        (before.theaps.total + 1, before.theaps.current));
+                    let owners = unsafe { &*DESTROY_OWNERS.0.get() };
+                    assert!(owners.failure.is_none());
+                    assert!(owners.arenas.as_ref().unwrap().is_released());
+                    stop.store(true, Ordering::Release);
+                    worker.join().expect("the member's later calls are refused");
+                });
+            },
+        );
+    }
+
     #[test]
     fn source_destroy_option_keeps_signed_explicit_and_automatic_dispatch_distinct() {
         for raw in [-7, -1, 0, 1, 2, 9, i64::MAX] {

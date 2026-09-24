@@ -318,6 +318,52 @@ impl Heap {
         target.merge_from_and_reset(&self.statistics);
     }
 
+    /// The first Theap on this Heap's list other than `except`, with the TLD
+    /// it names: one step of source `_mi_heap_detach_theaps`
+    /// (`theap.c:381-411`) at process destruction, where the caller detaches
+    /// each returned Theap before asking again.
+    ///
+    /// # Safety
+    /// Permanent terminal quiescence: no Theap or Heap list operation runs
+    /// concurrently, and every listed Theap and its TLD stay allocated until
+    /// the caller's subprocess destruction releases their arenas.
+    pub(crate) unsafe fn first_theap_other_than_quiescent(
+        &self,
+        except: Option<core::ptr::NonNull<super::Theap>>,
+    ) -> Option<(core::ptr::NonNull<super::Theap>, *mut super::ThreadLocalData)> {
+        let mut current = self.theaps;
+        while let Some(theap) = core::ptr::NonNull::new(current) {
+            if Some(theap) != except {
+                // SAFETY: a listed Theap is allocated (caller contract).
+                return Some((theap, unsafe { (*theap.as_ptr()).tld }));
+            }
+            // SAFETY: as above.
+            current = unsafe { *(*theap.as_ptr()).hnext.get() };
+        }
+        None
+    }
+
+    /// Visits this Heap's Theaps in list order with their TLDs until `visit`
+    /// returns `false`; `visit` must not change either list.
+    ///
+    /// # Safety
+    /// As for [`Self::first_theap_other_than_quiescent`].
+    pub(crate) unsafe fn visit_theaps_quiescent(
+        &self,
+        mut visit: impl FnMut(core::ptr::NonNull<super::Theap>, *mut super::ThreadLocalData) -> bool,
+    ) -> bool {
+        let mut current = self.theaps;
+        while let Some(theap) = core::ptr::NonNull::new(current) {
+            // SAFETY: a listed Theap is allocated (caller contract).
+            let (tld, next) = unsafe { ((*theap.as_ptr()).tld, *(*theap.as_ptr()).hnext.get()) };
+            if !visit(theap, tld) {
+                return false;
+            }
+            current = next;
+        }
+        true
+    }
+
     /// Source-visible fields of a non-main Heap image for the pinned-C
     /// differential: sequence, subprocess, no exclusive arena, NUMA node, no
     /// Theap, and its thread-local slot key.

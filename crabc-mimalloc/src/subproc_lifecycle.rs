@@ -52,9 +52,14 @@
 //! block owned by another thread takes the ordinary remote-free route. The
 //! runtime thread-exit entry runs [`native_child_thread_done`].
 //!
+//! [`destroy_all_native_children_terminal`] is the child walk of
+//! `_mi_subprocs_unsafe_destroy_all` at process destruction, which, as in
+//! source, destroys a child even under threads that still belong to it.
+//!
 //! Not yet covered: nested children, deferred-free callbacks on the child
 //! allocation route, and abandoning a finishing child thread's live pages
-//! (such a thread stays a member and keeps its child alive). Live
+//! (such a thread stays a member and keeps its child alive until process
+//! destruction). Live
 //! child metadata blocks at destruction are released with the child arenas,
 //! as in source. The source `_mi_thread_locals_thread_done` call in
 //! `mi_subproc_destroy` releases the destroying thread's dynamic thread-local
@@ -271,6 +276,10 @@ pub(crate) enum ChildSubprocessDestroyError {
     MetadataTheapDetach(ChildMetadataTheapError),
     MetadataTheapRelease(ChildMainHeapReleaseError),
     HeapUnlink(SourceHeapRegistryError),
+    /// Process destruction could not force-destroy a non-main child Heap.
+    NonMainHeapDestroy(crate::types::heap_registry::lifecycle::HeapReleaseError),
+    /// Process destruction could not detach a child-thread Theap.
+    ChildThreadTheapDetach(ChildMainHeapReleaseError),
 }
 
 #[must_use = "a failed child subprocess destruction retains its owner"]
@@ -360,22 +369,43 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
     config: crate::os::MemoryConfig,
     release: ChildHeapRelease<'_, 'heap>,
 ) -> Result<(), ChildSubprocessDestroyFailure<'heap, 'tracking>> {
+    // Process destruction destroys a child that threads may still belong to.
+    let terminal = matches!(release, ChildHeapRelease::Terminal);
     let mut release = Some(release);
     loop {
         let step = match child.stage() {
             // subproc.c:207-211: remove the child from the subprocess list.
             // SAFETY: forwarded quiescence and exact-registry obligations.
+            ChildMainHeapStage::HeapReady if terminal => unsafe {
+                child
+                    .unlink_registry_and_detach_pages_terminal(registry, binding)
+                    .map_err(ChildSubprocessDestroyError::Registry)
+            },
+            // SAFETY: as above.
             ChildMainHeapStage::HeapReady => unsafe {
                 child
                     .unlink_registry_and_finish_metadata_pages(registry, binding)
                     .map_err(ChildSubprocessDestroyError::Registry)
             },
-            // heap.c:151-155 `_mi_heap_detach_theaps` for the metadata Theap.
-            // SAFETY: registry unlink succeeded and `metadata` attached it.
+            // subproc.c:215-221 force-destroys each non-main Heap, then
+            // heap.c:151-155 `_mi_heap_detach_theaps` of the main Heap: the
+            // remaining child-thread Theaps, then the metadata Theap.
+            // SAFETY: registry unlink succeeded, terminal quiescence holds for
+            // the terminal steps, and `metadata` attached the metadata Theap.
             ChildMainHeapStage::RegistryUnlinked => unsafe {
-                child
-                    .detach_metadata_theap(metadata, config)
-                    .map_err(ChildSubprocessDestroyError::MetadataTheapDetach)
+                let threads = if terminal {
+                    destroy_non_main_heaps_terminal(&mut child).and_then(|()| {
+                        child.detach_child_thread_theaps_terminal()
+                            .map_err(ChildSubprocessDestroyError::ChildThreadTheapDetach)
+                    })
+                } else {
+                    Ok(())
+                };
+                threads.and_then(|()| {
+                    child
+                        .detach_metadata_theap(metadata, config)
+                        .map_err(ChildSubprocessDestroyError::MetadataTheapDetach)
+                })
             },
             // heap.c:158-172: merge its statistics, then `_mi_theap_decref`.
             // SAFETY: both list edges were removed by the previous step.
@@ -406,6 +436,34 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
         if let Err(error) = step {
             return Err(ChildSubprocessDestroyFailure::Retained { owner: child, error });
         }
+    }
+}
+
+/// `_mi_heap_force_destroy` of every non-main Heap of `child`
+/// (`subproc.c:215-221`) at process destruction, in list order.
+///
+/// # Safety
+/// Permanent terminal quiescence, after the child's registry unlink.
+unsafe fn destroy_non_main_heaps_terminal(
+    child: &mut ChildMainHeapContextOwner<'_>,
+) -> Result<(), ChildSubprocessDestroyError> {
+    let main = child.main_heap_pointer().ok_or(ChildSubprocessDestroyError::InvalidState)?;
+    loop {
+        let mut first = None;
+        let visited = child.visit_heaps(|heap| {
+            if heap == main {
+                return true;
+            }
+            first = Some(heap);
+            false
+        });
+        if !matches!(visited, Some(Ok(_))) {
+            return Err(ChildSubprocessDestroyError::InvalidState);
+        }
+        let Some(heap) = first else { return Ok(()) };
+        // SAFETY: forwarded quiescence; `heap` is a non-main Heap of `child`.
+        unsafe { crate::types::heap_registry::lifecycle::child_heap_force_destroy_terminal(child, heap) }
+            .map_err(ChildSubprocessDestroyError::NonMainHeapDestroy)?;
     }
 }
 
@@ -1043,12 +1101,13 @@ pub(crate) unsafe fn native_subproc_destroy(id: NativeSubprocessId) -> Result<()
 ///
 /// The native entry points are closed, so the child main Heap image is left
 /// on its process-main page for the main-subprocess destruction that follows
-/// (see [`ChildHeapRelease::Terminal`]). A child that a thread still belongs
-/// to is refused (`DestroyRefused`) with it and every later child retained:
-/// its member Theaps would need a terminal detach that is not ported yet. A
-/// list member without a production record, or a failed step, returns
-/// `Retained`. Every error stops the walk; process destruction then retains
-/// the main subprocess too.
+/// (see [`ChildHeapRelease::Terminal`]). As in source, a child that threads
+/// still belong to is destroyed under them: their Theaps' pages and list
+/// edges are detached, and their TLDs, Theaps, and roots are left naming
+/// released child memory that the closed entry points never reach again. A
+/// list member without a production record, or a failed step, returns an
+/// error that stops the walk; process destruction then retains the main
+/// subprocess too.
 ///
 /// # Safety
 /// Permanent terminal admission holds: every native entry point and child

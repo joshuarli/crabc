@@ -2697,9 +2697,16 @@ impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> 
     pub(crate) fn finish_pages(self) -> Result<(), Self> {
         self.finish_quiescent().map(|_| ())
     }
+}
 
-    /// Detaches every page of this child's metadata Theap for subprocess
-    /// destruction, live blocks included, without releasing any page.
+/// Page teardown shared by the child metadata and ordinary child-thread
+/// engines, which both page over one child's own arenas.
+impl<'child, 'map, Session: TheapPageSession>
+    PageAllocatorEngine<'child, 'map, Session, crate::page_backing::ChildMetadataArenaBacking<'child>>
+{
+    /// Detaches every page of this child Theap (the metadata Theap or an
+    /// ordinary child-thread Theap) for subprocess destruction, live blocks
+    /// included, without releasing any page.
     ///
     /// Source `mi_subproc_unsafe_destroy` never releases the child main
     /// Heap's pages one by one: `_mi_heap_destroy_pages` returns for a main

@@ -211,9 +211,58 @@ unsafe fn release_empty_heap(
     binding: ProcessMainBackingBinding,
     heap: NonNull<Heap>,
 ) -> Result<HeapReleaseOutcome, HeapReleaseError> {
+    // SAFETY: forwarded obligations.
+    let Some(image) = (unsafe { unlink_empty_heap(child, heap) })? else {
+        return Ok(HeapReleaseOutcome::MainHeapRefused);
+    };
+    // heap.c:225 `_mi_free_subproc_safe(heap)`.
+    // SAFETY: the exact live image block; nothing names it any longer.
+    let freed = unsafe {
+        member.with_page_engine(binding, |_child, engine| unsafe { engine.free(image.cast()) })
+    };
+    match freed {
+        Ok(Ok(())) => Ok(HeapReleaseOutcome::Released),
+        _ => Err(HeapReleaseError::Retained),
+    }
+}
+
+/// Pinned `_mi_heap_force_destroy` of a non-main child Heap inside
+/// `mi_subproc_unsafe_destroy` (`subproc.c:215-221`) at process destruction,
+/// for a Heap that owns no Theap and no page. The image block is not freed:
+/// it is a live block on a child-thread page that the child's arena
+/// destruction releases right after, where source frees it with
+/// `_mi_free_subproc_safe` (a free with no statistic in the release profile
+/// that the arena release makes unobservable).
+///
+/// # Safety
+/// Permanent terminal quiescence: no thread uses `heap` or `child`, and
+/// `heap` is a Heap of `child` other than its main Heap.
+pub(crate) unsafe fn child_heap_force_destroy_terminal(
+    child: &mut ChildMainHeapContextOwner<'_>,
+    heap: NonNull<Heap>,
+) -> Result<(), HeapReleaseError> {
+    // SAFETY: forwarded obligations.
+    match unsafe { unlink_empty_heap(child, heap) }? {
+        Some(_image) => Ok(()),
+        None => Err(HeapReleaseError::InvalidChild),
+    }
+}
+
+/// `mi_heap_free` up to the image free: refuse the main Heap (`None`) and a
+/// Heap with a Theap or page, merge statistics to the main Heap, remove the
+/// count and list edges, and release the thread-local slot. Returns the image
+/// that the caller frees or retains.
+///
+/// # Safety
+/// `heap` is the main Heap of `child` or a live non-main Heap of it that no
+/// thread uses, and no other operation on `child` runs concurrently.
+unsafe fn unlink_empty_heap(
+    child: &mut ChildMainHeapContextOwner<'_>,
+    heap: NonNull<Heap>,
+) -> Result<Option<NonNull<NonMainHeapImage>>, HeapReleaseError> {
     let main = child.main_heap_pointer().ok_or(HeapReleaseError::InvalidChild)?;
     if heap == main {
-        return Ok(HeapReleaseOutcome::MainHeapRefused);
+        return Ok(None);
     }
     // SAFETY: by the caller contract the Heap is a live non-main image that
     // no thread uses; list operations below hold the list lock.
@@ -238,15 +287,7 @@ unsafe fn release_empty_heap(
     // SAFETY: the image is off every list and exclusively owned now.
     let mut slot = unsafe { (*image.as_ptr()).slot.take() }.ok_or(HeapReleaseError::Retained)?;
     slot.release().map_err(|_| HeapReleaseError::Retained)?;
-    // heap.c:225 `_mi_free_subproc_safe(heap)`.
-    // SAFETY: the exact live image block; nothing names it any longer.
-    let freed = unsafe {
-        member.with_page_engine(binding, |_child, engine| unsafe { engine.free(image.cast()) })
-    };
-    match freed {
-        Ok(Ok(())) => Ok(HeapReleaseOutcome::Released),
-        _ => Err(HeapReleaseError::Retained),
-    }
+    Ok(Some(image))
 }
 
 #[cfg(test)]
