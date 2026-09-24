@@ -89,7 +89,27 @@ enum VmPolicyStartup {
     // mandatory diagnostic inputs in one variant; no caller can represent a
     // VM-backed selected diagnostic owner without its process policy.
     #[cfg(target_arch = "x86_64")]
-    ApplyProcessMemoryPolicyWithDiagnostics(VmPolicy, ProcessDiagnosticInputs),
+    ApplyProcessMemoryPolicyWithDiagnostics(VmPolicy, ProcessDiagnosticInputs, ProcessStartEntry),
+}
+
+/// Which pinned `src/init.c` entry reached the one `mi_process_init` body.
+///
+/// The source distinguishes the two by `os_preloading`, not by a separate
+/// startup routine. `_mi_auto_process_init` clears it before calling
+/// `mi_process_init`, then completes the loader tail (`_mi_options_post_init`
+/// and the weak-random reseeds). A first allocation that reaches
+/// `_mi_thread_init` before the runtime's startup call runs only the once
+/// body: the policy stays preloading, delayed output stays buffered, and a
+/// later runtime startup completes the tail. See
+/// [`ProcessMainInitializationStorage::complete_runtime_startup_tail`].
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessStartEntry {
+    /// `_mi_auto_process_init`: the embedding runtime's explicit startup.
+    RuntimeStartup,
+    /// `mi_process_init` from `_mi_thread_init` on a process's first
+    /// allocation before any runtime startup call.
+    FirstAllocation,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -135,6 +155,11 @@ pub(crate) struct ProcessMainInitializationStorage {
     // follows option initialization; READY separately gates normal capture.
     #[cfg(target_arch = "x86_64")]
     diagnostic_output_ptr: AtomicPtr<OutputOwner>,
+    // One-way claim of the `_mi_auto_process_init` tail after the once body.
+    // Source calls that routine once from the loader; a repeated runtime
+    // startup therefore observes the claim and performs no second flush.
+    #[cfg(target_arch = "x86_64")]
+    runtime_startup_tail: core::sync::atomic::AtomicBool,
 }
 
 // SAFETY: `process_once` makes COLD -> INITIALIZING exclusive and retains its
@@ -163,6 +188,8 @@ impl ProcessMainInitializationStorage {
             diagnostic_output: UnsafeCell::new(MaybeUninit::uninit()),
             #[cfg(target_arch = "x86_64")]
             diagnostic_output_ptr: AtomicPtr::new(core::ptr::null_mut()),
+            #[cfg(target_arch = "x86_64")]
+            runtime_startup_tail: core::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -317,7 +344,9 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, diagnostics),
+                VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(
+                    policy, diagnostics, ProcessStartEntry::RuntimeStartup,
+                ),
                 MainStaticAttachmentStorage::global(),
                 MainSubprocess::global(),
                 MetaAllocator::global(),
@@ -338,13 +367,13 @@ impl ProcessMainInitializationStorage {
     #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn prepare_with_vm_options_from_source_environment(
         &'static self, config: MemoryConfig, options: VmOptions,
-        diagnostics: ProcessDiagnosticInputs,
+        diagnostics: ProcessDiagnosticInputs, entry: ProcessStartEntry,
     ) -> Result<(ProcessMainThread, ProcessMainStartup), ProcessMainInitError> {
         let environment_reader = diagnostics.environment_reader();
         let policy = unsafe { VmPolicy::new_with_source_environment(options, environment_reader) }
             .map_err(ProcessMainInitError::VmPolicy)?;
         unsafe { self.prepare_with_components_after_claim(
-            config, VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, diagnostics),
+            config, VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, diagnostics, entry),
             MainStaticAttachmentStorage::global(), MainSubprocess::global(),
             MetaAllocator::global(), ProcessPageMapStorage::global(), || {},
         ) }
@@ -654,25 +683,32 @@ impl ProcessMainInitializationStorage {
         after_claim();
 
         #[cfg(target_arch = "x86_64")]
-        let (policy, apply_process_memory_policy, diagnostics) = {
+        let (policy, apply_process_memory_policy, diagnostics, entry) = {
             // Source options precede `_mi_os_init`. The sole selected x86
             // policy variant writes the process-lifetime owner here,
             // initializes its three descriptors (including delayed invalid
             // output), and retains the borrowed route before VM/OS/arena work.
             match vm_policy {
-                VmPolicyStartup::None => (None, false, ProcessStartupDiagnostics::Unconnected),
-                VmPolicyStartup::RetainOnly(policy) => (Some(policy), false, ProcessStartupDiagnostics::Unconnected),
-                VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => {
-                    (Some(policy), true, ProcessStartupDiagnostics::Unconnected)
-                }
-                VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, inputs) => {
+                // Fixture routes model only the post-preloading loader edge.
+                VmPolicyStartup::None => (
+                    None, false, ProcessStartupDiagnostics::Unconnected, ProcessStartEntry::RuntimeStartup,
+                ),
+                VmPolicyStartup::RetainOnly(policy) => (
+                    Some(policy), false, ProcessStartupDiagnostics::Unconnected,
+                    ProcessStartEntry::RuntimeStartup,
+                ),
+                VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => (
+                    Some(policy), true, ProcessStartupDiagnostics::Unconnected,
+                    ProcessStartEntry::RuntimeStartup,
+                ),
+                VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, inputs, entry) => {
                     let (environment_reader, default_stderr_output) = inputs.into_parts();
                     let output = OutputOwner::new(default_stderr_output);
                     unsafe { (*self.diagnostic_output.get()).write(output) };
                     let output = unsafe { (&mut *self.diagnostic_output.get()).assume_init_mut() };
                     unsafe { output.initialize_source_options(environment_reader) };
                     self.diagnostic_output_ptr.store(output, Ordering::Release);
-                    (Some(policy), true, ProcessStartupDiagnostics::Selected(output))
+                    (Some(policy), true, ProcessStartupDiagnostics::Selected(output), entry)
                 }
             }
         };
@@ -686,18 +722,25 @@ impl ProcessMainInitializationStorage {
         // before `_mi_os_init`, including process memory-policy operations.
         #[cfg(target_arch = "x86_64")]
         crate::statistics::initialize_process_clock();
+        // `_mi_auto_process_init` clears `os_preloading` before its
+        // option/OS/main-heap work; a first allocation that reaches
+        // `mi_process_init` earlier leaves it set until that runtime call.
+        #[cfg(target_arch = "x86_64")]
+        let finish_preloading = entry == ProcessStartEntry::RuntimeStartup;
+        #[cfg(target_arch = "aarch64")]
+        let finish_preloading = true;
         let vm_process = if let Some(policy) = policy {
-            // The source process-load edge clears `os_preloading` before its
-            // option/OS/main-heap work. Retain this policy first, then expose
-            // only its post-preloading read state to every later source
-            // owner. A later startup failure is terminal and deliberately
-            // leaves this exact policy image retained with its process.
+            // Retain this policy first, then expose its source preloading
+            // state to every later source owner. A later startup failure is
+            // terminal and deliberately leaves this exact policy image
+            // retained with its process.
             match unsafe {
                 self.retain_vm_process(
                     policy,
                     subprocess,
                     &mut config,
                     apply_process_memory_policy,
+                    finish_preloading,
                 )
             } {
                 Ok(process) => Some(process),
@@ -847,7 +890,11 @@ impl ProcessMainInitializationStorage {
         let startup = ProcessMainStartup {
             storage: self, completion: Some(completion), config, vm_process, metadata,
             #[cfg(target_arch = "x86_64")]
+            subprocess,
+            #[cfg(target_arch = "x86_64")]
             diagnostics,
+            #[cfg(target_arch = "x86_64")]
+            entry,
             _not_send_or_sync: PhantomData,
         };
         Ok((owner, startup))
@@ -935,6 +982,51 @@ impl ProcessMainInitializationStorage {
         }
     }
 
+    /// Completes pinned `_mi_auto_process_init` for a process whose
+    /// `mi_process_init` body already ran from a first allocation.
+    ///
+    /// That earlier entry left `os_preloading` set, its delayed output
+    /// buffered, and any weak random state unreseeded. This clears
+    /// preloading, then runs the same loader tail as a runtime-first startup.
+    /// Returns `Ok(false)` when the tail already ran, whether from a
+    /// runtime-first startup or an earlier call; it never repeats the flush.
+    ///
+    /// # Safety
+    ///
+    /// The caller is the initial source thread, owning no attachment, Theap,
+    /// or random projection, and serializes this call against every other
+    /// diagnostic dispatch as `_mi_options_post_init` requires: no other
+    /// attached thread may emit allocator diagnostics until it returns.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn complete_runtime_startup_after_first_allocation(
+        &'static self,
+    ) -> Result<bool, ProcessMainInitError> {
+        if self.state.load(Ordering::Acquire) != READY {
+            return Err(ProcessMainInitError::Retained);
+        }
+        if self.runtime_startup_tail.swap(true, Ordering::AcqRel) {
+            return Ok(false);
+        }
+        let subprocess = NonNull::new(self.subprocess.load(Ordering::Acquire))
+            .ok_or(ProcessMainInitError::Retained)?;
+        // SAFETY: READY Release-published this permanent subprocess owner.
+        let subprocess = unsafe { subprocess.as_ref() };
+        if let Some(policy) = NonNull::new(self.vm_policy_ptr.load(Ordering::Acquire)) {
+            // SAFETY: READY published this permanent inline policy image;
+            // the preloading scalar is atomic and never moved.
+            unsafe { policy.as_ref() }.finish_preloading();
+        }
+        let output = NonNull::new(self.diagnostic_output_ptr.load(Ordering::Acquire));
+        // SAFETY: the permanent diagnostic owner was published before READY;
+        // the caller supplies the tail's serialization obligations.
+        unsafe {
+            run_runtime_startup_tail(
+                output.map(|output| &*output.as_ptr()), subprocess.metadata_allocator(), subprocess,
+            )
+        }?;
+        Ok(true)
+    }
+
     #[inline]
     fn config(&self) -> MemoryConfig {
         // SAFETY: callers first observed allocation-ready with Acquire, whose Release
@@ -954,9 +1046,12 @@ impl ProcessMainInitializationStorage {
         subprocess: &'static MainSubprocess,
         config: &mut MemoryConfig,
         apply_process_memory_policy: bool,
+        finish_preloading: bool,
     ) -> Result<VmProcess<'static>, ProcessMainInitError> {
         let policy = unsafe { self.bind_vm_policy(policy) }?;
-        policy.finish_preloading();
+        if finish_preloading {
+            policy.finish_preloading();
+        }
         if apply_process_memory_policy {
             // Pinned `mi_process_init_once` invokes `_mi_os_init` after
             // options/statistics initialization and before heap/PageMap
@@ -1012,7 +1107,7 @@ impl ProcessMainInitializationStorage {
         // SAFETY: this test-only method owns the successful COLD ->
         // INITIALIZING transition and the supplied owners are all static.
         let process = match unsafe {
-            self.retain_vm_process(policy, subprocess, &mut config, false)
+            self.retain_vm_process(policy, subprocess, &mut config, false, true)
         } {
             Ok(process) => process,
             Err(error) => {
@@ -1093,7 +1188,7 @@ impl ProcessMainInitializationStorage {
         };
         // SAFETY: this helper owns INITIALIZING and the explicit isolated test
         // coordinator is the sole writer of the policy slot.
-        let process = match unsafe { self.retain_vm_process(policy, subprocess, &mut config, false) } {
+        let process = match unsafe { self.retain_vm_process(policy, subprocess, &mut config, false, true) } {
             Ok(process) => process,
             Err(error) => {
                 self.mark_retained();
@@ -1209,7 +1304,11 @@ pub(crate) struct ProcessMainStartup {
     vm_process: Option<VmProcess<'static>>,
     metadata: core::pin::Pin<&'static MetaAllocator>,
     #[cfg(target_arch = "x86_64")]
+    subprocess: &'static MainSubprocess,
+    #[cfg(target_arch = "x86_64")]
     diagnostics: ProcessStartupDiagnostics<'static>,
+    #[cfg(target_arch = "x86_64")]
+    entry: ProcessStartEntry,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
@@ -1262,12 +1361,20 @@ impl ProcessMainStartup {
         } else { crate::arena::StartupArenaReservationOutcomes::empty() };
         unsafe { (*self.storage.startup_reservations.get()).write(reservations) };
 
+        // `_mi_auto_process_init` continues after its `mi_process_init` with
+        // the loader tail; a first-allocation entry defers it to the later
+        // runtime startup call.
         #[cfg(target_arch = "x86_64")]
-        if let ProcessStartupDiagnostics::Selected(output) = diagnostics {
-            // SAFETY: source startup still has exclusive dispatch ownership;
-            // this is `_mi_options_post_init` after automatic attachment and
-            // the source startup reservation work.
-            unsafe { output.post_init() };
+        if self.entry == ProcessStartEntry::RuntimeStartup {
+            self.storage.runtime_startup_tail.store(true, Ordering::Relaxed);
+            let output = match diagnostics {
+                ProcessStartupDiagnostics::Selected(output) => Some(output),
+                ProcessStartupDiagnostics::Unconnected => None,
+            };
+            // SAFETY: source startup still has exclusive dispatch ownership
+            // after automatic attachment and the startup reservation work;
+            // no attachment/Theap/random borrow is live here.
+            unsafe { run_runtime_startup_tail(output, metadata, self.subprocess) }?;
         }
 
         if self.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED {
@@ -1290,6 +1397,41 @@ impl Drop for ProcessMainStartup {
 
 static PROCESS_MAIN_INITIALIZATION: ProcessMainInitializationStorage =
     ProcessMainInitializationStorage::new();
+
+/// The shared tail of pinned `_mi_auto_process_init` (`src/init.c:506-533`)
+/// after its `mi_process_init`: `_mi_options_post_init`, then
+/// `_mi_random_reinit_if_weak` for the caller's default Theap and, under
+/// `theap_meta_lock`, for the subprocess metadata Theap.
+///
+/// `mi_process_setup_auto_thread_done` has no receiver here: the embedding
+/// runtime owns pthread-exit hooks. The redirect message is inapplicable
+/// because this engine is linked, never interposed. A private-lock or
+/// metadata-binding failure is reported rather than skipping the reseed.
+///
+/// # Safety
+///
+/// The caller is the initial source thread, holds no attachment, Theap, or
+/// random projection, and owns `_mi_options_post_init`'s one-time
+/// serialization against every other diagnostic dispatch.
+#[cfg(target_arch = "x86_64")]
+unsafe fn run_runtime_startup_tail(
+    output: Option<&'static OutputOwner>,
+    metadata: core::pin::Pin<&'static MetaAllocator>,
+    subprocess: &'static MainSubprocess,
+) -> Result<(), ProcessMainInitError> {
+    if let Some(output) = output {
+        // SAFETY: forwarded; the delayed buffer is flushed exactly once
+        // because both callers first claim `runtime_startup_tail`.
+        unsafe { output.post_init() };
+    }
+    // SAFETY: the current default Theap belongs to this initial source
+    // thread, and no projection of it is live across this field access.
+    unsafe { crate::types::Theap::reinitialize_random_if_weak_at(crate::compiler_tls::default_theap()) };
+    metadata
+        .reinitialize_detached_metadata_random_if_weak(subprocess)
+        .map_err(ProcessMainInitError::Metadata)?;
+    Ok(())
+}
 
 /// Raw, nonowning process-start facts for the selected x86 native runtime.
 ///

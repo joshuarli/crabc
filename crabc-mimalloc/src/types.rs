@@ -6338,6 +6338,32 @@ impl Theap {
         }
     }
 
+    /// Pinned `_mi_random_reinit_if_weak(&theap->random)` on an initialized
+    /// source Theap; the immutable empty image is never written. Returns
+    /// whether the weak image retried entropy.
+    ///
+    /// # Safety
+    /// The caller retains this live Theap and excludes every overlapping
+    /// whole-Theap or random-field reference for this call.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn reinitialize_random_if_weak_at(pointer: NonNull<Self>) -> bool {
+        // SAFETY: the caller supplies the same field-level owner contract.
+        unsafe { Self::with_os_reservation_random_at(pointer, |random| {
+            random.is_some_and(|random| random.reinitialize_if_weak())
+        }) }
+    }
+
+    /// Test-only observation of whether an initialized Theap's random image
+    /// took the source weak path; `None` for the empty image.
+    ///
+    /// # Safety
+    /// The same exclusion as [`Self::reinitialize_random_if_weak_at`].
+    #[cfg(all(test, target_arch = "x86_64"))]
+    pub(crate) unsafe fn test_random_is_weak_at(pointer: NonNull<Self>) -> Option<bool> {
+        // SAFETY: forwarded; the projection only reads the weak flag.
+        unsafe { Self::with_os_reservation_random_at(pointer, |random| random.map(|random| random.is_weak())) }
+    }
+
     /// Returns the concrete source allocation provenance retained across
     /// `_mi_theap_init`'s empty-image copy. This is an observation only; it
     /// does not transfer the matching Malloc/Arena release capability.

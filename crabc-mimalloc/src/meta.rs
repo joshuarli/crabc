@@ -3783,6 +3783,35 @@ impl<'owner> MetadataEngine<'owner> {
         }).map_err(|_| MetaError::InitializationRetained)
     }
 
+    /// Pinned `_mi_auto_process_init`'s metadata reseed: while holding
+    /// `subproc->theap_meta_lock`, `_mi_random_reinit_if_weak` on the
+    /// subprocess metadata Theap (`src/init.c:526-531`). Returns whether the
+    /// weak image retried entropy.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn reinitialize_detached_metadata_random_if_weak(
+        self: Pin<&'static Self>, subprocess: &'static MainSubprocess,
+    ) -> Result<bool, MetaError> {
+        let _entry = self.enter_for_main_subprocess(subprocess)?;
+        self.validate_bound_detached_metadata_theap(subprocess)?;
+        let pointer = NonNull::new(self.get_ref().detached_metadata_theap.load(Ordering::Acquire))
+            .ok_or(MetaError::InitializationRetained)?;
+        // SAFETY: metadata entry plus the held source metadata lock exclude
+        // every other projection of this detached Theap's random field.
+        Ok(unsafe { Theap::reinitialize_random_if_weak_at(pointer) })
+    }
+
+    /// Test-only weak-random observation of the detached metadata Theap
+    /// under the same entry and source lock as its reseed.
+    #[cfg(all(test, target_arch = "x86_64"))]
+    pub(crate) fn test_detached_metadata_random_is_weak(
+        self: Pin<&'static Self>, subprocess: &'static MainSubprocess,
+    ) -> Option<bool> {
+        let _entry = self.enter_for_main_subprocess(subprocess).ok()?;
+        let pointer = NonNull::new(self.get_ref().detached_metadata_theap.load(Ordering::Acquire))?;
+        // SAFETY: entry and the source lock exclude overlapping projections.
+        unsafe { Theap::test_random_is_weak_at(pointer) }
+    }
+
     #[cfg(test)]
     pub(crate) fn test_canonical_metadata_heap_membership(self: Pin<&'static Self>) -> bool {
         let Ok(_entry) = self.enter() else { return false; };

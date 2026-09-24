@@ -120,7 +120,7 @@ use crate::process_init::{
 #[cfg(target_arch = "x86_64")]
 pub use crate::process_init::NativeProcessStartupFacts;
 #[cfg(target_arch = "x86_64")]
-use crate::process_init::ProcessStartupFactsCell;
+use crate::process_init::{ProcessStartEntry, ProcessStartupFactsCell};
 use crate::process_arena::{
     ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessPageBackingLease, ProcessSharedArenaStorage,
 };
@@ -4498,11 +4498,25 @@ impl RuntimeProcessStorage {
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    fn initialize(&'static self, facts: NativeProcessStartupFacts) -> bool {
+    fn initialize(&'static self, facts: NativeProcessStartupFacts, entry: ProcessStartEntry) -> bool {
         let default_stderr_output = facts.stderr_output().into_default_stderr_output();
         let Some(completion) = self.begin_initialization_once() else {
             return match self.state.load(Ordering::Acquire) {
-                PROCESS_ACTIVE => true,
+                PROCESS_ACTIVE if entry == ProcessStartEntry::FirstAllocation => true,
+                // The runtime startup call after a first-allocation start is
+                // pinned `_mi_auto_process_init` finding `mi_process_init`
+                // done: it still owes the loader tail, exactly once.
+                PROCESS_ACTIVE => self.is_on_initial_thread() && matches!(
+                    // SAFETY: the operation guard is held by the registered
+                    // initial thread, which owns no source projection here;
+                    // the embedding runtime serializes its startup call
+                    // before other threads can emit allocator diagnostics.
+                    unsafe {
+                        ProcessMainInitializationStorage::global()
+                            .complete_runtime_startup_after_first_allocation()
+                    },
+                    Ok(_)
+                ),
                 PROCESS_ALLOCATABLE => self.is_on_initial_allocation_thread(),
                 _ => false,
             };
@@ -4538,6 +4552,7 @@ impl RuntimeProcessStorage {
                             default_stderr_output,
                         )
                     },
+                    entry,
                 )
         };
         let Ok((owner, startup)) = owner else {
@@ -4563,7 +4578,7 @@ impl RuntimeProcessStorage {
     }
 
     #[cfg(all(target_arch = "x86_64", miri))]
-    fn initialize(&'static self, _facts: NativeProcessStartupFacts) -> bool {
+    fn initialize(&'static self, _facts: NativeProcessStartupFacts, _entry: ProcessStartEntry) -> bool {
         // Miri has no raw `environ` model. Do not activate a parallel/no-op
         // diagnostic startup path merely to consume the required x86 input.
         false
@@ -9528,8 +9543,9 @@ pub fn publish_native_process_startup_facts(facts: NativeProcessStartupFacts) ->
 /// before constructors. A false result means this private lifecycle is
 /// unavailable for the process: no facts are published, the caller is not
 /// the thread that owns (or may claim) initial startup, or source startup was
-/// retained. Repeating the call on the initial thread after a completed
-/// explicit or lazy startup returns true without a second startup. The
+/// retained. After a first-allocation start it performs only the loader tail
+/// (clear preloading, flush delayed output, reseed weak random state); after
+/// its own completed startup it returns true without repeating either. The
 /// embedding libc owns backend selection: its default C-backed build may
 /// remain selected, while an explicitly selected native-shadow build must
 /// fail its native allocation boundary without sending a native pointer to
@@ -9538,10 +9554,17 @@ pub fn publish_native_process_startup_facts(facts: NativeProcessStartupFacts) ->
 #[inline]
 #[cfg(target_arch = "x86_64")]
 pub fn initialize_process() -> bool {
+    start_process(ProcessStartEntry::RuntimeStartup)
+}
+
+/// Enters the one source process start from either pinned entry. Neither
+/// allocates or registers anything before the published facts are visible.
+#[cfg(target_arch = "x86_64")]
+fn start_process(entry: ProcessStartEntry) -> bool {
     let Some(facts) = ProcessStartupFactsCell::global().published() else { return false; };
     if !admission::register_initial_descriptor() { return false; }
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return false; };
-    RUNTIME_PROCESS.initialize(facts)
+    RUNTIME_PROCESS.initialize(facts, entry)
 }
 
 /// Test-only raw environment reader for the musl-hosted native unit binary.
@@ -9581,14 +9604,15 @@ pub(crate) fn test_initialize_process_from_host_environment(
 /// Pinned `mi_malloc_generic_admin` initializes a thread whose default Theap
 /// is still empty through `_mi_thread_init`, whose first step is the
 /// `mi_process_init` once body. The embedding runtime ordinarily performs
-/// that startup explicitly before constructors; this is the same transition
-/// when an allocation reaches a still-cold process first. It consumes only
-/// the published raw startup facts and repeats the explicit sequence exactly:
-/// source startup, then the dormant first-arena preparation that a later
-/// worker attachment requires. A caller that is unregistered after startup
-/// has begun is an ordinary unattached thread and receives no lazy
-/// authority; a failed lazy startup is retained exactly like a failed
-/// explicit one.
+/// `_mi_auto_process_init` explicitly before constructors; this is the
+/// transition when an allocation reaches a still-cold process first. It
+/// consumes only the published raw startup facts and runs the once body
+/// without the loader tail, so `os_preloading` stays set and delayed output
+/// stays buffered until [`initialize_process`]. It then prepares the dormant
+/// first arena that a later worker attachment requires, as the runtime's
+/// explicit startup does. A caller that is unregistered after startup has
+/// begun is an ordinary unattached thread and receives no lazy authority; a
+/// failed lazy startup is retained exactly like a failed explicit one.
 #[cfg(target_arch = "x86_64")]
 fn enter_native_allocation_operation() -> Option<admission::NativeAllocatorOperationGuard> {
     match admission::NativeAllocatorOperationGuard::enter() {
@@ -9599,7 +9623,7 @@ fn enter_native_allocation_operation() -> Option<admission::NativeAllocatorOpera
     if RUNTIME_PROCESS.state.load(Ordering::Acquire) != PROCESS_COLD {
         return None;
     }
-    if !initialize_process() || !prepare_native_later_thread_arena() {
+    if !start_process(ProcessStartEntry::FirstAllocation) || !prepare_native_later_thread_arena() {
         return None;
     }
     admission::NativeAllocatorOperationGuard::enter().ok()
@@ -17642,6 +17666,322 @@ mod tests {
                 assert_eq!(policy.purge_delay_milliseconds(), 321);
                 assert!(!policy.disallow_os_alloc(),
                     "the ambient environ is never an engine input");
+            },
+        );
+    }
+
+    /// The active process policy's source `os_preloading` scalar.
+    #[cfg(target_arch = "x86_64")]
+    fn active_process_is_preloading() -> bool {
+        // SAFETY: callers observed ACTIVE through a completed startup; only
+        // immutable ready witnesses and one atomic scalar are read.
+        let owner = unsafe { RUNTIME_PROCESS.active_owner() }.expect("the process owner is active");
+        let ready = owner.ready().expect("the active process completed readiness");
+        ready.process_backing().expect("the ready process has its VM backing").process().is_preloading()
+    }
+
+    /// An invalid `show_errors` descriptor with `verbose` enabled: source
+    /// options initialization stages one warning in the delayed buffer.
+    #[cfg(target_arch = "x86_64")]
+    static DELAYED_WARNING_ENVIRONMENT: DelayedWarningEnvironment = DelayedWarningEnvironment([
+        c"mimalloc_show_errors=bogus".as_ptr(),
+        c"mimalloc_verbose=1".as_ptr(),
+        core::ptr::null(),
+    ]);
+
+    #[cfg(target_arch = "x86_64")]
+    struct DelayedWarningEnvironment([*const core::ffi::c_char; 3]);
+
+    // SAFETY: the vector and its entries are immutable static C strings.
+    #[cfg(target_arch = "x86_64")]
+    unsafe impl Sync for DelayedWarningEnvironment {}
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn delayed_warning_environment() -> *const *const core::ffi::c_char {
+        DELAYED_WARNING_ENVIRONMENT.0.as_ptr()
+    }
+
+    /// Allocation-free capture of every default-stderr delivery.
+    #[cfg(target_arch = "x86_64")]
+    struct StartupStderrCapture {
+        calls: AtomicUsize,
+        length: AtomicUsize,
+        bytes: [core::sync::atomic::AtomicU8; 512],
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    static STARTUP_STDERR_CAPTURE: StartupStderrCapture = StartupStderrCapture {
+        calls: AtomicUsize::new(0),
+        length: AtomicUsize::new(0),
+        bytes: [const { core::sync::atomic::AtomicU8::new(0) }; 512],
+    };
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_startup_stderr(message: *const core::ffi::c_char) {
+        STARTUP_STDERR_CAPTURE.calls.fetch_add(1, Ordering::AcqRel);
+        // SAFETY: the source output primitive passes a NUL-terminated message.
+        for &byte in unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes() {
+            let index = STARTUP_STDERR_CAPTURE.length.fetch_add(1, Ordering::AcqRel);
+            if let Some(slot) = STARTUP_STDERR_CAPTURE.bytes.get(index) {
+                slot.store(byte, Ordering::Release);
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn captured_startup_stderr_contains(needle: &[u8]) -> bool {
+        let length = STARTUP_STDERR_CAPTURE.length.load(Ordering::Acquire).min(512);
+        let bytes: std::vec::Vec<u8> = STARTUP_STDERR_CAPTURE.bytes[..length].iter()
+            .map(|byte| byte.load(Ordering::Acquire)).collect();
+        bytes.windows(needle.len()).any(|window| window == needle)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn delayed_warning_startup_facts() -> NativeProcessStartupFacts {
+        // SAFETY: the reader returns an immutable static vector and the
+        // capture primitive is process-lifetime and allocation-free.
+        unsafe {
+            NativeProcessStartupFacts::new(
+                4096,
+                delayed_warning_environment,
+                RuntimeStderrOutput::new(capture_startup_stderr),
+            )
+        }
+        .expect("the native x86 fixture uses a supported base page size")
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn first_allocation_start_defers_the_loader_tail_to_runtime_startup() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::first_allocation_start_defers_the_loader_tail_to_runtime_startup",
+            || {
+                assert!(publish_native_process_startup_facts(delayed_warning_startup_facts()));
+                // `mi_malloc` -> `_mi_thread_init` -> `mi_process_init` before
+                // any `_mi_auto_process_init`: the once body alone.
+                assert!(native_round_trip(48));
+                assert!(active_process_is_preloading(),
+                    "a first-allocation start keeps the source os_preloading state");
+                assert_eq!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire), 0,
+                    "the invalid-option warning stays in the delayed buffer");
+
+                // The runtime startup call is `_mi_auto_process_init` finding
+                // `mi_process_init` done: it runs only the loader tail.
+                assert!(initialize_process());
+                assert!(!active_process_is_preloading());
+                assert!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire) > 0);
+                assert!(captured_startup_stderr_contains(
+                    b"environment option mimalloc_show_errors has an invalid value."),
+                    "post-init flushed the delayed source warning to the FILE primitive");
+                let flushed = STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire);
+
+                assert!(initialize_process(), "a repeated runtime startup is idempotent");
+                assert_eq!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire), flushed,
+                    "the loader tail runs once");
+                assert!(native_round_trip(96));
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn runtime_startup_runs_the_loader_tail_once_before_activation() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::runtime_startup_runs_the_loader_tail_once_before_activation",
+            || {
+                assert!(publish_native_process_startup_facts(delayed_warning_startup_facts()));
+                assert!(initialize_process());
+                assert!(!active_process_is_preloading(),
+                    "_mi_auto_process_init clears os_preloading before its body");
+                assert!(captured_startup_stderr_contains(
+                    b"environment option mimalloc_show_errors has an invalid value."));
+                let flushed = STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire);
+                assert!(flushed > 0);
+                assert!(native_round_trip(48));
+                assert!(initialize_process());
+                assert_eq!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire), flushed);
+            },
+        );
+    }
+
+    /// Reports the default and metadata Theap random images' weak flags.
+    #[cfg(target_arch = "x86_64")]
+    fn startup_random_images_are_weak() -> (bool, bool) {
+        // SAFETY: the initial source thread owns its default Theap and no
+        // projection of it is live between these native operations.
+        let default = unsafe { crate::types::Theap::test_random_is_weak_at(default_theap()) }
+            .expect("the initial thread has an initialized default Theap");
+        let metadata = MetaAllocator::global()
+            .test_detached_metadata_random_is_weak(MainSubprocess::global())
+            .expect("startup published the detached metadata Theap");
+        (default, metadata)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn entropy_failure_at_first_allocation_start_is_reseeded_by_runtime_startup() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::entropy_failure_at_first_allocation_start_is_reseeded_by_runtime_startup",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                // Fail the first two raw getrandom draws: the metadata and
+                // default Theap `_mi_random_init` calls take the weak path.
+                let fault = fault::install(fault::Plan::at_pair(
+                    fault::Point::Entropy, 1, fault::Point::Entropy, 1, Errno::NOSYS,
+                ));
+                assert!(native_round_trip(48), "weak random state never fails startup");
+                // Exactly the two source draws ran, and both failed.
+                assert_eq!((fault.observed(), fault.secondary_observed()), (2, 1));
+                assert_eq!(startup_random_images_are_weak(), (true, true),
+                    "both startup random images degraded instead of recursing or failing");
+
+                fault.set(fault::Plan::disabled());
+                assert!(initialize_process());
+                assert_eq!(startup_random_images_are_weak(), (false, false),
+                    "the loader tail reseeded both weak images from direct entropy");
+                assert!(native_round_trip(64));
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn entropy_failure_at_runtime_startup_is_reseeded_before_activation() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::entropy_failure_at_runtime_startup_is_reseeded_before_activation",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                let fault = fault::install(fault::Plan::at_pair(
+                    fault::Point::Entropy, 1, fault::Point::Entropy, 1, Errno::NOSYS,
+                ));
+                assert!(initialize_process());
+                // Both source draws failed inside the once body, then the
+                // tail's `_mi_random_reinit_if_weak` retried each directly:
+                // four primary observations, the last two succeeding.
+                assert_eq!((fault.observed(), fault.secondary_observed()), (4, 3));
+                assert_eq!(startup_random_images_are_weak(), (false, false));
+                fault.set(fault::Plan::disabled());
+                assert!(native_round_trip(48));
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn page_map_failure_at_first_allocation_start_is_retained_without_restart() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::page_map_failure_at_first_allocation_start_is_retained_without_restart",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                // The first raw mapping in the once body reserves the PageMap.
+                let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+                assert!(matches!(native_allocate_aligned(48, 16, false),
+                    NativePageAllocationResult::Unavailable));
+                assert_eq!(fault.observed(), 1);
+                assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_RETAINED,
+                    "a post-claim PageMap failure is terminal for this process");
+                // Observe every later primitive without failing any.
+                fault.set(fault::Plan::any_nth(usize::MAX, Errno::NOMEM));
+
+                // Neither a later allocation nor the runtime startup call can
+                // reopen the retained once body.
+                assert!(matches!(native_allocate_aligned(48, 16, false),
+                    NativePageAllocationResult::Unavailable));
+                assert!(!initialize_process());
+                assert!(!process_is_active());
+                assert_eq!(fault.observed(), 0, "no retried source startup reached a primitive");
+            },
+        );
+    }
+
+    /// First recursive allocation result observed from inside a startup
+    /// primitive: 0 none, 1 allocated, 2 unavailable, 3 other.
+    #[cfg(target_arch = "x86_64")]
+    static STARTUP_RECURSION_RESULT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+    #[cfg(target_arch = "x86_64")]
+    static STARTUP_RECURSION_REENTERED_STARTUP: core::sync::atomic::AtomicU8 =
+        core::sync::atomic::AtomicU8::new(0);
+
+    /// Performs one recursive native allocation from a startup primitive,
+    /// frees it if it was granted, and records the outcome once.
+    #[cfg(target_arch = "x86_64")]
+    fn record_startup_recursive_allocation() {
+        if STARTUP_RECURSION_RESULT.load(Ordering::Acquire) != 0 { return; }
+        let outcome = match native_allocate_aligned(32, 16, false) {
+            NativePageAllocationResult::Allocated(block) => {
+                // SAFETY: the recursive client is exclusively owned here.
+                unsafe { block.as_ptr().write_bytes(0x2d, 32) };
+                // SAFETY: `block` is this thread's exact live native client.
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                1
+            }
+            NativePageAllocationResult::Unavailable => 2,
+            _ => 3,
+        };
+        STARTUP_RECURSION_RESULT.store(outcome, Ordering::Release);
+    }
+
+    /// A FILE primitive that allocates and re-enters runtime startup while
+    /// the loader tail flushes delayed output through it.
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn allocating_startup_stderr(message: *const core::ffi::c_char) {
+        record_startup_recursive_allocation();
+        if STARTUP_RECURSION_REENTERED_STARTUP.load(Ordering::Acquire) == 0 {
+            STARTUP_RECURSION_REENTERED_STARTUP.store(
+                if initialize_process() { 1 } else { 2 }, Ordering::Release);
+        }
+        // SAFETY: forwarded source message.
+        unsafe { capture_startup_stderr(message) };
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn allocating_output_startup_facts() -> NativeProcessStartupFacts {
+        // SAFETY: immutable static reader vector; process-lifetime primitive.
+        unsafe {
+            NativeProcessStartupFacts::new(
+                4096,
+                delayed_warning_environment,
+                RuntimeStderrOutput::new(allocating_startup_stderr),
+            )
+        }
+        .expect("the native x86 fixture uses a supported base page size")
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn output_recursion_in_the_runtime_startup_tail_allocates_through_the_initial_owner() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::output_recursion_in_the_runtime_startup_tail_allocates_through_the_initial_owner",
+            || {
+                assert!(publish_native_process_startup_facts(allocating_output_startup_facts()));
+                assert!(initialize_process());
+                assert_eq!(STARTUP_RECURSION_RESULT.load(Ordering::Acquire), 1,
+                    "post-init output may allocate through the published initial owner");
+                assert_eq!(STARTUP_RECURSION_REENTERED_STARTUP.load(Ordering::Acquire), 1,
+                    "a recursive startup call returns without waiting on its own once");
+                let flushed = STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire);
+                assert_eq!(flushed, 1, "the recursive call did not flush a second time");
+                assert!(process_is_active());
+                assert!(native_round_trip(48));
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn output_recursion_in_the_deferred_loader_tail_allocates_through_the_initial_owner() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::output_recursion_in_the_deferred_loader_tail_allocates_through_the_initial_owner",
+            || {
+                assert!(publish_native_process_startup_facts(allocating_output_startup_facts()));
+                assert!(native_round_trip(48));
+                assert_eq!(STARTUP_RECURSION_RESULT.load(Ordering::Acquire), 0,
+                    "no output reached the FILE primitive before the loader tail");
+                assert!(initialize_process());
+                assert_eq!(STARTUP_RECURSION_RESULT.load(Ordering::Acquire), 1);
+                assert_eq!(STARTUP_RECURSION_REENTERED_STARTUP.load(Ordering::Acquire), 1);
+                assert_eq!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire), 1);
+                assert!(native_round_trip(64));
             },
         );
     }
