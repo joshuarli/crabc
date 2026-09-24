@@ -62,13 +62,22 @@ static void *loader(void *argument)
 
 struct child_scan { int violations; int images; };
 
-/* True when the pending dlerror is musl's fork-inconsistency text for `name`;
- * consumes the error either way. */
-static int fork_inconsistent(const char *name)
+/* Raw evidence for a failed child: stderr names the check and its observed
+ * value; only the stdout counts are compared with musl. */
+static void child_violation(int *violations, const char *check, const char *observed)
+{
+    char line[1200];
+    int length = snprintf(line, sizeof line, "fork child %ld violation: %s: %s\n",
+        (long)getpid(), check, observed ? observed : "(null)");
+    if (length > 0) (void)!write(2, line, length < (int)sizeof line ? (size_t)length : sizeof line - 1);
+    ++*violations;
+}
+
+/* True when `error` is musl's fork-inconsistency text for `name`. */
+static int fork_inconsistent(const char *name, const char *error)
 {
     static const char prefix[] = "State of ";
     static const char suffix[] = " is inconsistent due to multithreaded fork\n";
-    const char *error = dlerror();
     size_t length = strlen(name);
     return error && !strncmp(error, prefix, sizeof prefix - 1)
         && !strncmp(error + sizeof prefix - 1, name, length)
@@ -80,7 +89,7 @@ static int child_image(struct dl_phdr_info *info, size_t size, void *data)
     struct child_scan *scan = data;
     (void)size;
     const char *name = info->dlpi_name ? info->dlpi_name : "";
-    if (strstr(name, "libfr_")) ++scan->violations;
+    if (strstr(name, "libfr_")) child_violation(&scan->violations, "rolled-back image listed", name);
     const char *base = strstr(name, "libcc_ok");
     if (!base) return 0;
     ++scan->images;
@@ -89,11 +98,12 @@ static int child_image(struct dl_phdr_info *info, size_t size, void *data)
     snprintf(symbol, sizeof symbol, "cc_ok_value%d", index);
     void *handle = dlopen(base, RTLD_NOW | RTLD_NOLOAD);
     if (!handle) {
-        if (!fork_inconsistent(name)) ++scan->violations;
+        const char *error = dlerror();
+        if (!fork_inconsistent(name, error)) child_violation(&scan->violations, "listed image NOLOAD", error);
         return 0;
     }
     int *value = dlsym(handle, symbol);
-    if (!value || *value != 900 + index) ++scan->violations;
+    if (!value || *value != 900 + index) child_violation(&scan->violations, "listed image value", symbol);
     return 0;
 }
 
@@ -109,9 +119,9 @@ static int child_checks(void)
     struct child_scan scan = {0, 0};
     dl_iterate_phdr(child_image, &scan);
     int violations = scan.violations;
-    if (dlopen("libfr_root.so", RTLD_NOW | RTLD_GLOBAL)) ++violations;
+    if (dlopen("libfr_root.so", RTLD_NOW | RTLD_GLOBAL)) child_violation(&violations, "failed graph opened", "libfr_root.so");
     const char *error = dlerror();
-    if (!error || strcmp(error, failure_text)) ++violations;
+    if (!error || strcmp(error, failure_text)) child_violation(&violations, "failed graph text", error);
     if (!dlopen("libcc_ok15.so", RTLD_NOW | RTLD_GLOBAL)) {
         /* Its constructor was in flight at fork: musl names it by the path it
          * was loaded under, and its TLS reader is not usable in this child. */
@@ -119,12 +129,14 @@ static int child_checks(void)
         const char *error = dlerror();
         size_t length = error ? strlen(error) : 0;
         if (!error || strncmp(error, "State of ", 9) || length < sizeof suffix - 1
-            || strcmp(error + length - (sizeof suffix - 1), suffix)) ++violations;
+            || strcmp(error + length - (sizeof suffix - 1), suffix)) child_violation(&violations, "new load", error);
         return violations;
     }
     int value = 0;
     pthread_t thread;
-    if (pthread_create(&thread, 0, child_thread, &value) || pthread_join(thread, 0) || value != 815) ++violations;
+    int created = pthread_create(&thread, 0, child_thread, &value);
+    if (created) child_violation(&violations, "thread create", strerror(created));
+    else if (pthread_join(thread, 0) || value != 815) child_violation(&violations, "thread TLS", value == -1 ? "no reader" : "wrong value");
     return violations;
 }
 
@@ -144,7 +156,10 @@ static int threaded(void)
         int status = -1;
         if (waitpid(child, &status, 0) != child) return 5;
         ++children;
-        if (!WIFEXITED(status) || WEXITSTATUS(status)) ++failed;
+        if (!WIFEXITED(status) || WEXITSTATUS(status)) {
+            ++failed;
+            fprintf(stderr, "fork round %d child wait status %#x\n", round, (unsigned)status);
+        }
     }
     atomic_store(&forks_done, 1);
     pthread_join(thread, 0);
