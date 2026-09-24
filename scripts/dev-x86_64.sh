@@ -606,6 +606,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
   owned-credentials-profile [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify the selected credential-setter profile against musl
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
+  owned-static-replacement [STATIC_SYSROOT]  link application replacements of libc functions through the installed static archive against musl
   owned-stdio-allocator-interposition  qualify dynamic FILE allocation ownership against musl
   owned-mimalloc-startup-errno  qualify allocator lifecycle errno preservation against musl
   owned-signal-handler-fork  qualify early worker signal delivery and fork against musl
@@ -7260,7 +7261,7 @@ case "$command" in
     owned-process-globals) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
-    owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
+    owned-error-reporting|owned-static-replacement|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation|owned-protocol-database|owned-resolver-family) ;;
     owned-package-corpus|owned-package-corpus-input|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family) ;;
@@ -7527,6 +7528,13 @@ case "$command" in
     general-dynamic-dlopen)
         prepare_general_dynamic_dlopen_arguments "$@"
         set -- "${GENERAL_DYNAMIC_DLOPEN_ARGUMENTS[@]}"
+        ;;
+    owned-static-replacement)
+        [ "$#" -le 1 ] || fail "usage: ./scripts/dev-x86_64.sh owned-static-replacement [STATIC_SYSROOT]"
+        if [ "$#" -eq 1 ]; then
+            static_replacement_product="$(translate_owned_posix_product "$1")" || exit 2
+            set -- "$static_replacement_product"
+        fi
         ;;
     ldso-static-dlfcn)
         [ "$#" -le 1 ] || fail "usage: ./scripts/dev-x86_64.sh ldso-static-dlfcn [STATIC_SYSROOT]"
@@ -9904,6 +9912,10 @@ PY
         [ "$#" -eq 0 ] || fail "owned-error-reporting takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_error_reporting.sh
+        ;;
+    owned-static-replacement)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_static_replacement.sh "$@"
         ;;
     owned-stdio-allocator-interposition)
         [ "$#" -eq 0 ] || fail "owned-stdio-allocator-interposition takes no arguments"

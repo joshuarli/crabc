@@ -1117,6 +1117,65 @@ mod allocator {
         unsafe { errno::set_errno(value) };
     }
 
+    // A local alias beside the wrapper's own weak `malloc`. The assembler
+    // resolves it to this object's definition, so it names libc's body even
+    // when the application's `malloc` preempts the public symbol. Its only
+    // users, the weak (hence never imported or inlined) `calloc` and
+    // `aligned_alloc`, share this object.
+    core::arch::global_asm!(
+        ".type __crabc_x86_c_allocator_malloc_body,@function",
+        ".set __crabc_x86_c_allocator_malloc_body, malloc",
+    );
+
+    /// The final address of the public `name` symbol, read from its GOT
+    /// slot, which honors ELF preemption in the static link and through the
+    /// dynamic loader alike.
+    macro_rules! public_entry {
+        ($name:literal) => {{
+            let address: usize;
+            // SAFETY: a RIP-relative load of this image's GOT slot for
+            // `$name`; the slot is immutable once relocation has completed.
+            unsafe {
+                core::arch::asm!(
+                    concat!("mov {0}, qword ptr [rip + ", $name, "@GOTPCREL]"),
+                    out(reg) address,
+                    options(nomem, nostack, preserves_flags, pure),
+                )
+            };
+            address
+        }};
+    }
+
+    /// Whether the resolved public `malloc` is not this wrapper's body.
+    #[inline]
+    fn cabi_application_malloc_replaced() -> bool {
+        let body: usize;
+        // SAFETY: a RIP-relative address computation of the local alias.
+        unsafe {
+            core::arch::asm!(
+                "lea {0}, [rip + __crabc_x86_c_allocator_malloc_body]",
+                out(reg) body,
+                options(nomem, nostack, preserves_flags, pure),
+            )
+        };
+        public_entry!("malloc") != body
+    }
+
+    /// Call the resolved public `malloc` through its GOT address as an
+    /// opaque pointer. A declared `malloc` is a recognized library call, and
+    /// LLVM would fold it plus zeroing back into `calloc`, the caller.
+    ///
+    /// # Safety
+    /// As for C `malloc`.
+    #[inline]
+    unsafe fn cabi_public_malloc(size: SizeT) -> *mut c_void {
+        let address = public_entry!("malloc");
+        // SAFETY: the resolved `malloc` has the C `malloc` signature.
+        let entry: unsafe extern "C" fn(SizeT) -> *mut c_void =
+            unsafe { core::mem::transmute(address) };
+        unsafe { entry(size) }
+    }
+
     include!("../../allocator_mimalloc.rs");
 
     // The static archive emits one member per Rust module and extracts a

@@ -257,6 +257,12 @@ dynamic allocation-boundary check for caller-owned `asprintf` bytes, passwd
 temporary `getline` cleanup, and AIO list-state ownership. Its [component record](owned-c-allocation-interposition.md)
 keeps those executable allocator edges distinct from the FILE-lifetime receipt.
 
+`./scripts/dev-x86_64.sh owned-static-replacement [STATIC_SYSROOT]` links
+programs that define libc functions themselves, starting with the malloc
+family, through the installed static archive in static and static-PIE mode
+and requires pinned musl's link result and transcript; see
+[owned-static-replacement.md](owned-static-replacement.md).
+
 `./scripts/dev-x86_64.sh owned-c-abi-compat [--static-sysroot STATIC] [DYNAMIC]`
 runs the selected `libc.c-abi-compat` search, queue, hash-table, `__qsort_r`,
 gettext, diagnostic-string, legacy-observation, and malloc-family policy

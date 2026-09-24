@@ -117,9 +117,11 @@ evidence from `./scripts/dev-x86_64.sh owned-native-allocator-fork`.
 Performance qualification remains required, and neither the allocator-level
 tests nor the installed probe qualifies automatic destruction.
 
-### Application allocator replacement in the native-shadow libc
+### Application allocator replacement in the owned libc
 
-The native-shadow libc follows musl 1.2.6's replacement contract: a program
+The native-shadow libc, and the default C-backend wrapper
+(`libc/src/allocator_mimalloc.rs`) in the owned x86 static product, follow
+musl 1.2.6's replacement contract: a program
 may replace `malloc`, `free` and `realloc`, and optionally `calloc`, the aligned
 entries and `malloc_usable_size`. Libc's own derived entries then reach the
 replacement through the public symbols. `calloc` allocates with public
@@ -128,13 +130,14 @@ and `memalign` call public `aligned_alloc`, and `valloc` calls public
 `memalign`. Libc's own `aligned_alloc` refuses with `ENOMEM` once `malloc` is
 replaced. Musl makes that refusal only in dynamic processes: a static musl
 program with a replaced `malloc` still receives an internal mallocng pointer
-from `aligned_alloc`, which its `free` cannot own. The native static archive
-refuses there too, so no native pointer reaches an application allocator.
+from `aligned_alloc`, which its `free` cannot own. The owned static archives
+refuse there too, so no backend pointer reaches an application allocator.
 
 The static archive binds the malloc family weak, because its entries share
 one object where musl uses separate archive members. libc.so keeps musl's
 bindings. `./scripts/dev-x86_64.sh owned-allocator-override` is the installed
-evidence.
+native-shadow evidence; `./scripts/dev-x86_64.sh owned-static-replacement`
+covers the default static product.
 
 ### Metadata release provenance and exclusive-arena Theaps
 

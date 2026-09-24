@@ -26,9 +26,10 @@
 //!
 //! Linux 5.10 provides each legacy x86 syscall used by this leaf, so it uses
 //! musl's direct x86 forms rather than a newer-ABI fallback. `getcwd` retains
-//! musl's caller-buffer validation and unreachable-directory rejection but
-//! deliberately rejects its allocator-requiring null-buffer extension with
-//! `EINVAL`; no C allocator boundary is selected by this static archive.
+//! musl's caller-buffer validation and unreachable-directory rejection. Its
+//! null-buffer extension copies the name through the public `strdup` where
+//! the owned runtimes select that C allocation client; a build without it
+//! rejects a null buffer with `EINVAL`.
 
 use core::ffi::{c_char, c_int, c_long, c_uint};
 use core::mem::size_of;
@@ -131,10 +132,25 @@ pub unsafe extern "C" fn chroot(path: *const c_char) -> c_int {
 /// # Safety
 ///
 /// `buffer` must designate writable `capacity` bytes for the syscall duration
-/// and remain valid while its result is inspected. This static no-allocation
-/// leaf deliberately rejects musl's null-buffer allocation extension.
+/// and remain valid while its result is inspected, or be null. A null buffer
+/// follows musl: `capacity` is ignored, the name is read into a `PATH_MAX`
+/// stack buffer, and the result is a `strdup` copy the caller frees.
 #[no_mangle]
 pub unsafe extern "C" fn getcwd(buffer: *mut c_char, capacity: usize) -> *mut c_char {
+    #[cfg(crabc_x86_allocator_string_duplication)]
+    if buffer.is_null() {
+        unsafe extern "C" {
+            fn strdup(source: *const c_char) -> *mut c_char;
+        }
+        let mut name = [0 as c_char; 4096];
+        // SAFETY: the local buffer is writable for its full length.
+        let result = unsafe { getcwd(name.as_mut_ptr(), name.len()) };
+        if result.is_null() {
+            return result;
+        }
+        // SAFETY: successful getcwd left a NUL-terminated name in `name`.
+        return unsafe { strdup(name.as_ptr()) };
+    }
     if buffer.is_null() || capacity == 0 {
         return null_with_errno(EINVAL);
     }

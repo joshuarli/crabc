@@ -42,6 +42,15 @@ unsafe fn mimalloc_failed<T>(ptr: *mut T) -> *mut T {
     ptr
 }
 
+// Application replacement follows musl 1.2.6. A static program may define
+// `malloc`, `free` and `realloc`, and optionally `calloc`, `reallocarray` and
+// the aligned entries. Musl's libc.a keeps each of these in its own member,
+// so those definitions link without a duplicate symbol. The installed x86
+// static archive binds every entry here weak, as the native-shadow entries
+// are: an application definition then preempts it even when this member is
+// extracted for another entry, and libc's own calls stay ordinary
+// preemptible references that reach the replacement rather than an inlined
+// backend call. libc.so keeps musl's bindings: weak `malloc`, strong others.
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
@@ -52,6 +61,7 @@ pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
 }
 
 #[no_mangle]
+#[cfg_attr(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)), linkage = "weak")]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     if !ptr.is_null() {
         // POSIX permits cleanup code to call free without disturbing a prior
@@ -64,6 +74,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 }
 
 #[no_mangle]
+#[cfg_attr(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)), linkage = "weak")]
 pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
     let total = match count.checked_mul(size) {
         Some(value) => value,
@@ -81,10 +92,22 @@ pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
         return malloc(0);
     }
 
+    // With `malloc` replaced, musl's `calloc` allocates through the public
+    // `malloc` and zeroes, so the result belongs to the replacement.
+    #[cfg(target_arch = "x86_64")]
+    if cabi_application_malloc_replaced() {
+        let allocation = cabi_public_malloc(total);
+        if !allocation.is_null() {
+            core::ptr::write_bytes(allocation.cast::<u8>(), 0, total);
+        }
+        return allocation;
+    }
+
     mimalloc_failed(libmimalloc_sys::mi_zalloc(total))
 }
 
 #[no_mangle]
+#[cfg_attr(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)), linkage = "weak")]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_void {
     // Musl sends a null input through malloc, so retain this wrapper's
     // explicit 16-byte natural-alignment boundary for realloc(NULL, n).
@@ -106,6 +129,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_vo
 }
 
 #[no_mangle]
+#[cfg_attr(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)), linkage = "weak")]
 pub unsafe extern "C" fn reallocarray(
     ptr: *mut c_void,
     count: SizeT,
@@ -124,7 +148,19 @@ pub unsafe extern "C" fn reallocarray(
 }
 
 #[no_mangle]
+#[cfg_attr(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)), linkage = "weak")]
 pub unsafe extern "C" fn aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_void {
+    // Once `malloc` is replaced, mallocng's `DISABLE_ALIGNED_ALLOC` refuses
+    // after its power-of-two test, so no backend pointer reaches the
+    // application's `free`. Musl applies it in dynamic processes only; the
+    // x86 static archive refuses too, as the native-shadow libc does
+    // (compat/allocator/known-differences.md).
+    #[cfg(target_arch = "x86_64")]
+    if cabi_application_malloc_replaced() {
+        let error = if alignment != 0 && !mimalloc_is_power_of_two(alignment) { EINVAL } else { ENOMEM };
+        cabi_set_allocator_errno(error);
+        return null_mut();
+    }
     // musl's `(align & -align) != align` test accepts zero, then normalizes
     // it to its natural allocator alignment. Keep that observable historical
     // behavior without forwarding an invalid zero alignment into mimalloc.
@@ -149,6 +185,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_
 }
 
 #[no_mangle]
+#[cfg_attr(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)), linkage = "weak")]
 pub unsafe extern "C" fn posix_memalign(
     result: *mut *mut c_void,
     alignment: SizeT,
@@ -183,6 +220,7 @@ pub unsafe extern "C" fn posix_memalign(
 }
 
 #[no_mangle]
+#[cfg_attr(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)), linkage = "weak")]
 pub unsafe extern "C" fn memalign(alignment: SizeT, size: SizeT) -> *mut c_void {
     // Musl keeps this historical entry as a thin adapter. Its zero-alignment
     // case retains the allocator's ordinary natural-alignment behavior rather
@@ -195,6 +233,7 @@ pub unsafe extern "C" fn memalign(alignment: SizeT, size: SizeT) -> *mut c_void 
 }
 
 #[no_mangle]
+#[cfg_attr(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)), linkage = "weak")]
 pub unsafe extern "C" fn valloc(size: SizeT) -> *mut c_void {
     // The active Linux/AArch64 runtime and staged Linux/x86-64 runtime both
     // select a 4 KiB base page. This legacy adapter changes only allocation

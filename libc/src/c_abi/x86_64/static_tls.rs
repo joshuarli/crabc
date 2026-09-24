@@ -454,7 +454,13 @@ impl StaticInitialTlsPlan {
                 if header.memory_size == 0 {
                     (core::ptr::null(), 0, 0, core::mem::align_of::<usize>())
                 } else {
-                    if !unsafe {
+                    // A template with no initialized bytes is never read:
+                    // the block is zero-filled. Linkers give a `.tbss`-only
+                    // PT_TLS an address that no PT_LOAD need cover (LLD puts
+                    // it in the gap before the writable segment), as when a
+                    // static program replaces the whole malloc family and
+                    // the allocator's `.tdata` is not linked.
+                    if header.file_size != 0 && !unsafe {
                         virtual_range_within_load(
                             phdr_address,
                             phnum,
