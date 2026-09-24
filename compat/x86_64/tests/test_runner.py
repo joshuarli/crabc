@@ -2076,6 +2076,7 @@ unsafe fn join_selected_worker_inner(
             'owned-loader-short-stack|owned-dynamic-sysroot',
             'owned-dynamic-pthread-exit',
             'owned-dynamic-fork',
+            'runtime-private-facades',
             'materialized-dynamic-sysroot',
             'crt-object-bundle',
             'crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto',

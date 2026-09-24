@@ -10,8 +10,9 @@
 //! Every callback reports failure as a copied `TextV1` diagnostic (loader)
 //! or a positive Linux/pthread error number (thread and memory stream). None
 //! transports a public C sentinel, borrowed loader string, `link_map`, `FILE`
-//! layout, or TLS `errno` across the boundary, and none changes the calling
-//! thread's C `errno` or pending `dlerror` state:
+//! layout, or TLS `errno` across the boundary. The table itself neither
+//! reports through the caller's C `errno` nor touches its pending `dlerror`
+//! (application constructors run by a load remain free to change `errno`):
 //!
 //! - Loader callbacks call the interpreter's private runtime operations that
 //!   `general_dlfcn` also uses, under the same cancellation guard. Their
@@ -25,6 +26,12 @@
 //!
 //! Only the installed dynamic product selects this table: the static product
 //! has no loader owner for the table's loader half.
+//!
+//! Output pointers are checked for null where the wire permits it; any other
+//! pointer argument is caller-owned storage with its exact `crabc_core::runtime`
+//! layout, valid and unaliased for the synchronous call, by the table contract
+//! the facade upholds. The per-call SAFETY notes below cover only the ownership
+//! boundaries beyond that contract.
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
@@ -310,6 +317,7 @@ struct SnapshotPass {
     additions: u64,
     removals: u64,
     stable: bool,
+    malformed: bool,
 }
 
 /// Copies one borrowed record. It calls no application code and reads only
@@ -319,7 +327,7 @@ unsafe extern "C" fn copy_image(info: *mut c_void, size: usize, data: *mut c_voi
     // loader passes one complete public `dl_phdr_info` for this callback.
     let pass = unsafe { &mut *data.cast::<SnapshotPass>() };
     if info.is_null() || size < core::mem::size_of::<DlPhdrInfo>() {
-        pass.stable = false;
+        pass.malformed = true;
         return 1;
     }
     let info = unsafe { &*info.cast::<DlPhdrInfo>() };
@@ -373,10 +381,15 @@ unsafe extern "C" fn loader_snapshot(
             additions: 0,
             removals: 0,
             stable: true,
+            malformed: false,
         };
         // SAFETY: the callback only writes records below `capacity` and the
         // pass outlives this synchronous traversal.
         let _ = unsafe { __crabc_x86_64_runtime_iterate(copy_image, ptr::addr_of_mut!(pass).cast()) };
+        if pass.malformed {
+            unsafe { write_message(error, b"loader image record is malformed") };
+            return -1;
+        }
         if !pass.stable {
             continue;
         }

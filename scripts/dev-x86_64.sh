@@ -663,6 +663,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-dynamic-sysroot  qualify both clean dynamic builds and extracted runtime
   owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
   owned-dynamic-fork  test installed loader, TLS and pthread fork transactions
+  runtime-private-facades [DYNAMIC_SYSROOT]  run crabc-rs RuntimeV1 dl/thread/cfile facades through an installed dynamic product
   materialized-dynamic-sysroot  build and test the installed initial-graph shared runtime
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   unwinder-build  build and audit the pinned standalone Rust unwind archive (not runtime qualification)
@@ -6994,6 +6995,7 @@ case "$command" in
     owned-loader-short-stack|owned-dynamic-sysroot) ;;
     owned-dynamic-pthread-exit) ;;
     owned-dynamic-fork) ;;
+    runtime-private-facades) ;;
     materialized-dynamic-sysroot) ;;
     crt-object-bundle) ;;
     unwinder-build|unwinder-cleanup|unwinder-owned-cleanup|unwinder-metadata-bounds|unwinder-eh-frame-bounds|unwinder-dynamic-bounds|unwinder-indirect-personality-bounds|unwinder-metadata-target-bounds|unwinder-frame-bounds) ;;
@@ -9679,6 +9681,16 @@ PY
     owned-dynamic-fork)
         [ "$#" -eq 0 ] || fail "owned-dynamic-fork takes no arguments"
         run_in_container bash /workspace/compat/x86_64/run_owned_dynamic_fork.sh
+        ;;
+    runtime-private-facades)
+        [ "$#" -le 1 ] || fail "usage: ./scripts/dev-x86_64.sh runtime-private-facades [DYNAMIC_SYSROOT]"
+        ensure_image
+        if [ "$#" -eq 1 ]; then
+            facade_product="$(translate_owned_posix_product "$1")" || exit 2
+            run_in_container python3 -B /workspace/compat/x86_64/runtime_private_facades.py --dynamic-sysroot "$facade_product"
+        else
+            run_in_container python3 -B /workspace/compat/x86_64/runtime_private_facades.py
+        fi
         ;;
     owned-dynamic-pthread-exit)
         [ "$#" -eq 0 ] || fail "owned-dynamic-pthread-exit takes no arguments"

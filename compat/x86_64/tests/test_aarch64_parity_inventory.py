@@ -129,8 +129,8 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             report["capability_state_counts"],
             {
                 "implemented-foundation": 180,
-                "missing": 11,
-                "selected-private": 32,
+                "missing": 10,
+                "selected-private": 33,
             },
         )
         self.assertEqual(len(report["families"]), 26)
@@ -229,11 +229,16 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(runtime_loader["x86_family"], "ldso.dynamic-runtime")
         self.assertEqual(runtime_loader["contract_state"], "selected-private")
+        private_facades = next(
+            row for row in report["capabilities"] if row["id"] == "runtime.private-facades"
+        )
+        self.assertEqual(private_facades["x86_family"], "ldso.dynamic-runtime")
+        self.assertEqual(private_facades["contract_state"], "selected-private")
         dynamic_runtime = next(
             row for row in report["families"] if row["id"] == "ldso.dynamic-runtime"
         )
         self.assertEqual(dynamic_runtime["contract_state"], "selected-private")
-        self.assertEqual(dynamic_runtime["verified_slice_count"], 1)
+        self.assertEqual(dynamic_runtime["verified_slice_count"], 2)
         self.assertEqual(dynamic_runtime["verified_artifact_count"], 16)
         text_math = next(
             row for row in report["families"]
@@ -360,7 +365,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
-            54,
+            55,
         )
         self.assertNotIn(
             {"family": "libc.posix-runtime", "id": "static-c-environment"},

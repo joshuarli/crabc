@@ -429,6 +429,19 @@ only with the same selected static/dynamic products and public ELF cohort; it
 does not turn the private implementation spellings into new installed ABI
 providers or close pthread lifecycle, family, or public-support evidence.
 
+## Rust RuntimeV1 facades
+
+`./scripts/dev-x86_64.sh runtime-private-facades [DYNAMIC_SYSROOT]` proves the
+frozen `runtime.private-facades` mapping: `crabc_rs::{dl, runtime_thread,
+cfile}` reach the installed dynamic libc's loader, pthread, and stream owners
+only through the private `__crabc_runtime_v1` table. It checks the facade's
+normal dependency graph and each release fat-LTO probe object's imports, then
+runs the three unchanged frozen AArch64 probes and three x86 differentials
+against the same product's public dlfcn, pthread, and stdio results in PIE and
+non-PIE executables through kernel and direct interpreter entry. Without an
+argument it builds a fresh product; raw outputs and `report.json` stay in the
+printed evidence directory. It does not qualify `ldso.dynamic-runtime`.
+
 ## Installed descriptor control
 
 `./scripts/dev-x86_64.sh owned-message-queues` checks installed POSIX queue

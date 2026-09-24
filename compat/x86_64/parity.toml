@@ -20001,6 +20001,50 @@ oracle = [
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Initial stack, mmap/mprotect/munmap rollback, and ARCH_SET_FS transition boundary." },
 ]
 
+[[family.verified_slice]]
+id = "runtime.private-facades.native-runtime-v1"
+description = "Private native x86 selected-private `runtime.private-facades` slice inside still-planned `ldso.dynamic-runtime`. The installed owned dynamic libc exports the frozen private `__crabc_runtime_v1` table (`crabc_core::runtime::RuntimeV1`) from `runtime_facade_v1.rs`, and `crabc_rs::{dl, runtime_thread, cfile}` consume it on x86-64 without target-specific code. Loader callbacks call the interpreter's private runtime open/symbol/close/address/information/iterate operations under the dlfcn cancellation guard, then copy musl-shaped diagnostics, recorded names, and a restart-on-publication image snapshot into caller-owned wire storage without consuming `dlerror`; thread callbacks call the selected pthread create/join/detach/identity/cancellation/TSD owners and transport positive pthread errors; memory-stream callbacks call the owned stream engine and restore the caller's errno. The runner requires the facade's normal graph to be exactly crabc-rs/crabc-core/bitflags and each release fat-LTO probe object to import only the private getter plus memory primitives. It runs the three unchanged frozen AArch64 probes plus x86 loader, thread, and memory-stream differentials against the same product's public dlfcn/pthread/stdio results in PIE and non-PIE executables through kernel and direct interpreter entry. This does not qualify the loader family, the dlfcn C ABI capabilities, a static-product table, a product cohort, or public x86 support."
+capabilities = ["runtime.private-facades"]
+source_owners = [
+  "crabc-core/src/runtime.rs",
+  "crabc-rs/Cargo.toml",
+  "crabc-rs/src/lib.rs",
+  "crabc-rs/src/dl.rs",
+  "crabc-rs/src/runtime_thread.rs",
+  "crabc-rs/src/cfile.rs",
+  "crabc-rs/examples/loader_runtime_probe.rs",
+  "crabc-rs/examples/runtime_thread_probe.rs",
+  "crabc-rs/examples/cfile_direct_probe.rs",
+  "crabc-rs/examples/x86_64_loader_facade_probe.rs",
+  "crabc-rs/examples/x86_64_thread_facade_probe.rs",
+  "crabc-rs/examples/x86_64_cfile_facade_probe.rs",
+  "libc/src/c_abi/x86_64/runtime_facade_v1.rs",
+  "libc/src/c_abi/x86_64/general_dlfcn.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "tests/fixtures/loader_runtime_test.c",
+  "tests/fixtures/runtime_thread_test.c",
+  "tests/fixtures/cfile_runtime_test.c",
+  "tests/fixtures/loader_dlfcn_basic_dso.c",
+  "compat/x86_64/runtime_private_facades.py",
+  "compat/x86_64/runtime_private_facades_loader.c",
+  "compat/x86_64/runtime_private_facades_thread.c",
+  "compat/x86_64/runtime_private_facades_cfile.c",
+  "compat/x86_64/runtime_private_facades_tls_dso.c",
+  "scripts/build_x86_64_owned_dynamic_sysroot.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The private table is the frozen append-only RuntimeV1 wire: version 1 with the full introspection-bearing size, fixed 256-byte TextV1 copies with a truncation bit, opaque u64 thread handles equal to the selected thread-pointer `pthread_t`, 128 key slots, and typed memory-stream mode/seek values rather than C mode strings or `whence` constants.",
+  "Loader operations bind the interpreter's private `__crabc_x86_64_runtime_*` resolution already admitted for shared libc. The table rejects null and RTLD_NEXT symbol handles, and its snapshot copies public `dl_phdr_info` records through a libc-internal callback, restarting when a runtime load publishes between records, so no application callback runs for the facade.",
+  "Each probe is a release fat-LTO ET_REL x86-64 object linked by the installed `crabc-cc-dynamic` driver. Its only undefined runtime symbols are `__crabc_runtime_v1` plus compiler memory primitives and declared fixture oracle callbacks; public dlfcn, pthread, stdio, allocator, and `__errno_location` imports are rejected.",
+]
+x86_header_prerequisites = ["No installed header declares the table or its wire types. Applications reach it only through crabc-rs's opt-in runtime-loader, runtime-thread, and runtime-stdio features in a process using the installed dynamic libc; the static product selects no table."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh runtime-private-facades", scope = "Builds a fresh installed owned dynamic product, verifies its libc exports the private getter, checks the facade's normal dependency graph, and extracts and inspects six release fat-LTO probe objects. The unchanged frozen AArch64 loader-runtime, runtime-thread, and CFile probes pass with their original fixtures. The x86 differentials compare copied open/symbol diagnostics, dladdr/dlinfo/dl_iterate_phdr values, TLS symbol and snapshot addresses, and musl retained-close/global-scope lifecycle with public dlfcn; thread identity with public pthread_self plus typed spawn, TSD destructors, key exhaustion as EAGAIN, deferred cancellation, disabled cancellation, and detach/drop-detach; and nine fmemopen scenarios' traces and bytes with public stdio, plus typed direction rejection. Pending dlerror and errno survive facade calls. All six run in PIE and non-PIE executables through kernel and direct interpreter entry." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 dlfcn, pthread, TSD, and fmemopen contracts as implemented by the same installed x86 product's public C ABI", role = "In-process differential oracle for every copied facade observation; the private table itself has no musl counterpart." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "ET_REL probe objects, PT_INTERP kernel and direct entry, and dl_phdr_info/link_map/Dl_info layouts." },
+]
+
 [[family.verified_artifact]]
 id = "ldso-initial-tls"
 description = "Private native x86 Variant-II initial-TLS interpreter artifact within still-planned `ldso.dynamic-runtime`, not the `crabc-ldso` target. A fixed main PIE (without PT_TLS) -> mid.so -> leaf.so graph maps exactly two GNU-Dynamic TLS DSO images. The candidate assigns one-based module IDs only to the TLS-bearing images, lays their PT_TLS images below TP with the musl 1.2.6 initial-layout alignment phase, copies initialized data, zeroes TBSS, installs a private immutable DTV plus module-size table at `%fs`, and sets ARCH_SET_FS only after all graph relocations and before dependency constructors. It accepts only R_X86_64_DTPMOD64/R_X86_64_DTPOFF64 and the fixed graph's __tls_get_addr JUMP_SLOT route; the private resolver rejects absent modules and offsets outside a module's recorded PT_TLS.p_memsz. The TLS-free candidate interpreter has no external runtime dependency; its exact two-DSO DT_NEEDED graph runs under `env -i`, while the pinned musl 1.2.6 static __tls_get_addr object supplies the naked reference main's resolver without a libc DT_NEEDED edge. The runner proves initialized values, 4096-byte alignment, TBSS zeroing and mutation, module-ID/DTV ownership, and that only the candidate resolves the direct main import from its interpreter. It fails closed for p_filesz > p_memsz, non-power-of-two alignment, p_offset/p_vaddr phase mismatch, duplicate PT_TLS, initialized TLS outside a readable file-backed PT_LOAD, nonzero DTPMOD addend, DTPOFF outside PT_TLS.p_memsz, R_X86_64_TPOFF64, and DF_STATIC_TLS. It excludes initial-exec/TPOFF admission beyond that rejection, TLSDESC, DTV growth, dlopen, dynamic thread allocation, pthread/TCB parity, loader/libc RuntimeV1 bridging, a general loader, dynamic CRT/sysroot, full x86-64 parity, and public x86 support."

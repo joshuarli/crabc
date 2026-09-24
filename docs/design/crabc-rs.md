@@ -558,6 +558,17 @@ permission to dereference an image after later loader activity. Older
 the legacy prefix-size check; callers gate the new fields on the complete
 extension size.
 
+On x86-64 the installed dynamic libc provides the same table from
+`libc/src/c_abi/x86_64/runtime_facade_v1.rs`. Its snapshot copies each image
+through the interpreter's private program-header traversal with a libc-owned
+copy callback, which runs no Rust or application code. The x86 loader locks
+per record rather than across the traversal, so the copy restarts whenever a
+runtime load publishes between two records; a returned snapshot reflects one
+publication generation. Copied names are the loader's recorded paths, and a
+successful close keeps pinned musl's retained mapping and exit-time
+destructors. `./scripts/dev-x86_64.sh runtime-private-facades` owns the
+installed-product evidence for all three `RuntimeV1` consumers.
+
 ## Scope-resolved C-only families
 
 The remaining C POSIX regex, process-control, process-wide credential and

@@ -201,28 +201,37 @@ def symbols(nm: str, path: Path, *flags: str) -> list[str]:
     return sorted(names)
 
 
-def extract_lto_object(tools: dict[str, str], archive: Path, example: str, output: Path) -> Path:
-    """Select the one fat-LTO member which holds every Rust crate but builtins."""
+def select_lto_member(members: list[str], example: str) -> str:
+    """Select the one fat-LTO member which holds every Rust crate but builtins.
+
+    A release staticlib also carries compiler-builtins members; those are not
+    part of the facade object and are never linked from this archive.
+    """
 
     pattern = re.compile(rf"{re.escape(example)}-[0-9a-f]+\.{re.escape(example)}\.[0-9a-f]+-cgu\.0\.rcgu\.o")
-    members = [member for member in run([tools["ar"], "t", str(archive)]).splitlines()
-               if pattern.fullmatch(member)]
-    if len(members) != 1:
-        fail(f"{archive.name} must hold exactly one fat-LTO facade member: {members}")
+    selected = [member for member in members if pattern.fullmatch(member)]
+    if len(selected) != 1:
+        fail(f"lib{example}.a must hold exactly one fat-LTO facade member: {selected}")
+    return selected[0]
+
+
+def extract_lto_object(tools: dict[str, str], archive: Path, example: str, output: Path) -> Path:
+    member = select_lto_member(run([tools["ar"], "t", str(archive)]).splitlines(), example)
     output.mkdir(parents=True, exist_ok=True)
-    run([tools["ar"], "x", str(archive), members[0]], cwd=output)
-    extracted = output / members[0]
+    run([tools["ar"], "x", str(archive), member], cwd=output)
     selected = output / f"{example}.o"
-    extracted.rename(selected)
+    (output / member).rename(selected)
     return selected
 
 
-def inspect_probe(tools: dict[str, str], probe: Probe, obj: Path) -> dict[str, object]:
-    header = run([tools["readobj"], "--file-headers", str(obj)])
-    if "Format: elf64-x86-64" not in header or "Type: Relocatable" not in header:
-        fail(f"{obj.name} is not an x86-64 ELF relocatable object")
-    undefined = symbols(tools["nm"], obj, "--undefined-only")
-    defined = symbols(tools["nm"], obj, "--defined-only", "--extern-only")
+def admit_probe_symbols(probe: Probe, undefined: list[str], defined: list[str]) -> None:
+    """Fail closed unless the object reaches runtime state only via RuntimeV1.
+
+    The forbidden-name check runs first, so a fixture callback declaration can
+    never admit a public C ABI or errno import. After fat LTO, the facade's
+    own definitions must be internal: only probe entries remain global.
+    """
+
     if PRIVATE_RUNTIME not in undefined:
         fail(f"{probe.example} does not import the private runtime getter")
     forbidden = sorted(FORBIDDEN_IMPORTS.intersection(undefined))
@@ -237,6 +246,15 @@ def inspect_probe(tools: dict[str, str], probe: Probe, obj: Path) -> dict[str, o
     extra = sorted(set(defined) - probe.entries - FACADE_GLOBAL_DEFINITIONS)
     if extra:
         fail(f"{probe.example} did not internalize facade definitions: {extra}")
+
+
+def inspect_probe(tools: dict[str, str], probe: Probe, obj: Path) -> dict[str, object]:
+    header = run([tools["readobj"], "--file-headers", str(obj)])
+    if "Format: elf64-x86-64" not in header or "Type: Relocatable" not in header:
+        fail(f"{obj.name} is not an x86-64 ELF relocatable object")
+    undefined = symbols(tools["nm"], obj, "--undefined-only")
+    defined = symbols(tools["nm"], obj, "--defined-only", "--extern-only")
+    admit_probe_symbols(probe, undefined, defined)
     return {
         "features": list(probe.features),
         "object": obj.name,
