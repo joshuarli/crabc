@@ -447,6 +447,7 @@ for mode in threaded constructor; do
     if [ "$status" -ne 0 ] || ! cmp -s "$work/fork-$mode-oracle.stdout" "$work/fork-$mode-candidate.stdout"; then
         printf 'general load fork (%s): FAIL status=%s; evidence: %s\n' "$mode" "$status" "$work" >&2
         diff -u "$work/fork-$mode-oracle.stdout" "$work/fork-$mode-candidate.stdout" >&2 || true
+        cat "$work/fork-$mode-oracle.stderr" "$work/fork-$mode-candidate.stderr" >&2
         exit 1
     fi
     grep -Fxq 'fork contract: complete' "$work/fork-$mode-candidate.stdout"
