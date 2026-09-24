@@ -16,6 +16,13 @@
  * crabc's selected profile must return -1/EOPNOTSUPP. The runner keeps those
  * intentional alias transcripts separate from the raw-equivalent direct
  * differential.
+ *
+ * The `transitions` subcase runs as the container's real root, outside a user
+ * namespace, and performs actual ID changes in disposable single-threaded
+ * children: supplementary-group replacement and clearing, distinct
+ * real/effective/saved uid and gid words, unprivileged saved-ID exchanges and
+ * EPERM rejection, and root `setuid`/`setgid` collapsing all three IDs. Every
+ * step records the raw status and errno plus the raw kernel IDs afterward.
  */
 
 #ifndef _GNU_SOURCE
@@ -317,6 +324,72 @@ static int run_cases(const char *scenario,
     return 1;
 }
 
+static void print_transition(const char *name, int status, int error)
+{
+    struct credential_ids ids = { 0 };
+    gid_t groups[256] = { 0 };
+    long count = raw_syscall3(SYS_getgroups, 256, (long)groups, 0);
+    int ok = capture_ids(&ids);
+
+    printf("credentials-transition %s: status=%d errno=%d ids=%d "
+        "uid=%lu/%lu/%lu gid=%lu/%lu/%lu groups=%ld:%lu,%lu\n",
+        name, status, error, ok, (unsigned long)ids.real_uid,
+        (unsigned long)ids.effective_uid, (unsigned long)ids.saved_uid,
+        (unsigned long)ids.real_gid, (unsigned long)ids.effective_gid,
+        (unsigned long)ids.saved_gid, count,
+        (unsigned long)(count > 0 ? groups[0] : 0),
+        (unsigned long)(count > 1 ? groups[1] : 0));
+    fflush(stdout);
+}
+
+#define TRANSITION(name, call) do { \
+        int transition_status; \
+        errno = ERANGE; \
+        transition_status = (call); \
+        print_transition((name), transition_status, errno); \
+    } while (0)
+
+static void transition_groups(void)
+{
+    static const gid_t groups[2] = { 5, 6 };
+    TRANSITION("setgroups-two", setgroups(2, groups));
+    TRANSITION("setgroups-empty", setgroups(0, NULL));
+}
+
+static void transition_resids(void)
+{
+    TRANSITION("setresgid-distinct", setresgid(11, 12, 13));
+    TRANSITION("setresuid-distinct", setresuid(21, 22, 23));
+    TRANSITION("setresuid-saved-effective", setresuid((uid_t)-1, 23, (uid_t)-1));
+    TRANSITION("setresuid-unprivileged-real", setresuid(99, (uid_t)-1, (uid_t)-1));
+    TRANSITION("setresgid-unprivileged", setresgid(99, (gid_t)-1, (gid_t)-1));
+    TRANSITION("setuid-unprivileged-saved", setuid(21));
+    TRANSITION("setgroups-unprivileged", setgroups(0, NULL));
+}
+
+static void transition_root_ids(void)
+{
+    TRANSITION("setgid-root", setgid(7));
+    TRANSITION("setuid-root", setuid(8));
+    TRANSITION("setuid-dropped", setuid(0));
+    TRANSITION("setgid-dropped", setgid(0));
+}
+
+static int run_transition(void (*transition)(void))
+{
+    pid_t child = fork();
+    int status;
+
+    if (child < 0)
+        return 0;
+    if (child == 0) {
+        transition();
+        _exit(0);
+    }
+    return waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+        WEXITSTATUS(status) == 0;
+}
+
 static int equals(const char *left, const char *right)
 {
     while (*left == *right) {
@@ -355,6 +428,16 @@ int main(int argc, char **argv)
                 sizeof(direct_cases) / sizeof(*direct_cases), 0))
             return 1;
         puts("credentials-profile direct: successful-current/no-change/rejected IDs-unchanged");
+        return 0;
+    }
+    if (equals(argv[1], "transitions")) {
+        struct credential_ids ids = { 0 };
+        if (!capture_ids(&ids) || ids.real_uid != 0 || ids.effective_uid != 0)
+            return 4;
+        if (!run_transition(transition_groups) || !run_transition(transition_resids) ||
+            !run_transition(transition_root_ids))
+            return 5;
+        puts("credentials-profile transitions: real single-thread ID changes");
         return 0;
     }
     if (equals(argv[1], "aliases-musl")) {

@@ -3,8 +3,9 @@
 #
 # One object is compiled with the supplied dynamic product's installed driver
 # and headers, then linked unchanged to pinned musl, owned static ET_EXEC,
-# static PIE, and owned dynamic PIE/non-PIE consumers.  Each execution enters
-# a new mapped user namespace before chrooting into its disposable root.  The
+# static PIE, and owned dynamic PIE/non-PIE consumers.  The direct and alias
+# executions enter a new mapped user namespace before chrooting into their
+# disposable root; the transitions execution uses the container root.  The
 # probe itself has no live application workers and forks a fresh child for
 # every setter call, so it neither mutates the harness nor claims an all-thread
 # credential rendezvous.
@@ -193,6 +194,26 @@ run_in_user_namespace_root() {
     fi
 }
 
+# Real ID transitions need the container's own root authority: a
+# single-ID mapped user namespace cannot express distinct uid/gid words.
+# The probe changes IDs only in disposable children of this chroot process.
+run_in_root() {
+    local root="$1" stdout="$2" stderr="$3"
+    shift 3
+    local status
+
+    set +e
+    timeout 30 env -i PATH="$PATH" chroot "$root" "$@" >"$stdout" 2>"$stderr"
+    status=$?
+    set -e
+    printf '%s\n' "$status" >"${stdout}.status"
+    if [ "$status" -ne 0 ]; then
+        printf 'owned credentials profile process failed with status %s: %s\n' \
+            "$status" "$*" >&2
+        return 1
+    fi
+}
+
 validate_transcript() {
     local scenario="$1" transcript="$2"
 
@@ -265,6 +286,9 @@ run_oracle() {
             "$work/oracle-$scenario.stdout" "$work/oracle-$scenario.stderr" \
             /consumer "$scenario"
     done
+    run_in_root "$work/oracle-root" "$work/oracle-transitions.stdout" \
+        "$work/oracle-transitions.stderr" /consumer transitions
+    [ ! -s "$work/oracle-transitions.stderr" ]
     validate_transcript direct "$work/oracle-direct.stdout"
     validate_transcript aliases-musl "$work/oracle-aliases-musl.stdout"
     [ ! -s "$work/oracle-direct.stderr" ]
@@ -286,6 +310,13 @@ run_candidate() {
     cmp "$work/oracle-direct.stdout" "$work/$label-direct.stdout"
     cmp "$work/oracle-direct.stderr" "$work/$label-direct.stderr"
     cmp "$work/oracle-direct.stdout.status" "$work/$label-direct.stdout.status"
+
+    run_in_root "$root" \
+        "$work/$label-transitions.stdout" "$work/$label-transitions.stderr" \
+        "${command[@]}" transitions
+    cmp "$work/oracle-transitions.stdout" "$work/$label-transitions.stdout"
+    cmp "$work/oracle-transitions.stderr" "$work/$label-transitions.stderr"
+    cmp "$work/oracle-transitions.stdout.status" "$work/$label-transitions.stdout.status"
 
     run_in_user_namespace_root "$root" \
         "$work/$label-aliases-profile.stdout" "$work/$label-aliases-profile.stderr" \
@@ -336,17 +367,18 @@ done
 cat >"$work/profile-differential.txt" <<'EOF'
 same-object direct result: pinned musl and crabc both pass explicit current-ID, all-ones no-change, and rejected calls with unchanged IDs
 mapped user namespace setgroups result: a valid one-element current-gid slice is denied with EPERM before any ID transition
+same-object transitions result: pinned musl and crabc produce identical raw results and kernel IDs for real single-threaded setgroups, setresuid/setresgid, setuid, and setgid changes as container root
 pinned musl aliases: setreuid, seteuid, setregid, and setegid succeed for unchanged IDs
 selected crabc profile aliases: setreuid, seteuid, setregid, and setegid return -1/EOPNOTSUPP with unchanged IDs
 no all-thread credential rendezvous is claimed or tested
 EOF
 
 if [ "$static_was_supplied" -eq 0 ] && [ "$dynamic_was_supplied" -eq 0 ]; then
-    printf 'owned credentials profile: PASS (same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+    printf 'owned credentials profile: PASS (same installed-driver object, pinned musl direct and real-transition differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 elif [ "$static_was_supplied" -eq 1 ] && [ "$dynamic_was_supplied" -eq 1 ]; then
-    printf 'owned credentials profile: PASS (supplied static and installed products, same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+    printf 'owned credentials profile: PASS (supplied static and installed products, same installed-driver object, pinned musl direct and real-transition differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 elif [ "$static_was_supplied" -eq 1 ]; then
-    printf 'owned credentials profile: PASS (supplied static product and default installed product, same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+    printf 'owned credentials profile: PASS (supplied static product and default installed product, same installed-driver object, pinned musl direct and real-transition differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 else
-    printf 'owned credentials profile: PASS (supplied installed product, same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+    printf 'owned credentials profile: PASS (supplied installed product, same installed-driver object, pinned musl direct and real-transition differential, explicit four-alias profile difference, user namespaces, private children, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 fi

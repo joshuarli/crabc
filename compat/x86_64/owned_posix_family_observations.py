@@ -42,7 +42,7 @@ class Layout:
 LAYOUTS = {
     'legacy-filesystem': Layout('posix_filesystem', ('aliases', 'directory', 'traversal', 'temporary', 'handles'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
     'control-residual': Layout('process_control'),
-    'credentials-profile': Layout('credentials_profile', ('direct', 'aliases'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.stdout.status'),
+    'credentials-profile': Layout('credentials_profile', ('direct', 'aliases', 'transitions'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.stdout.status'),
     'environment-lifecycle': Layout('environment_lifecycle', ('normal', 'allocation-failure'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', '.stdout.stderr', '.stdout.status'),
     'signal-full': Layout('posix_signals', ('sets', 'actions-masks', 'queue-delivery', 'suspend-delivery', 'sigpause-cancellation', 'sigsuspend-cancellation', 'interrupt-bookkeeping', 'alternate-stack', 'alternate-minimum', 'signalfd', 'waits'), '{mode}-{scenario}', '{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.status.json'),
     'kernel-residual': Layout('kernel_residual', ('cpucount', 'configuration', 'sysconf-signal-stack', 'hostid-membarrier', 'personality', 'prctl', 'scheduler', 'syscall', 'ulimit', 'uts-namespace', 'uts-seccomp', 'all'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
@@ -143,7 +143,9 @@ def collect(case: str, leaf_root: Path, *, static_required: bool, root: Path = R
     for scenario in layout.scenarios:
         oracle_stem = _stem(case, layout, '', scenario, oracle=True)
         oracle_raw, oracle = _observation(leaf, oracle_stem, layout, expected)
-        if case == 'credentials-profile':
+        # Real-root transitions are a plain differential; the helper validates
+        # only the mapped-namespace direct and alias transcripts.
+        if case == 'credentials-profile' and scenario != 'transitions':
             _credentials_helper(root, 'aliases-musl' if scenario == 'aliases' else scenario, leaf / (oracle_stem + '.stdout'))
         row = {'kind': 'differential', 'oracle': oracle, 'candidates': {}}
         for mode in modes:
