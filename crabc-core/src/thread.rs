@@ -1,7 +1,7 @@
 //! Stateless Linux/AArch64 and Linux/x86-64 thread operations.
 
 use crate::Result;
-use crate::syscall::{decode, syscall0, syscall2, syscall3, syscall6, SYS_FUTEX, SYS_GETCPU, SYS_GETTID, SYS_SCHED_GETAFFINITY, SYS_SCHED_RR_GET_INTERVAL, SYS_SCHED_SETAFFINITY, SYS_SCHED_YIELD, SYS_SETRESGID, SYS_SETRESUID};
+use crate::syscall::{decode, syscall0, syscall2, syscall3, syscall6, SYS_FUTEX, SYS_GETCPU, SYS_MEMBARRIER, SYS_GETTID, SYS_SCHED_GETAFFINITY, SYS_SCHED_RR_GET_INTERVAL, SYS_SCHED_SETAFFINITY, SYS_SCHED_YIELD, SYS_SETRESGID, SYS_SETRESUID};
 use core::{arch::asm, mem::MaybeUninit};
 
 /// `FUTEX_WAIT`, waiting while the futex word still equals `expected`.
@@ -305,6 +305,26 @@ pub unsafe fn sched_setaffinity_raw(pid: i32, mask: *const u8, size: usize) -> R
     // all three values are immediate Linux syscall arguments.
     decode(unsafe { syscall3(SYS_SCHED_SETAFFINITY, pid as usize, size, mask as usize) })
         .map(|_| ())
+}
+
+/// `MEMBARRIER_CMD_PRIVATE_EXPEDITED`: every running thread of the calling
+/// process executes a full memory barrier before the call returns.
+pub const MEMBARRIER_CMD_PRIVATE_EXPEDITED: i32 = 1 << 3;
+/// `MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED`: registers the process (its
+/// memory map, inherited by `fork` and reset by `execve`) for
+/// [`MEMBARRIER_CMD_PRIVATE_EXPEDITED`].
+pub const MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED: i32 = 1 << 4;
+
+/// Performs one Linux `membarrier` command without a CPU mask.
+///
+/// Linux 4.14 provides both private-expedited commands, below the 5.10
+/// baseline. A seccomp policy may still deny the syscall; callers need a
+/// symmetric-fence path for that error.
+#[inline]
+pub fn membarrier(command: i32) -> Result<usize> {
+    // SAFETY: `membarrier` takes only immediate integer arguments; flags and
+    // CPU ID are zero.
+    decode(unsafe { syscall3(SYS_MEMBARRIER, command as u32 as usize, 0, 0) })
 }
 
 /// Yields the processor to the Linux scheduler.

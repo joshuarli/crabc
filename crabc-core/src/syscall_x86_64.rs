@@ -197,6 +197,7 @@ pub(crate) const SYS_SCHED_RR_GET_INTERVAL: usize = 148;
 pub(crate) const SYS_SCHED_SETAFFINITY: usize = 203;
 pub(crate) const SYS_SCHED_GETAFFINITY: usize = 204;
 pub(crate) const SYS_FUTEX: usize = 202;
+pub(crate) const SYS_MEMBARRIER: usize = 324;
 pub(crate) const SYS_CLONE: usize = 56;
 pub(crate) const SYS_EXECVE: usize = 59;
 pub(crate) const SYS_WAIT4: usize = 61;
