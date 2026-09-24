@@ -526,7 +526,6 @@ def build_report(
     require(len(candidate) == len(pinned) + len(project_only), "candidate header arithmetic changed")
 
     expected_digest_keys = {
-        "callable_inventory_sha256",
         "callable_extension_contract_sha256",
         "matrix_contract_sha256",
         "public_header_inventory_sha256",
@@ -727,7 +726,6 @@ def build_file_report(contract: MatrixContract) -> dict[str, Any]:
         pinned_headers=pinned_headers,
         candidate_headers=candidate_headers,
         input_digests={
-            "callable_inventory_sha256": sha256_file(contract.inventory),
             "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
             "matrix_contract_sha256": sha256_file(CONTRACT_PATH),
             "public_header_inventory_sha256": sha256_file(contract.public_headers),

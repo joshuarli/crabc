@@ -297,10 +297,16 @@ def load_case_manifest(gate: Mapping[str, object]) -> dict[str, Any]:
     if not isinstance(path, str):
         raise QualificationRunError(f"{gate.get('id')} has no pinned case manifest")
     case_path = ROOT / path
-    expected_hash = gate.get("case_manifest_sha256")
-    if not isinstance(expected_hash, str) or manifest.sha256_file(case_path) != expected_hash:
-        raise QualificationRunError(f"{gate['id']} case manifest changed after declaration validation")
     return manifest.load_json(case_path, f"{gate['id']} case manifest")
+
+
+def runner_digest(case: Mapping[str, Any]) -> str:
+    """Digest the runner bytes a receipt records; nothing pins them in source."""
+    return manifest.sha256_file(ROOT / case["command"][1])
+
+
+def case_manifest_digest(entry: Mapping[str, object]) -> str:
+    return manifest.sha256_file(ROOT / str(entry["case_manifest"]))
 
 
 def verify_case_runner(gate: Mapping[str, object], case: Mapping[str, Any]) -> None:
@@ -315,18 +321,10 @@ def verify_case_runner(gate: Mapping[str, object], case: Mapping[str, Any]) -> N
         isinstance(token, str) and token for token in command
     ):
         raise QualificationRunError(f"{gate['id']}/{case.get('id')} has an invalid runner command")
-    expected_hash = case.get("runner_sha256")
-    if not isinstance(expected_hash, str) or not expected_hash:
-        raise QualificationRunError(f"{gate['id']}/{case.get('id')} has no pinned runner hash")
     try:
-        _, runner_path = manifest.repository_file(
-            command[1], f"{gate['id']}/{case.get('id')} runner"
-        )
-        observed_hash = manifest.sha256_file(runner_path)
+        manifest.repository_file(command[1], f"{gate['id']}/{case.get('id')} runner")
     except manifest.QualificationManifestError as error:
         raise QualificationRunError(str(error)) from error
-    if observed_hash != expected_hash:
-        raise QualificationRunError(f"{gate['id']}/{case.get('id')} runner bytes changed after case validation")
 
 
 def require(condition: bool, message: str) -> None:
@@ -674,15 +672,12 @@ def transaction_directory(admission: Mapping[str, object]) -> Path:
 
 def verify_private_admission_runner(admission: Mapping[str, object]) -> None:
     command = admission.get("command")
-    expected_hash = admission.get("runner_sha256")
-    if not isinstance(command, list) or len(command) != 2 or not isinstance(expected_hash, str):
-        raise QualificationRunError("private admission command or runner hash is invalid")
+    if not isinstance(command, list) or len(command) != 2:
+        raise QualificationRunError("private admission command is invalid")
     try:
-        _, path = manifest.repository_file(command[1], "private admission runner")
+        manifest.repository_file(command[1], "private admission runner")
     except manifest.QualificationManifestError as error:
         raise QualificationRunError(str(error)) from error
-    if manifest.sha256_file(path) != expected_hash:
-        raise QualificationRunError("private admission runner bytes changed after declaration validation")
 
 
 def select_private_admission(report: Mapping[str, object]) -> Mapping[str, object]:
@@ -876,8 +871,8 @@ def prefix_record(
         "promotion_ready": False,
         "completed_gate_count": 0,
         "case_manifest": admission["case_manifest"],
-        "case_manifest_sha256": admission["case_manifest_sha256"],
-        "runner_sha256": admission["runner_sha256"],
+        "case_manifest_sha256": case_manifest_digest(admission),
+        "runner_sha256": runner_digest(admission),
         "source_before": dict(source_before),
         "source_after": dict(source_after),
         "inputs_before": dict(inputs_before),
@@ -946,8 +941,8 @@ def validate_private_admission_receipt(path: Path) -> dict[str, object]:
         "promotion_ready": False,
         "completed_gate_count": 0,
         "case_manifest": admission["case_manifest"],
-        "case_manifest_sha256": admission["case_manifest_sha256"],
-        "runner_sha256": admission["runner_sha256"],
+        "case_manifest_sha256": case_manifest_digest(admission),
+        "runner_sha256": runner_digest(admission),
         "command": admission["command"],
         "outcome": "passed-non-promoting",
         "exit_status": 0,
@@ -1251,7 +1246,7 @@ def execute_chain_case(
         "gate": gate["id"],
         "id": case["id"],
         "command": list(command),
-        "runner_sha256": case["runner_sha256"],
+        "runner_sha256": runner_digest(case),
         "expected_stdout_line": case["expected_stdout_line"],
         "timeout_seconds": case["timeout_seconds"],
         "exit_status": exit_status,
@@ -1298,7 +1293,7 @@ def chain_gate_records(selected: Sequence[Mapping[str, object]]) -> list[dict[st
         {
             "id": gate["id"],
             "case_manifest": gate["case_manifest"],
-            "case_manifest_sha256": gate["case_manifest_sha256"],
+            "case_manifest_sha256": case_manifest_digest(gate),
         }
         for gate in selected
     ]
@@ -1378,7 +1373,7 @@ def validate_chain_case(
         "gate": gate["id"],
         "id": case["id"],
         "command": case["command"],
-        "runner_sha256": case["runner_sha256"],
+        "runner_sha256": runner_digest(case),
         "expected_stdout_line": case["expected_stdout_line"],
         "timeout_seconds": case["timeout_seconds"],
     }

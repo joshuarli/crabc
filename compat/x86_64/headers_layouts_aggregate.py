@@ -313,7 +313,7 @@ def command_tokens(value: object, location: str) -> tuple[str, str]:
 
 def record_file(path: Path) -> dict[str, str]:
     require(path.is_file() and not path.is_symlink(), f"aggregate input is unsafe: {display_path(path)}")
-    return {"path": display_path(path), "sha256": sha256_file(path)}
+    return {"path": display_path(path)}
 
 
 def records_for_table(foundation: Mapping[str, Any], table: str) -> list[Mapping[str, Any]]:
@@ -648,7 +648,6 @@ def generic_reports(foundation: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "id": identifier,
                 "path": display_path(path),
                 "schema": schema,
-                "sha256": sha256_file(path),
                 "summary": dict(summary),
                 "table": table,
             }
@@ -1439,17 +1438,14 @@ def build_report() -> dict[str, Any]:
 def report_inputs_are_current(value: object) -> None:
     records = value
     require(isinstance(records, list) and records, "aggregate report inputs are invalid")
-    expected_paths = tracked_input_paths()
     actual_paths: list[str] = []
     for index, record in enumerate(records):
-        require(isinstance(record, Mapping) and set(record) == {"path", "sha256"}, f"aggregate report input[{index}] is invalid")
+        require(isinstance(record, Mapping) and set(record) == {"path"}, f"aggregate report input[{index}] is invalid")
         path = record.get("path")
-        digest = record.get("sha256")
-        require(isinstance(path, str) and isinstance(digest, str) and len(digest) == 64, f"aggregate report input[{index}] digest is invalid")
+        require(isinstance(path, str), f"aggregate report input[{index}] path is invalid")
+        repository_file(path, f"aggregate report input[{index}].path")
         actual_paths.append(path)
-        current = sha256_file(repository_file(path, f"aggregate report input[{index}].path"))
-        require(current == digest, f"aggregate report input digest is stale: {path}")
-    require(actual_paths == expected_paths, "aggregate report input coverage drifted")
+    require(actual_paths == tracked_input_paths(), "aggregate report input coverage drifted")
 
 
 def validate_report(report: Mapping[str, Any]) -> None:

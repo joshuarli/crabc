@@ -24,25 +24,44 @@ are not transferable passes for a different revision.
 - **State:** `campaign-status` reports 9/26 families `foundation-verified` and
   180 implemented, 34 selected-private, and 9 missing capabilities; all eight
   ordered qualification gates are executable and fail closed on named unmet
-  conditions. `libc.posix-runtime` is the next ready family transition; rerun
-  its admission on merged `main`. C mimalloc remains the selected backend;
-  allocator M2–M11 remain open (M6 has a fail-closed gate). The merged
-  allocator unit suite last passed 1,159/1,159 at `f6c8da3c2`.
-- **Parked lanes:** `lane/<id>` branches ending in a `WIP(lane <id>)` commit
-  are the starting points for the next campaign: `posix`, `pattern`,
-  `math-time`, `loader`, `crt-dynamic`, `dynamic-product`, `std-lto`,
-  `m2-vm-arenas`, `m2-init-fault`, `m3`, `m5-remote`, `m5-exit`, `m5-stress`,
-  `m6`, `m7`, `alloc-fork`, `alloc-perf`. Older work is archived under
-  `refs/archive/`; evidence receipts are in `.work/archive/`.
-- **Open cross-cutting defects:** 358 runner scripts build with plain
-  `cargo rustc` and fail to link `rust_eh_personality` on the pinned nightly
-  (generalize `2261f8e20`); ~500 `pipefail` sites use `printf | grep -q` and
-  can lose matches (use here-strings); static and dynamic products install
+  conditions. C mimalloc remains the selected backend; allocator M2–M11 remain
+  open (M6 has a fail-closed gate). The merged allocator unit suite last passed
+  1,159/1,159 at `f6c8da3c2`. Host test files pass except the host-only perf
+  descriptor-closure test in `compat/perf/tests/test_run_x86_64.py`.
+- **Resume here, in order:**
+  1. Fix the cross-cutting link defect first (one owner): runner scripts that
+     build `libc.a` with plain `cargo rustc` fail to link `rust_eh_personality`
+     on the pinned nightly (`libc-resolver-runtime`, the headers/layouts
+     aggregate runner's crypt-allocator component, and ~358 scripts in all).
+     Generalize `2261f8e20` (source-built core through
+     `native_static_source_runtime_closure.py`) into one shared helper.
+  2. Rerun the `libc.posix-runtime` family admission on merged `main`;
+     `lane/posix` holds a candidate admission commit and an experimental
+     registry lock change.
+  3. Resume the parked `lane/*` branches (each ends in a `WIP(lane <id>)`
+     commit): `posix`, `pattern`, `math-time`, `loader`, `crt-dynamic`,
+     `dynamic-product`, `std-lto`, `m2-vm-arenas`, `m2-init-fault`, `m3`,
+     `m5-remote`, `m5-exit`, `m5-stress`, `m6`, `m7`, `alloc-fork`,
+     `alloc-perf`.
+  4. Keep removing checked-in digests of repository files (one owner): header
+     matrix `inputs` digests and per-row digests (`header_abi_matrix`,
+     `header_declaration_macro_visibility_matrix`, `header_record_layout_matrix`
+     reports, `header_callable_inventory.json`), allocator source-map/API
+     coverage, corpus manifest, and image-input receipt pins. Count summaries
+     suffice; runtime receipts may still digest what actually ran. Keep upstream
+     archive, toolchain, and image provenance pins.
+- **Other open defects:** ~500 `pipefail` sites use `printf | grep -q` and can
+  lose matches (use here-strings); static and dynamic products install
   different `crt1.o` (the combined sysroot needs one entry for static `ET_EXEC`
   and dynamic non-PIE, as the frozen AArch64 `crt/src/normal_entry.rs` did);
   owned `sysconf` lacks `_SC_NPROCESSORS_*` and `_SC_PHYS_PAGES`/`_AVPHYS_PAGES`;
   Rust page block pops clear `retire_expire`, which pinned
   `mi_page_malloc_zero` never touches (`lane/m3`).
+- **Housekeeping:** superseded branches are archived under
+  `refs/archive/branches/`, old stashes under `refs/archive/stash/`, and
+  pre-campaign evidence receipts in `.work/archive/*-receipts.tar.gz`. A fresh
+  worktree needs `scripts/lanes/rust-check.sh cargo fetch --locked` before
+  offline builds.
 
 ## Parallel lanes
 

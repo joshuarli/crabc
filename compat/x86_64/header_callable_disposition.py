@@ -523,7 +523,6 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
         "oracle": ORACLE,
         "inputs": {
             "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
-            "callable_inventory_sha256": sha256_file(contract.callable_inventory),
             "candidate_external_callable_sha256": candidate_name_digest(external),
             "static_c_abi_exports_sha256": sha256_file(contract.static_exports),
         },

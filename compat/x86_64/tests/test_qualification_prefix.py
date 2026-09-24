@@ -37,7 +37,7 @@ class QualificationPrefixTests(unittest.TestCase):
             private_path = root / manifest.PRIVATE_ADMISSION[0][1]
             private_path.parent.mkdir(parents=True)
             private_path.write_bytes((ROOT / manifest.PRIVATE_ADMISSION[0][1]).read_bytes())
-            (root / manifest.PRIVATE_ADMISSION[0][3][1]).write_text('pass\n')
+            (root / manifest.PRIVATE_ADMISSION[0][2][1]).write_text('pass\n')
             case_runner = root / 'runner.py'
             case_runner.write_text("print('case: PASS')\n")
             gate = document['promotion_chain'][0]
@@ -443,14 +443,13 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        for relative in (manifest.PRIVATE_ADMISSION[0][1], manifest.PRIVATE_ADMISSION[0][3][1]):
+        for relative in (manifest.PRIVATE_ADMISSION[0][1], manifest.PRIVATE_ADMISSION[0][2][1]):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes((ROOT / relative).read_bytes())
         self.gate_runner = self.root / 'compat/x86_64/gate_fixture.py'
         self.gate_runner.write_text(GATE_FIXTURE, encoding='utf-8')
         document = json.loads(manifest.CONTRACT_PATH.read_text(encoding='utf-8'))
-        runner_hash = hashlib.sha256(self.gate_runner.read_bytes()).hexdigest()
         for gate in document['promotion_chain']:
             relative = f"compat/x86_64/qualification-gates/{gate['id']}.json"
             path = self.root / relative
@@ -460,11 +459,10 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
                 **{key: gate[key] for key in ('oracle', 'provenance', 'purity', 'isolation')},
                 'cases': [{'id': 'gate-conditions',
                            'command': ['python3', 'compat/x86_64/gate_fixture.py', gate['id']],
-                           'runner_sha256': runner_hash,
                            'expected_stdout_line': f"x86 qualification gate {gate['id']}: PASS",
                            'timeout_seconds': 30}],
             }), encoding='utf-8')
-            gate['case_manifest'] = {'path': relative, 'sha256': manifest.sha256_file(path)}
+            gate['case_manifest'] = relative
         self.contract = self.root / 'compat/x86_64/qualification_manifest.json'
         self.contract.write_text(json.dumps(document), encoding='utf-8')
         self.receipts = self.root / 'receipts'
@@ -538,7 +536,7 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
         self.source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64}
 
         self.gate_runner.write_text(GATE_FIXTURE + '# changed\n', encoding='utf-8')
-        with self.assertRaisesRegex(manifest.QualificationManifestError, 'runner hash does not match'):
+        with self.assertRaisesRegex(runner.QualificationRunError, 'drifted from its pinned case'):
             runner.validate_chain_receipt(path)
 
     def test_dispatch_prints_the_failing_gate_conditions_and_exits_nonzero(self):

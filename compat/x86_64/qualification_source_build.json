@@ -18,7 +18,6 @@
         "python3",
         "compat/lua/qualify_source_build.py"
       ],
-      "runner_sha256": "8f11c7b4880bcf54914a81c2e338a031dc5f547e7913c13fe6c08051ff0fa956",
       "expected_stdout_line": "x86 consumer.source-build Lua roster: PASS (non-promoting)",
       "timeout_seconds": 3600
     }

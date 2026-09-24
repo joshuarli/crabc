@@ -317,7 +317,6 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             pinned_headers=("alpha.h", "beta.h"),
             candidate_headers=("alpha.h", "beta.h", "extension.h"),
             input_digests={
-                "callable_inventory_sha256": "inventory",
                 "callable_extension_contract_sha256": "extension-contract",
                 "matrix_contract_sha256": "contract",
                 "public_header_inventory_sha256": "headers",
@@ -360,7 +359,6 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                 pinned_headers=("alpha.h", "beta.h"),
                 candidate_headers=("alpha.h", "beta.h", "extension.h"),
                 input_digests={
-                    "callable_inventory_sha256": "inventory",
                     "callable_extension_contract_sha256": "extension-contract",
                     "matrix_contract_sha256": "contract",
                     "public_header_inventory_sha256": "headers",
@@ -380,7 +378,6 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                 pinned_headers=("alpha.h", "beta.h"),
                 candidate_headers=("alpha.h", "beta.h", "extension.h"),
                 input_digests={
-                    "callable_inventory_sha256": "inventory",
                     "callable_extension_contract_sha256": "extension-contract",
                     "matrix_contract_sha256": "contract",
                     "public_header_inventory_sha256": "headers",
@@ -436,7 +433,6 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             "callables": target_records,
         }
         digests = {
-            "callable_inventory_sha256": "inventory",
             "callable_extension_contract_sha256": "extension-contract",
             "matrix_contract_sha256": "matrix-contract",
             "public_header_inventory_sha256": "headers",

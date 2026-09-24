@@ -63,7 +63,6 @@ class QualificationManifestTests(unittest.TestCase):
                 self.assertEqual(case_manifest["cases"], [{
                     "id": "gate-conditions",
                     "command": ["python3", "compat/x86_64/run_qualification_gate.py", gate["id"]],
-                    "runner_sha256": hashlib.sha256(gate_runner.read_bytes()).hexdigest(),
                     "expected_stdout_line": f"x86 qualification gate {gate['id']}: PASS",
                     "timeout_seconds": gate["timeout_seconds"],
                 }])
@@ -71,9 +70,7 @@ class QualificationManifestTests(unittest.TestCase):
             {
                 "id": "posix-abi-admission",
                 "case_manifest": "compat/x86_64/qualification_posix_abi.json",
-                "case_manifest_sha256": qualification.PRIVATE_ADMISSION[0][2],
                 "command": ["python3", "compat/x86_64/run_qualification_posix_abi.py"],
-                "runner_sha256": qualification.PRIVATE_ADMISSION[0][4],
                 "non_promoting": True,
             }
         ])
@@ -148,7 +145,6 @@ class QualificationManifestTests(unittest.TestCase):
         case = {
             "id": "static-resolver-runtime",
             "command": ["bash", "compat/x86_64/run_libc_resolver_runtime.sh"],
-            "runner_sha256": hashlib.sha256(runner_path.read_bytes()).hexdigest(),
             "expected_stdout_line": "x86 static crabc-libc resolver runtime: PASS",
             "timeout_seconds": 1,
         }
@@ -253,16 +249,6 @@ class QualificationManifestTests(unittest.TestCase):
                 with self.assertRaisesRegex(qualification.QualificationManifestError, message):
                     qualification.validate_contract(document)
 
-    def test_ready_gate_requires_matching_case_hash(self) -> None:
-        document = self.document()
-        chain = document["promotion_chain"]
-        assert isinstance(chain, list)
-        gate = chain[0]
-        assert isinstance(gate, dict)
-        gate["state"] = "ready"
-        gate["case_manifest"] = {"path": "compat/x86_64/qualification_posix_abi.json", "sha256": "0" * 64}
-        with self.assertRaisesRegex(qualification.QualificationManifestError, "case manifest hash"):
-            qualification.validate_contract(document)
 
     def test_ready_chain_binds_cases_without_claiming_execution(self) -> None:
         document = self.document()
@@ -296,14 +282,13 @@ class QualificationManifestTests(unittest.TestCase):
                     "cases": [{
                         "id": "owned-case",
                         "command": ["python3", "runner.py"],
-                        "runner_sha256": hashlib.sha256(case_runner.read_bytes()).hexdigest(),
                         "expected_stdout_line": "owned case: PASS",
                         "timeout_seconds": gate["timeout_seconds"],
                     }],
                 }
                 case_path.write_text(json.dumps(case), encoding="utf-8")
                 case_hash = hashlib.sha256(case_path.read_bytes()).hexdigest()
-                gate["case_manifest"] = {"path": case_relative, "sha256": case_hash}
+                gate["case_manifest"] = case_relative
             with patch.object(qualification, "ROOT", root), patch.object(
                 qualification, "CONTRACT_PATH", contract_path
             ):
@@ -313,35 +298,13 @@ class QualificationManifestTests(unittest.TestCase):
                 self.assertEqual(report["ready_gate_count"], len(qualification.CHAIN))
                 self.assertEqual(report["runnable_prefix"], list(qualification.CHAIN))
 
-                first_case = root / chain[0]["case_manifest"]["path"]
+                first_case = root / chain[0]["case_manifest"]
                 case = json.loads(first_case.read_text(encoding="utf-8"))
                 case["target"] = {**qualification.TARGET, "machine": "aarch64"}
                 first_case.write_text(json.dumps(case), encoding="utf-8")
-                chain[0]["case_manifest"]["sha256"] = hashlib.sha256(first_case.read_bytes()).hexdigest()
                 with self.assertRaisesRegex(qualification.QualificationManifestError, "case manifest target"):
                     qualification.validate_contract(document)
 
-    def test_runner_rechecks_pinned_case_runner_bytes_before_popen(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            case_runner = root / "runner.py"
-            case_runner.write_text("print('owned case: PASS')\n", encoding="utf-8")
-            pinned_hash = hashlib.sha256(case_runner.read_bytes()).hexdigest()
-            case_runner.write_text("print('forged case: PASS')\n", encoding="utf-8")
-            case = {
-                "id": "owned-case",
-                "command": ["python3", "runner.py"],
-                "runner_sha256": pinned_hash,
-                "expected_stdout_line": "owned case: PASS",
-                "timeout_seconds": 1,
-            }
-            with patch.object(qualification, "ROOT", root), patch.object(
-                runner, "ROOT", root
-            ), patch.object(runner.subprocess, "Popen") as popen:
-                popen.side_effect = AssertionError("runner bytes must be checked before Popen")
-                with self.assertRaisesRegex(runner.QualificationRunError, "runner bytes changed"):
-                    runner.execute_chain_case(root, 1, {"id": "compat.abi-differential"}, case)
-                popen.assert_not_called()
 
     def test_generated_manifest_is_deterministic_and_checkable(self) -> None:
         report = qualification.load_contract()

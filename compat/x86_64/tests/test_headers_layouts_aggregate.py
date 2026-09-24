@@ -192,7 +192,7 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         inputs = changed["inputs"]
         assert isinstance(inputs, list) and isinstance(inputs[0], dict)
         inputs[0]["sha256"] = "0" * 64
-        with self.assertRaisesRegex(AGGREGATE.AggregateError, "input digest"):
+        with self.assertRaisesRegex(AGGREGATE.AggregateError, r"input\[0\] is invalid"):
             AGGREGATE.validate_report(changed)
 
         changed = copy.deepcopy(report)

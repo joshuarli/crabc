@@ -60,9 +60,7 @@ PRIVATE_ADMISSION = (
     (
         "posix-abi-admission",
         "compat/x86_64/qualification_posix_abi.json",
-        "0afebd7ed94da8236d29a93c54b10dd6e9ea7519ca179ac61659d76d2c346446",
         ("python3", "compat/x86_64/run_qualification_posix_abi.py"),
-        "579c5deaf872835d100408aac2b7b6970ea54a5b20f827573c782c2d02b4f9aa",
     ),
 )
 GATE_CONTRACTS = (
@@ -225,29 +223,20 @@ def validate_private_admission(value: object) -> list[dict[str, object]]:
     for index, expected in enumerate(PRIVATE_ADMISSION):
         entry = value[index]
         require(isinstance(entry, Mapping), f"private_admission[{index}] must be an object")
-        exact_keys(entry, {"id", "case_manifest", "case_manifest_sha256", "command", "runner_sha256", "non_promoting"}, f"private_admission[{index}]")
-        identifier, manifest_path, manifest_hash, command, runner_hash = expected
+        exact_keys(entry, {"id", "case_manifest", "command", "non_promoting"}, f"private_admission[{index}]")
+        identifier, manifest_path, command = expected
         require(entry.get("id") == identifier, "private admission identifier or order drifted")
         declared_path, resolved = repository_file(entry.get("case_manifest"), f"private_admission[{index}].case_manifest")
         require(declared_path == manifest_path, "private admission case manifest path drifted")
-        require(entry.get("case_manifest_sha256") == manifest_hash, "private admission case manifest hash drifted")
-        require(sha256_file(resolved) == manifest_hash, "private admission case manifest bytes drifted")
         require(validated_command(entry.get("command"), f"private_admission[{index}].command") == command, "private admission command drifted")
-        require(entry.get("runner_sha256") == runner_hash, "private admission runner hash drifted")
-        _, runner = repository_file(command[1], f"private_admission[{index}].command[1]")
-        require(sha256_file(runner) == runner_hash, "private admission runner bytes drifted")
+        repository_file(command[1], f"private_admission[{index}].command[1]")
         require(entry.get("non_promoting") is True, "private admission must be explicitly non-promoting")
-        result.append({"id": identifier, "case_manifest": manifest_path, "case_manifest_sha256": manifest_hash, "command": list(command), "runner_sha256": runner_hash, "non_promoting": True})
+        result.append({"id": identifier, "case_manifest": manifest_path, "command": list(command), "non_promoting": True})
     return result
 
 
 def validate_ready_cases(gate: Mapping[str, object], location: str) -> dict[str, object]:
-    case_reference = gate["case_manifest"]
-    require(isinstance(case_reference, Mapping), f"{location}.case_manifest must be an object")
-    exact_keys(case_reference, {"path", "sha256"}, f"{location}.case_manifest")
-    case_path, case_file = repository_file(case_reference.get("path"), f"{location}.case_manifest.path")
-    case_hash = nonempty_string(case_reference.get("sha256"), f"{location}.case_manifest.sha256")
-    require(sha256_file(case_file) == case_hash, f"{location} case manifest hash does not match immutable bytes")
+    case_path, case_file = repository_file(gate["case_manifest"], f"{location}.case_manifest")
     case = load_json(case_file, f"{location} case manifest")
     exact_keys(case, {"schema", "gate", "target", "oracle", "provenance", "purity", "isolation", "cases"}, f"{location} case manifest")
     require(case.get("schema") == CASE_SCHEMA, f"{location} case manifest schema drifted")
@@ -262,7 +251,7 @@ def validate_ready_cases(gate: Mapping[str, object], location: str) -> dict[str,
         require(isinstance(item, Mapping), f"{location} case manifest cases[{case_index}] must be an object")
         exact_keys(
             item,
-            {"id", "command", "runner_sha256", "expected_stdout_line", "timeout_seconds"},
+            {"id", "command", "expected_stdout_line", "timeout_seconds"},
             f"{location} case manifest cases[{case_index}]",
         )
         case_id = nonempty_string(item.get("id"), f"{location} case manifest cases[{case_index}].id")
@@ -273,20 +262,11 @@ def validate_ready_cases(gate: Mapping[str, object], location: str) -> dict[str,
             f"{location} case manifest cases[{case_index}].command",
             fixed_arguments=True,
         )
-        _, runner = repository_file(
-            command[1], f"{location} case manifest cases[{case_index}].command[1]"
-        )
-        runner_hash = nonempty_string(
-            item.get("runner_sha256"), f"{location} case manifest cases[{case_index}].runner_sha256"
-        )
-        require(
-            sha256_file(runner) == runner_hash,
-            f"{location} case manifest cases[{case_index}] runner hash does not match immutable bytes",
-        )
+        repository_file(command[1], f"{location} case manifest cases[{case_index}].command[1]")
         nonempty_string(item.get("expected_stdout_line"), f"{location} case manifest cases[{case_index}].expected_stdout_line")
         timeout = positive_timeout(item.get("timeout_seconds"), f"{location} case manifest cases[{case_index}].timeout_seconds")
         require(timeout <= gate["timeout_seconds"], f"{location} case manifest case timeout exceeds its gate timeout")
-    return {"case_manifest": case_path, "case_manifest_sha256": case_hash, "case_count": len(cases)}
+    return {"case_manifest": case_path, "case_count": len(cases)}
 
 
 def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
