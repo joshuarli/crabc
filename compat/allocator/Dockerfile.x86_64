@@ -43,7 +43,11 @@ RUN apk add --no-cache \
     && RUST_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' /tmp/rust-toolchain.toml)" \
     && test -n "${RUST_TOOLCHAIN}" \
     && rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
-    && rustup component add rust-src llvm-tools
+    && rustup component add rust-src llvm-tools miri
+
+# `miri` is a component of the same pinned nightly; the M3 allocator gate runs
+# its local-engine tests under strict-provenance Miri. It is never a build
+# input for allocator or runtime artifacts.
 
 # Alpine's system musl is not the oracle. Build the pinned upstream release
 # under /opt so the evidence commands select it explicitly through musl-gcc.

@@ -2846,9 +2846,11 @@ this is source-derived scalar stress evidence only—not a remote-free,
 cross-thread-transfer, or thread-recreation implementation claim. Its exact
 upstream revision, source regions, MIT provenance, patch/result hashes, and
 intentional constraints live in `adapted-stress-test-v3.5.0.json`.
-A fixed-capacity `cfg(miri)` mapping model exercises current
-VM ownership and page-map transitions without broadening production support;
-the pinned toolchain does not currently install Miri itself. No allocator
+Under `cfg(miri)` the unchanged allocator `os.rs` runs over `crabc-core`'s
+Miri kernel model (`crabc-core/src/miri_model.rs`), which replaces only the raw
+syscall seams. The allocator image carries the pinned nightly's Miri
+component; `./compat/allocator/run-x86_64.sh allocator-m3` runs the local
+engine tests under strict-provenance Miri as one M3 component. No allocator
 readiness or promotion claim follows from this slice.
 
 ### Theap collect-abandon queue seam and persistent-worker connector

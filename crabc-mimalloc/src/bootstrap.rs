@@ -174,7 +174,23 @@ impl ExclusiveTheapBootstrap {
         mut self: Pin<&mut Self>,
         thread_id: LiveThreadId,
     ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
-        self.as_mut().bind_owner(TheapOwner::Live(thread_id), None)?;
+        self.as_mut().bind_owner(TheapOwner::Live(thread_id), None, false)?;
+        self.begin_bound_session(TheapOwner::Live(thread_id))
+    }
+
+    /// Attaches the live Theap with the source non-abandoning option image.
+    ///
+    /// `src/theap.c:229-231` selects `allow_page_abandon == false` only with
+    /// `mi_option_page_full_retain == -1`, so every exhausted page enters
+    /// `BIN_FULL`. [`Self::activate_live`] keeps the historical retain-two
+    /// fixture image that existing focused tests depend on; this is the
+    /// source-reachable local profile compared with pinned C.
+    #[cfg(test)]
+    pub(crate) fn activate_live_non_abandoning(
+        mut self: Pin<&mut Self>,
+        thread_id: LiveThreadId,
+    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+        self.as_mut().bind_owner(TheapOwner::Live(thread_id), None, true)?;
         self.begin_bound_session(TheapOwner::Live(thread_id))
     }
 
@@ -213,7 +229,7 @@ impl ExclusiveTheapBootstrap {
         self: Pin<&mut Self>,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), BootstrapError> {
-        self.bind_owner(TheapOwner::Detached, Some(subprocess))
+        self.bind_owner(TheapOwner::Detached, Some(subprocess), false)
     }
 
     /// Lends the one mutable session for an already bound detached metadata
@@ -286,6 +302,7 @@ impl ExclusiveTheapBootstrap {
         self: Pin<&mut Self>,
         owner: TheapOwner,
         detached_subprocess: Option<&'static MainSubprocess>,
+        live_non_abandoning: bool,
     ) -> Result<(), BootstrapError> {
         // SAFETY: `Self` is !Unpin and this method never moves a field. The
         // newly stored self-referential raw pointers target the pinned `heap`
@@ -311,6 +328,9 @@ impl ExclusiveTheapBootstrap {
             state.heap.bind_main_subprocess(subprocess);
         }
         let bound = match owner {
+            TheapOwner::Live(_) if live_non_abandoning => state
+                .theap
+                .bind_exclusive_single_thread_non_abandoning(&mut state.heap, &mut state.tld),
             TheapOwner::Live(_) => state
                 .theap
                 .bind_exclusive_single_thread(&mut state.heap, &mut state.tld),
@@ -819,6 +839,30 @@ impl ExclusiveTheapSession<'_> {
         // SAFETY: this exclusive session owns the retired bounds.
         unsafe { Theap::reset_local_retired_bounds_at(self.theap_pointer()) }
     }
+
+    /// Runs the source `_mi_deferred_free` scalar prefix for one collection
+    /// phase of a phased allocation: advance this Theap's heartbeat and
+    /// select from a fixture-local registration that has no callback.
+    ///
+    /// Runtime owners perform this phase B through their caller-stack
+    /// `DeferredFreeSource`; this exclusive fixture session has no process
+    /// callback boundary, so a test driver stands in for that runtime step.
+    #[cfg(test)]
+    pub(crate) fn test_run_empty_deferred_free_phase(&mut self, force: bool) -> u64 {
+        static EMPTY_REGISTRATION: crate::deferred_free::DeferredFreeRegistration =
+            crate::deferred_free::DeferredFreeRegistration::new();
+        let theap = self.theap_pointer();
+        // SAFETY: `state` is the live pinned bootstrap; this only computes
+        // the TLD field address.
+        let tld = unsafe {
+            NonNull::new_unchecked(core::ptr::addr_of_mut!((*self.state.as_ptr()).tld))
+        };
+        let invocation = crate::deferred_free::begin(&EMPTY_REGISTRATION, theap, tld, force)
+            .expect("the exclusive Theap records its own TLD");
+        // SAFETY: the empty registration never selects user code, so no
+        // callback can observe or reenter this exclusive session.
+        unsafe { invocation.invoke() }
+    }
 }
 
 impl theap_page_session_sealed::Sealed for ExclusiveTheapSession<'_> {}
@@ -828,6 +872,17 @@ unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
     fn theap(&self) -> &Theap { Self::theap(self) }
     #[inline]
     fn thread_id(&self) -> Option<LiveThreadId> { Self::thread_id(self) }
+    /// This session exclusively owns its whole pinned Theap, so it keeps the
+    /// source `_mi_malloc_generic` counters. It has no process option owner
+    /// and therefore uses the frozen `mi_option_generic_collect` default.
+    #[inline]
+    fn advance_generic_allocation_administration(
+        &mut self,
+    ) -> crate::types::GenericAllocationAdministration {
+        // SAFETY: this exclusive session owns both counters, and the frozen
+        // default option read inspects no Theap state.
+        unsafe { Theap::advance_generic_allocation_administration_at(self.theap_pointer(), || 10_000) }
+    }
     #[inline]
     fn queue(&self, bin: usize) -> Option<&PageQueue> { Self::queue(self, bin) }
     #[inline]

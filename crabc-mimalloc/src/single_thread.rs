@@ -8780,6 +8780,41 @@ impl<'bootstrap, 'arena, 'map>
         })
     }
 
+    /// Activates the sole live Theap with the source non-abandoning option
+    /// image (`mi_option_page_full_retain == -1`); see
+    /// [`ExclusiveTheapBootstrap::activate_live_non_abandoning`]. The other
+    /// contracts are those of [`Self::activate`].
+    #[cfg(test)]
+    pub(crate) fn activate_non_abandoning(
+        bootstrap: Pin<&'bootstrap mut ExclusiveTheapBootstrap>,
+        thread_id: LiveThreadId,
+        arena: ArenaView<'arena>,
+        requested_arena: ArenaId,
+        page_map: &'map mut PageMap,
+        thread_sequence: usize,
+    ) -> Result<Self, BootstrapError> {
+        let session = bootstrap.activate_live_non_abandoning(thread_id)?;
+        Ok(Self {
+            session,
+            arena,
+            arena_lifetime: PhantomData,
+            requested_arena,
+            page_map,
+            thread_sequence,
+            pending_os_release: None,
+            collection_poison: None,
+            page_commit_poison: false,
+            forced_collect_retired_call_count: 0,
+            page_free_collect_failure_once: PageCollectFailureInjection::None,
+            page_release_after_page_map_unregister_failure_once: false,
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            last_page_to_full: None,
+            page_commit_on_demand: false,
+            page_area_commit_lease: None,
+            shutdown_complete: false,
+        })
+    }
+
     /// Activates the detached process metadata theap over the same source
     /// page/arena lifecycle. Every later operation must be externally
     /// serialized by the metadata private lock; this is not a thread-local or
@@ -42314,6 +42349,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 }
+
+// Deterministic M3 C/Rust local-engine trace driver; see its module header.
+#[cfg(test)]
+mod local_trace;
 
 #[cfg(test)]
 mod tests {

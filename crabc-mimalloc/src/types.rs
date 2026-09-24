@@ -6212,7 +6212,32 @@ impl Theap {
         let Some(thread_id) = LiveThreadId::new(tld.thread_id()) else {
             return false;
         };
-        self.bind_exclusive_owner(heap, tld, TheapOwner::Live(thread_id))
+        self.bind_exclusive_owner(heap, tld, TheapOwner::Live(thread_id), 2)
+    }
+
+    /// Binds the same live exclusive image with the source-reachable
+    /// non-abandoning option image.
+    ///
+    /// `src/theap.c:229-231` derives `allow_page_abandon` and
+    /// `page_full_retain` from `mi_option_page_full_retain`; its only
+    /// non-abandoning value for a live Theap is `-1`, which sends every full
+    /// page straight to `BIN_FULL`. [`Self::bind_exclusive_single_thread`]
+    /// keeps its historical retain-two fixture image for existing focused
+    /// tests; the M3 local-engine differential uses this source image.
+    pub(crate) fn bind_exclusive_single_thread_non_abandoning(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+    ) -> bool {
+        let Some(thread_id) = LiveThreadId::new(tld.thread_id()) else {
+            return false;
+        };
+        self.bind_exclusive_owner(
+            heap,
+            tld,
+            TheapOwner::Live(thread_id),
+            TheapPageMode::NonAbandoningPageSession.page_full_retain(),
+        )
     }
 
     /// Binds the empty source image to one process-lived detached metadata
@@ -6232,7 +6257,7 @@ impl Theap {
         heap: &mut Heap,
         tld: &mut ThreadLocalData,
     ) -> bool {
-        self.bind_exclusive_owner(heap, tld, TheapOwner::Detached)
+        self.bind_exclusive_owner(heap, tld, TheapOwner::Detached, 2)
     }
 
     fn bind_exclusive_owner(
@@ -6240,6 +6265,7 @@ impl Theap {
         heap: &mut Heap,
         tld: &mut ThreadLocalData,
         owner: TheapOwner,
+        page_full_retain: isize,
     ) -> bool {
         if !tld.matches_owner(owner) {
             return false;
@@ -6277,11 +6303,13 @@ impl Theap {
         // abandonment below, not this reclaim option image.
         self.allow_page_reclaim = true;
         self.is_detached = owner.is_detached();
-        // `theap.c:mi_theap_options_init` snapshots the default
-        // `mi_option_page_full_retain == 2` into each initialized theap. This
-        // bounded lifecycle freezes that normal-release value rather than
+        // `theap.c:mi_theap_options_init` snapshots
+        // `mi_option_page_full_retain` into each initialized theap. The
+        // bounded lifecycle freezes either the normal-release value `2` or,
+        // for the source non-abandoning live image, `-1`, rather than
         // introducing mutable option state.
-        self.page_full_retain = 2;
+        debug_assert!(page_full_retain == 2 || (page_full_retain == -1 && !owner.is_detached()));
+        self.page_full_retain = page_full_retain;
         if owner.is_detached() {
             // The preceding fresh-TLD guard proves `mi_tld_init`'s null
             // detached head before `mi_process_theap_meta` enters
@@ -6751,6 +6779,14 @@ impl Theap {
     #[inline]
     pub(crate) const fn pages_full_size(&self) -> usize {
         self.pages_full_size
+    }
+
+    /// Copies the source `heartbeat`, `generic_count`, and
+    /// `generic_collect_count` fields for the M3 local-engine trace.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn test_generic_administration_image(&self) -> (u64, isize, isize) {
+        (self.heartbeat, self.generic_count, self.generic_collect_count)
     }
 
     /// Reports the frozen source `page_reclaim_on_free >= 0` option image.

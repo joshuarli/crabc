@@ -92,6 +92,25 @@ passing; the contract validator rejects inventory gaps, double ownership, and
 unblocked gates that depend on missing evidence. `--check` validates the
 contract alone; `--reader-tests` runs its checker tests.
 
+`./compat/allocator/run-x86_64.sh allocator-m3` is the fail-closed native
+M3 gate defined by `m3-local-engine-x86_64-v3.5.0.json`. It requires complete
+M1/M2 reports, then runs `m3_x86_64.py`: generated workloads (a sweep of every
+reachable bin past one page, retirement/reuse probes, generic administration,
+and seeded churn) execute in separate pinned-C (`m3_local_trace_x86_64.c`,
+default Theap with `MIMALLOC_PAGE_FULL_RETAIN=-1`) and Rust
+(`single_thread::local_trace`) processes over identical in-place arenas, and
+their normalized traces (logical allocation and page IDs, block indices,
+queue order/counts, direct cache, Theap counters) must match line by line.
+It also derives the bin/page-class transition matrix, runs the M3 Rust unit
+batch, and runs the local engine under strict-provenance Miri. Unit and Miri
+tests are selected by exact module-path prefix from `--list` (libtest filters
+match substrings) and run per module group, so a Miri abort reports every
+test it prevented rather than hiding them. Every unmet
+prerequisite, check, or checked-in remaining condition is printed and the
+command exits 3. `--differential-only` and `--miri-only` are development
+subsets that write separate reports and never close M3. Traces and workloads
+stay under `.work/allocator-x86_64/target/compat/allocator/x86_64/m3-local-engine/`.
+
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
 Linux/x86-64 little-endian development is active alongside runtime parity;
@@ -1003,10 +1022,9 @@ TPREL-only final `libc.so`, rejecting TLSDESC and `__tls_get_addr`. A
 standalone test-only package exposes 16 `crabc_test_*` C symbols around one
 creating-thread context; it exports neither standard allocation names nor
 `mi_*` names. It is not a public allocator API and makes no
-allocator-readiness or whole-port parity claim. Its fixed-capacity `cfg(miri)`
-model covers current mapping and page-map ownership. The pinned image does not
-currently contain Miri, so forced-`cfg(miri)` execution is smoke evidence only
-and is never reported as a Miri pass.
+allocator-readiness or whole-port parity claim. Under `cfg(miri)` the allocator's real `os.rs` runs over
+`crabc-core`'s Miri kernel model; `allocator-m3` reports the Miri component
+only from an actual strict-provenance `cargo miri test` run.
 
 ## Recorded AArch64 reproduction commands (paused)
 
