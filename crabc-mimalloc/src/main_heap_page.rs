@@ -110,18 +110,20 @@ use crate::main_heap_thread::{
     MainHeapThreadPageSessionError,
 };
 use crate::main_theap::MainStaticHeapLease;
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
 use crate::process_page_map::{
     LiveAllocationPointer, ProcessPageMapError, ProcessPageMapMutationLease, ProcessPageMapPostExitAccess,
     ProcessPageMapSuspendedEngineAccess,
 };
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::single_thread::ThreadExitMappedRegularPostExitAdoptOutcome;
 use crate::single_thread::{
     FreeError, OwnerLocalMainHeapPageAllocator, OwnerLocalMainHeapPageSessionBindError,
     StaticMainMappedRegularClaimSelector,
     PageAllocatorEngine, PageAllocatorEngineState, RemoteFreePreparationError, RemoteFreeProducer,
     RemoteFreeProducerPair,
     ThreadExitMappedRegularPostExitAdoptError,
-    ThreadExitMappedRegularPostExitAdoptOutcome,
     ThreadExitMappedRegularPostExitAbandonError,
     ThreadExitMappedRegularPostExitAbandonFailure,
     ThreadExitMappedRegularPostExitFreeError,
@@ -369,6 +371,7 @@ impl ParentHeapAllocation<'_> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainHeapThreadOwnerLocalPageEngineBeginError {
     Attachment(MainHeapThreadAttachmentError),
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Pair(ProcessPageArenaLeaseError),
     Session(MainHeapThreadPageSessionError),
     SubprocessMismatch,
@@ -674,6 +677,7 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedRegularAdoption<'attachment
 /// while the registered page remains live. Its one consuming retry starts
 /// from the source-restored bitmap/count pair and may reclaim only the same
 /// retained `parts.page` candidate.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 #[must_use = "a reabandoned mapped-regular owner must retry its exact candidate or remain terminally retained"]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<
     'attachment,
@@ -998,6 +1002,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitMappedRegularPagesRoute<'_> {}
 /// A pre-publication refusal while opening a later-thread process page owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainHeapThreadProcessPageAllocatorBeginError {
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Pair(ProcessPageArenaLeaseError),
     Attachment(MainHeapThreadAttachmentError),
     /// The metadata TLD/Theap attachment belongs to a different process-main
@@ -1023,6 +1028,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
     /// metadata, and every
     /// force-collected full origin retain their post-exit client-free route.
     SourceNotInitiallyNonfullAdoptable,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Pair(ProcessPageArenaLeaseError),
     Attachment(MainHeapThreadAttachmentError),
     SubprocessMismatch,
@@ -1040,6 +1046,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
     /// Direct page-area commitment failed after queue-tail restoration, and
     /// source `_mi_page_abandon` restored the exact mapped-abandoned
     /// bitmap/count pair for the bounded same-candidate retry.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     PageCommit(ProcessPageArenaLeaseError),
     Route(ThreadExitMappedRegularPostExitAdoptError),
 }
@@ -1070,6 +1077,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptFailure<'attachme
     /// may consume itself only through its same-candidate [`retry`](
     /// MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption::retry)
     /// method; it is not a recovered short route or a fresh-page fallback.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Reabandoned {
         adoption:
             MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<'attachment, 'main>,
@@ -2229,6 +2237,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptError {
     /// target queue under the matched immutable process page-size contract.
     /// This rejects before short PageMap access moves to a long engine.
     Request,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Pair(ProcessPageArenaLeaseError),
     Attachment(MainHeapThreadAttachmentError),
     SubprocessMismatch,
@@ -2356,6 +2365,7 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
     /// Promotes one attached later-thread owner into its persistent local page
     /// engine. The paired process capability is consumed once; only its
     /// stable arena view and exact-owned-ranges PageMap reference remain.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) fn begin(
         attachment: &mut MainHeapThreadAttachment<'main>,
         pair: ProcessPageArenaLease,
@@ -7107,6 +7117,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     /// broadens into non-direct-small, malformed or out-of-profile
     /// no-immediate metadata, full-origin, multi-member aggregate-registry,
     /// or concurrent adoption.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) fn adopt_into_later_main<'attachment>(
         self,
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,
@@ -7464,6 +7475,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl<'attachment, 'main>
     MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<'attachment, 'main>
 {
@@ -7553,6 +7565,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main> {
     /// ordinary allocation request that selected that member's source queue
     /// geometry. The consuming result must be retained or finished before the
     /// attachment can leave its normal lifecycle.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) unsafe fn adopt_remaining_mapped_regular_into_later_main<'attachment>(
         self,
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,

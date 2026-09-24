@@ -34,10 +34,11 @@ use crate::main_theap::{
 use crate::os::MemoryConfig;
 use crate::page;
 use crate::page_backing::RuntimeFirstRegularPageBacking;
-use crate::process_arena::{
-    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaReserveFailure,
-    ProcessSharedArenaStorage,
-};
+use crate::process_arena::ProcessSharedArenaStorage;
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::process_arena::ProcessSharedArenaReserveFailure;
 use crate::process_init::ProcessMainBackingBinding;
 use crate::process_page_map::{ProcessPageMapError, ProcessPageMapMutationLease};
 #[cfg(test)]
@@ -101,6 +102,7 @@ pub(crate) enum MainStaticDeferredFreeAllocationPhase {
 /// A pre-publication refusal while opening the bounded static page allocator.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainStaticProcessPageAllocatorBeginError {
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Pair(ProcessPageArenaLeaseError),
     /// The static ticket-zero attachment belongs to another process image.
     /// This is checked before it is borrowed as a page session or the PageMap
@@ -1132,6 +1134,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// engine. Any pair or callback failure is terminal: after a later engine
     /// may have touched source page ownership, this permanent session cannot
     /// claim a retry.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) fn with_later_thread_page_pair<R>(
         &mut self,
         operation: impl FnOnce(ProcessPageArenaLease) -> Result<R, ()>,
@@ -1478,7 +1481,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
                     return None;
                 }
-                let (backing, pair): (RuntimeFirstRegularPageBacking, Option<ProcessPageArenaLease>) = match route {
+                let backing = match route {
                     #[cfg(any(test, not(target_arch = "x86_64")))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => {
                         let arena_lease = match arena_storage.ready_lease() {
@@ -1509,7 +1512,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                                 return None;
                             }
                         };
-                        (RuntimeFirstRegularPageBacking::selected_sidecar(arena), Some(pair))
+                        RuntimeFirstRegularPageBacking::selected_sidecar(arena)
                     }
                     MainStaticRuntimeFirstArenaRoute::SourceProcess(lease) => {
                         if !lease.is_allocation_ready()
@@ -1526,10 +1529,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                                 return None;
                             }
                         };
-                        (
-                            RuntimeFirstRegularPageBacking::source_registry(lease.process(), numa_node),
-                            None,
-                        )
+                        RuntimeFirstRegularPageBacking::source_registry(lease.process(), numa_node)
                     }
                 };
                 // Only the historical sidecar route shares one lifecycle
@@ -1600,19 +1600,19 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         (page_map_ref, None)
                     }
                 };
+                // The sidecar pair was joined from this same PageMap root.
                 #[cfg(not(test))]
-                let page_map_ref = match (match route {
+                let owned_ranges = match route {
                     #[cfg(any(test, not(target_arch = "x86_64")))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => unsafe {
-                        pair.expect("the sidecar route retains its exact PageMap/arena pair")
-                            .page_map_for_owned_ranges()
-                            .map_err(|_| ())
+                        page_map.page_map_for_owned_ranges()
                     },
                     MainStaticRuntimeFirstArenaRoute::SourceProcess(lease) => unsafe {
                         lease.page_map().page_map_for_owned_ranges()
-                            .map_err(|_| ())
                     },
-                }) {
+                };
+                #[cfg(not(test))]
+                let page_map_ref = match owned_ranges {
                     Ok(page_map_ref) => page_map_ref,
                     Err(_) => {
                         let _ = finish_sidecar_setup_lifecycle(page_map_lifecycle);
@@ -1703,17 +1703,17 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
-                let required_size = match first_ordinary_fresh_page_size(config, request) {
-                    Some(size) => size,
-                    None => {
-                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
-                            session,
-                            reservation,
-                            arena_storage,
-                        };
-                        return None;
-                    }
-                };
+                // The request must need an ordinary fresh page on every route;
+                // only the legacy reservation consumes its size.
+                let fresh_page_size = first_ordinary_fresh_page_size(config, request);
+                if fresh_page_size.is_none() {
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
+                        session,
+                        reservation,
+                        arena_storage,
+                    };
+                    return None;
+                }
                 if !session.preflight_fresh_page_session() {
                     self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
                     return None;
@@ -1757,11 +1757,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
-                let (backing, route, pair): (
-                    RuntimeFirstRegularPageBacking,
-                    MainStaticRuntimeFirstArenaRoute,
-                    Option<ProcessPageArenaLease>,
-                ) = match source_process {
+                let (backing, route) = match source_process {
                     Some(lease) => {
                     if !session.ensure_static_main_mapped_regular_claim_selector_for_process(lease) {
                         let _ = finish_sidecar_setup_lifecycle(page_map_lifecycle);
@@ -1780,7 +1776,6 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     (
                         RuntimeFirstRegularPageBacking::source_registry(lease.process(), numa_node),
                         MainStaticRuntimeFirstArenaRoute::SourceProcess(lease),
-                        None,
                     )
                     }
                     #[cfg(any(test, not(target_arch = "x86_64")))]
@@ -1788,6 +1783,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     // Only the explicit-config fixture route reaches this
                     // one-arena owner. Canonical process allocation uses the
                     // source registry's own search/reserve/search transition.
+                    let Some(required_size) = fresh_page_size else {
+                        let _ = finish_sidecar_setup_lifecycle(page_map_lifecycle);
+                        session.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        return None;
+                    };
                     let reservation_result = Some(
                         arena_storage.reserve_default_os_arena(page_map, required_size));
                     let arena = match reservation_result {
@@ -1846,7 +1847,6 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     (
                         RuntimeFirstRegularPageBacking::selected_sidecar(arena),
                         MainStaticRuntimeFirstArenaRoute::Sidecar,
-                        Some(pair),
                     )
                     }
                     // Native x86 production compiles no legacy reservation.
@@ -1899,18 +1899,19 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         (page_map_ref, None)
                     }
                 };
+                // The sidecar pair was joined from this same PageMap root.
                 #[cfg(not(test))]
-                let page_map_ref = match (match route {
+                let owned_ranges = match route {
                     #[cfg(any(test, not(target_arch = "x86_64")))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => unsafe {
-                        pair.expect("the sidecar route retains its exact PageMap/arena pair")
-                            .page_map_for_owned_ranges()
-                            .map_err(|_| ())
+                        page_map.page_map_for_owned_ranges()
                     },
                     MainStaticRuntimeFirstArenaRoute::SourceProcess(lease) => unsafe {
-                        lease.page_map().page_map_for_owned_ranges().map_err(|_| ())
+                        lease.page_map().page_map_for_owned_ranges()
                     },
-                }) {
+                };
+                #[cfg(not(test))]
+                let page_map_ref = match owned_ranges {
                     Ok(page_map_ref) => page_map_ref,
                     Err(_) => {
                         let _ = finish_sidecar_setup_lifecycle(page_map_lifecycle);

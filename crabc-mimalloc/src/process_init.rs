@@ -42,9 +42,9 @@ use crate::main_theap::{
     MainStaticPageSessionError, MainStaticProcessPageSession,
     MainStaticProcessPageSessionError, MainStaticTheapError,
 };
-use crate::main_static_page::{
-    MainStaticFirstArenaPageAllocator, MainStaticFirstArenaPageAllocatorBeginError,
-};
+use crate::main_static_page::MainStaticFirstArenaPageAllocatorBeginError;
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::main_static_page::MainStaticFirstArenaPageAllocator;
 use crate::meta::{MetaAllocator, MetaError};
 use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
 use crate::config::{VmOptionEnvironmentReader, VmOptions};
@@ -52,10 +52,10 @@ use crate::config::{VmOptionEnvironmentReader, VmOptions};
 use crate::diagnostic_output::{MbindWarningRoute, OutputOwner, ProcessDiagnosticInputs};
 use crate::os::{MemoryConfig, VmPolicy, VmPolicyConfigurationError, VmProcess};
 use crate::page_map::PageMapHeader;
-use crate::process_arena::{
-    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaError,
-    ProcessSharedArenaStorage,
-};
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::process_arena::{ProcessPageArenaLeaseError, ProcessSharedArenaError, ProcessSharedArenaStorage};
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::process_arena::ProcessPageArenaLease;
 use crate::process_page_map::{
     ProcessPageMapError, ProcessPageMapRoot, ProcessPageMapStorage,
 };
@@ -2095,7 +2095,9 @@ pub(crate) enum ProcessMainProcessPageSessionError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessMainReadySharedArenaError {
     Process(ProcessMainInitError),
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Arena(ProcessSharedArenaError),
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Pair(ProcessPageArenaLeaseError),
 }
 
@@ -2161,12 +2163,14 @@ impl ProcessMainThread {
     /// process-shared sidecar is already READY; joining its two immutable
     /// witnesses rejects a root, configuration, or subprocess mismatch before
     /// any page lifecycle can begin.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) fn ready_shared_arena_pair(
         &self,
     ) -> Result<ProcessPageArenaLease, ProcessMainReadySharedArenaError> {
         self.ready_shared_arena_pair_with_storage(ProcessSharedArenaStorage::global())
     }
 
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     fn ready_shared_arena_pair_with_storage(
         &self,
         arena_storage: &'static ProcessSharedArenaStorage,

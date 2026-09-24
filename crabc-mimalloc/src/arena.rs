@@ -58,8 +58,10 @@ use crate::os::MemoryConfig;
 use crate::subproc::MainSubprocess;
 use crate::types::{
     Arena, ArenaPages, CommitFunction, Heap, HeapArenaPagesError, MemoryId,
-    MemoryKind, Page, Subprocess, Theap, ThreadSequence,
+    Page, Subprocess, Theap, ThreadSequence,
 };
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::types::MemoryKind;
 
 #[path = "arena_selection.rs"]
 mod selection;
@@ -1174,6 +1176,7 @@ pub(crate) unsafe fn manage_external_in_place(
 /// may access the region until this function returns.
 /// The registry's initialized subprocess must outlive every resulting arena
 /// and bitmap view, including later subprocess statistics updates.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 pub(crate) unsafe fn manage_os_in_place(
     registry: &ArenaRegistry,
     start: *mut u8,
@@ -1213,6 +1216,7 @@ pub(crate) unsafe fn manage_os_in_place(
 /// callback contract. `numa_node_source` must be synchronous, must not retain
 /// an arena pointer or mapping capability, and must return a source-valid node
 /// for every arena the bounded manager initializes.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 pub(crate) unsafe fn manage_os_in_place_with_numa_source<N>(
     registry: &ArenaRegistry,
     start: *mut u8,

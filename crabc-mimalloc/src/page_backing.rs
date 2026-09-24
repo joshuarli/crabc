@@ -100,6 +100,7 @@ impl<'arena> PageBacking<'arena> for ArenaView<'arena> {
 /// its existing direct-OS fallback.  It must not turn that refusal into a
 /// second, private sidecar arena.
 pub(crate) enum RuntimeFirstRegularPageBacking {
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     SelectedSidecar(ArenaView<'static>),
     SourceRegistry { process: VmProcess<'static>, numa_node: i32 },
     SourceStartupRegular {
@@ -110,6 +111,7 @@ pub(crate) enum RuntimeFirstRegularPageBacking {
 }
 
 impl RuntimeFirstRegularPageBacking {
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) fn selected_sidecar(arena: ArenaView<'static>) -> Self {
         Self::SelectedSidecar(arena)
@@ -133,6 +135,7 @@ impl RuntimeFirstRegularPageBacking {
         Self::SourceRegistry { process, numa_node }
     }
 
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     #[inline]
     fn selected_matches_memory(&self, memory: MemoryId) -> Option<ArenaView<'static>> {
         let pointer = memory.arena_memory()?.arena;
@@ -184,6 +187,7 @@ impl sealed::Sealed for RuntimeFirstRegularPageBacking {}
 impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
     fn selected_arena(&self) -> Option<&ArenaView<'static>> {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(arena) => Some(arena),
             Self::SourceStartupRegular { startup_arena, .. } => Some(startup_arena),
             Self::SourceRegistry { .. } => None,
@@ -192,6 +196,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     fn reclaim_arenas(&self, requested: ArenaId, thread_sequence: usize) -> PageArenaSearch<'static> {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(arena) => PageArenaSearch::Selected(unsafe {
                 ArenaView::from_ptr(core::ptr::from_ref(arena.arena()).cast_mut())
             }),
@@ -211,6 +216,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     unsafe fn arena_for_memory(&self, memory: MemoryId) -> Option<ArenaView<'static>> {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(_) => self.selected_matches_memory(memory),
             // SAFETY: the PageBacking caller supplies a current arena MemoryId
             // from this process-owned claim or page; the helper validates its
@@ -223,6 +229,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     fn process(&self) -> Option<VmProcess<'static>> {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(_) => None,
             Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => Some(*process),
         }
@@ -249,6 +256,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaSliceClaim<'static>> {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(arena) => {
                 arena.try_claim_suitable_slices(requested, slices, commit, thread_sequence)
             }
@@ -288,6 +296,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     unsafe fn release(&self, memory: MemoryId) -> bool {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(_) => {
                 self.selected_matches_memory(memory).is_some()
                     && unsafe { crate::arena::release_arena_slices(memory) }
@@ -303,6 +312,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     unsafe fn account_page_commit_before_release(&self, memory: MemoryId, committed: usize) -> bool {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(_) => true,
             Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => {
                 // SAFETY: `memory` belongs to the current live source page;
@@ -320,6 +330,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     fn collect(&self, config: MemoryConfig, force: bool, thread_sequence: usize) -> bool {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(arena) => {
                 arena.collect_scheduled_purge(config.page_size(), force)
             }

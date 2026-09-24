@@ -58,42 +58,55 @@
 #[cfg(test)]
 extern crate std;
 
-use core::cell::UnsafeCell;
-use core::ffi::c_void;
-use core::mem::MaybeUninit;
-use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
-
-use crabc_core::Errno;
-
-use crate::arena::{
-    ArenaRegistry, ArenaView, CommitHook, ExternalArenaPlan, ManageArenaError,
-    ManagedExternalRegion, manage_external_in_place,
-    manage_os_in_place_with_numa_source,
-};
-use crate::config::{
-    ARENA_ALIGNMENT, ARENA_MAX_CHUNK_OBJ_SIZE, ARENA_MAX_SIZE, ARENA_MIN_SIZE,
-    ARENA_SLICE_SIZE, GIB, MAX_ALLOC_SIZE,
-};
-use crate::invariants;
-use crate::lock::PrivateLock;
-use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation, VmProcess};
-use crate::page_map::PageMapHeader;
-use crate::process_init::ProcessMainBackingBinding;
-use crate::process_page_map::{
-    MappedAbandonedClaimAccess, MappedAbandonedClaimCompletion,
-    MappedAbandonedClaimOutcome, ProcessPageMapError, ProcessPageMapRoot,
-    ProcessPageMapMutationLease,
-};
+use crate::os::MemoryConfig;
+use crate::process_page_map::{ProcessPageMapError, ProcessPageMapRoot, ProcessPageMapMutationLease};
 use crate::subproc::MainSubprocess;
-use crate::random::TheapRandomImage;
 
+// The historical one-arena sidecar and legacy pair below are compiled only
+// for the paused AArch64 target and test-only builds.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use {
+    core::cell::UnsafeCell,
+    core::mem::MaybeUninit,
+    core::sync::atomic::{AtomicPtr, AtomicU8},
+    crate::os::Mapping,
+    crabc_core::Errno,
+    crate::arena::{ArenaRegistry, ManageArenaError, ManagedExternalRegion},
+    crate::config::GIB,
+    crate::lock::PrivateLock,
+    crate::page_map::PageMapHeader,
+    core::ffi::c_void,
+    core::ptr::NonNull,
+    core::sync::atomic::Ordering,
+    crate::arena::{
+        ArenaView, CommitHook, ExternalArenaPlan, manage_external_in_place,
+        manage_os_in_place_with_numa_source,
+    },
+    crate::config::{
+        ARENA_ALIGNMENT, ARENA_MAX_CHUNK_OBJ_SIZE, ARENA_MAX_SIZE, ARENA_MIN_SIZE,
+        ARENA_SLICE_SIZE, MAX_ALLOC_SIZE,
+    },
+    crate::invariants,
+    crate::os::{MapAccess, NormalOsAllocation, VmProcess},
+    crate::process_init::ProcessMainBackingBinding,
+    crate::process_page_map::{
+        MappedAbandonedClaimAccess, MappedAbandonedClaimCompletion, MappedAbandonedClaimOutcome,
+    },
+    crate::random::TheapRandomImage,
+};
+
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 const COLD: u8 = 0;
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 const INITIALIZING: u8 = 1;
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 const READY: u8 = 2;
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 const RETAINED: u8 = 3;
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 const PAIR_UNSET: u8 = 0;
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 const PAIR_SET: u8 = 1;
 
 // `src/options.c:46-64` freezes these normal-release values for the only
@@ -101,6 +114,7 @@ const PAIR_SET: u8 = 1;
 // in KiB; retain bytes here because every surrounding map/arena boundary is
 // byte-based. This is not an options implementation or a mutable substitute
 // for one.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 const DEFAULT_ARENA_RESERVE: usize = GIB;
 
 // Pinned `src/arena.c:781-803` passes `MI_SECURE < 5` to the regular
@@ -122,14 +136,23 @@ const TICKET_ZERO_FIRST_ARENA_ALLOW_LARGE: bool = true;
 /// root identity, and registry publication are all stable until a future
 /// process-shutdown/quiescence owner exists.
 pub(crate) struct ProcessSharedArenaStorage {
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     state: AtomicU8,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pair_state: AtomicU8,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     initialization_lock: PrivateLock,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     config: UnsafeCell<MaybeUninit<MemoryConfig>>,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     subprocess: AtomicPtr<MainSubprocess>,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     page_map_root: AtomicPtr<PageMapHeader>,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     registry: ArenaRegistry,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     mapping: UnsafeCell<MaybeUninit<Mapping>>,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     managed: UnsafeCell<MaybeUninit<ManagedExternalRegion>>,
 }
 
@@ -145,14 +168,23 @@ unsafe impl Sync for ProcessSharedArenaStorage {}
 impl ProcessSharedArenaStorage {
     const fn new() -> Self {
         Self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             state: AtomicU8::new(COLD),
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             pair_state: AtomicU8::new(PAIR_UNSET),
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             initialization_lock: PrivateLock::new(),
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             config: UnsafeCell::new(MaybeUninit::uninit()),
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             page_map_root: AtomicPtr::new(core::ptr::null_mut()),
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             registry: ArenaRegistry::new(core::ptr::null_mut()),
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             mapping: UnsafeCell::new(MaybeUninit::uninit()),
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             managed: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
@@ -163,6 +195,13 @@ impl ProcessSharedArenaStorage {
     pub(crate) fn global() -> &'static Self {
         &PROCESS_SHARED_ARENA
     }
+}
+
+// The one-arena sidecar and its reservation serve only the historical
+// explicit-config route. Native x86 production reserves through the source
+// process registry and never installs or leases this sidecar.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+impl ProcessSharedArenaStorage {
 
     /// Returns an immutable lease for the one already-published shared arena.
     ///
@@ -1079,6 +1118,7 @@ impl ProcessSharedArenaStorage {
 /// `needs_recommit`; the frozen Linux `MADV_DONTNEED` path leaves a range
 /// accessible, so both its successful outcome and its no-failure-channel
 /// error case return false.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 unsafe extern "C" fn process_owned_mapping_commit(
     commit: bool,
     start: *mut u8,
@@ -1123,6 +1163,7 @@ unsafe extern "C" fn process_owned_mapping_commit(
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 /// A stable lease for the paired process map and one registered arena.
 ///
 /// It intentionally offers only immutable identity/configuration and a
@@ -1134,13 +1175,16 @@ pub(crate) struct ProcessSharedArenaLease {
     storage: &'static ProcessSharedArenaStorage,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 // SAFETY: this is a copyable pointer to process-static storage. It cannot
 // mutate its arena or page map; individual ArenaView/PageMap operations retain
 // their explicit synchronization and page-lifetime contracts.
 unsafe impl Send for ProcessSharedArenaLease {}
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 // SAFETY: see the Send justification above.
 unsafe impl Sync for ProcessSharedArenaLease {}
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl ProcessSharedArenaLease {
     /// Returns the exact Release-published page-map root paired with this
     /// arena owner.
@@ -1260,6 +1304,7 @@ impl ProcessSharedArenaLease {
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 /// A typed pairing of the process-global PageMap and one process-owned arena.
 ///
 /// A raw [`PageMapHeader`] cannot prove that a fresh page's map registration,
@@ -1275,6 +1320,7 @@ pub(crate) struct ProcessPageArenaLease {
     arena: ProcessSharedArenaLease,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl ProcessPageArenaLease {
     #[inline]
     pub(crate) const fn page_map_lease(self) -> ProcessPageMapRoot { self.page_map }
@@ -1534,6 +1580,7 @@ pub(crate) enum ChildProcessPageArenaLeaseError {
 }
 
 /// A pre-mutation mismatch while forming one process page/arena owner.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessPageArenaLeaseError {
     PageMap(ProcessPageMapError),
@@ -1548,17 +1595,20 @@ pub(crate) enum ProcessPageArenaLeaseError {
 /// registry and resolves each page through its actual MemoryId.
 #[derive(Clone, Copy)]
 pub(crate) enum ProcessPageBackingLease {
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     LegacyPair(ProcessPageArenaLease),
     Process(crate::process_init::ProcessMainBackingBinding),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessPageBackingError {
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     LegacyPair(ProcessPageArenaLeaseError),
     PageMap(ProcessPageMapError),
     NotAllocationReady,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl From<ProcessPageArenaLease> for ProcessPageBackingLease {
     fn from(pair: ProcessPageArenaLease) -> Self { Self::LegacyPair(pair) }
 }
@@ -1573,6 +1623,7 @@ impl ProcessPageBackingLease {
     {
         use crate::page_backing::RuntimeFirstRegularPageBacking;
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::LegacyPair(pair) => pair.arena()
                 .map(RuntimeFirstRegularPageBacking::selected_sidecar)
                 .map_err(ProcessPageBackingError::LegacyPair),
@@ -1585,6 +1636,7 @@ impl ProcessPageBackingLease {
 
     pub(crate) fn subprocess(self) -> Result<&'static MainSubprocess, ProcessPageBackingError> {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::LegacyPair(pair) => pair.subprocess().map_err(ProcessPageBackingError::LegacyPair),
             Self::Process(binding) => binding.page_map().subprocess().map_err(ProcessPageBackingError::PageMap),
         }
@@ -1597,6 +1649,7 @@ impl ProcessPageBackingLease {
         -> Result<&'static crate::page_map::PageMap, ProcessPageBackingError>
     {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::LegacyPair(pair) => unsafe { pair.page_map_for_owned_ranges() }
                 .map_err(ProcessPageBackingError::LegacyPair),
             Self::Process(binding) => unsafe { binding.page_map().page_map_for_owned_ranges() }
@@ -1611,6 +1664,7 @@ impl ProcessPageBackingLease {
         -> Result<ProcessPageMapMutationLease, ProcessPageBackingError>
     {
         match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::LegacyPair(pair) => unsafe { pair.begin_blocking_exact_post_owner_exit_mutation() }
                 .map_err(ProcessPageBackingError::LegacyPair),
             Self::Process(binding) => unsafe { binding.page_map().begin_blocking_exact_post_owner_exit_mutation() }
@@ -1624,6 +1678,7 @@ impl ProcessPageBackingLease {
 /// The mapping is returned to make its release authority explicit. Callers
 /// should normally call [`Mapping::unmap`] or pass it to a higher source
 /// reserve-policy owner; dropping this failure does not implicitly unmap.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 #[must_use = "an arena-install failure retains or returns an explicit mapping owner"]
 pub(crate) enum ProcessSharedArenaInstallFailure {
     Returned {
@@ -1635,6 +1690,7 @@ pub(crate) enum ProcessSharedArenaInstallFailure {
     },
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl ProcessSharedArenaInstallFailure {
     #[inline]
     fn returned(error: ProcessSharedArenaError, mapping: Mapping) -> Self {
@@ -1665,6 +1721,7 @@ impl ProcessSharedArenaInstallFailure {
 }
 
 /// One concrete process-shared arena setup failure.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessSharedArenaError {
     PageMap(ProcessPageMapError),
@@ -1683,6 +1740,7 @@ pub(crate) enum ProcessSharedArenaError {
     Retained,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 enum ProcessSharedArenaInstallAttempt {
     Ready(ProcessSharedArenaLease),
     Returned {
@@ -1692,6 +1750,7 @@ enum ProcessSharedArenaInstallAttempt {
     Retained(ProcessSharedArenaError),
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 /// A source-shaped explicit OS-reservation failure.
 ///
 /// `Rejected` has released every unpublished mapping and leaves the selected
@@ -1708,6 +1767,7 @@ pub(crate) enum ProcessSharedArenaReserveFailure {
     },
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl ProcessSharedArenaReserveFailure {
     #[inline]
     fn rejected(error: ProcessSharedArenaReserveError) -> Self {
@@ -1721,6 +1781,7 @@ impl ProcessSharedArenaReserveFailure {
 
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 /// One concrete regular-OS reservation result.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessSharedArenaReserveError {
@@ -1751,12 +1812,14 @@ pub(crate) enum ProcessSharedArenaReserveError {
     Retained,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 enum ProcessSharedArenaReservationAttempt {
     Ready(ProcessSharedArenaLease),
     Rejected(ProcessSharedArenaReserveError),
     Retained(ProcessSharedArenaReserveError),
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 /// The frozen first-arena result of `mi_arena_reserve` before a mapping exists.
 ///
 /// The v3.5.0 source uses mutable option descriptors and the number of already
@@ -1771,12 +1834,14 @@ struct DefaultOsArenaReservation {
     adjust_committed: bool,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 #[derive(Clone, Copy)]
 enum ManagedArenaBacking {
     External,
     RegularOs(crate::types::MemoryId),
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 /// Immutable process-image identity selected before mapping a new arena.
 #[derive(Clone, Copy)]
 struct ProcessArenaPair {
@@ -1785,6 +1850,7 @@ struct ProcessArenaPair {
     subprocess: &'static MainSubprocess,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 /// The non-forgeable process-policy counterpart to one process arena pair.
 ///
 /// It remains private to the first-arena owner so callers cannot extract a
@@ -1795,6 +1861,7 @@ struct ProcessBackedArenaPair {
     process: VmProcess<'static>,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl ProcessBackedArenaPair {
     fn from_binding(
         backing: ProcessMainBackingBinding,
@@ -1812,6 +1879,7 @@ impl ProcessBackedArenaPair {
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 /// Selects the stored node for the ordinary first regular arena.
 ///
 /// Pinned `src/arena.c:1735-1740` receives the regular reservation's `-1`
@@ -1830,6 +1898,7 @@ fn process_regular_arena_numa_node(process: VmProcess<'_>, requested: i32) -> i3
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl ProcessArenaPair {
     fn from_page_map(page_map: ProcessPageMapRoot) -> Result<Self, ProcessPageMapError> {
         Ok(Self {
@@ -1840,6 +1909,7 @@ impl ProcessArenaPair {
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 #[derive(Clone, Copy)]
 struct ProcessArenaCandidate {
     pair: ProcessArenaPair,
@@ -1847,6 +1917,7 @@ struct ProcessArenaCandidate {
     length: usize,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl ProcessArenaCandidate {
     fn from_page_map_and_mapping(
         page_map: ProcessPageMapRoot,
@@ -1880,6 +1951,7 @@ impl ProcessArenaCandidate {
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 fn one_regular_os_arena_length(
     requested_size: usize,
 ) -> Result<usize, ProcessSharedArenaReserveError> {
@@ -1899,6 +1971,7 @@ fn one_regular_os_arena_length(
     Ok(length)
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 /// Selects the first regular source arena from `mi_arena_reserve`.
 ///
 /// `requested_size` is the current fresh page's slice-rounded size before the
@@ -1948,6 +2021,7 @@ fn default_os_arena_reservation(
 /// bounded runtime seam. The policy is nevertheless live for the source
 /// reserve/eager-commit/large-page inputs, and the regular mapping receives
 /// the fixed normal-release `MI_SECURE < 5` caller bit.
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 fn process_default_os_arena_reservation(
     config: MemoryConfig,
     requested_size: usize,

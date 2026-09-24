@@ -181,9 +181,8 @@ use crate::process_page_map::{
     MappedAbandonedClaimOutcome, MappedAbandonedClaimRetainedRange,
     ProcessPageMapMutationLease,
 };
-use crate::process_arena::{
-    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaError,
-};
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaError};
 use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
 use crate::subproc::MainSubprocess;
@@ -355,6 +354,7 @@ enum PageCommitError {
     MissingTestLease,
     InvalidPageArea,
     InvalidPlan,
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Mapping(ProcessPageArenaLeaseError),
     ProcessMapping(crabc_core::Errno),
     PrefixState,
@@ -3471,6 +3471,7 @@ pub(super) enum StaticMainMappedRegularSelectedMapOutcome<R> {
 }
 
 impl<'main> StaticMainMappedRegularClaimSelector<'main> {
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) const fn new(
         pair: ProcessPageArenaLease,
@@ -3510,6 +3511,7 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
     /// facts; it never borrows a PageMap entry, claims a bitmap bit, or opens
     /// a new arena-selection route.
     #[inline]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) fn matches_pair(&self, candidate: ProcessPageArenaLease) -> bool {
         let ProcessPageBackingLease::LegacyPair(pair) = self.backing else { return false; };
         let (Ok(current_root), Ok(candidate_root)) =
@@ -3545,7 +3547,11 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
     }
 
     pub(crate) fn matches_process(&self, candidate: crate::process_init::ProcessMainBackingBinding) -> bool {
-        let ProcessPageBackingLease::Process(current) = self.backing else { return false; };
+        let current = match self.backing {
+            ProcessPageBackingLease::Process(current) => current,
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            ProcessPageBackingLease::LegacyPair(_) => return false,
+        };
         current.is_allocation_ready() && candidate.is_allocation_ready()
             && core::ptr::eq(current.process().subprocess(), candidate.process().subprocess())
             && current.page_map().root().ok().zip(candidate.page_map().root().ok())
@@ -3759,6 +3765,7 @@ impl StaticMainMappedRegularClaimSource<'_> {
         // validation inside the paired closure and consumes every completion
         // before this synchronous callback returns.
         let outcome = match self.selector.backing {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             ProcessPageBackingLease::LegacyPair(pair) => unsafe { pair.try_with_mapped_abandoned_claim(operation) },
             ProcessPageBackingLease::Process(binding) if binding.is_allocation_ready() => unsafe {
                 binding.page_map().try_with_owned_mapped_abandoned_claim(operation)
@@ -5708,6 +5715,7 @@ pub(crate) enum ThreadExitMappedRegularPostExitAdoptOutcome {
     /// but `_mi_page_abandon` restored this exact page to the paired
     /// mapped-abandoned bitmap/count state. The caller retains its long
     /// target owner and may retry only this same candidate.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Reabandoned(ProcessPageArenaLeaseError),
 }
 
@@ -20739,6 +20747,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     /// allowed to execute the source direct page-area commit. After a
     /// successful low-owner claim, source bitmap/count/association state can
     /// no longer be retried through a second route.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) unsafe fn adopt_into_later_main<'attachment, 'map>(
         &self,
         target: &mut PageAllocatorEngine<
@@ -38032,8 +38041,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     return Err(GenericPathError::Lifecycle);
                 }
             },
-            MappedAbandonedClaimOutcome::PairMismatch
-            | MappedAbandonedClaimOutcome::RootTerminal
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            MappedAbandonedClaimOutcome::PairMismatch => {
+                source.retain_root();
+                return Err(GenericPathError::Lifecycle);
+            }
+            MappedAbandonedClaimOutcome::RootTerminal
             | MappedAbandonedClaimOutcome::RootTerminalLock(_) => {
                 source.retain_root();
                 return Err(GenericPathError::Lifecycle);
@@ -38098,13 +38111,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// terminal after its respective ownership transition.
     #[inline]
     fn direct_page_commit_mapping_miss(error: GenericPathError) -> bool {
-        matches!(
-            error,
-            GenericPathError::PageCommit(PageCommitError::ProcessMapping(_))
-                | GenericPathError::PageCommit(PageCommitError::Mapping(
-                    ProcessPageArenaLeaseError::Arena(ProcessSharedArenaError::Mapping(_))
-                ))
-        )
+        match error {
+            GenericPathError::PageCommit(PageCommitError::ProcessMapping(_)) => true,
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            GenericPathError::PageCommit(PageCommitError::Mapping(
+                ProcessPageArenaLeaseError::Arena(ProcessSharedArenaError::Mapping(_)),
+            )) => true,
+            _ => false,
+        }
     }
 
     /// Performs the source's local-only `mi_page_free_quick_collect` without

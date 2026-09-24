@@ -121,9 +121,9 @@ use crate::process_init::{
 pub use crate::process_init::NativeProcessStartupFacts;
 #[cfg(target_arch = "x86_64")]
 use crate::process_init::{ProcessStartEntry, ProcessStartupFactsCell};
-use crate::process_arena::{
-    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessPageBackingLease, ProcessSharedArenaStorage,
-};
+use crate::process_arena::{ProcessPageBackingLease, ProcessSharedArenaStorage};
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
 use crate::process_page_map::{
     LiveAllocationPageState, LiveAllocationPointer, ProcessPageMapError, ProcessPageMapRoot,
 };
@@ -7882,6 +7882,7 @@ impl NativePersistentThreadOwner {
             }
         }
         let engine = match pair {
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             ProcessPageBackingLease::LegacyPair(pair) => MainHeapThreadOwnerLocalPageEngine::begin(&mut self.attachment, pair),
             ProcessPageBackingLease::Process(binding) => MainHeapThreadOwnerLocalPageEngine::begin_for_process(&mut self.attachment, binding),
         }?;

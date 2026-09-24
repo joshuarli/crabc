@@ -56,6 +56,7 @@ use crate::subproc::{
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MemoryConfig, VmProcess};
 use crate::os_page::OsAlignedPageOwner;
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 use crate::process_arena::ProcessPageArenaLease;
 use crate::random::TheapRandomImage;
 use crate::single_thread::{
@@ -3053,6 +3054,7 @@ impl MainStaticProcessPageSession {
     /// after the initial owner has formed its exact process PageMap/arena
     /// pair. A dormant reactivation may reuse only this same pair; a mismatch
     /// is terminal rather than an implicit broad arena search.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) fn ensure_static_main_mapped_regular_claim_selector(
         &mut self,
         pair: ProcessPageArenaLease,

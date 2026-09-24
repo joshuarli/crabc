@@ -803,6 +803,7 @@ pub(crate) enum MappedAbandonedClaimOutcome {
     /// The supplied map lease and validated process-page-arena lease name
     /// different immutable PageMap roots. No lock was acquired and no source
     /// state changed.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     PairMismatch,
     /// This root was already terminal, became terminal before the closure
     /// could run. The closure did not run.
@@ -1182,6 +1183,7 @@ impl ProcessPageMapRoot {
     /// after it matches the outer outcome and consumes the linear range token
     /// under that token's contract. A closure that panics or unwinds is
     /// terminally retained before its lock releases.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) unsafe fn try_with_validated_mapped_abandoned_claim(
         self,
         paired: crate::process_arena::ProcessPageArenaLease,
