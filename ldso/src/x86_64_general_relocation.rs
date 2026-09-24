@@ -174,6 +174,24 @@ unsafe fn symbol_name(object: &Object, index: usize) -> Option<&[u8]> {
     Some(unsafe { core::slice::from_raw_parts(name, length) })
 }
 
+/// `symbol_name(object, index)? == name` for a string table whose final byte
+/// is NUL: the same record and offset checks, then a bounded comparison that
+/// stops at the first differing byte instead of measuring the whole name.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn terminated_symbol_name_is(object: &Object, index: usize, name: &[u8]) -> Option<bool> {
+    if index == 0 { return None; }
+    let symbol = unsafe { direct_symbol(object, index) }?;
+    let offset = unsafe { read_u32(symbol) } as usize;
+    if offset >= object.strsz { return None; }
+    let available = object.strsz - offset;
+    for (position, &expected) in name.iter().chain(core::iter::once(&0)).enumerate() {
+        // A terminated table ends every in-range name before its last byte.
+        if position == available { return Some(false); }
+        if unsafe { object.strtab.add(offset + position).read() } != expected { return Some(false); }
+    }
+    Some(true)
+}
+
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 fn gnu_hash(name: &[u8]) -> u32 {
     name.iter().fold(5381u32, |hash, byte| {
@@ -868,8 +886,17 @@ unsafe fn relocate_initial_graph_inner(
 pub(super) unsafe fn debugger_pointer_slot(object: &Object) -> Option<*mut usize> {
     if object.canonical_libc_identity.is_none() { return None; }
     let mut result = None;
+    // With a NUL-terminated string table no name read can fail, so a byte
+    // comparison bounded by the table decides equality without measuring
+    // every name; otherwise keep the measuring read and its failure.
+    let terminated = unsafe { object.strtab.add(object.strsz.checked_sub(1)?).read() } == 0;
     for index in 1..object.symcount {
-        if unsafe { symbol_name(object, index) }? != b"_dl_debug_addr" { continue; }
+        let matches = if terminated {
+            unsafe { terminated_symbol_name_is(object, index, b"_dl_debug_addr") }?
+        } else {
+            unsafe { symbol_name(object, index) }? == b"_dl_debug_addr"
+        };
+        if !matches { continue; }
         let symbol = unsafe { direct_symbol(object, index) }?;
         let value = unsafe { read_u64(symbol.add(8)) };
         let size = unsafe { read_u64(symbol.add(16)) };
@@ -907,6 +934,9 @@ unsafe fn preflight_debugger_destinations(
             if debugger.overlaps(runtime_address(object.base, offset)?, length)? { return None; }
         }
     }
+    // Only RELR targets need decoding scratch; an object without a RELR
+    // table has none to check and needs no scratch mapping.
+    if object.relrsz == 0 { return Some(()); }
     let mut scratch = unsafe { RelocationScratch::new(object) }?;
     let (_, targets) = unsafe { scratch.slices() };
     let count = unsafe { preflight_relr_table(object, targets, 0) }?;
