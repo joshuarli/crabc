@@ -2727,7 +2727,22 @@ name = "root-child-subprocess-new-visit-destroy"
 source_region = "158-194 mi_subproc_new, 202-263 mi_subproc_unsafe_destroy and mi_subproc_destroy, 303-313 mi_subproc_visit_heaps; src/heap.c:103-147 _mi_heap_init and _mi_heap_new_for_subproc main-Heap arm, 150-172 mi_heap_free_theaps, 175-226 mi_heap_free, 240-251 _mi_heap_force_destroy; src/stats.c:446-451 _mi_stats_merge_into"
 rust_module = "crabc_mimalloc::subproc::lifecycle, crabc_mimalloc::meta, crabc_mimalloc::types::heap_registry, and crabc_mimalloc::statistics"
 rust_item = "subproc::lifecycle::{new_child,destroy_child}; SubprocessHeapList::visit_heaps; ChildMainHeapContextOwner::release_after_empty_heap_teardown; SubprocessStatistics::merge_child_subprocess_and_reset; subproc::lifecycle::tests::source_ordered_child_subprocess_lifecycle_trace"
-intentional_difference = "Covers root children of the process main subprocess created and destroyed on a later-main thread attachment. Destruction requires a quiescent child: no non-main Heap, no live metadata or ordinary page, and no thread, so source _mi_heap_destroy_pages and the non-main-Heap loop have nothing to release; a failed step returns the owner at its recorded stage instead of continuing. Source stores the child image memid into theap_meta->memid (subproc.c:171); both are parent MI_MEM_MALLOC blocks, so _mi_meta_free only uses the kind and frees the Theap pointer, which Rust expresses by freeing the metadata Theap's own capability. The destroying thread's _mi_thread_locals_thread_done is not modeled because no child lifecycle here allocates a dynamic thread-local table. mi_subproc_add_current_thread, nested children, and public entry points are absent."
+intentional_difference = "Covers root children of the process main subprocess created and destroyed on a later-main thread attachment. Destruction requires a quiescent child: no non-main Heap, no live metadata or ordinary page, and no thread, so source _mi_heap_destroy_pages and the non-main-Heap loop have nothing to release; a failed step returns the owner at its recorded stage instead of continuing. Source stores the child image memid into theap_meta->memid (subproc.c:171); both are parent MI_MEM_MALLOC blocks, so _mi_meta_free only uses the kind and frees the Theap pointer, which Rust expresses by freeing the metadata Theap's own capability. The destroying thread's _mi_thread_locals_thread_done is not modeled because no child lifecycle here allocates a dynamic thread-local table. Thread admission is the separate child-subprocess-add-current-thread item; nested children and public entry points are absent."
+tests = ["crabc-mimalloc/src/subproc_lifecycle.rs", "compat/allocator/subprocess_lifecycle.c", "compat/allocator/subprocess_lifecycle.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/subproc.c"
+name = "child-subprocess-add-current-thread"
+source_region = "283-299 mi_subproc_add_current_thread; src/init.c:236-282 mi_tld_init/mi_tld_create/mi_tld_free, 306-360 _mi_thread_init_with_heap, 377-421 mi_thread_theaps_done, 452-480 _mi_thread_done; src/theap.c:236-306 _mi_theap_init theaps statistic, 347-354 mi_theap_free_mem"
+rust_module = "crabc_mimalloc::subproc::lifecycle and crabc_mimalloc::meta"
+rust_item = "subproc::lifecycle::{add_current_thread,ChildThreadMember::thread_done,ChildThreadAddOutcome}; Theap::initialized_default_subprocess_at; ChildMainHeapContextOwner::begin_child_thread and ChildThreadOwner::teardown theaps statistics; subproc::lifecycle::tests::source_ordered_child_subprocess_lifecycle_trace"
+intentional_difference = "The refusal of a thread whose default Theap is initialized is a typed AlreadyInitialized outcome instead of a warning message. A member borrows the child owner, so one thread at a time belongs to a child and re-adding the same thread is not expressible. thread_done first proves that every page of the thread drains and otherwise returns PagesRemain with the member and roots intact; source would abandon live pages to the child main Heap, which has no Rust route yet. The native runtime allocation entries do not yet dispatch through an admitted thread's default Theap; the member's page engine is the allocation route."
 tests = ["crabc-mimalloc/src/subproc_lifecycle.rs", "compat/allocator/subprocess_lifecycle.c", "compat/allocator/subprocess_lifecycle.py"]
 exported = false
 implemented = true

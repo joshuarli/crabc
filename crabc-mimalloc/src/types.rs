@@ -6315,6 +6315,29 @@ impl Theap {
         }) }
     }
 
+    /// The admission read of source `mi_subproc_add_current_thread`
+    /// (`subproc.c:291-296`): `None` while this default Theap is
+    /// uninitialized, otherwise the subprocess its TLD names (null when the
+    /// initialized Theap has no TLD).
+    ///
+    /// # Safety
+    /// `pointer` is the calling thread's current default-Theap root, and a
+    /// non-null TLD it names is that thread's own live TLD. No transition of
+    /// either image runs during the read.
+    pub(crate) unsafe fn initialized_default_subprocess_at(
+        pointer: NonNull<Self>,
+    ) -> Option<*mut SubprocessIdentity> {
+        let theap = pointer.as_ptr();
+        // SAFETY: forwarded liveness; only two scalar fields are read.
+        unsafe {
+            if (*theap).heap.load(Ordering::Relaxed).is_null() {
+                return None;
+            }
+            let tld = (*theap).tld;
+            Some(if tld.is_null() { null_mut() } else { (*tld).subprocess })
+        }
+    }
+
     /// Returns the concrete source allocation provenance retained across
     /// `_mi_theap_init`'s empty-image copy. This is an observation only; it
     /// does not transfer the matching Malloc/Arena release capability.

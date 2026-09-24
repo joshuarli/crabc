@@ -1,8 +1,10 @@
 /* Copyright (c) 2026 crabc contributors. SPDX-License-Identifier: MIT */
-/* Pinned mi_subproc_new / mi_subproc_destroy / mi_subproc_visit_heaps
-   lifecycle for root children of the main subprocess, printed in the field
+/* Pinned mi_subproc_new / mi_subproc_add_current_thread /
+   mi_subproc_visit_heaps / mi_subproc_destroy lifecycle for root children of
+   the main subprocess, printed in the field
    order of subproc_lifecycle::tests::source_ordered_child_subprocess_lifecycle_trace. */
 #include "static.c"
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -29,9 +31,49 @@ static bool visit_count(mi_heap_t* heap, void* arg) {
   return state->result;
 }
 
-static int64_t values[64];
+static int64_t values[96];
 static size_t value_count;
-static void push(int64_t value) { require(value_count < 64); values[value_count++] = value; }
+static void push(int64_t value) { require(value_count < 96); values[value_count++] = value; }
+
+/* A fresh thread joins `subproc`, allocates and frees one block, and runs
+   `mi_thread_done`. Its fields follow the main-thread fields in order. */
+typedef struct worker_s { mi_subproc_t* subproc; int64_t values[16]; size_t count; } worker_t;
+static void wpush(worker_t* worker, int64_t value) {
+  require(worker->count < 16);
+  worker->values[worker->count++] = value;
+}
+
+static void* worker_main(void* arg) {
+  worker_t* const worker = (worker_t*)arg;
+  mi_subproc_t* const subproc = worker->subproc;
+  require(!mi_theap_is_initialized(_mi_theap_default()));
+  mi_subproc_add_current_thread(_mi_subproc_to_id(subproc));
+  mi_theap_t* const theap = _mi_theap_default();
+  wpush(worker, (int64_t)mi_atomic_load_relaxed(&subproc->thread_count));
+  wpush(worker, (int64_t)mi_atomic_load_relaxed(&subproc->thread_total_count));
+  wpush(worker, subproc->stats.threads.current);
+  wpush(worker, subproc->stats.theaps.current);
+  wpush(worker, mi_theap_is_initialized(theap) && _mi_theap_heap(theap) == subproc->heap_main
+                && !theap->is_detached);
+  wpush(worker, theap->tld->subproc == subproc);
+  wpush(worker, (int64_t)theap->tld->thread_seq);
+  /* Re-adding a thread of the same subprocess changes nothing. */
+  mi_subproc_add_current_thread(_mi_subproc_to_id(subproc));
+  require(_mi_theap_default() == theap && mi_atomic_load_relaxed(&subproc->thread_count) == 1);
+  void* const block = mi_malloc(64);
+  require(block != NULL);
+  const mi_page_t* const page = _mi_ptr_page(block);
+  wpush(worker, mi_page_heap(page) == subproc->heap_main);
+  wpush(worker, mi_page_thread_id(page) == _mi_thread_id());
+  mi_free(block);
+  mi_thread_done();
+  wpush(worker, !mi_theap_is_initialized(_mi_theap_default()));
+  wpush(worker, (int64_t)mi_atomic_load_relaxed(&subproc->thread_count));
+  wpush(worker, (int64_t)mi_atomic_load_relaxed(&subproc->thread_total_count));
+  wpush(worker, subproc->stats.threads.current);
+  wpush(worker, subproc->stats.theaps.current);
+  return NULL;
+}
 
 int main(void) {
   mi_process_init();
@@ -86,10 +128,24 @@ int main(void) {
   const int64_t first_reserved = first->stats.reserved.current;
   push(first_reserved > 0);
 
+  /* `mi_subproc_add_current_thread` on a thread already in the main
+     subprocess only warns. */
+  mi_subproc_add_current_thread(_mi_subproc_to_id(first));
+  push(_mi_theap_default()->tld->subproc == main_subproc);
+  push((int64_t)mi_atomic_load_relaxed(&first->thread_count));
+  push((int64_t)mi_atomic_load_relaxed(&first->thread_total_count));
+  worker_t worker = { first, {0}, 0 };
+  pthread_t thread;
+  require(pthread_create(&thread, NULL, &worker_main, &worker) == 0);
+  require(pthread_join(thread, NULL) == 0);
+  for (size_t i = 0; i < worker.count; i++) push(worker.values[i]);
+  push(first->stats.threads.total);
+
   const int64_t heaps_before = main_subproc->stats.heaps.total;
   const int64_t reserved_before = main_subproc->stats.reserved.current;
   const int64_t arenas_before = main_subproc->stats.arena_count.total;
   const int64_t pages_before = main_subproc->stats.pages.total;
+  const int64_t threads_before = main_subproc->stats.threads.total;
   mi_subproc_destroy(_mi_subproc_to_id(first));
   push((int64_t)member_count());
   push(member_at(0) == second && member_at(1) == main_subproc);
@@ -97,6 +153,7 @@ int main(void) {
   push(main_subproc->stats.reserved.current - reserved_before == first_reserved);
   push(main_subproc->stats.arena_count.total - arenas_before);
   push(main_subproc->stats.pages.total > pages_before);
+  push(main_subproc->stats.threads.total - threads_before);
 
   /* Destroying the main subprocess or a null identifier is a no-op. The Rust
      child owner cannot name either, so these are asserted but not traced. */

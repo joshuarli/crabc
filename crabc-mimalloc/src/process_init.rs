@@ -1409,6 +1409,16 @@ impl ProcessMainBackingBinding {
         self.storage.ensure_allocation_ready().is_ok()
     }
 
+    /// Completes an isolated test binding's startup (`SOURCE_ATTACHED` to
+    /// `READY`) so threads other than the binding thread may own pages, as
+    /// they may after production startup. Any other state is left unchanged.
+    #[cfg(test)]
+    pub(crate) fn test_publish_ready(self) -> bool {
+        self.storage.state
+            .compare_exchange(SOURCE_ATTACHED, READY, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
     /// Classifies source startup's regular arena outcome for its one bounded
     /// ticket-zero consumer.  The immutable outcome is written before the
     /// coordinator's `READY` Release; an initializing process cannot expose

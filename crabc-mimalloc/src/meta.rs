@@ -1613,6 +1613,23 @@ impl ChildThreadOwner<'_, '_> {
     #[inline]
     pub(crate) const fn thread(&self) -> LiveThreadId { self.thread }
 
+    /// This thread's regular Theap while the owner retains its block. The
+    /// address identifies the Theap for the thread's compiler-TLS roots; it
+    /// grants no projection of the image.
+    #[inline]
+    pub(crate) fn theap_pointer(&self) -> Option<NonNull<Theap>> {
+        self.theap.as_ref().map(|block| block.pointer.cast())
+    }
+
+    /// Projects the child image that this thread's TLD names, for source
+    /// subprocess-scoped transitions such as thread statistics.
+    pub(crate) fn with_child_image<R>(
+        &mut self,
+        operation: impl for<'image> FnOnce(Pin<&'image crate::subproc::ChildSubprocessImage>) -> R,
+    ) -> Option<R> {
+        self.parent.context.with_image(|child| operation(child.as_ref()))
+    }
+
     /// Completes an already-accounted raw unmap retry retained by this
     /// thread's child page operation. The parent context is inaccessible to
     /// callers while this owner borrows it, so retry stays on this typed
@@ -1819,7 +1836,13 @@ impl ChildThreadOwner<'_, '_> {
         };
         release.map_err(ChildThreadTeardownError::PageEngine)?;
         match free_theap {
-            Some(Ok(())) => self.theap = None,
+            Some(Ok(())) => {
+                self.theap = None;
+                // theap.c:350-352 `mi_theap_free_mem` for a non-detached Theap.
+                self.with_child_image(|image| {
+                    image.get_ref().identity().record_statistics_theap_unlinked();
+                });
+            }
             Some(Err(error)) => return Err(ChildThreadTeardownError::TheapRelease(error)),
             None => return Err(ChildThreadTeardownError::InvalidTransition),
         }
@@ -2044,9 +2067,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         self.stage
     }
 
-    /// The pinned child identity as an address only, for list-order checks.
-    #[cfg(test)]
-    pub(crate) fn test_identity_pointer(&mut self) -> Option<*mut crate::subproc::SubprocessIdentity> {
+    /// The pinned child identity as an address only: list order, and the
+    /// subprocess comparison of `mi_subproc_add_current_thread`.
+    pub(crate) fn identity_pointer(&mut self) -> Option<*mut crate::subproc::SubprocessIdentity> {
         self.context.with_image(|child| child.identity().as_ptr())
     }
 
@@ -2499,6 +2522,11 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 match initialize {
                     Some(Ok(())) => {
                         owner.state = ChildThreadOwnerState::Attached;
+                        // theap.c:296-298: a non-detached Theap counts in its
+                        // subprocess once `_mi_theap_init` has linked it.
+                        owner.with_child_image(|image| {
+                            image.get_ref().identity().record_statistics_theap_linked();
+                        });
                         Ok(owner)
                     }
                     Some(Err(error)) => {

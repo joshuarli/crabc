@@ -40,14 +40,17 @@ PageMap release, Heap statistics and bookkeeping, and full subprocess
 destruction remain separate work.
 
 `./compat/allocator/run-x86_64.sh allocator-subprocess-lifecycle` compares
-pinned `mi_subproc_new`, `mi_subproc_visit_heaps`, and `mi_subproc_destroy`
+pinned `mi_subproc_new`, `mi_subproc_add_current_thread`,
+`mi_subproc_visit_heaps`, and `mi_subproc_destroy`
 ([`subprocess_lifecycle.c`](subprocess_lifecycle.c)) with the Rust
 `subproc::lifecycle` composition for root children of the process main
 subprocess. The address-free trace covers list order and sequence numbers, the
 child main Heap and its metadata Theap on the parent's detached TLD, the
-child's first metadata arena, Heap visitation with an early stop, and the
-destroy-time statistics merge into the main subprocess. Children with threads,
-non-main Heaps, or live pages at destruction are not covered yet. Logs live
+child's first metadata arena, `mi_subproc_add_current_thread` refusing a
+thread already in the main subprocess and admitting a fresh thread that
+allocates, frees, and finishes, Heap visitation with an early stop, and the
+destroy-time statistics merge into the main subprocess. Destroying a child
+that still has threads, non-main Heaps, or live pages is not covered yet. Logs live
 under `x86_64/subprocess-lifecycle` in the allocator artifacts directory.
 
 `./compat/allocator/run-x86_64.sh allocator-m6` is the fail-closed Milestone 6
