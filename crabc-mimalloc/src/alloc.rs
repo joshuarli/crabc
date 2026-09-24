@@ -109,7 +109,7 @@ pub(crate) const fn replacement_zeros_first_byte(new_size: usize, zero: bool) ->
 /// The immutable pointer facts consumed by usable-size and realloc.
 ///
 /// The production implementation is the operation-scoped result of
-/// [`crate::process_page_map::ProcessPageMapLease::lookup_live_allocation`].
+/// [`crate::process_page_map::ProcessPageMapRoot::lookup_live_allocation`].
 /// Keeping this interface limited to source geometry prevents realloc from
 /// treating a PageMap observation as page ownership. In particular, ordinary
 /// in-place reuse requires a separate [`CurrentTargetHeapAllocation`] proof.

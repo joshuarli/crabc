@@ -39,7 +39,6 @@
     "native_boundary_source": "libc/src/allocator_native_mimalloc.rs",
     "engine_root_source": "crabc-mimalloc/src/lib.rs",
     "runtime_source": "crabc-mimalloc/src/runtime_lifecycle.rs",
-    "page_map_source": "crabc-mimalloc/src/process_page_map.rs",
     "sources": [
       "libc/Cargo.toml",
       "libc/src/c_abi.rs",
@@ -221,7 +220,7 @@
     "local_hot_path_global_pagemap_leases": {
       "final_required": 0,
       "unit": "global PageMap mutation leases per steady-state local allocator operation",
-      "source_limit": "A selected source indicator proves the current route retains the lease machinery, not an exact dynamic operation count."
+      "source_limit": "Indicators are lease-acquiring call sites may-reachable from the selected allocation, free, realloc, and usable-size entry points; the W03 post-exit terminal release takes its structural boundary through a separate helper. A reachable site is not an exact dynamic operation count."
     },
     "local_operation_owner_registry_scans": {
       "final_required": 0,
@@ -440,7 +439,7 @@
   "ratchet_baseline": {
     "static_signal_ceiling": {
       "local_hot_path_process_scheduler_ops": 10,
-      "local_hot_path_global_pagemap_leases": 3,
+      "local_hot_path_global_pagemap_leases": 0,
       "local_operation_owner_registry_scans": 14,
       "local_operation_client_ledger_scans": 9,
       "remote_free_owner_registry_scans": 16,

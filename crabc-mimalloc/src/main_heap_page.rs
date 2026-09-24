@@ -8206,7 +8206,7 @@ pub(crate) mod tests {
     use crate::os::{fault, MapAccess, Mapping, MemoryConfig, PageSize};
     use crate::os_page::PublishedOsAlignedPage;
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
-    use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
+    use crate::process_page_map::{ProcessPageMapRoot, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
     use crate::types::{
         BIN_BLOCK_SIZES, EMPTY_PAGE, MemoryKind, Page, PageKind, Theap, ThreadLocalData,
@@ -8234,7 +8234,7 @@ pub(crate) mod tests {
     fn paired_process_owner(
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> (ProcessPageMapLease, ProcessSharedArenaLease) {
+    ) -> (ProcessPageMapRoot, ProcessSharedArenaLease) {
         let page_map = ProcessPageMapStorage::test_static_owner()
             .initialize(config, subprocess)
             .expect("the isolated process map initializes");
@@ -8257,7 +8257,7 @@ pub(crate) mod tests {
     fn paired_reserved_process_owner(
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> (ProcessPageMapLease, ProcessSharedArenaLease) {
+    ) -> (ProcessPageMapRoot, ProcessSharedArenaLease) {
         let page_map = ProcessPageMapStorage::test_static_owner()
             .initialize(config, subprocess)
             .expect("the isolated process map initializes");

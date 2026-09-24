@@ -57,7 +57,7 @@ use crate::process_arena::{
     ProcessSharedArenaStorage,
 };
 use crate::process_page_map::{
-    ProcessPageMapError, ProcessPageMapLease, ProcessPageMapStorage,
+    ProcessPageMapError, ProcessPageMapRoot, ProcessPageMapStorage,
 };
 use crate::subproc::{
     MainStaticBootstrapSelectionError, MainSubprocess,
@@ -1161,7 +1161,7 @@ impl ProcessMainInitializationStorage {
         mut config: MemoryConfig,
         options: VmOptions,
         subprocess: &'static MainSubprocess,
-        page_map: ProcessPageMapLease,
+        page_map: ProcessPageMapRoot,
     ) -> Result<ProcessMainBackingBinding, ProcessMainInitError> {
         if self
             .state
@@ -1664,7 +1664,7 @@ pub(crate) enum ProcessMainInitError {
 /// Coordinator-issued proof for one canonical VM-backed process root.
 ///
 /// This is deliberately not reconstructible from a [`VmProcess`] and a
-/// [`ProcessPageMapLease`].  Independent test or future process coordinators
+/// [`ProcessPageMapRoot`].  Independent test or future process coordinators
 /// can legitimately form matching-looking pairs for the same subprocess;
 /// only this source-order coordinator proves that the retained policy and
 /// PageMap root were selected together before its sole `READY` publication.
@@ -1674,7 +1674,7 @@ pub(crate) enum ProcessMainInitError {
 pub(crate) struct ProcessMainBackingBinding {
     storage: &'static ProcessMainInitializationStorage,
     process: VmProcess<'static>,
-    page_map: ProcessPageMapLease,
+    page_map: ProcessPageMapRoot,
 }
 
 /// Source-start regular-arena admission for the bounded ticket-zero bridge.
@@ -1709,7 +1709,7 @@ impl ProcessStartupRegularArenaLease {
     pub(crate) const fn process(self) -> VmProcess<'static> { self.binding.process() }
 
     #[inline]
-    pub(crate) const fn page_map(self) -> ProcessPageMapLease { self.binding.page_map() }
+    pub(crate) const fn page_map(self) -> ProcessPageMapRoot { self.binding.page_map() }
 
     /// Returns the exact published regular parent only while the process
     /// binding remains `READY` and its backing repeats the finite admission.
@@ -1729,7 +1729,7 @@ impl ProcessMainBackingBinding {
     fn new(
         storage: &'static ProcessMainInitializationStorage,
         process: VmProcess<'static>,
-        page_map: ProcessPageMapLease,
+        page_map: ProcessPageMapRoot,
     ) -> Self {
         debug_assert!(matches!(storage.state.load(Ordering::Acquire), INITIALIZING | SOURCE_ATTACHED | READY));
         debug_assert!(core::ptr::eq(
@@ -1751,7 +1751,7 @@ impl ProcessMainBackingBinding {
 
     /// Returns the canonical PageMap witness selected with [`Self::process`].
     #[inline]
-    pub(crate) const fn page_map(self) -> ProcessPageMapLease { self.page_map }
+    pub(crate) const fn page_map(self) -> ProcessPageMapRoot { self.page_map }
 
     /// Confirms that this capability still names the coordinator's one
     /// retained policy/root pair. Production metadata binding occurs before
@@ -1820,7 +1820,7 @@ pub(crate) struct ProcessMainAllocationLease {
     storage: &'static ProcessMainInitializationStorage,
     config: MemoryConfig,
     subprocess: &'static MainSubprocess,
-    page_map: ProcessPageMapLease,
+    page_map: ProcessPageMapRoot,
 }
 
 impl ProcessMainAllocationLease {
@@ -1843,7 +1843,7 @@ impl ProcessMainAllocationLease {
         Ok(self.config)
     }
 
-    pub(crate) fn page_map(self) -> Result<ProcessPageMapLease, ProcessMainInitError> {
+    pub(crate) fn page_map(self) -> Result<ProcessPageMapRoot, ProcessMainInitError> {
         self.ensure_valid()?;
         Ok(self.page_map)
     }
@@ -1881,7 +1881,7 @@ impl ProcessMainAllocationLease {
 #[derive(Clone, Copy)]
 pub(crate) struct ProcessMainReadyLease {
     storage: &'static ProcessMainInitializationStorage,
-    page_map: ProcessPageMapLease,
+    page_map: ProcessPageMapRoot,
     config: MemoryConfig,
     subprocess: &'static MainSubprocess,
 }
@@ -1975,7 +1975,7 @@ impl ProcessMainReadyLease {
     }
 
     #[inline]
-    pub(crate) fn page_map(self) -> Result<ProcessPageMapLease, ProcessMainInitError> {
+    pub(crate) fn page_map(self) -> Result<ProcessPageMapRoot, ProcessMainInitError> {
         self.ensure_ready()?;
         Ok(self.page_map)
     }

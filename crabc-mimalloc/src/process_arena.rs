@@ -16,7 +16,7 @@
 
 //! One process-shared, caller-selected arena backing.
 //!
-//! The global [`ProcessPageMapLease`] is a source root/publication owner, not
+//! The global [`ProcessPageMapRoot`] is a source root/publication owner, not
 //! an arena allocator. This sidecar starts the separate source
 //! `mi_manage_os_memory_ex2` boundary: it binds one caller-selected, already
 //! mapped single arena to that exact map root and main-subprocess identity,
@@ -82,7 +82,7 @@ use crate::page_map::PageMapHeader;
 use crate::process_init::ProcessMainBackingBinding;
 use crate::process_page_map::{
     MappedAbandonedClaimAccess, MappedAbandonedClaimCompletion,
-    MappedAbandonedClaimOutcome, ProcessPageMapError, ProcessPageMapLease,
+    MappedAbandonedClaimOutcome, ProcessPageMapError, ProcessPageMapRoot,
     ProcessPageMapMutationLease,
 };
 use crate::subproc::MainSubprocess;
@@ -207,7 +207,7 @@ impl ProcessSharedArenaStorage {
     /// whether to unmap on failure.
     pub(crate) fn install_one_owned_external_arena(
         &'static self,
-        page_map: ProcessPageMapLease,
+        page_map: ProcessPageMapRoot,
         mapping: Mapping,
     ) -> Result<ProcessSharedArenaLease, ProcessSharedArenaInstallFailure> {
         let candidate = match ProcessArenaCandidate::from_page_map_and_mapping(page_map, &mapping) {
@@ -290,7 +290,7 @@ impl ProcessSharedArenaStorage {
     /// terminal retained result preserve the only live ownership proof.
     pub(crate) fn reserve_one_os_arena(
         &'static self,
-        page_map: ProcessPageMapLease,
+        page_map: ProcessPageMapRoot,
         requested_size: usize,
         access: MapAccess,
     ) -> Result<ProcessSharedArenaLease, ProcessSharedArenaReserveFailure> {
@@ -367,7 +367,7 @@ impl ProcessSharedArenaStorage {
     /// routing must be added with their owning source state machines.
     pub(crate) fn reserve_default_os_arena(
         &'static self,
-        page_map: ProcessPageMapLease,
+        page_map: ProcessPageMapRoot,
         requested_size: usize,
     ) -> Result<ProcessSharedArenaLease, ProcessSharedArenaReserveFailure> {
         let pair = ProcessArenaPair::from_page_map(page_map)
@@ -1271,17 +1271,17 @@ impl ProcessSharedArenaLease {
 /// separate incomplete boundaries.
 #[derive(Clone, Copy)]
 pub(crate) struct ProcessPageArenaLease {
-    page_map: ProcessPageMapLease,
+    page_map: ProcessPageMapRoot,
     arena: ProcessSharedArenaLease,
 }
 
 impl ProcessPageArenaLease {
     #[inline]
-    pub(crate) const fn page_map_lease(self) -> ProcessPageMapLease { self.page_map }
+    pub(crate) const fn page_map_lease(self) -> ProcessPageMapRoot { self.page_map }
 
     /// Joins exactly matching Release-published process map and arena owners.
     pub(crate) fn join(
-        page_map: ProcessPageMapLease,
+        page_map: ProcessPageMapRoot,
         arena: ProcessSharedArenaLease,
     ) -> Result<Self, ProcessPageArenaLeaseError> {
         let map_root = page_map.root().map_err(ProcessPageArenaLeaseError::PageMap)?;
@@ -1334,7 +1334,7 @@ impl ProcessPageArenaLease {
     /// # Safety
     ///
     /// The caller must satisfy
-    /// [`ProcessPageMapLease::try_with_validated_mapped_abandoned_claim`]'s
+    /// [`ProcessPageMapRoot::try_with_validated_mapped_abandoned_claim`]'s
     /// exact selected-range, complete-claim, span-validation, and
     /// terminal-retention contract. This pair proves only stable process
     /// map/arena identity; it does not prove that the selected bitmap bit names
@@ -1367,7 +1367,7 @@ impl ProcessPageArenaLease {
     /// # Safety
     ///
     /// The caller must satisfy
-    /// [`ProcessPageMapLease::begin_blocking_exact_post_owner_exit_mutation`]'s
+    /// [`ProcessPageMapRoot::begin_blocking_exact_post_owner_exit_mutation`]'s
     /// W07-claim, exact-terminal-tail, and explicit-release-or-retention
     /// contract.
     #[inline]
@@ -1386,7 +1386,7 @@ impl ProcessPageArenaLease {
     /// # Safety
     ///
     /// The caller must satisfy
-    /// [`ProcessPageMapLease::page_map_for_owned_ranges`]'s exact-range,
+    /// [`ProcessPageMapRoot::page_map_for_owned_ranges`]'s exact-range,
     /// no-overlap, metadata-lifetime, and unregister-before-release contract.
     /// The paired arena identity does not add global PageMap mutation or
     /// terminal-release authority.
@@ -1455,7 +1455,7 @@ impl ProcessPageArenaLease {
 /// that distinction instead of requiring equal subprocess identities.
 #[derive(Clone, Copy)]
 pub(crate) struct ChildProcessPageArenaLease<'child> {
-    page_map: ProcessPageMapLease,
+    page_map: ProcessPageMapRoot,
     child: crate::os::ChildVmProcess<'child>,
 }
 
@@ -1463,7 +1463,7 @@ impl<'child> ChildProcessPageArenaLease<'child> {
     /// Joins the canonical parent's published map to one registered child.
     /// The child's own arena backing is selected through its pinned identity.
     pub(crate) fn join(
-        page_map: ProcessPageMapLease,
+        page_map: ProcessPageMapRoot,
         child: crate::os::ChildVmProcess<'child>,
     ) -> Result<Self, ChildProcessPageArenaLeaseError> {
         page_map
@@ -1831,7 +1831,7 @@ fn process_regular_arena_numa_node(process: VmProcess<'_>, requested: i32) -> i3
 }
 
 impl ProcessArenaPair {
-    fn from_page_map(page_map: ProcessPageMapLease) -> Result<Self, ProcessPageMapError> {
+    fn from_page_map(page_map: ProcessPageMapRoot) -> Result<Self, ProcessPageMapError> {
         Ok(Self {
             root: page_map.root()?,
             config: page_map.memory_config()?,
@@ -1849,7 +1849,7 @@ struct ProcessArenaCandidate {
 
 impl ProcessArenaCandidate {
     fn from_page_map_and_mapping(
-        page_map: ProcessPageMapLease,
+        page_map: ProcessPageMapRoot,
         mapping: &Mapping,
     ) -> Result<Self, ProcessSharedArenaError> {
         let pair = ProcessArenaPair::from_page_map(page_map)
@@ -2138,7 +2138,7 @@ mod tests {
     fn initialized_map(
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> ProcessPageMapLease {
+    ) -> ProcessPageMapRoot {
         ProcessPageMapStorage::test_static_owner()
             .initialize(config, subprocess)
             .expect("the isolated process map initializes")

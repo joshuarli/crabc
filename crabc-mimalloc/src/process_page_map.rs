@@ -545,7 +545,7 @@ impl ProcessPageMapStorage {
         &'static self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> Result<ProcessPageMapLease, ProcessPageMapError> {
+    ) -> Result<ProcessPageMapRoot, ProcessPageMapError> {
         // Source `_mi_atomic_once_enter` has a completed fast path.  Preserve
         // that no-lock read for the common process-ready case; a cold caller
         // still takes the private lock so only one final slot can be formed.
@@ -588,7 +588,7 @@ impl ProcessPageMapStorage {
         &'static self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> Result<ProcessPageMapLease, ProcessPageMapError> {
+    ) -> Result<ProcessPageMapRoot, ProcessPageMapError> {
         use crate::config::{SourceOption, MAX_VABITS};
         use crate::process_init::process_source_option;
         let configured_vabits = process_source_option(SourceOption::MaxVabits).clamp(0, MAX_VABITS as i64) as usize;
@@ -636,7 +636,7 @@ impl ProcessPageMapStorage {
         // header visible to later Acquire readers.
         unsafe { self.root.publish(self.page_map_ref()) };
         self.state.store(READY, Ordering::Release);
-        Ok(ProcessPageMapLease { storage: self })
+        Ok(ProcessPageMapRoot { storage: self })
     }
 
     /// Writes the exact private PageMap bootstrap mapping into its terminal
@@ -655,7 +655,7 @@ impl ProcessPageMapStorage {
         &'static self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> Result<ProcessPageMapLease, ProcessPageMapError> {
+    ) -> Result<ProcessPageMapRoot, ProcessPageMapError> {
         let stored_config = self.config();
         if stored_config != config {
             return Err(ProcessPageMapError::ConfigurationMismatch);
@@ -667,7 +667,7 @@ impl ProcessPageMapStorage {
             self.state.store(POISONED, Ordering::Release);
             return Err(ProcessPageMapError::Poisoned);
         }
-        Ok(ProcessPageMapLease { storage: self })
+        Ok(ProcessPageMapRoot { storage: self })
     }
 
     #[inline]
@@ -742,15 +742,15 @@ impl ProcessPageMapStorage {
 /// page-lifetime requirements before registering, unregistering, or looking
 /// up a page.
 #[derive(Clone, Copy)]
-pub(crate) struct ProcessPageMapLease {
+pub(crate) struct ProcessPageMapRoot {
     storage: &'static ProcessPageMapStorage,
 }
 
-// SAFETY: the lease contains one process-static address. It cannot mutate the
+// SAFETY: the root witness contains one process-static address. It cannot mutate the
 // map or bypass PageMap's own unsafe range and lifetime contracts.
-unsafe impl Send for ProcessPageMapLease {}
+unsafe impl Send for ProcessPageMapRoot {}
 // SAFETY: see the Send justification above.
-unsafe impl Sync for ProcessPageMapLease {}
+unsafe impl Sync for ProcessPageMapRoot {}
 
 /// The only completed operation states for one mapped-abandoned claim.
 ///
@@ -827,7 +827,7 @@ pub(crate) enum MappedAbandonedClaimOutcome {
 /// One PageMap borrow scoped to exactly one mapped-abandoned source attempt.
 ///
 /// This is constructed only by
-/// [`ProcessPageMapLease::try_with_validated_mapped_abandoned_claim`]. It can
+/// [`ProcessPageMapRoot::try_with_validated_mapped_abandoned_claim`]. It can
 /// expose the map only during that closure, and its consuming constructors are
 /// the only normal way to turn a source `AdoptedPage` or
 /// `RetainedAdoptFailure` into an outer completion state.
@@ -1131,7 +1131,7 @@ impl Drop for MappedAbandonedClaimScope {
     }
 }
 
-impl ProcessPageMapLease {
+impl ProcessPageMapRoot {
     #[inline]
     pub(crate) const fn storage_pointer(self) -> *mut ProcessPageMapStorage {
         core::ptr::from_ref(self.storage).cast_mut()
@@ -2045,7 +2045,7 @@ mod tests {
     /// [`LiveAllocationPointer`] through `lookup_live_allocation`, just as the
     /// production pointer dispatcher does.
     fn with_live_pointer_remote_fixture(
-        operation: impl FnOnce(ProcessPageMapLease, NonNull<Page>, NonNull<u8>),
+        operation: impl FnOnce(ProcessPageMapRoot, NonNull<Page>, NonNull<u8>),
     ) {
         let storage = ProcessPageMapStorage::test_static_owner();
         let subprocess = MainSubprocess::test_static_owner();

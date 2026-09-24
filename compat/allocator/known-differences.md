@@ -758,7 +758,7 @@ are compared.
 - **Upstream/Rust:** `src/page-map.c:228-365`, especially static
   `mi_page_map_empty`, `__mi_page_map`, `mi_page_map_init_once`, and
   `_mi_page_map_init`, plus `src/subproc.c:253-255`; represented by
-  `process_page_map::ProcessPageMapStorage`, `ProcessPageMapLease`, and
+  `process_page_map::ProcessPageMapStorage`, `ProcessPageMapRoot`, and
   `ProcessPageMapMutationLease` over `page_map::PageMap`.
 - **Category:** private incomplete process-initialization and page-owner
   boundary. It has no C ABI surface or valid allocation-trace differential;
@@ -1113,7 +1113,7 @@ are compared.
   `main_static_page::MainStaticFirstArenaPageAllocator`, and
   `process_owned_mapping_commit` / `ProcessPageArenaLease` over the existing
   `ArenaRegistry`, `ManagedExternalRegion`, `Mapping`, and
-  `ProcessPageMapLease` boundaries.
+  `ProcessPageMapRoot` boundaries.
 - **Category:** private incomplete process-arena ownership only. It has no C
   ABI surface or valid allocation-trace differential entry.
 - **Difference:** C may manage arbitrary external spans (including split

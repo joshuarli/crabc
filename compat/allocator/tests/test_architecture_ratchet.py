@@ -85,15 +85,14 @@ class ArchitectureRatchetTests(unittest.TestCase):
         self.assertTrue(report["summary"]["static_analysis_only"])
         self.assertIn("promotion-qualified runtime/artifact evidence", report["summary"]["unmet"])
         ceilings = self.manifest["ratchet_baseline"]["static_signal_ceiling"]
-        # Only the structural PageMap mutation lease is still selected. The
-        # ticket-zero scheduler, per-call park/resume, and exited-owner
-        # admission scaffolding are test-only and may not return.
-        still_selected_metrics = {"local_hot_path_global_pagemap_leases"}
+        # No static indicator remains selected. The hot-path PageMap lease
+        # metric follows the reachable lease call sites; the ticket-zero
+        # scheduler, per-call park/resume, and exited-owner admission
+        # scaffolding are test-only and may not return.
         self.assertEqual(report["ratchet"]["regressions"], sorted(report["ratchet"]["regressions"]))
         for name, metric in report["metrics"].items():
             self.assertLessEqual(metric["source_indicator_count"], ceilings[name])
-            if name not in still_selected_metrics:
-                self.assertEqual(metric["source_indicator_count"], 0, name)
+            self.assertEqual(metric["source_indicator_count"], 0, name)
         self.assertEqual(report["forbidden_scaffolding_compiled"]["found"], {})
         self.assertNotIn("forbidden production scaffolding is still selected", report["summary"]["unmet"])
         phase_ef = report["phase_ef_forbidden_scaffolding"]

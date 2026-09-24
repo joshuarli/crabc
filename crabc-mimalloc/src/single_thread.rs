@@ -42883,7 +42883,7 @@ mod tests {
     use crate::meta::MetaAllocator;
     use crate::owned_tls_key_registry::OwnedThreadLocalKeyRegistry;
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
-    use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
+    use crate::process_page_map::{ProcessPageMapRoot, ProcessPageMapStorage};
     use crate::config::{
         ARENA_ALIGNMENT, ARENA_MIN_SIZE, LARGE_MAX_OBJ_SIZE, MAX_ALIGN_SIZE,
         MAX_ALLOC_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
@@ -43144,7 +43144,7 @@ mod tests {
     fn w03_paired_process_owner(
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> (ProcessPageMapLease, ProcessSharedArenaLease) {
+    ) -> (ProcessPageMapRoot, ProcessSharedArenaLease) {
         let page_map = ProcessPageMapStorage::test_static_owner()
             .initialize(config, subprocess)
             .expect("the isolated W03 process map initializes");
@@ -43174,7 +43174,7 @@ mod tests {
     fn with_w03_process_page_fixture(
         operation: impl FnOnce(
                 MemoryConfig,
-                ProcessPageMapLease,
+                ProcessPageMapRoot,
                 ProcessPageArenaLease,
                 MainStaticHeapLease<'static>,
                 &mut MainStaticProcessPageSession,
@@ -43215,7 +43215,7 @@ mod tests {
     /// pre-CAS rejection: the lower process continuation must never inspect
     /// that owner after the typed pointer says Detached.
     fn with_w03_detached_pointer_fixture(
-        page_map: ProcessPageMapLease,
+        page_map: ProcessPageMapRoot,
         operation: impl FnOnce(LiveAllocationPointer, NonNull<Page>, NonNull<u8>),
     ) {
         let thread_id = LiveThreadId::new(16).expect("the fixture owner is source-valid");

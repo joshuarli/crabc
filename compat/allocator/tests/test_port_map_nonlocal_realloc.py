@@ -43,7 +43,7 @@ class NonlocalReallocPortMapTests(unittest.TestCase):
         for rust_fact in (
             "crabc_mimalloc::process_page_map",
             "crabc_mimalloc::runtime_lifecycle",
-            "ProcessPageMapLease::lookup_live_allocation",
+            "ProcessPageMapRoot::lookup_live_allocation",
             "LiveAllocationPointer",
             "native_reallocate_prepare_caller_persistent_owner",
             "native_live_allocation_for_pointer_reallocation",

@@ -125,7 +125,7 @@ use crate::process_arena::{
     ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessPageBackingLease, ProcessSharedArenaStorage,
 };
 use crate::process_page_map::{
-    LiveAllocationPageState, LiveAllocationPointer, ProcessPageMapError, ProcessPageMapLease,
+    LiveAllocationPageState, LiveAllocationPointer, ProcessPageMapError, ProcessPageMapRoot,
 };
 use crate::single_thread::{
     DeferredFreeAllocationContinuation, DeferredFreeAllocationPhase,
@@ -3912,9 +3912,9 @@ impl RuntimeProcessStorage {
     /// This intentionally shares only the immutable root witness, never the
     /// permanent owner, its page lifecycle lock, or an ordinary `&mut`
     /// engine. A live allocation itself supplies the same-slice lifetime
-    /// proof consumed by `ProcessPageMapLease::lookup_page_for_live_client`.
+    /// proof consumed by `ProcessPageMapRoot::lookup_page_for_live_client`.
     #[inline]
-    fn page_map_for_live_native_allocation(&'static self) -> Option<ProcessPageMapLease> {
+    fn page_map_for_live_native_allocation(&'static self) -> Option<ProcessPageMapRoot> {
         // SAFETY: allocation admission follows the final owner write and
         // admits only its initial thread before completed startup. This takes
         // immutable PageMap facts, never the permanent page owner.

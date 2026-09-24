@@ -286,7 +286,7 @@ pub(crate) struct MainStaticFirstArenaPageAllocator<'main> {
 enum MainStaticFirstArenaPageAllocatorState<'main> {
     AwaitingFreshPage {
         attachment: &'main mut MainStaticTheapAttachment,
-        page_map: crate::process_page_map::ProcessPageMapLease,
+        page_map: crate::process_page_map::ProcessPageMapRoot,
         arena_storage: &'static ProcessSharedArenaStorage,
     },
     Active(MainStaticProcessPageAllocator<'main>),
@@ -328,7 +328,7 @@ impl<'main> MainStaticFirstArenaPageAllocator<'main> {
     /// arena.
     pub(crate) fn begin(
         attachment: &'main mut MainStaticTheapAttachment,
-        page_map: crate::process_page_map::ProcessPageMapLease,
+        page_map: crate::process_page_map::ProcessPageMapRoot,
         arena_storage: &'static ProcessSharedArenaStorage,
     ) -> Result<Self, MainStaticFirstArenaPageAllocatorBeginError> {
         let map_subprocess = page_map
@@ -636,7 +636,7 @@ struct MainStaticRuntimeActiveEngine {
     /// canonical source-process engine owns its registered ranges directly
     /// and never acquires this lifecycle boundary.
     page_map_lifecycle: Option<ProcessPageMapMutationLease>,
-    page_map: crate::process_page_map::ProcessPageMapLease,
+    page_map: crate::process_page_map::ProcessPageMapRoot,
     arena_storage: &'static ProcessSharedArenaStorage,
     route: MainStaticRuntimeFirstArenaRoute,
 }
@@ -670,7 +670,7 @@ enum MainStaticRuntimeFirstArenaRoute {
 enum MainStaticRuntimeFirstArenaReservation {
     #[cfg(any(test, not(target_arch = "x86_64")))]
     Legacy {
-        page_map: crate::process_page_map::ProcessPageMapLease,
+        page_map: crate::process_page_map::ProcessPageMapRoot,
     },
     Process {
         backing: ProcessMainBackingBinding,
@@ -679,7 +679,7 @@ enum MainStaticRuntimeFirstArenaReservation {
 
 impl MainStaticRuntimeFirstArenaReservation {
     #[inline]
-    fn page_map(self) -> crate::process_page_map::ProcessPageMapLease {
+    fn page_map(self) -> crate::process_page_map::ProcessPageMapRoot {
         match self {
             #[cfg(any(test, not(target_arch = "x86_64")))]
             Self::Legacy { page_map } => page_map,
@@ -711,7 +711,7 @@ struct MainStaticRuntimeParkedEngine {
         RuntimeFirstRegularPageBacking,
     >,
     page_map_access: ProcessPageMapSuspendedEngineAccess,
-    page_map: crate::process_page_map::ProcessPageMapLease,
+    page_map: crate::process_page_map::ProcessPageMapRoot,
     arena_storage: &'static ProcessSharedArenaStorage,
     route: MainStaticRuntimeFirstArenaRoute,
 }
@@ -762,7 +762,7 @@ enum MainStaticRuntimeFirstArenaPageAllocatorState {
     /// long PageMap exclusion before reaching here.
     DormantExistingArena {
         session: MainStaticProcessPageSession,
-        page_map: crate::process_page_map::ProcessPageMapLease,
+        page_map: crate::process_page_map::ProcessPageMapRoot,
         arena_storage: &'static ProcessSharedArenaStorage,
         route: MainStaticRuntimeFirstArenaRoute,
     },
@@ -1065,7 +1065,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     #[cfg(any(test, not(target_arch = "x86_64")))]
     pub(crate) fn begin_legacy(
         session: MainStaticProcessPageSession,
-        page_map: crate::process_page_map::ProcessPageMapLease,
+        page_map: crate::process_page_map::ProcessPageMapRoot,
         arena_storage: &'static ProcessSharedArenaStorage,
     ) -> Result<Self, MainStaticRuntimeFirstArenaPageAllocatorBeginError> {
         Self::begin_with_reservation(
@@ -2819,7 +2819,7 @@ mod tests {
     use crate::os::{fault, MapAccess, Mapping, MemoryConfig, PageSize};
     use crate::process_init::ProcessMainInitializationStorage;
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
-    use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
+    use crate::process_page_map::{ProcessPageMapRoot, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
     use std::thread;
 
@@ -2835,7 +2835,7 @@ mod tests {
     fn paired_process_owner(
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> (ProcessPageMapLease, ProcessSharedArenaLease) {
+    ) -> (ProcessPageMapRoot, ProcessSharedArenaLease) {
         let page_map = ProcessPageMapStorage::test_static_owner()
             .initialize(config, subprocess)
             .expect("the isolated process map initializes");

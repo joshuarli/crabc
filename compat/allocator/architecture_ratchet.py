@@ -1302,7 +1302,6 @@ def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str,
 
     selected = required_mapping(manifest["selected_production"], "selected_production")
     runtime = required_string(selected.get("runtime_source"), "selected_production.runtime_source")
-    page_map = required_string(selected.get("page_map_source"), "selected_production.page_map_source")
     cfg_environment = required_mapping(
         phase_bc_policy(manifest)["cfg_environment"], "phase_bc_call_graph.cfg_environment"
     )
@@ -1315,10 +1314,14 @@ def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str,
             *production_matches(runtime, r"\bpage_owner_state\s*:\s*AtomicUsize\b"),
             *production_matches(runtime, r"\.page_owner_state\s*\.compare_exchange(?:_weak)?\s*\("),
         ],
-        "local_hot_path_global_pagemap_leases": [
-            *production_matches(runtime, r"\bProcessPageMapLease\b"),
-            *production_matches(page_map, r"\bstruct\s+ProcessPageMapMutationLease\b"),
-        ],
+        # A lease-acquiring call site may-reachable from the selected
+        # allocation/free/realloc/usable-size entry points, not a type name.
+        # The W03 post-exit terminal release takes its short structural
+        # boundary through a distinct helper after source state proves no
+        # client remains; the plan forbids leases only on ordinary paths.
+        "local_hot_path_global_pagemap_leases": phase_bc_reachable_signal_matches(
+            root, manifest, "long_pagemap_mutation_lease"
+        ),
         "local_operation_owner_registry_scans": [
             *production_matches(runtime, r"\bfn\s+claim_current_slot(?:_excluding_held_route)?\s*\("),
             *production_matches(runtime, r"\bwhile\s*!current\.is_null\(\)\s*\{"),
@@ -1362,6 +1365,39 @@ def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str,
         "metadata_plateau_after_warmup": [],
     }
     return {name: sorted(matches, key=lambda item: (item.path, item.line, item.pattern)) for name, matches in signals.items()}
+
+
+def phase_bc_reachable_signal_matches(
+    root: Path, manifest: Mapping[str, Any], ratchet_name: str
+) -> list[SourceMatch]:
+    """Return one Phase-B/C ratchet's reachable call sites as source indicators."""
+
+    policy = phase_bc_policy(manifest)
+    cfg_environment = required_mapping(
+        policy["cfg_environment"], "phase_bc_call_graph.cfg_environment"
+    )
+    functions = [
+        function
+        for path in policy["sources"]
+        for function in selected_rust_functions(root, path, cfg_environment)
+    ]
+    functions_by_node = {function.node: function for function in functions}
+    ratchet = required_mapping(
+        required_mapping(policy["ratchets"], "phase_bc_call_graph.ratchets").get(ratchet_name),
+        f"phase_bc_call_graph.ratchets.{ratchet_name}",
+    )
+    matches, _, _ = phase_bc_ratchet_matches(
+        ratchet_name,
+        ratchet,
+        policy["entry_points"],
+        functions,
+        functions_by_node,
+        phase_bc_call_edges(functions),
+    )
+    return [
+        SourceMatch(path=str(match["path"]), line=int(match["line"]), pattern=str(match["pattern"]))
+        for match in matches
+    ]
 
 
 def caller_identity_first_free_dispatch(
