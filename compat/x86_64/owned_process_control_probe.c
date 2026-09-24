@@ -43,6 +43,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
 #include <sched.h>
 #include <spawn.h>
@@ -857,6 +858,63 @@ static int check_fork(void)
     return 0;
 }
 
+/* Musl's fork identifies its caller by thread pointer alone, so public fork
+ * also succeeds in a process image copied by a raw SYS_fork, where the sole
+ * task keeps the copied TLS but has a new TID. The raw child forks through
+ * libc and proves the grandchild's identities; the raw copy is made from the
+ * initial thread and from a worker. */
+static int raw_image_fork_child(void)
+{
+    int report[2] = { -1, -1 };
+    pid_t parent = getpid();
+    pid_t observed[2] = { 0, 0 };
+    int status = 0;
+    pid_t child;
+    if (raw_pipe(report) != 0)
+        return 1;
+    child = fork();
+    if (child == 0) {
+        (void)raw_close(report[0]);
+        raw_exit(fork_child_matches(parent, report[1]) ? 47 : 1);
+    }
+    (void)raw_close(report[1]);
+    if (child <= 0 || !raw_read_full(report[0], observed, sizeof(observed)) ||
+        observed[0] != child || observed[1] != parent ||
+        raw_wait_for(child, &status) != child || !exited_with(status, 47))
+        return 2;
+    (void)raw_close(report[0]);
+    return 0;
+}
+
+static int raw_image_fork(void)
+{
+    int status = 0;
+    long child = raw_fork();
+    if (child == 0)
+        raw_exit(raw_image_fork_child() == 0 ? 48 : 1);
+    if (child <= 0 || raw_wait_for((pid_t)child, &status) != child)
+        return 1;
+    return exited_with(status, 48) ? 0 : 2;
+}
+
+static void *raw_image_fork_worker(void *argument)
+{
+    *(int *)argument = raw_image_fork();
+    return NULL;
+}
+
+static int check_fork_in_raw_image(void)
+{
+    pthread_t worker;
+    int worker_result = -1;
+    if (raw_image_fork() != 0)
+        return 1;
+    if (pthread_create(&worker, NULL, raw_image_fork_worker, &worker_result) != 0 ||
+        pthread_join(worker, NULL) != 0 || worker_result != 0)
+        return 2;
+    return 0;
+}
+
 static unsigned char clone_stack[65536] __attribute__((aligned(16)));
 
 static int clone_callback(void *argument)
@@ -911,7 +969,7 @@ static int daemon_supervisor(void)
     long child;
     if (raw_syscall5(SYS_prctl, 36, 1, 0, 0, 0) != 0 || raw_pipe(report) != 0)
         return 1;
-    child = fork();
+    child = raw_fork();
     if (child == 0) {
         pid_t original = getpid();
         (void)raw_close(report[0]);
@@ -938,9 +996,10 @@ static int daemon_supervisor(void)
 static int check_daemon(void)
 {
     int status = 0;
-    /* The supervisor and daemon's first child come from public fork: libc
-     * fork is ordinary after libc fork, and check_fork already proved it. */
-    pid_t child = fork();
+    /* The supervisor and daemon's caller are raw fixture children, so
+     * daemon's first libc fork runs in a raw-fork image, which musl admits
+     * exactly as check_fork_in_raw_image does. */
+    long child = raw_fork();
     if (child == 0)
         raw_exit(daemon_supervisor());
     if (child <= 0 || raw_wait_for((pid_t)child, &status) != child)
@@ -1080,6 +1139,9 @@ int main(int argc, char **argv)
         return 34;
     if (check_fork() != 0)
         return 35;
+    result = check_fork_in_raw_image();
+    if (result != 0)
+        return 70 + result;
     if (check_clone() != 0)
         return 36;
     if (check_vfork() != 0)

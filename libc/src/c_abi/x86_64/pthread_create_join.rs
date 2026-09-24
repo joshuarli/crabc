@@ -1128,7 +1128,9 @@ pub(super) struct ProcessChildCaller(Option<*mut ThreadControl>);
 #[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn capture_process_child_caller() -> ProcessChildCaller {
     let pointer = pthread_identity::current_thread_pointer();
-    if static_tls::is_initial_thread_pointer(pointer) {
+    // Match by thread pointer alone, as musl's `__pthread_self`: a caller in a
+    // raw-fork image keeps the inherited initial `%fs` but has a new TID.
+    if static_tls::is_inherited_initial_thread_pointer(pointer) {
         ProcessChildCaller(None)
     } else {
         let cancellation = pthread_identity::current_selected_cancellation_state();

@@ -70,10 +70,14 @@ and exit calls are fixture plumbing only; they do not select a public fork,
 pipe, supervision, or lifecycle API.
 
 The public creation entries are exercised directly. `fork` reports the
-child's own pid and parent through a pipe. `clone` rejects a null stack and
+child's own pid and parent through a pipe. As in musl, `fork` also succeeds in
+a process image copied by a raw `SYS_fork` from the initial thread or from a
+worker: that sole task keeps the copied TLS but has a new TID. Such an image
+was never prepared, so under the native allocator it takes the unprepared raw
+copy rather than the prepared-fork child contract. `clone` rejects a null stack and
 `CLONE_THREAD`, preserves `errno` on success, and runs its callback to an exit
-status. `vfork` execs the consumer. `daemon(1, 1)` runs under a subreaper
-supervisor that observes a new non-leader process in the new session and reaps
+status. `vfork` execs the consumer. `daemon(1, 1)` runs in a raw-fork image under a
+subreaper supervisor that observes a new non-leader process in the new session and reaps
 all three processes; its `/dev/null` and root-directory arguments stay in
 `owned-process-trio`. Both spawn entries run the consumer through
 `addopen`, `adddup2`, `addclose`, and `addchdir_np` (`posix_spawn`) or

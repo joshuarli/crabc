@@ -342,10 +342,11 @@ impl NativeAllocatorCopy {
 /// child keeps its FS image and copies only caller-owned TSD representation;
 /// copied key, loader and application locks are not repaired here.
 ///
-/// `prepared_allocator` is true only for full `fork`, whose caller already
-/// holds the worker-list lock, and selects the native allocator's prepared
-/// copy and child repair. `_Fork` passes false: its child repairs no
-/// allocator owner (see [`NativeAllocatorCopy`]).
+/// `prepared_allocator` is true only for full `fork` from a prepared image,
+/// whose caller already holds the worker-list lock, and selects the native
+/// allocator's prepared copy and child repair. `_Fork` and a full `fork` in a
+/// raw-fork image pass false: that child repairs no allocator owner (see
+/// [`NativeAllocatorCopy`] and [`is_raw_fork_image_caller`]).
 #[cfg(crabc_x86_owned_runtime)]
 unsafe fn fork_without_handlers(
     #[cfg_attr(not(feature = "native-mimalloc-shadow"), allow(unused_variables))]
@@ -399,17 +400,20 @@ unsafe fn fork_without_handlers(
 /// only the selected-worker registry/task reset waits for loader completion.
 #[cfg(all(crabc_x86_owned_runtime, crabc_x86_dynamic_runtime))]
 unsafe fn fork_without_handlers_deferred_registry_reset(
+    #[cfg_attr(not(feature = "native-mimalloc-shadow"), allow(unused_variables))]
+    prepared_allocator: bool,
 ) -> (i64, Option<pthread_create_join::DeferredProcessChildRegistryReset>) {
     let mut saved = 0_u64;
     unsafe { signal_execution::block_all_signals(&mut saved) };
     let caller = unsafe { pthread_create_join::capture_process_child_caller() };
     unsafe { super::owned_process_lock::pthread_fork_prepare() };
     // Full `fork` holds the worker-list lock, so it takes the prepared
-    // allocator copy. The full dynamic parent/error route below owns loader
-    // and atfork completion after this inner process-lock/signal pair has
-    // been restored.
+    // allocator copy unless its caller runs in a raw-fork image (see
+    // [`is_raw_fork_image_caller`]). The full dynamic parent/error route
+    // below owns loader and atfork completion after this inner
+    // process-lock/signal pair has been restored.
     #[cfg(feature = "native-mimalloc-shadow")]
-    let Some(allocator_copy) = (unsafe { NativeAllocatorCopy::begin(true) }) else {
+    let Some(allocator_copy) = (unsafe { NativeAllocatorCopy::begin(prepared_allocator) }) else {
         unsafe {
             super::owned_process_lock::pthread_fork_parent();
             signal_execution::restore_application_signals(&saved);
@@ -523,6 +527,42 @@ pub unsafe extern "C" fn pthread_atfork(
     0
 }
 
+/// Whether an otherwise unadmitted `fork` caller is the sole task of a
+/// process image copied by a raw `syscall(SYS_fork)` (or `clone` without
+/// `CLONE_VM`) from an owned task.
+///
+/// Musl's `fork` identifies its caller only by the thread pointer, so it
+/// succeeds in such an image. Here the normal admission additionally matches
+/// the recorded Linux TID, which the raw child no longer has. The raw image
+/// is recognized instead by an owned `%fs` identity (the inherited initial
+/// thread pointer, or a worker's published cancellation cache) on a
+/// thread-group leader: a foreign `CLONE_THREAD` task that copied an owned
+/// TLS base is never its group's leader, so it stays rejected.
+///
+/// A raw image was never prepared: no libc lock transaction or allocator
+/// quiescence surrounded its copy, and vanished parent threads were never
+/// repaired. Its `fork` therefore still takes the unprepared allocator copy
+/// ([`NativeAllocatorCopy::Unprepared`] under the native allocator) rather
+/// than claiming the prepared-fork child contract; the libc child identity,
+/// TSD, robust-list and registry repair is the same as for a prepared caller.
+#[cfg(crabc_x86_owned_runtime)]
+fn is_raw_fork_image_caller(thread_pointer: *mut u8) -> bool {
+    if thread_pointer.is_null() {
+        return false;
+    }
+    // SAFETY: getpid/gettid take no arguments and only report identities.
+    let (process, task) = unsafe {
+        (
+            super::raw_syscall::syscall0(super::raw_syscall::SYS_GETPID),
+            super::raw_syscall::syscall0(super::raw_syscall::SYS_GETTID),
+        )
+    };
+    process > 0
+        && process == task
+        && (static_tls::is_inherited_initial_thread_pointer(thread_pointer)
+            || !pthread_identity::current_selected_cancellation_state().is_null())
+}
+
 /// Fork one selected owned task through Linux `fork=57`.
 ///
 /// Registered user callbacks run newest-first before internal locks. The
@@ -543,9 +583,14 @@ pub unsafe extern "C" fn pthread_atfork(
 #[no_mangle]
 pub unsafe extern "C" fn fork() -> c_int {
     let thread_pointer = pthread_identity::current_thread_pointer();
-    if !static_tls::is_initial_thread_pointer(thread_pointer)
-        && !pthread_create_join::is_current_selected_worker()
-    {
+    let prepared_image = static_tls::is_initial_thread_pointer(thread_pointer)
+        || pthread_create_join::is_current_selected_worker();
+    #[cfg(crabc_x86_owned_runtime)]
+    if !prepared_image && !is_raw_fork_image_caller(thread_pointer) {
+        return c_status(-EAGAIN);
+    }
+    #[cfg(not(crabc_x86_owned_runtime))]
+    if !prepared_image {
         return c_status(-EAGAIN);
     }
     unsafe { __fork_handler(-1) };
@@ -583,10 +628,10 @@ pub unsafe extern "C" fn fork() -> c_int {
     pthread_create_join::pthread_fork_prepare();
     #[cfg(all(crabc_x86_owned_runtime, crabc_x86_dynamic_runtime))]
     let (result, deferred_child_registry_reset) = unsafe {
-        fork_without_handlers_deferred_registry_reset()
+        fork_without_handlers_deferred_registry_reset(prepared_image)
     };
     #[cfg(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)))]
-    let result = unsafe { fork_without_handlers(true) };
+    let result = unsafe { fork_without_handlers(prepared_image) };
     #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe { raw_selected_fork() };
     if result == 0 {
