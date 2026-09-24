@@ -13,6 +13,7 @@
 #include <sys/mman.h>
 #include <signal.h>
 #include <sys/syscall.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"pthread-scheduling:%d: %s errno=%d\n",__LINE__,#x,errno); _Exit(95); } } while (0)
@@ -55,7 +56,102 @@ static void deny_scheduler(void) {
     CHECK(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)==0);
     CHECK(prctl(PR_SET_SECCOMP,2,&program)==0);
 }
-int main(void) {
+/* Scope, concurrency, affinity, thread names, and C11 identity/exit. A
+ * named thread's comm file is reached through /proc, which the dynamic cells'
+ * chroot does not mount; musl then reports the open error, so the probe
+ * requires success with /proc and ENOENT without it. */
+static atomic_int named_ready, named_release;
+static void *named_worker(void *arg) {
+    atomic_store(&named_ready,1);
+    while(!atomic_load(&named_release)) sched_yield();
+    return arg;
+}
+static int c11_exit_worker(void *arg) {
+    thrd_t *observed=arg;
+    *observed=thrd_current();
+    CHECK((thrd_equal)(thrd_current(),*observed));
+    thrd_exit(33);
+}
+static tss_t surface_key;
+static atomic_int detached_done;
+static int c11_detached_worker(void *arg) {
+    CHECK(tss_get(surface_key)==NULL && tss_set(surface_key,(void *)8)==thrd_success);
+    atomic_store(&detached_done,(int)(intptr_t)tss_get(surface_key));
+    return (int)(intptr_t)arg;
+}
+static int surface(void) {
+    pthread_attr_t a; int scope=-1;
+    errno=77;
+    CHECK(pthread_attr_init(&a)==0);
+    CHECK(pthread_attr_setscope(&a,PTHREAD_SCOPE_SYSTEM)==0);
+    CHECK(pthread_attr_setscope(&a,PTHREAD_SCOPE_PROCESS)==ENOTSUP);
+    CHECK(pthread_attr_setscope(&a,7)==EINVAL);
+    CHECK(pthread_attr_getscope(&a,&scope)==0 && scope==PTHREAD_SCOPE_SYSTEM);
+    CHECK(pthread_attr_destroy(&a)==0);
+    CHECK(pthread_getconcurrency()==0);
+    CHECK(pthread_setconcurrency(-1)==EINVAL && pthread_setconcurrency(3)==EAGAIN);
+    CHECK(pthread_setconcurrency(0)==0 && pthread_getconcurrency()==0 && errno==77);
+
+    cpu_set_t set, observed, empty;
+    CPU_ZERO(&set); CPU_ZERO(&empty);
+    CHECK(pthread_getaffinity_np(pthread_self(),sizeof set,&set)==0 && CPU_COUNT(&set)>0);
+    CHECK(pthread_setaffinity_np(pthread_self(),sizeof set,&set)==0);
+    CHECK(pthread_setaffinity_np(pthread_self(),sizeof empty,&empty)==EINVAL && errno==77);
+    pthread_t t; void *result;
+    CHECK(pthread_create(&t,NULL,named_worker,(void *)5)==0);
+    while(!atomic_load(&named_ready)) sched_yield();
+    memset(&observed,0xff,sizeof observed);
+    CHECK(pthread_getaffinity_np(t,sizeof observed,&observed)==0 && CPU_EQUAL(&set,&observed));
+    CHECK(pthread_setaffinity_np(t,sizeof set,&set)==0 && errno==77);
+
+    char name[32];
+    CHECK(pthread_setname_np(pthread_self(),"sixteen-bytes-xx")==ERANGE);
+    CHECK(pthread_getname_np(pthread_self(),name,15)==ERANGE && errno==77);
+    CHECK(pthread_setname_np(pthread_self(),"crabc-main")==0);
+    CHECK(pthread_getname_np(pthread_self(),name,sizeof name)==0 && !strcmp(name,"crabc-main"));
+    struct stat proc;
+    if (stat("/proc/self/task",&proc)==0) {
+        CHECK(pthread_setname_np(t,"crabc-worker")==0);
+        CHECK(pthread_getname_np(t,name,sizeof name)==0 && !strcmp(name,"crabc-worker"));
+    } else {
+        CHECK(pthread_setname_np(t,"crabc-worker")==ENOENT);
+        CHECK(pthread_getname_np(t,name,sizeof name)==ENOENT);
+    }
+    atomic_store(&named_release,1);
+    CHECK(pthread_join(t,&result)==0 && result==(void *)5);
+
+    thrd_t main_thread=thrd_current(), child, reported;
+    int status=0;
+    CHECK((thrd_equal)(main_thread,thrd_current()) && (thrd_equal)(main_thread,pthread_self()));
+    CHECK(thrd_create(&child,c11_exit_worker,&reported)==thrd_success);
+    CHECK(thrd_join(child,&status)==thrd_success && status==33);
+    CHECK((thrd_equal)(child,reported) && !(thrd_equal)(child,main_thread));
+    /* Explicit scheduling parameters round-trip through the attribute. */
+    struct sched_param wanted={.sched_priority=0}, stored={.sched_priority=-1};
+    CHECK(pthread_attr_init(&a)==0);
+    CHECK(pthread_attr_setschedparam(&a,&wanted)==0 && pthread_attr_getschedparam(&a,&stored)==0);
+    CHECK(stored.sched_priority==0);
+    CHECK(pthread_attr_setinheritsched(&a,PTHREAD_EXPLICIT_SCHED)==0);
+    CHECK(pthread_create(&t,&a,inherited_worker,(void *)6)==0 && pthread_join(t,&result)==0 && result==(void *)6);
+    CHECK(pthread_attr_destroy(&a)==0);
+    CHECK((pthread_equal)(pthread_self(),pthread_self()) && !(pthread_equal)(pthread_self(),t));
+
+    /* A detached C11 thread publishes through TSS and finishes on its own. */
+    CHECK(tss_create(&surface_key,NULL)==thrd_success);
+    CHECK(tss_set(surface_key,(void *)7)==thrd_success && tss_get(surface_key)==(void *)7);
+    CHECK(thrd_create(&child,c11_detached_worker,NULL)==thrd_success);
+    CHECK(thrd_detach(child)==thrd_success);
+    while(!atomic_load(&detached_done)) CHECK(thrd_sleep(&(struct timespec){.tv_nsec=1000000},NULL)==0);
+    CHECK(atomic_load(&detached_done)==8 && tss_get(surface_key)==(void *)7);
+    tss_delete(surface_key);
+    CHECK(thrd_sleep(&(struct timespec){0},NULL)==0);
+    errno=77;
+    CHECK(thrd_sleep(&(struct timespec){.tv_nsec=-1},NULL)==-2 && errno==77);
+    puts("pthread scope, concurrency, affinity, names, and C11 identity/exit: PASS");
+    return 0;
+}
+int main(int argc, char **argv) {
+    if (argc==2 && !strcmp(argv[1],"surface")) return surface();
     target(pthread_self());
     sigset_t inherited; sigemptyset(&inherited); sigaddset(&inherited,SIGUSR2);
     CHECK(pthread_sigmask(SIG_BLOCK,&inherited,NULL)==0);

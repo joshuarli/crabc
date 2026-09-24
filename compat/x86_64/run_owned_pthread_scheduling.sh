@@ -15,7 +15,7 @@ readonly work
 printf 'pthread-scheduling evidence: %s\n' "$work"
 "$oracle_cc" -std=c11 -pthread -fPIC -I"$ROOT/include" -c "$probe" -o "$work/probe.o"
 "$oracle_cc" -pthread "$work/probe.o" -o "$work/oracle"
-for scenario in ordinary; do
+for scenario in ordinary surface; do
     timeout 20 "$work/oracle" "$scenario" >"$work/oracle-$scenario.stdout"
 done
 if [ "$check_static" -eq 1 ]; then
@@ -26,7 +26,7 @@ if [ "$check_static" -eq 1 ]; then
     fi
     for mode in static static-pie; do
         "$static_sysroot/bin/crabc-cc" "-$mode" -std=c11 "$work/probe.o" -o "$work/$mode"
-        for scenario in ordinary; do
+        for scenario in ordinary surface; do
             timeout 20 "$work/$mode" "$scenario" >"$work/$mode-$scenario.stdout"
             cmp "$work/oracle-$scenario.stdout" "$work/$mode-$scenario.stdout"
         done
@@ -40,7 +40,7 @@ cp -a "$provided_dynamic_sysroot" "$work/execution-root"
 for mode in pie non-pie; do
     "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 "$work/probe.o" -o "$work/dynamic-$mode"
     cp "$work/dynamic-$mode" "$work/execution-root/consumer-$mode"
-    for scenario in ordinary; do
+    for scenario in ordinary surface; do
         timeout 20 chroot "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
         timeout 20 chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \

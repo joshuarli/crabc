@@ -479,7 +479,13 @@ mod pthread_attr;
 mod pthread_affinity;
 #[path = "pthread_cpuclock.rs"]
 mod pthread_cpuclock;
+// Installed products port musl's cross-thread procfs task-name path; the
+// frozen archive keeps its self-only leaf.
+#[cfg(not(crabc_x86_owned_runtime))]
 #[path = "pthread_name.rs"]
+mod pthread_name;
+#[cfg(crabc_x86_owned_runtime)]
+#[path = "owned_pthread_name.rs"]
 mod pthread_name;
 #[path = "pthread_barrierattr_pshared.rs"]
 mod pthread_barrierattr_pshared;
