@@ -2767,6 +2767,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/heap.c"
+name = "child-thread-empty-non-main-heap-lifecycle"
+source_region = "30-33 mi_heap_stats_merge_to_main, 103-124 _mi_heap_init, 127-147 _mi_heap_new_for_subproc non-main arm, 149-157 mi_heap_new_in_arena and mi_heap_new with no arena, 175-226 mi_heap_free, 228-238 mi_heap_delete, 240-259 _mi_heap_force_destroy and mi_heap_destroy; src/threadlocal.c:288-315 _mi_thread_local_create and _mi_thread_local_free"
+rust_module = "crabc_mimalloc::types::heap_registry and crabc_mimalloc::types::heap_registry::lifecycle"
+rust_item = "lifecycle::{child_heap_new,child_heap_delete,child_heap_destroy,NonMainHeapImage,HeapKeySource}; Heap::{initialize_non_main,merge_statistics_to_main,is_without_theaps_or_pages}; SubprocessHeapList::{link_non_main,unlink_non_main}; subproc::lifecycle::{native_subproc_heap_new,native_subproc_heap_release}; lifecycle::tests::source_ordered_empty_heap_lifecycle_trace"
+intentional_difference = "Covers Heaps created on a thread admitted to a child subprocess, with no exclusive arena, that never receive a Theap: delete and destroy refuse a Heap with a Theap or page (NotEmpty) because Theap creation, page moving, and page destruction are not ported yet, so the two differ only in name. The image is a NonMainHeapImage, the source Heap at offset zero followed by the Rust lease of its dynamic thread-local key, allocated and freed through the admitting thread's page engine; the key registry is the process-global one, as source. List operations serialize under the child record lock as well as the Heap-list lock."
+tests = ["crabc-mimalloc/src/heap_lifecycle.rs", "crabc-mimalloc/src/subproc_lifecycle.rs", "compat/allocator/heap_lifecycle.c", "compat/allocator/heap_lifecycle.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/theap.c"
 name = "nonexclusive-dynamic-theap-direct-malloc-lifetime-checkpoint"
 source_region = "later TLD initialization/create/free from src/init.c:236-282; selected `_mi_thread_init_with_heap` dynamic-TLD/Theap setup from src/init.c:306-360; no-page `mi_thread_theaps_done` and outer `_mi_thread_done` order from src/init.c:377-421,452-480; regular TLS-backing lifecycle from src/threadlocal.c:103-173,205-214; selected MI_MEM_MALLOC `_mi_meta_free` dispatch from src/subproc.c:73-81; process-global key-registry lifecycle from src/threadlocal.c:221-315; source regular-slot/key setup from src/heap.c:37-42,60-84,128-147; and `_mi_theap_init` list linking, nonexclusive `_mi_theap_alloc`/`_mi_theap_create`, decr/free, and `_mi_tld_detach_theaps` from src/theap.c:236-369,415-450"

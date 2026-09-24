@@ -1,10 +1,10 @@
 // Copyright (c) 2018-2026 Microsoft Research, Daan Leijen
 // SPDX-License-Identifier: MIT
-// Source: mimalloc v3.5.0 src/heap.c:102-125,188-225.
+// Source: mimalloc v3.5.0 src/heap.c:30-33,102-125,188-225.
 
-//! Source subprocess Heap membership for the canonical process main Heap.
-//! This group owns the source head, lock, live count and sequence counter.
-//! It exposes no general Heap projection or non-main Heap constructor.
+//! Source subprocess Heap membership: the head, lock, live count, and
+//! sequence counter of one subprocess's Heap list, for main Heaps and for
+//! non-main Heaps from `mi_heap_new` (see [`lifecycle`]).
 
 use super::Heap;
 use crate::lock::PrivateLock;
@@ -195,12 +195,156 @@ impl SubprocessHeapList {
         Ok(ok)
     }
 
+    /// Source `_mi_heap_init`'s list push (`heap.c:115-124`) for one
+    /// non-main Heap: push at the head under the list lock, then the
+    /// `heap_count` increment and the `heaps` statistic.
+    ///
+    /// # Safety
+    /// `heap` was just initialized by [`Heap::initialize_non_main`] for this
+    /// list's subprocess and is pinned until its [`Self::unlink_non_main`].
+    /// Every linked member stays pinned until its own unlink; this writes the
+    /// current head's `prev` link while holding the list lock.
+    pub(crate) unsafe fn link_non_main(
+        &self,
+        heap: &mut Heap,
+        subprocess: &SubprocessIdentity,
+    ) -> Result<(), SourceHeapRegistryError> {
+        if !core::ptr::eq(heap.subprocess, subprocess.as_ptr()) || heap.theap_slot <= 1 {
+            return Err(SourceHeapRegistryError::InvalidImage);
+        }
+        let guard = self.lock.lock().map_err(SourceHeapRegistryError::ListLockAcquire)?;
+        let heap_pointer = core::ptr::from_mut(heap);
+        // SAFETY: the held lock excludes every other link/unlink, and the
+        // current head stays pinned until its own locked removal.
+        unsafe {
+            let head = *self.head.get();
+            heap.prev = null_mut();
+            heap.next = head;
+            if !head.is_null() {
+                (*head).prev = heap_pointer;
+            }
+            *self.head.get() = heap_pointer;
+        }
+        guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+        self.live.fetch_add(1, Ordering::Relaxed);
+        subprocess.record_statistics_heap_linked();
+        Ok(())
+    }
+
+    /// Source `mi_heap_free`'s count, statistic, and list removal
+    /// (`heap.c:205-219`) for one non-main Heap. The caller has already merged
+    /// the Heap's statistics into its main Heap.
+    ///
+    /// # Safety
+    /// `heap` is a member of this list with no Theap left, it stays pinned
+    /// until return, and its neighbours stay pinned until their own unlink.
+    pub(crate) unsafe fn unlink_non_main(
+        &self,
+        heap: &mut Heap,
+        subprocess: &SubprocessIdentity,
+    ) -> Result<(), SourceHeapRegistryError> {
+        if !core::ptr::eq(heap.subprocess, subprocess.as_ptr()) || !heap.theaps.is_null() {
+            return Err(SourceHeapRegistryError::InvalidImage);
+        }
+        self.live.fetch_sub(1, Ordering::Relaxed);
+        subprocess.record_statistics_heap_unlinked();
+        let guard = self.lock.lock().map_err(SourceHeapRegistryError::ListLockAcquire)?;
+        // SAFETY: the held lock excludes every other link/unlink, and both
+        // neighbours stay pinned until their own locked removal.
+        unsafe {
+            if !heap.next.is_null() {
+                (*heap.next).prev = heap.prev;
+            }
+            if !heap.prev.is_null() {
+                (*heap.prev).next = heap.next;
+            } else {
+                *self.head.get() = heap.next;
+            }
+        }
+        guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_counts(&self) -> (usize, usize, bool) {
         let guard = self.lock.lock().expect("source Heap audit lock");
         let counts = (self.live.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed), unsafe { (*self.head.get()).is_null() });
         guard.unlock().expect("source Heap audit unlock");
         counts
+    }
+}
+
+impl Heap {
+    /// Source `_mi_heap_init`'s field initialization (`heap.c:103-114`) for
+    /// one non-main Heap: its dynamic thread-local slot, subprocess, the next
+    /// Heap sequence, exclusive arena, no NUMA affinity, fresh statistics, and
+    /// fresh locks. List membership follows in
+    /// [`SubprocessHeapList::link_non_main`].
+    pub(crate) fn initialize_non_main(
+        &mut self,
+        subprocess: &SubprocessIdentity,
+        theap_slot: u64,
+        exclusive_arena: *mut super::Arena,
+        memory: super::MemoryId,
+    ) {
+        *self = Heap::bootstrap_empty();
+        self.theap_slot = theap_slot as usize;
+        self.subprocess = subprocess.as_ptr();
+        self.heap_seq = subprocess.heap_list().next_sequence();
+        self.exclusive_arena = exclusive_arena;
+        self.numa_node = -1;
+        self.memid = memory;
+    }
+
+    /// Whether this non-main Heap owns no Theap and no page: the state in
+    /// which `mi_heap_free_theaps`, `_mi_heap_move_pages`, and
+    /// `_mi_heap_destroy_pages` have nothing to do.
+    pub(crate) fn is_without_theaps_or_pages(&self) -> bool {
+        self.theaps.is_null()
+            && self.os_abandoned_pages.is_null()
+            && self.abandoned_count.iter().all(|count| count.load(Ordering::Relaxed) == 0)
+            && self.arena_pages.iter().all(|pages| pages.load(Ordering::Relaxed).is_null())
+    }
+
+    /// Source `mi_heap_stats_merge_to_main` (`heap.c:30-33`): merge this
+    /// Heap's statistics into its subprocess main Heap and reset them.
+    ///
+    /// # Safety
+    /// `main` is this Heap's live subprocess main Heap. Only its statistics
+    /// field is accessed, and those counters are relaxed atomics.
+    pub(crate) unsafe fn merge_statistics_to_main(&self, main: core::ptr::NonNull<Heap>) {
+        // SAFETY: forwarded liveness; no reference to the whole main Heap is
+        // formed, only to its internally synchronized statistics field.
+        let target = unsafe { &*core::ptr::addr_of!((*main.as_ptr()).statistics) };
+        target.merge_from_and_reset(&self.statistics);
+    }
+
+    /// Source-visible fields of a non-main Heap image for the pinned-C
+    /// differential: sequence, subprocess, no exclusive arena, NUMA node, no
+    /// Theap, and its thread-local slot key.
+    #[cfg(test)]
+    pub(crate) fn test_non_main_facts(&self) -> (usize, *mut SubprocessIdentity, bool, i32, bool, u64) {
+        (self.heap_seq, self.subprocess, self.exclusive_arena.is_null(), self.numa_node,
+            self.theaps.is_null(), self.theap_slot as u64)
+    }
+
+    /// This Heap's list neighbours, for the pinned-C list-order checks.
+    ///
+    /// # Safety
+    /// No list operation runs during the read.
+    #[cfg(test)]
+    pub(crate) unsafe fn test_links(heap: core::ptr::NonNull<Heap>) -> (*mut Heap, *mut Heap) {
+        unsafe { ((*heap.as_ptr()).prev, (*heap.as_ptr()).next) }
+    }
+}
+
+#[cfg(test)]
+impl SubprocessHeapList {
+    /// The list head, for the pinned-C list-order checks.
+    pub(crate) fn test_head(&self) -> *mut Heap {
+        let guard = self.lock.lock().expect("source Heap audit lock");
+        let head = unsafe { *self.head.get() };
+        guard.unlock().expect("source Heap audit unlock");
+        head
     }
 }
 
@@ -241,3 +385,6 @@ impl Heap {
         }
     }
 }
+
+#[path = "heap_lifecycle.rs"]
+pub(crate) mod lifecycle;

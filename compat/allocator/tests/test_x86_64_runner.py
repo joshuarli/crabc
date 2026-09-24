@@ -113,6 +113,7 @@ fi
         for command, runner in (
             ("allocator-heap-destroy", b"compat/allocator/heap_destroy.py"),
             ("allocator-subprocess-lifecycle", b"compat/allocator/subprocess_lifecycle.py"),
+            ("allocator-heap-lifecycle", b"compat/allocator/heap_lifecycle.py"),
         ):
             with self.subTest(command=command):
                 result = self.launch(command)

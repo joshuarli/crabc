@@ -39,8 +39,8 @@
       "scope": "Pinned-C/Rust quiescent arena-group retirement with regular, external, and huge owners and failed-release retries (M2 building block of subprocess destruction)."
     },
     "differential:public-heap-lifecycle": {
-      "runner": null,
-      "scope": "Pinned-C/Rust new/allocate/delete/destroy/contains/visit/statistics traces for non-main Heaps across threads."
+      "runner": "compat/allocator/heap_lifecycle.py",
+      "scope": "Pinned-C/Rust traces of non-main Heaps on a child-subprocess thread: mi_heap_new list push order and links, Heap sequence numbers, dynamic thread-local keys and their index reuse, Heap counts and heaps statistics, main-Heap delete/destroy refusal, and delete/destroy of Heaps that never allocate."
     },
     "differential:public-theap": {
       "runner": null,
@@ -121,7 +121,7 @@
         "unit:heap-lifecycle"
       ],
       "blocked_by": [
-        "The private dynamic Theap binding attaches one Theap to a caller-pinned `Heap::bootstrap_empty()` image with one claimed regular TLS key; no parent-Heap-allocated non-main Heap, non-main subprocess Heap-list membership, `_mi_heap_move_pages`, `_mi_heap_destroy_pages`, or `mi_heap_free` transition exists, and the Heap registry admits only main Heaps."
+        "`types::heap_registry::lifecycle` creates, deletes, and destroys non-main Heaps (image from the calling thread's main Heap, dynamic thread-local key, Heap-list membership, `mi_heap_free`) only on a thread of a child subprocess and only for Heaps that never get a Theap: per-thread Theap creation (`_mi_heap_theap_get_or_init`), `_mi_heap_move_pages`, `_mi_heap_destroy_pages`, exclusive arenas, `mi_heap_set_numa_affinity`, `mi_heap_collect`, `mi_heap_theap`, and Heaps of the process main subprocess do not exist."
       ]
     },
     {

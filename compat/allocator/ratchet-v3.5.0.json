@@ -7,14 +7,14 @@
   "format": 1,
   "native_shadow_stress_fixture_count": 1,
   "port_map_counts": {
-    "differential_verified": 46,
+    "differential_verified": 48,
     "exported": 4,
-    "implemented": 194,
-    "item_count": 191,
+    "implemented": 196,
+    "item_count": 193,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 194
+    "unit_verified": 196
   },
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_atomic_do_once-callsite-disposition-ledger": [
@@ -247,6 +247,11 @@
       "unit_verified",
       "differential_verified"
     ],
+    "item:src/arena.c:persistent-arena-reservation-and-slice-lifecycle": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/arena.c:process-ready-published-shared-arena-pair": [
       "implemented",
       "unit_verified"
@@ -340,6 +345,11 @@
     "item:src/free.c:same-origin-mapped-remote-free-reclaim-statistics-event": [
       "implemented",
       "unit_verified"
+    ],
+    "item:src/heap.c:child-thread-empty-non-main-heap-lifecycle": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/init.c:MI_MEMID_STATIC-bootstrap-page-and-theap-images": [
       "implemented",

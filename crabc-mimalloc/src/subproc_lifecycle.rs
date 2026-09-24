@@ -770,6 +770,71 @@ pub(crate) unsafe fn native_subproc_thread_done(
     }?
 }
 
+/// Production `mi_heap_new` on a thread admitted to the child `id`; see
+/// `types::heap_registry::lifecycle::child_heap_new`.
+///
+/// # Safety
+/// The id is live and the caller is the thread `member` admitted to it.
+pub(crate) unsafe fn native_subproc_heap_new(
+    id: NativeSubprocessId,
+    member: &mut ChildThreadMember,
+) -> Result<
+    Result<core::ptr::NonNull<crate::types::Heap>, crate::types::heap_registry::lifecycle::HeapNewError>,
+    NativeSubprocessError,
+> {
+    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs()
+        .ok_or(NativeSubprocessError::NotReady)?;
+    let keys = crate::types::heap_registry::lifecycle::HeapKeySource::global();
+    // SAFETY: forwarded obligations; the record lock excludes every other
+    // context operation, in place of source `heaps_lock`.
+    unsafe {
+        id.with_owner(|owner| match owner.as_mut() {
+            Some(child) => Ok(crate::types::heap_registry::lifecycle::child_heap_new(
+                child, member, binding, keys,
+            )),
+            None => Err(NativeSubprocessError::Gone),
+        })
+    }?
+}
+
+/// Production `mi_heap_delete` (or, with `destroy`, `mi_heap_destroy`) on a
+/// thread admitted to the child `id`; see
+/// `types::heap_registry::lifecycle::child_heap_delete`.
+///
+/// # Safety
+/// The id is live, the caller is the thread `member` admitted to it, and
+/// `heap` is the child's main Heap or a Heap created for it that no thread
+/// uses.
+pub(crate) unsafe fn native_subproc_heap_release(
+    id: NativeSubprocessId,
+    member: &mut ChildThreadMember,
+    heap: core::ptr::NonNull<crate::types::Heap>,
+    destroy: bool,
+) -> Result<
+    Result<
+        crate::types::heap_registry::lifecycle::HeapReleaseOutcome,
+        crate::types::heap_registry::lifecycle::HeapReleaseError,
+    >,
+    NativeSubprocessError,
+> {
+    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs()
+        .ok_or(NativeSubprocessError::NotReady)?;
+    // SAFETY: forwarded obligations; the record lock serializes the list.
+    unsafe {
+        id.with_owner(|owner| match owner.as_mut() {
+            Some(child) if destroy => Ok(crate::types::heap_registry::lifecycle::child_heap_destroy(
+                child, member, binding, heap,
+            )),
+            Some(child) => Ok(crate::types::heap_registry::lifecycle::child_heap_delete(
+                child, member, binding, heap,
+            )),
+            None => Err(NativeSubprocessError::Gone),
+        })
+    }?
+}
+
 /// Production `mi_subproc_visit_heaps` (`subproc.c:303-313`).
 ///
 /// # Safety
@@ -847,7 +912,7 @@ pub(crate) unsafe fn native_subproc_destroy(id: NativeSubprocessId) -> Result<()
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::main_heap_page::tests::with_owner_local_fixture;
     use crate::statistics::FinalStatisticsSnapshot;
@@ -866,34 +931,44 @@ mod tests {
         parent.statistics().final_output_snapshot()
     }
 
+    /// The process inputs of a child subprocess fixture over one attached
+    /// later-main fixture thread: an isolated source registry holding main,
+    /// and a READY binding over the fixture's PageMap with the C oracles'
+    /// arena policy (one minimum-size reservation, no eager commit).
+    pub(crate) fn child_fixture_inputs(
+        attachment: &mut MainHeapThreadAttachment<'_>,
+        pair: crate::process_arena::ProcessPageArenaLease,
+    ) -> (&'static MainSubprocess, &'static SourceSubprocessRegistry, ProcessMainBackingBinding) {
+        let parent = attachment.subprocess().expect("the fixture attaches to main");
+        let config = attachment.memory_config().expect("the attachment is live");
+        let registry = std::boxed::Box::leak(std::boxed::Box::new(SourceSubprocessRegistry::new()));
+        // SAFETY: this isolated fixture exclusively owns the main image.
+        unsafe { registry.initialize_main(parent) }.expect("main joins the registry");
+        let mut vm_options = crate::config::VmOptions::uninitialized();
+        vm_options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        vm_options.set(crate::config::VmOption::ArenaReserve,
+            (crate::config::ARENA_MIN_SIZE / crate::config::KIB) as i64);
+        vm_options.set(crate::config::VmOption::ArenaEagerCommit, 0);
+        // SAFETY: leaked isolated binding over the fixture's own map.
+        let binding = unsafe {
+            crate::process_init::ProcessMainInitializationStorage::test_static_owner()
+                .test_bind_vm_process_to_existing_page_map(
+                    config, vm_options, parent, pair.page_map_lease(),
+                )
+        }
+        .expect("children use the parent's policy and process PageMap");
+        // Startup is complete, so a fresh thread may own child pages.
+        assert!(binding.test_publish_ready());
+        (parent, registry, binding)
+    }
+
     /// Pinned-C/Rust differential for `mi_subproc_new`, `mi_subproc_destroy`,
     /// and `mi_subproc_visit_heaps`; `compat/allocator/subprocess_lifecycle.c`
     /// prints the same ordered fields.
     #[test]
     fn source_ordered_child_subprocess_lifecycle_trace() {
         with_owner_local_fixture(true, |attachment, mut heap_owner, pair| {
-            let parent = attachment.subprocess().expect("the fixture attaches to main");
-            let config = attachment.memory_config().expect("the attachment is live");
-            let registry = std::boxed::Box::leak(std::boxed::Box::new(
-                SourceSubprocessRegistry::new(),
-            ));
-            // SAFETY: this isolated fixture exclusively owns the main image.
-            unsafe { registry.initialize_main(parent) }.expect("main joins the registry");
-            let mut vm_options = crate::config::VmOptions::uninitialized();
-            vm_options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
-            vm_options.set(crate::config::VmOption::ArenaReserve,
-                (crate::config::ARENA_MIN_SIZE / crate::config::KIB) as i64);
-            vm_options.set(crate::config::VmOption::ArenaEagerCommit, 0);
-            // SAFETY: leaked isolated binding over the fixture's own map.
-            let binding = unsafe {
-                crate::process_init::ProcessMainInitializationStorage::test_static_owner()
-                    .test_bind_vm_process_to_existing_page_map(
-                        config, vm_options, parent, pair.page_map_lease(),
-                    )
-            }
-            .expect("children use the parent's policy and process PageMap");
-            // Startup is complete, so a fresh thread may own child pages.
-            assert!(binding.test_publish_ready());
+            let (parent, registry, binding) = child_fixture_inputs(attachment, pair);
 
             let mut trace: Vec<i64> = Vec::new();
             let main_identity = parent.identity_ptr();
@@ -1203,6 +1278,15 @@ mod tests {
                                 }
                                 .expect("concurrent child page operations are admitted");
                             }
+                            // A non-main Heap lives and dies on this thread.
+                            // SAFETY: the admitted thread; the Heap is unused.
+                            let heap = unsafe { native_subproc_heap_new(id, &mut member) }
+                                .expect("the child record is live")
+                                .expect("the child thread creates a Heap");
+                            assert_eq!(
+                                unsafe { native_subproc_heap_release(id, &mut member, heap, false) },
+                                Ok(Ok(crate::types::heap_registry::lifecycle::HeapReleaseOutcome::Released)),
+                            );
                             holding.wait();
                             release.wait();
                             // SAFETY: the admitted thread frees its last block.

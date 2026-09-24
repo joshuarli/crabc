@@ -2217,6 +2217,23 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         self.stage
     }
 
+    /// The child main Heap image address while this owner retains it. Only
+    /// field-level projections that source performs on another Heap's main
+    /// Heap (its statistics) may use it.
+    #[inline]
+    pub(crate) fn main_heap_pointer(&self) -> Option<NonNull<Heap>> {
+        self.heap_storage.as_ref().map(ChildHeapStorage::pointer_for_identity)
+    }
+
+    /// Projects the shared child image for one subprocess-scoped transition,
+    /// such as a Heap-list operation under that list's own lock.
+    pub(crate) fn with_child_image<R>(
+        &mut self,
+        operation: impl for<'image> FnOnce(Pin<&'image crate::subproc::ChildSubprocessImage>) -> R,
+    ) -> Option<R> {
+        self.context.with_image(operation)
+    }
+
     /// The pinned child identity as an address only: list order, and the
     /// subprocess comparison of `mi_subproc_add_current_thread`.
     pub(crate) fn identity_pointer(&mut self) -> Option<*mut crate::subproc::SubprocessIdentity> {

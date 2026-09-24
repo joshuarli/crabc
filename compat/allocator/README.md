@@ -55,13 +55,23 @@ a child destroyed with a live metadata block. Destroying a child that still
 has threads or non-main Heaps is not covered yet. Logs live
 under `x86_64/subprocess-lifecycle` in the allocator artifacts directory.
 
+`./compat/allocator/run-x86_64.sh allocator-heap-lifecycle` compares pinned
+`mi_heap_new`, `mi_heap_delete`, and `mi_heap_destroy`
+([`heap_lifecycle.c`](heap_lifecycle.c)) on a thread of a child subprocess
+with the Rust `types::heap_registry::lifecycle` on a child member thread: Heap
+list order and links, sequence numbers, dynamic thread-local keys and their
+index reuse, Heap counts and `heaps` statistics, and main-Heap refusal. The
+Heaps never allocate; per-thread Theaps and Heaps with pages are not covered
+yet. Logs live under `x86_64/heap-lifecycle` in the allocator artifacts
+directory.
+
 `./compat/allocator/run-x86_64.sh allocator-m6` is the fail-closed Milestone 6
 gate. [`m6-gate-v3.5.0.json`](m6-gate-v3.5.0.json) partitions every applicable
 Heap, Theap, arena, managed-memory, and subprocess item selected from
 [`api-v3.5.0.json`](api-v3.5.0.json) into gates, plus cross-cutting
 destruction/lifetime and upstream-test gates, and names each gate's evidence.
 The command executes every evidence entry that has a runner (currently the
-three destruction differentials above), writes `x86_64/m6-gate/report.json` under the
+differentials above), writes `x86_64/m6-gate/report.json` under the
 allocator artifacts directory, and exits nonzero until every gate passes. A
 gate passes only with no reviewed blocker and all of its evidence runnable and
 passing; the contract validator rejects inventory gaps, double ownership, and
