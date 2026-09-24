@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-# Prove the installed drivers' thread-aware translation and integrated libc link.
+# Prove the installed drivers' translation mode and integrated libc link.
+#
+# Two sources run in every installed executable mode. `pthread.c` checks the
+# thread-aware `-pthread` translation. `hosted.c` compares the drivers' C
+# language mode with the pinned musl GCC oracle compiling the same source:
+# `__STDC_HOSTED__`, the default stack protector, and builtin call rewrites
+# must agree. The oracle's undefined-symbol set is the judge for the rewrites
+# (`printf("...\n")` becomes `puts`) and for the `__stack_chk_fail` reference;
+# a smashed protected frame must stop the same way under both runtimes.
 set -euo pipefail
 ulimit -c 0
 
@@ -47,6 +55,41 @@ int main(void)
 }
 SOURCE
 
+cat >"$work/hosted.c" <<'SOURCE'
+#include <stdio.h>
+#include <string.h>
+
+#ifdef __SSP_STRONG__
+#define STACK_PROTECTOR __SSP_STRONG__
+#else
+#define STACK_PROTECTOR 0
+#endif
+
+/* Kept out of line so the compiler cannot see the overflow statically. */
+__attribute__((noinline)) static void fill(char *buffer, size_t length)
+{
+    memset(buffer, 's', length);
+}
+
+/* -fstack-protector-strong guards any frame holding a local array. */
+__attribute__((noinline)) static int protected_frame(size_t length)
+{
+    char local[16];
+    fill(local, length);
+    return local[0];
+}
+
+int main(int argc, char **argv)
+{
+    (void)argv;
+    printf("hosted=%d stack-protector=%d\n", __STDC_HOSTED__, STACK_PROTECTOR);
+    printf("builtin-rewrite\n");
+    fflush(stdout);
+    /* One argument smashes the canary; the check must stop before return. */
+    return protected_frame(argc > 1 ? 64 : 8) != 's';
+}
+SOURCE
+
 mkdir -p "$work/oracle-root/lib"
 cp -L --preserve=mode /opt/musl-1.2.6/lib/libc.so "$work/oracle-root/lib/ld-musl-x86_64.so.1"
 cp -a "$work/dynamic-product" "$work/candidate-root"
@@ -86,6 +129,46 @@ for mode in static-et-exec static-pie dynamic-pie dynamic-non-pie; do
     done
     readelf -lW "$work/$mode" >"$work/$mode.segments"
     readelf -dW "$work/$mode" >"$work/$mode.dynamic"
+
+    # The oracle compiles the same source in its own default language mode;
+    # only the code model follows the candidate's installed mode.
+    case "$mode" in
+        static-et-exec|dynamic-non-pie) oracle_code=(-fno-pie) ;;
+        *) oracle_code=(-fPIE) ;;
+    esac
+    "$driver" "--$mode" -std=c11 -c "$work/hosted.c" -o "$work/$mode-hosted.o"
+    "$oracle_cc" -std=c11 "${oracle_code[@]}" -c "$work/hosted.c" -o "$work/$mode-hosted-oracle.o"
+    for object in hosted hosted-oracle; do
+        nm -u "$work/$mode-$object.o" | awk '{print $NF}' | sort >"$work/$mode-$object.undefined"
+    done
+    cmp "$work/$mode-hosted-oracle.undefined" "$work/$mode-hosted.undefined"
+    grep -qx puts "$work/$mode-hosted.undefined"
+    grep -qx __stack_chk_fail "$work/$mode-hosted.undefined"
+    receipt_flags=()
+    case "$mode" in static-*) receipt_flags=(--link-receipt "$mode-hosted.crabc-link.json") ;; esac
+    "$driver" "--$mode" "${receipt_flags[@]}" "$work/$mode-hosted.o" -o "$work/$mode-hosted"
+    "$oracle_cc" "${oracle_flags[@]}" "$work/$mode-hosted-oracle.o" -o "$work/$mode-hosted-oracle"
+    cp -L --preserve=mode "$work/$mode-hosted" "$work/candidate-root/application"
+    cp -L --preserve=mode "$work/$mode-hosted-oracle" "$work/oracle-root/application"
+    for lane in candidate oracle; do
+        for case_name in intact smashed; do
+            arguments=()
+            [ "$case_name" = intact ] || arguments=(smash)
+            set +e
+            timeout 20 chroot "$work/$lane-root" /application "${arguments[@]}" \
+                >"$work/$mode-hosted-$case_name-$lane.stdout" 2>"$work/$mode-hosted-$case_name-$lane.stderr"
+            printf '%s\n' "$?" >"$work/$mode-hosted-$case_name-$lane.status"
+            set -e
+        done
+    done
+    for case_name in intact smashed; do
+        for suffix in stdout stderr status; do
+            cmp "$work/$mode-hosted-$case_name-oracle.$suffix" "$work/$mode-hosted-$case_name-candidate.$suffix"
+        done
+    done
+    printf 'hosted=1 stack-protector=3\nbuiltin-rewrite\n' | cmp - "$work/$mode-hosted-intact-oracle.stdout"
+    [ "$(cat "$work/$mode-hosted-intact-oracle.status")" = 0 ]
+    [ "$(cat "$work/$mode-hosted-smashed-oracle.status")" = 139 ]
 done
 
 python3 -B - "$ROOT" "$work" <<'PY'
@@ -113,6 +196,12 @@ for mode in ('static-et-exec', 'static-pie', 'dynamic-pie', 'dynamic-non-pie'):
         ('candidate_stdout', '-candidate.stdout'), ('oracle_stdout', '-oracle.stdout'),
         ('candidate_stderr', '-candidate.stderr'), ('oracle_stderr', '-oracle.stderr'),
         ('missing_option_stderr', '-plain.stderr'),
+        ('hosted_object', '-hosted.o'), ('hosted_oracle_object', '-hosted-oracle.o'),
+        ('hosted_undefined', '-hosted.undefined'), ('hosted_oracle_undefined', '-hosted-oracle.undefined'),
+        ('hosted_candidate', '-hosted'), ('hosted_oracle', '-hosted-oracle'),
+        *((f'hosted_{case}_{lane}_{suffix}', f'-hosted-{case}-{lane}.{suffix}')
+          for case in ('intact', 'smashed') for lane in ('candidate', 'oracle')
+          for suffix in ('stdout', 'stderr', 'status')),
     )}
     cases[mode]['oracle_link_mode'] = 'static-et-exec' if mode.startswith('static-') else mode
 record = {
@@ -120,6 +209,7 @@ record = {
     'campaign_complete': False, 'public_support': False,
     'runner': identity(root / 'compat/x86_64/run_owned_driver_pthread.sh'),
     'source': identity(work / 'pthread.c'),
+    'hosted_source': identity(work / 'hosted.c'),
     'products': {kind: identity(work / (kind + '-product/share/crabc/manifest.json')) for kind in ('static', 'dynamic')},
     'cases': cases,
 }
