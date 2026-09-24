@@ -157,6 +157,16 @@ def transform_assembly(relative: str, text: str) -> str:
     text = re.sub(
         r"^\s*\.section\s+\.note\.GNU-stack[^\n]*\n", "", text, flags=re.MULTILINE
     )
+    # Separately selected closures can share one codegen unit. Suffix every
+    # GCC function/data section with this source's tag so a renamed private
+    # copy never shares a section (and thus a --gc-sections unit) with a
+    # public definition or another closure's copy of the same musl source.
+    text = re.sub(
+        r"^(\s*\.section\s+)(\.(?:text|rodata|data|bss)[A-Za-z0-9_.$]*)(?=,|\s*$)",
+        rf"\1\2.crabc_x86_math_exp10_{tag}",
+        text,
+        flags=re.MULTILINE,
+    )
     return text.rstrip() + "\n"
 
 

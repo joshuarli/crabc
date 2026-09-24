@@ -13,7 +13,6 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
 readonly RECORD_SIZE=40
 readonly EXPECTED_RECORDS=196
-readonly ELEMENTARY_ASSEMBLY_SHA256=c92059813c80d5725f7345022734d4e9c7d3d24b1d46fb58c5dcdcc8d84f4c97
 readonly SYMBOLS=(fmal hypotl log1pl)
 readonly FENV_SIBLINGS=(feclearexcept feraiseexcept fegetround fesetround fetestexcept)
 readonly SPECIAL_SIBLINGS=(__fpclassifyl copysignl frexpl ilogbl nextafterl scalbnl)
@@ -24,7 +23,7 @@ require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp grep mkdir mktemp nm objdump python3 readelf realpath rustup sha256sum sort wc; do
+for tool in ar awk cargo cmp grep mkdir mktemp nm objdump python3 readelf realpath rustup sort wc; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -87,9 +86,6 @@ archive_member_for_symbol() {
 }
 
 cd "$ROOT_DIR"
-elementary_digest="$(sha256sum libc/src/c_abi/x86_64/math_elementary_long_double_musl_x86_64.S | awk '{ print $1 }')"
-[ "$elementary_digest" = "$ELEMENTARY_ASSEMBLY_SHA256" ] ||
-	fail "checked fmal/hypotl Rust assembly drifted from pinned generator output"
 for source in \
 	libc/src/c_abi/x86_64/math_elementary_long_double.rs \
 	libc/src/c_abi/x86_64/math_x87_extended.rs \

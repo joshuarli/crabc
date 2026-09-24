@@ -18,7 +18,7 @@
  */
 /* musl-1.2.6/src/math/atanh.c */
 	.text
-	.section	.text.atanh,"ax",@progbits
+	.section	.text.atanh.crabc_x86_math_atanh_src_math_atanh,"ax",@progbits
 	.globl	atanh
 	.type	atanh, @function
 atanh:
@@ -72,7 +72,7 @@ atanh:
 	addq	$40, %rsp
 	ret
 	.size	atanh, .-atanh
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_atanh_src_math_atanh,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_atanh_src_math_atanh_C0:
 	.long	0
@@ -81,7 +81,7 @@ atanh:
 .Lcrabc_x86_math_atanh_src_math_atanh_C1:
 	.long	0
 	.long	1071644672
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_atanh_src_math_atanh,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_atanh_src_math_atanh_C2:
 	.long	0
@@ -91,7 +91,7 @@ atanh:
 
 /* musl-1.2.6/src/math/atanhf.c */
 	.text
-	.section	.text.atanhf,"ax",@progbits
+	.section	.text.atanhf.crabc_x86_math_atanh_src_math_atanhf,"ax",@progbits
 	.globl	atanhf
 	.type	atanhf, @function
 atanhf:
@@ -142,14 +142,14 @@ atanhf:
 	addq	$40, %rsp
 	ret
 	.size	atanhf, .-atanhf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_atanh_src_math_atanhf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_atanh_src_math_atanhf_C0:
 	.long	1065353216
 	.align 4
 .Lcrabc_x86_math_atanh_src_math_atanhf_C1:
 	.long	1056964608
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_atanh_src_math_atanhf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_atanh_src_math_atanhf_C2:
 	.long	-2147483648
@@ -159,7 +159,7 @@ atanhf:
 
 /* musl-1.2.6/src/math/log1p.c */
 	.text
-	.section	.text.log1p,"ax",@progbits
+	.section	.text.log1p.crabc_x86_math_atanh_src_math_log1p,"ax",@progbits
 	.local crabc_x86_math_atanh_provider_log1p
 	.type	crabc_x86_math_atanh_provider_log1p, @function
 crabc_x86_math_atanh_provider_log1p:
@@ -282,7 +282,7 @@ crabc_x86_math_atanh_provider_log1p:
 	movapd	%xmm2, %xmm0
 	jmp	.Lcrabc_x86_math_atanh_src_math_log1p_13
 	.size	crabc_x86_math_atanh_provider_log1p, .-crabc_x86_math_atanh_provider_log1p
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_atanh_src_math_log1p,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_atanh_src_math_log1p_C1:
 	.long	0
@@ -338,7 +338,7 @@ crabc_x86_math_atanh_provider_log1p:
 
 /* musl-1.2.6/src/math/log1pf.c */
 	.text
-	.section	.text.log1pf,"ax",@progbits
+	.section	.text.log1pf.crabc_x86_math_atanh_src_math_log1pf,"ax",@progbits
 	.local crabc_x86_math_atanh_provider_log1pf
 	.type	crabc_x86_math_atanh_provider_log1pf, @function
 crabc_x86_math_atanh_provider_log1pf:
@@ -446,7 +446,7 @@ crabc_x86_math_atanh_provider_log1pf:
 	movaps	%xmm2, %xmm0
 	jmp	.Lcrabc_x86_math_atanh_src_math_log1pf_13
 	.size	crabc_x86_math_atanh_provider_log1pf, .-crabc_x86_math_atanh_provider_log1pf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_atanh_src_math_log1pf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_atanh_src_math_log1pf_C1:
 	.long	-1082130432

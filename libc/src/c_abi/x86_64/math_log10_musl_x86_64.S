@@ -28,7 +28,7 @@
  */
 /* musl-1.2.6/src/math/log10.c */
 	.text
-	.section	.text.log10,"ax",@progbits
+	.section	.text.log10.crabc_x86_math_log10_src_math_log10,"ax",@progbits
 	.globl	log10
 	.type	log10, @function
 log10:
@@ -156,7 +156,7 @@ log10:
 	movabsq	$4607182418800017408, %rcx
 	jmp	.Lcrabc_x86_math_log10_src_math_log10_6
 	.size	log10, .-log10
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_log10_src_math_log10,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_log10_src_math_log10_C1:
 	.long	0
@@ -224,7 +224,7 @@ log10:
 
 /* musl-1.2.6/src/math/log10f.c */
 	.text
-	.section	.text.log10f,"ax",@progbits
+	.section	.text.log10f.crabc_x86_math_log10_src_math_log10f,"ax",@progbits
 	.globl	log10f
 	.type	log10f, @function
 log10f:
@@ -315,7 +315,7 @@ log10f:
 .Lcrabc_x86_math_log10_src_math_log10f_1:
 	ret
 	.size	log10f, .-log10f
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_log10_src_math_log10f,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_log10_src_math_log10f_C1:
 	.long	-1082130432

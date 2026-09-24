@@ -18,7 +18,7 @@
  */
 /* musl-1.2.6/src/math/tanh.c */
 	.text
-	.section	.text.tanh,"ax",@progbits
+	.section	.text.tanh.crabc_x86_math_tanh_src_math_tanh,"ax",@progbits
 	.globl	tanh
 	.type	tanh, @function
 tanh:
@@ -83,7 +83,7 @@ tanh:
 	divsd	%xmm1, %xmm0
 	jmp	.Lcrabc_x86_math_tanh_src_math_tanh_4
 	.size	tanh, .-tanh
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tanh_src_math_tanh,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tanh_src_math_tanh_C1:
 	.long	0
@@ -96,7 +96,7 @@ tanh:
 .Lcrabc_x86_math_tanh_src_math_tanh_C3:
 	.long	0
 	.long	-1073741824
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_tanh_src_math_tanh,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_tanh_src_math_tanh_C4:
 	.long	0
@@ -106,7 +106,7 @@ tanh:
 
 /* musl-1.2.6/src/math/tanhf.c */
 	.text
-	.section	.text.tanhf,"ax",@progbits
+	.section	.text.tanhf.crabc_x86_math_tanh_src_math_tanhf,"ax",@progbits
 	.globl	tanhf
 	.type	tanhf, @function
 tanhf:
@@ -170,7 +170,7 @@ tanhf:
 	divss	%xmm1, %xmm0
 	jmp	.Lcrabc_x86_math_tanh_src_math_tanhf_4
 	.size	tanhf, .-tanhf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_tanh_src_math_tanhf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_tanh_src_math_tanhf_C1:
 	.long	1065353216
@@ -180,7 +180,7 @@ tanhf:
 	.align 4
 .Lcrabc_x86_math_tanh_src_math_tanhf_C3:
 	.long	-1073741824
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_tanh_src_math_tanhf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_tanh_src_math_tanhf_C4:
 	.long	-2147483648
@@ -190,7 +190,7 @@ tanhf:
 
 /* musl-1.2.6/src/math/expm1.c */
 	.text
-	.section	.text.expm1,"ax",@progbits
+	.section	.text.expm1.crabc_x86_math_tanh_src_math_expm1,"ax",@progbits
 	.local crabc_x86_math_tanh_provider_expm1
 	.type	crabc_x86_math_tanh_provider_expm1, @function
 crabc_x86_math_tanh_provider_expm1:
@@ -383,7 +383,7 @@ crabc_x86_math_tanh_provider_expm1:
 .Lcrabc_x86_math_tanh_src_math_expm1_1:
 	ret
 	.size	crabc_x86_math_tanh_provider_expm1, .-crabc_x86_math_tanh_provider_expm1
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tanh_src_math_expm1,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tanh_src_math_expm1_C0:
 	.long	0
@@ -463,7 +463,7 @@ crabc_x86_math_tanh_provider_expm1:
 
 /* musl-1.2.6/src/math/expm1f.c */
 	.text
-	.section	.text.expm1f,"ax",@progbits
+	.section	.text.expm1f.crabc_x86_math_tanh_src_math_expm1f,"ax",@progbits
 	.local crabc_x86_math_tanh_provider_expm1f
 	.type	crabc_x86_math_tanh_provider_expm1f, @function
 crabc_x86_math_tanh_provider_expm1f:
@@ -663,7 +663,7 @@ crabc_x86_math_tanh_provider_expm1f:
 .Lcrabc_x86_math_tanh_src_math_expm1f_1:
 	ret
 	.size	crabc_x86_math_tanh_provider_expm1f, .-crabc_x86_math_tanh_provider_expm1f
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_tanh_src_math_expm1f,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_tanh_src_math_expm1f_C0:
 	.long	-1090519040

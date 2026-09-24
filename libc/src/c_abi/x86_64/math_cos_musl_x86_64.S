@@ -40,7 +40,7 @@
  */
 /* musl-1.2.6/src/math/cos.c */
 	.text
-	.section	.text.cos,"ax",@progbits
+	.section	.text.cos.crabc_x86_math_cos_src_math_cos,"ax",@progbits
 	.globl	cos
 	.type	cos, @function
 cos:
@@ -95,7 +95,7 @@ cos:
 	call	crabc_x86_math_cos_kernel_sin
 	jmp	.Lcrabc_x86_math_cos_src_math_cos_1
 	.size	cos, .-cos
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math_cos,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math_cos_C0:
 	.long	0
@@ -104,7 +104,7 @@ cos:
 .Lcrabc_x86_math_cos_src_math_cos_C1:
 	.long	0
 	.long	1198522368
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_cos_src_math_cos,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_cos_src_math_cos_C3:
 	.long	0
@@ -117,7 +117,7 @@ cos:
 
 /* musl-1.2.6/src/math/cosf.c */
 	.text
-	.section	.text.cosf,"ax",@progbits
+	.section	.text.cosf.crabc_x86_math_cos_src_math_cosf,"ax",@progbits
 	.globl	cosf
 	.type	cosf, @function
 cosf:
@@ -221,26 +221,26 @@ cosf:
 	call	crabc_x86_math_cos_kernel_sindf
 	jmp	.Lcrabc_x86_math_cos_src_math_cosf_1
 	.size	cosf, .-cosf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_cos_src_math_cosf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_cos_src_math_cosf_C0:
 	.long	1065353216
 	.align 4
 .Lcrabc_x86_math_cos_src_math_cosf_C1:
 	.long	2071986176
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math_cosf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math_cosf_C2:
 	.long	1413754136
 	.long	1074340347
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_cos_src_math_cosf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_cos_src_math_cosf_C3:
 	.long	-2147483648
 	.long	0
 	.long	0
 	.long	0
-	.section	.rodata.cst8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math_cosf
 	.align 8
 .Lcrabc_x86_math_cos_src_math_cosf_C4:
 	.long	1413754136
@@ -253,7 +253,7 @@ cosf:
 .Lcrabc_x86_math_cos_src_math_cosf_C6:
 	.long	2134057426
 	.long	1074977148
-	.section	.rodata.cst16
+	.section	.rodata.cst16.crabc_x86_math_cos_src_math_cosf
 	.align 16
 .Lcrabc_x86_math_cos_src_math_cosf_C7:
 	.long	0
@@ -266,7 +266,7 @@ cosf:
 
 /* musl-1.2.6/src/math/__sin.c */
 	.text
-	.section	.text.__sin,"ax",@progbits
+	.section	.text.__sin.crabc_x86_math_cos_src_math___sin,"ax",@progbits
 	.local crabc_x86_math_cos_kernel_sin
 	.hidden	crabc_x86_math_cos_kernel_sin
 	.type	crabc_x86_math_cos_kernel_sin, @function
@@ -309,7 +309,7 @@ crabc_x86_math_cos_kernel_sin:
 	subsd	%xmm1, %xmm0
 	ret
 	.size	crabc_x86_math_cos_kernel_sin, .-crabc_x86_math_cos_kernel_sin
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math___sin,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math___sin_C0:
 	.long	1523570044
@@ -345,7 +345,7 @@ crabc_x86_math_cos_kernel_sin:
 
 /* musl-1.2.6/src/math/__cos.c */
 	.text
-	.section	.text.__cos,"ax",@progbits
+	.section	.text.__cos.crabc_x86_math_cos_src_math___cos,"ax",@progbits
 	.local crabc_x86_math_cos_kernel_cos
 	.hidden	crabc_x86_math_cos_kernel_cos
 	.type	crabc_x86_math_cos_kernel_cos, @function
@@ -383,7 +383,7 @@ crabc_x86_math_cos_kernel_cos:
 	addsd	%xmm6, %xmm0
 	ret
 	.size	crabc_x86_math_cos_kernel_cos, .-crabc_x86_math_cos_kernel_cos
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math___cos,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math___cos_C0:
 	.long	0
@@ -419,7 +419,7 @@ crabc_x86_math_cos_kernel_cos:
 
 /* musl-1.2.6/src/math/__sindf.c */
 	.text
-	.section	.text.__sindf,"ax",@progbits
+	.section	.text.__sindf.crabc_x86_math_cos_src_math___sindf,"ax",@progbits
 	.local crabc_x86_math_cos_kernel_sindf
 	.hidden	crabc_x86_math_cos_kernel_sindf
 	.type	crabc_x86_math_cos_kernel_sindf, @function
@@ -444,7 +444,7 @@ crabc_x86_math_cos_kernel_sindf:
 	cvtsd2ss	%xmm0, %xmm0
 	ret
 	.size	crabc_x86_math_cos_kernel_sindf, .-crabc_x86_math_cos_kernel_sindf
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math___sindf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math___sindf_C0:
 	.long	-1942272345
@@ -464,7 +464,7 @@ crabc_x86_math_cos_kernel_sindf:
 
 /* musl-1.2.6/src/math/__cosdf.c */
 	.text
-	.section	.text.__cosdf,"ax",@progbits
+	.section	.text.__cosdf.crabc_x86_math_cos_src_math___cosdf,"ax",@progbits
 	.local crabc_x86_math_cos_kernel_cosdf
 	.hidden	crabc_x86_math_cos_kernel_cosdf
 	.type	crabc_x86_math_cos_kernel_cosdf, @function
@@ -487,7 +487,7 @@ crabc_x86_math_cos_kernel_cosdf:
 	cvtsd2ss	%xmm0, %xmm0
 	ret
 	.size	crabc_x86_math_cos_kernel_cosdf, .-crabc_x86_math_cos_kernel_cosdf
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math___cosdf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math___cosdf_C0:
 	.long	-49521023
@@ -511,7 +511,7 @@ crabc_x86_math_cos_kernel_cosdf:
 
 /* musl-1.2.6/src/math/__rem_pio2.c */
 	.text
-	.section	.text.__rem_pio2,"ax",@progbits
+	.section	.text.__rem_pio2.crabc_x86_math_cos_src_math___rem_pio2,"ax",@progbits
 	.local crabc_x86_math_cos_reduce_pio2
 	.hidden	crabc_x86_math_cos_reduce_pio2
 	.type	crabc_x86_math_cos_reduce_pio2, @function
@@ -781,7 +781,7 @@ crabc_x86_math_cos_reduce_pio2:
 	movsd	%xmm0, 8(%r10)
 	jmp	.Lcrabc_x86_math_cos_src_math___rem_pio2_1
 	.size	crabc_x86_math_cos_reduce_pio2, .-crabc_x86_math_cos_reduce_pio2
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math___rem_pio2,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math___rem_pio2_C0:
 	.long	1413480448
@@ -854,7 +854,7 @@ crabc_x86_math_cos_reduce_pio2:
 .Lcrabc_x86_math_cos_src_math___rem_pio2_C17:
 	.long	0
 	.long	1097859072
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_cos_src_math___rem_pio2,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_cos_src_math___rem_pio2_C19:
 	.long	0
@@ -865,7 +865,7 @@ crabc_x86_math_cos_reduce_pio2:
 
 /* musl-1.2.6/src/math/__rem_pio2f.c */
 	.text
-	.section	.text.__rem_pio2f,"ax",@progbits
+	.section	.text.__rem_pio2f.crabc_x86_math_cos_src_math___rem_pio2f,"ax",@progbits
 	.local crabc_x86_math_cos_reduce_pio2f
 	.hidden	crabc_x86_math_cos_reduce_pio2f
 	.type	crabc_x86_math_cos_reduce_pio2f, @function
@@ -952,7 +952,7 @@ crabc_x86_math_cos_reduce_pio2f:
 	negl	%eax
 	jmp	.Lcrabc_x86_math_cos_src_math___rem_pio2f_5
 	.size	crabc_x86_math_cos_reduce_pio2f, .-crabc_x86_math_cos_reduce_pio2f
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math___rem_pio2f,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math___rem_pio2f_C0:
 	.long	1841940611
@@ -981,7 +981,7 @@ crabc_x86_math_cos_reduce_pio2f:
 .Lcrabc_x86_math_cos_src_math___rem_pio2f_C6:
 	.long	1610612736
 	.long	1072243195
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_cos_src_math___rem_pio2f,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_cos_src_math___rem_pio2f_C7:
 	.long	0
@@ -992,7 +992,7 @@ crabc_x86_math_cos_reduce_pio2f:
 
 /* musl-1.2.6/src/math/__rem_pio2_large.c */
 	.text
-	.section	.text.__rem_pio2_large,"ax",@progbits
+	.section	.text.__rem_pio2_large.crabc_x86_math_cos_src_math___rem_pio2_large,"ax",@progbits
 	.local crabc_x86_math_cos_reduce_pio2_large
 	.hidden	crabc_x86_math_cos_reduce_pio2_large
 	.type	crabc_x86_math_cos_reduce_pio2_large, @function
@@ -1594,7 +1594,7 @@ crabc_x86_math_cos_reduce_pio2_large:
 	movsd	%xmm0, 16(%rax)
 	jmp	.Lcrabc_x86_math_cos_src_math___rem_pio2_large_55
 	.size	crabc_x86_math_cos_reduce_pio2_large, .-crabc_x86_math_cos_reduce_pio2_large
-	.section	.rodata.PIo2,"a"
+	.section	.rodata.PIo2.crabc_x86_math_cos_src_math___rem_pio2_large,"a"
 	.align 32
 	.type	crabc_x86_math_cos_src_math___rem_pio2_large_PIo2, @object
 	.size	crabc_x86_math_cos_src_math___rem_pio2_large_PIo2, 64
@@ -1615,7 +1615,7 @@ crabc_x86_math_cos_src_math___rem_pio2_large_PIo2:
 	.long	920879650
 	.long	0
 	.long	896135965
-	.section	.rodata.ipio2,"a"
+	.section	.rodata.ipio2.crabc_x86_math_cos_src_math___rem_pio2_large,"a"
 	.align 32
 	.type	crabc_x86_math_cos_src_math___rem_pio2_large_ipio2, @object
 	.size	crabc_x86_math_cos_src_math___rem_pio2_large_ipio2, 2760
@@ -2310,7 +2310,7 @@ crabc_x86_math_cos_src_math___rem_pio2_large_ipio2:
 	.long	5633276
 	.long	5069057
 	.long	8417760
-	.section	.rodata.init_jk,"a"
+	.section	.rodata.init_jk.crabc_x86_math_cos_src_math___rem_pio2_large,"a"
 	.align 16
 	.type	crabc_x86_math_cos_src_math___rem_pio2_large_init_jk, @object
 	.size	crabc_x86_math_cos_src_math___rem_pio2_large_init_jk, 16
@@ -2319,7 +2319,7 @@ crabc_x86_math_cos_src_math___rem_pio2_large_init_jk:
 	.long	4
 	.long	4
 	.long	6
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math___rem_pio2_large,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math___rem_pio2_large_C1:
 	.long	0
@@ -2344,7 +2344,7 @@ crabc_x86_math_cos_src_math___rem_pio2_large_init_jk:
 .Lcrabc_x86_math_cos_src_math___rem_pio2_large_C6:
 	.long	0
 	.long	1072693248
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_cos_src_math___rem_pio2_large,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_cos_src_math___rem_pio2_large_C7:
 	.long	0
@@ -2354,7 +2354,7 @@ crabc_x86_math_cos_src_math___rem_pio2_large_init_jk:
 
 /* musl-1.2.6/src/math/floor.c */
 	.text
-	.section	.text.floor,"ax",@progbits
+	.section	.text.floor.crabc_x86_math_cos_src_math_floor,"ax",@progbits
 	.local crabc_x86_math_cos_provider_floor
 	.type	crabc_x86_math_cos_provider_floor, @function
 crabc_x86_math_cos_provider_floor:
@@ -2404,7 +2404,7 @@ crabc_x86_math_cos_provider_floor:
 	subsd	.Lcrabc_x86_math_cos_src_math_floor_C3(%rip), %xmm0
 	ret
 	.size	crabc_x86_math_cos_provider_floor, .-crabc_x86_math_cos_provider_floor
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math_floor,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math_floor_C1:
 	.long	0
@@ -2420,7 +2420,7 @@ crabc_x86_math_cos_provider_floor:
 
 /* musl-1.2.6/src/math/scalbn.c */
 	.text
-	.section	.text.scalbn,"ax",@progbits
+	.section	.text.scalbn.crabc_x86_math_cos_src_math_scalbn,"ax",@progbits
 	.local crabc_x86_math_cos_provider_scalbn
 	.type	crabc_x86_math_cos_provider_scalbn, @function
 crabc_x86_math_cos_provider_scalbn:
@@ -2462,7 +2462,7 @@ crabc_x86_math_cos_provider_scalbn:
 	cmovl	%eax, %edi
 	jmp	.Lcrabc_x86_math_cos_src_math_scalbn_6
 	.size	crabc_x86_math_cos_provider_scalbn, .-crabc_x86_math_cos_provider_scalbn
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cos_src_math_scalbn,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cos_src_math_scalbn_C0:
 	.long	0

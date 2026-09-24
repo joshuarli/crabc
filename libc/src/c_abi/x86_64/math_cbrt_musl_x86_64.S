@@ -14,7 +14,7 @@
 
 /* musl-1.2.6/src/math/cbrt.c */
 	.text
-	.section	.text.cbrt,"ax",@progbits
+	.section	.text.cbrt.crabc_x86_math_cbrt_src_math_cbrt,"ax",@progbits
 	.globl	cbrt
 	.type	cbrt, @function
 cbrt:
@@ -94,7 +94,7 @@ cbrt:
 .Lcrabc_x86_math_cbrt_src_math_cbrt_1:
 	ret
 	.size	cbrt, .-cbrt
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_cbrt_src_math_cbrt,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_cbrt_src_math_cbrt_C0:
 	.long	0
@@ -123,7 +123,7 @@ cbrt:
 
 /* musl-1.2.6/src/math/cbrtf.c */
 	.text
-	.section	.text.cbrtf,"ax",@progbits
+	.section	.text.cbrtf.crabc_x86_math_cbrt_src_math_cbrtf,"ax",@progbits
 	.globl	cbrtf
 	.type	cbrtf, @function
 cbrtf:
@@ -189,7 +189,7 @@ cbrtf:
 	movaps	%xmm3, %xmm0
 	ret
 	.size	cbrtf, .-cbrtf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_cbrt_src_math_cbrtf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_cbrt_src_math_cbrtf_C0:
 	.long	1266679808

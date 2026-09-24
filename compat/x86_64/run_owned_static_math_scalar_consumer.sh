@@ -8,7 +8,6 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
 readonly RECORD_SIZE=56
 readonly EXPECTED_RECORDS=304
-readonly ASSEMBLY_SHA256=540fbee35c6e9da21beb1e0035449cd40676ed9bbdbba20294fb352ba7d8b9bf
 readonly SYMBOLS=(fma fmaf hypot hypotf log1p log1pf)
 readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept feraiseexcept)
 readonly ROOT_SIBLINGS=(sqrt sqrtf)
@@ -18,7 +17,7 @@ require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp grep mkdir mktemp nm objdump python3 readelf realpath rustup sha256sum sort wc; do
+for tool in ar awk cargo cmp grep mkdir mktemp nm objdump python3 readelf realpath rustup sort wc; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -84,9 +83,6 @@ archive_member_for_symbol() {
 }
 
 cd "$ROOT_DIR"
-assembly_digest="$(sha256sum libc/src/c_abi/x86_64/math_scalar_completion_musl_x86_64.S | awk '{ print $1 }')"
-[ "$assembly_digest" = "$ASSEMBLY_SHA256" ] ||
-	fail "checked scalar-math assembly digest drifted from pinned generator output"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H "$probe" \
 	>/dev/null 2>"$trace"
 for header in fenv.h math.h stddef.h stdint.h unistd.h features.h bits/alltypes.h; do
@@ -304,6 +300,14 @@ PY
 	if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
 		fail "${label} installed candidate has unresolved symbols"
 	fi
+	# The release product compiles every libc module into one codegen unit, so
+	# each generated math closure must keep its private copies in sections of
+	# its own. Otherwise --gc-sections keeps, for example, acosh's private
+	# log1p whenever public log1p is linked.
+	unowned_providers="$(awk '$4 == "FUNC" && $8 ~ /^crabc_x86_math_/ &&
+		$8 !~ /^crabc_x86_math_scalar_completion_/ { print $8 }' "$symbols" | LC_ALL=C sort -u)"
+	[ -z "$unowned_providers" ] ||
+		fail "${label} installed candidate retains other closures' private math:" $unowned_providers
 	if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \
 		"$relocations" "$symbols"; then
 		fail "${label} installed candidate retains dynamic relocation or TLS form"

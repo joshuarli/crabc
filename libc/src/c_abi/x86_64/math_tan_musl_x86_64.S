@@ -49,7 +49,7 @@
  */
 /* musl-1.2.6/src/math/tan.c */
 	.text
-	.section	.text.tan,"ax",@progbits
+	.section	.text.tan.crabc_x86_math_tan_src_math_tan,"ax",@progbits
 	.globl	tan
 	.type	tan, @function
 tan:
@@ -94,7 +94,7 @@ tan:
 	call	crabc_x86_math_tan_kernel_tan
 	jmp	.Lcrabc_x86_math_tan_src_math_tan_1
 	.size	tan, .-tan
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tan_src_math_tan,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tan_src_math_tan_C0:
 	.long	0
@@ -108,7 +108,7 @@ tan:
 
 /* musl-1.2.6/src/math/tanf.c */
 	.text
-	.section	.text.tanf,"ax",@progbits
+	.section	.text.tanf.crabc_x86_math_tan_src_math_tanf,"ax",@progbits
 	.globl	tanf
 	.type	tanf, @function
 tanf:
@@ -199,14 +199,14 @@ tanf:
 	call	crabc_x86_math_tan_kernel_tandf
 	jmp	.Lcrabc_x86_math_tan_src_math_tanf_1
 	.size	tanf, .-tanf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_tan_src_math_tanf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_tan_src_math_tanf_C0:
 	.long	58720256
 	.align 4
 .Lcrabc_x86_math_tan_src_math_tanf_C1:
 	.long	2071986176
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tan_src_math_tanf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tan_src_math_tanf_C2:
 	.long	1413754136
@@ -228,7 +228,7 @@ tanf:
 
 /* musl-1.2.6/src/math/__tan.c */
 	.text
-	.section	.text.__tan,"ax",@progbits
+	.section	.text.__tan.crabc_x86_math_tan_src_math___tan,"ax",@progbits
 	.local crabc_x86_math_tan_kernel_tan
 	.hidden	crabc_x86_math_tan_kernel_tan
 	.type	crabc_x86_math_tan_kernel_tan, @function
@@ -335,14 +335,14 @@ crabc_x86_math_tan_kernel_tan:
 	xorpd	.Lcrabc_x86_math_tan_src_math___tan_C1(%rip), %xmm0
 	ret
 	.size	crabc_x86_math_tan_kernel_tan, .-crabc_x86_math_tan_kernel_tan
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_tan_src_math___tan,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_tan_src_math___tan_C1:
 	.long	0
 	.long	-2147483648
 	.long	0
 	.long	0
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tan_src_math___tan,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tan_src_math___tan_C2:
 	.long	1413754136
@@ -414,7 +414,7 @@ crabc_x86_math_tan_kernel_tan:
 
 /* musl-1.2.6/src/math/__tandf.c */
 	.text
-	.section	.text.__tandf,"ax",@progbits
+	.section	.text.__tandf.crabc_x86_math_tan_src_math___tandf,"ax",@progbits
 	.local crabc_x86_math_tan_kernel_tandf
 	.hidden	crabc_x86_math_tan_kernel_tandf
 	.type	crabc_x86_math_tan_kernel_tandf, @function
@@ -449,7 +449,7 @@ crabc_x86_math_tan_kernel_tandf:
 	cvtsd2ss	%xmm0, %xmm0
 	ret
 	.size	crabc_x86_math_tan_kernel_tandf, .-crabc_x86_math_tan_kernel_tandf
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tan_src_math___tandf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tan_src_math___tandf_C0:
 	.long	-1080615987
@@ -481,7 +481,7 @@ crabc_x86_math_tan_kernel_tandf:
 
 /* musl-1.2.6/src/math/__rem_pio2.c */
 	.text
-	.section	.text.__rem_pio2,"ax",@progbits
+	.section	.text.__rem_pio2.crabc_x86_math_tan_src_math___rem_pio2,"ax",@progbits
 	.local crabc_x86_math_tan_reduce_pio2
 	.hidden	crabc_x86_math_tan_reduce_pio2
 	.type	crabc_x86_math_tan_reduce_pio2, @function
@@ -751,7 +751,7 @@ crabc_x86_math_tan_reduce_pio2:
 	movsd	%xmm0, 8(%r10)
 	jmp	.Lcrabc_x86_math_tan_src_math___rem_pio2_1
 	.size	crabc_x86_math_tan_reduce_pio2, .-crabc_x86_math_tan_reduce_pio2
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tan_src_math___rem_pio2,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tan_src_math___rem_pio2_C0:
 	.long	1413480448
@@ -824,7 +824,7 @@ crabc_x86_math_tan_reduce_pio2:
 .Lcrabc_x86_math_tan_src_math___rem_pio2_C17:
 	.long	0
 	.long	1097859072
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_tan_src_math___rem_pio2,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_tan_src_math___rem_pio2_C19:
 	.long	0
@@ -835,7 +835,7 @@ crabc_x86_math_tan_reduce_pio2:
 
 /* musl-1.2.6/src/math/__rem_pio2f.c */
 	.text
-	.section	.text.__rem_pio2f,"ax",@progbits
+	.section	.text.__rem_pio2f.crabc_x86_math_tan_src_math___rem_pio2f,"ax",@progbits
 	.local crabc_x86_math_tan_reduce_pio2f
 	.hidden	crabc_x86_math_tan_reduce_pio2f
 	.type	crabc_x86_math_tan_reduce_pio2f, @function
@@ -922,7 +922,7 @@ crabc_x86_math_tan_reduce_pio2f:
 	negl	%eax
 	jmp	.Lcrabc_x86_math_tan_src_math___rem_pio2f_5
 	.size	crabc_x86_math_tan_reduce_pio2f, .-crabc_x86_math_tan_reduce_pio2f
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tan_src_math___rem_pio2f,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tan_src_math___rem_pio2f_C0:
 	.long	1841940611
@@ -951,7 +951,7 @@ crabc_x86_math_tan_reduce_pio2f:
 .Lcrabc_x86_math_tan_src_math___rem_pio2f_C6:
 	.long	1610612736
 	.long	1072243195
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_tan_src_math___rem_pio2f,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_tan_src_math___rem_pio2f_C7:
 	.long	0
@@ -962,7 +962,7 @@ crabc_x86_math_tan_reduce_pio2f:
 
 /* musl-1.2.6/src/math/__rem_pio2_large.c */
 	.text
-	.section	.text.__rem_pio2_large,"ax",@progbits
+	.section	.text.__rem_pio2_large.crabc_x86_math_tan_src_math___rem_pio2_large,"ax",@progbits
 	.local crabc_x86_math_tan_reduce_pio2_large
 	.hidden	crabc_x86_math_tan_reduce_pio2_large
 	.type	crabc_x86_math_tan_reduce_pio2_large, @function
@@ -1564,7 +1564,7 @@ crabc_x86_math_tan_reduce_pio2_large:
 	movsd	%xmm0, 16(%rax)
 	jmp	.Lcrabc_x86_math_tan_src_math___rem_pio2_large_55
 	.size	crabc_x86_math_tan_reduce_pio2_large, .-crabc_x86_math_tan_reduce_pio2_large
-	.section	.rodata.PIo2,"a"
+	.section	.rodata.PIo2.crabc_x86_math_tan_src_math___rem_pio2_large,"a"
 	.align 32
 	.type	crabc_x86_math_tan_src_math___rem_pio2_large_PIo2, @object
 	.size	crabc_x86_math_tan_src_math___rem_pio2_large_PIo2, 64
@@ -1585,7 +1585,7 @@ crabc_x86_math_tan_src_math___rem_pio2_large_PIo2:
 	.long	920879650
 	.long	0
 	.long	896135965
-	.section	.rodata.ipio2,"a"
+	.section	.rodata.ipio2.crabc_x86_math_tan_src_math___rem_pio2_large,"a"
 	.align 32
 	.type	crabc_x86_math_tan_src_math___rem_pio2_large_ipio2, @object
 	.size	crabc_x86_math_tan_src_math___rem_pio2_large_ipio2, 2760
@@ -2280,7 +2280,7 @@ crabc_x86_math_tan_src_math___rem_pio2_large_ipio2:
 	.long	5633276
 	.long	5069057
 	.long	8417760
-	.section	.rodata.init_jk,"a"
+	.section	.rodata.init_jk.crabc_x86_math_tan_src_math___rem_pio2_large,"a"
 	.align 16
 	.type	crabc_x86_math_tan_src_math___rem_pio2_large_init_jk, @object
 	.size	crabc_x86_math_tan_src_math___rem_pio2_large_init_jk, 16
@@ -2289,7 +2289,7 @@ crabc_x86_math_tan_src_math___rem_pio2_large_init_jk:
 	.long	4
 	.long	4
 	.long	6
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tan_src_math___rem_pio2_large,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tan_src_math___rem_pio2_large_C1:
 	.long	0
@@ -2314,7 +2314,7 @@ crabc_x86_math_tan_src_math___rem_pio2_large_init_jk:
 .Lcrabc_x86_math_tan_src_math___rem_pio2_large_C6:
 	.long	0
 	.long	1072693248
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_tan_src_math___rem_pio2_large,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_tan_src_math___rem_pio2_large_C7:
 	.long	0
@@ -2324,7 +2324,7 @@ crabc_x86_math_tan_src_math___rem_pio2_large_init_jk:
 
 /* musl-1.2.6/src/math/floor.c */
 	.text
-	.section	.text.floor,"ax",@progbits
+	.section	.text.floor.crabc_x86_math_tan_src_math_floor,"ax",@progbits
 	.local crabc_x86_math_tan_provider_floor
 	.type	crabc_x86_math_tan_provider_floor, @function
 crabc_x86_math_tan_provider_floor:
@@ -2374,7 +2374,7 @@ crabc_x86_math_tan_provider_floor:
 	subsd	.Lcrabc_x86_math_tan_src_math_floor_C3(%rip), %xmm0
 	ret
 	.size	crabc_x86_math_tan_provider_floor, .-crabc_x86_math_tan_provider_floor
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tan_src_math_floor,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tan_src_math_floor_C1:
 	.long	0
@@ -2390,7 +2390,7 @@ crabc_x86_math_tan_provider_floor:
 
 /* musl-1.2.6/src/math/scalbn.c */
 	.text
-	.section	.text.scalbn,"ax",@progbits
+	.section	.text.scalbn.crabc_x86_math_tan_src_math_scalbn,"ax",@progbits
 	.local crabc_x86_math_tan_provider_scalbn
 	.type	crabc_x86_math_tan_provider_scalbn, @function
 crabc_x86_math_tan_provider_scalbn:
@@ -2432,7 +2432,7 @@ crabc_x86_math_tan_provider_scalbn:
 	cmovl	%eax, %edi
 	jmp	.Lcrabc_x86_math_tan_src_math_scalbn_6
 	.size	crabc_x86_math_tan_provider_scalbn, .-crabc_x86_math_tan_provider_scalbn
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_tan_src_math_scalbn,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_tan_src_math_scalbn_C0:
 	.long	0

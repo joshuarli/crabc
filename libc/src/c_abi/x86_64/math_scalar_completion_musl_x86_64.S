@@ -44,7 +44,7 @@
  */
 /* musl-1.2.6/src/math/x86_64/fma.c */
 	.text
-	.section	.text.normalize,"ax",@progbits
+	.section	.text.normalize.crabc_x86_math_scalar_completion_src_math_x86_64_fma,"ax",@progbits
 	.type	crabc_x86_math_scalar_completion_src_math_x86_64_fma_normalize, @function
 crabc_x86_math_scalar_completion_src_math_x86_64_fma_normalize:
 	movq	%xmm0, %rdx
@@ -78,7 +78,7 @@ crabc_x86_math_scalar_completion_src_math_x86_64_fma_normalize:
 	cmove	%rsi, %rax
 	jmp	.Lcrabc_x86_math_scalar_completion_src_math_x86_64_fma_3
 	.size	crabc_x86_math_scalar_completion_src_math_x86_64_fma_normalize, .-crabc_x86_math_scalar_completion_src_math_x86_64_fma_normalize
-	.section	.text.fma,"ax",@progbits
+	.section	.text.fma.crabc_x86_math_scalar_completion_src_math_x86_64_fma,"ax",@progbits
 	.globl	fma
 	.type	fma, @function
 fma:
@@ -371,7 +371,7 @@ fma:
 	mulsd	.Lcrabc_x86_math_scalar_completion_src_math_x86_64_fma_C3(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_scalar_completion_src_math_x86_64_fma_45
 	.size	fma, .-fma
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_scalar_completion_src_math_x86_64_fma,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_scalar_completion_src_math_x86_64_fma_C0:
 	.long	0
@@ -391,7 +391,7 @@ fma:
 
 /* musl-1.2.6/src/math/x86_64/fmaf.c */
 	.text
-	.section	.text.fmaf,"ax",@progbits
+	.section	.text.fmaf.crabc_x86_math_scalar_completion_src_math_x86_64_fmaf,"ax",@progbits
 	.globl	fmaf
 	.type	fmaf, @function
 fmaf:
@@ -542,7 +542,7 @@ fmaf:
 
 /* musl-1.2.6/src/math/hypot.c */
 	.text
-	.section	.text.hypot,"ax",@progbits
+	.section	.text.hypot.crabc_x86_math_scalar_completion_src_math_hypot,"ax",@progbits
 	.globl	hypot
 	.type	hypot, @function
 hypot:
@@ -642,7 +642,7 @@ hypot:
 .Lcrabc_x86_math_scalar_completion_src_math_hypot_10:
 	ret
 	.size	hypot, .-hypot
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_scalar_completion_src_math_hypot,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_scalar_completion_src_math_hypot_C0:
 	.long	0
@@ -662,7 +662,7 @@ hypot:
 
 /* musl-1.2.6/src/math/hypotf.c */
 	.text
-	.section	.text.hypotf,"ax",@progbits
+	.section	.text.hypotf.crabc_x86_math_scalar_completion_src_math_hypotf,"ax",@progbits
 	.globl	hypotf
 	.type	hypotf, @function
 hypotf:
@@ -724,7 +724,7 @@ hypotf:
 .Lcrabc_x86_math_scalar_completion_src_math_hypotf_13:
 	ret
 	.size	hypotf, .-hypotf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_scalar_completion_src_math_hypotf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_scalar_completion_src_math_hypotf_C0:
 	.long	1820327936
@@ -737,7 +737,7 @@ hypotf:
 
 /* musl-1.2.6/src/math/log1p.c */
 	.text
-	.section	.text.log1p,"ax",@progbits
+	.section	.text.log1p.crabc_x86_math_scalar_completion_src_math_log1p,"ax",@progbits
 	.globl	log1p
 	.type	log1p, @function
 log1p:
@@ -860,7 +860,7 @@ log1p:
 	movapd	%xmm2, %xmm0
 	jmp	.Lcrabc_x86_math_scalar_completion_src_math_log1p_13
 	.size	log1p, .-log1p
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_scalar_completion_src_math_log1p,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_scalar_completion_src_math_log1p_C1:
 	.long	0
@@ -916,7 +916,7 @@ log1p:
 
 /* musl-1.2.6/src/math/log1pf.c */
 	.text
-	.section	.text.log1pf,"ax",@progbits
+	.section	.text.log1pf.crabc_x86_math_scalar_completion_src_math_log1pf,"ax",@progbits
 	.globl	log1pf
 	.type	log1pf, @function
 log1pf:
@@ -1024,7 +1024,7 @@ log1pf:
 	movaps	%xmm2, %xmm0
 	jmp	.Lcrabc_x86_math_scalar_completion_src_math_log1pf_13
 	.size	log1pf, .-log1pf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_scalar_completion_src_math_log1pf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_scalar_completion_src_math_log1pf_C1:
 	.long	-1082130432
@@ -1058,7 +1058,7 @@ log1pf:
 
 /* musl-1.2.6/src/math/scalbn.c */
 	.text
-	.section	.text.crabc_x86_math_scalar_completion_provider_scalbn,"ax",@progbits
+	.section	.text.crabc_x86_math_scalar_completion_provider_scalbn.crabc_x86_math_scalar_completion_src_math_scalbn,"ax",@progbits
 	.local crabc_x86_math_scalar_completion_provider_scalbn
 	.type	crabc_x86_math_scalar_completion_provider_scalbn, @function
 crabc_x86_math_scalar_completion_provider_scalbn:
@@ -1100,7 +1100,7 @@ crabc_x86_math_scalar_completion_provider_scalbn:
 	cmovl	%eax, %edi
 	jmp	.Lcrabc_x86_math_scalar_completion_src_math_scalbn_6
 	.size	crabc_x86_math_scalar_completion_provider_scalbn, .-crabc_x86_math_scalar_completion_provider_scalbn
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_scalar_completion_src_math_scalbn,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_scalar_completion_src_math_scalbn_C0:
 	.long	0

@@ -9,7 +9,7 @@
 
 /* musl-1.2.6/src/math/round.c */
 	.text
-	.section	.text.round,"ax",@progbits
+	.section	.text.round.crabc_x86_math_round_src_math_round,"ax",@progbits
 	.globl	round
 	.type	round, @function
 round:
@@ -57,14 +57,14 @@ round:
 	xorpd	.Lcrabc_x86_math_round_src_math_round_C0(%rip), %xmm0
 	ret
 	.size	round, .-round
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_round_src_math_round,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_round_src_math_round_C0:
 	.long	0
 	.long	-2147483648
 	.long	0
 	.long	0
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_round_src_math_round,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_round_src_math_round_C1:
 	.long	0
@@ -85,7 +85,7 @@ round:
 
 /* musl-1.2.6/src/math/roundf.c */
 	.text
-	.section	.text.roundf,"ax",@progbits
+	.section	.text.roundf.crabc_x86_math_round_src_math_roundf,"ax",@progbits
 	.globl	roundf
 	.type	roundf, @function
 roundf:
@@ -133,14 +133,14 @@ roundf:
 	xorps	.Lcrabc_x86_math_round_src_math_roundf_C0(%rip), %xmm0
 	ret
 	.size	roundf, .-roundf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_round_src_math_roundf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_round_src_math_roundf_C0:
 	.long	-2147483648
 	.long	0
 	.long	0
 	.long	0
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_round_src_math_roundf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_round_src_math_roundf_C1:
 	.long	1258291200

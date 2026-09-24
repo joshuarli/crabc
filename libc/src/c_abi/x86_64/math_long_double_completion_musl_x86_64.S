@@ -9,7 +9,7 @@
 
 /* musl-1.2.6/src/math/fdiml.c */
 	.text
-	.section	.text.fdiml,"ax",@progbits
+	.section	.text.fdiml.crabc_x86_math_long_double_completion_src_math_fdiml,"ax",@progbits
 	.globl	fdiml
 	.type	fdiml, @function
 fdiml:
@@ -55,7 +55,7 @@ fdiml:
 
 /* musl-1.2.6/src/math/exp10l.c */
 	.text
-	.section	.text.exp10l,"ax",@progbits
+	.section	.text.exp10l.crabc_x86_math_long_double_completion_src_math_exp10l,"ax",@progbits
 	.globl	exp10l
 	.type	exp10l, @function
 exp10l:
@@ -140,7 +140,7 @@ exp10l:
 	.size	exp10l, .-exp10l
 	.weak	pow10l
 	.set	pow10l,exp10l
-	.section	.rodata.p10.0,"a"
+	.section	.rodata.p10.0.crabc_x86_math_long_double_completion_src_math_exp10l,"a"
 	.align 32
 	.type	p10.0, @object
 	.size	p10.0, 496
@@ -269,14 +269,14 @@ p10.0:
 	.long	-480270031
 	.long	16432
 	.long	0
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_long_double_completion_src_math_exp10l,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_long_double_completion_src_math_exp10l_C1:
 	.long	-853832962
 	.long	-728074165
 	.long	16384
 	.long	0
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_long_double_completion_src_math_exp10l,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_long_double_completion_src_math_exp10l_C2:
 	.long	1092616192

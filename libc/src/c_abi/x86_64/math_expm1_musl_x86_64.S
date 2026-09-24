@@ -18,7 +18,7 @@
  */
 /* musl-1.2.6/src/math/expm1.c */
 	.text
-	.section	.text.expm1,"ax",@progbits
+	.section	.text.expm1.crabc_x86_math_expm1_src_math_expm1,"ax",@progbits
 	.globl	expm1
 	.type	expm1, @function
 expm1:
@@ -211,7 +211,7 @@ expm1:
 .Lcrabc_x86_math_expm1_src_math_expm1_1:
 	ret
 	.size	expm1, .-expm1
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_expm1_src_math_expm1,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_expm1_src_math_expm1_C0:
 	.long	0
@@ -291,7 +291,7 @@ expm1:
 
 /* musl-1.2.6/src/math/expm1f.c */
 	.text
-	.section	.text.expm1f,"ax",@progbits
+	.section	.text.expm1f.crabc_x86_math_expm1_src_math_expm1f,"ax",@progbits
 	.globl	expm1f
 	.type	expm1f, @function
 expm1f:
@@ -491,7 +491,7 @@ expm1f:
 .Lcrabc_x86_math_expm1_src_math_expm1f_1:
 	ret
 	.size	expm1f, .-expm1f
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_expm1_src_math_expm1f,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_expm1_src_math_expm1f_C0:
 	.long	-1090519040

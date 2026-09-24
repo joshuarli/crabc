@@ -9,7 +9,7 @@
 
 /* musl-1.2.6/src/math/ceil.c */
 	.text
-	.section	.text.ceil,"ax",@progbits
+	.section	.text.ceil.crabc_x86_math_ceil_src_math_ceil,"ax",@progbits
 	.globl	ceil
 	.type	ceil, @function
 ceil:
@@ -59,7 +59,7 @@ ceil:
 	addsd	.Lcrabc_x86_math_ceil_src_math_ceil_C0(%rip), %xmm0
 	ret
 	.size	ceil, .-ceil
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_ceil_src_math_ceil,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_ceil_src_math_ceil_C0:
 	.long	0
@@ -76,7 +76,7 @@ ceil:
 
 /* musl-1.2.6/src/math/ceilf.c */
 	.text
-	.section	.text.ceilf,"ax",@progbits
+	.section	.text.ceilf.crabc_x86_math_ceil_src_math_ceilf,"ax",@progbits
 	.globl	ceilf
 	.type	ceilf, @function
 ceilf:
@@ -115,7 +115,7 @@ ceilf:
 .Lcrabc_x86_math_ceil_src_math_ceilf_1:
 	ret
 	.size	ceilf, .-ceilf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_ceil_src_math_ceilf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_ceil_src_math_ceilf_C0:
 	.long	-2147483648

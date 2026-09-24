@@ -32,7 +32,7 @@
  */
 /* musl-1.2.6/src/math/exp2.c */
 	.text
-	.section	.text.exp2,"ax",@progbits
+	.section	.text.exp2.crabc_x86_math_exp2_src_math_exp2,"ax",@progbits
 	.globl	exp2
 	.type	exp2, @function
 exp2:
@@ -164,7 +164,7 @@ exp2:
 	pxor	%xmm0, %xmm0
 	ret
 	.size	exp2, .-exp2
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_exp2_src_math_exp2,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_exp2_src_math_exp2_C1:
 	.long	0
@@ -179,7 +179,7 @@ exp2:
 
 /* musl-1.2.6/src/math/exp2f.c */
 	.text
-	.section	.text.exp2f,"ax",@progbits
+	.section	.text.exp2f.crabc_x86_math_exp2_src_math_exp2f,"ax",@progbits
 	.globl	exp2f
 	.type	exp2f, @function
 exp2f:
@@ -238,11 +238,11 @@ exp2f:
 	pxor	%xmm0, %xmm0
 	ret
 	.size	exp2f, .-exp2f
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_exp2_src_math_exp2f,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_exp2_src_math_exp2f_C1:
 	.long	-1021968384
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_exp2_src_math_exp2f,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_exp2_src_math_exp2f_C2:
 	.long	0
@@ -255,7 +255,7 @@ exp2f:
 	.text
 	.hidden	crabc_x86_math_exp2_data
 	.local crabc_x86_math_exp2_data
-	.section	.rodata.__exp_data,"a"
+	.section	.rodata.__exp_data.crabc_x86_math_exp2_src_math_exp_data,"a"
 	.align 32
 	.type	crabc_x86_math_exp2_data, @object
 	.size	crabc_x86_math_exp2_data, 2160
@@ -549,7 +549,7 @@ crabc_x86_math_exp2_data:
 	.text
 	.hidden	crabc_x86_math_exp2_data_f
 	.local crabc_x86_math_exp2_data_f
-	.section	.rodata.__exp2f_data,"a"
+	.section	.rodata.__exp2f_data.crabc_x86_math_exp2_src_math_exp2f_data,"a"
 	.align 32
 	.type	crabc_x86_math_exp2_data_f, @object
 	.size	crabc_x86_math_exp2_data_f, 328
@@ -607,7 +607,7 @@ crabc_x86_math_exp2_data_f:
 
 /* musl-1.2.6/src/math/__math_oflow.c */
 	.text
-	.section	.text.__math_oflow,"ax",@progbits
+	.section	.text.__math_oflow.crabc_x86_math_exp2_src_math___math_oflow,"ax",@progbits
 	.local crabc_x86_math_exp2_provider_oflow
 	.hidden	crabc_x86_math_exp2_provider_oflow
 	.type	crabc_x86_math_exp2_provider_oflow, @function
@@ -615,7 +615,7 @@ crabc_x86_math_exp2_provider_oflow:
 	movsd	.Lcrabc_x86_math_exp2_src_math___math_oflow_C0(%rip), %xmm0
 	jmp	crabc_x86_math_exp2_provider_xflow
 	.size	crabc_x86_math_exp2_provider_oflow, .-crabc_x86_math_exp2_provider_oflow
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_exp2_src_math___math_oflow,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_exp2_src_math___math_oflow_C0:
 	.long	0
@@ -624,7 +624,7 @@ crabc_x86_math_exp2_provider_oflow:
 
 /* musl-1.2.6/src/math/__math_uflow.c */
 	.text
-	.section	.text.__math_uflow,"ax",@progbits
+	.section	.text.__math_uflow.crabc_x86_math_exp2_src_math___math_uflow,"ax",@progbits
 	.local crabc_x86_math_exp2_provider_uflow
 	.hidden	crabc_x86_math_exp2_provider_uflow
 	.type	crabc_x86_math_exp2_provider_uflow, @function
@@ -632,7 +632,7 @@ crabc_x86_math_exp2_provider_uflow:
 	movsd	.Lcrabc_x86_math_exp2_src_math___math_uflow_C0(%rip), %xmm0
 	jmp	crabc_x86_math_exp2_provider_xflow
 	.size	crabc_x86_math_exp2_provider_uflow, .-crabc_x86_math_exp2_provider_uflow
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_exp2_src_math___math_uflow,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_exp2_src_math___math_uflow_C0:
 	.long	0
@@ -641,7 +641,7 @@ crabc_x86_math_exp2_provider_uflow:
 
 /* musl-1.2.6/src/math/__math_xflow.c */
 	.text
-	.section	.text.__math_xflow,"ax",@progbits
+	.section	.text.__math_xflow.crabc_x86_math_exp2_src_math___math_xflow,"ax",@progbits
 	.local crabc_x86_math_exp2_provider_xflow
 	.hidden	crabc_x86_math_exp2_provider_xflow
 	.type	crabc_x86_math_exp2_provider_xflow, @function
@@ -656,7 +656,7 @@ crabc_x86_math_exp2_provider_xflow:
 	mulsd	%xmm1, %xmm0
 	ret
 	.size	crabc_x86_math_exp2_provider_xflow, .-crabc_x86_math_exp2_provider_xflow
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_exp2_src_math___math_xflow,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_exp2_src_math___math_xflow_C0:
 	.long	0
@@ -666,7 +666,7 @@ crabc_x86_math_exp2_provider_xflow:
 
 /* musl-1.2.6/src/math/__math_oflowf.c */
 	.text
-	.section	.text.__math_oflowf,"ax",@progbits
+	.section	.text.__math_oflowf.crabc_x86_math_exp2_src_math___math_oflowf,"ax",@progbits
 	.local crabc_x86_math_exp2_provider_oflowf
 	.hidden	crabc_x86_math_exp2_provider_oflowf
 	.type	crabc_x86_math_exp2_provider_oflowf, @function
@@ -674,7 +674,7 @@ crabc_x86_math_exp2_provider_oflowf:
 	movss	.Lcrabc_x86_math_exp2_src_math___math_oflowf_C0(%rip), %xmm0
 	jmp	crabc_x86_math_exp2_provider_xflowf
 	.size	crabc_x86_math_exp2_provider_oflowf, .-crabc_x86_math_exp2_provider_oflowf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_exp2_src_math___math_oflowf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_exp2_src_math___math_oflowf_C0:
 	.long	1879048192
@@ -682,7 +682,7 @@ crabc_x86_math_exp2_provider_oflowf:
 
 /* musl-1.2.6/src/math/__math_uflowf.c */
 	.text
-	.section	.text.__math_uflowf,"ax",@progbits
+	.section	.text.__math_uflowf.crabc_x86_math_exp2_src_math___math_uflowf,"ax",@progbits
 	.local crabc_x86_math_exp2_provider_uflowf
 	.hidden	crabc_x86_math_exp2_provider_uflowf
 	.type	crabc_x86_math_exp2_provider_uflowf, @function
@@ -690,7 +690,7 @@ crabc_x86_math_exp2_provider_uflowf:
 	movss	.Lcrabc_x86_math_exp2_src_math___math_uflowf_C0(%rip), %xmm0
 	jmp	crabc_x86_math_exp2_provider_xflowf
 	.size	crabc_x86_math_exp2_provider_uflowf, .-crabc_x86_math_exp2_provider_uflowf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_exp2_src_math___math_uflowf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_exp2_src_math___math_uflowf_C0:
 	.long	268435456
@@ -698,7 +698,7 @@ crabc_x86_math_exp2_provider_uflowf:
 
 /* musl-1.2.6/src/math/__math_xflowf.c */
 	.text
-	.section	.text.__math_xflowf,"ax",@progbits
+	.section	.text.__math_xflowf.crabc_x86_math_exp2_src_math___math_xflowf,"ax",@progbits
 	.local crabc_x86_math_exp2_provider_xflowf
 	.hidden	crabc_x86_math_exp2_provider_xflowf
 	.type	crabc_x86_math_exp2_provider_xflowf, @function
@@ -713,7 +713,7 @@ crabc_x86_math_exp2_provider_xflowf:
 	mulss	%xmm1, %xmm0
 	ret
 	.size	crabc_x86_math_exp2_provider_xflowf, .-crabc_x86_math_exp2_provider_xflowf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_exp2_src_math___math_xflowf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_exp2_src_math___math_xflowf_C0:
 	.long	-2147483648

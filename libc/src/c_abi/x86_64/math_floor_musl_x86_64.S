@@ -9,7 +9,7 @@
 
 /* musl-1.2.6/src/math/floor.c */
 	.text
-	.section	.text.floor,"ax",@progbits
+	.section	.text.floor.crabc_x86_math_floor_src_math_floor,"ax",@progbits
 	.globl	floor
 	.type	floor, @function
 floor:
@@ -59,7 +59,7 @@ floor:
 	subsd	.Lcrabc_x86_math_floor_src_math_floor_C3(%rip), %xmm0
 	ret
 	.size	floor, .-floor
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_floor_src_math_floor,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_floor_src_math_floor_C1:
 	.long	0
@@ -76,7 +76,7 @@ floor:
 
 /* musl-1.2.6/src/math/floorf.c */
 	.text
-	.section	.text.floorf,"ax",@progbits
+	.section	.text.floorf.crabc_x86_math_floor_src_math_floorf,"ax",@progbits
 	.globl	floorf
 	.type	floorf, @function
 floorf:
@@ -117,7 +117,7 @@ floorf:
 	movss	.Lcrabc_x86_math_floor_src_math_floorf_C1(%rip), %xmm0
 	ret
 	.size	floorf, .-floorf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_floor_src_math_floorf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_floor_src_math_floorf_C1:
 	.long	-2147483648

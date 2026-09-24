@@ -33,7 +33,7 @@
 
 /* musl-1.2.6/src/math/log2.c */
 	.text
-	.section	.text.log2,"ax",@progbits
+	.section	.text.log2.crabc_x86_math_log2_src_math_log2,"ax",@progbits
 	.globl	log2
 	.type	log2, @function
 log2:
@@ -192,7 +192,7 @@ log2:
 .Lcrabc_x86_math_log2_src_math_log2_1:
 	ret
 	.size	log2, .-log2
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_log2_src_math_log2,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_log2_src_math_log2_C1:
 	.long	0
@@ -208,7 +208,7 @@ log2:
 
 /* musl-1.2.6/src/math/log2f.c */
 	.text
-	.section	.text.log2f,"ax",@progbits
+	.section	.text.log2f.crabc_x86_math_log2_src_math_log2f,"ax",@progbits
 	.globl	log2f
 	.type	log2f, @function
 log2f:
@@ -277,11 +277,11 @@ log2f:
 .Lcrabc_x86_math_log2_src_math_log2f_1:
 	ret
 	.size	log2f, .-log2f
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_log2_src_math_log2f,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_log2_src_math_log2f_C1:
 	.long	1258291200
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_log2_src_math_log2f,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_log2_src_math_log2f_C2:
 	.long	0
@@ -295,7 +295,7 @@ log2f:
 	.text
 	.hidden	crabc_x86_math_log2___log2_data
 	.local	crabc_x86_math_log2___log2_data
-	.section	.rodata.__log2_data,"a"
+	.section	.rodata.__log2_data.crabc_x86_math_log2_src_math_log2_data,"a"
 	.align 32
 	.type	crabc_x86_math_log2___log2_data, @object
 	.size	crabc_x86_math_log2___log2_data, 2192
@@ -854,7 +854,7 @@ crabc_x86_math_log2___log2_data:
 	.text
 	.hidden	crabc_x86_math_log2___log2f_data
 	.local	crabc_x86_math_log2___log2f_data
-	.section	.rodata.__log2f_data,"a"
+	.section	.rodata.__log2f_data.crabc_x86_math_log2_src_math_log2f_data,"a"
 	.align 32
 	.type	crabc_x86_math_log2___log2f_data, @object
 	.size	crabc_x86_math_log2___log2f_data, 288
@@ -935,7 +935,7 @@ crabc_x86_math_log2___log2f_data:
 
 /* musl-1.2.6/src/math/__math_divzero.c */
 	.text
-	.section	.text.__math_divzero,"ax",@progbits
+	.section	.text.__math_divzero.crabc_x86_math_log2_src_math___math_divzero,"ax",@progbits
 	.local	crabc_x86_math_log2___math_divzero
 	.hidden	crabc_x86_math_log2___math_divzero
 	.type	crabc_x86_math_log2___math_divzero, @function
@@ -953,7 +953,7 @@ crabc_x86_math_log2___math_divzero:
 	movsd	.Lcrabc_x86_math_log2_src_math___math_divzero_C1(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_log2_src_math___math_divzero_2
 	.size	crabc_x86_math_log2___math_divzero, .-crabc_x86_math_log2___math_divzero
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_log2_src_math___math_divzero,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_log2_src_math___math_divzero_C0:
 	.long	0
@@ -966,7 +966,7 @@ crabc_x86_math_log2___math_divzero:
 
 /* musl-1.2.6/src/math/__math_divzerof.c */
 	.text
-	.section	.text.__math_divzerof,"ax",@progbits
+	.section	.text.__math_divzerof.crabc_x86_math_log2_src_math___math_divzerof,"ax",@progbits
 	.local	crabc_x86_math_log2___math_divzerof
 	.hidden	crabc_x86_math_log2___math_divzerof
 	.type	crabc_x86_math_log2___math_divzerof, @function
@@ -984,7 +984,7 @@ crabc_x86_math_log2___math_divzerof:
 	movss	.Lcrabc_x86_math_log2_src_math___math_divzerof_C1(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_log2_src_math___math_divzerof_2
 	.size	crabc_x86_math_log2___math_divzerof, .-crabc_x86_math_log2___math_divzerof
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_log2_src_math___math_divzerof,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_log2_src_math___math_divzerof_C0:
 	.long	-1082130432
@@ -995,7 +995,7 @@ crabc_x86_math_log2___math_divzerof:
 
 /* musl-1.2.6/src/math/__math_invalid.c */
 	.text
-	.section	.text.__math_invalid,"ax",@progbits
+	.section	.text.__math_invalid.crabc_x86_math_log2_src_math___math_invalid,"ax",@progbits
 	.local	crabc_x86_math_log2___math_invalid
 	.hidden	crabc_x86_math_log2___math_invalid
 	.type	crabc_x86_math_log2___math_invalid, @function
@@ -1008,7 +1008,7 @@ crabc_x86_math_log2___math_invalid:
 
 /* musl-1.2.6/src/math/__math_invalidf.c */
 	.text
-	.section	.text.__math_invalidf,"ax",@progbits
+	.section	.text.__math_invalidf.crabc_x86_math_log2_src_math___math_invalidf,"ax",@progbits
 	.local	crabc_x86_math_log2___math_invalidf
 	.hidden	crabc_x86_math_log2___math_invalidf
 	.type	crabc_x86_math_log2___math_invalidf, @function
