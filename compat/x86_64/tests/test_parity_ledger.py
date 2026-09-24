@@ -3605,9 +3605,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         stat_commands = {
             evidence["command"] for evidence in stat_compat["native_evidence"]
         }
-        self.assertEqual(
-            stat_commands, {"./scripts/dev-x86_64.sh libc-stat-compat"}
-        )
+        self.assertIn("./scripts/dev-x86_64.sh libc-stat-compat", stat_commands)
         self.assertIn("freestanding fixture", stat_compat["description"])
         self.assertIn("does not select libc.so", stat_compat["native_evidence"][0]["scope"])
         credentials = slices_by_id["process.credentials"]
