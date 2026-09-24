@@ -25,38 +25,41 @@ are not transferable passes for a different revision.
   180 implemented, 34 selected-private, and 9 missing capabilities; all eight
   ordered qualification gates are executable and fail closed on named unmet
   conditions. C mimalloc remains the selected backend; allocator M2–M11 remain
-  open (M6 has a fail-closed gate). The merged allocator unit suite last passed
-  1,159/1,159 at `f6c8da3c2`. Host test files pass except the host-only perf
-  descriptor-closure test in `compat/perf/tests/test_run_x86_64.py`.
+  open. Every freestanding-C runner builds `libc.a` through
+  `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
+  member per libc module). The development engine harness measures the Rust
+  local path at roughly 0.04× pinned C single-thread (contended host; the
+  0.25× sanity gate is not met).
 - **Resume here, in order:**
-  1. Fix the cross-cutting link defect first (one owner): runner scripts that
-     build `libc.a` with plain `cargo rustc` fail to link `rust_eh_personality`
-     on the pinned nightly (`libc-resolver-runtime`, the headers/layouts
-     aggregate runner's crypt-allocator component, and ~358 scripts in all).
-     Generalize `2261f8e20` (source-built core through
-     `native_static_source_runtime_closure.py`) into one shared helper.
-  2. Rerun the `libc.posix-runtime` family admission on merged `main`;
-     `lane/posix` holds a candidate admission commit and an experimental
-     registry lock change.
-  3. Resume the parked `lane/*` branches (each ends in a `WIP(lane <id>)`
-     commit): `posix`, `pattern`, `math-time`, `loader`, `crt-dynamic`,
-     `dynamic-product`, `std-lto`, `m2-vm-arenas`, `m2-init-fault`, `m3`,
-     `m5-remote`, `m5-exit`, `m5-stress`, `m6`, `m7`, `alloc-fork`,
-     `alloc-perf`.
-  4. Keep removing checked-in digests of repository files (one owner): header
-     matrix `inputs` digests and per-row digests (`header_abi_matrix`,
-     `header_declaration_macro_visibility_matrix`, `header_record_layout_matrix`
-     reports, `header_callable_inventory.json`), allocator source-map/API
-     coverage, corpus manifest, and image-input receipt pins. Count summaries
-     suffice; runtime receipts may still digest what actually ran. Keep upstream
-     archive, toolchain, and image provenance pins.
-- **Other open defects:** ~500 `pipefail` sites use `printf | grep -q` and can
-  lose matches (use here-strings); static and dynamic products install
-  different `crt1.o` (the combined sysroot needs one entry for static `ET_EXEC`
-  and dynamic non-PIE, as the frozen AArch64 `crt/src/normal_entry.rs` did);
-  owned `sysconf` lacks `_SC_NPROCESSORS_*` and `_SC_PHYS_PAGES`/`_AVPHYS_PAGES`;
-  Rust page block pops clear `retire_expire`, which pinned
-  `mi_page_malloc_zero` never touches (`lane/m3`).
+  1. Rerun the `libc.posix-runtime` family admission on a frozen checkout of
+     merged `main`; lane `posix` is dry-running the documented admission
+     sequence and reports the unmet components.
+  2. Integrate lane handoffs continuously (`.work/tmp/lane-agents.txt` maps
+     lanes to agents; all 16 are active): `posix`, `pattern` (now the
+     codegen-shape runner rewrite), `math-time` (math capability slices),
+     `loader`, `crt-dynamic`, `dynamic-product`, `std-lto`, `m2-vm-arenas`,
+     `m2-init-fault`, `m3`, `m5-remote`, `m5-exit` (also the 4-MiB free
+     abort), `m6`, `m7`, `alloc-fork` (now native worker-attachment
+     integration), `alloc-perf` (local-path structural costs). Lanes may
+     propose `[[family.verified_slice]]` commits; rerun their command on
+     merged `main` before merging one. Run native verification in a frozen
+     worktree, never the integration checkout.
+  3. Remaining repository-file digests: image-input receipts and readers that
+     still pin the retired core image `sha256:5990e55b…`, allocator API
+     coverage/shadow ABI/evidence manifests, owned `.list` and fixture pins in
+     the mimalloc visibility, errno-alias, syscall-alias and utmpx readers, the
+     native perf profile, and the Lua admission test. Keep frozen AArch64
+     baseline, pinned-musl header identity, upstream reference copies, and
+     archive/toolchain/image provenance pins.
+- **Other open defects:** fourteen runners pin optimizer shape (raw-syscall
+  provider counts, call edges; lane `pattern`); static and dynamic products
+  install different `crt1.o` (lane `crt-dynamic`); owned `sysconf` lacks musl's
+  rlimit, `_SC_NPROCESSORS_*` and `_SC_PHYS_PAGES`/`_AVPHYS_PAGES` entries
+  (unassigned); owned glob/opendir maps one region per directory stream
+  (~15× musl's `mmap` count; unassigned); Rust page block pops clear
+  `retire_expire`, which pinned `mi_page_malloc_zero` never touches (`m3`);
+  native `free` of a live ≥4-MiB block aborts (`m5-exit`). Timing-limited
+  leaves fail under host load averages above ~150; treat those as environment.
 - **Housekeeping:** superseded branches are archived under
   `refs/archive/branches/`, old stashes under `refs/archive/stash/`, and
   pre-campaign evidence receipts in `.work/archive/*-receipts.tar.gz`. A fresh
