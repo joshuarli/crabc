@@ -538,10 +538,9 @@ impl ProcessPageMapStorage {
 
     /// Initializes or obtains the process-global map for `subprocess`.
     ///
-    /// The source default `mi_option_max_vabits == 0` is passed as the
-    /// configured value, so [`PageMap::initialize`] observes the frozen
-    /// selected Linux-profile virtual-address width. Option parsing and process
-    /// shutdown are intentionally separate future boundaries.
+    /// `mi_page_map_init_once` (`src/page-map.c:272-299`) reads
+    /// `max_vabits` (clamped to `0..=MI_MAX_VABITS`, where zero selects the
+    /// observed width) and `pagemap_commit` from the process option table.
     pub(crate) fn initialize(
         &'static self,
         config: MemoryConfig,
@@ -590,7 +589,11 @@ impl ProcessPageMapStorage {
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<ProcessPageMapLease, ProcessPageMapError> {
-        let page_map = match PageMap::initialize(config, 0, false) {
+        use crate::config::{SourceOption, MAX_VABITS};
+        use crate::process_init::process_source_option;
+        let configured_vabits = process_source_option(SourceOption::MaxVabits).clamp(0, MAX_VABITS as i64) as usize;
+        let force_commit = process_source_option(SourceOption::PagemapCommit) != 0;
+        let page_map = match PageMap::initialize(config, configured_vabits, force_commit) {
             Ok(page_map) => page_map,
             Err(PageMapInitializationError::Failed { error }) => {
                 // `_mi_page_map_init` runs its body through source

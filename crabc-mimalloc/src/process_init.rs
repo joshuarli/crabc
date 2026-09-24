@@ -202,6 +202,16 @@ impl ProcessMainInitializationStorage {
         &PROCESS_MAIN_INITIALIZATION
     }
 
+    /// The published process descriptor table, once `_mi_options_init` ran.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn published_source_options(&self) -> Option<&'static OutputOwner> {
+        // SAFETY: the inline owner is written and its table installed before
+        // this pointer's Release publication, and it is never moved or
+        // reclaimed for the process lifetime.
+        unsafe { self.diagnostic_output_ptr.load(Ordering::Acquire).as_ref() }
+    }
+
     /// Builds an isolated leaked process-lifetime startup fixture.
     #[cfg(test)]
     pub(crate) fn test_static_owner() -> &'static Self {
@@ -1396,6 +1406,38 @@ impl Drop for ProcessMainStartup {
             self.storage.publish_terminal_state_and_release(completion, RETAINED);
         }
     }
+}
+
+/// `mi_option_get(option)` at an engine read point with no [`VmProcess`] in
+/// scope, such as `mi_theap_options_init` (`src/theap.c:228-233`).
+///
+/// C reads the one global `mi_options[]`; this reads the process table of
+/// the production coordinator once x86 startup has installed it. Before
+/// then, on isolated fixture coordinators, and on the paused AArch64
+/// process (which has no table), the read returns the pinned release
+/// default, which is what every such read point used before the table
+/// existed.
+#[inline]
+pub(crate) fn process_source_option(option: crate::config::SourceOption) -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(output) = ProcessMainInitializationStorage::global().published_source_options() {
+        // SAFETY: a published owner has an installed table, and every lazy
+        // retry delivers through the process output route as C's
+        // `mi_option_get` does.
+        return unsafe { output.option_value(option) };
+    }
+    option.default_value()
+}
+
+/// `_mi_option_get_fast(option)` counterpart of [`process_source_option`].
+#[inline]
+pub(crate) fn process_source_option_fast(option: crate::config::SourceOption) -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(output) = ProcessMainInitializationStorage::global().published_source_options() {
+        // SAFETY: a published owner has an installed table.
+        return unsafe { output.option_get_fast(option) };
+    }
+    option.default_value()
 }
 
 static PROCESS_MAIN_INITIALIZATION: ProcessMainInitializationStorage =

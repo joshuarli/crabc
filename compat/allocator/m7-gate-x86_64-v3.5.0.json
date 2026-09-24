@@ -72,6 +72,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--option-effects-differential"],
       "scope": "For every descriptor with an allocator effect, a pinned-C/Rust trace in which mi_option_set before first use changes the same VM, arena, purge, reclaim, page-queue, and PageMap decision."
     },
+    "differential:reclaim-options": {
+      "command": ["python3", "compat/allocator/reclaim_on_free.py"],
+      "scope": "Pinned C and Rust reach the same `mi_abandoned_page_try_reclaim` decision, page `used` count, and queue length for an own full page, foreign pages with an empty and a nonempty queue, and a large page, under environment profiles for the default, cross-thread (1) and disabled (-1) page_reclaim_on_free, zero page_max_reclaim and page_cross_thread_max_reclaim, and page_full_retain 0 and 5 (the Theap option image and the full-retain countdown)."
+    },
     "differential:statistics": {
       "command": null,
       "scope": "Pinned-C/Rust mi_stats_* and mi_process_info values, JSON, and printed output for the selected MI_STAT level, normalized for addresses and times."
@@ -189,11 +193,12 @@
       "compile_time_modes": [],
       "acceptance": "Every descriptor with an allocator effect is read from the one process descriptor table at its source read point, so `mi_option_set` before first use changes later behavior exactly as in C. Deprecated descriptors, `os_tag` (a macOS-only Mach VM tag at src/prim/unix/prim.c:371), and `retry_on_oom` (read only by the Windows primitive) have no selected Linux effect; the guarded descriptors belong to m7.guarded.",
       "evidence": [
-        "differential:option-effects"
+        "differential:option-effects",
+        "differential:reclaim-options"
       ],
       "blocked_by": [
         "The option-effects differential traces the arena max-object size, arena purge delay, minimal purge size, NUMA node count, generic-collect frequency, and arena reservation size/eager-commit decisions after `mi_option_set`; purge_decommits (`_mi_os_purge_ex`), disallow_os_alloc, disallow_arena_alloc, page_commit_on_demand, arena_is_numa_local, reserve_huge_os_pages, reserve_huge_os_pages_at, reserve_os_memory, destroy_on_exit, allow_thp's process THP policy, and allow_large_os_pages's large-page mapping branch have no decision-level C/Rust trace yet.",
-        "The engine fixes the release default of page_reclaim_on_free (src/theap.c:229, src/free.c:500), page_full_retain (src/theap.c:230-231), page_max_candidates (src/page.c:805), max_vabits (src/page-map.c:41,273), pagemap_commit (src/page-map.c:61,299), page_max_reclaim, and page_cross_thread_max_reclaim (src/free.c:455,462) instead of reading the descriptor."
+        "page_max_candidates (src/page.c:805), max_vabits (src/page-map.c:273), and pagemap_commit (src/page-map.c:299) are read from the process table at their source points but have no discriminating C/Rust trace: the reclaim profiles never build a queue of expandable, not-immediately-available pages, and no trace compares the PageMap reserved/committed extent under a configured max_vabits or a non-overcommit host."
       ]
     },
     {

@@ -46,6 +46,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:diagnostic-output-owner",
             "differential:option-effects",
             "differential:options-environment",
+            "differential:reclaim-options",
         ])
         # Every M7 gate still names an open condition.
         self.assertEqual(summary["blocked_gate_ids"], list(gate.GATE_IDS))

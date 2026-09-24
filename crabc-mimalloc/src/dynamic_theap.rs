@@ -2316,9 +2316,10 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
             .ok_or(DynamicTheapPageSessionError::Attachment(
                 DynamicTheapError::TheapProjection,
             ))?;
+        // Thread-exit abandonment depends on `allow_page_abandon`, not on
+        // how many full pages the search retains.
         if attachment.page_mode != TheapPageMode::OrdinaryAbandoning
             || !theap.allows_page_abandon()
-            || theap.page_full_retain() != 2
         {
             return Err(DynamicTheapPageSessionError::AggregateThreadExitMode);
         }

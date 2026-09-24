@@ -51,7 +51,11 @@ its own full, abandoned page; a worker with an empty or a nonempty queue for
 the bin freeing into an exited owner's page; and a large page, which is never
 reclaimed on free. For each case both record whether the freeing thread owns
 the page afterwards, its `used` count, and the thread's queue length for the
-bin. Logs live under `x86_64/reclaim-on-free`.
+bin. Both halves rerun the cases under seven `mimalloc_*` environment
+profiles (default, cross-thread and disabled `page_reclaim_on_free`, zero
+`page_max_reclaim` and `page_cross_thread_max_reclaim`, and
+`page_full_retain` of 0 and 5), so each process reads them from its own
+option table. Logs live under `x86_64/reclaim-on-free`.
 
 `./compat/allocator/run-x86_64.sh allocator-subprocess-lifecycle` compares
 pinned `mi_subproc_new`, `mi_subproc_add_current_thread`,

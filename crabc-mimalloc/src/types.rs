@@ -194,6 +194,14 @@ pub(crate) struct Heap {
 }
 
 impl Heap {
+    /// `heap->exclusive_arena` as the requested arena of a suitability test.
+    /// `None` would be a sub-arena, which a Heap never names.
+    #[inline]
+    pub(crate) fn exclusive_arena_id(&self) -> Option<crate::arena::ArenaId> {
+        // SAFETY: a Heap names only a live, published parent arena or null.
+        unsafe { crate::arena::ArenaId::from_arena(self.exclusive_arena) }
+    }
+
     #[inline]
     pub(crate) const fn bootstrap_empty() -> Self {
         Self {
@@ -5741,13 +5749,14 @@ impl Theap {
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
 
-        // `mi_theap_options_init` under the frozen default-release profile:
-        // `page_reclaim_on_free >= 0`, `page_full_retain == 2`, and a live
-        // TLD rather than the detached metadata identity.
-        self.allow_page_reclaim = true;
-        self.allow_page_abandon = owner != TheapOwner::Detached;
-        self.page_full_retain = 2;
+        self.initialize_source_options(tld);
         self.is_detached = owner == TheapOwner::Detached;
+        if owner == TheapOwner::Detached {
+            // `mi_process_theap_meta` (`src/init.c:199-203`): never shared
+            // with other threads, and a fixed retain of two.
+            self.allow_page_abandon = false;
+            self.page_full_retain = 2;
+        }
 
         let self_pointer = core::ptr::from_mut(self);
         let head_random = tld
@@ -5840,13 +5849,11 @@ impl Theap {
         self.tld = core::ptr::from_mut(tld);
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
-        self.allow_page_reclaim = true;
         // This source option image must be selected before the Release heap
-        // publication. Ordinary dynamic attachment keeps the normal abandon
-        // setting; the only alternate private mode is a non-abandoning page
+        // publication. Ordinary dynamic attachment reads the process option
+        // table; the only alternate private mode is a non-abandoning page
         // session whose bounded collector can drain every admitted route.
-        self.allow_page_abandon = page_mode.allows_page_abandon();
-        self.page_full_retain = page_mode.page_full_retain();
+        self.initialize_page_mode_options(tld, page_mode);
         self.is_detached = false;
 
         let self_pointer = core::ptr::from_mut(self);
@@ -5994,9 +6001,8 @@ impl Theap {
         self.tld = tld_pointer;
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
-        self.allow_page_reclaim = true;
-        self.allow_page_abandon = true;
-        self.page_full_retain = 2;
+        // SAFETY: `tld_pointer` is the validated live current-thread TLD.
+        self.initialize_source_options(unsafe { &*tld_pointer });
         self.is_detached = false;
 
         let self_pointer = core::ptr::from_mut(self);
@@ -6068,13 +6074,11 @@ impl Theap {
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
         // The source option image is selected before the Release heap
-        // publication.  Production later threads use the ordinary setting;
-        // a focused full-queue fixture may select the source-reachable `-1`
-        // page-full-retain image before this transition and may never toggle
-        // a live Theap.
-        self.allow_page_reclaim = true;
-        self.allow_page_abandon = page_mode.allows_page_abandon();
-        self.page_full_retain = page_mode.page_full_retain();
+        // publication.  Production later threads read the process option
+        // table; a focused full-queue fixture may select the source-reachable
+        // `-1` page-full-retain image before this transition and may never
+        // toggle a live Theap.
+        self.initialize_page_mode_options(tld, page_mode);
         self.is_detached = false;
 
         let self_pointer = core::ptr::from_mut(self);
@@ -6318,11 +6322,12 @@ impl Theap {
         self.refcount.store(1, core::sync::atomic::Ordering::Release);
         self.subproc
             .store(heap.subprocess, core::sync::atomic::Ordering::Release);
-        // `theap.c:mi_theap_options_init` snapshots the frozen normal-release
-        // `mi_option_page_reclaim_on_free == 0` as enabled before the heap
-        // Release publication. The detached metadata special case changes
-        // abandonment below, not this reclaim option image.
-        self.allow_page_reclaim = true;
+        // `theap.c:mi_theap_options_init` reads `page_reclaim_on_free` before
+        // the heap Release publication. The detached metadata special case
+        // changes abandonment below, not this reclaim option image.
+        self.allow_page_reclaim = crate::process_init::process_source_option(
+            crate::config::SourceOption::PageReclaimOnFree,
+        ) >= 0;
         self.is_detached = owner.is_detached();
         // `theap.c:mi_theap_options_init` snapshots
         // `mi_option_page_full_retain` into each initialized theap. The
@@ -6352,6 +6357,31 @@ impl Theap {
             core::sync::atomic::Ordering::Release,
         );
         true
+    }
+
+    /// `mi_theap_options_init` (`src/theap.c:228-233`) followed by
+    /// `_mi_theap_init`'s thread-pool quartering (`src/theap.c:250-258`),
+    /// reading the process option table in source order.
+    fn initialize_source_options(&mut self, tld: &ThreadLocalData) {
+        use crate::config::SourceOption;
+        use crate::process_init::process_source_option;
+        self.allow_page_reclaim = process_source_option(SourceOption::PageReclaimOnFree) >= 0;
+        self.allow_page_abandon = process_source_option(SourceOption::PageFullRetain) >= 0;
+        // `mi_option_get_clamp(mi_option_page_full_retain, -1, 32)`.
+        self.page_full_retain = process_source_option(SourceOption::PageFullRetain).clamp(-1, 32) as isize;
+        if tld.is_in_threadpool() && self.page_full_retain > 0 {
+            self.page_full_retain /= 4;
+        }
+    }
+
+    /// The source options for an ordinary Theap, or the fixed `-1` image of
+    /// the private non-abandoning page session.
+    fn initialize_page_mode_options(&mut self, tld: &ThreadLocalData, page_mode: TheapPageMode) {
+        self.initialize_source_options(tld);
+        if page_mode == TheapPageMode::NonAbandoningPageSession {
+            self.allow_page_abandon = page_mode.allows_page_abandon();
+            self.page_full_retain = page_mode.page_full_retain();
+        }
     }
 
     #[inline]

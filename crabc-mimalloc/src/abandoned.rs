@@ -583,6 +583,21 @@ impl<M: MappedAbandonedPages> ReclaimOnFreeCandidate<'_, M> {
     #[inline]
     pub(crate) const fn bin(&self) -> usize { self.bin }
 
+    /// `mi_page_is_mostly_used(page)` (`include/mimalloc/internal.h:925-929`)
+    /// after the claim's collection: at most an eighth of the reserved
+    /// blocks remain free. The source subtracts in promoted `int`.
+    #[inline]
+    pub(crate) fn is_mostly_used(&self) -> bool {
+        let reserved = i64::from(self.state.reserved);
+        // SAFETY: the held low owner bit makes this ordinary field stable.
+        let used = unsafe { ptr::read(self.state.used.as_ptr()) } as i64;
+        reserved - used <= reserved / 8
+    }
+
+    /// `page->memid`, for `_mi_arena_memid_is_suitable`.
+    #[inline]
+    pub(crate) const fn memory(&self) -> MemoryId { self.state.memid }
+
     /// Completes the page-side half of a reclaim into `theap`, owned by
     /// `thread`, and returns the page for the owner's queue append.
     ///

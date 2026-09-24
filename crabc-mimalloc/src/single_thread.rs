@@ -208,7 +208,6 @@ use crate::types::page_queue::{
 
 const RETIRE_CYCLES: u8 = 16;
 const RETIRE_MAX_PAGES: usize = 3;
-const PAGE_MAX_CANDIDATES: isize = 4;
 
 /// Ports `mi_page_is_huge` for the page shapes this engine can keep live.
 ///
@@ -2851,7 +2850,6 @@ struct PageAllocatorEngineCollectionPoisonMemoryAudit {
 enum SelectedMainArenaRegularFullPreflightError {
     NotSelectedMainArenaOwner,
     PageAbandonDisabled,
-    UnexpectedFullRetain,
     NonArenaQueue,
     SingletonQueueIsNotHuge,
     MemoryIsNotArena,
@@ -22132,9 +22130,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // non-abandoning one-page routes. Do not let that type erase the
         // source option boundary of this aggregate: source visits/abandons
         // ordinary regular pages only with this exact ordinary image.
-        if !self.engine.session.theap().allows_page_abandon()
-            || self.engine.session.theap().page_full_retain() != 2
-        {
+        if !self.engine.session.theap().allows_page_abandon() {
             return Err(reject(
                 self,
                 DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonError::OrdinaryAbandoningMode,
@@ -36545,11 +36541,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         candidate: abandoned::ReclaimOnFreeCandidate<'_, M>,
     ) -> abandoned::ReclaimOnFreeOutcome {
         use abandoned::ReclaimOnFreeOutcome::{Declined, Failed, Reclaimed};
-        /// `options.c` defaults for `page_max_reclaim` (unlimited) and
-        /// `page_cross_thread_max_reclaim`.
-        const PAGE_MAX_RECLAIM: isize = -1;
-        const PAGE_CROSS_THREAD_MAX_RECLAIM: isize = 32;
+        use crate::config::SourceOption;
+        use crate::process_init::process_source_option_fast;
 
+        // `mi_free_try_collect_mt` reads `page_reclaim_on_free` and offers
+        // the page only when it is `>= 0` (`src/free.c:500-508`).
+        let reclaim_on_free = process_source_option_fast(SourceOption::PageReclaimOnFree);
+        if reclaim_on_free < 0 {
+            return Declined;
+        }
         if self.is_collection_poisoned()
             || self.pending_os_release.is_some()
             || !self.session.permits_ordinary_page_operations()
@@ -36569,7 +36569,18 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: an initialized Theap keeps its owning TLD live.
         let in_threadpool = unsafe { tld.as_ref() }.is_in_threadpool();
         let max_reclaim = if core::ptr::eq(theap, candidate.originating_theap()) {
-            if in_threadpool { PAGE_CROSS_THREAD_MAX_RECLAIM } else { PAGE_MAX_RECLAIM }
+            process_source_option_fast(if in_threadpool {
+                SourceOption::PageCrossThreadMaxReclaim
+            } else {
+                SourceOption::PageMaxReclaim
+            })
+        } else if reclaim_on_free == 1
+            && !in_threadpool
+            && !candidate.is_mostly_used()
+            && self.page_memory_is_suitable_for_theap(candidate.memory())
+        {
+            // The cross-thread branch (`src/free.c:458-463`).
+            process_source_option_fast(SourceOption::PageCrossThreadMaxReclaim)
         } else {
             0
         };
@@ -36599,6 +36610,18 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.update_direct_cache(bin);
         self.session.theap().record_page_reclaimed_on_free();
         Reclaimed
+    }
+
+    /// `_mi_arena_memid_is_suitable(page->memid,
+    /// _mi_theap_heap(theap)->exclusive_arena)` for this engine's Theap.
+    fn page_memory_is_suitable_for_theap(&self, memory: crate::types::MemoryId) -> bool {
+        let Some(heap) = NonNull::new(self.session.theap().heap()) else { return false; };
+        // SAFETY: an initialized Theap's Heap outlives it; `exclusive_arena`
+        // is fixed when the Heap is created.
+        let Some(requested) = (unsafe { heap.as_ref() }).exclusive_arena_id() else { return false; };
+        // SAFETY: the page's arena and the Heap's arena are live published
+        // arenas of this process.
+        unsafe { crate::arena::memory_is_suitable(memory, requested) }
     }
 
     /// Copies this session's bounded deferred-free source identity without
@@ -37694,7 +37717,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             } else {
                 if candidate.is_null() {
                     candidate = page;
-                    candidate_limit = PAGE_MAX_CANDIDATES;
+                    // `_mi_option_get_fast(mi_option_page_max_candidates)`.
+                    candidate_limit = crate::process_init::process_source_option_fast(
+                        crate::config::SourceOption::PageMaxCandidates,
+                    ) as isize;
                 } else {
                     // SAFETY: candidate remains queue-linked until either the
                     // explicit all-free release below or its final move.
@@ -40782,9 +40808,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         if !self.session.theap().allows_page_abandon() {
             return Err(SelectedMainArenaRegularFullPreflightError::PageAbandonDisabled);
-        }
-        if self.session.theap().page_full_retain() != 2 {
-            return Err(SelectedMainArenaRegularFullPreflightError::UnexpectedFullRetain);
         }
         // SAFETY: callers hold the unique live page-engine borrow and this
         // is the pre-transition read of one queue-linked page. A producer can

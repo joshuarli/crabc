@@ -1242,6 +1242,21 @@ impl OutputOwner {
         }
     }
 
+    /// `_mi_option_get_fast` (`src/options.c:268-273`): the raw descriptor
+    /// value with no lazy initialization, used by the source's hot read
+    /// points in `free.c` and `page.c`.
+    ///
+    /// # Safety
+    ///
+    /// The table must already be installed by
+    /// [`Self::initialize_source_options`].
+    #[inline]
+    pub(crate) unsafe fn option_get_fast(&self, option: SourceOption) -> i64 {
+        debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
+        // SAFETY: the caller guarantees the installed, atomic-slot table.
+        unsafe { self.source_options_ref_unlocked() }.value(option)
+    }
+
     /// `mi_option_get_clamp` (`src/options.c:286-289`). The source compares
     /// against `min` first, so an inverted range returns `min` or `max`
     /// exactly as C does instead of rejecting it.
