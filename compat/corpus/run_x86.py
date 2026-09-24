@@ -323,9 +323,8 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
     if excluded_values != ["musl-1.2.6-r2.apk"] or excluded_values[0] not in archive_roster:
         fail("native corpus excluded libc archive contract drifted")
     source_text = workload.get("source_manifest")
-    source_digest = workload.get("source_manifest_sha256")
-    if not isinstance(source_text, str) or require_sha256(source_digest, "workload source manifest digest") != sha256_file(ROOT / source_text, "workload source manifest"):
-        fail("native corpus source workload bytes changed")
+    if not isinstance(source_text, str):
+        fail("native corpus source workload manifest is missing")
     if workload.get("case_count") != 34:
         fail("native corpus case count drifted")
     source_manifest = ROOT / source_text

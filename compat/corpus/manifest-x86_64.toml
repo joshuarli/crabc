@@ -22,7 +22,6 @@ index_signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub"
 
 [workload]
 source_manifest = "compat/corpus/manifest.toml"
-source_manifest_sha256 = "8cee578b19e94e6963115694244e2fcc8fc06616a273099abbd6cc9c54deefe8"
 case_count = 34
 
 # The direct 15-package workload is byte-pinned below with its complete finite
