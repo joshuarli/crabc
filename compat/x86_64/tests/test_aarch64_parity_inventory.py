@@ -129,8 +129,8 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             report["capability_state_counts"],
             {
                 "implemented-foundation": 180,
-                "missing": 17,
-                "selected-private": 26,
+                "missing": 15,
+                "selected-private": 28,
             },
         )
         self.assertEqual(len(report["families"]), 26)
@@ -153,6 +153,12 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(locale_core["x86_family"], "libc.text-math-locale-stdio")
         self.assertEqual(locale_core["contract_state"], "selected-private")
+        for identifier in ("text.wide-multibyte", "text.iconv"):
+            text_capability = next(
+                row for row in report["capabilities"] if row["id"] == identifier
+            )
+            self.assertEqual(text_capability["x86_family"], "libc.text-math-locale-stdio")
+            self.assertEqual(text_capability["contract_state"], "selected-private")
         elementary_fenv_sensitive = next(
             row
             for row in report["capabilities"]
@@ -222,7 +228,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"]
             if row["id"] == "libc.text-math-locale-stdio"
         )
-        self.assertEqual(text_math["verified_slice_count"], 7)
+        self.assertEqual(text_math["verified_slice_count"], 9)
         self.assertEqual(text_math["verified_artifact_count"], 77)
         self.assertIn(
             {
@@ -343,7 +349,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
-            51,
+            53,
         )
         self.assertNotIn(
             {"family": "libc.posix-runtime", "id": "static-c-environment"},

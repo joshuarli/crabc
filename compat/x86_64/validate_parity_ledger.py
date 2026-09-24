@@ -72559,6 +72559,83 @@ def require_locale_profile_slice(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+TEXT_COMPONENT_COMMAND = "./scripts/dev-x86_64.sh owned-text-locale-numeric-component"
+TEXT_COMPONENT_SLICES = ("text.wide-multibyte", "text.iconv")
+
+
+def require_text_component_slices(family: Mapping[str, Any]) -> None:
+    """Bind the text.wide-multibyte and text.iconv slices to their component.
+
+    Both selections rest on the installed text/locale/numeric component. The
+    ledger may select either capability only while that component's machine
+    contract carries rows for it and observes every frozen spelling, either as
+    an installed-header ET_REL import or through the separate public/private
+    locale-alias workload. A future narrowing of the component therefore fails
+    here instead of leaving a stale selected-private claim.
+    """
+    import owned_text_locale_numeric_component_contract as text_component
+
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.text-math-locale-stdio].verified_slice",
+        family.get("status", ""),
+        list(family.get("capabilities", [])),
+    )
+    try:
+        roster = text_component.load_capability_roster(ROOT)
+    except text_component.ContractError as error:
+        raise LedgerError(f"text component contract is invalid: {error}") from error
+    alias_contract = json.loads(
+        (ROOT / "compat" / "x86_64" / "locale_alias_contract.json").read_text(encoding="utf-8")
+    )
+    alias_proved = set(alias_contract["visible_aliases"].values()) | set(
+        alias_contract["reverse_visible_aliases"].values()
+    )
+    for capability in TEXT_COMPONENT_SLICES:
+        matching = [entry for entry in slices if entry.get("id") == capability]
+        require(
+            len(matching) == 1,
+            f"libc.text-math-locale-stdio must contain exactly one {capability} slice",
+        )
+        selected = matching[0]
+        require(
+            selected.get("capabilities") == [capability],
+            f"{capability} slice must select exactly its capability",
+        )
+        require(
+            family.get("status") == "planned",
+            f"{capability} slice must not promote libc.text-math-locale-stdio",
+        )
+        evidence = selected.get("native_evidence")
+        require(
+            isinstance(evidence, list)
+            and [entry.get("command") for entry in evidence] == [TEXT_COMPONENT_COMMAND],
+            f"{capability} slice must use the installed text/locale/numeric component",
+        )
+        require(
+            any(row_capability == capability for row_capability, _row, _roles in text_component.ROWS),
+            f"text component contract has no {capability} row",
+        )
+        unobserved = sorted(
+            symbol
+            for symbol in roster[capability]
+            if symbol not in text_component.PROVIDER_SYMBOLS and symbol not in alias_proved
+        )
+        require(
+            not unobserved,
+            f"text component leaves {capability} spellings unobserved: {', '.join(unobserved)}",
+        )
+        owners = set(nonempty_strings(selected["source_owners"], f"{capability}.source_owners"))
+        for owner in (
+            "compat/x86_64/owned_text_locale_numeric_component_contract.py",
+            "compat/x86_64/run_owned_text_locale_numeric_component.sh",
+            "compat/x86_64/owned_text_locale_differential_probe.c",
+        ):
+            require(owner in owners, f"{capability} source owners omit {owner}")
+        for phrase in ("selected-private", "family completion", "public x86 support"):
+            require(phrase in selected["description"], f"{capability} description omits {phrase}")
+
+
 def require_bounded_regex_artifact(family: Mapping[str, Any]) -> None:
     """Keep the bounded C matcher as evidence, not regex-family promotion."""
 
@@ -80637,6 +80714,7 @@ def _validate_ledger(
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
     require_uchar_stateful_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_profile_slice(by_id["libc.text-math-locale-stdio"])
+    require_text_component_slices(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])
     require_bounded_regex_artifact(by_id["libc.text-math-locale-stdio"])

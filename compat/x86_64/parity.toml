@@ -15548,6 +15548,94 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-profile", scope = "Pinned-musl 1.2.6 project-header C execution and strict C11/C++17 declaration/linkage oracle plus one dependency-free x86 crabc-libc archive and true `-nostdlib -static --gc-sections` candidate. The common digest proves initial C state, each LC query, C/POSIX/C.UTF-8 selection, exact C.UTF-8;C;C;C;C;C serialization, immutable 96-byte lconv contents, and invalid-category rejection. The candidate alone rejects empty environment selection, arbitrary map names, and unreturned mixed forms without state mutation; that intentional fixed-profile difference is not attributed to musl's general map path. The archive's aggregate export ratchet and final-ELF checks require setlocale/localeconv at the selected boundary and reject unresolved symbols, interpreter/DT_NEEDED, PT_TLS/dynamic TLS, conversion, locale-object, allocation, environment, gettext, numeric, time, stdio, and ambient runtime dependencies. It selects only this fixed locale.core seam, not general locale behavior, family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration/source/behavior oracle for src/locale/setlocale.c, locale_map.c, and localeconv.c: category serialization, CTYPE-only built-in C.UTF-8, and immutable POSIX lconv. The candidate deliberately excludes locale_map.c's environment lookup, arbitrary-name map loading, and allocation paths." }, { kind = "aarch64-contract", source = "libc/src/c_abi.rs plus compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv and compat/ratchet/aarch64-dynamic.json", role = "Existing AArch64 project ownership and global export evidence for setlocale/localeconv only. It establishes the current project C ABI seam but is not a behavioral fallback for the x86 fixed-profile rejection boundary." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 int/pointer return and argument ABI, 96-byte align-8 lconv layout, unconditional C/C++ linkage, and a static candidate without a TLS requirement." }]
 
+[[family.verified_slice]]
+id = "text.wide-multibyte"
+description = "Private native x86 selected-private `text.wide-multibyte` slice inside still-planned `libc.text-math-locale-stdio`. The installed owned static and dynamic products provide all 96 frozen spellings, and one installed-header ET_REL workload imports every one of them: the named C/POSIX/C.UTF-8 multibyte state machines (`mbrtowc`, `mbrlen`, `mbsinit`, `mbtowc`, `mblen`, `wcrtomb`, `wctomb`, `btowc`, `wctob`), string conversions (`mbs[n]rtowcs`, `wcs[n]rtombs`, `mbstowcs`, `wcstombs`), UTF-16/32 `uchar.h` conversions, allocation-free and allocating wide strings and memory, Unicode classification, simple case mapping and terminal width, `wcsftime`, and the thirty FILE-oriented wide entries. Pinned musl 1.2.6 and every supplied static/static-PIE and dynamic PIE/non-PIE kernel/direct cell must produce identical bytes for the existing focused probes and for two differential transcripts that carry no expected values. C/POSIX stay byte-oriented through musl's private code units; only exact C/POSIX/C.UTF-8 names are selected. The stream engine behind the FILE entries remains owned by the separate stdio FILE-engine component; this slice establishes no stdio capability, locale database, legacy encoding, family completion, promotion, or public x86 support."
+capabilities = ["text.wide-multibyte"]
+source_owners = [
+  "AGENTS.md",
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/locale_multibyte.rs",
+  "libc/src/c_abi/x86_64/uchar_stateful.rs",
+  "libc/src/c_abi/x86_64/c32rtomb.rs",
+  "libc/src/c_abi/x86_64/wide_character.rs",
+  "libc/src/c_abi/x86_64/wide_character_tables.rs",
+  "libc/src/c_abi/x86_64/wcswcs.rs",
+  "libc/src/c_abi/x86_64/owned_wide_conversion.rs",
+  "libc/src/c_abi/x86_64/owned_wcsftime.rs",
+  "libc/src/c_abi/x86_64/owned_wide_stdio.rs",
+  "libc/src/c_abi/x86_64/owned_wide_format.rs",
+  "include/uchar.h",
+  "include/wchar.h",
+  "include/wctype.h",
+  "compat/x86_64/libc_locale_multibyte_probe.c",
+  "compat/x86_64/libc_wide_character_probe.c",
+  "compat/x86_64/libc_uchar_stateful_probe.c",
+  "compat/x86_64/libc_c32rtomb_probe.c",
+  "compat/x86_64/libc_wcswcs_probe.c",
+  "compat/x86_64/owned_wide_conversion_probe.c",
+  "compat/x86_64/owned_text_locale_differential_probe.c",
+  "compat/x86_64/owned_wide_stream_differential_probe.c",
+  "compat/x86_64/owned_text_locale_numeric_component_contract.py",
+  "compat/x86_64/owned_text_locale_numeric_component_driver.c",
+  "compat/x86_64/owned_text_locale_numeric_component_evidence.py",
+  "compat/x86_64/owned_text_locale_numeric_component_receipt.py",
+  "compat/x86_64/run_owned_text_locale_numeric_component.sh",
+  "compat/x86_64/owned-text-locale-numeric-component.md",
+  "compat/x86_64/tests/test_owned_text_locale_numeric_component.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 little-endian LP64: `wchar_t` and `wint_t` are signed/unsigned four-byte values, `char16_t`/`char32_t` are two/four bytes, `mbstate_t` is eight bytes with alignment four and musl keeps its state in the first word, and `FILE`, `locale_t`, and `va_list` cross the SysV AMD64 pointer ABI.",
+  "Pinned musl 1.2.6 src/multibyte, src/string/wcs*/wmem*, src/ctype/isw*/tow*/wcwidth/wcswidth, src/time/wcsftime.c, and src/stdio wide entries are the MIT behavior oracle. The x86 leaves retain musl's UTF-8 transition table, C-locale private code units, per-element `wcsrtombs` source progress, null-state channel separation, and UTF-16 pending-low state.",
+]
+x86_header_prerequisites = [
+  "Every role is compiled once through the supplied installed `wchar.h`, `wctype.h`, `uchar.h`, `stdio.h`, `locale.h`, and `stdlib.h` with `-std=c11 -D_GNU_SOURCE -fno-builtin`; header traces must stay inside the installed product. The existing wide-character and locale-multibyte C/C++ header matrices remain the declaration proof.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh owned-text-locale-numeric-component", scope = "Supplied owned static and dynamic products: one installed-header ET_REL workload linked to pinned musl 1.2.6 and to static, static-PIE, and dynamic PIE/non-PIE kernel/direct executables. The receipt requires identical stdout/stderr/status in all six cells, physical static and dynamic providers for every imported spelling, and the ordered stage frames of the `locale-object-wide`, `multibyte`, `wide-character`, `wide-conversion`, `uchar`, `wcswcs`, `differential-transcript`, and `wide-stream` rows. It does not complete the family, the stdio stream engine, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT behavior oracle for every frozen text.wide-multibyte spelling under the fixed C/POSIX/C.UTF-8 profile, compared byte-for-byte through the same installed-header object." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 wchar_t/wint_t/char16_t/char32_t/mbstate_t/FILE/va_list conventions and static/shared provider ownership." }]
+
+[[family.verified_slice]]
+id = "text.iconv"
+description = "Private native x86 selected-private `text.iconv` slice inside still-planned `libc.text-math-locale-stdio`. The installed owned static and dynamic products provide `iconv_open`, `iconv`, and `iconv_close` for exactly ASCII, UTF-8, UTF-16LE/BE, UTF-32LE/BE (including musl's UCS-4LE/BE spellings), and native `WCHAR_T` through musl's `fuzzycmp` name matching and empty-name UTF-8 default. Pinned musl 1.2.6 and every supplied static/static-PIE and dynamic PIE/non-PIE kernel/direct cell must produce identical bytes for every ordered pair at each output capacity, every truncated input prefix, reset forms, malformed-input EILSEQ progress, incomplete-input EINVAL, E2BIG no-progress, and ASCII `*` substitution counts. Musl's stateful BOM UTF-16/UTF-32, UCS-2, and legacy codepage spellings are deliberately unsupported and fail with EINVAL; that candidate-only rejection is retained as non-credit source-specific evidence. This slice establishes no general encoding registry, locale database, family completion, promotion, or public x86 support."
+capabilities = ["text.iconv"]
+source_owners = [
+  "AGENTS.md",
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/locale_multibyte.rs",
+  "libc/src/c_abi/x86_64/iconv.rs",
+  "include/iconv.h",
+  "compat/x86_64/libc_locale_wide_iconv_probe.c",
+  "compat/x86_64/owned_text_locale_differential_probe.c",
+  "compat/x86_64/owned_text_locale_numeric_component_contract.py",
+  "compat/x86_64/owned_text_locale_numeric_component_driver.c",
+  "compat/x86_64/owned_text_locale_numeric_component_evidence.py",
+  "compat/x86_64/owned_text_locale_numeric_component_receipt.py",
+  "compat/x86_64/run_owned_text_locale_numeric_component.sh",
+  "compat/x86_64/owned-text-locale-numeric-component.md",
+  "compat/x86_64/tests/test_owned_text_locale_numeric_component.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the pointer-sized opaque `iconv_t`, the input/output pointer records, and `size_t` counts in general-purpose registers. `WCHAR_T` is the native little-endian signed 32-bit `wchar_t`; the codec reads and writes bytes and needs no unaligned typed access.",
+  "Pinned musl 1.2.6 src/locale/iconv.c::{fuzzycmp,find_charmap,combine_to_from,extract_from,extract_to,iconv} and iconv_close.c are the MIT oracle for name normalization, the non-allocating stateless descriptor token, pointer/count progress, EINVAL/EILSEQ/E2BIG, and ASCII substitution. The stateful descriptor allocation, BOM forms, and codepage tables are outside the fixed profile.",
+]
+x86_header_prerequisites = [
+  "Every role is compiled through the supplied installed `iconv.h`, `errno.h`, and `wchar.h` with `-std=c11 -D_GNU_SOURCE -fno-builtin`; header traces must stay inside the installed product. The existing iconv C/C++ header matrix remains the declaration proof.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh owned-text-locale-numeric-component", scope = "Supplied owned static and dynamic products: one installed-header ET_REL workload linked to pinned musl 1.2.6 and to static, static-PIE, and dynamic PIE/non-PIE kernel/direct executables. The receipt requires identical stdout/stderr/status in all six cells, physical static and dynamic providers for all three iconv spellings, and the ordered stage frames of the `utf16-32-iconv` and `differential-transcript` rows, plus the non-credit candidate rejection of unsupported encoding names. It does not complete the family, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT behavior oracle for the fixed UTF/ASCII/WCHAR_T iconv profile, compared byte-for-byte through the same installed-header object." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 iconv_t/pointer/count conventions, native WCHAR_T storage, and static/shared provider ownership." }]
+
 [[family.verified_artifact]]
 id = "static-c-locale-wide-iconv"
 description = "Private native x86 selected-static C composition inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive first runs a project-header fixture through pinned musl 1.2.6 and then a true `-nostdlib -static` candidate. It composes the separately selected direct named `C`/`POSIX`/`C.UTF-8` locale and ordinary `mbstate_t` UTF-8 boundary with exactly `iconv_open`, `iconv`, and `iconv_close`. The descriptor is a non-null allocation-free token for ASCII, UTF-8, UTF-16LE/BE, UTF-32LE/BE, and native little-endian 32-bit `WCHAR_T`; C++ references retain unmangled C spellings. The runtime differential proves musl's exact fuzzy name normalization boundary, UTF-8 to/from fixed-endian UTF-16 and UTF-32 byte order, `WCHAR_T` UTF-8 conversion, musl-shaped ASCII `'*'` substitution counting, direct named C.UTF-8 multibyte state, EINVAL unknown/incomplete UTF-8 or UTF-16 input, EILSEQ malformed UTF-8/UTF-16/UTF-32 progress, E2BIG no-progress, stale errno on successful conversion/reset, and close. The candidate-only negative edge rejects generic BOM/stateful UTF-16 and UCS-2 spellings alongside legacy codepages without changing the descriptor boundary. It intentionally excludes general locale state, environment lookup, locale objects and `_l` APIs, collation, arbitrary or stateful iconv encodings/BOM forms, all legacy codepage maps, wide streams/stdio, general text or Unicode normalization, allocation, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."

@@ -417740,7 +417740,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "96b704ad07e73bf982add6a29b6cbc1a1732113f8845f68c2ea7bd281d418de6",
+    "parity_ledger_sha256": "795b79dfa18946c108de8a9aa9bf39425b95ef2e02026322378fbb17dcab631f",
     "static_c_abi_exports_sha256": "3698b538aea4c357f0536bacf340bf4c0c520a6b8cc6d34a8e119b4ce1c655b3"
   },
   "oracle": "Pinned musl 1.2.6",
