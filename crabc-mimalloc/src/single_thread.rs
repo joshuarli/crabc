@@ -1785,7 +1785,13 @@ unsafe fn release_claimed_process_arena_singleton_page(
     {
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     }
-    for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+    let Some(page_map_size) = page::page_map_slice_count(block_size, 1, usable_offset)
+        .and_then(|count| count.checked_mul(ARENA_SLICE_SIZE))
+        .filter(|&page_map_size| page_map_size != 0 && page_map_size <= size)
+    else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
         let Some(address) = slice_start.addr().checked_add(offset) else {
             return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
         };
@@ -1797,7 +1803,7 @@ unsafe fn release_claimed_process_arena_singleton_page(
     }
     // Source terminal order is PageMap unregister, one ordinary main-arena
     // bit clear, metadata retirement, then full singleton slice release.
-    if unsafe { page_map.unregister_range(slice_start, size) }.is_err() {
+    if unsafe { page_map.unregister_range(slice_start, page_map_size) }.is_err() {
         return ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation;
     }
     if unsafe { arena.pages() }
