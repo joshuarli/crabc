@@ -119,7 +119,6 @@ use crate::process_arena::{
 use crate::process_page_map::{
     LiveAllocationPageState, LiveAllocationPointer, ProcessPageMapError, ProcessPageMapLease,
 };
-use crate::remote_free;
 use crate::single_thread::{
     DeferredFreeAllocationContinuation, DeferredFreeAllocationPhase,
     GenericAllocationCollection,
@@ -10452,14 +10451,16 @@ unsafe fn native_reallocate_inner(
 /// Frees one C-facing native-shadow block from its source page state.
 ///
 /// This is the production pointer-first counterpart of pinned
-/// `mi_free_nonnull`: it obtains one coherent PageMap observation before it
-/// compares the captured source owner against the caller. A matching source
-/// owner uses only its current local engine. Every other live, abandoned, or
-/// mapped-abandoned source state moves directly into W03's process-page-facts
-/// continuation, which consumes W07's exact claim internally. A detached
-/// PageMap observation remains a typed source refusal and is fail-closed as
-/// retained; it never revives a former owner through a route, registry,
-/// client ledger, scheduler bridge, or geometry selector.
+/// `mi_free_nonnull`: one PageMap lookup captures the page, canonical block,
+/// and `xthread_id` snapshot before that snapshot is compared with the
+/// freeing thread. A matching source owner uses only its current local
+/// engine. Every other live, abandoned, or mapped-abandoned source state,
+/// including a page of the permanent initial owner, takes the one
+/// `mi_free_block_mt(..., allow_collect=true)` publication in W03, which
+/// consumes W07's exact claim internally when the CAS claims an abandoned
+/// head. A detached PageMap observation remains a typed source refusal and is
+/// fail-closed as retained; it never revives a former owner through a route,
+/// registry, client ledger, scheduler bridge, or geometry selector.
 ///
 /// # Safety
 ///
@@ -10479,37 +10480,10 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         RUNTIME_PROCESS.retain_page_owner();
         return NativePageFreeResult::Retained;
     };
-    // SAFETY: `native_free` accepts one exact current native allocation. Its
-    // live source block keeps the selected PageMap entry and metadata stable
-    // through this pointer-only page dispatch; this touches no lifecycle or
-    // owner-local PageMap state.
-    let page = match unsafe { page_map.lookup_page_for_live_client(block) } {
-        Ok(Some(page)) => page,
-        Ok(None) => return NativePageFreeResult::InvalidPointer,
-        Err(_) => {
-            RUNTIME_PROCESS.retain_page_owner();
-            return NativePageFreeResult::Retained;
-        }
-    };
-    // Pinned `mi_free_nonnull` reaches the page before it compares a source
-    // owner identity with the freeing thread. Keep that source order for both
-    // the permanent-initial live-owner publication and the generic fallback.
-    let Some(current) = current_thread_identity() else {
-        RUNTIME_PROCESS.retain_page_owner();
-        return NativePageFreeResult::Retained;
-    };
-    // SAFETY: `page` came from the current allocation's short PageMap lookup;
-    // the helper uses it only for the permanent initial owner, whose source
-    // page remains owner-associated for the process lifetime. Any other page
-    // state continues below through the coherent state-capturing lookup.
-    if let Some(result) = unsafe {
-        native_free_pointer_first_live_initial_foreign_page(page, block, current)
-    } {
-        return result;
-    }
     // SAFETY: `native_free` accepts only an exact current native allocation.
     // Its source lifetime keeps the selected registration and page metadata
-    // stable until one branch below consumes the observation.
+    // stable until one branch below consumes the observation. The lookup
+    // takes no PageMap lifecycle lease.
     let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
         Ok(Some(allocation)) => allocation,
         Ok(None) => return NativePageFreeResult::InvalidPointer,
@@ -10517,6 +10491,12 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
             RUNTIME_PROCESS.retain_page_owner();
             return NativePageFreeResult::Retained;
         }
+    };
+    // Pinned `mi_free_nonnull` reaches the page before it compares the
+    // captured source owner identity with the freeing thread.
+    let Some(current) = current_thread_identity() else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
     };
 
     // This is the source `mi_free_nonnull` caller-relative decision after the
@@ -10527,64 +10507,6 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
     }
 
     native_free_pointer_first_nonlocal(allocation)
-}
-
-/// Publishes a foreign free to the permanent initial owner's live page.
-///
-/// Pinned `mi_free_block_mt` may use its ordinary atomic push without an
-/// abandoned-page claim only when the source owner remains associated for the
-/// complete publication. The process initial owner is the one native runtime
-/// owner with that property: it is persistent process storage and has no
-/// thread-exit teardown. General later-owner and abandoned pages intentionally
-/// return `None` so the state-capturing path below can use the
-/// `allow_collect=true` W03 continuation instead of weakening its race
-/// semantics.
-///
-/// # Safety
-///
-/// `page` must be the PageMap result for `block`, and `block` must be an exact
-/// current native allocation that keeps its page and source block area live
-/// through this atomic publication.
-unsafe fn native_free_pointer_first_live_initial_foreign_page(
-    page: core::ptr::NonNull<Page>,
-    block: core::ptr::NonNull<u8>,
-    current: LiveThreadId,
-) -> Option<NativePageFreeResult> {
-    let initial = RUNTIME_PROCESS.initial_live_thread_identity()?;
-    if current == initial {
-        return None;
-    }
-    // SAFETY: the exact live client pins initialized source metadata. This
-    // check reads only the initial owner's atomic identity/head fields and
-    // confirms that the page never enters a later-owner or abandoned route.
-    if !unsafe { Page::is_live_owner_for_thread_at(page, initial) } {
-        return None;
-    }
-    // SAFETY: the same live client keeps this permanently initial-owned page's
-    // geometry fixed. This is the source aligned/interior canonical recovery
-    // before the remote head receives its free-list block.
-    let Some(canonical_block) =
-        (unsafe { Page::canonical_remote_block_for_live_client_at(page, block) })
-    else {
-        RUNTIME_PROCESS.retain_page_owner();
-        return Some(NativePageFreeResult::Retained);
-    };
-    // SAFETY: the initial owner cannot execute a thread-exit unown transition,
-    // so this stable owner-associated page satisfies `remote_free::push`'s
-    // `allow_collect=false` contract. The foreign caller gives up the exact
-    // canonical block only after this source CAS succeeds.
-    let producer = unsafe { Page::remote_free_producer_state_at(page) };
-    match unsafe { remote_free::push(producer, canonical_block) } {
-        Ok(()) => Some(NativePageFreeResult::Freed),
-        Err(_) => {
-            // A PageMap-proven permanent-initial source cannot legitimately
-            // lose its owner association or canonical alignment. Preserve the
-            // runtime rather than retrying through a registry, scheduler, or
-            // post-exit continuation after an uncertain publication.
-            RUNTIME_PROCESS.retain_page_owner();
-            Some(NativePageFreeResult::Retained)
-        }
-    }
 }
 
 /// Consumes one post-process-done local allocation through its retained source
@@ -10737,32 +10659,27 @@ fn native_free_pointer_first_local(
 
 /// Consumes one nonlocal PageMap observation through W03's source-state tail.
 ///
-/// This is the only nonlocal free continuation. W03 invokes W07's linear
-/// source claim internally and owns any post-CAS retained capability; this
-/// dispatcher receives only scalar disposition/rejection values.
+/// This is the only nonlocal free continuation. W03 performs the source
+/// `mi_free_block_mt(..., allow_collect=true)` CAS with only the page's
+/// atomic fields; it asks for the process PageMap/arena and static-main Heap
+/// facts only after that CAS claims an abandoned head, as pinned
+/// `mi_free_try_collect_mt` does. A publication to a live owner therefore
+/// never borrows that owner's TLD, Theap, or engine, nor any process lease.
+/// W03 invokes W07's linear source claim internally and owns any post-CAS
+/// retained capability; this dispatcher receives only scalar
+/// disposition/rejection values.
 fn native_free_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
 ) -> NativePageFreeResult {
     let detached = allocation.page_state() == LiveAllocationPageState::Detached;
-    let Some(process) = current_native_process_page_backing() else {
-        // The PageMap observation cannot safely continue without the paired
-        // arena capability. This is not a temporary current-owner result.
-        RUNTIME_PROCESS.retain_page_owner();
-        return NativePageFreeResult::Retained;
-    };
-    // SAFETY: the active process owns this never-dropped main-Heap lease.
-    // `process` was formed from the same active root immediately above.
-    let Some(main_heap) = (unsafe { RUNTIME_PROCESS.allocation_main_heap() }) else {
-        RUNTIME_PROCESS.retain_page_owner();
-        return NativePageFreeResult::Retained;
-    };
     // SAFETY: `allocation` is the exact current PageMap-derived source
-    // pointer, while `process` and `main_heap` are the matching process-wide
-    // PageMap/arena and static-Heap facts required by W03. W03 consumes any
-    // W07 claim rather than exposing or rebuilding it here.
+    // pointer. The facts callback returns the matching process-wide
+    // PageMap/arena and static-Heap facts required by a claimed W03 tail.
+    // W03 consumes any W07 claim rather than exposing or rebuilding it here.
     match unsafe {
         crate::single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts(
-            allocation, process, main_heap,
+            allocation,
+            native_free_claimed_tail_process_page_facts,
         )
     } {
         Ok(
@@ -10791,6 +10708,19 @@ fn native_free_pointer_first_nonlocal(
             NativePageFreeResult::Retained
         }
     }
+}
+
+/// Supplies the process facts that a claimed abandoned-page free tail needs.
+///
+/// The active process owns its PageMap/arena backing and the never-dropped
+/// static main-Heap lease for its lifetime; both come from that same root.
+fn native_free_claimed_tail_process_page_facts(
+) -> Option<(ProcessPageBackingLease, MainStaticHeapLease<'static>)> {
+    let process = current_native_process_page_backing()?;
+    // SAFETY: the active process owns this never-dropped main-Heap lease.
+    // `process` was formed from the same active root immediately above.
+    let main_heap = unsafe { RUNTIME_PROCESS.allocation_main_heap() }?;
+    Some((process, main_heap))
 }
 
 /// Returns the PageMap-derived usable size of one live native allocation.

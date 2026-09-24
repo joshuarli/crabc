@@ -1390,28 +1390,32 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
 /// exception-only scalar marker and seals its exact claim (and acquired map
 /// lease) independently. The marker never gates or serializes normal CASes.
 ///
-/// The caller supplies only the coherent `LiveAllocationPointer` and copied
-/// process PageMap/arena plus main-Heap leases. This boundary never accepts a
-/// former owner, TLS owner, registry, ledger, bare PageMap, route, or raw
-/// page/block pair. A stale live snapshot and an abandoned/mapped snapshot
-/// both obey the current CAS head. A PageMap-valid detached input has no
-/// source producer and is rejected before the CAS; W01 may map that typed,
-/// unsupported boundary to its own scalar runtime disposition, but W03 does
-/// not mark the process terminal or select a legacy route for it.
+/// The caller supplies only the coherent `LiveAllocationPointer` and a
+/// provider of copied process PageMap/arena plus main-Heap leases. As in
+/// pinned `mi_free_block_mt`, a publication to an existing owner needs only
+/// the page's atomic fields, so the provider runs only after the CAS claims
+/// an abandoned head and `mi_free_try_collect_mt` needs those facts. A claim
+/// whose facts are unavailable is sealed as a terminal retained owner. This
+/// boundary never accepts a former owner, TLS owner, registry, ledger, bare
+/// PageMap, route, or raw page/block pair. A stale live snapshot and an
+/// abandoned/mapped snapshot both obey the current CAS head. A PageMap-valid
+/// detached input has no source producer and is rejected before the CAS; W01
+/// may map that typed, unsupported boundary to its own scalar runtime
+/// disposition, but W03 does not mark the process terminal or select a legacy
+/// route for it.
 ///
 /// # Safety
 ///
 /// `allocation` must be an exact current native allocation obtained from the
 /// active process PageMap, and its client lifetime must remain live through
-/// this consuming operation. `process` and `main_heap` must be copied leases
-/// for that same active process. On `Released`, the allocation's page and
-/// canonical block may be invalid and must not be accessed again. On
+/// this consuming operation. Leases returned by `process_page_facts` must be
+/// copies for that same active process. On `Released`, the allocation's page
+/// and canonical block may be invalid and must not be accessed again. On
 /// `Retained`, W03 owns the exact terminal source capability internally; a
 /// caller must not re-publish this allocation through a post-exit tail.
 pub(crate) unsafe fn continue_post_owner_exit_live_allocation_with_process_page_facts(
     allocation: LiveAllocationPointer,
-    process: impl Into<ProcessPageBackingLease>,
-    main_heap: MainStaticHeapLease<'static>,
+    process_page_facts: impl FnOnce() -> Option<(ProcessPageBackingLease, MainStaticHeapLease<'static>)>,
 ) -> Result<
     ProcessPostOwnerExitPointerFreeDisposition,
     ProcessPostOwnerExitPointerFreeRejection,
@@ -1422,8 +1426,7 @@ pub(crate) unsafe fn continue_post_owner_exit_live_allocation_with_process_page_
         continue_post_owner_exit_live_allocation_with_terminal_marker(
             &PROCESS_POST_OWNER_EXIT_TERMINAL_MARKER,
             allocation,
-            process,
-            main_heap,
+            process_page_facts,
         )
     }
 }
@@ -1437,13 +1440,11 @@ pub(crate) unsafe fn continue_post_owner_exit_live_allocation_with_process_page_
 unsafe fn continue_post_owner_exit_live_allocation_with_terminal_marker(
     marker: &ProcessPostOwnerExitTerminalMarker,
     allocation: LiveAllocationPointer,
-    process: impl Into<ProcessPageBackingLease>,
-    main_heap: MainStaticHeapLease<'static>,
+    process_page_facts: impl FnOnce() -> Option<(ProcessPageBackingLease, MainStaticHeapLease<'static>)>,
 ) -> Result<
     ProcessPostOwnerExitPointerFreeDisposition,
     ProcessPostOwnerExitPointerFreeRejection,
 > {
-    let process = process.into();
     if allocation.page_state() == crate::process_page_map::LiveAllocationPageState::Detached {
         // Source `mi_free_block_mt` has no detached producer projection. This
         // is a typed pre-CAS boundary only: preserve the PageMap observation,
@@ -1483,6 +1484,17 @@ unsafe fn continue_post_owner_exit_live_allocation_with_terminal_marker(
                 );
                 return Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained);
             }
+            // `mi_free_try_collect_mt` first needs process facts here, after
+            // the CAS made this free the page's one owner.
+            let Some((process, main_heap)) = process_page_facts() else {
+                terminalize_post_owner_exit_retained(
+                    marker,
+                    ProcessPostOwnerExitTerminalRetained::Claimed {
+                        owner: ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(claim),
+                    },
+                );
+                return Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained);
+            };
 
             // SAFETY: the exact claim moved directly out of the source CAS;
             // no page/block authority is rebuilt. The lower continuation
@@ -42736,8 +42748,7 @@ mod tests {
                     continue_post_owner_exit_live_allocation_with_terminal_marker(
                         &marker,
                         allocation,
-                        pair,
-                        main_heap,
+                        move || Some((pair.into(), main_heap)),
                     )
                 };
                 assert_eq!(
@@ -42803,7 +42814,7 @@ mod tests {
             // through the source unown/CAS/tail operation.
             let result = unsafe {
                 continue_post_owner_exit_live_allocation_with_terminal_marker(
-                    &marker, allocation, pair, main_heap,
+                    &marker, allocation, move || Some((pair.into(), main_heap)),
                 )
             };
             assert_eq!(
@@ -42841,6 +42852,103 @@ mod tests {
     }
 
     #[test]
+    fn post_owner_exit_pointer_live_owner_publication_requests_no_process_facts() {
+        with_w03_process_page_fixture(|config, page_map, pair, _main_heap, session| {
+            let (page, block, _memory, _slice_index) =
+                w03_publish_arena_singleton(config, pair, session);
+            // SAFETY: the newly published singleton has one exact current
+            // client. This lookup copies only its coherent pointer facts.
+            let allocation = unsafe { page_map.lookup_live_allocation(block) }
+                .expect("the W03 arena singleton PageMap remains ready")
+                .expect("the W03 arena singleton pointer resolves");
+            assert_eq!(
+                allocation.page_state(),
+                crate::process_page_map::LiveAllocationPageState::LiveOwnerAssociated
+            );
+
+            let marker = ProcessPostOwnerExitTerminalMarker::new();
+            // SAFETY: the live static owner keeps this exact page and its one
+            // client registered through the source publication.
+            let result = unsafe {
+                continue_post_owner_exit_live_allocation_with_terminal_marker(
+                    &marker,
+                    allocation,
+                    || -> Option<(ProcessPageBackingLease, MainStaticHeapLease<'static>)> {
+                        panic!("a publication to a live owner needs only page atomics")
+                    },
+                )
+            };
+            assert_eq!(result, Ok(ProcessPostOwnerExitPointerFreeDisposition::PublishedToOwner));
+            assert!(!marker.is_retained());
+            // SAFETY: the fixture keeps the live page registered; this reads
+            // only its atomic remote head after the completed publication.
+            let state = unsafe { Page::remote_free_producer_state_at(page) };
+            assert_eq!(
+                unsafe { state.xthread_free.as_ref() }.load(Ordering::Acquire),
+                block.as_ptr().addr() | 1,
+                "the block is published to the live owner, which keeps the low owner bit"
+            );
+        });
+    }
+
+    #[test]
+    fn post_owner_exit_pointer_claim_without_process_facts_is_sealed_retained() {
+        with_w03_process_page_fixture(|config, page_map, pair, _main_heap, session| {
+            let (page, block, _memory, _slice_index) =
+                w03_publish_arena_singleton(config, pair, session);
+            // SAFETY: the newly published singleton has one exact current
+            // client. This lookup copies only its coherent pointer facts.
+            let allocation = unsafe { page_map.lookup_live_allocation(block) }
+                .expect("the W03 arena singleton PageMap remains ready")
+                .expect("the W03 arena singleton pointer resolves");
+            assert_eq!(
+                unsafe { abandoned::abandon_unmappable_after_collect(page) },
+                Ok(AbandonResult::UnownedUnmapped),
+                "the source owner establishes abandoned identity before unown"
+            );
+
+            let marker = ProcessPostOwnerExitTerminalMarker::new();
+            // SAFETY: the still-live block keeps this abandoned singleton
+            // registered through the claiming source CAS.
+            let result = unsafe {
+                continue_post_owner_exit_live_allocation_with_terminal_marker(
+                    &marker,
+                    allocation,
+                    || None,
+                )
+            };
+            assert_eq!(result, Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained));
+            assert!(marker.is_retained());
+            assert_eq!(
+                marker.test_audit_snapshot(),
+                ProcessPostOwnerExitTerminalAuditSnapshot {
+                    terminalizations: 1,
+                    categories: ProcessPostOwnerExitTerminalAuditCategory::UncontinuedClaim.bit(),
+                },
+                "the exact claim is sealed rather than continued without process facts"
+            );
+            // SAFETY: the sealed claim retains this page; this reads only its
+            // atomic remote head.
+            let state = unsafe { Page::remote_free_producer_state_at(page) };
+            assert_eq!(
+                unsafe { state.xthread_free.as_ref() }.load(Ordering::Acquire),
+                block.as_ptr().addr() | 1,
+                "the retained claim keeps its published block and low owner bit"
+            );
+            assert!(
+                !unsafe {
+                    page_map
+                        .page_map()
+                        .expect("the retained claim leaves the process map ready")
+                        .checked_lookup(block.as_ptr())
+                }
+                .is_null(),
+                "a sealed claim never unregisters its page"
+            );
+        });
+    }
+
+    #[test]
     fn post_owner_exit_pointer_external_singleton_unabandons_lists_and_retires_metadata() {
         with_w03_process_page_fixture(|_config, page_map, pair, main_heap, session| {
             let (page, block, base, layout, page_map_size) =
@@ -42873,7 +42981,7 @@ mod tests {
             assert_eq!(
                 unsafe {
                     continue_post_owner_exit_live_allocation_with_terminal_marker(
-                        &marker, allocation, pair, main_heap,
+                        &marker, allocation, move || Some((pair.into(), main_heap)),
                     )
                 },
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Released),
@@ -42938,7 +43046,7 @@ mod tests {
             // claim; after `Released`, its page/mapping must not be accessed.
             let result = unsafe {
                 continue_post_owner_exit_live_allocation_with_terminal_marker(
-                    &marker, allocation, pair, main_heap,
+                    &marker, allocation, move || Some((pair.into(), main_heap)),
                 )
             };
             assert_eq!(
@@ -43014,7 +43122,7 @@ mod tests {
             assert_eq!(
                 unsafe {
                     continue_post_owner_exit_live_allocation_with_terminal_marker(
-                        &marker, allocation, pair, main_heap,
+                        &marker, allocation, move || Some((pair.into(), main_heap)),
                     )
                 },
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
@@ -43106,7 +43214,7 @@ mod tests {
             assert_eq!(
                 unsafe {
                     continue_post_owner_exit_live_allocation_with_terminal_marker(
-                        &marker, allocation, pair, main_heap,
+                        &marker, allocation, move || Some((pair.into(), main_heap)),
                     )
                 },
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)

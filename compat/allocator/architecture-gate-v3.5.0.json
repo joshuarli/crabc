@@ -59,8 +59,7 @@
       "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\("
     ],
     "pointer_dispatch_patterns": [
-      "\\blookup_page_for_live_client\\s*\\(",
-      "\\bcanonical_remote_block_for_live_client_at\\s*\\("
+      "\\.lookup_live_allocation\\s*\\("
     ],
     "maximum_phase_a_identity_matches": 1,
     "phase_a_bridge": {
@@ -184,9 +183,9 @@
           }
         ],
         "patterns": {
-          "live_page_lookup": "\\.lookup_page_for_live_client\\s*\\(",
-          "canonical_remote_block": "\\bPage::canonical_remote_block_for_live_client_at\\s*\\(",
-          "atomic_remote_push": "\\bremote_free::push\\s*\\("
+          "live_page_lookup": "\\.lookup_live_allocation\\s*\\(",
+          "canonical_block_recovery": "\\brecover_block_start\\s*\\(",
+          "allow_collect_publication": "\\bcontinue_post_owner_exit_live_allocation_with_process_page_facts\\s*\\("
         },
         "direction": "minimum_per_pattern",
         "final_required": "runtime-proven page-local remote-free dispatch",
@@ -462,8 +461,8 @@
     "phase_bc_selected_production_reachable_floor_per_pattern": {
       "page_local_remote_free_projection": {
         "live_page_lookup": 1,
-        "canonical_remote_block": 1,
-        "atomic_remote_push": 1
+        "canonical_block_recovery": 1,
+        "allow_collect_publication": 1
       }
     }
   }

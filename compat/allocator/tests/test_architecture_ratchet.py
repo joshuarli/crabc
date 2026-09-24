@@ -207,8 +207,8 @@ class ArchitectureRatchetTests(unittest.TestCase):
         remote_projection = phase_bc["ratchets"]["page_local_remote_free_projection"]
         self.assertFalse(remote_projection["final_acceptance"])
         self.assertEqual(set(remote_projection["pattern_counts"]), {
-            "atomic_remote_push",
-            "canonical_remote_block",
+            "allow_collect_publication",
+            "canonical_block_recovery",
             "live_page_lookup",
         })
         self.assertIsInstance(remote_projection["static_projection_present"], bool)
@@ -369,7 +369,7 @@ pub unsafe fn native_free() {{
         policy = copy.deepcopy(self.manifest)
         policy["caller_identity_first_free_dispatch"]["path"] = "runtime.rs"
         pointer_first_source = """\
-pub unsafe fn native_free() { lookup_page_for_live_client(); if RUNTIME_PROCESS.is_on_initial_thread() {} }
+pub unsafe fn native_free() { page_map.lookup_live_allocation(block); if RUNTIME_PROCESS.is_on_initial_thread() {} }
 """
         repeated_identity_source = """\
 pub unsafe fn native_free() {
@@ -396,7 +396,7 @@ pub unsafe fn native_free() {
 pub unsafe fn native_free() {
     #[cfg(test)]
     if RUNTIME_PROCESS.is_on_initial_thread() {}
-    lookup_page_for_live_client();
+    page_map.lookup_live_allocation(block);
 }
 """
         with tempfile.TemporaryDirectory() as temporary:
@@ -756,9 +756,9 @@ pub unsafe fn native_free() {
 }
 
 fn pointer_projection() {
-    page_map.lookup_page_for_live_client(block);
-    Page::canonical_remote_block_for_live_client_at(page, block);
-    remote_free::push(page, block);
+    page_map.lookup_live_allocation(block);
+    crate::aligned::recover_block_start(client, page_start, block_size);
+    crate::single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts(allocation, facts);
 }
 
 fn local_compatibility_bridge() {
@@ -813,7 +813,7 @@ fn helper_path() {
         self.assertNotIn(("runtime.rs", "feature_test_only_scaffolding"), reachable)
         self.assertEqual(
             report["ratchets"]["page_local_remote_free_projection"]["pattern_counts"],
-            {"atomic_remote_push": 1, "canonical_remote_block": 1, "live_page_lookup": 1},
+            {"allow_collect_publication": 1, "canonical_block_recovery": 1, "live_page_lookup": 1},
         )
         for name in (
             "per_call_scheduler_park_resume",
@@ -1433,8 +1433,8 @@ fn hidden_or_selected() {}
         }
         baseline["phase_bc_selected_production_reachable_floor_per_pattern"] = {
             "page_local_remote_free_projection": {
-                "atomic_remote_push": 1,
-                "canonical_remote_block": 1,
+                "allow_collect_publication": 1,
+                "canonical_block_recovery": 1,
                 "live_page_lookup": 1,
             }
         }
@@ -1444,9 +1444,9 @@ pub unsafe fn native_free() {
     forbidden_helper();
 }
 fn pointer_projection() {
-    page_map.lookup_page_for_live_client(block);
-    Page::canonical_remote_block_for_live_client_at(page, block);
-    remote_free::push(page, block);
+    page_map.lookup_live_allocation(block);
+    crate::aligned::recover_block_start(client, page_start, block_size);
+    crate::single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts(allocation, facts);
 }
 fn forbidden_helper() {
     NATIVE_LIVE_REMOTE_OWNER.claim_exact_client(block);
