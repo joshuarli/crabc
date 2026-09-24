@@ -24,8 +24,13 @@ are not transferable passes for a different revision.
 - **State:** `campaign-status` reports 9/26 families `foundation-verified` and
   180 implemented, 43 selected-private, and 0 missing capabilities; all eight
   ordered qualification gates are executable and fail closed on named unmet
-  conditions. C mimalloc remains the selected backend; allocator M2–M11 remain
-  open. Every freestanding-C runner builds `libc.a` through
+  conditions. `compat.abi-differential` reads all its evidence rows from one
+  published set (`abi-differential-evidence assemble`); only the selection
+  closure (382 named blockers, mostly companion receipts and unadmitted
+  families) stays unmet. Two families still carry prose evidence rows
+  (`libc.c-abi-compat`, `consumer.rust-std-lto`; lanes `c-abi-family` and
+  `rust-std-lto`), plus `performance.release`. C mimalloc remains the
+  selected backend; allocator M2–M11 remain open. Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). The development engine harness measures the Rust
   local path at roughly 0.04× pinned C single-thread (contended host; the
