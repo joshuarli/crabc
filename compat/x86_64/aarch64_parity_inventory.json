@@ -782,13 +782,13 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "pattern.regex",
       "x86_family": "libc.text-math-locale-stdio"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "pattern.wordexp",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1347,8 +1347,8 @@
   ],
   "capability_state_counts": {
     "implemented-foundation": 180,
-    "missing": 4,
-    "selected-private": 39
+    "missing": 2,
+    "selected-private": 41
   },
   "families": [
     {
@@ -1461,7 +1461,7 @@
       "contract_state": "selected-private",
       "id": "libc.text-math-locale-stdio",
       "verified_artifact_count": 77,
-      "verified_slice_count": 11
+      "verified_slice_count": 13
     },
     {
       "aarch64_gates": [

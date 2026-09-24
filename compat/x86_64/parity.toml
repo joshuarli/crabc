@@ -17090,6 +17090,86 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh owned-calendar-component", scope = "With no supplied pair the launcher builds current static and dynamic owned products, derives a fresh TZif input in the observed pinned image from the hash-pinned IANA 2025b archives, and runs the installed calendar component. Eight installed-header objects link through pinned musl plus static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry in fresh chroot roots; fifteen candidate actions per cell cover POSIX and named-zone local conversion, normalization, gap/fold, overflow, concurrent `_r` calls, direct and shared-buffer `asctime`/`ctime`, locale-object `strftime_l`, TZif specification checks, strptime ordinary and guard-page cases, DATEMSK getdate/getdate_err, and safe clock-control rows. The public reader reconstructs every command, header trace, link receipt, root audit, raw stream, and source/product/tool seal before admitting the five rows. This completes only time.clock-calendar inside still-planned libc.text-math-locale-stdio; family completion, x86 promotion, full parity, and public support remain false." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for calendar conversion, TZ state, formatting, parsing, getdate, and legacy clock-control entry points, excluding the documented TZif and strptime oracle defects." }, { kind = "timezone-data", source = "IANA tzcode/tzdata 2025b (hash-pinned archives)", role = "Test-only real-zone TZif fixtures; never bundled into a product." }]
 
+[[family.verified_slice]]
+id = "owned-c-pattern-regex"
+description = "Private native x86 selected-private `pattern.regex` capability inside still-planned `libc.text-math-locale-stdio`. The installed static and dynamic runtime products own the four frozen symbols `regcomp`, `regerror`, `regexec`, and `regfree` through the source-faithful Rust port of pinned musl 1.2.6's TRE compiler, parallel and backtracking TNFA executors, arena allocator, and regerror table. One installed-header object runs through pinned musl 1.2.6 and static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry; every transcript must be byte-identical to musl's. It covers directed leftmost-longest, capture, backreference, anchor, class, case-fold, execution-flag, `REG_NOSUB`, compile/free/recompile, and regerror table/truncation contracts; a deterministic differential corpus of fixed, structured, token-soup, long-subject, and non-ASCII case-fold BRE/ERE patterns under eight flag sets in `C` and `C.UTF-8`; and locale edges where a `uselocale` thread locale or a different execution locale governs decoding. The only intentional difference is confined to inputs where musl reads or moves outside the caller's subject (a backreference into an open group, or a multibyte width-drifted range past the terminator); the port treats those as failed backreferences and the runner requires musl's guarded fault and the owned answer in a separate mode. This selects exactly `pattern.regex`; it is not a Rust regex API, locale database, family completion, promotion, or public x86 support."
+capabilities = ["pattern.regex"]
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/owned_regex/mod.rs",
+  "libc/src/c_abi/x86_64/owned_regex/types.rs",
+  "libc/src/c_abi/x86_64/owned_regex/memory.rs",
+  "libc/src/c_abi/x86_64/owned_regex/compile.rs",
+  "libc/src/c_abi/x86_64/owned_regex/execute.rs",
+  "libc/src/c_abi/x86_64/owned_regex/error.rs",
+  "libc/src/c_abi/x86_64/owned_regex/LICENSE-TRE-2-CLAUSE-BSD.txt",
+  "include/regex.h",
+  "compat/x86_64/owned_regex_probe.c",
+  "compat/x86_64/run_owned_regex.sh",
+  "compat/x86_64/owned_regex_component_receipt.py",
+  "compat/x86_64/tests/test_owned_regex_component_receipt.py",
+  "docs/evidence/x86-owned-regex.md",
+]
+x86_abi_prerequisites = [
+  "The closed capability surface is exactly the four symbols recorded by `compat/crabc-rs/coverage.toml` under `pattern.regex`. System V AMD64 LP64 makes `regoff_t` a signed aligned eight-byte `long`; `regex_t` carries `re_nsub` and the opaque TNFA pointer in musl's layout, and `regmatch_t` is two `regoff_t` offsets.",
+  "Pinned musl 1.2.6 src/regex/{tre.h,tre-mem.c,regcomp.c,regexec.c,regerror.c} are the source algorithms, with TRE's two-clause BSD license retained beside the port. `regcomp` publishes the completed graph through `regex_t` and `regfree` consumes it once; allocation uses the selected C allocator and every compile/execute failure path releases its partial state.",
+  "Pattern and subject decoding reads the calling thread's LC_CTYPE at each call through the selected multibyte and wide-character owners, so only the fixed C, POSIX, and C.UTF-8 profile is selected.",
+]
+x86_header_prerequisites = [
+  "The object preprocesses the supplied product's locale.h, regex.h, stddef.h, stdio.h, stdlib.h, string.h, features.h, and bits/alltypes.h under -std=c11 -fno-builtin; the runner rejects a header trace outside that tree, and static assertions pin the regoff_t width, alignment, signedness, and every entry signature. The installed header has no REG_STARTEND.",
+  "The same relocatable object links against pinned musl and every installed product mode and imports exactly one undefined row for each of the four entries.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh owned-regex", scope = "With no supplied pair the launcher builds current static and dynamic owned products, compiles owned_regex_probe.c once through the installed headers, and links that object to pinned musl plus static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry in copied chroot roots. Every candidate's stdout, stderr, and status must equal musl's complete transcript, including the directed contracts, regerror table, locale edges, and every differential and case-fold corpus digest; the bounded-backreference mode requires musl's guarded fault and the owned answer. Provider rows in the object, archive, executables, and shared object and the v2 receipt are rebuilt and checked by the public reader. This completes only pattern.regex inside still-planned libc.text-math-locale-stdio; family completion, promotion, and public support remain false." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT and TRE BSD source plus C/POSIX behavior oracle for regcomp, regexec, regerror, and regfree, excluding only the documented out-of-subject backreference inputs." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 regoff_t/regex_t/regmatch_t layout and static/shared provider ownership." }]
+
+[[family.verified_slice]]
+id = "owned-c-pattern-wordexp"
+description = "Private native x86 selected-private `pattern.wordexp` capability inside still-planned `libc.text-math-locale-stdio`. The installed static and dynamic runtime products own the two frozen symbols `wordexp` and `wordfree` through the owned evaluator: tilde, parameter, and arithmetic expansion, field splitting, quote-aware pathname expansion, and quote removal run in-process, and only a selected command substitution spawns `/bin/sh`. The result transaction publishes accepted prefixes, preserves prior records on append failure, honors `WRDE_DOOFFS`/`WRDE_APPEND`/`WRDE_REUSE`, and `wordfree` makes a repeated release inert. Errors keep the fixed diagnostic contract of owned-wordexp.md: typed `WRDE_NOSPACE`, `WRDE_BADCHAR`, `WRDE_BADVAL`, `WRDE_CMDSUB`, and `WRDE_SYNTAX`; no diagnostic without `WRDE_SHOWERR`; with it, raw fd-2 `wordexp: NAME: MESSAGE` lines that leave the parent's FILE state untouched. One installed-header object runs twenty-six cases through pinned musl 1.2.6 and static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry; each candidate cell must report its exact positive transcript, and each musl cell must equal its source match or its named fixed source observation, including the twenty-input upstream-policy trace. Invalid multibyte bytes in C.UTF-8 pathname and parameter-removal patterns terminate and never match in both runtimes; word expansion never takes the fnmatch FNM_PATHNAME scan that loops in musl. This selects exactly `pattern.wordexp`; it is not a shell, a Rust wordexp API, family completion, promotion, or public x86 support."
+capabilities = ["pattern.wordexp"]
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/owned_wordexp.rs",
+  "libc/src/c_abi/x86_64/owned_wordexp_engine.rs",
+  "libc/src/c_abi/x86_64/owned_wordexp_process.rs",
+  "libc/src/c_abi/x86_64/owned_wordexp_paths.rs",
+  "libc/src/c_abi/x86_64/owned_wordexp_results.rs",
+  "libc/src/c_abi/x86_64/owned_pattern.rs",
+  "include/wordexp.h",
+  "compat/x86_64/owned_wordexp_probe.c",
+  "compat/x86_64/owned_wordexp_posix_probe.c",
+  "compat/x86_64/owned_wordexp_engine_probe.c",
+  "compat/x86_64/owned_wordexp_source_policy_probe.c",
+  "compat/x86_64/run_owned_wordexp.sh",
+  "compat/x86_64/run_owned_wordexp_expected_inputs.sh",
+  "compat/x86_64/owned_wordexp_evidence.py",
+  "compat/x86_64/owned_wordexp_upstream_policy.py",
+  "compat/x86_64/owned_wordexp_upstream_policy_diagnostics.json",
+  "compat/x86_64/tests/test_owned_wordexp_evidence.py",
+  "compat/x86_64/tests/test_owned_wordexp_upstream_policy.py",
+  "compat/x86_64/owned-wordexp.md",
+  "compat/x86_64/owned-wordexp-engine-abi.md",
+  "compat/x86_64/owned-wordexp-upstream-policy.md",
+  "compat/x86_64/owned-wordexp-pattern-boundary.md",
+]
+x86_abi_prerequisites = [
+  "The closed capability surface is exactly the two symbols recorded by `compat/crabc-rs/coverage.toml` under `pattern.wordexp`. System V AMD64 LP64 makes `wordexp_t` a 24-byte align-8 record of `we_wordc`, `we_wordv`, and `we_offs`; result vectors and strings come from the selected C allocator and are released only by `wordfree`.",
+  "Pinned musl 1.2.6 src/misc/wordexp.c is the source-control oracle; its whole-input shell protocol is not ported. The owned evaluator follows the POSIX wordexp interface and Shell Command Language expansion order, uses the private quote-aware pattern boundary over the musl-derived fnmatch/glob owners, the reentrant passwd owner for tilde lookup, and the owned spawn owner only for selected command substitutions.",
+  "The C entry disables cancellation until temporary owners drop; diagnostics are raw fd-2 writes that retry EINTR and partial writes and follow the caller's SIGPIPE disposition.",
+]
+x86_header_prerequisites = [
+  "The object compiles owned_wordexp_probe.c with its included POSIX, engine, and upstream-policy companions once through the supplied product's installed wordexp.h and C headers; static assertions pin the wordexp_t layout and both entry signatures.",
+  "The same relocatable object links against pinned musl and every installed product mode, so the header declarations are consumed only through executed C ABI calls.",
+]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-wordexp", scope = "With supplied static and dynamic products the runner compiles one installed-header object and links it to pinned musl plus static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry, then runs all twenty-six cases in sealed chroot roots with the controlled external shell fixture (156 candidate cells). Each candidate cell requires its exact positive transcript and empty diagnostics; each paired musl cell must match its source control or named source observation, including the twenty-input upstream-policy trace and the invalid-multibyte pattern selector. The version-5 receipt seals sources, products, tools, links, execution-tree contents, and raw streams." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-wordexp-expected-inputs", scope = "Independently captures the native compiler, linker, oracle compiler, shell, timeout, chroot, ldd, and pinned-musl oracle identities for the same supplied products without running a cell. `owned_wordexp_evidence.py validate --report REPORT --expected-inputs SEAL` replays the owned-wordexp receipt on the host against that seal. This completes only pattern.wordexp inside still-planned libc.text-math-locale-stdio; family completion, promotion, and public support remain false." },
+]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source-control oracle for wordexp and wordfree through its shell protocol, with the named fixed source observations retained separately from required candidate results." }, { kind = "c-posix", source = "POSIX.1-2024 wordexp and Shell Command Language", role = "Expansion order, quoting, error types, and diagnostic requirements that the owned evaluator follows where musl's shell protocol differs." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 wordexp_t layout and static/shared provider ownership." }]
+
 [[family]]
 id = "libc.resolver"
 order = 100
