@@ -37,6 +37,9 @@ pub unsafe fn mmap_raw(
     fd: RawFd,
     offset: u64,
 ) -> Result<*mut u8> {
+    // Miri: return model memory with real provenance rather than an integer.
+    #[cfg(miri)]
+    return unsafe { crate::miri_model::mmap(address, length, protection, flags, fd, offset) };
     // SAFETY: The caller owns the mapping contract. `decode` recognizes only
     // the Linux error range, so valid high-address mappings remain successful
     // pointer values.
@@ -394,6 +397,9 @@ pub unsafe fn remap_file_pages_raw(
 /// page count is zero.
 #[inline]
 pub unsafe fn mincore_raw(address: *mut u8, length: usize, vector: *mut u8) -> Result<()> {
+    // Miri: the model writes through the caller's own vector pointer.
+    #[cfg(miri)]
+    return unsafe { crate::miri_model::mincore(address, length, vector) };
     // SAFETY: The caller supplies the mapped-range and output-vector validity
     // contracts; Linux validates the address and range.
     decode(unsafe { syscall3(SYS_MINCORE, address as usize, length, vector as usize) })

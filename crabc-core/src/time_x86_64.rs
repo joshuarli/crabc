@@ -258,6 +258,9 @@ pub fn clock_gettime(clock_id: i32) -> Result<KernelTimespec> {
 /// `struct timespec`; the storage must remain live for the duration of the
 /// call. Linux initializes both signed 64-bit fields on success.
 pub unsafe fn clock_gettime_raw(clock_id: i32, timespec: *mut u8) -> Result<()> {
+    // Miri: the deterministic model clock writes the caller's storage.
+    #[cfg(miri)]
+    return unsafe { crate::miri_model::clock_gettime(clock_id, timespec) };
     // SAFETY: The caller owns the exact output-pointer contract documented
     // above; the shared dispatcher performs the target syscall/vDSO call.
     unsafe { decode(crate::vdso::clock_gettime_status(clock_id, timespec) as isize) }.map(|_| ())

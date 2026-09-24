@@ -5,6 +5,7 @@
 //! `rax` carrying both the syscall number and result, arguments in
 //! `rdi`, `rsi`, `rdx`, `r10`, `r8`, and `r9`, and `rcx`/`r11` clobbered.
 
+#[cfg(not(miri))]
 use core::arch::asm;
 
 use crate::error::MAX_ERRNO;
@@ -204,6 +205,7 @@ pub(crate) const SYS_PRLIMIT64: usize = 302;
 pub(crate) const SYS_PIDFD_OPEN: usize = 434;
 pub(crate) const SYS_EXIT_GROUP: usize = 231;
 
+#[cfg(not(miri))]
 #[inline(always)]
 pub(crate) unsafe fn syscall0(number: usize) -> isize {
     let result: isize;
@@ -222,6 +224,7 @@ pub(crate) unsafe fn syscall0(number: usize) -> isize {
     result
 }
 
+#[cfg(not(miri))]
 #[inline(always)]
 pub(crate) unsafe fn syscall1(number: usize, arg0: usize) -> isize {
     let result: isize;
@@ -239,6 +242,7 @@ pub(crate) unsafe fn syscall1(number: usize, arg0: usize) -> isize {
     result
 }
 
+#[cfg(not(miri))]
 #[inline(always)]
 pub(crate) unsafe fn syscall2(number: usize, arg0: usize, arg1: usize) -> isize {
     let result: isize;
@@ -257,6 +261,7 @@ pub(crate) unsafe fn syscall2(number: usize, arg0: usize, arg1: usize) -> isize 
     result
 }
 
+#[cfg(not(miri))]
 #[inline(always)]
 pub(crate) unsafe fn syscall3(number: usize, arg0: usize, arg1: usize, arg2: usize) -> isize {
     let result: isize;
@@ -276,6 +281,7 @@ pub(crate) unsafe fn syscall3(number: usize, arg0: usize, arg1: usize, arg2: usi
     result
 }
 
+#[cfg(not(miri))]
 #[inline(always)]
 pub(crate) unsafe fn syscall4(number: usize, arg0: usize, arg1: usize, arg2: usize, arg3: usize) -> isize {
     let result: isize;
@@ -296,6 +302,7 @@ pub(crate) unsafe fn syscall4(number: usize, arg0: usize, arg1: usize, arg2: usi
     result
 }
 
+#[cfg(not(miri))]
 #[inline(always)]
 pub(crate) unsafe fn syscall5(
     number: usize,
@@ -324,6 +331,7 @@ pub(crate) unsafe fn syscall5(
     result
 }
 
+#[cfg(not(miri))]
 #[inline(always)]
 pub(crate) unsafe fn syscall6(
     number: usize,
@@ -379,4 +387,64 @@ pub(crate) fn decode_i64(result: isize) -> Result<i64> {
         return Err(Errno::from_raw_os_error((-result) as i32));
     }
     Ok(result as i64)
+}
+
+// Miri cannot execute `syscall`; these seams dispatch to the kernel model.
+// Calls that return pointers or write through caller pointers never reach
+// here: their typed wrappers call the model directly to keep provenance.
+#[cfg(miri)]
+#[inline(always)]
+pub(crate) unsafe fn syscall0(number: usize) -> isize {
+    crate::miri_model::syscall(number, [0; 6])
+}
+
+#[cfg(miri)]
+#[inline(always)]
+pub(crate) unsafe fn syscall1(number: usize, arg0: usize) -> isize {
+    crate::miri_model::syscall(number, [arg0, 0, 0, 0, 0, 0])
+}
+
+#[cfg(miri)]
+#[inline(always)]
+pub(crate) unsafe fn syscall2(number: usize, arg0: usize, arg1: usize) -> isize {
+    crate::miri_model::syscall(number, [arg0, arg1, 0, 0, 0, 0])
+}
+
+#[cfg(miri)]
+#[inline(always)]
+pub(crate) unsafe fn syscall3(number: usize, arg0: usize, arg1: usize, arg2: usize) -> isize {
+    crate::miri_model::syscall(number, [arg0, arg1, arg2, 0, 0, 0])
+}
+
+#[cfg(miri)]
+#[inline(always)]
+pub(crate) unsafe fn syscall4(number: usize, arg0: usize, arg1: usize, arg2: usize, arg3: usize) -> isize {
+    crate::miri_model::syscall(number, [arg0, arg1, arg2, arg3, 0, 0])
+}
+
+#[cfg(miri)]
+#[inline(always)]
+pub(crate) unsafe fn syscall5(
+    number: usize,
+    arg0: usize,
+    arg1: usize,
+    arg2: usize,
+    arg3: usize,
+    arg4: usize,
+) -> isize {
+    crate::miri_model::syscall(number, [arg0, arg1, arg2, arg3, arg4, 0])
+}
+
+#[cfg(miri)]
+#[inline(always)]
+pub(crate) unsafe fn syscall6(
+    number: usize,
+    arg0: usize,
+    arg1: usize,
+    arg2: usize,
+    arg3: usize,
+    arg4: usize,
+    arg5: usize,
+) -> isize {
+    crate::miri_model::syscall(number, [arg0, arg1, arg2, arg3, arg4, arg5])
 }

@@ -446,7 +446,6 @@ X86_ALLOCATOR_EVIDENCE_MIMALLOC_SOURCES = {
     Path("crabc-mimalloc/src/lib.rs"),
     Path("crabc-mimalloc/src/main_heap_page.rs"),
     Path("crabc-mimalloc/src/os.rs"),
-    Path("crabc-mimalloc/src/os_host_model.rs"),
     Path("crabc-mimalloc/src/os_page.rs"),
     Path("crabc-mimalloc/src/remote_free.rs"),
     Path("crabc-mimalloc/src/single_thread.rs"),

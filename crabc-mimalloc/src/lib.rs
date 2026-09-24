@@ -43,9 +43,9 @@ extern crate std;
 
 // These are the explicit allocator-engine target profiles. The AArch64
 // profile is the production-integration target; the x86-64 profile is native
-// parity evidence only. `cfg(miri)` selects a private test instrument: it
-// never makes another target supported by the allocator engine or a public
-// production build.
+// parity evidence only. `cfg(miri)` selects `crabc-core`'s private Miri
+// kernel model as a test instrument: it never makes another target supported
+// by the allocator engine or a public production build.
 #[cfg(all(
     not(miri),
     not(all(
@@ -81,10 +81,8 @@ mod once;
 mod os_page;
 mod page_backing;
 mod owned_tls_key_registry;
-#[cfg(miri)]
-#[path = "os_host_model.rs"]
-mod os;
-#[cfg(not(miri))]
+// Under `cfg(miri)` this same module runs over `crabc-core`'s Miri kernel
+// model; only the raw syscall seams below it are replaced.
 mod os;
 mod page;
 mod page_map;

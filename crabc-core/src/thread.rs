@@ -140,6 +140,9 @@ pub fn thread_pointer_identity() -> usize {
 #[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn thread_pointer_identity() -> usize {
+    // Miri cannot read `%fs:0`; the model returns a per-thread address.
+    #[cfg(miri)]
+    return crate::miri_model::thread_pointer_identity();
     let thread_pointer: usize;
     // SAFETY: Linux/x86-64 makes the current thread-control-block self pointer
     // readable at `%fs:0`. This snapshots that memory word without dereferencing

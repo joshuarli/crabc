@@ -8,6 +8,7 @@
 
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![cfg_attr(miri, feature(thread_local))]
 
 #[cfg(test)]
 extern crate std;
@@ -60,6 +61,10 @@ mod syscall;
 #[cfg(target_arch = "x86_64")]
 #[path = "syscall_x86_64.rs"]
 mod syscall;
+
+/// Miri-only kernel model behind the raw syscall seams; see its module docs.
+#[cfg(all(miri, target_arch = "x86_64"))]
+mod miri_model;
 
 /// Direct descriptor I/O operations.
 pub mod io;
