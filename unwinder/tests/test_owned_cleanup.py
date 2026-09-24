@@ -1477,6 +1477,29 @@ class OwnedCleanupContract(unittest.TestCase):
         self.assertEqual(build_std_closure["linker_output"], owned_cleanup.record_file(
             build_std_output, "test build-std executable",
         ))
+        # Cargo's build-dir layout names every bin by its unit directory, not
+        # an extra filename; the DSO host is not special.
+        dso_host_output = target / "crabc_owned_cleanup_dso_host"
+        dso_host_output.write_bytes(b"DSO host executable")
+        dso_host_closure = owned_cleanup.cargo_source_lto_extern_closure(
+            build_std_log.replace("crabc-owned-cleanup-build-std", "crabc-owned-cleanup-dso-host")
+            .replace("crabc_owned_cleanup_build_std", "crabc_owned_cleanup_dso_host"),
+            target_name="crabc-owned-cleanup-dso-host", binary_name="crabc-owned-cleanup-dso-host",
+            link_output=dso_host_output, source_library_root=target, source_build_root=target,
+            runtime_artifacts=runtime_records, runtime_metadata_artifacts={}, cargo_provider=provider_record,
+            application_dependency=dependency_record, built_unwind=built_unwind_record,
+        )
+        self.assertEqual(dso_host_closure["linker_output"], owned_cleanup.record_file(
+            dso_host_output, "test DSO host executable",
+        ))
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "does not bind the final linker output"):
+            owned_cleanup.cargo_source_lto_extern_closure(
+                build_std_log, target_name="crabc-owned-cleanup-build-std",
+                binary_name="crabc-owned-cleanup-build-std", link_output=output,
+                source_library_root=target, source_build_root=target,
+                runtime_artifacts=runtime_records, runtime_metadata_artifacts={}, cargo_provider=provider_record,
+                application_dependency=dependency_record, built_unwind=built_unwind_record,
+            )
         plugin_output = target / "libcrabc_owned_cleanup_plugin.so"
         plugin_output.write_bytes(b"fused plugin output")
         plugin_log = (

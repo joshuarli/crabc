@@ -1316,7 +1316,9 @@ def cargo_source_lto_extern_closure(
                        if argument == "-C" and index + 1 < len(arguments)
                        and arguments[index + 1].startswith("extra-filename=")]
     if binary_name is not None:
-        if not extra_filenames and target_name == "crabc-owned-cleanup-build-std":
+        # Cargo's build-dir layout gives each bin its own hashed unit
+        # directory and no extra filename; the older flat layout used one.
+        if not extra_filenames:
             expected_name = crate_name
         else:
             require(len(extra_filenames) == 1 and re.fullmatch(r"-[0-9a-f]+", extra_filenames[0]) is not None,
