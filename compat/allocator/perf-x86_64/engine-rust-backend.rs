@@ -22,11 +22,13 @@ use core::ffi::{c_char, c_int, c_ulong, c_void};
 use core::ptr::{NonNull, null_mut};
 
 use crabc_mimalloc::__crabc_runtime::{
-    NativePageAllocationResult, NativePageFreeResult, RuntimeStderrOutput, ThreadAttachResult,
+    NativePageAllocationResult, NativePageFreeResult, NativeProcessStartupFacts, RuntimeStderrOutput,
+    ThreadAttachResult,
     ThreadFinishResult, attach_current_thread, current_native_allocator_thread_descriptor,
     finish_current_thread_native_after_user_destructors, initialize_process,
     native_allocate_aligned, native_free, native_reallocate, native_usable_size,
-    prepare_native_later_thread_arena, register_current_native_allocator_worker_descriptor,
+    prepare_native_later_thread_arena, publish_native_process_startup_facts,
+    register_current_native_allocator_worker_descriptor,
 };
 
 /// The public C `malloc` alignment selected by crabc-libc's native adapter.
@@ -39,6 +41,14 @@ unsafe extern "C" {
     fn getauxval(tag: c_ulong) -> c_ulong;
     fn fputs(message: *const c_char, stream: *mut c_void) -> c_int;
     static mut stderr: *mut c_void;
+    static mut environ: *mut *mut c_char;
+}
+
+/// The fixture process's musl `environ`, the source `_mi_prim_getenv` input.
+unsafe fn musl_environment() -> *const *const c_char {
+    // SAFETY: reads musl's process-global environment word; the fixture
+    // never mutates its environment after startup.
+    unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
 }
 
 #[panic_handler]
@@ -77,7 +87,12 @@ pub extern "C" fn crabc_allocator_engine_process_init() -> c_int {
     // SAFETY: `musl_fputs_stderr` has the source callback shape, never
     // unwinds, and musl's stderr FILE outlives the process allocator.
     let output = unsafe { RuntimeStderrOutput::new(musl_fputs_stderr) };
-    if initialize_process(page_size, output) && prepare_native_later_thread_arena() {
+    // SAFETY: `musl_environment` returns musl's live NUL-terminated
+    // `environ`, never allocates through this engine, and never unwinds.
+    let Some(facts) = (unsafe { NativeProcessStartupFacts::new(page_size, musl_environment, output) }) else {
+        return -1;
+    };
+    if publish_native_process_startup_facts(facts) && initialize_process() && prepare_native_later_thread_arena() {
         0
     } else {
         -1
