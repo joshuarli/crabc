@@ -7,7 +7,7 @@
 set -euo pipefail
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly READER="$ROOT/compat/x86_64/loader_structural_owner_contract_reader.py"
-readonly IMAGE='sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d'
+readonly IMAGE="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import core_image; print(core_image.CORE_IMAGE_ID)' "$(dirname "${BASH_SOURCE[0]}")")"
 readonly PATH_VALUE='/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_SHARED=/opt/musl-1.2.6/lib/libc.so

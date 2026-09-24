@@ -28,6 +28,7 @@ import tempfile
 import tomllib
 import zlib
 from typing import Any, Iterable, Mapping, Sequence
+import core_image
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,7 +38,7 @@ COMMAND_SCHEMA = "crabc.x86_64-locale-alias-contract-command/v2"
 IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs.json"
 PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
 CURRENT_SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v4"
-CURRENT_PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+CURRENT_PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
 CURRENT_IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs-v2.json"
 CURRENT_TOOLCHAIN = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
 CURRENT_TOOLCHAIN_ROOT = f"/opt/rustup/toolchains/{CURRENT_TOOLCHAIN}-x86_64-unknown-linux-musl"

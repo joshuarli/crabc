@@ -14,6 +14,7 @@ import tomllib
 import zlib
 
 from loader_debug_abi_evidence import Elf
+import core_image
 
 
 class AuthorityError(ValueError):
@@ -240,7 +241,7 @@ def require_relocation_stream(path, artifact):
     require(actual == expected, f'raw relocations do not describe retained ELF: {path.name}')
 
 
-IMAGE_ID = 'sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d'
+IMAGE_ID = core_image.CORE_IMAGE_ID
 IMAGE_COMMANDS = ('bash', 'cat', 'chmod', 'chroot', 'cmp', 'cp', 'dirname', 'env',
                   'grep', 'mkdir', 'mktemp', 'python3', 'readelf', 'realpath',
                   'timeout', 'uname', 'gcc', 'as', 'ld', 'rustup')

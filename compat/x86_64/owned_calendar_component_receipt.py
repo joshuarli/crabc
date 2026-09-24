@@ -27,12 +27,13 @@ if str(HERE) not in sys.path:
 
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as products
+import core_image
 
 SCHEMA = "crabc.x86_64-owned-calendar-products/v1"
 SOURCE_MOUNT = "/workspace"
 # The current core-evidence image after the nightly-2026-09-15 toolchain pin.
 # Reports from the retired image remain historical, not current admission.
-PINNED_IMAGE_ID = "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+PINNED_IMAGE_ID = core_image.CORE_IMAGE_ID
 SCOPE = ("time.clock-calendar",)
 FULL_MODE = "full-six-mode"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"

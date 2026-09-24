@@ -32,6 +32,7 @@ import header_declaration_inventory
 import native_declaration_abi
 import native_data_declarations
 import owned_errno_storage_lifecycle
+import core_image
 CONTRACT_PATH = MODULE_DIR / 'owned_public_data_variable_runtime.toml'
 SCHEMA = 'crabc.x86_64-owned-public-data-variable-runtime/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-owned-public-data-variable-runtime-contract/v1'
@@ -40,7 +41,7 @@ TARGET = 'x86_64-unknown-linux-musl'
 PINNED_MUSL_COMMIT = '9fa28ece75d8a2191de7c5bb53bed224c5947417'
 STATUS = 'component-verified'
 IMAGE_ENV = 'CRABC_PUBLIC_DATA_VARIABLE_RUNTIME_IMAGE_ID'
-IMAGE = 'crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d'
+IMAGE = core_image.CORE_IMAGE_REFERENCE
 COMMAND_TIMEOUT_SECONDS = 45
 GROUPS = (
     ('immutable-network-data', ('_ns_flagdata', 'in6addr_any', 'in6addr_loopback')),

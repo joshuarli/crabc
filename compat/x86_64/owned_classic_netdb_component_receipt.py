@@ -27,6 +27,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from rust_toolchain import pinned_toolchain
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import core_image
 
 SOURCE_MOUNT = "/workspace"
 SCHEMA = "crabc.x86_64-owned-classic-netdb-products/v1"
@@ -79,7 +82,7 @@ DYNAMIC_CELLS = (
     "dynamic-non-pie-direct",
 )
 FULL_CELLS = ("static", "static-pie", *DYNAMIC_CELLS)
-PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
 IMAGE_MANIFEST = "compat/x86_64/owned_classic_netdb_image_inputs.json"
 TOOLCHAIN = pinned_toolchain(ROOT)
 TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{TOOLCHAIN}-x86_64-unknown-linux-musl"

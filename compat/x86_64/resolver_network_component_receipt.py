@@ -29,9 +29,12 @@ ROOT = HERE.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import core_image
 
 SOURCE_MOUNT = "/workspace"
-PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
 IMAGE_MANIFEST = "compat/x86_64/owned_resolver_network_image_inputs.json"
 RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v2"
 SCOPE = ("libc.resolver",)

@@ -29,12 +29,13 @@ import owned_syscall_alias_authority as authority
 import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
 import owned_pthread_alias_contract_reader as pthread_reader
+import core_image
 
 SCHEMA = "crabc.x86_64-owned-syscall-alias-contract/v3"
 IMAGE_MANIFEST = MODULE_DIR / "owned-syscall-alias-image-inputs-current.json"
 STATUS = {"component_complete": True, "family_completion": False,
           "runtime_qualification": False, "promotion_ready": False, "public_support": False}
-IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+IMAGE = core_image.CORE_IMAGE_REFERENCE
 MUSL_SOURCE_COMMIT = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
 # The current runner expands to 47 parametrized ``run`` envelopes. The two
 # historical counts remain provenance, never a substitute for this exact

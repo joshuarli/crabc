@@ -38,6 +38,7 @@ from owned_pthread_timed_dynamic_authority import (
     PthreadTimedDynamicAuthorityError, require_pthread_timed_probe_functions,
 )
 from loader_debug_abi_evidence import Elf
+import core_image
 
 
 SCHEMA = "crabc.x86_64-owned-pthread-timed-feature-contract/v1"
@@ -51,7 +52,7 @@ SUCCESS_TRANSCRIPT = b"owned-pthread-timed-feature-contract-ok\n"
 TIMEOUT_SECONDS = 45
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 ROOT = Path(__file__).resolve().parents[2]
-PINNED_IMAGE = "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+PINNED_IMAGE = core_image.CORE_IMAGE_ID
 IMAGE_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 IMAGE_MANIFEST_PATH = ROOT / "compat/x86_64/owned_pthread_timed_feature_image_inputs_current.json"
 # The runner, reader, oracle wrapper, and supplied drivers consume only this

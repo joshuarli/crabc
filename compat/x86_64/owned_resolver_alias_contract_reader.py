@@ -31,12 +31,13 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
+import core_image
 
 SCHEMA = 'crabc.x86_64-owned-resolver-alias-contract/v1'
 COLLECTION_BEGIN_SCHEMA = 'crabc.x86_64-owned-resolver-alias-collection-begin/v1'
 STATUS = 'component-verified'
 COMPONENT = 'resolver-alias-private-bodies'
-IMAGE = 'crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d'
+IMAGE = core_image.CORE_IMAGE_REFERENCE
 IMAGE_MANIFEST = MODULE_DIR / 'owned_resolver_alias_image_inputs.json'
 MUSL_SOURCE_COMMIT = '9fa28ece75d8a2191de7c5bb53bed224c5947417'
 IMAGE_MARKER = 'CRABC_RESOLVER_ALIAS_IMAGE_ID'

@@ -20,7 +20,7 @@ readonly CHROOT=/usr/sbin/chroot
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly MUSL_SHARED=/opt/musl-1.2.6/lib/libc.so
-readonly IMAGE='crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d'
+readonly IMAGE="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import core_image; print(core_image.CORE_IMAGE_REFERENCE)' "$(dirname "${BASH_SOURCE[0]}")")"
 
 fail() { printf 'owned resolver alias receipt: %s\n' "$*" >&2; exit 1; }
 

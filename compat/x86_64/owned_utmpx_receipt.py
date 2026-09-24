@@ -40,11 +40,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
+import core_image
 
 SCHEMA = "crabc.x86_64-owned-utmpx-receipt/v1"
 COMMAND_SCHEMA = "crabc.x86_64-owned-utmpx-command/v2"
 SOURCE_MOUNT = "/workspace"
-PINNED_IMAGE_ID = "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+PINNED_IMAGE_ID = core_image.CORE_IMAGE_ID
 PINNED_IMAGE = "crabc-core-evidence@" + PINNED_IMAGE_ID
 IMAGE_MANIFEST = "compat/x86_64/owned_utmpx_current_image_inputs.json"
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")

@@ -31,6 +31,7 @@ import loader_runtime_registry_evidence as runtime_registry
 import native_abi_elf_facts as elf_facts
 import native_abi_inventory as inventory
 import owned_posix_product_evidence as product_evidence
+import core_image
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,7 +40,7 @@ SCHEMA = "crabc.x86_64-loader-structural-owner-receipt/v1"
 STATUS = "component-verified"
 COMPONENT = "loader-structural-owner"
 TARGET = "x86_64-unknown-linux-musl"
-PINNED_IMAGE = "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+PINNED_IMAGE = core_image.CORE_IMAGE_ID
 SOURCE_MOUNT = "/workspace"
 IMAGE_INPUT_PATHS = {
     "oracle_compiler": "/usr/local/bin/crabc-x86_64-musl-gcc",
