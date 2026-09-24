@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_usable_size, prepare_native_later_thread_arena,
 };
 
@@ -51,7 +51,7 @@ fn source_client_request(index: usize) -> usize {
 fn publish_concurrent_post_exit_os_singletons() -> [usize; LIVE_BLOCK_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let mut clients = [0; LIVE_BLOCK_COUNT];
 
         for (index, client) in clients.iter_mut().enumerate() {
@@ -114,7 +114,7 @@ fn concurrent_distinct_post_exit_page_releases_complete_without_retention() {
         let release_barrier = Arc::clone(&release_barrier);
         let terminal_free_barrier = Arc::clone(&terminal_free_barrier);
         releasers.push(std::thread::spawn(move || {
-            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+            assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             release_barrier.wait();
 
             let index = releaser;

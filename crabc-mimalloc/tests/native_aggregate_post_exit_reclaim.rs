@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena, ticket_zero_allocate,
     ticket_zero_free,
 };
@@ -38,7 +38,7 @@ fn native_aggregate_reclaims_its_final_mapped_regular_member_before_b_finishes()
 
     let (blocks_sender, blocks_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let direct_small = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A receives the direct-small aggregate sibling"),
@@ -98,7 +98,7 @@ fn native_aggregate_reclaims_its_final_mapped_regular_member_before_b_finishes()
     let (terminal_sender, terminal_receiver) = mpsc::sync_channel(0);
     let (finish_sender, finish_receiver) = mpsc::sync_channel(0);
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let direct_small = unsafe { core::ptr::NonNull::new_unchecked(direct_small as *mut u8) };
         let first_medium = unsafe { core::ptr::NonNull::new_unchecked(first_medium as *mut u8) };
         let final_medium = unsafe { core::ptr::NonNull::new_unchecked(final_medium as *mut u8) };

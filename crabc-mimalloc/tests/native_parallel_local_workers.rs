@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
-    ThreadFinishResult, attach_current_thread, finish_current_thread_native_after_user_destructors,
+    ThreadFinishResult, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_usable_size,
     prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
@@ -30,7 +30,7 @@ fn native_shadow_keeps_a_second_parked_worker_local_while_a_live_route_is_occupi
     let (owner_ready_sender, owner_ready_receiver) = mpsc::sync_channel(0);
     let (owner_release_sender, owner_release_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let block = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A creates the one parked live-owner publication"),
@@ -54,7 +54,7 @@ fn native_shadow_keeps_a_second_parked_worker_local_while_a_live_route_is_occupi
         .expect("A publishes its one live route before B attaches");
     let (worker_sender, worker_receiver) = mpsc::sync_channel(0);
     let worker = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let result = match native_allocate_aligned(73, 16, false) {
             NativePageAllocationResult::Allocated(block) => {
                 // SAFETY: B's pointer remains in B's private native ledger.

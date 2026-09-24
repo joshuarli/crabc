@@ -14,8 +14,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
     native_runtime_test_fail_next_unmap, prepare_native_later_thread_arena, ticket_zero_allocate,
 };
@@ -75,7 +74,7 @@ fn post_exit_failed_os_release_seals_one_terminal_source_owner() {
 
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         sender
             .send(publish_exact_os_singleton_before_owner_exit())
             .expect("A supplies only the exact live C-shaped client");
@@ -110,7 +109,7 @@ fn post_exit_failed_os_release_seals_one_terminal_source_owner() {
     );
 
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let failure = native_runtime_test_fail_next_unmap();
         // SAFETY: A published this exact still-live C client before its owner
         // exited. B holds no A owner, page, list, map, or release capability;

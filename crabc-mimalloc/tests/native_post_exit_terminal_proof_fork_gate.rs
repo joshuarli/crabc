@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
-    after_fork_child, after_fork_parent, attach_current_thread, before_fork,
+    after_fork_child, after_fork_parent, before_fork,
     finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena,
     process_is_active, ticket_zero_allocate, ticket_zero_free,
@@ -48,7 +48,7 @@ fn wait_for_disabled_child(pid: i32) {
 
 fn fork_post_exit_child() -> ! {
     after_fork_child(true);
-    if process_is_active() || attach_current_thread() != ThreadAttachResult::Inactive {
+    if process_is_active() || native_runtime_test_support::attach_current_thread() != ThreadAttachResult::Inactive {
         crabc_core::process::exit_immediately(101);
     }
     crabc_core::process::exit_immediately(0);
@@ -115,7 +115,7 @@ fn post_exit_page_free_keeps_fork_child_disabled_until_b_finishes() {
 
     let (owner_sender, owner_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         owner_sender
             .send(allocate_owner_exit_aggregate())
             .expect("A publishes only exact C-shaped post-exit inputs");
@@ -142,7 +142,7 @@ fn post_exit_page_free_keeps_fork_child_disabled_until_b_finishes() {
     let (post_exit_sender, post_exit_receiver) = mpsc::sync_channel(0);
     let (release_sender, release_receiver) = mpsc::sync_channel(0);
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         for address in [clients[5], clients[4], clients[3], clients[2], clients[1], clients[0]] {
             free_exact_post_exit_client(address);
         }

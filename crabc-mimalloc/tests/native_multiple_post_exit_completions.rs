@@ -5,8 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_reallocate, native_runtime_fork_admission_test_audit, native_usable_size,
     prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
 };
@@ -71,7 +70,7 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
 fn publish_owner_exit_page_map_sources() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         sender
             .send(allocate_owner_exit_aggregate())
             .expect("A publishes only its exact C-shaped clients before owner exit");
@@ -137,7 +136,7 @@ fn one_b_consumes_multiple_post_exit_page_map_sources_while_initial_owner_remain
     let (terminal_sender, terminal_receiver) = mpsc::sync_channel(0);
     let (finish_sender, finish_receiver) = mpsc::sync_channel(0);
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             1,

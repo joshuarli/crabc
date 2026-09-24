@@ -12,7 +12,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit,
     native_runtime_live_client_page_map_span_test_audit,
@@ -546,7 +546,7 @@ fn exercise_later_natural_alignment_small_requests() {
         "the initial persistent owner prepares the later receiver's first-arena pair before small C-aligned clients"
     );
     let worker = std::thread::spawn(|| {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         exercise_natural_alignment_small_clients();
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
@@ -644,7 +644,7 @@ fn exercise_mapped_abandoned_regular_allocation(
 
     let (owner_ready_sender, owner_ready_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let source_regular = match native_allocate_aligned(source_request, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             NativePageAllocationResult::Unavailable
@@ -759,7 +759,7 @@ fn exercise_mapped_abandoned_regular_allocation(
             // use the client until after the joined one-page reuse audit.
             let (consumer_finished_sender, consumer_finished_receiver) = mpsc::sync_channel(1);
             let consumer = std::thread::spawn(move || {
-                assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
                 // B receives no A allocation address, source page, or
                 // post-exit route. This is the ordinary generic native
                 // allocation path only.

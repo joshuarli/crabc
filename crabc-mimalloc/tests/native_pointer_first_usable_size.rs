@@ -12,7 +12,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_runtime_lifecycle_test_audit, native_usable_size,
 };
 
@@ -76,7 +76,7 @@ fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_th
     let (later_sender, later_receiver) = mpsc::sync_channel(0);
     let (resume_sender, resume_receiver) = mpsc::sync_channel(0);
     let worker = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let later = allocate_aligned_current(83, 256);
         assert_eq!(
             later.as_ptr().addr() & 255,

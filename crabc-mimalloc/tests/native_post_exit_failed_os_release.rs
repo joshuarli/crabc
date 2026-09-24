@@ -5,8 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_runtime_fork_admission_test_audit, native_runtime_test_fail_next_unmap,
     prepare_native_later_thread_arena, ticket_zero_allocate,
 };
@@ -60,7 +59,7 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
 
     let (owner_sender, owner_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         owner_sender
             .send(allocate_mixed_owner_exit_aggregate())
             .expect("A gives B only the exact OS client before owner exit");
@@ -83,7 +82,7 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
     );
 
     let consumer = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             1,

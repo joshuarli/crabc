@@ -11,7 +11,7 @@ mod native_runtime_test_support;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_reallocate, native_runtime_lifecycle_test_audit,
     native_usable_size, prepare_native_later_thread_arena,
 };
@@ -95,7 +95,7 @@ fn assert_released_to_baseline(
 
 fn allocate_owner_exit_client() -> usize {
     std::thread::spawn(|| {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let block = match native_allocate_aligned(OLD_REQUEST, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             NativePageAllocationResult::Unavailable
@@ -251,7 +251,7 @@ fn native_pointer_first_nonlocal_reallocate_audits_failure_and_one_old_consumpti
     );
 
     let observation = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let successful_old = live_block(successful_address);
         let anchor = match native_allocate_aligned(LOCAL_ANCHOR_REQUEST, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,

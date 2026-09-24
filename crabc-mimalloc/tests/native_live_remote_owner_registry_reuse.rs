@@ -5,8 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_usable_size, prepare_native_later_thread_arena,
     ticket_zero_allocate, ticket_zero_free,
 };
@@ -25,7 +24,7 @@ fn spawn_live_persistent_owner(
     resume: mpsc::Receiver<()>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let remote = match native_allocate_aligned(remote_request, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A creates its exact live remote client"),
@@ -64,7 +63,7 @@ fn spawn_live_persistent_owner(
 
 fn release_exact_live_client(address: usize, request: usize) {
     std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         // SAFETY: the paired A keeps this exact client live in its persistent
         // owner until B's PageMap-derived operation finishes.
         let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };

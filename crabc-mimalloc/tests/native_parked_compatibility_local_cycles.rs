@@ -3,8 +3,7 @@ mod native_runtime_test_support;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_reallocate, prepare_native_later_thread_arena, ticket_zero_allocate,
     ticket_zero_free,
 };
@@ -43,7 +42,7 @@ fn parked_compatibility_worker_repeats_local_cycles_then_returns_ticket_zero_to_
     );
 
     std::thread::spawn(|| {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
 
         for &(request, replacement_request, seed) in LOCAL_COMPATIBILITY_CYCLES {
             let original = allocate_local_compatibility_block(request);

@@ -75,3 +75,29 @@ pub(crate) fn initialize(page_size_bytes: usize) -> bool {
 pub(crate) fn initialize(page_size_bytes: usize) -> bool {
     initialize_process(page_size_bytes)
 }
+
+/// Attaches the calling test thread the way libc's x86-64 pthread start does.
+///
+/// Selected libc publishes and registers the worker's allocator-TLS descriptor
+/// before its first allocator entry; an unregistered descriptor is refused by
+/// the operation admission and reports `Inactive`. A std test thread has no
+/// libc start routine, so this performs that registration first. It is
+/// idempotent for an already registered thread, including the initial one.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn attach_current_thread() -> crabc_mimalloc::__crabc_runtime::ThreadAttachResult {
+    use crabc_mimalloc::__crabc_runtime::{
+        current_native_allocator_thread_descriptor,
+        register_current_native_allocator_worker_descriptor,
+    };
+    let descriptor = current_native_allocator_thread_descriptor();
+    // SAFETY: the descriptor belongs to this thread's allocator TLS, which
+    // stays mapped until the test thread exits. No libc registry visits these
+    // test threads, so no terminal or fork scan can observe the record.
+    if !unsafe { register_current_native_allocator_worker_descriptor(descriptor) } {
+        return crabc_mimalloc::__crabc_runtime::ThreadAttachResult::Inactive;
+    }
+    crabc_mimalloc::__crabc_runtime::attach_current_thread()
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) use crabc_mimalloc::__crabc_runtime::attach_current_thread;

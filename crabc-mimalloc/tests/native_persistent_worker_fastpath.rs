@@ -11,7 +11,7 @@ use std::sync::{Arc, Barrier, Condvar, Mutex, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_reallocate,
     native_runtime_current_thread_attachment_test_audit, native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit, native_runtime_metadata_page_map_test_audit,
@@ -76,7 +76,7 @@ fn run_independent_local_worker(
     teardown: WorkerTeardown,
     reclaim_turn: Option<Arc<(Mutex<usize>, Condvar)>>,
 ) -> Option<usize> {
-    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+    assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
 
     let anchor = allocate_local(ANCHOR_REQUEST);
     // SAFETY: this worker has the only current-owner capability for its
@@ -399,7 +399,7 @@ fn attach_pins_a_page_empty_owner_until_normal_no_allocation_teardown() {
         .expect("the initialized metadata identity remains live");
 
     let attached = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let audit = native_runtime_current_thread_attachment_test_audit();
         assert_eq!(
             audit.persistent_owner_installed, 1,

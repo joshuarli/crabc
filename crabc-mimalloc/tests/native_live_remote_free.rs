@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
-    ThreadFinishResult, attach_current_thread, finish_current_thread_native_after_user_destructors,
+    ThreadFinishResult, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena,
     native_usable_size, ticket_zero_allocate, ticket_zero_free, TicketZeroPageAllocationResult,
     TicketZeroPageFreeResult,
@@ -32,7 +32,7 @@ fn native_live_owner_remote_free_uses_pointer_first_page_map() {
     let (free_sender, free_receiver) = mpsc::sync_channel(0);
     let (resume_sender, resume_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let remote = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A receives the remote C-shaped client"),
@@ -84,7 +84,7 @@ fn native_live_owner_remote_free_uses_pointer_first_page_map() {
         .recv()
         .expect("A keeps its live persistent source engine before B enters");
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         // SAFETY: A keeps this exact native allocation live until B publishes
         // its source-shaped remote free and finishes its own operation.
         let remote = unsafe { core::ptr::NonNull::new_unchecked(remote as *mut u8) };
@@ -142,7 +142,7 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
     let (remote_sender, remote_receiver) = mpsc::sync_channel(0);
     let (resume_sender, resume_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let first = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A receives the first remote C-shaped client"),
@@ -212,7 +212,7 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
     .map(|(address, request, first_byte, last_byte)| {
         let start = Arc::clone(&start);
         std::thread::spawn(move || {
-            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+            assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             // SAFETY: A keeps this exact allocation live until this publisher
             // completes its source-shaped PageMap remote free.
             let remote = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
@@ -276,7 +276,7 @@ fn native_live_owner_remote_free_from_worker_keeps_b_local_owner() {
     let (remote_sender, remote_receiver) = mpsc::sync_channel(0);
     let (resume_sender, resume_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let remote = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A creates the exact live source client"),
@@ -322,7 +322,7 @@ fn native_live_owner_remote_free_from_worker_keeps_b_local_owner() {
     });
 
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         owner_ready_receiver
             .recv()
             .expect("B waits for A's live owner before creating its local state");

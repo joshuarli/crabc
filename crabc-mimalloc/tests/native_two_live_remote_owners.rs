@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_usable_size, prepare_native_later_thread_arena,
     ticket_zero_allocate, ticket_zero_free,
 };
@@ -37,7 +37,7 @@ fn two_live_native_owners_accept_independent_pointer_first_remote_frees() {
     let (second_resume_sender, second_resume_receiver) = mpsc::sync_channel(0);
 
     let first_owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let remote = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A1 creates its live native remote client"),
@@ -87,7 +87,7 @@ fn two_live_native_owners_accept_independent_pointer_first_remote_frees() {
         .expect("A1 remains live before A2 creates its independent live client");
 
     let second_owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let remote = match native_allocate_aligned(53, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A2 creates its independently live remote client"),
@@ -133,7 +133,7 @@ fn two_live_native_owners_accept_independent_pointer_first_remote_frees() {
         .recv()
         .expect("A2 remains live before either B worker starts");
     let first_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let (address, request, first_byte, last_byte) = first;
         // SAFETY: A1 keeps this exact allocation live until B1 finishes its
         // source-shaped pointer-first remote free.
@@ -160,7 +160,7 @@ fn two_live_native_owners_accept_independent_pointer_first_remote_frees() {
     });
 
     let second_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let (address, request, first_byte, last_byte) = second;
         // SAFETY: A2 keeps this exact allocation live until B2 finishes its
         // source-shaped pointer-first remote free.

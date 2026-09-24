@@ -10,8 +10,7 @@ use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
     native_usable_size, prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
 };
@@ -72,7 +71,7 @@ fn exact_post_exit_block(address: usize) -> core::ptr::NonNull<u8> {
 fn publish_os_singleton_sources() -> [OsSingletonInput; OS_SINGLETON_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let inputs: [OsSingletonInput; OS_SINGLETON_COUNT] = core::array::from_fn(|index| {
             let alignment = os_singleton_alignment(index);
             let block = match native_allocate_aligned(OS_SINGLETON_REQUEST, alignment, false) {
@@ -131,7 +130,7 @@ fn release_os_singleton_source(
     start: Arc<Barrier>,
     source_observed: Arc<Barrier>,
 ) -> OsSingletonObservation {
-    let attachment = attach_current_thread();
+    let attachment = native_runtime_test_support::attach_current_thread();
     // Every fresh B reaches this source-operation boundary without a turn
     // scheduler or retry bridge. An attachment failure still joins the fixed
     // barriers so the regression fails boundedly instead of stranding peers.

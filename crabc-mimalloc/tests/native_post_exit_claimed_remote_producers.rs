@@ -6,7 +6,7 @@ use std::sync::{Arc, Barrier, mpsc};
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_usable_size, prepare_native_later_thread_arena,
     ticket_zero_allocate, ticket_zero_free,
 };
@@ -42,7 +42,7 @@ fn post_exit_low_bit_claim_collects_exact_same_page_remote_producers() {
 fn run_claim_epoch(producer_count: usize) {
     let (clients_sender, clients_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let mut clients = Vec::with_capacity(producer_count);
         for index in 0..producer_count {
             let client = match native_allocate_aligned(REQUEST, 16, false) {
@@ -82,7 +82,7 @@ fn run_claim_epoch(producer_count: usize) {
     for (index, address) in clients.into_iter().enumerate() {
         let start = Arc::clone(&start);
         producers.push(std::thread::spawn(move || {
-            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+            assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             // SAFETY: this is the one exact current client allocated by the
             // finished owner; no other producer receives the same address.
             let client = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };

@@ -12,7 +12,7 @@ use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit, prepare_native_later_thread_arena,
 };
@@ -41,7 +41,7 @@ fn allocate_local(request: usize) -> core::ptr::NonNull<u8> {
 }
 
 fn run_local_worker(worker: usize, ready: mpsc::SyncSender<()>, start: Arc<Barrier>) {
-    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+    assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
 
     // This first allocation creates and installs the later worker's persistent
     // compiler-TLS owner. The concurrent sequence below is therefore a

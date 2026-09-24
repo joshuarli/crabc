@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
-    ThreadFinishResult, attach_current_thread, finish_current_thread_native_after_user_destructors,
+    ThreadFinishResult, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena,
 };
 
@@ -30,7 +30,7 @@ fn joined_source_publication_collects_before_live_sibling_owner_exit() {
 
     let (live_sender, live_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let source_published = match native_allocate_aligned(SOURCE_PUBLISHED_REQUEST, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A creates the source-published direct-small client"),
@@ -43,7 +43,7 @@ fn joined_source_publication_collects_before_live_sibling_owner_exit() {
         let source_published = source_published.as_ptr().addr();
         std::thread::scope(|scope| {
             let publisher = scope.spawn(move || {
-                assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
                 // SAFETY: A keeps this exact direct-small client live until
                 // the joined publisher has completed its pointer-first free.
                 let source_published = unsafe {
@@ -83,7 +83,7 @@ fn joined_source_publication_collects_before_live_sibling_owner_exit() {
         .expect("A completes source collect-abandon before the post-exit free");
 
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         // SAFETY: A supplied this exact still-live medium address before its
         // collect-abandon exit. The fresh releaser must use pointer-derived
         // PageMap/page facts; it receives no source route or client ledger.

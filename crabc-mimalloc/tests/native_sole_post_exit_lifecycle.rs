@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
-    ThreadFinishResult, attach_current_thread, finish_current_thread_native_after_user_destructors,
+    ThreadFinishResult, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_reallocate, native_usable_size,
     prepare_native_later_thread_arena,
     ticket_zero_allocate, ticket_zero_free, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
@@ -32,7 +32,7 @@ fn native_sole_post_exit_replacement_releases_the_dormant_pair_while_b_remains_a
 
     let (block_sender, block_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let returned_medium = match native_allocate_aligned(64 * 1024, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("owner receives its first native medium client"),
@@ -83,7 +83,7 @@ fn native_sole_post_exit_replacement_releases_the_dormant_pair_while_b_remains_a
     let release_b = Arc::new(Barrier::new(2));
     let b_release = Arc::clone(&release_b);
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         #[cfg(feature = "native-runtime-test-audit")]
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,

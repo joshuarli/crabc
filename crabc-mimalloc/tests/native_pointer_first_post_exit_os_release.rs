@@ -15,7 +15,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit, native_runtime_test_fail_next_unmap,
     prepare_native_later_thread_arena,
@@ -78,7 +78,7 @@ fn native_free_pointer_first_post_exit_os_release_is_terminal_without_retry() {
 
     let (owner_sender, owner_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         owner_sender
             .send(allocate_mixed_owner_exit_aggregate_os_singleton())
             .expect("A gives the later free only an exact C-shaped address");
@@ -113,7 +113,7 @@ fn native_free_pointer_first_post_exit_os_release_is_terminal_without_retry() {
     );
 
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
 
         // B first owns and releases an unrelated local client. Its later
         // foreign free receives only A's raw C-shaped address: no A owner,

@@ -3,8 +3,7 @@ mod native_runtime_test_support;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
 };
 
@@ -15,7 +14,7 @@ fn current_page_size() -> usize {
 
 fn publish_one_post_exit_worker_client(request: usize) -> usize {
     std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let block = match native_allocate_aligned(request, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             NativePageAllocationResult::Unavailable

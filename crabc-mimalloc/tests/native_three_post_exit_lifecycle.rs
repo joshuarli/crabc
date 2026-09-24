@@ -6,7 +6,7 @@ use std::sync::{Arc, Barrier, mpsc};
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena, ticket_zero_allocate,
     ticket_zero_free,
 };
@@ -75,7 +75,7 @@ fn free_exact_native_post_exit_client(address: usize) {
 fn publish_exited_owner() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         sender
             .send(allocate_owner_exit_aggregate())
             .expect("A publishes only its C-shaped post-exit client inputs");
@@ -182,7 +182,7 @@ fn three_exited_native_owners_free_aggregates_through_page_state_in_non_fifo_ord
     let (release_third_sender, release_third_receiver) = mpsc::sync_channel(0);
 
     let first_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         first_attached.wait();
         for (index, address) in first.into_iter().enumerate() {
             first_turn_receiver
@@ -209,7 +209,7 @@ fn three_exited_native_owners_free_aggregates_through_page_state_in_non_fifo_ord
     });
 
     let second_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         second_attached.wait();
         for address in second {
             second_turn_receiver
@@ -234,7 +234,7 @@ fn three_exited_native_owners_free_aggregates_through_page_state_in_non_fifo_ord
     });
 
     let third_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         third_attached.wait();
         for address in third {
             third_turn_receiver

@@ -8,8 +8,7 @@ mod native_runtime_test_support;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_reallocate, native_runtime_lifecycle_test_audit, native_usable_size,
     prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
 };
@@ -59,7 +58,7 @@ fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
         .expect("the initialized process has a quiescent lifecycle audit");
 
     std::thread::spawn(|| {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
 
         // Keep one regular page-owned client live while the repeating client
         // cycles.  This prevents an all-free owner transition from masking
@@ -161,7 +160,7 @@ fn live_persistent_owner_exits_without_scheduler_handoff() {
             "the live ticket-zero owner establishes the audit baseline before its worker exits",
         );
         std::thread::spawn(|| {
-            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+            assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             let _live = allocate_local(81);
             assert_eq!(
                 finish_current_thread_native_after_user_destructors(),

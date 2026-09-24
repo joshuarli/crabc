@@ -3,7 +3,7 @@ mod native_runtime_test_support;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena, ticket_zero_allocate,
     ticket_zero_free, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
 };
@@ -25,7 +25,7 @@ fn initial_thread_frees_exact_client_after_worker_owner_exit() {
     );
 
     let worker = std::thread::spawn(|| {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let block = match native_allocate_aligned(16, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             NativePageAllocationResult::Unavailable

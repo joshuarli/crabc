@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_reallocate,
     native_usable_size,
 };
@@ -136,7 +136,7 @@ fn native_pointer_reallocate_replaces_live_foreign_sources_through_current_owner
     let (owner_sender, owner_receiver) = mpsc::sync_channel(0);
     let (resume_sender, resume_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let local = match native_allocate_aligned(53, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             NativePageAllocationResult::Unavailable

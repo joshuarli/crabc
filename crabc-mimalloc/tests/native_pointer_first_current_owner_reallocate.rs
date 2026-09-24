@@ -10,7 +10,7 @@ mod native_runtime_test_support;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_reallocate, native_runtime_lifecycle_test_audit,
     native_usable_size, prepare_native_later_thread_arena,
 };
@@ -104,7 +104,7 @@ fn native_current_owner_reallocate_keeps_aligned_initial_and_later_paths_direct(
     let later_baseline = native_runtime_lifecycle_test_audit()
         .expect("the later-owner phase starts from a quiescent scalar baseline");
     let worker = std::thread::spawn(|| {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let later = allocate_aligned_current(83, 256);
         assert_eq!(
             later.as_ptr().addr() & 255,

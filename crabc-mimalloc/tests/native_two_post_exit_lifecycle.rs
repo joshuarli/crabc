@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
-    ThreadFinishResult, attach_current_thread, finish_current_thread_native_after_user_destructors,
+    ThreadFinishResult, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena,
 };
 
@@ -77,7 +77,7 @@ fn two_owner_exit_aggregates_free_through_pointer_page_state() {
 
     let (first_sender, first_receiver) = mpsc::sync_channel(0);
     let first_owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         first_sender
             .send(allocate_owner_exit_aggregate())
             .expect("A1 publishes only its C-shaped detached client inputs");
@@ -96,7 +96,7 @@ fn two_owner_exit_aggregates_free_through_pointer_page_state() {
 
     let (second_sender, second_receiver) = mpsc::sync_channel(0);
     let second_owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         second_sender
             .send(allocate_owner_exit_aggregate())
             .expect("A2 publishes only its C-shaped detached client inputs");
@@ -121,7 +121,7 @@ fn two_owner_exit_aggregates_free_through_pointer_page_state() {
     let turn_first_from_second = turn_first_sender.clone();
 
     let first_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         first_attached.wait();
         for address in first {
             turn_first_receiver
@@ -140,7 +140,7 @@ fn two_owner_exit_aggregates_free_through_pointer_page_state() {
     });
 
     let second_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         second_attached.wait();
         for (index, address) in second.into_iter().enumerate() {
             turn_second_receiver

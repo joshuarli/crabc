@@ -5,8 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_runtime_fork_admission_test_audit, prepare_native_later_thread_arena,
     ticket_zero_allocate, ticket_zero_free,
 };
@@ -57,7 +56,7 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
 fn publish_owner_exit_page_map_sources() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         sender
             .send(allocate_owner_exit_aggregate())
             .expect("A publishes only its exact PageMap source clients before source owner exit");
@@ -108,7 +107,7 @@ fn post_exit_page_map_frees_do_not_block_live_remote_publication() {
     let (remote_sender, remote_receiver) = mpsc::sync_channel(0);
     let (resume_sender, resume_receiver) = mpsc::sync_channel(0);
     let live_owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let remote = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("C creates one live exact source client"),
@@ -154,7 +153,7 @@ fn post_exit_page_map_frees_do_not_block_live_remote_publication() {
         .expect("C keeps its live persistent owner while B frees A's post-exit sources");
 
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             2,

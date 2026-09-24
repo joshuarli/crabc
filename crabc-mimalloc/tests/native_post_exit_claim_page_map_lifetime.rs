@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_usable_size, prepare_native_later_thread_arena,
 };
 
@@ -62,7 +62,7 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
     let leader_address = clients[0];
     let leader_ready = Arc::clone(&source_ready);
     let leader = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let leader_client = exact_client(leader_address);
         assert_live_source_client(leader_client, 0);
         leader_ready.wait();
@@ -91,7 +91,7 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
         let source_ready = Arc::clone(&source_ready);
         let follower_start = Arc::clone(&follower_start);
         followers.push(std::thread::spawn(move || {
-            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+            assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             let client = exact_client(address);
             assert_live_source_client(client, index);
             source_ready.wait();
@@ -178,7 +178,7 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
 fn publish_exited_owner_clients() -> [usize; PRODUCER_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let mut clients = [0; PRODUCER_COUNT];
         for (index, client) in clients.iter_mut().enumerate() {
             let block = match native_allocate_aligned(REQUEST, 16, false) {

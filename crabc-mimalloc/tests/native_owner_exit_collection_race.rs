@@ -13,8 +13,7 @@ use std::time::{Duration, Instant};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
     native_runtime_test_arm_owner_exit_collection_rendezvous, native_usable_size,
     prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
@@ -102,7 +101,7 @@ fn run_owner_exit_collection_race(producer_count: usize) {
     let (racing_done_sender, racing_done_receiver) = mpsc::channel();
 
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
 
         let seed = match native_allocate_aligned(REQUEST, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
@@ -166,7 +165,7 @@ fn run_owner_exit_collection_race(producer_count: usize) {
         let publish_racing_clients = Arc::clone(&publish_racing_clients);
         let racing_done_sender = racing_done_sender.clone();
         publishers.push(std::thread::spawn(move || {
-            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+            assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             // SAFETY: A supplied this exact still-current C-shaped client to
             // this one B. B receives neither A's page nor an owner capability.
             let racing_client = unsafe {

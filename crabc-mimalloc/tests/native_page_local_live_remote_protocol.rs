@@ -6,7 +6,7 @@ use std::sync::{Arc, Barrier, mpsc};
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_usable_size, prepare_native_later_thread_arena,
     ticket_zero_allocate, ticket_zero_free,
 };
@@ -45,7 +45,7 @@ fn run_live_remote_epoch(producer_count: usize) {
 
     let owner_start = Arc::clone(&start);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
 
         let mut remote_clients = Vec::with_capacity(producer_count);
         for index in 0..producer_count {
@@ -112,7 +112,7 @@ fn run_live_remote_epoch(producer_count: usize) {
         let start = Arc::clone(&start);
         let publisher_done_sender = publisher_done_sender.clone();
         publishers.push(std::thread::spawn(move || {
-            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+            assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             // SAFETY: the owner has published one exact current source client
             // and waits for this producer to consume it before teardown.
             let remote = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };

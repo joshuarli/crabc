@@ -5,8 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_reallocate, native_usable_size, prepare_native_later_thread_arena, ticket_zero_allocate,
     ticket_zero_free,
 };
@@ -89,7 +88,7 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
 
     let (owner_sender, owner_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         owner_sender
             .send(allocate_owner_exit_aggregate())
             .expect("A publishes only exact C-shaped post-exit inputs");
@@ -119,7 +118,7 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
 
     let (local_sender, local_receiver) = mpsc::sync_channel(0);
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let local = match native_allocate_aligned(53, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("B establishes its own persistent local native owner"),
@@ -279,7 +278,7 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
     );
 
     let final_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         // SAFETY: B published this exact local address before B exited. Its
         // page state remains the only source authority for C's operation.
         let local = unsafe { core::ptr::NonNull::new_unchecked(local as *mut u8) };

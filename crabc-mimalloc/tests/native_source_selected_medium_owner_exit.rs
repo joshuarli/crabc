@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
-    ThreadFinishResult, attach_current_thread, finish_current_thread_native_after_user_destructors,
+    ThreadFinishResult, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena,
 };
 
@@ -33,7 +33,7 @@ fn native_owner_exit_selects_live_medium_after_retired_large_prepass() {
 
     let (live_sender, live_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let retired_large = match native_allocate_aligned(RETIRED_LARGE_REQUEST, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A creates the regular-large source page"),
@@ -75,7 +75,7 @@ fn native_owner_exit_selects_live_medium_after_retired_large_prepass() {
         .expect("A completes the source-ordered owner-exit traversal");
 
     let releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         // SAFETY: A completed source owner exit after sending this exact live
         // client. B has no former-Theap or geometry capability; it exercises
         // only the normal pointer-derived post-exit free.

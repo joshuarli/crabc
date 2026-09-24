@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena, ticket_zero_allocate,
     ticket_zero_free,
 };
@@ -125,7 +125,7 @@ fn split_releasers_free_mixed_post_exit_clients_through_page_state() {
 
     let (owner_sender, owner_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         owner_sender
             .send(allocate_owner_exit_aggregate())
             .expect("A publishes only exact C-shaped post-exit free inputs");
@@ -154,7 +154,7 @@ fn split_releasers_free_mixed_post_exit_clients_through_page_state() {
     }
 
     let first_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
 
         // Preserve the mixed aggregate's singleton/large release order, then
         // let a separate worker consume the remaining regular-page clients.
@@ -196,7 +196,7 @@ fn split_releasers_free_mixed_post_exit_clients_through_page_state() {
     );
 
     let second_releaser = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
 
         free_post_exit_client(clients[2]);
         free_post_exit_client(clients[1]);

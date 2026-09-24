@@ -4,8 +4,7 @@
 mod native_runtime_test_support;
 
 use crabc_mimalloc::__crabc_runtime::{
-    SelectedProcessDoneResult, ThreadAttachResult, attach_current_thread,
-    finish_selected_default_release_process_after_user_atexit,
+    SelectedProcessDoneResult, ThreadAttachResult, finish_selected_default_release_process_after_user_atexit,
     native_runtime_current_thread_attachment_test_audit, prepare_native_later_thread_arena,
 };
 
@@ -34,7 +33,7 @@ fn attachment_only_worker_may_run_source_process_done() {
     assert!(native_runtime_test_support::initialize(page_size));
     assert!(prepare_native_later_thread_arena());
     std::thread::spawn(|| {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let attached = native_runtime_current_thread_attachment_test_audit();
         assert_eq!(attached.persistent_owner_installed, 1);
         assert_eq!(attached.page_engine_active, 0);

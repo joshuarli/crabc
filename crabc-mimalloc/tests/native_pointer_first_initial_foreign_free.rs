@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free,
 };
 
@@ -50,7 +50,7 @@ fn native_free_publishes_an_aligned_initial_client_from_a_foreign_owner() {
     let (publish_sender, publish_receiver) = mpsc::sync_channel(0);
     let remote_address = remote.as_ptr().addr();
     let worker = std::thread::spawn(move || {
-        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let local = match native_allocate_aligned(41, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             NativePageAllocationResult::Unavailable
