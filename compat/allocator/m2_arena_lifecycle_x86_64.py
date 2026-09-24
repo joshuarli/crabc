@@ -30,8 +30,8 @@ TARGET = "arena::owned::tests::emit_native_arena_lifecycle_trace"
 FIELD = re.compile(r"m2\.arena\.lifecycle\.([0-9]+)=(-?[0-9]+)")
 # libtest's `--nocapture` output places the first field after this delimiter.
 RUST_INLINE_PREFIX = f"test {TARGET} ... "
-# Scenario markers are `-1000 - scenario`; the final marker is scenario 14.
-FINAL_MARKER = -1014
+# Scenario markers are `-1000 - scenario`; the final marker is scenario 15.
+FINAL_MARKER = -1015
 
 
 def parse_trace(output: str, *, source: str) -> list[int]:

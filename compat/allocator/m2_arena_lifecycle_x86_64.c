@@ -19,6 +19,7 @@
   Kernel alignment luck may change `mmap_calls`, so that counter is excluded.
 */
 #include "static.c"
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -228,6 +229,33 @@ static lifecycle_claim_t object(lifecycle_owner_t* owner, size_t size, size_t al
   emit_stats_delta(owner, before);
   emit_arenas_from(owner, arenas_before);
   return result;
+}
+
+/* One of eight concurrent workers in scenario 14: source `mi_arenas_try_alloc`
+   of one slice with its own thread sequence, then release after the parent
+   has recorded the combined result. */
+typedef struct concurrent_worker_s {
+  lifecycle_owner_t* owner;
+  pthread_barrier_t* start;
+  pthread_barrier_t* claimed;
+  pthread_barrier_t* release;
+  size_t tseq;
+  void* p;
+  mi_memid_t memid;
+} concurrent_worker_t;
+
+static void* concurrent_worker(void* raw) {
+  concurrent_worker_t* const worker = (concurrent_worker_t*)raw;
+  worker->memid = _mi_memid_none();
+  pthread_barrier_wait(worker->start);
+  worker->p = mi_arenas_try_alloc(&worker->owner->heap, 1, MI_ARENA_SLICE_ALIGN, false, true, NULL,
+                                  worker->tseq, -1, &worker->memid);
+  pthread_barrier_wait(worker->claimed);
+  pthread_barrier_wait(worker->release);
+  if (worker->p != NULL) {
+    _mi_arenas_free(&worker->owner->subproc, worker->p, MI_ARENA_SLICE_SIZE, worker->memid);
+  }
+  return NULL;
 }
 
 /* Source `_mi_arenas_free` of one live claim. */
@@ -569,6 +597,87 @@ int main(void) {
     release(owner, &theap);
   }
 
+  /* 14. Concurrent fresh reservation: with the only arena exhausted, eight
+         workers enter mi_arenas_try_alloc together. The arena_reserve_lock
+         unchanged-count check serializes reservation but does not make it
+         unique: a worker whose search failed before another's publication
+         but whose count read follows it reserves again. Only
+         interleaving-independent relations are recorded: every worker
+         claims a distinct slice of a fresh arena, between one and eight
+         identically sized arenas are reserved, and statistics account for
+         exactly those arenas. */
   emit_marker(14);
+  {
+    configure(true, 32 * 1024, 0, false);
+    lifecycle_owner_t* const owner = fresh_owner();
+    mi_arena_id_t existing_id = _mi_arena_id_none();
+    require(mi_reserve_os_memory_ex2(&owner->subproc, MI_ARENA_MIN_SIZE, false, false, false, &existing_id) == 0);
+    mi_arena_t* const existing = _mi_arena_from_id(existing_id);
+    lifecycle_claim_t fillers[MI_ARENA_MIN_SIZE / MI_ARENA_SLICE_SIZE];
+    size_t filled = 0;
+    for (;;) {
+      require(filled < sizeof(fillers) / sizeof(fillers[0]));
+      fillers[filled].slices = 1;
+      fillers[filled].start = mi_arenas_try_alloc(&owner->heap, 1, MI_ARENA_SLICE_ALIGN, false, true, existing,
+                                                  0, -1, &fillers[filled].memid);
+      if (fillers[filled].start == NULL) break;
+      filled++;
+    }
+    emit((int64_t)filled);
+    pthread_barrier_t start, claimed, release_all;
+    pthread_barrier_init(&start, NULL, 8);
+    pthread_barrier_init(&claimed, NULL, 9);
+    pthread_barrier_init(&release_all, NULL, 9);
+    concurrent_worker_t workers[8];
+    pthread_t threads[8];
+    const lifecycle_stats_t before = stats_of(owner);
+    for (size_t i = 0; i < 8; i++) {
+      workers[i] = (concurrent_worker_t){ owner, &start, &claimed, &release_all, i, NULL, _mi_memid_none() };
+      require(pthread_create(&threads[i], NULL, concurrent_worker, &workers[i]) == 0);
+    }
+    pthread_barrier_wait(&claimed);
+    const lifecycle_stats_t after = stats_of(owner);
+    const int64_t fresh = (int64_t)mi_arenas_get_count(&owner->subproc) - 1;
+    mi_arena_t* const first_fresh = mi_arena_from_index(&owner->subproc, 1);
+    size_t claimed_count = 0;
+    bool in_fresh = true, distinct = true;
+    for (size_t i = 0; i < 8; i++) {
+      if (workers[i].p == NULL) continue;
+      claimed_count++;
+      in_fresh = in_fresh && workers[i].memid.mem.arena.arena != existing
+                 && workers[i].memid.mem.arena.arena->arena_idx >= 1;
+      for (size_t j = 0; j < i; j++) distinct = distinct && workers[j].p != workers[i].p;
+    }
+    bool same_geometry = true;
+    for (int64_t index = 1; index <= fresh; index++) {
+      mi_arena_t* const arena = mi_arena_from_index(&owner->subproc, (size_t)index);
+      same_geometry = same_geometry && arena->slice_count == first_fresh->slice_count
+                      && arena->info_slices == first_fresh->info_slices && arena->parent == NULL;
+    }
+    emit((int64_t)claimed_count);
+    emit(in_fresh);
+    emit(distinct);
+    emit(fresh >= 1 && fresh <= 8);
+    emit(same_geometry);
+    emit((int64_t)first_fresh->slice_count);
+    emit((int64_t)first_fresh->info_slices);
+    emit((after.reserved - before.reserved) / fresh);
+    emit((after.reserved - before.reserved) % fresh);
+    emit((after.committed - before.committed) / fresh);
+    emit((after.committed - before.committed) % fresh);
+    emit(after.commit_calls - before.commit_calls == fresh);
+    emit(after.arena_count - before.arena_count == fresh);
+    pthread_barrier_wait(&release_all);
+    for (size_t i = 0; i < 8; i++) require(pthread_join(threads[i], NULL) == 0);
+    bool all_free = true;
+    for (int64_t index = 1; index <= fresh; index++) {
+      mi_arena_t* const arena = mi_arena_from_index(&owner->subproc, (size_t)index);
+      all_free = all_free && free_slice_count(arena) == arena->slice_count - arena->info_slices;
+    }
+    emit(all_free);
+    for (size_t i = 0; i < filled; i++) release(owner, &fillers[i]);
+  }
+
+  emit_marker(15);
   return 0;
 }

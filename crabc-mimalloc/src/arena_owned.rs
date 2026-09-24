@@ -4060,7 +4060,95 @@ mod tests {
             lifecycle_release(&mut trace, owner, &mut theap);
         }
 
+        // 14. Concurrent fresh reservation after exhausting the only arena.
+        // Source reservation is serialized but not unique, so only the
+        // interleaving-independent relations of the C fixture are compared.
         trace.marker(14);
+        {
+            use std::sync::{Arc, Barrier};
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let p = owner.process;
+            let existing = unsafe { owner.backing.reserve_os_memory_for_process(p, owner.config,
+                ARENA_MIN_SIZE, MapAccess::Reserved, false, false, None) }.unwrap();
+            let mut fillers = std::vec::Vec::new();
+            loop {
+                let search = ArenaSearch { heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+                    numa_node: -1, requested: existing, allow_pinned: true };
+                match unsafe { owner.backing.try_allocate_slices(p, owner.config, search, 1,
+                    ARENA_SLICE_SIZE, false) } {
+                    Some(claim) => fillers.push(LifecycleClaim { claim: Some(claim), slices: 1 }),
+                    None => break,
+                }
+            }
+            trace.emit(fillers.len() as i64);
+            let start = Arc::new(Barrier::new(8));
+            let claimed = Arc::new(Barrier::new(9));
+            let release_all = Arc::new(Barrier::new(9));
+            let before = lifecycle_stats(owner);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let workers: std::vec::Vec<_> = (0..8).map(|worker| {
+                let (start, claimed, release_all) = (start.clone(), claimed.clone(), release_all.clone());
+                let sender = sender.clone();
+                std::thread::spawn(move || {
+                    let search = ArenaSearch { heap_sequence: 0, heap_count: 1, thread_sequence: worker,
+                        numa_node: -1, requested: ArenaId::none(), allow_pinned: true };
+                    start.wait();
+                    // SAFETY: the fixture group outlives every worker.
+                    let claim = unsafe { owner.backing.try_allocate_slices(owner.process, owner.config,
+                        search, 1, ARENA_SLICE_SIZE, false) };
+                    let observed = claim.as_ref().map(|claim| {
+                        let arena = claim.memory_id().arena_memory().unwrap().arena;
+                        (arena as usize, unsafe { (*arena).arena_index }, claim.start() as usize)
+                    });
+                    sender.send(observed).unwrap();
+                    claimed.wait();
+                    release_all.wait();
+                    if let Some(claim) = claim { assert!(claim.release()); }
+                })
+            }).collect();
+            claimed.wait();
+            let after = lifecycle_stats(owner);
+            let observed: std::vec::Vec<_> = receiver.try_iter().flatten().collect();
+            let fresh = owner.backing.registry().count() - 1;
+            let arena = |index| unsafe { owner.backing.registry().arena_at(index) }.unwrap();
+            let first_fresh = arena(1);
+            let in_fresh = observed.iter().all(|&(pointer, index, _)|
+                pointer != existing.as_ptr() as usize && index >= 1);
+            let distinct = observed.iter().enumerate().all(|(index, (_, _, start))|
+                observed[..index].iter().all(|(_, _, other)| other != start));
+            let same_geometry = (1..=fresh).all(|index| {
+                let arena = arena(index);
+                arena.slice_count == first_fresh.slice_count
+                    && arena.info_slices == first_fresh.info_slices && arena.parent.is_null()
+            });
+            let fresh_count = fresh as i64;
+            trace.emit(observed.len() as i64);
+            trace.emit_bool(in_fresh);
+            trace.emit_bool(distinct);
+            trace.emit_bool((1..=8).contains(&fresh));
+            trace.emit_bool(same_geometry);
+            trace.emit(first_fresh.slice_count as i64);
+            trace.emit(first_fresh.info_slices as i64);
+            trace.emit((after.reserved - before.reserved) / fresh_count);
+            trace.emit((after.reserved - before.reserved) % fresh_count);
+            trace.emit((after.committed - before.committed) / fresh_count);
+            trace.emit((after.committed - before.committed) % fresh_count);
+            trace.emit_bool(after.commit_calls - before.commit_calls == fresh_count);
+            trace.emit_bool(after.arena_count - before.arena_count == fresh_count);
+            release_all.wait();
+            for worker in workers { worker.join().unwrap(); }
+            let all_free = (1..=fresh).all(|index| {
+                let arena = arena(index);
+                let view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }.unwrap();
+                let free = unsafe { view.slices_free() }.unwrap();
+                (0..arena.slice_count).filter(|&slice| free.is_set_range(slice, 1) == Some(true)).count()
+                    == arena.slice_count - arena.info_slices
+            });
+            trace.emit_bool(all_free);
+            for claim in &mut fillers { lifecycle_release(&mut trace, owner, claim); }
+        }
+
+        trace.marker(15);
     }
 }
 
