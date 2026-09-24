@@ -33,7 +33,8 @@ group several C entries place each musl object's entries in
 which becomes a child module only in the installed static build; libc.so and
 the per-leaf fixture archives, whose runners pin one object per leaf, keep
 the items inline. The roster covers the malloc family, the string, memory and
-environment entries, `strerror`/`perror`, `atoi`/`atol`/`atoll`, and `qsort`.
+environment entries, `strerror`/`perror`, `atoi`/`atol`/`atoll`, `qsort`,
+and the printf/scanf entry points.
 
 ## String role
 
@@ -48,6 +49,21 @@ null, as musl's does), and owned `%s` formatting measures with `strnlen`.
 Musl's `setlocale` also measures each category name with `strlen` while
 serializing an `LC_ALL` result; the fixed-profile implementation returns
 prebuilt names, so the role compares only its environment edge.
+
+## Formatted I/O roles
+
+`PRINTF` defines counting `vfprintf` and `vasprintf` (with a minimal
+formatter: musl formats every printf-family call, `vsnprintf` included,
+through the public `vfprintf`). `VSNPRINTF` defines a counting `vsnprintf`
+over a memory stream, and `SCANF` a counting one-directive `vfscanf`. Musl's
+`printf`, `vprintf` and `fprintf` reach `vfprintf`; `snprintf`, `sprintf`
+(through `vsprintf`) and `vasprintf` reach `vsnprintf`; `asprintf` reaches
+`vasprintf`; `scanf`, `vscanf` and `fscanf` reach `vfscanf`.
+`libc/src/c_abi/x86_64/stdio_format_scan.rs` and `owned_printf.rs` keep each
+entry in its own member, with its `__isoc99_` alias beside it, and route
+through those never-inlined `v` forms. Musl's `vsscanf` also scans through
+the public `vfscanf` over a string FILE; the candidate's `vsscanf` scans the
+string directly, so the `SCANF` role does not call `sscanf`.
 
 ## Allocator roles
 

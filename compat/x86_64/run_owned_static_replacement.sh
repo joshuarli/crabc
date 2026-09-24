@@ -21,7 +21,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_static_replacement_probe.c"
-readonly roles=(MALLOC_TRIO MALLOC_FULL STRINGS)
+readonly roles=(MALLOC_TRIO MALLOC_FULL STRINGS PRINTF VSNPRINTF SCANF)
 readonly replaceable_functions=(
     malloc calloc realloc free aligned_alloc posix_memalign memalign valloc
     reallocarray malloc_usable_size strerror perror
@@ -31,6 +31,8 @@ readonly replaceable_functions=(
     strtok_r strcoll strxfrm dirname memchr memmem memcmp bcmp memset memmove
     bcopy bzero explicit_bzero swab atoi atol atoll qsort
     getenv setenv unsetenv clearenv
+    printf vprintf fprintf vfprintf sprintf vsprintf snprintf vsnprintf
+    dprintf vdprintf asprintf vasprintf scanf vscanf fscanf vfscanf sscanf vsscanf
 )
 
 [ "$#" -le 1 ] || {
@@ -84,7 +86,7 @@ run_role() {
     mkdir -p "$root"
     cp "$executable" "$root/consumer"
     step="run-$label"
-    timeout 40 env -i PATH="$PATH" chroot "$root" /consumer \
+    timeout 40 env -i PATH="$PATH" chroot "$root" /consumer </dev/null \
         >"$work/$label.stdout" 2>"$work/$label.stderr" || status=$?
     printf '%s\n' "$status" >"$work/$label.status"
 }

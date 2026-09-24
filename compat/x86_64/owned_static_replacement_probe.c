@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <locale.h>
 #include <netdb.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -493,6 +494,217 @@ static int run_string_clients(void)
 }
 #endif
 
+#if defined(CRABC_REPLACE_PRINTF) || defined(CRABC_REPLACE_VSNPRINTF) || defined(CRABC_REPLACE_SCANF)
+static unsigned long replacement_calls;
+
+static void report_replacement(const char *operation, unsigned long mark)
+{
+    emit_flag(operation, "replacement", replacement_calls != mark);
+}
+#endif
+
+#ifdef CRABC_REPLACE_PRINTF
+/*
+ * Counting `vfprintf` and `vasprintf` with a minimal "%s"/"%d" formatter:
+ * musl formats every printf-family call, including vsnprintf, through the
+ * public vfprintf, so a replacement cannot delegate to libc formatting.
+ * Musl's printf, vprintf and fprintf reach vfprintf, and asprintf vasprintf.
+ */
+static int format_minimal(char *buffer, size_t capacity, const char *format, va_list args)
+{
+    size_t length = 0;
+
+    for (; *format; format++) {
+        char digits[24];
+        const char *text = digits;
+        if (*format != '%') {
+            digits[0] = *format;
+            digits[1] = 0;
+        } else if (*++format == 's') {
+            text = va_arg(args, const char *);
+        } else if (*format == 'd') {
+            int value = va_arg(args, int);
+            unsigned magnitude = value < 0 ? 0u - (unsigned)value : (unsigned)value;
+            char reversed[16];
+            size_t count = 0, index = 0;
+            do reversed[count++] = (char)('0' + magnitude % 10); while (magnitude /= 10);
+            if (value < 0) digits[index++] = '-';
+            while (count) digits[index++] = reversed[--count];
+            digits[index] = 0;
+        } else {
+            return -1;
+        }
+        while (*text) {
+            if (length + 1 >= capacity) return -1;
+            buffer[length++] = *text++;
+        }
+    }
+    buffer[length] = 0;
+    return (int)length;
+}
+
+int vfprintf(FILE *stream, const char *format, va_list args)
+{
+    char buffer[256];
+    int length;
+
+    replacement_calls++;
+    length = format_minimal(buffer, sizeof buffer, format, args);
+    if (length < 0) return -1;
+    return fwrite(buffer, 1, (size_t)length, stream) == (size_t)length ? length : -1;
+}
+
+int vasprintf(char **destination, const char *format, va_list args)
+{
+    char buffer[256];
+    int length;
+
+    replacement_calls++;
+    length = format_minimal(buffer, sizeof buffer, format, args);
+    if (length < 0 || !(*destination = malloc((size_t)length + 1))) return -1;
+    memcpy(*destination, buffer, (size_t)length + 1);
+    return length;
+}
+
+static int call_vprintf(const char *format, ...)
+{
+    va_list args;
+    int status;
+
+    va_start(args, format);
+    status = vprintf(format, args);
+    va_end(args);
+    return status;
+}
+
+static int run_printf_clients(void)
+{
+    unsigned long mark;
+    FILE *stream;
+    char *text = 0;
+
+    mark = replacement_calls;
+    emit_flag("printf", "status", printf("%s\n", "printed") != 8 || fflush(stdout));
+    report_replacement("printf", mark);
+    mark = replacement_calls;
+    emit_flag("vprintf", "status", call_vprintf("%d\n", 7) != 2 || fflush(stdout));
+    report_replacement("vprintf", mark);
+    stream = fopen("/replacement-printf", "w");
+    if (!stream) return 30;
+    mark = replacement_calls;
+    emit_flag("fprintf", "status", fprintf(stream, "%s", "file") != 4);
+    report_replacement("fprintf", mark);
+    if (fclose(stream)) return 31;
+    mark = replacement_calls;
+    emit_flag("asprintf", "status", asprintf(&text, "%s-%d", "value", 3) != 7 || strcmp(text, "value-3"));
+    report_replacement("asprintf", mark);
+    free(text);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_VSNPRINTF
+/* A counting `vsnprintf` over a memory stream and libc's vfprintf. Musl's
+ * snprintf, vsprintf (and so sprintf) and vasprintf format through it. */
+int vsnprintf(char *destination, size_t capacity, const char *format, va_list args)
+{
+    char buffer[256];
+    FILE *stream;
+    int length;
+
+    replacement_calls++;
+    stream = fmemopen(buffer, sizeof buffer, "w");
+    if (!stream) return -1;
+    length = vfprintf(stream, format, args);
+    if (fclose(stream) || length < 0 || (size_t)length >= sizeof buffer) return -1;
+    buffer[length] = 0;
+    if (capacity) {
+        size_t copied = (size_t)length < capacity ? (size_t)length : capacity - 1;
+        memcpy(destination, buffer, copied);
+        destination[copied] = 0;
+    }
+    return length;
+}
+
+static int run_vsnprintf_clients(void)
+{
+    unsigned long mark;
+    char buffer[32];
+    char *text = 0;
+
+    mark = replacement_calls;
+    emit_flag("snprintf", "status", snprintf(buffer, sizeof buffer, "%d:%s", 5, "x") != 3 || strcmp(buffer, "5:x"));
+    report_replacement("snprintf", mark);
+    mark = replacement_calls;
+    emit_flag("sprintf", "status", sprintf(buffer, "%s", "spr") != 3 || strcmp(buffer, "spr"));
+    report_replacement("sprintf", mark);
+    mark = replacement_calls;
+    emit_flag("asprintf", "status", asprintf(&text, "%d", 42) != 2 || strcmp(text, "42"));
+    report_replacement("asprintf", mark);
+    free(text);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_SCANF
+/* A counting `vfscanf` that accepts exactly one "%d" directive. Musl's scanf,
+ * vscanf and fscanf scan through the public vfscanf. */
+int vfscanf(FILE *stream, const char *format, va_list args)
+{
+    int character, value = 0, digits = 0, negative = 0;
+
+    replacement_calls++;
+    if (strcmp(format, "%d")) return -1;
+    do character = getc(stream); while (character == ' ' || character == '\n');
+    if (character == '-') {
+        negative = 1;
+        character = getc(stream);
+    }
+    while (character >= '0' && character <= '9') {
+        value = value * 10 + (character - '0');
+        digits++;
+        character = getc(stream);
+    }
+    if (character != EOF) ungetc(character, stream);
+    if (!digits) return character == EOF ? EOF : 0;
+    *va_arg(args, int *) = negative ? -value : value;
+    return 1;
+}
+
+static int call_vscanf(const char *format, ...)
+{
+    va_list args;
+    int status;
+
+    va_start(args, format);
+    status = vscanf(format, args);
+    va_end(args);
+    return status;
+}
+
+static int run_scanf_clients(void)
+{
+    unsigned long mark;
+    FILE *stream;
+    int value = 0;
+
+    stream = fopen("/replacement-scanf", "w+");
+    if (!stream || fputs("-42\n", stream) < 0 || fseek(stream, 0, SEEK_SET)) return 40;
+    mark = replacement_calls;
+    emit_flag("fscanf", "status", fscanf(stream, "%d", &value) != 1 || value != -42);
+    report_replacement("fscanf", mark);
+    if (fclose(stream)) return 41;
+    /* The runner supplies an empty standard input. */
+    mark = replacement_calls;
+    emit_flag("scanf", "status", scanf("%d", &value) != EOF);
+    report_replacement("scanf", mark);
+    mark = replacement_calls;
+    emit_flag("vscanf", "status", call_vscanf("%d", &value) != EOF);
+    report_replacement("vscanf", mark);
+    return 0;
+}
+#endif
+
 int main(void)
 {
 #ifdef CRABC_REPLACE_MALLOC
@@ -501,6 +713,18 @@ int main(void)
 #endif
 #ifdef CRABC_REPLACE_STRINGS
     int status = run_string_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_PRINTF
+    int status = run_printf_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_VSNPRINTF
+    int status = run_vsnprintf_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_SCANF
+    int status = run_scanf_clients();
     if (status) return status;
 #endif
     emit("owned-static-replacement-ok\n");

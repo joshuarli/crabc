@@ -114,25 +114,22 @@ use super::{errno, error_strings};
 // musl 1.2.6 defines the ISO-C99 spellings as weak aliases of the ordinary
 // scanning entries.  Keeping these as assembler aliases, instead of Rust
 // forwarding wrappers, preserves the source-required one definition in both
-// the static archive and shared libc.
-core::arch::global_asm!(
-    ".weak __isoc99_sscanf",
-    ".set __isoc99_sscanf, sscanf",
-    ".weak __isoc99_vsscanf",
-    ".set __isoc99_vsscanf, vsscanf",
-);
+// the static archive and shared libc. Each alias sits beside its target, in
+// the target's archive member.
+macro_rules! isoc99_alias {
+    ($name:literal) => {
+        core::arch::global_asm!(
+            concat!(".weak __isoc99_", $name),
+            concat!(".set __isoc99_", $name, ", ", $name),
+        );
+    };
+}
 
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
-core::arch::global_asm!(
-    ".weak __isoc99_scanf",
-    ".set __isoc99_scanf, scanf",
-    ".weak __isoc99_vscanf",
-    ".set __isoc99_vscanf, vscanf",
-    ".weak __isoc99_fscanf",
-    ".set __isoc99_fscanf, fscanf",
-    ".weak __isoc99_vfscanf",
-    ".set __isoc99_vfscanf, vfscanf",
-);
+// Musl formats and scans through the `v` forms' public symbols: `printf`,
+// `vprintf` and `fprintf` call `vfprintf`; `sprintf` calls `vsprintf`, which
+// with `snprintf` calls `vsnprintf`; `scanf`, `vscanf` and `fscanf` call
+// `vfscanf`; `sscanf` calls `vsscanf`. The `v` forms are never inlined, so an
+// application definition of one reaches every caller as it does in musl.
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 use super::stdio_standard;
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
@@ -1066,76 +1063,91 @@ unsafe fn format_to_buffer(
     }
 }
 
-/// Format the selected grammar into a bounded caller-owned byte buffer.
-///
-/// # Safety
-///
-/// `format` must be a readable NUL-terminated string and `args` must contain
-/// the promoted types required by every selected directive.  When `capacity`
-/// is nonzero, `destination` must be writable for that many bytes; it may be
-/// null only when `capacity` is zero.  Every `%s` source must be readable
-/// through its selected precision or NUL, and every `%n` destination must be
-/// writable with the type selected by its length modifier. Bare `%m` consumes
-/// no argument and observes the calling thread's current errno message.
-#[no_mangle]
-pub unsafe extern "C" fn vsnprintf(
-    destination: *mut c_char,
-    capacity: usize,
-    format: *const c_char,
-    mut args: VaList,
-) -> c_int {
-    unsafe { format_to_buffer(destination, capacity, format, &mut args) }
-}
+// Musl's `src/stdio/vsnprintf.c` object.
+static_archive_member! { vsnprintf_source {
+    /// Format the selected grammar into a bounded caller-owned byte buffer.
+    ///
+    /// # Safety
+    ///
+    /// `format` must be a readable NUL-terminated string and `args` must contain
+    /// the promoted types required by every selected directive.  When `capacity`
+    /// is nonzero, `destination` must be writable for that many bytes; it may be
+    /// null only when `capacity` is zero.  Every `%s` source must be readable
+    /// through its selected precision or NUL, and every `%n` destination must be
+    /// writable with the type selected by its length modifier. Bare `%m` consumes
+    /// no argument and observes the calling thread's current errno message.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn vsnprintf(
+        destination: *mut c_char,
+        capacity: usize,
+        format: *const c_char,
+        mut args: VaList,
+    ) -> c_int {
+        unsafe { format_to_buffer(destination, capacity, format, &mut args) }
+    }
+}}
 
-/// C-variadic entry for [`vsnprintf`]'s selected byte-buffer grammar.
-///
-/// # Safety
-///
-/// The destination and format obligations are the same as [`vsnprintf`].
-/// Every variadic argument must have the promoted type required by its
-/// directive, and every selected pointer argument must satisfy that
-/// directive's readable or writable extent.
-#[no_mangle]
-pub unsafe extern "C" fn snprintf(
-    destination: *mut c_char,
-    capacity: usize,
-    format: *const c_char,
-    mut args: ...,
-) -> c_int {
-    unsafe { format_to_buffer(destination, capacity, format, &mut args) }
-}
+// Musl's `src/stdio/snprintf.c` object.
+static_archive_member! { snprintf_source {
+    /// C-variadic entry for [`vsnprintf`]'s selected byte-buffer grammar.
+    ///
+    /// # Safety
+    ///
+    /// The destination and format obligations are the same as [`vsnprintf`].
+    /// Every variadic argument must have the promoted type required by its
+    /// directive, and every selected pointer argument must satisfy that
+    /// directive's readable or writable extent.
+    #[no_mangle]
+    pub unsafe extern "C" fn snprintf(
+        destination: *mut c_char,
+        capacity: usize,
+        format: *const c_char,
+        args: ...,
+    ) -> c_int {
+        unsafe { vsnprintf(destination, capacity, format, args) }
+    }
+}}
 
-/// Format the selected grammar without an explicit destination bound.
-///
-/// # Safety
-///
-/// `destination` must be non-null and large enough for every produced byte and
-/// the trailing NUL.  `format`, `args`, `%s`, and `%n` carry the same
-/// obligations as [`vsnprintf`].
-#[no_mangle]
-pub unsafe extern "C" fn vsprintf(
-    destination: *mut c_char,
-    format: *const c_char,
-    mut args: VaList,
-) -> c_int {
-    unsafe { format_to_buffer(destination, usize::MAX, format, &mut args) }
-}
+// Musl's `src/stdio/vsprintf.c` object.
+static_archive_member! { vsprintf_source {
+    /// Format the selected grammar without an explicit destination bound.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must be non-null and large enough for every produced byte and
+    /// the trailing NUL.  `format`, `args`, `%s`, and `%n` carry the same
+    /// obligations as [`vsnprintf`].
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn vsprintf(
+        destination: *mut c_char,
+        format: *const c_char,
+        args: VaList,
+    ) -> c_int {
+        // Musl's `vsprintf` is `vsnprintf(s, INT_MAX, fmt, ap)`.
+        unsafe { vsnprintf(destination, c_int::MAX as usize, format, args) }
+    }
+}}
 
-/// C-variadic entry for [`vsprintf`]'s selected unbounded-buffer grammar.
-///
-/// # Safety
-///
-/// `destination` must be non-null and large enough for the full result and
-/// trailing NUL.  The format and variadic arguments must satisfy the same
-/// type and extent obligations as [`snprintf`].
-#[no_mangle]
-pub unsafe extern "C" fn sprintf(
-    destination: *mut c_char,
-    format: *const c_char,
-    mut args: ...,
-) -> c_int {
-    unsafe { format_to_buffer(destination, usize::MAX, format, &mut args) }
-}
+// Musl's `src/stdio/sprintf.c` object.
+static_archive_member! { sprintf_source {
+    /// C-variadic entry for [`vsprintf`]'s selected unbounded-buffer grammar.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must be non-null and large enough for the full result and
+    /// trailing NUL.  The format and variadic arguments must satisfy the same
+    /// type and extent obligations as [`snprintf`].
+    #[no_mangle]
+    pub unsafe extern "C" fn sprintf(
+        destination: *mut c_char,
+        format: *const c_char,
+        args: ...,
+    ) -> c_int {
+        unsafe { vsprintf(destination, format, args) }
+    }
+}}
 
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 #[cfg(not(crabc_x86_owned_runtime))]
@@ -1167,71 +1179,88 @@ unsafe fn format_to_stream(stream: *mut StandardStream, format: *const c_char, a
     unsafe { owned_printf::format_stream(stream, format, args) }
 }
 
-/// Format to the permanently owned standard output stream.
-///
-/// This boundary intentionally admits only the exact permanent stream objects
-/// owned by `stdio_standard`; it does not construct or inspect a public FILE
-/// layout, and it leaves stdout buffered until an explicit `fflush`.
-#[no_mangle]
+// Musl's `src/stdio/printf.c` object.
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
-/// # Safety
-///
-/// `format` must be a readable NUL-terminated string and each variadic
-/// argument must have the promoted type required by the selected grammar.
-/// The call writes only to the exact permanent `stdout` object owned by this
-/// module; callers must not assume it is flushed until `fflush(stdout)`.
-pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
-    let stream = unsafe { stdio_standard::stdout };
-    unsafe { format_to_stream(stream, format, &mut args) }
-}
+static_archive_member! { printf_source {
+    /// Format to the permanently owned standard output stream.
+    ///
+    /// This boundary intentionally admits only the exact permanent stream objects
+    /// owned by `stdio_standard`; it does not construct or inspect a public FILE
+    /// layout, and it leaves stdout buffered until an explicit `fflush`.
+    #[no_mangle]
+    #[cfg(feature = "x86-stdio-permanent-format-scan")]
+    /// # Safety
+    ///
+    /// `format` must be a readable NUL-terminated string and each variadic
+    /// argument must have the promoted type required by the selected grammar.
+    /// The call writes only to the exact permanent `stdout` object owned by this
+    /// module; callers must not assume it is flushed until `fflush(stdout)`.
+    pub unsafe extern "C" fn printf(format: *const c_char, args: ...) -> c_int {
+        let stream = unsafe { stdio_standard::stdout };
+        unsafe { vfprintf(stream, format, args) }
+    }
+}}
 
-#[no_mangle]
+// Musl's `src/stdio/vprintf.c` object.
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
-/// # Safety
-///
-/// `format` must be a readable NUL-terminated string and `args` must contain
-/// the promoted values required by the selected grammar. The forwarded list
-/// is consumed during the call and targets only the permanent `stdout`.
-pub unsafe extern "C" fn vprintf(
-    format: *const c_char,
-    mut args: VaList,
-) -> c_int {
-    let stream = unsafe { stdio_standard::stdout };
-    unsafe { format_to_stream(stream, format, &mut args) }
-}
+static_archive_member! { vprintf_source {
+    #[no_mangle]
+    #[cfg(feature = "x86-stdio-permanent-format-scan")]
+    /// # Safety
+    ///
+    /// `format` must be a readable NUL-terminated string and `args` must contain
+    /// the promoted values required by the selected grammar. The forwarded list
+    /// is consumed during the call and targets only the permanent `stdout`.
+    pub unsafe extern "C" fn vprintf(
+        format: *const c_char,
+        args: VaList,
+    ) -> c_int {
+        let stream = unsafe { stdio_standard::stdout };
+        unsafe { vfprintf(stream, format, args) }
+    }
+}}
 
-/// Format to a stream admitted by the selected stdio engine.
-#[no_mangle]
+// Musl's `src/stdio/fprintf.c` object.
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
-/// # Safety
-///
-/// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
-/// otherwise it must be exactly permanent `stdin`, `stdout`, or `stderr`.
-/// `format` must
-/// be readable through NUL and variadic arguments must match the grammar.
-pub unsafe extern "C" fn fprintf(
-    stream: *mut StandardStream,
-    format: *const c_char,
-    mut args: ...,
-) -> c_int {
-    unsafe { format_to_stream(stream, format, &mut args) }
-}
+static_archive_member! { fprintf_source {
+    /// Format to a stream admitted by the selected stdio engine.
+    #[no_mangle]
+    #[cfg(feature = "x86-stdio-permanent-format-scan")]
+    /// # Safety
+    ///
+    /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
+    /// otherwise it must be exactly permanent `stdin`, `stdout`, or `stderr`.
+    /// `format` must
+    /// be readable through NUL and variadic arguments must match the grammar.
+    pub unsafe extern "C" fn fprintf(
+        stream: *mut StandardStream,
+        format: *const c_char,
+        args: ...,
+    ) -> c_int {
+        unsafe { vfprintf(stream, format, args) }
+    }
+}}
 
-#[no_mangle]
+// Musl's `src/stdio/vfprintf.c` object.
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
-/// # Safety
-///
-/// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
-/// otherwise it must be exactly one of the permanent standard-stream objects.
-/// `format` must be NUL-terminated and `args` must contain the required
-/// promoted values. The `VaList` is forwarded directly and consumed in place.
-pub unsafe extern "C" fn vfprintf(
-    stream: *mut StandardStream,
-    format: *const c_char,
-    mut args: VaList,
-) -> c_int {
-    unsafe { format_to_stream(stream, format, &mut args) }
-}
+static_archive_member! { vfprintf_source {
+    #[no_mangle]
+    #[cfg(feature = "x86-stdio-permanent-format-scan")]
+    /// # Safety
+    ///
+    /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
+    /// otherwise it must be exactly one of the permanent standard-stream objects.
+    /// `format` must be NUL-terminated and `args` must contain the required
+    /// promoted values. The `VaList` is forwarded directly and consumed in place.
+    #[inline(never)]
+    pub unsafe extern "C" fn vfprintf(
+        stream: *mut StandardStream,
+        format: *const c_char,
+        mut args: VaList,
+    ) -> c_int {
+        unsafe { format_to_stream(stream, format, &mut args) }
+    }
+}}
 
 #[derive(Clone, Copy)]
 enum ScanBase {
@@ -1700,44 +1729,55 @@ unsafe fn scan_from_string(
     }
 }
 
-/// Scan the selected grammar from a caller-owned NUL-terminated byte string.
-///
-/// # Safety
-///
-/// `input` and `format` must be readable through their terminating NULs.
-/// `args` must contain a non-null writable destination of the exact type and
-/// extent required by each nonsuppressed directive; `%c` needs its selected
-/// width and `%s` also needs room for the trailing NUL. The selected
-/// assignment-suppressed `%*3[abc]` state has no variadic destination.
-/// With the owned runtime, `%[` also requires width plus NUL capacity;
-/// `%f`, `%lf`, and `%Lf` require float, double, and x86 long-double storage.
-/// An owned `%m` byte directive takes writable `char **` storage; on success
-/// the caller owns and must free its allocation. Failed unpublished
-/// allocations are freed internally without replacing the destination pointer.
-#[no_mangle]
-pub unsafe extern "C" fn vsscanf(
-    input: *const c_char,
-    format: *const c_char,
-    mut args: VaList,
-) -> c_int {
-    unsafe { scan_from_string(input, format, &mut args) }
-}
+// Musl's `src/stdio/vsscanf.c` object.
+static_archive_member! { vsscanf_source {
+    isoc99_alias!("vsscanf");
 
-/// C-variadic entry for [`vsscanf`]'s selected NUL-string grammar.
-///
-/// # Safety
-///
-/// `input` and `format` must be readable NUL-terminated strings.  Every
-/// variadic destination must be non-null, writable, correctly typed, and large
-/// enough for the directive as described by [`vsscanf`].
-#[no_mangle]
-pub unsafe extern "C" fn sscanf(
-    input: *const c_char,
-    format: *const c_char,
-    mut args: ...,
-) -> c_int {
-    unsafe { scan_from_string(input, format, &mut args) }
-}
+    /// Scan the selected grammar from a caller-owned NUL-terminated byte string.
+    ///
+    /// # Safety
+    ///
+    /// `input` and `format` must be readable through their terminating NULs.
+    /// `args` must contain a non-null writable destination of the exact type and
+    /// extent required by each nonsuppressed directive; `%c` needs its selected
+    /// width and `%s` also needs room for the trailing NUL. The selected
+    /// assignment-suppressed `%*3[abc]` state has no variadic destination.
+    /// With the owned runtime, `%[` also requires width plus NUL capacity;
+    /// `%f`, `%lf`, and `%Lf` require float, double, and x86 long-double storage.
+    /// An owned `%m` byte directive takes writable `char **` storage; on success
+    /// the caller owns and must free its allocation. Failed unpublished
+    /// allocations are freed internally without replacing the destination pointer.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn vsscanf(
+        input: *const c_char,
+        format: *const c_char,
+        mut args: VaList,
+    ) -> c_int {
+        unsafe { scan_from_string(input, format, &mut args) }
+    }
+}}
+
+// Musl's `src/stdio/sscanf.c` object.
+static_archive_member! { sscanf_source {
+    isoc99_alias!("sscanf");
+
+    /// C-variadic entry for [`vsscanf`]'s selected NUL-string grammar.
+    ///
+    /// # Safety
+    ///
+    /// `input` and `format` must be readable NUL-terminated strings.  Every
+    /// variadic destination must be non-null, writable, correctly typed, and large
+    /// enough for the directive as described by [`vsscanf`].
+    #[no_mangle]
+    pub unsafe extern "C" fn sscanf(
+        input: *const c_char,
+        format: *const c_char,
+        args: ...,
+    ) -> c_int {
+        unsafe { vsscanf(input, format, args) }
+    }
+}}
 
 /// One-byte-lookahead reader used by the permanent-stream scanner. A peeked
 /// byte is not part of the consumed count and is returned through `ungetc` on
@@ -2045,69 +2085,94 @@ unsafe fn scan_from_stream(
     }
 }
 
-/// Scan from the permanently owned standard input stream.
-#[no_mangle]
+// Musl's `src/stdio/scanf.c` object.
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
-/// # Safety
-///
-/// `format` must be a readable NUL-terminated string and each destination
-/// pointer in the variadic list must be non-null, writable, and correctly
-/// typed for its selected conversion. The call reads only permanent `stdin`.
-/// Destination extents and owned `%m` ownership are as specified by [`vsscanf`].
-pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
-    let stream = unsafe { stdio_standard::stdin };
-    unsafe { scan_from_stream(stream, format, &mut args) }
-}
+static_archive_member! { scanf_source {
+    isoc99_alias!("scanf");
 
-#[no_mangle]
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
-/// # Safety
-///
-/// `format` must be NUL-terminated; every destination in the forwarded list
-/// must be non-null, writable, and correctly typed for its selected conversion.
-/// The list is consumed directly while reading permanent `stdin`.
-/// Destination extents and owned `%m` ownership are as specified by [`vsscanf`].
-pub unsafe extern "C" fn vscanf(
-    format: *const c_char,
-    mut args: VaList,
-) -> c_int {
-    let stream = unsafe { stdio_standard::stdin };
-    unsafe { scan_from_stream(stream, format, &mut args) }
-}
+    /// Scan from the permanently owned standard input stream.
+    #[no_mangle]
+    #[cfg(feature = "x86-stdio-permanent-format-scan")]
+    /// # Safety
+    ///
+    /// `format` must be a readable NUL-terminated string and each destination
+    /// pointer in the variadic list must be non-null, writable, and correctly
+    /// typed for its selected conversion. The call reads only permanent `stdin`.
+    /// Destination extents and owned `%m` ownership are as specified by [`vsscanf`].
+    pub unsafe extern "C" fn scanf(format: *const c_char, args: ...) -> c_int {
+        let stream = unsafe { stdio_standard::stdin };
+        unsafe { vfscanf(stream, format, args) }
+    }
+}}
 
-#[no_mangle]
+// Musl's `src/stdio/vscanf.c` object.
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
-/// # Safety
-///
-/// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
-/// otherwise it must be exactly permanent `stdin`, `stdout`, or `stderr`.
-/// `format` must be NUL-terminated and each scan
-/// destination must be valid for its selected conversion.
-/// The FILE must not be concurrently destroyed. Destination extents and
-/// owned `%m` allocation ownership are as specified by [`vsscanf`].
-pub unsafe extern "C" fn fscanf(
-    stream: *mut StandardStream,
-    format: *const c_char,
-    mut args: ...,
-) -> c_int {
-    unsafe { scan_from_stream(stream, format, &mut args) }
-}
+static_archive_member! { vscanf_source {
+    isoc99_alias!("vscanf");
 
-#[no_mangle]
+    #[no_mangle]
+    #[cfg(feature = "x86-stdio-permanent-format-scan")]
+    /// # Safety
+    ///
+    /// `format` must be NUL-terminated; every destination in the forwarded list
+    /// must be non-null, writable, and correctly typed for its selected conversion.
+    /// The list is consumed directly while reading permanent `stdin`.
+    /// Destination extents and owned `%m` ownership are as specified by [`vsscanf`].
+    pub unsafe extern "C" fn vscanf(
+        format: *const c_char,
+        args: VaList,
+    ) -> c_int {
+        let stream = unsafe { stdio_standard::stdin };
+        unsafe { vfscanf(stream, format, args) }
+    }
+}}
+
+// Musl's `src/stdio/fscanf.c` object.
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
-/// # Safety
-///
-/// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
-/// otherwise it must be exactly one of the permanent standard-stream objects.
-/// `format` must be NUL-terminated and every forwarded scan destination must
-/// be non-null, writable, and correctly typed. The `VaList` is consumed
-/// directly without reconstruction.
-/// The FILE must not be concurrently destroyed. Destination extents and
-/// owned `%m` allocation ownership are as specified by [`vsscanf`].
-pub unsafe extern "C" fn vfscanf(
-    stream: *mut StandardStream,
-    format: *const c_char,
-    mut args: VaList,
-) -> c_int {
-    unsafe { scan_from_stream(stream, format, &mut args) }
-}
+static_archive_member! { fscanf_source {
+    isoc99_alias!("fscanf");
+
+    #[no_mangle]
+    #[cfg(feature = "x86-stdio-permanent-format-scan")]
+    /// # Safety
+    ///
+    /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
+    /// otherwise it must be exactly permanent `stdin`, `stdout`, or `stderr`.
+    /// `format` must be NUL-terminated and each scan
+    /// destination must be valid for its selected conversion.
+    /// The FILE must not be concurrently destroyed. Destination extents and
+    /// owned `%m` allocation ownership are as specified by [`vsscanf`].
+    pub unsafe extern "C" fn fscanf(
+        stream: *mut StandardStream,
+        format: *const c_char,
+        args: ...,
+    ) -> c_int {
+        unsafe { vfscanf(stream, format, args) }
+    }
+}}
+
+// Musl's `src/stdio/vfscanf.c` object.
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+static_archive_member! { vfscanf_source {
+    isoc99_alias!("vfscanf");
+
+    #[no_mangle]
+    #[cfg(feature = "x86-stdio-permanent-format-scan")]
+    /// # Safety
+    ///
+    /// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
+    /// otherwise it must be exactly one of the permanent standard-stream objects.
+    /// `format` must be NUL-terminated and every forwarded scan destination must
+    /// be non-null, writable, and correctly typed. The `VaList` is consumed
+    /// directly without reconstruction.
+    /// The FILE must not be concurrently destroyed. Destination extents and
+    /// owned `%m` allocation ownership are as specified by [`vsscanf`].
+    #[inline(never)]
+    pub unsafe extern "C" fn vfscanf(
+        stream: *mut StandardStream,
+        format: *const c_char,
+        mut args: VaList,
+    ) -> c_int {
+        unsafe { scan_from_stream(stream, format, &mut args) }
+    }
+}}

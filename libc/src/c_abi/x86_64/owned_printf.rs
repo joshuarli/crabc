@@ -466,50 +466,65 @@ impl FormatSink for DescriptorOutput {
     fn allow_errno_message(&self) -> bool { true }
 }
 
-/// # Safety
-/// `format` is NUL terminated and each promoted argument has the type and
-/// readable/writable extent required by its conversion. `fd` is borrowed.
-#[no_mangle]
-pub unsafe extern "C" fn vdprintf(fd: c_int, format_string: *const c_char, mut args: VaList) -> c_int {
-    unsafe {
-        let mut cursor = args.clone();
-        let prepared = match prepare(format_string, &mut cursor) { Ok(value) => value, Err(error) => return result(Err(error)) };
-        let mut output = DescriptorOutput { fd, buffer: [0; 80], pending: 0, count: 0, failed: false, overflowed: false };
-        let value = result(render(&mut output, format_string, &mut cursor, &prepared));
-        output.flush(true);
-        if output.failed { -1 } else { value }
+// Musl's `src/stdio/vdprintf.c` object.
+static_archive_member! { vdprintf_source {
+    /// # Safety
+    /// `format` is NUL terminated and each promoted argument has the type and
+    /// readable/writable extent required by its conversion. `fd` is borrowed.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn vdprintf(fd: c_int, format_string: *const c_char, mut args: VaList) -> c_int {
+        unsafe {
+            let mut cursor = args.clone();
+            let prepared = match prepare(format_string, &mut cursor) { Ok(value) => value, Err(error) => return result(Err(error)) };
+            let mut output = DescriptorOutput { fd, buffer: [0; 80], pending: 0, count: 0, failed: false, overflowed: false };
+            let value = result(render(&mut output, format_string, &mut cursor, &prepared));
+            output.flush(true);
+            if output.failed { -1 } else { value }
+        }
     }
-}
+}}
 
-/// # Safety
-/// The format/argument obligations are those of vdprintf; this call does not
-/// take ownership of or close `fd`.
-#[no_mangle]
-pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
-    unsafe { vdprintf(fd, format, args) }
-}
+// Musl's `src/stdio/dprintf.c` object.
+static_archive_member! { dprintf_source {
+    /// # Safety
+    /// The format/argument obligations are those of vdprintf; this call does not
+    /// take ownership of or close `fd`.
+    #[no_mangle]
+    pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
+        unsafe { vdprintf(fd, format, args) }
+    }
+}}
 
 unsafe extern "C" { fn malloc(size: usize) -> *mut c_void; }
 
-/// # Safety
-/// `destination` is writable pointer storage; format and arguments satisfy
-/// vsnprintf's type/extent contract. On allocation success the caller owns the
-/// malloc-family allocation, including a possible second-pass failure.
-#[no_mangle]
-pub unsafe extern "C" fn vasprintf(destination: *mut *mut c_char, format: *const c_char, mut args: VaList) -> c_int {
-    unsafe {
-        let mut first = args.clone();
-        let length = format_to_buffer(ptr::null_mut(), 0, format, &mut first);
-        if length < 0 { return -1; }
-        *destination = malloc(length as usize + 1).cast();
-        if (*destination).is_null() { return -1; }
-        format_to_buffer(*destination, length as usize + 1, format, &mut args)
+// Musl's `src/stdio/vasprintf.c` object.
+static_archive_member! { vasprintf_source {
+    /// # Safety
+    /// `destination` is writable pointer storage; format and arguments satisfy
+    /// vsnprintf's type/extent contract. On allocation success the caller owns the
+    /// malloc-family allocation, including a possible second-pass failure.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn vasprintf(destination: *mut *mut c_char, format: *const c_char, args: VaList) -> c_int {
+        // Musl measures and formats through the public `vsnprintf`, so an
+        // application definition of it reaches `asprintf` too.
+        unsafe {
+            let length = vsnprintf(ptr::null_mut(), 0, format, args.clone());
+            if length < 0 { return -1; }
+            *destination = malloc(length as usize + 1).cast();
+            if (*destination).is_null() { return -1; }
+            vsnprintf(*destination, length as usize + 1, format, args)
+        }
     }
-}
+}}
 
-/// # Safety
-/// The format, argument and output-ownership obligations are those of vasprintf.
-#[no_mangle]
-pub unsafe extern "C" fn asprintf(destination: *mut *mut c_char, format: *const c_char, mut args: ...) -> c_int {
-    unsafe { vasprintf(destination, format, args) }
-}
+// Musl's `src/stdio/asprintf.c` object.
+static_archive_member! { asprintf_source {
+    /// # Safety
+    /// The format, argument and output-ownership obligations are those of vasprintf.
+    #[no_mangle]
+    pub unsafe extern "C" fn asprintf(destination: *mut *mut c_char, format: *const c_char, mut args: ...) -> c_int {
+        unsafe { vasprintf(destination, format, args) }
+    }
+}}
