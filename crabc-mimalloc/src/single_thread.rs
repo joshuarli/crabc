@@ -3191,6 +3191,15 @@ pub(crate) struct PageAllocatorEngineState<'arena, 'map,
 
 /// Existing static-session spelling/API. The generic engine above is private
 /// implementation structure, not a public first-class heap abstraction.
+/// Whether pinned `_mi_malloc_generic` searches the request's queue before
+/// `mi_malloc_generic_fallback` (`src/page.c:1103`: `req_size <
+/// MI_SMALL_MAX_OBJ_SIZE`; release builds have no padding). Medium, large,
+/// and huge requests reach the fallback's `mi_find_page` directly.
+#[inline]
+const fn generic_request_searches_before_fallback(request: usize) -> bool {
+    request < SMALL_MAX_OBJ_SIZE
+}
+
 pub(crate) type SingleThreadAllocator<'bootstrap, 'arena, 'map> =
     PageAllocatorEngine<'arena, 'map, ExclusiveTheapSession<'bootstrap>>;
 
@@ -37497,10 +37506,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         let request = request.max(WORD_SIZE);
         if !size_class::request_size_is_valid(request) {
-            return self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Refused {
-                request,
-                size_refused: true,
-            });
+            // An oversized request is never below `MI_SMALL_MAX_OBJ_SIZE`, so
+            // `_mi_malloc_generic` enters its fallback without a search.
+            return self.begin_deferred_free_generic_allocation(
+                DeferredFreeAllocationContinuation::Refused { request, size_refused: true },
+                false,
+            );
         }
         if request <= SMALL_SIZE_MAX {
             return self.begin_deferred_free_small_allocation(request, zero);
@@ -37510,6 +37521,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         self.begin_deferred_free_generic_allocation(
             DeferredFreeAllocationContinuation::Generic(continuation),
+            generic_request_searches_before_fallback(request),
         )
     }
 
@@ -37564,12 +37576,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     DeferredFreeAlignedCompletion::Overallocate { alignment, offset },
                 ),
             Some(aligned::AlignedAllocationPlan::HugeSingleton { request, alignment }) => {
+                // A huge alignment skips the `_mi_malloc_generic` search.
                 self.begin_deferred_free_generic_allocation(
                     DeferredFreeAllocationContinuation::AlignedHuge {
                         request,
                         alignment,
                         zero,
                     },
+                    false,
                 )
             }
             // An oversized request or a huge alignment with an offset fails
@@ -37588,10 +37602,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 } else {
                     (size.max(MAX_ALIGN_SIZE).saturating_add(alignment - 1), true)
                 };
-                self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Refused {
-                    request,
-                    size_refused,
-                })
+                // Neither shape searches first: the base is oversized, or a
+                // nonzero `huge_alignment` skips `_mi_malloc_generic`'s search.
+                self.begin_deferred_free_generic_allocation(
+                    DeferredFreeAllocationContinuation::Refused { request, size_refused },
+                    false,
+                )
             }
         }
     }
@@ -37677,10 +37693,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(generic) = self.generic_allocation_continuation(request, zero) else {
             return DeferredFreeAllocationPhase::Complete(None);
         };
-        self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Aligned {
-            generic,
-            completion,
-        })
+        self.begin_deferred_free_generic_allocation(
+            DeferredFreeAllocationContinuation::Aligned { generic, completion },
+            generic_request_searches_before_fallback(request),
+        )
     }
 
     #[inline]
@@ -37733,10 +37749,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             kind: PageKind::Small,
             zero,
         };
-        self.begin_deferred_free_generic_allocation(match completion {
-            None => DeferredFreeAllocationContinuation::Generic(generic),
-            Some(completion) => DeferredFreeAllocationContinuation::Aligned { generic, completion },
-        })
+        self.begin_deferred_free_generic_allocation(
+            match completion {
+                None => DeferredFreeAllocationContinuation::Generic(generic),
+                Some(completion) => DeferredFreeAllocationContinuation::Aligned { generic, completion },
+            },
+            generic_request_searches_before_fallback(request),
+        )
     }
 
     fn generic_allocation_continuation(
@@ -37776,12 +37795,27 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         })
     }
 
+    /// Pinned `_mi_malloc_generic` (`src/page.c:1101-1116`): the counted
+    /// call first searches a small request's queue once, then enters
+    /// `mi_malloc_generic_fallback` (`src/page.c:1048-1065`), whose
+    /// administration, `mi_find_page`, and forced-collection retry follow.
+    /// `search_first` is [`generic_request_searches_before_fallback`] for the
+    /// request; a call reaching the 1,000-call administration threshold
+    /// skips the search, as the source's `++generic_count < 1000` does.
     fn begin_deferred_free_generic_allocation(
         &mut self,
         continuation: DeferredFreeAllocationContinuation,
+        search_first: bool,
     ) -> DeferredFreeAllocationPhase {
         match self.session.advance_generic_allocation_administration() {
             GenericAllocationAdministration::None => {
+                if search_first {
+                    match self.attempt_deferred_free_allocation(continuation) {
+                        Ok(Some(block)) => return DeferredFreeAllocationPhase::Complete(Some(block)),
+                        Err(_) => return DeferredFreeAllocationPhase::Complete(None),
+                        Ok(None) => {}
+                    }
+                }
                 self.try_deferred_free_allocation_once(continuation)
             }
             GenericAllocationAdministration::Mini => DeferredFreeAllocationPhase::Collect {
@@ -37917,7 +37951,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // for an ArenaView-backed static-main owner: its selected
                 // mapped-abandoned regular page is considered before the
                 // generic fresh-page fallback.
-                return self.allocate_generic_with_retry(bin, block_size, PageKind::Small, zero);
+                return self.allocate_generic_with_retry(
+                    bin,
+                    block_size,
+                    PageKind::Small,
+                    zero,
+                    generic_request_searches_before_fallback(request),
+                );
             }
 
             let page = NonNull::new(direct)?;
@@ -37935,6 +37975,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         block_size,
                         PageKind::Small,
                         zero,
+                        generic_request_searches_before_fallback(request),
                     );
                 }
                 Err(_) => return None,
@@ -37953,7 +37994,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             if block_size == 0 || block_size < request {
                 return None;
             }
-            return self.allocate_generic_with_retry(bin, block_size, PageKind::Singleton, zero);
+            return self.allocate_generic_with_retry(
+                bin,
+                block_size,
+                PageKind::Singleton,
+                zero,
+                generic_request_searches_before_fallback(request),
+            );
         }
 
         let page_size = self.page_map.memory_config().page_size().bytes();
@@ -37965,16 +38012,37 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if kind == PageKind::Singleton {
             return None;
         }
-        self.allocate_generic_with_retry(bin, block_size, kind, zero)
+        self.allocate_generic_with_retry(
+            bin,
+            block_size,
+            kind,
+            zero,
+            generic_request_searches_before_fallback(request),
+        )
     }
 
+    /// Pinned `_mi_malloc_generic` (`src/page.c:1101-1116`) followed by
+    /// `mi_malloc_generic_fallback` (`src/page.c:1048-1065`): a small request
+    /// (`search_first`, see [`generic_request_searches_before_fallback`])
+    /// first searches its queue once; the fallback's `mi_find_page` then
+    /// searches again, and only its no-page result force-collects and
+    /// retries once. Each search includes `mi_page_queue_find_free_ex`'s own
+    /// `first_try` retry.
     fn allocate_generic_with_retry(
         &mut self,
         bin: usize,
         block_size: usize,
         kind: PageKind,
         zero: bool,
+        search_first: bool,
     ) -> Option<NonNull<u8>> {
+        if search_first {
+            match self.allocate_generic_once(bin, block_size, kind, zero) {
+                Ok(Some(block)) => return Some(block),
+                Err(_) => return None,
+                Ok(None) => {}
+            }
+        }
         for attempt in 0..2 {
             match self.allocate_generic_once(bin, block_size, kind, zero) {
                 Ok(Some(block)) => return Some(block),
@@ -49365,6 +49433,54 @@ mod tests {
                     allocator.free(second).unwrap();
                     allocator.free(first).unwrap();
                 }
+            }
+        });
+    }
+
+    /// Pinned `_mi_malloc_generic` (`src/page.c:1101-1116`) searches a small
+    /// request's queue once before `mi_malloc_generic_fallback` searches it
+    /// again; each failing search runs `_mi_theap_collect_retired(false)`
+    /// before its fresh-page claim. With the arena exhausted, a phased small
+    /// allocation therefore ages a retired page once per search before it
+    /// selects the forced collection. This fixture's arena has no process
+    /// owner, for which `find_generic_queue_page_with_first_try` takes no
+    /// `first_try` retry, so each search collects exactly once.
+    #[test]
+    fn deferred_small_generic_searches_its_queue_before_the_fallback() {
+        with_allocator(|allocator| {
+            let retired = allocator.allocate(64, false).unwrap();
+            // SAFETY: `retired` is this engine's current allocation.
+            let page = unsafe { allocator.page_for_block(retired) };
+            let mut fill = std::vec::Vec::new();
+            for size in [
+                crate::config::LARGE_MAX_OBJ_SIZE,
+                crate::config::MEDIUM_MAX_OBJ_SIZE,
+                SMALL_MAX_OBJ_SIZE,
+            ] {
+                while let Some(block) = allocator.allocate(size, false) {
+                    fill.push(block);
+                }
+            }
+            // SAFETY: the page stays queued as a retired page after this
+            // last free; only its ordinary retirement byte is read below.
+            unsafe { allocator.free(retired).unwrap() };
+            assert_eq!(unsafe { (*page).retire_expire() }, RETIRE_CYCLES);
+            let phase = allocator.begin_deferred_free_allocation(2048, false);
+            assert!(matches!(
+                phase,
+                DeferredFreeAllocationPhase::Collect {
+                    collection: GenericAllocationCollection::Force,
+                    ..
+                }
+            ));
+            assert_eq!(
+                unsafe { (*page).retire_expire() },
+                RETIRE_CYCLES - 2,
+                "both the counted search and the fallback search ran"
+            );
+            for block in fill {
+                // SAFETY: every filler is a current allocation of this engine.
+                unsafe { allocator.free(block).unwrap() };
             }
         });
     }
