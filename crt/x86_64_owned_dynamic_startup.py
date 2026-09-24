@@ -5,8 +5,11 @@ This is the executing gate for the `crt.dynamic-startup` family obligation:
 installed dynamic-PIE `Scrt1.o` and dynamic non-PIE `crt1.o` entry, the
 libc `__libc_start_main` handoff, main-image preinit/init/fini lifecycle and
 process finalization, the compiler-helper archive, and the deterministic link
-interface of the installed driver. It consumes a supplied materialized product
-and never builds, repairs, or substitutes a runtime.
+interface of the installed driver. A separate wide graph (24-entry init/fini
+arrays in the executable, a dependency and a runtime plugin) checks that
+startup and finalization are not bounded by a small fixed callback table. It consumes a
+supplied materialized product and never builds, repairs, or substitutes a
+runtime.
 
 Pinned musl 1.2.6 is the behavior oracle. The same fixture sources are built
 by the oracle compiler profile and executed as separate processes. The only
@@ -38,6 +41,7 @@ FIXTURES = ROOT / "crt" / "fixtures"
 MAIN_SOURCE = FIXTURES / "owned_dynamic_startup_main.c"
 DEPENDENCY_SOURCE = FIXTURES / "owned_dynamic_startup_dependency.c"
 PLUGIN_SOURCE = FIXTURES / "owned_dynamic_startup_plugin.c"
+WIDE_SOURCE = FIXTURES / "owned_dynamic_startup_wide.c"
 DEPENDENCY = "libowned-startup-dependency.so"
 PLUGIN = "libowned-startup-plugin.so"
 SCHEMA = "crabc.x86_64-owned-crt-dynamic-startup/v1"
@@ -82,6 +86,30 @@ SCENARIOS = {
     "dlopen-in-dependency-constructor": ("DLAIMaFZldmf", 7),
 }
 OWNED_PREINIT = "P"
+
+# The wide graph (see WIDE_SOURCE) has no admitted difference and no preinit.
+# Its executable names the hub plus one group of leaves, the hub another group
+# and the runtime plugin a third.
+WIDE_FANOUT = 4
+WIDE_CALLBACKS = 24
+WIDE_HUB = "libowned-startup-wide-hub.so"
+WIDE_PLUGIN = "libowned-startup-wide-plugin.so"
+WIDE_STATUS = 7
+WIDE_VALUES = "|1020,2010|"
+
+
+def wide_leaf(group: str, index: int) -> str:
+    return f"libowned-startup-wide-{group}{index}.so"
+
+
+def wide_markers() -> list[str]:
+    """Every two-byte callback marker the wide graph must emit exactly once."""
+
+    markers = [group + chr(ord(case) + index)
+               for group in "wdp" for index in range(1, WIDE_FANOUT + 1) for case in "Aa"]
+    markers += [role + chr(ord(case) + index)
+                for role in "HQM" for index in range(WIDE_CALLBACKS) for case in "Aa"]
+    return markers
 # After kernel entry, AT_ENTRY must name the executable's own `_start`. A
 # direct interpreter command's auxv rewrite is loader policy, not CRT
 # behavior: pinned musl leaves the kernel vector untouched while the owned
@@ -401,6 +429,93 @@ def build(recorder: Recorder, product: Path, work: Path) -> dict[str, object]:
     return report
 
 
+def build_wide(recorder: Recorder, product: Path, work: Path) -> dict[str, object]:
+    """Build the wide graph through the installed driver and pinned musl."""
+
+    driver = str(product / "bin/crabc-cc-dynamic")
+    candidate = work / "candidate" / "wide"
+    oracle = work / "oracle" / "wide"
+    candidate.mkdir()
+    oracle.mkdir()
+
+    def shared(name: str, defines: list[str], dependencies: list[str]) -> None:
+        obj = candidate / f"{name}.o"
+        recorder.run(f"compile-{name}", [driver, "--dynamic-shared-object", "-c", *FIXTURE_FLAGS, *defines,
+                                         str(WIDE_SOURCE), "-o", str(obj)])
+        declared = [item for dependency in dependencies for item in ("--application-dso", str(candidate / dependency))]
+        recorder.run(f"link-{name}", [driver, "--dynamic-shared-object", str(obj), *declared,
+                                      "-o", str(candidate / name)])
+        recorder.run(f"oracle-{name}", [str(ORACLE_COMPILER), "-fPIC", "-shared", *FIXTURE_FLAGS, *defines,
+                                        str(WIDE_SOURCE), f"-Wl,-soname,{name}", f"-Wl,-rpath,{oracle}",
+                                        "-Wl,--no-as-needed", *(str(oracle / item) for item in dependencies),
+                                        "-o", str(oracle / name)])
+
+    groups = {group: [wide_leaf(group, index) for index in range(1, WIDE_FANOUT + 1)] for group in "wdp"}
+    for group, names in groups.items():
+        for index, name in enumerate(names, 1):
+            shared(name, ["-DWIDE_LEAF", f"-DWIDE_GROUP={group}", f"-DWIDE_ID={index}"], [])
+    shared(WIDE_HUB, ["-DWIDE_HUB"], groups["d"])
+    shared(WIDE_PLUGIN, ["-DWIDE_PLUGIN"], groups["p"])
+    direct = [WIDE_HUB, *groups["w"]]
+    report: dict[str, object] = {}
+    for mode, (flag, _entry, elf_type, oracle_flags) in MODES.items():
+        output = candidate / f"main-wide-{mode}"
+        transitive = [item for name in groups["d"] for item in ("--transitive-application-dso", str(candidate / name))]
+        recorder.run(f"link-wide-{mode}", [driver, flag, *FIXTURE_FLAGS, str(WIDE_SOURCE),
+                                           *(item for name in direct for item in ("--application-dso", str(candidate / name))),
+                                           *transitive, "-o", str(output)])
+        image = parse_elf(output)
+        require(image.elf_type == elf_type and image.needed == (*direct, "libc.so"),
+                f"{output.name}: wide DT_NEEDED differs: {image.needed}")
+        require(len(image.tags(DT_INIT_ARRAYSZ)) == 1 and image.tags(DT_INIT_ARRAYSZ)[0] >= 8 * WIDE_CALLBACKS
+                and len(image.tags(DT_FINI_ARRAYSZ)) == 1 and image.tags(DT_FINI_ARRAYSZ)[0] >= 8 * WIDE_CALLBACKS,
+                f"{output.name}: wide callback arrays are smaller than {WIDE_CALLBACKS} entries")
+        report[mode] = {"needed": list(image.needed), "init_array_bytes": image.tags(DT_INIT_ARRAYSZ)[0],
+                        "fini_array_bytes": image.tags(DT_FINI_ARRAYSZ)[0]}
+        recorder.run(f"oracle-wide-{mode}", [str(ORACLE_COMPILER), *oracle_flags, *FIXTURE_FLAGS,
+                                             "-fstack-protector-strong", str(WIDE_SOURCE), f"-Wl,-rpath,{oracle}",
+                                             "-Wl,--no-as-needed", *(str(oracle / name) for name in direct),
+                                             "-o", str(oracle / f"main-wide-{mode}")])
+    report["shared_objects"] = sorted(path.name for path in candidate.glob("*.so"))
+    return report
+
+
+def execute_wide(recorder: Recorder, root: Path, work: Path) -> list[dict[str, object]]:
+    """Compare the complete wide transcript and status with pinned musl."""
+
+    candidate = work / "candidate" / "wide"
+    oracle = work / "oracle" / "wide"
+    for path in candidate.glob("*.so"):
+        shutil.copy2(path, root / "usr/lib" / path.name)
+    markers = wide_markers()
+    cells = []
+    for mode in MODES:
+        shutil.copy2(candidate / f"main-wide-{mode}", root / f"main-wide-{mode}")
+        for entry in ENTRIES:
+            prefix = [INTERPRETER] if entry == "direct" else []
+            observed = recorder.run(f"candidate-wide-{mode}-{entry}",
+                                    [TIMEOUT, "20", CHROOT, str(root), *prefix, f"/main-wide-{mode}"],
+                                    environment={}, expect_success=False)
+            oracle_prefix = [str(ORACLE_INTERPRETER)] if entry == "direct" else []
+            reference = recorder.run(f"oracle-wide-{mode}-{entry}",
+                                     [TIMEOUT, "20", *oracle_prefix, str(oracle / f"main-wide-{mode}")],
+                                     environment={}, expect_success=False)
+            label = f"wide/{mode}/{entry}"
+            transcript = observed.stdout.decode(errors="replace")
+            oracle_transcript = reference.stdout.decode(errors="replace")
+            before, separator, after = oracle_transcript.partition(WIDE_VALUES)
+            pairs = [(before + after)[index:index + 2] for index in range(0, len(before + after), 2)]
+            require(reference.returncode == WIDE_STATUS and separator and reference.stderr == b""
+                    and sorted(pairs) == sorted(markers),
+                    f"{label}: pinned musl oracle observed {oracle_transcript!r} status {reference.returncode}")
+            require(observed.returncode == WIDE_STATUS and transcript == oracle_transcript and observed.stderr == b"",
+                    f"{label}: owned {transcript!r} status {observed.returncode} "
+                    f"{observed.stderr.decode(errors='replace')!r}; musl {oracle_transcript!r}")
+            cells.append({"mode": mode, "entry": entry, "scenario": "wide-graph", "status": WIDE_STATUS,
+                          "candidate": transcript, "oracle": oracle_transcript})
+    return cells
+
+
 def execute(recorder: Recorder, product: Path, work: Path) -> list[dict[str, object]]:
     root = work / "execution-root"
     shutil.copytree(product, root, symlinks=True)
@@ -440,7 +555,7 @@ def execute(recorder: Recorder, product: Path, work: Path) -> list[dict[str, obj
                         f"musl {oracle_transcript!r} status {reference.returncode}")
                 cells.append({"mode": mode, "entry": entry, "scenario": scenario, "status": status,
                               "candidate": transcript, "oracle": oracle_transcript})
-    return cells
+    return cells + execute_wide(recorder, root, work)
 
 
 def product_identity(product: Path) -> str:
@@ -460,9 +575,11 @@ def main(arguments: list[str]) -> int:
         before = product_identity(product)
         recorder = Recorder(work)
         report = {"schema": SCHEMA, "product_manifest_sha256": before,
-                  "fixtures": {path.name: sha256(path) for path in (MAIN_SOURCE, DEPENDENCY_SOURCE, PLUGIN_SOURCE)},
+                  "fixtures": {path.name: sha256(path)
+                               for path in (MAIN_SOURCE, DEPENDENCY_SOURCE, PLUGIN_SOURCE, WIDE_SOURCE)},
                   "admitted_difference": "owned executable DT_PREINIT_ARRAY dispatch (leading P)"}
         report.update(build(recorder, product, work))
+        report["wide"] = build_wide(recorder, product, work)
         report["cells"] = execute(recorder, product, work)
         require(product_identity(product) == before, "installed product manifest changed during evidence")
         report["family_completion"] = False

@@ -559,9 +559,10 @@ struct InstalledInitialTls {
     dtv_words: usize,
     module_count: usize,
 }
-// Each Scrt1-admitting sibling accepts exactly one tiny Rust-Scrt1 lifecycle
-// shape. This caps every executable array before the handoff without
-// pretending to be a general constructor-array policy.
+// Each legacy Scrt1-admitting sibling accepts exactly one tiny Rust-Scrt1
+// lifecycle shape. This caps every executable array before the handoff without
+// pretending to be a general constructor-array policy; the installed runtime
+// admits arrays of any valid length (see `callback_array_entries_admitted`).
 #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
 const MAX_OWNED_CRT_MAIN_ARRAY_ENTRIES: usize = 16;
 
@@ -1858,7 +1859,7 @@ unsafe fn parse_mapped(
                         if length != 0
                             && length % 8 == 0
                             && address % 8 == 0
-                            && length <= (MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES * 8) as u64
+                            && callback_array_entries_admitted(length, MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES)
                             && virtual_range_in_readable_file_load(phdr, phnum, address, length) => {}
                     _ => return None,
                 }
@@ -1986,9 +1987,7 @@ unsafe fn parse_mapped(
                     return None;
                 }
             } else if byte_len % pointer_size != 0
-                || byte_len
-                    > (MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
-                        * core::mem::size_of::<usize>()) as u64
+                || !callback_array_entries_admitted(byte_len, MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES)
                 || address & (pointer_size - 1) != 0
                 || !virtual_range_in_load(phdr, phnum, address, byte_len)
             {
@@ -2037,7 +2036,7 @@ unsafe fn parse_mapped(
             (Some(_), Some(0)) if registry_main => {}
             (Some(address), Some(byte_len))
                 if byte_len != 0 && byte_len % 8 == 0 && address % 8 == 0
-                    && byte_len <= (MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES * 8) as u64
+                    && callback_array_entries_admitted(byte_len, MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES)
                     && virtual_range_in_readable_file_load(phdr, phnum, address, byte_len) =>
             {
                 object.general_fini_array = runtime_address(base, address)? as *const usize;
@@ -4871,10 +4870,28 @@ unsafe fn scrt1_array_in_load(
 ) -> bool {
     byte_len != 0
         && byte_len % core::mem::size_of::<usize>() as u64 == 0
-        && byte_len / core::mem::size_of::<usize>() as u64
-            <= MAX_OWNED_CRT_MAIN_ARRAY_ENTRIES as u64
+        && callback_array_entries_admitted(byte_len, MAX_OWNED_CRT_MAIN_ARRAY_ENTRIES)
         && address % core::mem::align_of::<usize>() as u64 == 0
         && virtual_range_in_load(phdr, phnum, address, byte_len)
+}
+
+/// Whether an ELF callback array of `byte_len` bytes fits its callback owner.
+///
+/// The installed runtime copies every initial and runtime array into loader
+/// mappings sized from the object, because pinned musl dispatches arrays of
+/// any length. Legacy private roots retain `legacy_entries` inline slots.
+// Some private roots parse no callback array at all.
+#[allow(dead_code)]
+fn callback_array_entries_admitted(byte_len: u64, legacy_entries: usize) -> bool {
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    {
+        let _ = legacy_entries;
+        usize::try_from(byte_len / core::mem::size_of::<usize>() as u64).is_ok()
+    }
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+    {
+        byte_len <= (legacy_entries * core::mem::size_of::<usize>()) as u64
+    }
 }
 
 fn runtime_address(base: u64, virtual_address: u64) -> Option<u64> { base.checked_add(virtual_address) }

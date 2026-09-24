@@ -30,7 +30,6 @@ use core::sync::atomic::{AtomicI32, Ordering};
 #[path = "x86_64_runtime_registry_tests.rs"]
 mod tests;
 
-const CALLBACKS: usize = MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES + 1;
 const INITIALIZED: i32 = -1;
 const FINALIZING: i32 = -2;
 const FINALIZED: i32 = -3;
@@ -90,9 +89,11 @@ struct RuntimeObject {
     needed: [*mut RuntimeObject; MAX_NEEDED],
     needed_count: usize,
     name: [u8; MAX_PATH],
-    initializers: [usize; CALLBACKS],
+    // Initializers then finalizers, copied once before the node can run
+    // either. Musl's ELF arrays have no length bound, so this is sized to the
+    // object; rollback releases it with the node and published nodes retain it.
+    callbacks: Option<LoaderBuffer<usize>>,
     initializer_count: usize,
-    finalizers: [usize; CALLBACKS],
     finalizer_count: usize,
     // Zero is queued, a positive kernel TID owns an executing constructor,
     // and negative values are terminal initialization/finalization phases.
@@ -109,7 +110,7 @@ impl RuntimeObject {
         unsafe { core::ptr::write(node, Self { link_map: LinkMap { address: 0, name: core::ptr::null(), dynamic: core::ptr::null(), next: core::ptr::null_mut(), previous: core::ptr::null_mut() }, storage, identity, index,
             next: core::ptr::null_mut(), previous: core::ptr::null_mut(), symbol_next: core::ptr::null_mut(), fini_next: core::ptr::null_mut(), needed_by: core::ptr::null_mut(), global: false, short_name,
             needed: [core::ptr::null_mut(); MAX_NEEDED], needed_count: 0, name: [0; MAX_PATH],
-            initializers: [0; CALLBACKS], initializer_count: 0, finalizers: [0; CALLBACKS], finalizer_count: 0,
+            callbacks: None, initializer_count: 0, finalizer_count: 0,
             callback_state: AtomicI32::new(0) });
             core::ptr::copy_nonoverlapping(name.as_ptr(), (*node).name.as_mut_ptr(), name.len());
             (*node).link_map.name = (*node).name.as_ptr();
@@ -128,13 +129,35 @@ impl RuntimeObject {
         }
     }
 
+    /// Copy one validated plan. A node receives its callbacks exactly once.
     unsafe fn callbacks(&mut self, initializers: &[usize], finalizers: &[usize]) -> Option<()> {
-        if initializers.len() > CALLBACKS || finalizers.len() > CALLBACKS { return None; }
-        self.initializers[..initializers.len()].copy_from_slice(initializers);
-        self.finalizers[..finalizers.len()].copy_from_slice(finalizers);
-        self.initializer_count = initializers.len();
-        self.finalizer_count = finalizers.len();
+        let length = initializers.len().checked_add(finalizers.len())?;
+        let buffer = if length == 0 { None } else {
+            let mut buffer = LoaderBuffer::new(length, 0)?;
+            let (first, second) = buffer.as_mut_slice().split_at_mut(initializers.len());
+            first.copy_from_slice(initializers);
+            second.copy_from_slice(finalizers);
+            Some(buffer)
+        };
+        self.adopt_callbacks(buffer, initializers.len())
+    }
+
+    /// Take ownership of `initializers ++ finalizers` split at `initializer_count`.
+    fn adopt_callbacks(&mut self, buffer: Option<LoaderBuffer<usize>>, initializer_count: usize) -> Option<()> {
+        let length = buffer.as_ref().map_or(0, |buffer| buffer.as_slice().len());
+        if self.callbacks.is_some() || initializer_count > length { return None; }
+        self.callbacks = buffer;
+        self.initializer_count = initializer_count;
+        self.finalizer_count = length - initializer_count;
         Some(())
+    }
+
+    fn initializers(&self) -> &[usize] {
+        self.callbacks.as_ref().map_or(&[], |buffer| &buffer.as_slice()[..self.initializer_count])
+    }
+
+    fn finalizers(&self) -> &[usize] {
+        self.callbacks.as_ref().map_or(&[], |buffer| &buffer.as_slice()[self.initializer_count..])
     }
 }
 
@@ -168,6 +191,9 @@ impl Drop for UnpublishedObjects {
                 if let ObjectStorage::Runtime(object) = &(*node).storage {
                     syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64);
                 }
+                // The node is raw loader memory, never dropped as a whole;
+                // release its one owned callback mapping explicitly.
+                core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).callbacks));
                 syscall2(SYS_MUNMAP, node as i64, core::mem::size_of::<RuntimeObject>() as i64);
                 node = previous;
             }
@@ -417,7 +443,7 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
         }
         drop(callbacks);
         drop(guard);
-        for &address in unsafe { &(&(*node).initializers)[..(*node).initializer_count] } {
+        for &address in unsafe { (*node).initializers() } {
             let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(address) };
             unsafe { callback(); }
         }
@@ -469,7 +495,7 @@ pub(super) unsafe fn finalize_process() {
         // skips the incomplete object; a vanished constructor cannot finish.
         if state == INITIALIZED {
             unsafe { (*node).callback_state.store(FINALIZING, Ordering::Release); }
-            for &address in unsafe { &(&(*node).finalizers)[..(*node).finalizer_count] } {
+            for &address in unsafe { (*node).finalizers() } {
                 let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(address) };
                 unsafe { callback(); }
             }
@@ -676,25 +702,27 @@ unsafe fn load_one(
 
 unsafe fn preflight_runtime_callbacks(node: *mut RuntimeObject) -> Option<()> {
     let object = *unsafe { (*node).object() }?;
-    let mut init = [0usize; CALLBACKS];
-    let mut fini = [0usize; CALLBACKS];
-    let mut init_count = 0;
-    let mut fini_count = 0;
-    if object.general_init != 0 { init[0] = object.general_init; init_count = 1; }
-    for index in 0..object.init_count {
-        *init.get_mut(init_count)? = unsafe { *object.init_array.add(index) };
-        init_count += 1;
+    let init_count = object.init_count.checked_add(usize::from(object.general_init != 0))?;
+    let fini_count = object.general_fini_count.checked_add(usize::from(object.general_fini != 0))?;
+    let length = init_count.checked_add(fini_count)?;
+    if length == 0 { return unsafe { (*node).adopt_callbacks(None, 0) }; }
+    let mut callbacks = LoaderBuffer::new(length, 0usize)?;
+    {
+        let (init, fini) = callbacks.as_mut_slice().split_at_mut(init_count);
+        let mut next = 0;
+        if object.general_init != 0 { init[0] = object.general_init; next = 1; }
+        for index in 0..object.init_count { init[next + index] = unsafe { *object.init_array.add(index) }; }
+        // ELF fini arrays execute backwards, followed by legacy DT_FINI.
+        for (slot, index) in (0..object.general_fini_count).rev().enumerate() {
+            fini[slot] = unsafe { *object.general_fini_array.add(index) };
+        }
+        if object.general_fini != 0 { fini[object.general_fini_count] = object.general_fini; }
     }
-    for index in (0..object.general_fini_count).rev() {
-        *fini.get_mut(fini_count)? = unsafe { *object.general_fini_array.add(index) };
-        fini_count += 1;
-    }
-    if object.general_fini != 0 { *fini.get_mut(fini_count)? = object.general_fini; fini_count += 1; }
-    for &address in init[..init_count].iter().chain(&fini[..fini_count]) {
+    for &address in callbacks.as_slice() {
         let offset = (address as u64).checked_sub(object.base)?;
         if address == 0 || !unsafe { virtual_range_in_executable_load(object.phdr, object.phnum, offset, 1) } { return None; }
     }
-    unsafe { (*node).callbacks(&init[..init_count], &fini[..fini_count]) }
+    unsafe { (*node).adopt_callbacks(Some(callbacks), init_count) }
 }
 
 /// Admit one dlopen request. On failure `diagnostic` names the first failure

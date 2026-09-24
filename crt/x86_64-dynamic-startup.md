@@ -174,7 +174,15 @@ name exactly `Scrt1.o`/`crt1.o`, `crabc-dynamic-attach.o`, `crti.o`, the
 application object and DSO, `libc.so`, `libcrabc-builtins.a` and `crtn.o` in
 that order, and LLD's trace must extract `crabc-builtins.o` at the archive's
 position. Relinking the same object is byte-identical, and the same link
-without `libcrabc-builtins.a` fails on `__udivti3`. The dynamic qualification
+without `libcrabc-builtins.a` fails on `__udivti3`.
+
+A separate wide graph from `fixtures/owned_dynamic_startup_wide.c` gives the
+executable, one initial hub dependency and one runtime plugin 24 constructors
+and 24 destructors each, beside groups of leaf libraries under the executable,
+the hub and the plugin. Its complete construction/finalization transcript and
+exit status must equal pinned musl's in both modes and entries: the loader
+copies each ELF callback array into a mapping sized from the object instead of
+a fixed per-array table. The dynamic qualification
 case `crt-dynamic-startup` replays this leaf on the installed, second, and
 extracted products.
 
@@ -185,9 +193,6 @@ Open conditions, recorded rather than asserted:
   extracting its own. Musl's `libgcc.a` helpers are hidden. The fixture keeps
   helper use out of the main image's link-time dependency so each image's own
   extraction stays observable.
-- The loader copies at most 16 entries per init or fini array into its
-  callback plan and rejects larger main (`mainelf`) or dependency (`graph`)
-  arrays; musl has no such bound.
 - After a direct interpreter command the owned loader rewrites the process
   auxv (`AT_PHDR`, `AT_ENTRY`, ...), while musl changes only its private copy.
   This loader policy is outside the CRT transcript.
