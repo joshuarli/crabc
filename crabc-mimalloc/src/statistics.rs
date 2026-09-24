@@ -293,6 +293,19 @@ impl StatCounter {
         i64_add_relaxed(&self.total, amount as i64);
     }
 
+    /// Mirrors `__mi_stat_counter_increase`, the plain (non-`_mt`) add that
+    /// `mi_theap_stat_counter_increase` selects for a Theap's own counters.
+    ///
+    /// Only the Theap's owning thread writes these fields while it is
+    /// attached; other threads merely read or merge them. A relaxed load
+    /// and store is therefore the exact source update without a locked
+    /// read-modify-write, and a concurrent reader observes either value just
+    /// as it may in the C implementation.
+    #[inline]
+    fn increase_owner_local(&self, amount: usize) {
+        i64_store_relaxed(&self.total, i64_load_relaxed(&self.total).wrapping_add(amount as i64));
+    }
+
     /// Mirrors `mi_stat_counter_add_mt` for one selected source field.
     #[inline]
     fn add_from(&self, source: &Self) {
@@ -815,13 +828,17 @@ impl HeapTheapStatistics {
         true
     }
 
+    /// `page.c:_mi_page_retire`'s `mi_theap_stat_counter_increase`; only a
+    /// Theap owner records it (see [`StatCounter::increase_owner_local`]).
     #[inline]
-    pub(crate) fn page_retired(&self) { self.pages_retire.increase(1); }
+    pub(crate) fn page_retired(&self) { self.pages_retire.increase_owner_local(1); }
 
+    /// `page.c:mi_page_queue_find_free_ex`'s two Theap counter increases,
+    /// recorded only by the Theap owner.
     #[inline]
     pub(crate) fn pages_searched(&self, count: usize) {
-        self.page_searches.increase(count);
-        self.page_searches_count.increase(1);
+        self.page_searches.increase_owner_local(count);
+        self.page_searches_count.increase_owner_local(1);
     }
 
     #[inline]
