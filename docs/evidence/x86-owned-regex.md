@@ -83,7 +83,18 @@ executes each compiled pattern on fixed, generated, and long subjects under all
 execute status, and all ten `regmatch_t` slots fold into one printed FNV-1a
 digest per block, so the transcript is judged by comparison with musl rather
 than by a checked-in copy; `--corpus-trace` and `--corpus-trace-subjects`
-print each observation to localize a divergence. Each owned executable's
+print each observation to localize a divergence. A separate case-fold block
+in each locale runs fixed and generated backreference-free patterns over
+non-ASCII case pairs and classes (`é`/`É`, the one-way long-s, Kelvin-sign
+and final-sigma pairs, four-byte characters, multibyte range endpoints, and
+invalid surrogate/out-of-range encodings), so `REG_ICASE` and `C.UTF-8`
+classification are compared on the parallel matcher. Directed locale edges
+compile and execute under a `uselocale` thread locale while the global locale
+stays `C`, execute patterns compiled under one locale in the other, and read
+`regerror` text there. Other `CORPUS_SEED` values also reach the drift
+difference above: every divergence found in the alternative seeds tried was a
+musl match whose offsets extend past the subject terminator, where the port
+reports no match. Each owned executable's
 stdout and stderr must exactly match the pinned musl execution. The retained object has
 exactly one undefined public row for each of `regcomp`, `regexec`, `regerror`,
 and `regfree`; pinned musl, the static archive and linked static entries, and

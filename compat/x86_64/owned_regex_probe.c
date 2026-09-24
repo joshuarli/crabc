@@ -5,6 +5,9 @@
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
 #endif
 
+/* POSIX 2008 exposes the locale_t thread-locale interface used below. */
+#define _POSIX_C_SOURCE 200809L
+
 #include <locale.h>
 #include <regex.h>
 #include <stddef.h>
@@ -235,6 +238,12 @@ static const int corpus_eflags[] = {
 };
 
 struct corpus_state {
+    /* Subject material for the current block: generated subjects draw from
+     * `atoms`, and every compilation also runs on each `subjects` entry. */
+    const char *const *atoms;
+    size_t atom_count;
+    const char *const *subjects;
+    size_t subject_count;
     unsigned long long random;
     unsigned long long digest;
     int trace;
@@ -332,8 +341,7 @@ static void corpus_pattern(struct corpus_state *state, const char *pattern,
         count = corpus_next(state) % 9;
         for (atom = 0; atom != count; ++atom)
             corpus_append(subjects[index], sizeof subjects[index], &length,
-                corpus_subject_atoms[corpus_next(state) %
-                    (sizeof corpus_subject_atoms / sizeof *corpus_subject_atoms)]);
+                state->atoms[corpus_next(state) % state->atom_count]);
     }
 
     for (flag = 0; flag != cflag_count; ++flag) {
@@ -361,12 +369,9 @@ static void corpus_pattern(struct corpus_state *state, const char *pattern,
         corpus_fold(state, (long)compiled.re_nsub);
         if (state->trace)
             printf(" nsub=%zu", compiled.re_nsub);
-        for (subject = 0; subject != sizeof corpus_fixed_subjects /
-                sizeof *corpus_fixed_subjects + 3; ++subject) {
-            const char *text = subject < sizeof corpus_fixed_subjects /
-                sizeof *corpus_fixed_subjects ? corpus_fixed_subjects[subject]
-                : subjects[subject - sizeof corpus_fixed_subjects /
-                    sizeof *corpus_fixed_subjects];
+        for (subject = 0; subject != state->subject_count + 3; ++subject) {
+            const char *text = subject < state->subject_count ?
+                state->subjects[subject] : subjects[subject - state->subject_count];
             for (eflag = 0; eflag != sizeof corpus_eflags / sizeof *corpus_eflags;
                     ++eflag)
                 corpus_execute(state, &compiled, text, corpus_eflags[eflag],
@@ -548,6 +553,80 @@ static void corpus_long_subjects(struct corpus_state *state)
         putchar('\n');
 }
 
+/*
+ * Case-fold block: non-ASCII case pairs and classes.  REG_ICASE and the
+ * C.UTF-8 classes follow towlower/towupper and iswctype, including one-way
+ * pairs (long s and `s`/`S`, the Kelvin sign and `k`/`K`, final sigma),
+ * four-byte characters, ranges across multibyte endpoints, and invalid
+ * surrogate/out-of-range encodings.  No token is a backreference, so every
+ * pattern runs on the parallel matcher and stays clear of the backtracking
+ * drift difference named at `--bounded-backreference`.
+ */
+static const char *const casefold_patterns[] = {
+    "\xc3\xa9", "\xc3\x89", "[\xc3\x89]+", "[^\xc3\xa9]+", "[[:upper:]]\xc3\xa9",
+    "[[:lower:]]+", "[[:alpha:]]+", "\\w+", "\xce\xa3+", "\xcf\x82", "[\xcf\x83]",
+    "[\xc3\xa0-\xc3\xbe]+", "[a-\xc3\xa9]+", "[\xc3\xa9-a]", "\xe2\x84\xaa", "[k-m]+",
+    "k", "K", "\xc5\xbf+", "s", "S", "[s]", "[^S]+", "(\xc3\xa9|x)+",
+    "\xf0\x9f\x98\x80", "[\xf0\x9f\x98\x80-\xf0\x9f\x98\x82]", ".\xf0\x9f\x98\x81.",
+    "\xed\xa0\x80", "\xf4\x90\x80\x80", "[\xed\xa0\x80]", "\\x{c9}", "\\x{17f}",
+    "\\x{212a}", "[[:upper:][:digit:]]+", "^.$", "^..$",
+};
+
+static const char *const casefold_tokens[] = {
+    "a", "s", "S", "k", "K", "e", "E", ".", "*", "+", "?", "{1,2}", "\\{1,2\\}",
+    "|", "\\|", "(", ")", "\\(", "\\)", "^", "$", "[[:upper:]]", "[[:lower:]]",
+    "[[:alpha:]]", "[^[:alpha:]]", "\\w", "\\W", "\xc3\xa9", "\xc3\x89", "[\xc3\xa9]",
+    "[^\xc3\x89]", "\xc5\xbf", "\xe2\x84\xaa", "\xce\xa3", "\xcf\x83", "\xcf\x82",
+    "[\xcf\x83\xcf\x82]", "\xf0\x9f\x98\x80", "[\xf0\x9f\x98\x80-\xf0\x9f\x98\x82]",
+    "[\xc3\xa0-\xc3\xbe]", "[a-\xc3\xa9]", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xff",
+    "\xc3", "\\x{e9}", "\\x{c9}", "\\x{3c3}",
+};
+
+static const char *const casefold_atoms[] = {
+    "a", "s", "S", "k", "K", "e", "E", " ", "\xc3\xa9", "\xc3\x89", "\xc5\xbf",
+    "\xe2\x84\xaa", "\xce\xa3", "\xcf\x83", "\xcf\x82", "\xf0\x9f\x98\x81",
+    "\xed\xa0\x80", "\xff", "\xc3",
+};
+
+static const char *const casefold_subjects[] = {
+    "", "\xc3\xa9\xc3\x89", "S\xc5\xbfs", "\xe2\x84\xaaKk", "aab\nba",
+    "\xce\xa3\xcf\x83\xcf\x82", "\xf0\x9f\x98\x80\xf0\x9f\x98\x81\xf0\x9f\x98\x82",
+    "x\xc3\x89y", "\xed\xa0\x80\xf4\x90\x80\x80", "\xff\xc3\xa9",
+};
+
+enum { CASEFOLD_RANDOM_PATTERNS = 1000 };
+
+static void corpus_casefold(struct corpus_state *state, const char *locale)
+{
+    char pattern[256];
+    size_t index;
+
+    state->atoms = casefold_atoms;
+    state->atom_count = sizeof casefold_atoms / sizeof *casefold_atoms;
+    state->subjects = casefold_subjects;
+    state->subject_count = sizeof casefold_subjects / sizeof *casefold_subjects;
+    for (index = 0; index != sizeof casefold_patterns / sizeof *casefold_patterns;
+            ++index)
+        corpus_pattern(state, casefold_patterns[index], corpus_cflags,
+            sizeof corpus_cflags / sizeof *corpus_cflags);
+    corpus_block(state, locale, "casefold-fixed", 0);
+    for (index = 0; index != CASEFOLD_RANDOM_PATTERNS; ++index) {
+        size_t length = 0;
+        size_t tokens = 1 + corpus_next(state) % 8;
+        size_t token;
+
+        pattern[0] = '\0';
+        for (token = 0; token != tokens; ++token)
+            corpus_append(pattern, sizeof pattern, &length,
+                casefold_tokens[corpus_next(state) %
+                    (sizeof casefold_tokens / sizeof *casefold_tokens)]);
+        corpus_pattern(state, pattern, corpus_cflags,
+            sizeof corpus_cflags / sizeof *corpus_cflags);
+        if ((index + 1) % CORPUS_BLOCK == 0)
+            corpus_block(state, locale, "casefold-random", index / CORPUS_BLOCK);
+    }
+}
+
 static void run_corpus(const char *locale, int trace)
 {
     struct corpus_state state;
@@ -557,6 +636,10 @@ static void run_corpus(const char *locale, int trace)
 
     CHECK(setlocale(LC_ALL, locale) != NULL);
     memset(&state, 0, sizeof state);
+    state.atoms = corpus_subject_atoms;
+    state.atom_count = sizeof corpus_subject_atoms / sizeof *corpus_subject_atoms;
+    state.subjects = corpus_fixed_subjects;
+    state.subject_count = sizeof corpus_fixed_subjects / sizeof *corpus_fixed_subjects;
     state.random = CORPUS_SEED;
     state.digest = 0xcbf29ce484222325ULL;
     state.trace = trace;
@@ -595,6 +678,7 @@ static void run_corpus(const char *locale, int trace)
         if ((index + 1) % CORPUS_BLOCK == 0)
             corpus_block(&state, locale, "random", index / CORPUS_BLOCK);
     }
+    corpus_casefold(&state, locale);
     printf("corpus locale=%s compiled=%lu executions=%lu matches=%lu errors=",
         locale, state.compiled, state.executions, state.matches);
     for (code = 1; code != 16; ++code)
@@ -633,6 +717,61 @@ static void check_regerror_table(void)
     }
     public_regfree(&compiled);
     printf("regerror-bounded digest=%016llx\n", digest);
+}
+
+/*
+ * Locale edges.  musl reads the calling thread's LC_CTYPE at each call:
+ * `regcomp` decodes the pattern and `regexec` decodes the subject under the
+ * locale current at that call, so a thread locale installed by `uselocale`
+ * governs both, and a pattern compiled in one locale may execute in another.
+ * `regerror` text is the same C-locale table in C and C.UTF-8.  The global
+ * locale stays C throughout; each observation prints its status and offsets.
+ */
+static void locale_observe(const char *label, const regex_t *compiled,
+    const char *subject)
+{
+    regmatch_t match = {-7, -70};
+    int status = public_regexec(compiled, subject, 1, &match, 0);
+
+    printf("locale-edge %s status=%d match=%ld,%ld\n", label, status,
+        (long)match.rm_so, (long)match.rm_eo);
+}
+
+static void check_locale_edges(void)
+{
+    static const char e_acute[] = "\xc3\xa9";
+    static const char e_acute_upper[] = "\xc3\x89";
+    locale_t utf8;
+    regex_t dot_c;
+    regex_t dot_utf8;
+    regex_t icase_utf8;
+    regex_t alpha_utf8;
+    char text[32];
+
+    CHECK(setlocale(LC_ALL, "C") != NULL);
+    utf8 = newlocale(LC_CTYPE_MASK, "C.UTF-8", (locale_t)0);
+    CHECK(utf8 != (locale_t)0);
+    CHECK(public_regcomp(&dot_c, "^.$", REG_EXTENDED) == REG_OK);
+    CHECK(uselocale(utf8) != (locale_t)0);
+    CHECK(public_regcomp(&dot_utf8, "^.$", REG_EXTENDED) == REG_OK);
+    CHECK(public_regcomp(&icase_utf8, e_acute, REG_EXTENDED | REG_ICASE) == REG_OK);
+    CHECK(public_regcomp(&alpha_utf8, "^[[:alpha:]]$", REG_EXTENDED) == REG_OK);
+    locale_observe("compile-c exec-utf8 dot", &dot_c, e_acute);
+    locale_observe("compile-utf8 exec-utf8 dot", &dot_utf8, e_acute);
+    locale_observe("compile-utf8 exec-utf8 icase", &icase_utf8, e_acute_upper);
+    locale_observe("compile-utf8 exec-utf8 alpha", &alpha_utf8, e_acute);
+    CHECK(public_regerror(REG_ECTYPE, &alpha_utf8, text, sizeof text) == 29);
+    printf("locale-edge regerror-utf8 %s\n", text);
+    CHECK(uselocale(LC_GLOBAL_LOCALE) == utf8);
+    locale_observe("compile-c exec-c dot", &dot_c, e_acute);
+    locale_observe("compile-utf8 exec-c dot", &dot_utf8, e_acute);
+    locale_observe("compile-utf8 exec-c icase", &icase_utf8, e_acute_upper);
+    locale_observe("compile-utf8 exec-c alpha", &alpha_utf8, e_acute);
+    public_regfree(&alpha_utf8);
+    public_regfree(&icase_utf8);
+    public_regfree(&dot_utf8);
+    public_regfree(&dot_c);
+    freelocale(utf8);
 }
 
 /*
@@ -747,6 +886,7 @@ int main(int argc, char **argv)
     check_compile_and_free();
     check_errors();
     check_regerror_table();
+    check_locale_edges();
     /* `--corpus-trace` prints one running digest per compilation;
      * `--corpus-trace-subjects` adds every execution observation. */
     if (argc == 2 && !strcmp(argv[1], "--corpus-trace"))
