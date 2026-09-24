@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Selected x86-64 credential profile through installed owned products.
+# Selected x86-64 credential setters through installed owned products.
 #
 # One object is compiled with the supplied dynamic product's installed driver
 # and headers, then linked unchanged to pinned musl, owned static ET_EXEC,
 # static PIE, and owned dynamic PIE/non-PIE consumers.  The direct and alias
 # executions enter a new mapped user namespace before chrooting into their
-# disposable root; the transitions execution uses the container root.  The
-# probe itself has no live application workers and forks a fresh child for
-# every setter call, so it neither mutates the harness nor claims an all-thread
-# credential rendezvous.
+# disposable root; the transitions and threads executions use the container
+# root.  Every scenario runs its setter calls in fresh disposable children, so
+# the harness itself never changes identity.
 #
-# The direct setters have the same musl result.  The four historical aliases
-# are an explicit selected-profile difference: musl succeeds for the unchanged
-# IDs while crabc returns -1/EOPNOTSUPP without an ID change.  They therefore
-# have independent expected raw streams rather than an invalid byte-for-byte
-# differential assertion.
+# All nine setters follow musl's all-thread `__synccall` rendezvous.  The
+# threads scenario proves it: live workers parked in several states, callers
+# on the initial thread, on a worker, and after the initial thread's
+# pthread_exit, and a churn of creation, exit, fork, and targeted-thread
+# lookups around repeated transitions.  Every raw stream is compared
+# byte-for-byte with pinned musl.
 set -euo pipefail
 ulimit -c 0
 
@@ -114,7 +114,7 @@ readonly installed="$provided_dynamic"
 /usr/bin/gcc -nostdinc -isystem "$installed/usr/include" -ffreestanding \
     -fno-builtin -fstack-protector-strong -std=c11 -fPIE -E -H "$PROBE" \
     >/dev/null 2>"$work/header-trace"
-for header in errno.h grp.h stddef.h stdint.h stdio.h sys/syscall.h sys/types.h sys/wait.h unistd.h; do
+for header in errno.h grp.h pthread.h sched.h signal.h stddef.h stdint.h stdio.h sys/syscall.h sys/types.h sys/wait.h unistd.h; do
     grep -Fq "$installed/usr/include/$header" "$work/header-trace" || {
         printf 'owned credentials profile did not use installed %s\n' "$header" >&2
         exit 1
@@ -237,26 +237,19 @@ expected = {
         ("setgid-unmapped", -1, errno.EINVAL),
         ("setgroups-current", -1, errno.EPERM),
     ],
-    "aliases-musl": [
+    "aliases": [
         ("setreuid-current", 0, None),
         ("seteuid-current", 0, None),
         ("setregid-current", 0, None),
         ("setegid-current", 0, None),
     ],
-    "aliases-profile": [
-        ("setreuid-current", -1, errno.EOPNOTSUPP),
-        ("seteuid-current", -1, errno.EOPNOTSUPP),
-        ("setregid-current", -1, errno.EOPNOTSUPP),
-        ("setegid-current", -1, errno.EOPNOTSUPP),
-    ],
 }[scenario]
 summaries = {
     "direct": "credentials-profile direct: successful-current/no-change/rejected IDs-unchanged",
-    "aliases-musl": "credentials-profile aliases: musl-success IDs-unchanged",
-    "aliases-profile": "credentials-profile aliases: crabc-eopnotsupp IDs-unchanged",
+    "aliases": "credentials-profile aliases: success IDs-unchanged",
 }
 pattern = re.compile(
-    r"^credentials-profile (?P<scenario>direct|aliases-musl|aliases-profile) "
+    r"^credentials-profile (?P<scenario>direct|aliases) "
     r"(?P<name>[a-z0-9-]+): status=(?P<status>-?[0-9]+) errno=(?P<errno>[0-9]+) "
     r"before=uid=(?P<before_uid>[0-9]+/[0-9]+/[0-9]+),gid=(?P<before_gid>[0-9]+/[0-9]+/[0-9]+) "
     r"after=uid=(?P<after_uid>[0-9]+/[0-9]+/[0-9]+),gid=(?P<after_gid>[0-9]+/[0-9]+/[0-9]+) "
@@ -281,18 +274,26 @@ run_oracle() {
     mkdir "$work/oracle-root"
     "$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/workload.o" \
         -o "$work/oracle-root/consumer"
-    for scenario in direct aliases-musl; do
+    for scenario in direct aliases; do
         run_in_user_namespace_root "$work/oracle-root" \
             "$work/oracle-$scenario.stdout" "$work/oracle-$scenario.stderr" \
             /consumer "$scenario"
+        validate_transcript "$scenario" "$work/oracle-$scenario.stdout"
+        [ ! -s "$work/oracle-$scenario.stderr" ]
     done
-    run_in_root "$work/oracle-root" "$work/oracle-transitions.stdout" \
-        "$work/oracle-transitions.stderr" /consumer transitions
-    [ ! -s "$work/oracle-transitions.stderr" ]
-    validate_transcript direct "$work/oracle-direct.stdout"
-    validate_transcript aliases-musl "$work/oracle-aliases-musl.stdout"
-    [ ! -s "$work/oracle-direct.stderr" ]
-    [ ! -s "$work/oracle-aliases-musl.stderr" ]
+    for scenario in transitions threads; do
+        run_in_root "$work/oracle-root" "$work/oracle-$scenario.stdout" \
+            "$work/oracle-$scenario.stderr" /consumer "$scenario"
+        [ ! -s "$work/oracle-$scenario.stderr" ]
+    done
+}
+
+compare_with_oracle() {
+    local label="$1" scenario="$2"
+
+    cmp "$work/oracle-$scenario.stdout" "$work/$label-$scenario.stdout"
+    cmp "$work/oracle-$scenario.stderr" "$work/$label-$scenario.stderr"
+    cmp "$work/oracle-$scenario.stdout.status" "$work/$label-$scenario.stdout.status"
 }
 
 run_candidate() {
@@ -303,28 +304,19 @@ run_candidate() {
     if [ "$entry" = direct ]; then
         command=(/lib/ld-crabc-x86_64.so.1 /consumer)
     fi
-    run_in_user_namespace_root "$root" \
-        "$work/$label-direct.stdout" "$work/$label-direct.stderr" \
-        "${command[@]}" direct
-    validate_transcript direct "$work/$label-direct.stdout"
-    cmp "$work/oracle-direct.stdout" "$work/$label-direct.stdout"
-    cmp "$work/oracle-direct.stderr" "$work/$label-direct.stderr"
-    cmp "$work/oracle-direct.stdout.status" "$work/$label-direct.stdout.status"
-
-    run_in_root "$root" \
-        "$work/$label-transitions.stdout" "$work/$label-transitions.stderr" \
-        "${command[@]}" transitions
-    cmp "$work/oracle-transitions.stdout" "$work/$label-transitions.stdout"
-    cmp "$work/oracle-transitions.stderr" "$work/$label-transitions.stderr"
-    cmp "$work/oracle-transitions.stdout.status" "$work/$label-transitions.stdout.status"
-
-    run_in_user_namespace_root "$root" \
-        "$work/$label-aliases-profile.stdout" "$work/$label-aliases-profile.stderr" \
-        "${command[@]}" aliases-profile
-    validate_transcript aliases-profile "$work/$label-aliases-profile.stdout"
-    [ ! -s "$work/$label-aliases-profile.stderr" ]
-    cmp "$work/oracle-aliases-musl.stdout.status" \
-        "$work/$label-aliases-profile.stdout.status"
+    for scenario in direct aliases; do
+        run_in_user_namespace_root "$root" \
+            "$work/$label-$scenario.stdout" "$work/$label-$scenario.stderr" \
+            "${command[@]}" "$scenario"
+        validate_transcript "$scenario" "$work/$label-$scenario.stdout"
+        compare_with_oracle "$label" "$scenario"
+    done
+    for scenario in transitions threads; do
+        run_in_root "$root" \
+            "$work/$label-$scenario.stdout" "$work/$label-$scenario.stderr" \
+            "${command[@]}" "$scenario"
+        compare_with_oracle "$label" "$scenario"
+    done
 }
 
 run_oracle
@@ -367,18 +359,17 @@ done
 cat >"$work/profile-differential.txt" <<'EOF'
 same-object direct result: pinned musl and crabc both pass explicit current-ID, all-ones no-change, and rejected calls with unchanged IDs
 mapped user namespace setgroups result: a valid one-element current-gid slice is denied with EPERM before any ID transition
+same-object alias result: setreuid, seteuid, setregid, and setegid succeed for unchanged IDs in pinned musl and crabc
 same-object transitions result: pinned musl and crabc produce identical raw results and kernel IDs for real single-threaded setgroups, setresuid/setresgid, setuid, and setgid changes as container root
-pinned musl aliases: setreuid, seteuid, setregid, and setegid succeed for unchanged IDs
-selected crabc profile aliases: setreuid, seteuid, setregid, and setegid return -1/EOPNOTSUPP with unchanged IDs
-no all-thread credential rendezvous is claimed or tested
+same-object threads result: every thread reports each transition of all nine setters from initial-thread, worker, and post-pthread_exit callers; a first-thread EPERM changes no thread; transitions stay complete under creation, exit, fork, and targeted-lookup churn
 EOF
 
 if [ "$static_was_supplied" -eq 0 ] && [ "$dynamic_was_supplied" -eq 0 ]; then
-    printf 'owned credentials profile: PASS (same installed-driver object, pinned musl direct and real-transition differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+    printf 'owned credentials profile: PASS (same installed-driver object, pinned musl direct and real-transition differential, all-thread rendezvous, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 elif [ "$static_was_supplied" -eq 1 ] && [ "$dynamic_was_supplied" -eq 1 ]; then
-    printf 'owned credentials profile: PASS (supplied static and installed products, same installed-driver object, pinned musl direct and real-transition differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+    printf 'owned credentials profile: PASS (supplied static and installed products, same installed-driver object, pinned musl direct and real-transition differential, all-thread rendezvous, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 elif [ "$static_was_supplied" -eq 1 ]; then
-    printf 'owned credentials profile: PASS (supplied static product and default installed product, same installed-driver object, pinned musl direct and real-transition differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+    printf 'owned credentials profile: PASS (supplied static product and default installed product, same installed-driver object, pinned musl direct and real-transition differential, all-thread rendezvous, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 else
-    printf 'owned credentials profile: PASS (supplied installed product, same installed-driver object, pinned musl direct and real-transition differential, explicit four-alias profile difference, user namespaces, private children, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+    printf 'owned credentials profile: PASS (supplied installed product, same installed-driver object, pinned musl direct and real-transition differential, all-thread rendezvous, user namespaces, private children, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 fi

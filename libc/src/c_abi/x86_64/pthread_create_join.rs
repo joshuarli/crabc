@@ -894,7 +894,15 @@ unsafe fn exit_selected_final_runtime_task() -> ! {
 /// see the other's still-positive TID and each take `SYS_exit`. The logical
 /// task-state store and the following scan occur under one list lock, so only
 /// the transition that commits the final Active task returns true.
+///
+/// Owned builds commit under musl's thread-list lock, which the caller's
+/// application-signal block admits. As in musl, a non-final task keeps that
+/// lock through its remaining retirement and releases it only immediately
+/// before `SYS_exit` ([`release_thread_list_for_task_exit`]), so a
+/// `__synccall` rendezvous never meets a task that can vanish under it.
 fn selected_initial_thread_is_final_runtime_task() -> bool {
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe { super::owned_synccall::lock_thread_list() };
     lock_selected_worker_registry();
     SELECTED_INITIAL_THREAD_TASK_STATE.store(
         SelectedRuntimeTaskState::EXIT_COMMITTED,
@@ -915,6 +923,10 @@ fn selected_initial_thread_is_final_runtime_task() -> bool {
         control = unsafe { (*control).registry_next };
     }
     unlock_selected_worker_registry();
+    #[cfg(crabc_x86_owned_runtime)]
+    if !another_active_task {
+        unsafe { super::owned_synccall::unlock_thread_list() };
+    }
     !another_active_task
 }
 
@@ -926,7 +938,11 @@ fn selected_initial_thread_is_final_runtime_task() -> bool {
 /// thread-list unlink point, but keeps the control mapped for join/detach
 /// reclamation. Once committed, a task cannot be counted as another thread's
 /// live sibling even if Linux has not yet cleared its child-TID word.
+///
+/// Owned builds hold the thread-list lock exactly as for the initial task.
 fn selected_worker_is_final_runtime_task(control: *mut ThreadControl) -> bool {
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe { super::owned_synccall::lock_thread_list() };
     lock_selected_worker_registry();
     // SAFETY: current-worker identity retains this linked control mapping
     // until its calling task invokes SYS_exit.
@@ -958,7 +974,24 @@ fn selected_worker_is_final_runtime_task(control: *mut ThreadControl) -> bool {
         cursor = unsafe { (*cursor).registry_next };
     }
     unlock_selected_worker_registry();
+    #[cfg(crabc_x86_owned_runtime)]
+    if !another_active_task {
+        unsafe { super::owned_synccall::unlock_thread_list() };
+    }
     !another_active_task
+}
+
+/// Release the thread-list lock a non-final task kept from its exit commit,
+/// as the last step before its `SYS_exit`.
+///
+/// Musl's kernel releases the lock through the exiting thread's
+/// clear-child-TID address; here that word belongs to join/reclamation, so
+/// the task releases the lock itself. It runs no further code but the exit
+/// instruction, and a rendezvous does not signal a committed task.
+#[inline(always)]
+fn release_thread_list_for_task_exit() {
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe { super::owned_synccall::unlock_thread_list() };
 }
 
 /// Whether any selected worker control remains linked.
@@ -972,6 +1005,81 @@ pub(super) fn has_live_selected_workers() -> bool {
     let live = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) != 0;
     unlock_selected_worker_registry();
     live
+}
+
+/// The calling owned task's recorded Linux TID, musl's `__pthread_self()->tid`.
+///
+/// The thread pointer alone selects the record, so a raw-fork, vfork, or
+/// foreign task that runs with a copied owned `%fs` reports the original
+/// task's TID; `__synccall` compares it with `gettid` exactly as musl does.
+#[cfg(crabc_x86_owned_runtime)]
+pub(super) fn current_runtime_task_linux_id() -> Option<c_int> {
+    let current = pthread_identity::current_thread_pointer() as usize;
+    if current == 0 {
+        return None;
+    }
+    if current == INITIAL_SIGNAL_TARGET_TP.load(Ordering::Acquire) {
+        let tid = INITIAL_SIGNAL_TARGET_TID.load(Ordering::Acquire);
+        return (tid > 0).then_some(tid);
+    }
+    lock_selected_worker_registry_shared();
+    let tid = selected_worker_by_thread_pointer_locked(current).map(|control| {
+        // SAFETY: registry membership keeps the control mapped here.
+        let tid = unsafe { (*control).worker_tid.load(Ordering::Acquire) };
+        if tid == -1 { unsafe { (*control).child_tid.load(Ordering::Acquire) } } else { tid }
+    });
+    unlock_selected_worker_registry_shared();
+    tid.filter(|tid| *tid > 0)
+}
+
+/// Copy the Linux TID of every other live task into `targets`, the initial
+/// task first and then in registry order (musl's `td->next` walk), and
+/// return how many there are, which may exceed `targets.len()`.
+///
+/// The caller's thread-list lock keeps this set exact and stable: creation
+/// and exit commitment both need that lock, so a second call returns the
+/// same set. The registry lock is held only for this copy. A rendezvous must
+/// not take it again once it has caught any task, because a caught task may
+/// hold it while it waits in its handler.
+///
+/// # Safety-relevant contract
+///
+/// The caller holds the thread-list lock with all signals blocked.
+#[cfg(crabc_x86_owned_runtime)]
+pub(super) fn collect_other_live_runtime_tasks(self_tid: c_int, targets: &mut [c_int]) -> usize {
+    let mut count = 0_usize;
+    let mut record = |tid: c_int| {
+        if let Some(slot) = targets.get_mut(count) {
+            *slot = tid;
+        }
+        count += 1;
+    };
+    let initial = INITIAL_SIGNAL_TARGET_TID.load(Ordering::Acquire);
+    if initial > 0
+        && initial != self_tid
+        && SELECTED_INITIAL_THREAD_TASK_STATE.load(Ordering::Acquire) == SelectedRuntimeTaskState::ACTIVE
+    {
+        record(initial);
+    }
+    lock_selected_worker_registry_shared();
+    let mut control = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
+    while !control.is_null() {
+        // SAFETY: registry membership keeps every traversed control live.
+        let (state, worker, child) = unsafe {
+            (
+                (*control).task_state.load(Ordering::Acquire),
+                (*control).worker_tid.load(Ordering::Acquire),
+                (*control).child_tid.load(Ordering::Acquire),
+            )
+        };
+        let tid = if worker == -1 { child } else { worker };
+        if state == SelectedRuntimeTaskState::ACTIVE && tid > 0 && tid != self_tid {
+            record(tid);
+        }
+        control = unsafe { (*control).registry_next };
+    }
+    unlock_selected_worker_registry_shared();
+    count
 }
 
 /// Musl needs loader callback exclusion only while another task can own it.
@@ -1004,12 +1112,18 @@ pub(super) fn fork_has_other_runtime_tasks() -> bool {
 /// not make another task's pthread_kill wait for this fork. The sole child
 /// discards the copied lock word with the rest of the inherited registry.
 pub(super) fn pthread_fork_prepare() {
+    // Musl's fork takes its thread-list lock at this point, with application
+    // signals blocked, so no `__synccall` rendezvous spans the copy.
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe { super::owned_synccall::lock_thread_list() };
     lock_selected_worker_registry_shared();
 }
 
 /// Release the parent-side selected-worker fork transaction.
 pub(super) unsafe fn pthread_fork_parent() {
     unlock_selected_worker_registry_shared();
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe { super::owned_synccall::unlock_thread_list() };
 }
 
 /// Install the child's clear-child-TID address inside the all-signal-blocked
@@ -1059,6 +1173,9 @@ impl DeferredProcessChildRegistryReset {
         SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
         SELECTED_INITIAL_THREAD_TASK_STATE.store(SelectedRuntimeTaskState::ACTIVE, Ordering::Release);
         SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+        // Musl `__post_Fork`: the copied thread-list lock has no owner here.
+        #[cfg(crabc_x86_owned_runtime)]
+        super::owned_synccall::reset_thread_list_after_fork();
     }
 }
 
@@ -1288,8 +1405,22 @@ pub(super) fn selected_thread_attributes(thread: *mut c_void) -> Option<Selected
     }
     // A signal handler can reenter the registry, and asynchronous cancellation
     // can exit without unwinding. Neither may interrupt this snapshot lock.
+    // Owned builds leave only SIGSYNCCALL deliverable, whose handler does
+    // neither: this wait may be for a holder that a rendezvous has caught.
     let mut saved_mask = 0_u64;
+    #[cfg(not(crabc_x86_owned_runtime))]
     unsafe { super::signal_execution::block_all_signals(&mut saved_mask) };
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe {
+        let blocked = !(1_u64 << (super::owned_synccall::SIGSYNCCALL - 1));
+        raw_syscall::syscall4(
+            raw_syscall::SYS_RT_SIGPROCMASK,
+            0, // SIG_BLOCK
+            core::ptr::addr_of!(blocked) as i64,
+            core::ptr::addr_of_mut!(saved_mask) as i64,
+            8,
+        );
+    }
     lock_selected_worker_registry();
     let attributes = if thread as usize == INITIAL_SIGNAL_TARGET_TP.load(Ordering::Acquire) {
         // SAFETY: this process-lifetime value is written only by the sole
@@ -2348,6 +2479,30 @@ unsafe fn selected_worker_native_mimalloc_attached(
     }
 }
 
+/// Commit a worker that ends before its callback to exit, under the
+/// thread-list lock, so a later `__synccall` does not signal a task that is
+/// about to vanish. Only the clone tail's `SYS_exit` follows the release.
+///
+/// Such a child may still run with every signal blocked. It first leaves
+/// only `SIGSYNCCALL` deliverable: taking the lock while that signal is
+/// blocked could deadlock against a rendezvous that is waiting for it.
+#[cfg(crabc_x86_owned_runtime)]
+fn commit_unstarted_worker_exit(control: *mut ThreadControl) {
+    let mask = !(1_u64 << (super::owned_synccall::SIGSYNCCALL - 1));
+    unsafe {
+        raw_syscall::syscall4(
+            raw_syscall::SYS_RT_SIGPROCMASK,
+            2, // SIG_SETMASK
+            core::ptr::addr_of!(mask) as usize as i64,
+            0,
+            8,
+        );
+        super::owned_synccall::lock_thread_list();
+        (*control).task_state.store(SelectedRuntimeTaskState::EXIT_COMMITTED, Ordering::Release);
+        super::owned_synccall::unlock_thread_list();
+    }
+}
+
 /// Run the one selected C callback, then publish its result before exit.
 unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     let control = opaque.cast::<ThreadControl>();
@@ -2371,7 +2526,10 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
                         state as *const AtomicI32 as i64, 128, 2, 0, 0, 0);
                 }
             }
-            if state.load(Ordering::Acquire) != 0 { return 0; }
+            if state.load(Ordering::Acquire) != 0 {
+                commit_unstarted_worker_exit(control);
+                return 0;
+            }
         }
     }
     let Some(worker_tid) = current_linux_thread_id() else {
@@ -2379,6 +2537,8 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         // admitted result handoff avoids leaving a joiner to spin forever if
         // a hostile syscall filter violates that kernel precondition.
         unsafe { publish_worker_result(control, SelectedWorkerResult::Invalid) };
+        #[cfg(crabc_x86_owned_runtime)]
+        commit_unstarted_worker_exit(control);
         return 0;
     };
     // SAFETY: this child owns initialization before it calls user code; the
@@ -2399,6 +2559,8 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         // The parent observes this terminal rejection before it exposes the
         // pthread handle. No callback, user cleanup, or TSD destructor can
         // exist on this path, so the clone tail may end the child directly.
+        #[cfg(crabc_x86_owned_runtime)]
+        commit_unstarted_worker_exit(control);
         return 0;
     }
     // Musl pthread_create.c::start clears SIGCANCEL (33, not SIGTIMER
@@ -2495,6 +2657,8 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     #[cfg(crabc_x86_owned_runtime)]
     unsafe { pthread_cancel::orphan_current_stdio_locks() };
     unsafe { pthread_identity::clear_current_selected_cancellation_state() };
+    // The private clone tail issues SYS_exit directly after this return.
+    release_thread_list_for_task_exit();
     0
 }
 
@@ -2718,12 +2882,26 @@ unsafe fn create_selected_worker_with_attributes(
         } else { 0xffff_fffc_7fff_ffff | (1_u64 << 32) }
     } else { 1_u64 << 32 };
     let mut creator_signal_mask = 0_u64;
+    // Owned creation takes musl's thread-list lock between publication and
+    // clone, so `__synccall` never meets a linked control without a live task.
+    // As in musl, the lock is taken with only application signals blocked;
+    // the rest of the creation mask follows.
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe {
+        super::signal_execution::block_application_signals(&mut creator_signal_mask);
+        super::owned_synccall::lock_thread_list();
+    }
+    let mut ignored_signal_mask = 0_u64;
     let _ = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_RT_SIGPROCMASK,
             0, // SIG_BLOCK
             core::ptr::addr_of!(creation_signal_mask) as usize as i64,
-            core::ptr::addr_of_mut!(creator_signal_mask) as usize as i64,
+            if cfg!(crabc_x86_owned_runtime) {
+                core::ptr::addr_of_mut!(ignored_signal_mask)
+            } else {
+                core::ptr::addr_of_mut!(creator_signal_mask)
+            } as usize as i64,
             8,
         )
     };
@@ -2760,6 +2938,12 @@ unsafe fn create_selected_worker_with_attributes(
             child_tid,
         )
     };
+    // A failed clone's control is withdrawn before the thread-list lock is
+    // released, so no rendezvous can meet it.
+    let clone_failure_withdrawn =
+        is_linux_error(clone_result).then(|| release_selected_worker(control));
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe { super::owned_synccall::unlock_thread_list() };
     #[cfg(crabc_x86_owned_runtime)]
     let scheduler_result = if clone_result >= 0 && attributes.scheduler_requested {
         let result = unsafe { raw_syscall::syscall3(
@@ -2792,8 +2976,8 @@ unsafe fn create_selected_worker_with_attributes(
     unsafe { super::signal_execution::restore_application_signals(&creator_signal_mask) };
     #[cfg(crabc_x86_owned_runtime)]
     if scheduler_result < 0 { return (-scheduler_result) as c_int; }
-    if is_linux_error(clone_result) {
-        if !release_selected_worker(control) {
+    if let Some(withdrawn) = clone_failure_withdrawn {
+        if !withdrawn {
             // The private list can still expose `control` to the selected
             // pthread_exit scanner.  Fail closed by retaining both mappings
             // rather than unmapping a pointer that a failed withdrawal left
@@ -2918,11 +3102,13 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         #[cfg(crabc_x86_owned_runtime)]
         unsafe { pthread_cancel::orphan_current_stdio_locks() };
         unsafe { pthread_identity::clear_current_selected_cancellation_state() };
+        release_thread_list_for_task_exit();
         // SAFETY: another selected worker remains. End only this initial task;
         // the final worker takes the ordinary process-exit path above.
         unsafe { exit_selected_linux_task() }
     }
-    if let Some(control) = current_selected_worker_control() {
+    let committed = current_selected_worker_control();
+    if let Some(control) = committed {
         // SAFETY: the matched current selected worker remains live until this
         // path invokes SYS_exit. Preserve musl's cleanup-before-TSD-before-
         // result ordering without holding the worker-registry lock across user
@@ -2989,6 +3175,9 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
     #[cfg(crabc_x86_owned_runtime)]
     unsafe { pthread_cancel::orphan_current_stdio_locks() };
     unsafe { pthread_identity::clear_current_selected_cancellation_state() };
+    if committed.is_some() {
+        release_thread_list_for_task_exit();
+    }
     // SAFETY: Linux SYS_exit terminates precisely the calling task and does
     // not return. The CLONE_CHILD_CLEARTID lifecycle attached during clone
     // clears/wakes the joiner's shared child-TID word after this exit.

@@ -210,7 +210,10 @@ mod stat_compat;
 mod filesystem_capacity;
 #[path = "timestamp_updates.rs"]
 mod timestamp_updates;
-#[path = "credentials.rs"]
+// Frozen private archives keep the calling-task profile; owned products
+// port musl's all-thread `__setxid`/`setgroups` over `__synccall`.
+#[cfg_attr(not(crabc_x86_owned_runtime), path = "credentials.rs")]
+#[cfg_attr(crabc_x86_owned_runtime, path = "owned_credentials.rs")]
 mod credentials;
 #[path = "credential_observation.rs"]
 mod credential_observation;
@@ -495,6 +498,9 @@ mod pthread_barrier;
 mod pthread_spin_init;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
+#[cfg(crabc_x86_owned_runtime)]
+#[path = "owned_synccall.rs"]
+mod owned_synccall;
 #[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_process_trio.rs"]
 mod owned_process_trio;

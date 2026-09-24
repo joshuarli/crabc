@@ -49,11 +49,17 @@ performance justification under the engineering policy.
 
 ## Process credential mutation
 
-The C `setreuid`, `setregid`, `seteuid`, and `setegid` interfaces return `-1`
-with `errno == EOPNOTSUPP` and leave real/effective/saved IDs unchanged. This
-is a libc-profile limit, not Linux `ENOSYS`. Their process-wide musl contract
-needs an all-thread credential rendezvous not currently owned here. Native
-calling-task `setresuid`/`setresgid` remain separate and do not satisfy it.
+Linux credential syscalls change only the calling task. The installed x86
+C setters `setuid`, `setgid`, `seteuid`, `setegid`, `setreuid`, `setregid`,
+`setresuid`, `setresgid`, and `setgroups` follow musl's process-wide
+contract: each runs its syscall on every thread through musl's `__synccall`
+signal rendezvous, and a failure after another thread has already changed
+kills the process. The frozen private x86 archive and paused AArch64 keep
+their earlier profile: `setreuid`, `setregid`, `seteuid`, and `setegid`
+return `-1` with `errno == EOPNOTSUPP` and leave IDs unchanged (a
+libc-profile limit, not Linux `ENOSYS`), and the direct setters affect only
+the calling task. `crabc-rs` credential operations remain explicit
+calling-task operations.
 
 ## Temporary files and file handles
 

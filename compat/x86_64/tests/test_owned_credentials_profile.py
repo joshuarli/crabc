@@ -122,7 +122,6 @@ class OwnedCredentialsProfileTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn("validate_transcript", source)
-        self.assertIn("aliases-profile", source)
         self.assertIn("--link-receipt", source)
         self.assertIn("owned_posix_product_evidence", source)
         self.assertIn("validate_link", source)

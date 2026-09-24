@@ -155,18 +155,11 @@ class ObservationsTests(unittest.TestCase):
         with self.assertRaisesRegex(observations.ObservationError, 'roster differs'):
             observations.collect('static-fork', evidence, static_required=True, root=source_root)
 
-    def test_credentials_deliberate_alias_difference_is_retained_and_validated(self):
+    def test_credentials_scenarios_are_differentials_with_validated_transcripts(self):
         self.fixture('credentials-profile')
         names = ('setreuid-current', 'seteuid-current', 'setregid-current', 'setegid-current')
-        for mode in ('oracle', *observations.MODES):
-            oracle = mode == 'oracle'
-            scenario = 'aliases-musl' if oracle else 'aliases-profile'
-            stem = observations._stem('credentials-profile', observations.LAYOUTS['credentials-profile'], mode, 'aliases', oracle=oracle)
-            detail = 'musl-success' if oracle else 'crabc-eopnotsupp'
-            text = ''.join(f'credentials-profile {scenario} {name}: status={0 if oracle else -1} errno={0 if oracle else 95} before=uid=0/0/0,gid=0/0/0 after=uid=0/0/0,gid=0/0/0 ids=unchanged\n' for name in names)
-            text += f'credentials-profile aliases: {detail} IDs-unchanged\n'
-            (self.leaf / (stem + '.stdout')).write_text(text)
-            observations._credentials_helper(observations.ROOT, scenario, self.leaf / (stem + '.stdout'))
+        aliases = ''.join(f'credentials-profile aliases {name}: status=0 errno=0 before=uid=0/0/0,gid=0/0/0 after=uid=0/0/0,gid=0/0/0 ids=unchanged\n' for name in names)
+        aliases += 'credentials-profile aliases: success IDs-unchanged\n'
         direct_calls = [('setresuid-current', 0, 0), ('setresgid-current', 0, 0),
                         ('setuid-current', 0, 0), ('setgid-current', 0, 0),
                         ('setresuid-all-ones', 0, 0), ('setresgid-all-ones', 0, 0),
@@ -174,17 +167,20 @@ class ObservationsTests(unittest.TestCase):
                         ('setgroups-current', -1, 1)]
         direct = ''.join(f'credentials-profile direct {name}: status={status} errno={error} before=uid=0/0/0,gid=0/0/0 after=uid=0/0/0,gid=0/0/0 ids=unchanged\n' for name, status, error in direct_calls)
         direct += 'credentials-profile direct: successful-current/no-change/rejected IDs-unchanged\n'
-        for mode in ('oracle', *observations.MODES):
-            stem = observations._stem('credentials-profile', observations.LAYOUTS['credentials-profile'], mode, 'direct', oracle=mode == 'oracle')
-            (self.leaf / (stem + '.stdout')).write_text(direct)
+        for scenario, text in (('direct', direct), ('aliases', aliases)):
+            for mode in ('oracle', *observations.MODES):
+                stem = observations._stem('credentials-profile', observations.LAYOUTS['credentials-profile'], mode, scenario, oracle=mode == 'oracle')
+                (self.leaf / (stem + '.stdout')).write_text(text)
         result = observations.collect('credentials-profile', self.leaf, static_required=True)
-        self.assertEqual(result['scenarios']['aliases']['kind'], 'credentials-profile-difference')
-        self.assertNotEqual(result['scenarios']['aliases']['oracle']['stdout']['base64'], result['scenarios']['aliases']['candidates']['static']['stdout']['base64'])
-        path = self.leaf / 'static-aliases-profile.stdout'
-        path.write_text(path.read_text().replace('errno=95', 'errno=38'))
+        self.assertEqual({row['kind'] for row in result['scenarios'].values()}, {'differential'})
+        self.assertEqual(set(result['scenarios']), {'direct', 'aliases', 'transitions', 'threads'})
+        path = self.leaf / 'static-aliases.stdout'
+        path.write_text(path.read_text().replace('status=0 errno=0', 'status=-1 errno=95'))
+        with self.assertRaisesRegex(observations.ObservationError, 'raw observation differs'):
+            observations.collect('credentials-profile', self.leaf, static_required=True)
+        (self.leaf / 'oracle-aliases.stdout').write_text(path.read_text())
         with self.assertRaisesRegex(observations.ObservationError, 'transcript validation failed'):
             observations.collect('credentials-profile', self.leaf, static_required=True)
-
 
 if __name__ == '__main__':
     unittest.main()

@@ -19,11 +19,18 @@ const EINVAL: c_int = 22;
 /// Own the calling thread's complete kernel mask until a signal transaction
 /// has released every lock and mapping lease. Restoring can immediately
 /// deliver pending application signals or asynchronous cancellation.
+///
+/// Only `SIGSYNCCALL` stays deliverable. Its handler touches no lock, lease,
+/// or cancellation state, so it cannot abandon them; and the transaction's
+/// registry lookup may wait for a lock holder that a `__synccall`
+/// rendezvous has caught, which then needs this thread to be caught too.
+/// Musl's `pthread_kill` waits only for its per-thread kill lock, whose
+/// holders cannot be caught, so it can block everything.
 pub(super) struct AllSignals(u64);
 
 impl AllSignals {
     pub(super) unsafe fn block() -> Result<Self, c_int> {
-        let all = u64::MAX;
+        let all = !(1_u64 << (super::owned_synccall::SIGSYNCCALL - 1));
         let mut previous = 0;
         let result = unsafe { raw_syscall::syscall4(
             raw_syscall::SYS_RT_SIGPROCMASK, 0, (&all as *const u64) as i64,

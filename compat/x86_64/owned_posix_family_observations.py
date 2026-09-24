@@ -42,7 +42,7 @@ class Layout:
 LAYOUTS = {
     'legacy-filesystem': Layout('posix_filesystem', ('aliases', 'directory', 'traversal', 'temporary', 'handles'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
     'control-residual': Layout('process_control'),
-    'credentials-profile': Layout('credentials_profile', ('direct', 'aliases', 'transitions'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.stdout.status'),
+    'credentials-profile': Layout('credentials_profile', ('direct', 'aliases', 'transitions', 'threads'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.stdout.status'),
     'environment-lifecycle': Layout('environment_lifecycle', ('normal', 'allocation-failure'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', '.stdout.stderr', '.stdout.status'),
     'signal-full': Layout('posix_signals', ('sets', 'actions-masks', 'queue-delivery', 'suspend-delivery', 'sigpause-cancellation', 'sigsuspend-cancellation', 'interrupt-bookkeeping', 'alternate-stack', 'alternate-minimum', 'signalfd', 'waits'), '{mode}-{scenario}', '{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.status.json'),
     'kernel-residual': Layout('kernel_residual', ('cpucount', 'configuration', 'sysconf-signal-stack', 'hostid-membarrier', 'personality', 'prctl', 'scheduler', 'syscall', 'ulimit', 'uts-namespace', 'uts-seccomp', 'all'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
@@ -103,8 +103,6 @@ def _credentials_helper(root: Path, scenario: str, transcript: Path) -> None:
 
 
 def _stem(case: str, layout: Layout, mode: str, scenario: str, *, oracle=False) -> str:
-    if case == 'credentials-profile' and scenario == 'aliases':
-        scenario = 'aliases-musl' if oracle else 'aliases-profile'
     if case == 'system-cancellation' and mode.endswith('-kernel'):
         mode = mode.removesuffix('-kernel')
     if case == 'io-cancellation':
@@ -143,10 +141,11 @@ def collect(case: str, leaf_root: Path, *, static_required: bool, root: Path = R
     for scenario in layout.scenarios:
         oracle_stem = _stem(case, layout, '', scenario, oracle=True)
         oracle_raw, oracle = _observation(leaf, oracle_stem, layout, expected)
-        # Real-root transitions are a plain differential; the helper validates
-        # only the mapped-namespace direct and alias transcripts.
-        if case == 'credentials-profile' and scenario != 'transitions':
-            _credentials_helper(root, 'aliases-musl' if scenario == 'aliases' else scenario, leaf / (oracle_stem + '.stdout'))
+        # Every credential scenario is a plain differential; the helper
+        # additionally validates the mapped-namespace direct and alias oracle
+        # transcripts, which the candidates must then equal byte-for-byte.
+        if case == 'credentials-profile' and scenario in ('direct', 'aliases'):
+            _credentials_helper(root, scenario, leaf / (oracle_stem + '.stdout'))
         row = {'kind': 'differential', 'oracle': oracle, 'candidates': {}}
         for mode in modes:
             stem = _stem(case, layout, mode, scenario)
@@ -155,12 +154,7 @@ def collect(case: str, leaf_root: Path, *, static_required: bool, root: Path = R
             if case == 'posix-timers' and mode not in MODES[:2]:
                 reference, dynamic_oracle = _observation(leaf, 'oracle-dynamic', layout, expected)
                 row['dynamic_oracle'] = dynamic_oracle
-            if case == 'credentials-profile' and scenario == 'aliases':
-                _credentials_helper(root, 'aliases-profile', leaf / (stem + '.stdout'))
-                if raw['stderr'] != b'' or oracle_raw['stderr'] != b'':
-                    raise ObservationError('credentials aliases stderr must be empty')
-                row['kind'] = 'credentials-profile-difference'
-            elif case == 'control-residual':
+            if case == 'control-residual':
                 _control_difference(root, leaf, oracle_raw, raw)
                 row['kind'] = 'fexecve-seccomp-profile-difference'
             elif raw != reference:

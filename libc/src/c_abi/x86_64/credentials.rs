@@ -1,4 +1,6 @@
-//! Static Linux/x86-64 C credential-setter boundary.
+//! Static Linux/x86-64 C credential-setter boundary of the frozen private
+//! archive. Installed owned products select `owned_credentials.rs`, musl's
+//! all-thread `__synccall` setters, in place of this whole leaf.
 //!
 //! This selected leaf owns the nine C setters classified by
 //! `process.credentials`: `setgroups`, `setuid`, `setgid`, `setresuid`,

@@ -276,19 +276,16 @@ def credentials_companion(root, matrix, matrix_receipt, product):
         native.same(obj['object'], family.file_identity(root, root / obj['object']['path']), 'credentials canonical object')
         hashes.add(obj['object']['sha256'])
         scenarios = row['observations']['scenarios']
-        native.keys(scenarios, ('direct', 'aliases'), 'credentials companion scenarios')
-        for scenario in ('direct', 'aliases'):
-            record = scenarios[scenario]
-            native.same(record['kind'], 'differential' if scenario == 'direct' else 'credentials-profile-difference',
-                        'credentials scenario semantic kind')
+        native.keys(scenarios, observations.LAYOUTS['credentials-profile'].scenarios, 'credentials companion scenarios')
+        for scenario, record in scenarios.items():
+            native.same(record['kind'], 'differential', 'credentials scenario semantic kind')
             native.keys(record['candidates'], observations.MODES, 'credentials complete product entries')
             oracle = _retained_raw(root, leaf, record['oracle'])
-            _credentials_helper(root, 'direct' if scenario == 'direct' else 'aliases-musl', leaf / record['oracle']['stdout']['path'])
+            if scenario in ('direct', 'aliases'):
+                _credentials_helper(root, scenario, leaf / record['oracle']['stdout']['path'])
             for mode in observations.MODES:
                 candidate = _retained_raw(root, leaf, record['candidates'][mode])
-                _credentials_helper(root, 'direct' if scenario == 'direct' else 'aliases-profile', leaf / record['candidates'][mode]['stdout']['path'])
-                if scenario == 'direct':
-                    native.require(candidate == oracle, 'credentials direct-setter raw difference')
+                native.require(candidate == oracle, 'credentials setter raw difference')
         replays[label] = {'receipt': row['receipt'], 'objects': objects, 'scenarios': scenarios}
     native.require(len(hashes) == 1, 'credentials replay object differs across products')
     return {'receipt': matrix_receipt, 'replays': replays,
