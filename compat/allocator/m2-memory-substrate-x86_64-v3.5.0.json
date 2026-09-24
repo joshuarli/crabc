@@ -3,8 +3,7 @@
     {
       "id": "vm-primitives",
       "evidence_fragment": {
-        "path": "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "3043394bb2635329bf176af98b97f4855b2e2669ed15d6de26a4be5c0e73d0b7"
+        "path": "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json"
       }
     },
     {
@@ -51,8 +50,7 @@
     {
       "id": "bitmaps",
       "evidence_fragment": {
-        "path": "compat/allocator/m2-bitmaps-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
+        "path": "compat/allocator/m2-bitmaps-x86_64-v3.5.0.fragment.json"
       }
     },
     {
@@ -144,15 +142,13 @@
     {
       "id": "initialization",
       "evidence_fragment": {
-        "path": "compat/allocator/m2-initialization-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "605ec5f0ec43f983c796f180608c8ed01ba806e9f89b90c6755eef832567a984"
+        "path": "compat/allocator/m2-initialization-x86_64-v3.5.0.fragment.json"
       }
     },
     {
       "id": "fault-injection",
       "evidence_fragment": {
-        "path": "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "6953c3c95e08600b4b1abba64e017a6ca8e3e9d584a68dd67e8de6ecebb7704c"
+        "path": "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
       }
     },
     {

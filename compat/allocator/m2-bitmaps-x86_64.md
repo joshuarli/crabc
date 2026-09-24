@@ -30,8 +30,8 @@ a live subprocess owner, while ordinary `clear_once_set` takes the source
 subprocess explicitly. Test contexts own a stable subprocess rather than
 discarding events through a test observer or process-global fallback.
 
-`m2_bitmaps_x86_64.py::run_evidence(harness, offline=..., test_program=...,
-contract_fragment=...)` is the native producer interface. The aggregate passes
+`m2_bitmaps_x86_64.py::run_evidence(harness, offline=..., test_program=...)`
+is the native producer interface. The aggregate passes
 its one prepared test program; standalone use prepares one if omitted.
 It uses the canonical harness's pins and contained paths,
 extracts the fixed archive, builds the direct C fixture with pinned `stats.c`

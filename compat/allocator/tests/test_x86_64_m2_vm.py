@@ -569,7 +569,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
 
     def test_vm_fragment_reference_and_partial_status_fail_closed(self):
         contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
-        contract["components"][0]["evidence_fragment"]["inventory_sha256"] = "0" * 64
+        contract["components"][0]["evidence_fragment"]["path"] = "compat/allocator/other.fragment.json"
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER.validate_x86_64_m2_memory_substrate_contract(contract, RUNNER.load_pin())
 

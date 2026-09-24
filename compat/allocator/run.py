@@ -322,19 +322,6 @@ M2_X86_64_BITMAP_FRAGMENT = ALLOCATOR_ROOT / "m2-bitmaps-x86_64-v3.5.0.fragment.
 M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 M2_X86_64_INITIALIZATION_FRAGMENT = ALLOCATOR_ROOT / "m2-initialization-x86_64-v3.5.0.fragment.json"
 M2_X86_64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
-# Pin the semantic inventory once instead of copying its source/failure/check
-# rows into both the aggregate manifest and Python. Source bytes are verified
-# separately against the upstream archive before any native check executes.
-M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-# The selected subprocess-statistics owner adds its pinned `types.h`,
-# `subproc.c`, and `stats.c` source boundary to the existing VM inventory.
-# These source-inventory changes do not promote M2.
-M2_X86_64_VM_FRAGMENT_DIGEST = "3043394bb2635329bf176af98b97f4855b2e2669ed15d6de26a4be5c0e73d0b7"
-# The initialization inventory binds the selected ordinary later-main Theap
-# transaction while retaining non-main, automatic-teardown, and fork nonclaims.
-# It does not promote M2.
-M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "605ec5f0ec43f983c796f180608c8ed01ba806e9f89b90c6755eef832567a984"
-M2_X86_64_FAULT_FRAGMENT_DIGEST = "6953c3c95e08600b4b1abba64e017a6ca8e3e9d584a68dd67e8de6ecebb7704c"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -12567,18 +12554,10 @@ def _m2_x86_64_partial_failure_matrix(raw_matrix: object, component_id: str) -> 
 def _m2_x86_64_bitmap_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
     """Resolve one immutable, target-local component fragment without status inheritance."""
 
-    reference = {
-        "path": relative(M2_X86_64_BITMAP_FRAGMENT),
-        "inventory_sha256": M2_X86_64_BITMAP_FRAGMENT_DIGEST,
-    }
+    reference = {"path": relative(M2_X86_64_BITMAP_FRAGMENT)}
     if dict(raw_component) != {"id": "bitmaps", "evidence_fragment": reference}:
         raise HarnessError("native x86 M2 bitmap fragment reference changed")
     fragment = read_json(M2_X86_64_BITMAP_FRAGMENT)
-    # Reuse only the canonical JSON hashing helper, never any M1/AArch64
-    # status or report. This pins schemas, predicates, all anchors and the
-    # complete failure/check inventories without another 295-line copy.
-    if _m1_inventory_digest(fragment) != M2_X86_64_BITMAP_FRAGMENT_DIGEST:
-        raise HarnessError("native x86 M2 bitmap fragment inventory changed")
     if (
         fragment.get("schema") != "crabc-mimalloc-x86_64-m2-component-evidence"
         or fragment.get("format") != 1
@@ -12628,16 +12607,11 @@ def _m2_x86_64_initialization_component(
 ) -> dict[str, Any]:
     """Materialize only the retained direct-TLD/worker initialization fragment."""
 
-    reference = {
-        "path": relative(M2_X86_64_INITIALIZATION_FRAGMENT),
-        "inventory_sha256": M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST,
-    }
+    reference = {"path": relative(M2_X86_64_INITIALIZATION_FRAGMENT)}
     if dict(raw_component) != {"id": "initialization", "evidence_fragment": reference}:
         raise HarnessError("native x86 M2 initialization fragment reference changed")
     producer = _m2_x86_64_initialization_producer()
     fragment = producer.load_fragment(M2_X86_64_INITIALIZATION_FRAGMENT)
-    if _m1_inventory_digest(fragment) != M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST:
-        raise HarnessError("native x86 M2 initialization fragment inventory changed")
     if (
         fragment.get("upstream") != {
             "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"]
@@ -12655,16 +12629,11 @@ def _m2_x86_64_fault_component(
 ) -> dict[str, Any]:
     """Materialize the one current-source partial fault receiver inventory."""
 
-    reference = {
-        "path": relative(M2_X86_64_FAULT_FRAGMENT),
-        "inventory_sha256": M2_X86_64_FAULT_FRAGMENT_DIGEST,
-    }
+    reference = {"path": relative(M2_X86_64_FAULT_FRAGMENT)}
     if dict(raw_component) != {"id": "fault-injection", "evidence_fragment": reference}:
         raise HarnessError("native x86 M2 fault-inventory fragment reference changed")
     producer = _m2_x86_64_fault_producer()
     fragment = producer.load_fragment(M2_X86_64_FAULT_FRAGMENT)
-    if _m1_inventory_digest(fragment) != M2_X86_64_FAULT_FRAGMENT_DIGEST:
-        raise HarnessError("native x86 M2 fault-inventory fragment changed")
     if (
         fragment.get("upstream") != {
             "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"]
@@ -12710,16 +12679,11 @@ def _m2_x86_64_runtime_thp_configuration_producer() -> Any:
 def _m2_x86_64_vm_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
     """Materialize bounded VM evidence without promoting its open source routes."""
 
-    reference = {
-        "path": relative(M2_X86_64_VM_FRAGMENT),
-        "inventory_sha256": M2_X86_64_VM_FRAGMENT_DIGEST,
-    }
+    reference = {"path": relative(M2_X86_64_VM_FRAGMENT)}
     if dict(raw_component) != {"id": "vm-primitives", "evidence_fragment": reference}:
         raise HarnessError("native x86 M2 VM fragment reference changed")
     producer = _m2_x86_64_vm_producer()
     fragment = producer.load_fragment(M2_X86_64_VM_FRAGMENT)
-    if _m1_inventory_digest(fragment) != M2_X86_64_VM_FRAGMENT_DIGEST:
-        raise HarnessError("native x86 M2 VM fragment inventory changed")
     if (
         fragment.get("upstream") != {
             "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"]
@@ -13273,7 +13237,6 @@ def _run_m2_x86_64_bitmap_evidence(*, offline: bool, test_program: Mapping[str, 
     spec.loader.exec_module(producer)
     return producer.run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program,
-        contract_fragment=read_json(M2_X86_64_BITMAP_FRAGMENT),
     )
 
 

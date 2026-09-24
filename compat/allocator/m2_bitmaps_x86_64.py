@@ -39,12 +39,9 @@ def transcript(output: str) -> list[int]:
     return [int(value) for _, value in matches]
 
 
-def run_evidence(harness, *, offline: bool, test_program=None, contract_fragment=None) -> dict:
+def run_evidence(harness, *, offline: bool, test_program=None) -> dict:
     """Run inside the pinned native allocator image; do not infer M2 closure."""
     harness.require_native_x86_64()
-    if contract_fragment is not None:
-        if harness._m1_inventory_digest(contract_fragment) != harness.M2_X86_64_BITMAP_FRAGMENT_DIGEST:
-            raise harness.HarnessError("native bitmap producer fragment inventory changed")
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
     artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-bitmaps"

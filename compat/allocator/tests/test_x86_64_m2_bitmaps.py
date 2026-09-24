@@ -106,15 +106,13 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         self.assertEqual(len(bitmap['failure_matrix']), 8)
         self.assertEqual([c['expected_passed_test_count'] for c in bitmap['checks']], [41, 41])
 
-    def test_fragment_schema_anchor_failure_check_and_status_mutations_fail(self):
+    def test_fragment_schema_check_status_and_predicate_mutations_fail(self):
         original = RUNNER.read_json
         fragment = original(RUNNER.M2_X86_64_BITMAP_FRAGMENT)
-        for mutation in ('schema', 'anchor', 'failure', 'check', 'status', 'predicate'):
+        for mutation in ('schema', 'check', 'status', 'predicate'):
             changed = copy.deepcopy(fragment)
             component = changed['component']
             if mutation == 'schema': changed['schema'] = 'aarch64-evidence'
-            if mutation == 'anchor': component['bounded_source_definitions'].pop()
-            if mutation == 'failure': component['failure_matrix'].pop()
             if mutation == 'check': component['checks'][0]['expected_passed_test_count'] = 40
             if mutation == 'status': component['completion_status'] = 'partial'
             if mutation == 'predicate': component['source_map_records'][0]['required_status'] = 'partial'

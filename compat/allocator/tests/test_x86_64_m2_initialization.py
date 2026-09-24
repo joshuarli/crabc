@@ -22,10 +22,7 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
         self.assertEqual(component["native_status"], "partial")
         self.assertEqual(
             component["evidence_fragment"],
-            {
-                "path": RUNNER.relative(RUNNER.M2_X86_64_INITIALIZATION_FRAGMENT),
-                "inventory_sha256": RUNNER.M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST,
-            },
+            {"path": RUNNER.relative(RUNNER.M2_X86_64_INITIALIZATION_FRAGMENT)},
         )
         self.assertEqual(
             [
