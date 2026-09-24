@@ -170,6 +170,35 @@ def sibling_owned_items(inventory: Mapping[str, Any]) -> dict[str, str]:
     return owned
 
 
+def validate_abi_boundary(
+    boundary: object, items: set[str], by_name: Mapping[str, Mapping[str, Any]]
+) -> None:
+    """Cross-check the recorded ABI disposition against the API inventory.
+
+    No selected item may be a crabc libc export, and every selected external
+    function must carry the inventory's prefixed test-adapter surface.
+    """
+
+    if not isinstance(boundary, Mapping) or set(boundary) != {
+        "disposition", "crabc_libc_exported", "external_function_surface", "adapter",
+    }:
+        raise harness.HarnessError("M7 inventory must record exactly its ABI boundary disposition")
+    if boundary["crabc_libc_exported"] is not False or not boundary["disposition"]:
+        raise harness.HarnessError("M7 ABI boundary must keep every mi_* item out of libc")
+    if not (harness.ROOT / str(boundary["adapter"]) / "Cargo.toml").is_file():
+        raise harness.HarnessError("M7 ABI boundary names an absent test adapter")
+    exported = sorted(name for name in items if by_name[name].get("crabc_libc_exported") is not False)
+    if exported:
+        raise harness.HarnessError(f"M7 items would be crabc libc exports: {exported}")
+    surface = boundary["external_function_surface"]
+    outside = sorted(
+        name for name in items
+        if by_name[name].get("kind") == "external-function" and by_name[name].get("adapter_surface") != surface
+    )
+    if outside:
+        raise harness.HarnessError(f"M7 external functions outside the {surface} surface: {outside}")
+
+
 def validate_contract(
     contract: Mapping[str, Any],
     api: Mapping[str, Any],
@@ -193,6 +222,7 @@ def validate_contract(
     ):
         raise harness.HarnessError("M7 allocator gate must use the pinned API applicability inventory")
     items, modes = selected_inventory(inventory, api)
+    validate_abi_boundary(inventory.get("abi_boundary"), items, _by_name(api.get("items"), "item"))
     shared = sorted(items & set(sibling_items))
     if shared:
         raise harness.HarnessError(

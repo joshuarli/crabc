@@ -39,7 +39,13 @@
     ],
     "disjoint_from": [
       "compat/allocator/m6-gate-v3.5.0.json"
-    ]
+    ],
+    "abi_boundary": {
+      "disposition": "crabc libc's public surface stays musl's and exports no mi_* symbol; every M7 external function is reachable only through the prefixed test adapter, which the gate evaluates.",
+      "crabc_libc_exported": false,
+      "external_function_surface": "test-c-api-adapter-only",
+      "adapter": "compat/allocator/test-adapter"
+    }
   },
   "evidence": {
     "differential:options-environment": {
@@ -173,7 +179,7 @@
         "differential:options-environment"
       ],
       "blocked_by": [
-        "The accessors exist only as crate-private `OutputOwner` operations; no public or prefixed test-adapter C ABI maps raw `mi_option_t` values and the process owner to them."
+        "The accessors exist only as crate-private `OutputOwner` operations; no prefixed test-adapter function maps raw `mi_option_t` values and the process owner to them."
       ]
     },
     {
@@ -211,7 +217,7 @@
       "blocked_by": [
         "No engine path reports through `OutputOwner::error_message`: the selected source's 37 `_mi_error_message` sites outside src/options.c (alloc, aligned, posix, arena, free, heap, init, libc, os, page-map, page, theap, threadlocal) are unported, and the libc boundary does not apply `SourceErrorDisposition::DefaultErrno`.",
         "The `MI_XMALLOC` abort-on-allocation-failure profile is absent.",
-        "`mi_register_output` and `mi_register_deferred_free` have no public or prefixed C ABI mapping, and deferred-free has no `mi_collect` invocation evidence."
+        "`mi_register_output` and `mi_register_deferred_free` have no prefixed test-adapter mapping, and deferred-free has no `mi_collect` invocation evidence."
       ]
     },
     {
@@ -239,7 +245,7 @@
         "differential:statistics"
       ],
       "blocked_by": [
-        "No public statistics accessor, JSON renderer, print route, reset, or `mi_process_info` API exists; only the final-output scalar image is rendered.",
+        "No prefixed test-adapter statistics accessor, JSON renderer, print route, reset, or `mi_process_info` mapping exists; only the final-output scalar image is rendered.",
         "Statistics producers gated on `MI_STAT > 0` are absent."
       ]
     },
@@ -285,7 +291,7 @@
       ],
       "blocked_by": [
         "The engine selects only `DEBUG_LEVEL = 0` and `PADDING_SIZE = 0`; no debug, show-errors, or padding profile, assertion level, or debug fill exists.",
-        "`mi_debug_show_arenas` and `mi_arenas_print` are absent.",
+        "`mi_debug_show_arenas` and `mi_arenas_print` are absent, including their prefixed test-adapter mapping.",
         "No applicability decision exists for the TSAN/UBSAN and Valgrind/ASAN/ETW modes."
       ]
     },

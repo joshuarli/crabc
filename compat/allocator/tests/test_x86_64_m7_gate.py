@@ -102,6 +102,20 @@ class M7GateContractTests(unittest.TestCase):
         with self.assertRaisesRegex(harness.HarnessError, "another milestone owns"):
             self.validate(overlapping)
 
+    def test_an_item_exported_by_libc_or_outside_the_adapter_is_rejected(self) -> None:
+        for field, value, message in (
+            ("crabc_libc_exported", True, "libc exports"),
+            ("adapter_surface", "source-only", "outside the test-c-api-adapter-only"),
+        ):
+            api = copy.deepcopy(self.api)
+            next(item for item in api["items"] if item["name"] == "mi_stats_get")[field] = value
+            with self.assertRaisesRegex(harness.HarnessError, message):
+                self.validate(api=api)
+        exporting = copy.deepcopy(self.contract)
+        exporting["inventory"]["abi_boundary"]["crabc_libc_exported"] = True
+        with self.assertRaisesRegex(harness.HarnessError, "out of libc"):
+            self.validate(exporting)
+
     def test_inapplicable_or_unselected_ownership_is_rejected(self) -> None:
         inapplicable = copy.deepcopy(self.contract)
         inapplicable["inventory"]["additional_items"].append("mi_collect_reduce")
