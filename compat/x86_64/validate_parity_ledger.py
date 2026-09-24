@@ -66712,6 +66712,120 @@ def require_stdio_tmpfile_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+STDIO_FILE_ENGINE_CAPABILITIES = (
+    "stdio.path-stream",
+    "stdio.stream-io",
+    "stdio.position-buffering",
+    "stdio.format-scan",
+)
+
+
+def require_stdio_installed_file_engine_slice(family: Mapping[str, Any]) -> None:
+    """Bind the four FILE capabilities to the installed-engine receipt.
+
+    The slice is credited only by the eight-row installed-header FILE-engine
+    receipt, whose reader requires the retained objects to reference every
+    frozen symbol of these capabilities. It must not absorb the source-only
+    `stdio.fopen64-alias` capability or promote the family.
+    """
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.text-math-locale-stdio].verified_slice",
+        str(family.get("status", "")),
+        string_list(
+            family.get("capabilities"),
+            "family[libc.text-math-locale-stdio].capabilities",
+            allow_empty=True,
+        ),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "stdio.installed-file-engine"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one stdio.installed-file-engine slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "stdio.installed-file-engine must not promote libc.text-math-locale-stdio",
+    )
+    selected = matching[0]
+    require(
+        selected.get("capabilities") == list(STDIO_FILE_ENGINE_CAPABILITIES),
+        "stdio.installed-file-engine must select exactly the four FILE engine capabilities",
+    )
+    commands = [
+        entry.get("command")
+        for entry in selected.get("native_evidence", [])
+        if isinstance(entry, Mapping)
+    ]
+    require(
+        commands == [
+            "./scripts/dev-x86_64.sh owned-stdio-file-engine",
+            "./scripts/dev-x86_64.sh owned-stdio",
+        ],
+        "stdio.installed-file-engine must use its two installed-product evidence commands",
+    )
+
+    description = selected.get("description")
+    require(isinstance(description, str), "stdio.installed-file-engine needs a description")
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "pinned musl 1.2.6",
+        "static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry",
+        "every frozen symbol of the four capabilities",
+        "`feof`/`ferror`",
+        "mid-stream `setvbuf`",
+        "exit flush",
+        "`stdio.fopen64-alias` macro remains its own slice",
+        "family aggregate",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"stdio.installed-file-engine description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(selected.get("source_owners"), "stdio.installed-file-engine.source_owners")
+    )
+    receipt_path = ROOT / "compat" / "x86_64" / "owned_stdio_file_engine_receipt.py"
+    specification = importlib.util.spec_from_file_location(
+        "parity_ledger_owned_stdio_file_engine_receipt", receipt_path
+    )
+    require(
+        specification is not None and specification.loader is not None,
+        "stdio.installed-file-engine cannot load its receipt reader",
+    )
+    reader = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(reader)
+    require(
+        tuple(reader.FROZEN_CAPABILITIES) == STDIO_FILE_ENGINE_CAPABILITIES
+        and reader.FROZEN_LEDGER == "compat/crabc-rs/coverage.toml"
+        and "stdio.frozen-surface" in reader.SCOPE,
+        "stdio.installed-file-engine reader must check the same frozen FILE surface",
+    )
+    for role in reader.SCOPE:
+        source = str(reader.ROLES[role]["source"])
+        require(source in owners, f"stdio.installed-file-engine source owners omit {source}")
+    for owner in (
+        "compat/crabc-rs/coverage.toml",
+        "libc/src/c_abi/x86_64/owned_static_stdio.rs",
+        "compat/x86_64/run_owned_stdio_file_engine.sh",
+        "compat/x86_64/owned_stdio_file_engine_receipt.py",
+        "compat/x86_64/text-math-locale-stdio-family.toml",
+        "compat/x86_64/validate_parity_ledger.py",
+    ):
+        require(owner in owners, f"stdio.installed-file-engine source owners omit {owner}")
+
+    roster = load_toml(ROOT / "compat" / "x86_64" / "text-math-locale-stdio-family.toml")
+    components = roster.get("components")
+    engine = components.get("stdio-engine") if isinstance(components, Mapping) else None
+    require(
+        isinstance(engine, Mapping)
+        and engine.get("reader") == "compat/x86_64/owned_stdio_file_engine_receipt.py"
+        and set(STDIO_FILE_ENGINE_CAPABILITIES) <= set(engine.get("credits", []))
+        and engine.get("rows") == list(reader.SCOPE),
+        "stdio.installed-file-engine family roster must credit the engine rows",
+    )
+
+
 def require_stdio_fopen64_alias_slice(family: Mapping[str, Any]) -> None:
     """Keep the x86 fopen64 capability a source-only LP64 macro alias.
 
@@ -80688,6 +80802,7 @@ def _validate_ledger(
     require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_tmpfile_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_fopen64_alias_slice(by_id["libc.text-math-locale-stdio"])
+    require_stdio_installed_file_engine_slice(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
     require_elementary_sqrt_fenv_artifact(by_id["libc.text-math-locale-stdio"])
     require_fenv_sensitive_rounding_artifact(by_id["libc.text-math-locale-stdio"])

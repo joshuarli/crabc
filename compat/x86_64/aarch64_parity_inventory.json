@@ -1022,7 +1022,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "stdio.format-scan",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1034,19 +1034,19 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "stdio.path-stream",
       "x86_family": "libc.text-math-locale-stdio"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "stdio.position-buffering",
       "x86_family": "libc.text-math-locale-stdio"
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "stdio.stream-io",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1347,8 +1347,8 @@
   ],
   "capability_state_counts": {
     "implemented-foundation": 180,
-    "missing": 15,
-    "selected-private": 28
+    "missing": 11,
+    "selected-private": 32
   },
   "families": [
     {
@@ -1461,7 +1461,7 @@
       "contract_state": "selected-private",
       "id": "libc.text-math-locale-stdio",
       "verified_artifact_count": 77,
-      "verified_slice_count": 9
+      "verified_slice_count": 10
     },
     {
       "aarch64_gates": [
@@ -3208,7 +3208,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "4c774b50acb3aea5cb9a5e6be2af4ac1dfae50e377f3d113d66a9d47375ce875",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "795b79dfa18946c108de8a9aa9bf39425b95ef2e02026322378fbb17dcab631f",
+    "x86_parity_ledger": "a5e387d48b231692c8e2ada31e5e039df9c1e02e725ad37fed29720b63d40145",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "3698b538aea4c357f0536bacf340bf4c0c520a6b8cc6d34a8e119b4ce1c655b3"
   },

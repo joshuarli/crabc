@@ -129,8 +129,8 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             report["capability_state_counts"],
             {
                 "implemented-foundation": 180,
-                "missing": 15,
-                "selected-private": 28,
+                "missing": 11,
+                "selected-private": 32,
             },
         )
         self.assertEqual(len(report["families"]), 26)
@@ -148,6 +148,17 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(allocator_basic["x86_family"], "libc.c-abi-compat")
         self.assertEqual(allocator_basic["contract_state"], "selected-private")
+        for identifier in (
+            "stdio.path-stream",
+            "stdio.stream-io",
+            "stdio.position-buffering",
+            "stdio.format-scan",
+        ):
+            stdio_capability = next(
+                row for row in report["capabilities"] if row["id"] == identifier
+            )
+            self.assertEqual(stdio_capability["x86_family"], "libc.text-math-locale-stdio")
+            self.assertEqual(stdio_capability["contract_state"], "selected-private")
         locale_core = next(
             row for row in report["capabilities"] if row["id"] == "locale.core"
         )
@@ -228,7 +239,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"]
             if row["id"] == "libc.text-math-locale-stdio"
         )
-        self.assertEqual(text_math["verified_slice_count"], 9)
+        self.assertEqual(text_math["verified_slice_count"], 10)
         self.assertEqual(text_math["verified_artifact_count"], 77)
         self.assertIn(
             {
@@ -349,7 +360,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
-            53,
+            54,
         )
         self.assertNotIn(
             {"family": "libc.posix-runtime", "id": "static-c-environment"},
@@ -473,10 +484,10 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1276)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1275)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
-            1218,
+            1217,
         )
         self.assertEqual(
             report["unsupported_contracts"],

@@ -15456,6 +15456,65 @@ oracle = [
   { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers/static archive", role = "LP64 FILE-pointer C/C++ calling/linkage convention, macro-rewritten ordinary fopen relocation, and absence of a second x86 ELF fopen64 name in both static and final artifacts." },
 ]
 
+[[family.verified_slice]]
+id = "stdio.installed-file-engine"
+description = "Private native x86 selected-private `stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`, and `stdio.format-scan` capabilities inside still-planned `libc.text-math-locale-stdio`. One owned FILE engine in the installed static and dynamic products (`owned_static_stdio.rs` with its backend, wide, process, extension, printf, and scanf owners) serves permanent, descriptor, memory, cookie, and process streams with pinned musl 1.2.6 locking, buffering, byte/wide orientation, positioning, error, and ordinary-exit flushing. The eight-row installed-header FILE-engine receipt links each probe object with pinned musl and in static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry, requires byte-identical stdout, stderr, and status, and requires the retained objects to reference every frozen symbol of the four capabilities (110 names in `compat/crabc-rs/coverage.toml`). Its frozen-surface row retains the musl regressions for exact `feof`/`ferror` values, buffered bytes kept across a mid-stream `setvbuf`, and the newest-first open-file exit flush before the standard streams. Recorded intentional differences are confined to C-undefined or diagnosable input. The `stdio.fopen64-alias` macro remains its own slice. This does not complete family evidence, the family aggregate, promotion, or public x86 support."
+capabilities = ["stdio.path-stream", "stdio.stream-io", "stdio.position-buffering", "stdio.format-scan"]
+source_owners = [
+  "AGENTS.md",
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/owned_static_stdio.rs",
+  "libc/src/c_abi/x86_64/owned_stdio_backends.rs",
+  "libc/src/c_abi/x86_64/owned_stdio_extensions.rs",
+  "libc/src/c_abi/x86_64/owned_stdio_process.rs",
+  "libc/src/c_abi/x86_64/owned_wide_stdio.rs",
+  "libc/src/c_abi/x86_64/owned_wide_format.rs",
+  "libc/src/c_abi/x86_64/owned_printf.rs",
+  "libc/src/c_abi/x86_64/owned_scanf.rs",
+  "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+  "libc/src/c_abi/x86_64/ctermid.rs",
+  "include/stdio.h",
+  "include/stdio_ext.h",
+  "compat/x86_64/owned_stdio_backends_probe.c",
+  "compat/x86_64/owned_stdio_process_probe.c",
+  "compat/x86_64/owned_wide_stdio_probe.c",
+  "compat/x86_64/owned_wide_format_probe.c",
+  "compat/x86_64/owned_stdio_extensions_probe.c",
+  "compat/x86_64/owned_static_printf_float_probe.c",
+  "compat/x86_64/owned_static_scanf_probe.c",
+  "compat/x86_64/owned_stdio_surface_probe.c",
+  "compat/x86_64/run_owned_stdio_file_engine.sh",
+  "compat/x86_64/owned_stdio_file_engine_receipt.py",
+  "compat/x86_64/owned-stdio-file-engine.md",
+  "compat/x86_64/owned_stdio_probe.c",
+  "compat/x86_64/run_owned_stdio.sh",
+  "compat/x86_64/text-math-locale-stdio-family.toml",
+  "compat/x86_64/owned_text_math_locale_stdio_family.py",
+  "compat/x86_64/tests/test_owned_stdio_file_engine_receipt.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 LP64 opaque `FILE *` handles, 64-bit `off_t` and the first eight bytes of the 16-byte `fpos_t`, `va_list` forwarding for the `v*scanf` and `__isoc99_*` entries, and pinned musl's same-address weak aliases (`fdopen`, `fseeko`/`ftello`, unlocked and `_IO_*` spellings, `__getdelim`, `fpurge`, and `__isoc99_*`).",
+  "The installed products own every FILE: their libc.a and libc.so provide the frozen names, and pinned musl is linked only as the oracle side of each differential, never into a candidate.",
+]
+x86_header_prerequisites = [
+  "Each probe is preprocessed with `-nostdinc` against the installed dynamic product's `usr/include`; the reader requires every traced header, including stdio.h, stdio_ext.h, wchar.h, and locale.h, to be a physical file inside that tree.",
+  "Names pinned musl exports without a public declaration (`__fgetwc_unlocked`, `__fputwc_unlocked`, `__getdelim`, `fpurge`, `_IO_*`, and `__isoc99_*`) are declared in probe source exactly as musl defines them.",
+]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-stdio-file-engine", scope = "Eight installed-header FILE-engine rows (file backends, process streams, wide streams, wide formatting, stdio_ext extensions, printf float, scanf, and the frozen surface), each one object linked with pinned musl and with supplied static ET_EXEC, static PIE, and dynamic PIE/non-PIE products entered by the kernel and the direct loader. Raw stdout, stderr, and status must equal the oracle in all six cells. The reader seals sources, tools, products, links, and copied dynamic payloads, and parses the retained objects' undefined symbols: every frozen `stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`, and `stdio.format-scan` name must be referenced. It establishes no family aggregate, promotion, or public support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-stdio", scope = "One installed-header object checks byte/wide FILE lifecycle, buffered versus descriptor offsets, saved positions, byte format/scan, reopen identity, descriptor ownership, and UTF-8 stream orientation against pinned musl in the same six supplied-product cells, plus the v3 `fopen64` macro profile. It corroborates the engine rows without separately crediting a capability." },
+]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT src/stdio source and executable behavior oracle for FILE lifecycle, locking, buffering, orientation, positioning, scanning, and exit flushing, linked from the same installed-header objects." },
+  { kind = "aarch64-contract", source = "compat/crabc-rs/coverage.toml", role = "Frozen symbol lists of the four capabilities; the engine reader requires its retained objects to reference each listed name." },
+]
+
 [[family.verified_artifact]]
 id = "static-c-named-locale-multibyte"
 description = "Private native x86 selected-static-archive named C locale/multibyte core. One dependency-free `crabc-libc` archive lets its freestanding C fixture resolve the sixteen selected entries `setlocale`, `localeconv`, `__ctype_get_mb_cur_max`, `mbrtowc`, `mbrlen`, `mbsinit`, `wcrtomb`, `mblen`, `mbtowc`, `wctomb`, `mbsrtowcs`, `wcsrtombs`, `mbstowcs`, `wcstombs`, `btowc`, and `wctob` after equivalent pinned-musl execution; the archive-wide selected C ABI remains separately ratcheted. It admits only named global `C`, `POSIX`, and `C.UTF-8` category selection plus its exact six-component mixed `LC_ALL` serialization. Musl's built-in `C.UTF-8` map changes only `LC_CTYPE`, so global `C.UTF-8` and the returned mixed state are exactly `C.UTF-8;C;C;C;C;C`; direct `POSIX` and non-CTYPE `C.UTF-8` normalize to `C`. A candidate-only regression rejects POSIX components, non-CTYPE UTF-8 components, or redundant uniform six-component forms without changing state. `C`/`POSIX` retain musl's private C code units while CTYPE `C.UTF-8` retains the bounded UTF-8 state machine, split-state/error/reset behavior, legacy conversion results, initial-state C string source/destination updates, and one caller-owned positive-capacity UTF-8 resume. The immutable POSIX `lconv` record carries `CHAR_MAX` monetary fields, while EILSEQ uses the already selected x86 initial-TLS errno seam. The separate C/C++ header gate proves the six-category values, x86 `wchar_t`/`wint_t`/8-byte `mbstate_t` and 96-byte `lconv` layouts, selected signatures, MB_CUR_MAX type, and unmangled C++ names. This artifact intentionally excludes noninitial `mbsrtowcs` resume with zero output capacity, `setlocale(category, \"\")` environment lookup, arbitrary locale names/maps, locale objects and `_l` APIs, per-thread locale overrides, collation, iconv, wide streams, general stdio, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."

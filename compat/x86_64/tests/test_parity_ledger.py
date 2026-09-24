@@ -31075,6 +31075,47 @@ class X86ParityLedgerTests(unittest.TestCase):
                 self.family(changed_command, "libc.text-math-locale-stdio")
             )
 
+    def test_stdio_installed_file_engine_slice_is_bound_to_the_engine_receipt(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(family["status"], "planned")
+        ledger.require_stdio_installed_file_engine_slice(family)
+
+        def changed(mutate) -> dict[str, object]:
+            changed_data = self.data()
+            changed_family = self.family(changed_data, "libc.text-math-locale-stdio")
+            selected = next(
+                entry
+                for entry in changed_family["verified_slice"]
+                if entry["id"] == "stdio.installed-file-engine"
+            )
+            mutate(selected)
+            return changed_family
+
+        cases = (
+            (lambda entry: entry.__setitem__("capabilities", [*entry["capabilities"], "stdio.fopen64-alias"]),
+             "stdio.installed-file-engine must select exactly the four FILE engine capabilities"),
+            (lambda entry: entry["native_evidence"].pop(),
+             "stdio.installed-file-engine must use its two installed-product evidence commands"),
+            (lambda entry: entry.__setitem__(
+                "description", entry["description"].replace("every frozen symbol of the four capabilities", "selected rows")),
+             "stdio.installed-file-engine description omits every frozen symbol of the four capabilities"),
+            (lambda entry: entry["source_owners"].remove("compat/x86_64/owned_stdio_surface_probe.c"),
+             "stdio.installed-file-engine source owners omit compat/x86_64/owned_stdio_surface_probe.c"),
+        )
+        for mutate, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ledger.LedgerError, message):
+                    ledger.require_stdio_installed_file_engine_slice(changed(mutate))
+
+        promoted = self.data()
+        promoted_family = self.family(promoted, "libc.text-math-locale-stdio")
+        promoted_family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "stdio.installed-file-engine must not promote libc.text-math-locale-stdio"
+        ):
+            ledger.require_stdio_installed_file_engine_slice(promoted_family)
+
     def test_gettid_artifact_stays_private_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
