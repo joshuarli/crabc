@@ -240,6 +240,27 @@ class DependencyBoundary(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Cargo home must be a physical directory'):
                 builder.build(output, cargo_home=output.parent / 'missing-cargo-home')
 
+    def test_declared_offline_sources_are_both_physical_work_directories(self):
+        home, source = builder.OFFLINE_CARGO_HOME_ENV, builder.OFFLINE_REGISTRY_UNWINDING_SOURCE_ENV
+        self.assertIsNone(builder.declared_offline_sources({}))
+        scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary, tempfile.TemporaryDirectory() as outside:
+            root = Path(temporary)
+            (root / 'cargo-home').mkdir()
+            (root / 'unwinding').mkdir()
+            (root / 'linked').symlink_to(root / 'unwinding')
+            declared = {home: str(root / 'cargo-home'), source: str(root / 'unwinding')}
+            self.assertEqual(builder.declared_offline_sources(declared), (root / 'cargo-home', root / 'unwinding'))
+            with self.assertRaisesRegex(ValueError, 'must declare both'):
+                builder.declared_offline_sources({home: declared[home]})
+            for escape in (outside, str(root / 'linked'), str(root / 'missing'), 'relative'):
+                with self.subTest(escape=escape), self.assertRaisesRegex(ValueError, 'physical checkout .work'):
+                    builder.declared_offline_sources({**declared, source: escape})
+            with unittest.mock.patch.dict(builder.os.environ, declared), \
+                    self.assertRaisesRegex(ValueError, 'cannot be combined'):
+                builder.build(root / 'combined', cargo_home=root / 'cargo-home')
+
     def test_new_dependency_cannot_enter_normal_graph(self):
         self.metadata['packages'].append({
             'id': 'cc', 'name': 'cc', 'version': '1.0.0', 'targets': [{'kind': ['lib']}],

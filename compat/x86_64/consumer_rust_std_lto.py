@@ -888,13 +888,24 @@ def cross_dso_lane(context: Context, label: str, *, build_std: bool) -> dict[str
     return report
 
 
-def provider_regressions(context: Context) -> dict[str, Any]:
-    """Run each standalone malformed-metadata regression once; retain its receipt."""
+def provider_regressions(context: Context, provider_sources: Mapping[str, str]) -> dict[str, Any]:
+    """Run each standalone malformed-metadata regression once; retain its receipt.
 
+    Each regression rebuilds its own provider through ``unwinder/build.py``.
+    The gate container has no network, so those nested builds take the same
+    authenticated offline provider sources as the gate's provider rather than
+    whatever the shared Cargo registry cache happens to hold.
+    """
+
+    environment = {
+        **tool_environment(),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        provider_build.OFFLINE_CARGO_HOME_ENV: provider_sources["cargo_home"],
+        provider_build.OFFLINE_REGISTRY_UNWINDING_SOURCE_ENV: provider_sources["registry_source"],
+    }
     results: dict[str, Any] = {}
     for script in PROVIDER_REGRESSIONS:
-        result = run([sys.executable, "-B", ROOT / "unwinder" / script],
-                     env={**tool_environment(), "PYTHONDONTWRITEBYTECODE": "1"}, cwd=ROOT)
+        result = run([sys.executable, "-B", ROOT / "unwinder" / script], env=environment, cwd=ROOT)
         log = context.retained.write(f"provider-regressions/{script}.log", result.stdout + result.stderr)
         lines = result.stdout.decode(errors="replace").splitlines()
         record: dict[str, Any] = {"returncode": result.returncode, "log": log, "unmet": []}

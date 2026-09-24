@@ -321,6 +321,34 @@ def verify_staged_patched_unwinding(staged):
         if digest(staged['staged'] / patch['target']) != patch['compiled_sha256']:
             raise ValueError('compiled unwinding overlay differs from the staged patch record')
 
+# An offline caller (the network-less ``consumer.rust-std-lto`` container)
+# declares one authenticated provider source set for nested builds it cannot
+# pass arguments to, such as the standalone bounds regressions. Both
+# variables name physical directories below checkout ``.work``: a Cargo home
+# whose config replaces crates.io with the verified provider vendor, and the
+# registry-shaped ``unwinding`` source derived from that vendor.
+OFFLINE_CARGO_HOME_ENV = 'CRABC_UNWINDER_OFFLINE_CARGO_HOME'
+OFFLINE_REGISTRY_UNWINDING_SOURCE_ENV = 'CRABC_UNWINDER_OFFLINE_REGISTRY_UNWINDING_SOURCE'
+
+
+def declared_offline_sources(environment):
+    """Return the declared ``(cargo_home, registry_unwinding_source)`` or None."""
+    values = [environment.get(name) for name in (OFFLINE_CARGO_HOME_ENV, OFFLINE_REGISTRY_UNWINDING_SOURCE_ENV)]
+    if not any(values):
+        return None
+    if not all(values):
+        raise ValueError('offline provider sources must declare both the Cargo home and the unwinding source')
+    work = ROOT.parent / '.work'
+    paths = []
+    for value in values:
+        path = Path(value)
+        if (not path.is_absolute() or path.is_symlink() or not path.is_dir()
+                or path.resolve(strict=True) != path or not path.is_relative_to(work)):
+            raise ValueError(f'offline provider source is not a physical checkout .work directory: {value}')
+        paths.append(path)
+    return tuple(paths)
+
+
 def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source=None):
     if (platform.system(), platform.machine()) != ('Linux', 'x86_64'):
         raise ValueError('native Linux/x86-64 required')
@@ -334,14 +362,19 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
         stage_root = Path(os.path.abspath(stage_root))
         if not stage_root.is_relative_to(output):
             raise ValueError('private unwinding stage root must remain below build output')
-    if registry_unwinding_source is not None:
+    declared = declared_offline_sources(os.environ)
+    if declared is not None and (cargo_home is not None or registry_unwinding_source is not None):
+        raise ValueError('explicit provider sources cannot be combined with declared offline sources')
+    if declared is not None:
+        cargo_home, registry_unwinding_source = declared
+    elif registry_unwinding_source is not None:
         registry_unwinding_source = Path(os.path.abspath(registry_unwinding_source))
         if (registry_unwinding_source.is_symlink() or not registry_unwinding_source.is_dir()
                 or not registry_unwinding_source.resolve(strict=True).is_relative_to(output.parent)):
             raise ValueError('registry unwinding source must be a physical input below the build output parent')
     if cargo_home is None:
         cargo_home = ROOT.parent / '.work/x86_64/cargo'
-    else:
+    elif declared is None:
         cargo_home = Path(os.path.abspath(cargo_home))
         if cargo_home.parent != output.parent:
             raise ValueError('private Cargo home must remain beside build output')
