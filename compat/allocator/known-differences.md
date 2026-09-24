@@ -87,17 +87,20 @@ is not a valid C-program observable difference and has no C differential
 entry; the selected arena witness is source-level safety evidence over C's
 assertion-invalid input, not C/Rust invalid-input parity.
 
-### Native child source-owner repair (development)
+### Native child source-owner repair
 
 Pinned mimalloc v3.5.0 has no Linux atfork handler which retires vanished
-Theap/TLD owners. The unconnected native runtime child continuation therefore
-is an explicit crabc integration transition, not a claimed translation of a C
-fork algorithm. It reuses the existing source collect-abandon, list-removal,
+Theap/TLD owners. The native runtime child continuation therefore is an
+explicit crabc integration transition, not a claimed translation of a C fork
+algorithm. It reuses the existing source collect-abandon, list-removal,
 metadata-free and static-storage rules after exclusive child quiescence. It
 intentionally does not invoke a foreign deferred-free callback for a vanished
-thread. The current thread keeps its exact owner, while a vanished initial
-attachment becomes detached without unmapping its static storage or removing
-the canonical process Heap. The contract and exact APIs are described in
+thread. The current thread keeps its exact owner and becomes the child's
+initial descriptor, while a vanished initial attachment becomes detached
+without unmapping its static storage or removing the canonical process Heap.
+An unprepared raw copy repairs nothing; from a worker it retains the copied
+initial descriptor so later prepared-fork or terminal writers in that child
+refuse. The contract and exact APIs are described in
 `docs/design/allocator.md`; source-aware libc fork wiring, installed behavior,
 and performance qualification remain required. Allocator-level live-client
 fork tests do not replace those gates or qualify automatic destruction.

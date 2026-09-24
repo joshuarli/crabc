@@ -68,6 +68,37 @@ static DESCRIPTOR: NativeAllocatorThreadDescriptor = NativeAllocatorThreadDescri
 static INITIAL_DESCRIPTOR: AtomicPtr<NativeAllocatorThreadDescriptor> = AtomicPtr::new(core::ptr::null_mut());
 static EPOCH: NativeAllocatorEpoch = NativeAllocatorEpoch::new();
 
+/// Deterministic fork-preparation fault points for isolated regressions.
+///
+/// Each armed point is consumed once. `Preflight` refuses a prepared fork
+/// after its drain and before any process copy; `ChildRepair` retains the
+/// first vanished owner visited by sole-child repair without touching its
+/// source fields. Allocator, libc and product builds contain neither.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub(super) enum NativeAllocatorForkTestFault { Preflight = 1, ChildRepair = 2 }
+
+#[cfg(test)]
+static FORK_TEST_FAULT: AtomicU8 = AtomicU8::new(0);
+
+/// Arms one deterministic fork-preparation fault for the next matching step.
+#[cfg(test)]
+pub(super) fn native_allocator_arm_fork_test_fault(fault: NativeAllocatorForkTestFault) {
+    FORK_TEST_FAULT.store(fault as u8, Ordering::SeqCst);
+}
+
+/// Clears an armed fork fault, e.g. the parent's copy of a child-only point.
+#[cfg(test)]
+pub(super) fn native_allocator_disarm_fork_test_fault() {
+    FORK_TEST_FAULT.store(0, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn take_fork_test_fault(fault: NativeAllocatorForkTestFault) -> bool {
+    FORK_TEST_FAULT.compare_exchange(fault as u8, 0, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+}
+
 /// Obtains only the current TLS record's identity. Libc publishes this pointer
 /// before worker registration/attachment; it must never dereference it itself.
 pub fn current_native_allocator_thread_descriptor() -> NonNull<NativeAllocatorThreadDescriptor> {
@@ -284,11 +315,11 @@ unsafe fn with_diagnostic_callback_at<R>(
     Ok(result)
 }
 
-/// Temporary terminal-safety coverage of the existing raw-fork copy interval.
-/// This is an ordinary epoch entry, not allocator-wide fork quiescence. It
-/// prevents permanent terminal transfer from racing the copy but does not
-/// repair vanished child owners. The shared fork writer and its child-repair
-/// continuation replace this guard when full generic repair is implemented.
+/// Terminal-safety coverage of an unprepared raw process copy (`_Fork` and
+/// non-VM `clone`). This is an ordinary epoch entry, not allocator-wide fork
+/// quiescence. It prevents permanent terminal transfer from racing the copy
+/// but repairs no vanished child owner; the prepared libc `fork` instead uses
+/// `begin_native_allocator_source_fork_quiescence` and its child continuation.
 #[must_use = "hold through the raw copy and complete before user hooks"]
 pub struct NativeAllocatorRawForkCopyGuard {
     operation: NativeAllocatorOperationGuard,
@@ -329,16 +360,37 @@ fn complete_raw_fork_child_at(epoch: &NativeAllocatorEpoch, copy: &NativeAllocat
         return Err(NativeAllocatorQuiescenceError::InvalidDescriptor);
     }
     match observed & MODE_MASK {
-        OPEN => Ok(()),
+        OPEN => {}
         // A writer can close after ordinary admission but cannot finish its
         // drain while this exact raw-copy record remains entered. Therefore
         // the copied child contains no committed transfer from that writer.
         // Only the sole child discards the now-vanished pre-commit writer.
         // Refusal/reopen may have advanced generations before the copy, hence
         // the monotonic floor rather than an invalid equality requirement.
-        FORK_CLOSED | TERMINAL_CLOSING => epoch.reopen(observed),
-        _ => Err(NativeAllocatorQuiescenceError::WriterBusy),
+        FORK_CLOSED | TERMINAL_CLOSING => epoch.reopen(observed)?,
+        _ => return Err(NativeAllocatorQuiescenceError::WriterBusy),
     }
+    retain_vanished_initial_after_unprepared_copy(copy.operation.descriptor);
+    Ok(())
+}
+
+/// Distinguishes an unprepared raw-fork image from prepared child repair.
+///
+/// Nothing drained the other native owners before this copy, so a vanished
+/// owner may have been copied mid-operation. The raw child never repairs,
+/// transfers or trusts such state. Libc forgets inherited worker controls,
+/// leaving the process-lifetime initial descriptor as the only vanished
+/// owner still reachable by a later writer when the survivor was a worker.
+/// Retain that exact descriptor: a later prepared fork or terminal writer
+/// then refuses instead of waiting on its copied entry or retiring a torn
+/// owner. The survivor's own owner is untouched and remains usable.
+fn retain_vanished_initial_after_unprepared_copy(survivor: NonNull<NativeAllocatorThreadDescriptor>) {
+    let Some(initial) = NonNull::new(INITIAL_DESCRIPTOR.load(Ordering::Acquire)) else { return; };
+    if initial == survivor { return; }
+    // SAFETY: the process-lifetime initial TLS mapping stays mapped in this
+    // sole child; only its registration atomic is changed here.
+    let record = unsafe { initial.as_ref() };
+    let _ = record.registration.compare_exchange(REGISTERED, RETAINED, Ordering::Release, Ordering::Acquire);
 }
 
 /// Protects the existing raw-fork copy from terminal source-owner transfer.
@@ -847,6 +899,14 @@ impl NativeAllocatorForkChildContinuation {
                 valid = false;
                 return;
             };
+            #[cfg(test)]
+            if take_fork_test_fault(NativeAllocatorForkTestFault::ChildRepair) {
+                // Model a one-way retirement failure before any source field
+                // changes: this exact owner stays the unique retained residue.
+                record.registration.store(RETAINED, Ordering::Release);
+                valid = false;
+                return;
+            }
             if unsafe { super::retire_vanished_child_slot(slot, &self) } {
                 record.registration.store(TRANSFERRED, Ordering::Release);
             } else {
@@ -862,6 +922,13 @@ impl NativeAllocatorForkChildContinuation {
         if !unsafe { super::RUNTIME_FORK_ADMISSION.rearm_deferred_free_callback_after_source_child_repair() } {
             return Err(NativeAllocatorQuiescenceError::RetainedDescriptor);
         }
+        // Child TLS repair: libc makes this surviving task the child's initial
+        // task and forgets every inherited worker control. Re-root the
+        // process-lifetime descriptor slot before reopening so a later fork or
+        // terminal writer visits the survivor exactly once, and so libc never
+        // treats its TLS/control mapping as a reclaimable worker. A vanished
+        // initial descriptor was acknowledged TRANSFERRED above.
+        INITIAL_DESCRIPTOR.store(self.survivor.as_ptr(), Ordering::Release);
         EPOCH.reopen(self.closed)?;
         self.armed = false;
         Ok(())
@@ -896,6 +963,10 @@ pub unsafe fn begin_native_allocator_source_fork_quiescence(
                 .is_some_and(|slot| unsafe { super::fork_slot_can_repair(slot) });
         }
     });
+    #[cfg(test)]
+    if valid && take_fork_test_fault(NativeAllocatorForkTestFault::Preflight) {
+        valid = false;
+    }
     if !valid {
         unsafe { interval.resume_parent()?; }
         return Err(NativeAllocatorQuiescenceError::RetainedDescriptor);
@@ -1334,6 +1405,38 @@ pub(super) fn rearm_current_source_descriptor() -> bool {
     match DESCRIPTOR.registration.compare_exchange(RETIRED, REGISTERED, Ordering::Release, Ordering::Acquire) {
         Ok(_) | Err(REGISTERED) | Err(UNPUBLISHED) => true,
         Err(_) => false,
+    }
+}
+
+/// Scalar observations for the process-isolated fork repair regressions.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TestRegistration { Unpublished, Registered, Retired, Transferred, Retained }
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TestEpochMode { Open, ForkClosed, TerminalClosing, Terminal }
+
+#[cfg(test)]
+pub(super) fn test_epoch_mode() -> TestEpochMode {
+    match EPOCH.state.load(Ordering::SeqCst) & MODE_MASK {
+        OPEN => TestEpochMode::Open,
+        FORK_CLOSED => TestEpochMode::ForkClosed,
+        TERMINAL_CLOSING => TestEpochMode::TerminalClosing,
+        _ => TestEpochMode::Terminal,
+    }
+}
+
+/// # Safety
+/// `descriptor` names a live descriptor from this allocator image.
+#[cfg(test)]
+pub(super) unsafe fn test_registration(descriptor: NonNull<NativeAllocatorThreadDescriptor>) -> TestRegistration {
+    match unsafe { descriptor.as_ref() }.registration.load(Ordering::Acquire) {
+        UNPUBLISHED => TestRegistration::Unpublished,
+        REGISTERED => TestRegistration::Registered,
+        RETIRED => TestRegistration::Retired,
+        TRANSFERRED => TestRegistration::Transferred,
+        _ => TestRegistration::Retained,
     }
 }
 

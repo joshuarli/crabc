@@ -126,17 +126,37 @@ A vanished initial owner enters `ProcessMainThreadState::MainThreadDetached`:
 the canonical Heap and ready backing survive for the worker which called fork,
 but initial-thread projections cannot resume and the static TLD is not unmapped.
 
-Only complete repair reopens the exact copied epoch. Any partial failure keeps
-its exact residual owners and mappings, seals entry, and requires child
-fail-stop. This is crabc runtime integration around pinned source collection
-algorithms; mimalloc v3.5.0 has no Linux atfork owner-repair transition to port.
-The allocator-level worker-origin and initial-origin tests in
-`runtime_fork_repair_tests.rs` exercise inherited live clients, a new child
-worker, retaining process-done, and unchanged parent ownership. They are
-pending focused execution and do not establish installed libc fork support.
-The existing raw-copy guard remains an interim terminal-safety boundary until
-this continuation is wired and qualified across the actual libc lock/hook
-sequence. Neither path enables automatic physical process destruction.
+Only complete repair reopens the exact copied epoch. Just before reopening,
+repair re-roots the process-lifetime initial descriptor slot
+(`native_allocator_initial_thread_descriptor`) to the survivor: libc makes the
+surviving task the child's initial task and forgets every inherited worker
+control, so a later fork or terminal writer must still visit that survivor
+exactly once. Any partial failure keeps its exact residual owners and
+mappings, never re-roots, seals entry, and requires child fail-stop. This is
+crabc runtime integration around pinned source collection algorithms;
+mimalloc v3.5.0 has no Linux atfork owner-repair transition to port.
+
+`begin_native_allocator_raw_fork_copy` is the separate unprepared image used by
+`_Fork` and non-VM `clone`. Nothing drained the other owners, so the raw child
+repairs, transfers and trusts none of them; its own owner stays usable. When the
+survivor is a worker, the copied initial descriptor is the one vanished owner a
+later writer could still reach, and `complete_child` marks exactly that record
+retained. A later prepared fork or terminal writer in that child then refuses
+instead of waiting on a copied entry or retiring a torn owner. A raw copy from
+the sole owner is a complete image and may later take the prepared path.
+
+`runtime_fork_repair_tests.rs` runs each fixture in a freshly exec'd test
+process. Worker-origin and initial-origin prepared copies, taken while a third
+owner churns, verify every inherited small/medium/large/singleton client,
+reallocate and free them, run the survivor's allocation/zero/aligned/realloc/
+usable-size/free set, deliver the survivor's deferred-free callback, attach a
+new worker, repeat a second-generation prepared fork and complete process-done.
+They also check callback-token invalidation and rearm, the survivor's remaining
+admission claim, free PageMap lifecycle, exact thread statistics and the
+unchanged parent. A joined-worker fixture carries the permanent legal-C
+exit-before-free regression across the copy. Injected preflight and child-repair
+faults prove refusal without owner change and fail-stop with exactly one
+retained owner. Neither path enables automatic physical process destruction.
 
 Worker attachment has a separate Rust borrow boundary in
 `runtime_lifecycle.rs::attach_current_thread`: a compiler-TLS entry claim
