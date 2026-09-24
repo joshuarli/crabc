@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,15 @@ LINK_RECEIPT_SCHEMA = 1
 APPLICATION_OBJECTS = "<application-objects>"
 OUTPUT = "<output>"
 MANIFEST_RELATIVE_PATH = "share/crabc/manifest.json"
+# A combined four-mode sysroot (scripts/build_x86_64_owned_combined_sysroot.py)
+# owns MANIFEST_RELATIVE_PATH and keeps this product's own manifest at a fixed
+# placement. Product metadata may move only within share/crabc/; this product's
+# usr/lib/Scrt1.o, which no static mode links, is the one file it may leave out
+# in favor of the dynamic product's PIE entry at that path.
+COMBINED_SYSROOT_FORMAT = "crabc-x86-64-owned-sysroot-v1"
+COMBINED_STATIC_MANIFEST = "share/crabc/static/manifest.json"
+PRODUCT_METADATA_PREFIX = "share/crabc/"
+COMBINED_UNINSTALLED_STATIC_PATHS = frozenset({"usr/lib/Scrt1.o"})
 
 # Caller-owned ``.o`` inputs cross directly into LLD.  Keep their format
 # boundary explicit instead of allowing suffix-based dispatch to reinterpret a
@@ -197,17 +207,42 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def manifest_payload_files(root: Path) -> dict[str, str]:
-    """Load the builder's regular-file hash boundary without trusting CWD."""
-
-    manifest_path = root / "share" / "crabc" / "manifest.json"
-    require_regular(manifest_path, "manifest")
+def load_manifest(path: Path, description: str) -> dict:
+    require_regular(path, description)
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise DriverError(f"owned manifest is unreadable: {manifest_path}") from error
+        raise DriverError(f"owned {description} is unreadable: {path}") from error
     if not isinstance(manifest, dict):
-        raise DriverError("owned manifest is not an object")
+        raise DriverError(f"owned {description} is not an object")
+    return manifest
+
+
+def payload_hashes(files: object, description: str) -> dict[str, str]:
+    """Return one safe relative-path to SHA-256 map from a manifest record."""
+
+    if not isinstance(files, dict) or not files:
+        raise DriverError(f"owned {description} has no regular-file payload hashes")
+    result: dict[str, str] = {}
+    for relative, expected_hash in files.items():
+        if not isinstance(relative, str) or not isinstance(expected_hash, str):
+            raise DriverError(f"owned {description} has an invalid payload hash record")
+        candidate = Path(relative)
+        if (
+            candidate.is_absolute()
+            or not candidate.parts
+            or any(part in {"", ".", ".."} for part in candidate.parts)
+        ):
+            raise DriverError(f"owned {description} has an unsafe payload path: {relative}")
+        if len(expected_hash) != 64 or any(character not in "0123456789abcdef" for character in expected_hash):
+            raise DriverError(f"owned {description} has an invalid payload hash: {relative}")
+        result[relative] = expected_hash
+    return result
+
+
+def static_product_payload_files(manifest: dict) -> dict[str, str]:
+    """Validate one static product manifest record and return its payload."""
+
     if manifest.get("format") != SYSROOT_FORMAT or manifest.get("target") != TARGET:
         raise DriverError("owned manifest does not identify this x86 static sysroot")
     installed = manifest.get("installed")
@@ -218,36 +253,79 @@ def manifest_payload_files(root: Path) -> dict[str, str]:
         raise DriverError("owned manifest sealed static driver record drifted")
     if driver.get("status") != "planned-owned-static-product-seed-not-family-completion-not-public-support":
         raise DriverError("owned manifest sealed static driver status drifted")
-    files = installed.get("files")
-    if not isinstance(files, dict) or not files:
-        raise DriverError("owned manifest has no regular-file payload hashes")
-    result: dict[str, str] = {}
-    for relative, expected_hash in files.items():
-        if not isinstance(relative, str) or not isinstance(expected_hash, str):
-            raise DriverError("owned manifest has an invalid payload hash record")
-        candidate = Path(relative)
-        if (
-            candidate.is_absolute()
-            or not candidate.parts
-            or any(part in {"", ".", ".."} for part in candidate.parts)
-        ):
-            raise DriverError(f"owned manifest has an unsafe payload path: {relative}")
-        if len(expected_hash) != 64 or any(character not in "0123456789abcdef" for character in expected_hash):
-            raise DriverError(f"owned manifest has an invalid payload hash: {relative}")
-        result[relative] = expected_hash
-    return result
+    return payload_hashes(installed.get("files"), "manifest")
+
+
+def manifest_payload_files(root: Path) -> dict[str, str]:
+    """Load the builder's regular-file hash boundary without trusting CWD."""
+
+    return static_product_payload_files(load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest"))
+
+
+def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str], dict[str, str]]:
+    """Return the exact files and aliases of a combined tree embedding this product.
+
+    The combined manifest owns the whole tree. The embedded static product
+    manifest must validate as the standalone one does, and each of its files
+    must be installed with its recorded hash at its own path, except moved
+    product metadata and the one unlinked entry object named above.
+    """
+
+    if manifest.get("schema") != 1 or manifest.get("target") != TARGET:
+        raise DriverError("owned manifest does not identify an x86 combined sysroot")
+    files = payload_hashes(manifest.get("files"), "combined manifest")
+    links = manifest.get("symlinks")
+    products = manifest.get("products")
+    if not isinstance(links, dict) or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
+        raise DriverError("owned combined manifest has no alias or product record")
+    for link, target in links.items():
+        if (not isinstance(link, str) or not isinstance(target, str) or "/" in target
+                or target in {"", ".", ".."} or (Path(link).parent / target).as_posix() not in files):
+            raise DriverError(f"owned combined manifest has an unsafe alias: {link}")
+    product = products["static"]
+    placements = product.get("placements")
+    if (product.get("format") != SYSROOT_FORMAT or product.get("manifest") != COMBINED_STATIC_MANIFEST
+            or COMBINED_STATIC_MANIFEST not in files or not isinstance(placements, dict)):
+        raise DriverError("owned combined sysroot does not embed this static product")
+    embedded = static_product_payload_files(load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest"))
+    for relative, expected_hash in embedded.items():
+        if relative not in placements:
+            raise DriverError(f"owned combined sysroot does not place static payload: {relative}")
+        placed = placements[relative]
+        if placed is None and relative in COMBINED_UNINSTALLED_STATIC_PATHS:
+            continue
+        movable = relative.startswith(PRODUCT_METADATA_PREFIX) and isinstance(placed, str) \
+            and placed.startswith(PRODUCT_METADATA_PREFIX)
+        if placed != relative and not movable:
+            raise DriverError(f"owned combined sysroot moved static payload: {relative}")
+        if files.get(placed) != expected_hash:
+            raise DriverError(f"owned combined sysroot does not install static payload unchanged: {relative}")
+    return files, links
 
 
 def validate_manifest_payload(root: Path) -> None:
-    """Bind driver execution to the immutable installed regular-file payload."""
+    """Bind driver execution to the immutable installed regular-file payload.
 
-    files = manifest_payload_files(root)
+    The tree is either this static product or a combined four-mode sysroot
+    embedding it. Either way its regular files, and the combined tree's
+    manifested loader aliases, are exact.
+    """
+
+    manifest = load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest")
+    if manifest.get("format") == COMBINED_SYSROOT_FORMAT:
+        files, links = combined_manifest_payload(root, manifest)
+    else:
+        files, links = static_product_payload_files(manifest), {}
     expected_files = set(files)
     observed_files: set[str] = set()
+    observed_links: dict[str, str] = {}
     for artifact in sorted(root.rglob("*")):
         relative = artifact.relative_to(root).as_posix()
         if artifact.is_symlink():
-            raise DriverError(f"owned installed tree contains a symlink: {relative}")
+            if relative not in links:
+                raise DriverError(f"owned installed tree contains a symlink: {relative}")
+            observed_links[relative] = os.readlink(artifact)
+            continue
         if artifact.is_dir():
             continue
         if not artifact.is_file():
@@ -261,6 +339,8 @@ def validate_manifest_payload(root: Path) -> None:
     missing = sorted(expected_files - observed_files)
     if missing:
         raise DriverError(f"owned manifest payload is missing: {missing[0]}")
+    if observed_links != links:
+        raise DriverError("owned installed aliases differ from the combined manifest")
     for relative, expected_hash in files.items():
         artifact = root / relative
         require_regular(artifact, relative)

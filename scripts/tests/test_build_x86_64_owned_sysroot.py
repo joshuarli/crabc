@@ -30,6 +30,9 @@ driver = importlib.util.module_from_spec(DRIVER_SPEC)
 sys.modules[DRIVER_SPEC.name] = driver
 DRIVER_SPEC.loader.exec_module(driver)
 
+sys.path.insert(0, str(ROOT / "scripts"))
+import build_x86_64_owned_combined_sysroot as combined  # noqa: E402
+
 
 class BuildX86OwnedSysrootTests(unittest.TestCase):
     def test_default_installation_stays_in_checkout_work_state(self) -> None:
@@ -795,6 +798,105 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                     self.assertEqual(completed.returncode, 1)
                     self.assertEqual(completed.stdout, "")
                     self.assertIn(expected_error, completed.stderr)
+
+    def materialize_combined_static_driver_sysroot(self, workspace: Path) -> Path:
+        """Compose a small static product with a small dynamic one; return the tree."""
+
+        static = workspace / "static"
+        self.materialize_static_driver_sysroot(static)
+        (static / "usr" / "lib" / "Scrt1.o").write_bytes(b"static unlinked Scrt1\n")
+        builder.write_json(
+            static / "share" / "crabc" / "manifest.json",
+            builder.installed_manifest(
+                builder.regular_file_hashes(static, exclude=frozenset({driver.MANIFEST_RELATIVE_PATH})),
+                self.example_producer_tools(),
+            ),
+        )
+        dynamic = workspace / "dynamic"
+        for relative, payload in (
+            ("bin/crabc-cc-dynamic", b"dynamic driver\n"),
+            ("lib/ld-crabc-x86_64.so.1", b"loader\n"),
+            ("usr/lib/libc.so", b"shared libc\n"),
+            ("usr/lib/Scrt1.o", b"dynamic PIE entry\n"),
+            ("usr/lib/crt1.o", b"owned\n"),
+            ("usr/include/stdint.h", b"\n"),
+            ("share/crabc/crabc_cc_static.py", DRIVER_SOURCE.read_bytes()),
+        ):
+            path = dynamic / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+        (dynamic / "lib" / "ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+        builder.write_json(dynamic / "share" / "crabc" / "manifest.json", {
+            "format": combined.PRODUCT_FORMATS["dynamic"], "target": builder.TARGET,
+            "toolchain": builder.PINNED_TOOLCHAIN,
+        })
+        output = workspace / "combined"
+        combined.compose({"static": static, "dynamic": dynamic}, output)
+        return output
+
+    def test_static_driver_plans_both_static_modes_from_a_combined_sysroot(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.materialize_combined_static_driver_sysroot(Path(temporary))
+            self.assertEqual((root / "usr/lib/Scrt1.o").read_bytes(), b"dynamic PIE entry\n")
+            for mode, crt in (("-static", "crt1.o"), ("-static-pie", "rcrt1.o")):
+                with self.subTest(mode=mode):
+                    completed = subprocess.run(
+                        [str(root / "bin" / "crabc-cc"), "--print-link-plan", mode],
+                        check=False, capture_output=True, text=True,
+                    )
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    plan = json.loads(completed.stdout)
+                    self.assertEqual(plan["headers"], str(root / "usr" / "include"))
+                    self.assertIn(str(root / "usr" / "lib" / crt), plan["linker"])
+                    self.assertIn(str(root / "usr" / "lib" / "libc.a"), plan["linker"])
+
+    def test_static_driver_rejects_combined_sysroot_drift_before_planning(self) -> None:
+        """A self-consistent combined roster may not replace or move static payload."""
+
+        def forge(root: Path, edit) -> None:
+            path = root / driver.MANIFEST_RELATIVE_PATH
+            record = json.loads(path.read_text(encoding="utf-8"))
+            edit(root, record)
+            path.write_text(json.dumps(record), encoding="utf-8")
+
+        def substitute_libc(root: Path, record: dict) -> None:
+            (root / "usr/lib/libc.a").write_bytes(b"foreign\n")
+            record["files"]["usr/lib/libc.a"] = builder.sha256_file(root / "usr/lib/libc.a")
+
+        def move_crt1(root: Path, record: dict) -> None:
+            record["products"]["static"]["placements"]["usr/lib/crt1.o"] = "usr/lib/Scrt1.o"
+
+        def drop_crt1(root: Path, record: dict) -> None:
+            record["products"]["static"]["placements"]["usr/lib/crt1.o"] = None
+
+        def stray_link(root: Path, record: dict) -> None:
+            (root / "usr/include/extra.h").symlink_to("stdint.h")
+
+        def retarget_alias(root: Path, record: dict) -> None:
+            (root / "lib/ld-musl-x86_64.so.1").unlink()
+            (root / "lib/ld-musl-x86_64.so.1").symlink_to("/lib/ld-musl-x86_64.so.1")
+
+        def foreign_product(root: Path, record: dict) -> None:
+            record["products"]["static"]["format"] = "other"
+
+        for label, edit, expected_error in (
+            ("substitute", substitute_libc, "does not install static payload unchanged: usr/lib/libc.a"),
+            ("move", move_crt1, "moved static payload: usr/lib/crt1.o"),
+            ("drop", drop_crt1, "moved static payload: usr/lib/crt1.o"),
+            ("link", stray_link, "contains a symlink: usr/include/extra.h"),
+            ("alias", retarget_alias, "aliases differ"),
+            ("product", foreign_product, "does not embed this static product"),
+        ):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                root = self.materialize_combined_static_driver_sysroot(Path(temporary))
+                forge(root, edit)
+                completed = subprocess.run(
+                    [str(root / "bin" / "crabc-cc"), "--print-link-plan", "-static"],
+                    check=False, capture_output=True, text=True,
+                )
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(completed.stdout, "")
+                self.assertIn(expected_error, completed.stderr)
 
     def test_static_driver_rejects_ambient_runtime_injection_before_invocation(self) -> None:
         for arguments in (

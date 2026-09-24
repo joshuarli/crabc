@@ -193,11 +193,14 @@ rules. The installed dynamic driver accepts that tree only through
 `validate_combined` in `crabc_cc_owned_dynamic.py`: the combined manifest must
 match the whole tree exactly, its only aliases are this product's, and every
 file named by the embedded `share/crabc/dynamic/manifest.json` must be
-installed unchanged, with each driver-required runtime input at its own path.
+installed unchanged at its own path; only product metadata may move within
+`share/crabc/`. The static driver applies the same rule to
+`share/crabc/static/manifest.json` in `combined_manifest_payload`
+(`crabc_cc_static.py`), except that the static product's unlinked
+`usr/lib/Scrt1.o` yields to the dynamic PIE entry.
 Links from a combined tree otherwise follow the same inspection and receipt
 contract; the receipt's `manifest_sha256` names the combined manifest.
 `./scripts/dev-x86_64.sh owned-combined-sysroot` builds two clean combined
 trees, compares them byte-for-byte, requires identical packages and compares a
 fresh extraction. It fails closed until both products install one shared
-`usr/lib/crt1.o`, the static driver accepts a combined tree, and both product
-suites run from all three combined trees.
+`usr/lib/crt1.o` and both product suites run from all three combined trees.

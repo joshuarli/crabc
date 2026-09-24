@@ -409,7 +409,10 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             ("roster", lambda record: (root / "usr/lib/libforeign.so").write_bytes(b"foreign")),
             ("combined sysroot contract", lambda record: record.update(symlinks={})),
             ("does not embed", lambda record: record["products"]["dynamic"].update(format="other")),
-            ("moved dynamic runtime input", move_libc),
+            ("moved dynamic payload: usr/lib/libc.so", move_libc),
+            # Only product metadata may move; an ordinary payload file may not.
+            ("moved dynamic payload: fixture.s", lambda record: record["products"]["dynamic"]["placements"]
+             .update({"fixture.s": "share/crabc/dynamic/fixture.s"})),
             ("unchanged: usr/lib/libc.so", substitute_libc),
         )
         libc = (root / "usr/lib/libc.so").read_bytes()

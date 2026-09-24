@@ -42,7 +42,7 @@ RETAIN_LINK_EVIDENCE_ENV = "CRABC_X86_64_RETAIN_LINK_EVIDENCE"
 MANIFEST = "share/crabc/manifest.json"
 # A combined four-mode sysroot (scripts/build_x86_64_owned_combined_sysroot.py)
 # owns MANIFEST and keeps this product's own manifest at a fixed placement.
-COMBINED_FORMAT = "crabc-x86-64-owned-sysroot-v1"
+COMBINED_FORMAT = shared.COMBINED_SYSROOT_FORMAT
 COMBINED_PRODUCT_MANIFEST = "share/crabc/dynamic/manifest.json"
 
 
@@ -217,8 +217,8 @@ def validate_combined(root: Path) -> dict:
     ``share/crabc/<product>/`` and writes the combined manifest in its place.
     This driver runs there only when the whole tree equals that manifest's exact
     roster and hashes, its only aliases are this product's, and every file the
-    embedded dynamic product manifest names is installed unchanged. No dynamic
-    payload path may move or be replaced by the other product's bytes.
+    embedded dynamic product manifest names is installed unchanged at its own
+    path; only product metadata may move within ``share/crabc/``.
     """
     record = json.loads((root / MANIFEST).read_text())
     files, links = record.get("files"), record.get("symlinks")
@@ -259,9 +259,12 @@ def validate_combined(root: Path) -> dict:
         raise shared.DriverError("wrong embedded dynamic product contract")
     for relative, digest in embedded_files.items():
         placed = placements.get(relative)
-        if relative in REQUIRED and placed != relative:
-            raise shared.DriverError(f"combined sysroot moved dynamic runtime input: {relative}")
-        if not isinstance(placed, str) or files.get(placed) != digest:
+        # Only product metadata may move, and only within share/crabc/.
+        movable = (relative not in REQUIRED and relative.startswith(shared.PRODUCT_METADATA_PREFIX)
+                   and isinstance(placed, str) and placed.startswith(shared.PRODUCT_METADATA_PREFIX))
+        if placed != relative and not movable:
+            raise shared.DriverError(f"combined sysroot moved dynamic payload: {relative}")
+        if files.get(placed) != digest:
             raise shared.DriverError(f"combined sysroot does not install dynamic payload unchanged: {relative}")
     return record
 
