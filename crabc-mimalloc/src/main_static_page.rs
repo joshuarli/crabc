@@ -1395,15 +1395,23 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             >,
         ) -> Option<R>,
     ) -> Option<R> {
+        // The steady active engine is borrowed in place. Moving the whole
+        // state out through `Transition` and back copied its complete
+        // engine image (hundreds of bytes) twice per allocation; `&mut self`
+        // already excludes every other projection of this owner, and the
+        // compiler-TLS owner cell rejects nested access before reaching it.
+        if let MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) = &mut self.state {
+            return allocate(&mut active.engine);
+        }
         let state = core::mem::replace(
             &mut self.state,
             MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
         );
         match state {
-            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
-                let block = allocate(&mut active.engine);
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
-                block
+            // Handled in place above; restore rather than reach a panic path.
+            active @ MainStaticRuntimeFirstArenaPageAllocatorState::Active(_) => {
+                self.state = active;
+                None
             }
             #[cfg(test)]
             MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => {
@@ -2254,22 +2262,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         let Some(block) = block else {
             return self.allocate_current_initial_thread_local(new_size, false);
         };
-        let state = core::mem::replace(
-            &mut self.state,
-            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
-        );
-        match state {
-            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
                 // SAFETY: the persistent initial owner keeps this exact
-                // engine current and exclusively borrowed for the call.
-                let replacement = unsafe { active.engine.reallocate(Some(block), new_size) };
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
-                replacement
+                // engine current and exclusively borrowed in place for the
+                // call, as in `free_current_initial_thread_local`.
+                unsafe { active.engine.reallocate(Some(block), new_size) }
             }
-            other => {
-                self.state = other;
-                None
-            }
+            _ => None,
         }
     }
 
@@ -2358,22 +2358,13 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         &mut self,
         block: NonNull<u8>,
     ) -> Option<usize> {
-        let state = core::mem::replace(
-            &mut self.state,
-            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
-        );
-        match state {
+        match &self.state {
             MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
                 // SAFETY: the persistent initial owner holds the only direct
-                // mutable projection of this exact current engine.
-                let usable_size = unsafe { active.engine.usable_size(block) };
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
-                usable_size
+                // projection of this exact current engine, borrowed in place.
+                unsafe { active.engine.usable_size(block) }
             }
-            other => {
-                self.state = other;
-                None
-            }
+            _ => None,
         }
     }
 
