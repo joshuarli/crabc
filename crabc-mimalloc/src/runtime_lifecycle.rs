@@ -10428,7 +10428,14 @@ fn native_allocate_shaped(
     }
     // A thread admitted to a child subprocess allocates from its own child
     // Theap, as source `mi_malloc` does through that thread's default Theap.
-    if let Some(result) = crate::subproc::lifecycle::native_child_thread_allocate(request, alignment, zero) {
+    if let Some(result) = crate::subproc::lifecycle::native_child_thread_allocate(
+        request,
+        match shape {
+            NativeAllocationShape::Ordinary => None,
+            NativeAllocationShape::Aligned { alignment, offset } => Some((alignment, offset)),
+        },
+        zero,
+    ) {
         return result;
     }
     // Pinned `mi_heap_malloc` receives an already-selected heap/theap before

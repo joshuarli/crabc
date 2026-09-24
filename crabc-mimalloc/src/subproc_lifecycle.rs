@@ -960,9 +960,12 @@ pub(crate) enum NativeChildThreadDoneError {
 /// an admitted child thread through its own Theap. `None` when the current
 /// thread is not a child member. Deferred-free callbacks are not invoked on
 /// this route yet.
+///
+/// `aligned` is `None` for an ordinary `_mi_theap_malloc_zero` request and
+/// `Some((alignment, offset))` for `mi_theap_malloc_zero_aligned_at`.
 pub(crate) fn native_child_thread_allocate(
     request: usize,
-    alignment: usize,
+    aligned: Option<(usize, usize)>,
     zero: bool,
 ) -> Option<crate::runtime_lifecycle::NativePageAllocationResult> {
     use crate::runtime_lifecycle::NativePageAllocationResult;
@@ -971,9 +974,10 @@ pub(crate) fn native_child_thread_allocate(
     let binding = current.binding;
     // SAFETY: this is the admitted thread operating on its own Theap.
     let block = unsafe {
-        current.member.with_page_engine(binding, |_child, engine| match zero {
-            true => engine.allocate_aligned_zeroed(request, alignment),
-            false => engine.allocate_aligned(request, alignment),
+        current.member.with_page_engine(binding, |_child, engine| match (aligned, zero) {
+            (None, zero) => engine.allocate(request, zero),
+            (Some((alignment, offset)), true) => engine.allocate_aligned_zeroed_at(request, alignment, offset),
+            (Some((alignment, offset)), false) => engine.allocate_aligned_at(request, alignment, offset),
         })
     };
     Some(match block {

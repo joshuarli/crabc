@@ -256,9 +256,7 @@
         "differential:collection",
         "adapter:export-boundary"
       ],
-      "blocked_by": [
-        "The native engine does not reclaim an abandoned full page on its owner's free as pinned `mi_free_try_collect_mt` does (`mi_abandoned_page_try_reclaim` into the originating Theap within `page_max_reclaim`, after which the emptied page is retired): it frees the page when its last block returns. The first divergence is `page_kinds.3.1.0` (12 KiB-bin medium pages) and `collect.probe.2.0` (32 KiB-bin pages before `mi_collect(false)`). Abandonment and reclaim are M5 work."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.page-kinds",
@@ -269,9 +267,7 @@
         "differential:page-kinds",
         "unit:native-operations"
       ],
-      "blocked_by": [
-        "The native engine does not reclaim an abandoned full page on its owner's free as pinned `mi_free_try_collect_mt` does (`mi_abandoned_page_try_reclaim` into the originating Theap within `page_max_reclaim`, after which the emptied page is retired): it frees the page when its last block returns. The first divergence is `page_kinds.3.1.0` (12 KiB-bin medium pages) and `collect.probe.2.0` (32 KiB-bin pages before `mi_collect(false)`). Abandonment and reclaim are M5 work."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m4.oom-failure",
