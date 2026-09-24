@@ -144,6 +144,56 @@ required = [
   "clean failure for malformed unsupported missing and stale inputs plus once-only cyclic dependency lifecycle",
 ]
 
+# Every coverage obligation names the qualification cases whose receipts
+# must exist for all three products. A case may support several obligations.
+[[coverage.evidence]]
+requirement = "installed main program initially loaded dependency graph and runtime-loaded plugin"
+cases = ["dlopen-pie", "dlopen-non-pie", "cross-dso", "constructor-exit"]
+
+[[coverage.evidence]]
+requirement = "installed interpreter path and compatibility alias"
+cases = ["elf-scope-alias", "cli", "crt-dynamic-startup"]
+
+[[coverage.evidence]]
+requirement = "shared-libc loading and loader-to-libc RuntimeV1 handoff"
+cases = ["crt-dynamic-startup", "cli", "cross-dso"]
+
+[[coverage.evidence]]
+requirement = "dependency search repeated dependencies symbol scope weak global protected behavior and selected relocations"
+cases = ["dlopen-pie", "dlopen-non-pie", "elf-scope-alias", "lazy-pie", "lazy-non-pie", "cycle"]
+
+[[coverage.evidence]]
+requirement = "main dependency and plugin constructors reverse exit finalization retained dlclose mappings and failed-load rollback"
+cases = ["constructor-exit", "dlopen-pie", "dlopen-non-pie", "cross-dso", "pthread-exit"]
+
+[[coverage.evidence]]
+requirement = "dlopen dlsym dlclose dlerror dladdr dlinfo and dl_iterate_phdr behavior"
+cases = ["dlopen-pie", "dlopen-non-pie"]
+
+[[coverage.evidence]]
+requirement = "initial IE and GD TLS runtime GD growth initial IE reopen and clean rejection of new runtime IE"
+cases = ["cross-dso", "dlopen-pie", "dlopen-non-pie"]
+
+[[coverage.evidence]]
+requirement = "DTV growth before and after worker creation"
+cases = ["dlopen-pie", "dlopen-non-pie", "cross-dso"]
+
+[[coverage.evidence]]
+requirement = "allocator errno stdio pthread/TSD signal and exit interaction across DSO boundaries"
+cases = ["cross-dso", "pthread-exit", "constructor-exit"]
+
+[[coverage.evidence]]
+requirement = "concurrent open lookup close callback execution and admitted loader reentrancy"
+cases = ["dlopen-pie", "dlopen-non-pie"]
+
+[[coverage.evidence]]
+requirement = "fork child repair where selected"
+cases = ["fork", "dlopen-pie", "dlopen-non-pie", "signal-handler-fork", "atfork-registry", "underscore-fork"]
+
+[[coverage.evidence]]
+requirement = "clean failure for malformed unsupported missing and stale inputs plus once-only cyclic dependency lifecycle"
+cases = ["dlopen-pie", "dlopen-non-pie", "cycle", "loader-synthetic"]
+
 [non_promotion]
 status = "implemented-owned-dynamic-product-requires-live-qualification-not-family-or-public-promotion"
 driver_execution = "installed-translation-and-linking"
@@ -166,4 +216,4 @@ source = "live nonignored source content and modes; clean revision at publicatio
 materialization = "manifest payload hashes plus source and both contract digests; never runtime publication"
 receipt = "exact successful case matrix, immutable logs, base driver purity receipts, oracle identities and identical packages"
 publication = "explicit reviewed receipt publication; no family or public promotion"
-required_cases = ["cycle", "cli", "elf-scope-alias", "dlopen-pie", "dlopen-non-pie", "lazy-pie", "lazy-non-pie", "constructor-exit", "crt-dynamic-startup", "pthread-signal", "pthread-exit", "fork", "signal-handler-fork", "atfork-registry", "posix-timers", "pthread-scheduling", "pthread-cpuclock", "signal-helpers", "signal-full", "fcntl", "named-ipc", "message-queues", "pthread-getattr", "pthread-join-cancel", "pthread-cond-cancel", "pthread-cond-timed", "pthread-mutex", "io-cancellation", "system-cancellation", "spawn", "linux-control", "kernel-residual", "vm-mechanisms", "group", "assert", "quick-exit", "legacy-time", "environment-lifecycle", "syslog", "credentials-profile", "pthread-spin", "process-trio", "underscore-fork", "process-control", "filesystem-mechanisms", "error-reporting", "c-allocation-interposition", "stdio-allocator-interposition", "mimalloc-startup-errno", "pty", "passwd", "account-files", "utmpx", "aio", "locale", "stdio", "numeric-calendar", "math-fenv-all-entry", "rand", "pattern", "regex", "wordexp", "wide-calendar", "monetary", "fmtmsg", "classic-netdb", "posix-filesystem", "unix-mechanisms", "posix-composition", "resolver-cancellation", "loader-synthetic", "package-corpus"]
+required_cases = ["cycle", "cli", "elf-scope-alias", "dlopen-pie", "dlopen-non-pie", "lazy-pie", "lazy-non-pie", "constructor-exit", "crt-dynamic-startup", "pthread-signal", "pthread-exit", "fork", "signal-handler-fork", "atfork-registry", "posix-timers", "pthread-scheduling", "pthread-cpuclock", "signal-helpers", "signal-full", "fcntl", "named-ipc", "message-queues", "pthread-getattr", "pthread-join-cancel", "pthread-cond-cancel", "pthread-cond-timed", "pthread-mutex", "io-cancellation", "system-cancellation", "spawn", "linux-control", "kernel-residual", "vm-mechanisms", "group", "assert", "quick-exit", "legacy-time", "environment-lifecycle", "syslog", "credentials-profile", "pthread-spin", "process-trio", "underscore-fork", "process-control", "filesystem-mechanisms", "error-reporting", "c-allocation-interposition", "stdio-allocator-interposition", "mimalloc-startup-errno", "pty", "passwd", "account-files", "utmpx", "aio", "locale", "stdio", "numeric-calendar", "math-fenv-all-entry", "rand", "pattern", "regex", "wordexp", "wide-calendar", "monetary", "fmtmsg", "classic-netdb", "posix-filesystem", "unix-mechanisms", "posix-composition", "resolver-cancellation", "loader-synthetic", "package-corpus", "cross-dso"]

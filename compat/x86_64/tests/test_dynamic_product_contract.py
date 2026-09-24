@@ -150,6 +150,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "resolver-cancellation",
                 "loader-synthetic",
                 "package-corpus",
+                "cross-dso",
             ],
         )
         self.assertEqual(report["status"], "implemented-unqualified")
@@ -187,6 +188,21 @@ class DynamicProductContractTests(unittest.TestCase):
                 "runtime loaded DSO coverage",
                 lambda contract: contract["coverage"]["required"].pop(),
                 "coverage contract",
+            ),
+            (
+                "unmapped coverage obligation",
+                lambda contract: contract["coverage"]["evidence"].pop(),
+                "exactly one ordered evidence entry",
+            ),
+            (
+                "coverage evidence without a registered case",
+                lambda contract: contract["coverage"]["evidence"][6]["cases"].__setitem__(0, "initial-ie"),
+                "unknown cases",
+            ),
+            (
+                "coverage evidence without cases",
+                lambda contract: contract["coverage"]["evidence"][8].__setitem__("cases", []),
+                "distinct case names",
             ),
             (
                 "reproducible installs",

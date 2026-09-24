@@ -45,6 +45,17 @@ excluded, so there is no checked-in self-hash or commit cycle.
   before replacement. Immutable receipts and prior case evidence are never
   rewritten. No schema check or build invokes publication implicitly.
 
+`dynamic-product.toml` maps each `coverage.required` obligation to the
+registered cases that prove it (`[[coverage.evidence]]`); the contract
+validator rejects an unmapped obligation or an unregistered case name. The
+`cross-dso` case (`run_owned_dynamic_cross_dso.sh`) is the application-shaped
+composition witness: in PIE and non-PIE entries, an initial dependency with
+initial-exec TLS (`DF_STATIC_TLS`, reached by the executable's own
+`R_X86_64_TPOFF64`) is reopened through `dlopen`, and a runtime plugin's GD
+TLS, allocation ownership, errno, stdout, a TSD destructor, a SA_SIGINFO
+handler, retained close/reopen, and atexit/destructor/stdio exit order cross
+module boundaries, byte-identical with pinned musl.
+
 The finite `CASES` roster maps the contract to CLI, dependency cycles, ELF
 weak/protected/hidden scope and interpreter aliases, PIE/non-PIE runtime
 loading and deferred binding, constructor exit, pthread signals and exit,

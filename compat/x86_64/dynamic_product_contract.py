@@ -15,7 +15,7 @@ import json
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -111,6 +111,38 @@ def canonical_contract_bytes(contract: Mapping[str, Any]) -> bytes:
 
 def contract_sha256(contract: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical_contract_bytes(contract)).hexdigest()
+
+
+def coverage_map(coverage: Mapping[str, Any], cases: Iterable[str]) -> dict[str, list[str]]:
+    """Map each ordered coverage obligation to the qualification cases proving it.
+
+    Every obligation needs exactly one entry naming at least one registered
+    case. A case may support several obligations, and breadth cases outside
+    the product obligations stay required by the qualification roster itself.
+    """
+
+    known = set(cases)
+    evidence = coverage.get("evidence")
+    if not isinstance(evidence, list):
+        raise ProductContractError("dynamic coverage.evidence must be an array of tables")
+    mapped: dict[str, list[str]] = {}
+    for index, entry in enumerate(evidence):
+        if not isinstance(entry, dict):
+            raise ProductContractError(f"dynamic coverage.evidence[{index}] must be a table")
+        require_exact_keys(entry, {"requirement", "cases"}, f"dynamic coverage.evidence[{index}]")
+        requirement, named = entry["requirement"], entry["cases"]
+        if requirement not in coverage["required"] or requirement in mapped:
+            raise ProductContractError(f"dynamic coverage evidence is undeclared or repeated: {requirement}")
+        if (not isinstance(named, list) or not named or len(set(named)) != len(named)
+                or not all(isinstance(case, str) for case in named)):
+            raise ProductContractError(f"dynamic coverage evidence needs distinct case names: {requirement}")
+        unknown = sorted(set(named) - known)
+        if unknown:
+            raise ProductContractError(f"dynamic coverage evidence names unknown cases: {unknown}")
+        mapped[requirement] = list(named)
+    if list(mapped) != list(coverage["required"]):
+        raise ProductContractError("every dynamic coverage obligation needs exactly one ordered evidence entry")
+    return mapped
 
 
 def validate_dynamic_product_contract(contract: Mapping[str, Any]) -> None:
@@ -386,7 +418,7 @@ def validate_dynamic_product_contract(contract: Mapping[str, Any]) -> None:
     coverage = contract["coverage"]
     if not isinstance(coverage, dict):
         raise ProductContractError("dynamic coverage table is required")
-    require_exact_keys(coverage, {"required"}, "dynamic coverage contract")
+    require_exact_keys(coverage, {"required", "evidence"}, "dynamic coverage contract")
     require_string_list(
         coverage["required"],
         [
@@ -407,6 +439,7 @@ def validate_dynamic_product_contract(contract: Mapping[str, Any]) -> None:
     )
 
     import owned_dynamic_qualification as qualification
+    coverage_map(coverage, qualification.CASES)
     require_equal(contract["qualification"], {
         "validator": "compat/x86_64/owned_dynamic_qualification.py",
         "products": list(qualification.PRODUCTS),

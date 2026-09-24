@@ -113,6 +113,7 @@ CASES = {
     "resolver-cancellation": ("run_owned_resolver_cancellation.sh", None),
     "loader-synthetic": ("run_owned_loader_synthetic.sh", None),
     "package-corpus": ("run_owned_package_corpus.sh", None),
+    "cross-dso": ("run_owned_dynamic_cross_dso.sh", None),
 }
 # Both native corpus components consume the caller's exact installed product
 # and the complete frozen roster. Their private network has no interfaces up;
