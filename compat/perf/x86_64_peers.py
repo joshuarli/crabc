@@ -973,6 +973,12 @@ class PeerContext:
         record["stdout"] = file_identity(self.root, peer.stdout_path)
         record["stderr"] = file_identity(self.root, peer.stderr_path)
         if peer.events_path.is_file() and not peer.events_path.is_symlink():
+            # The peer child writes this record itself; the DNS server's
+            # atomic writer leaves mkstemp's 0600. The adapter adds read bits
+            # to every retained file before it seals an attempt, so seal the
+            # identity under that final mode or host replay cannot match it.
+            mode = stat.S_IMODE(peer.events_path.stat().st_mode)
+            os.chmod(peer.events_path, mode | 0o444, follow_symlinks=False)
             record["events"] = file_identity(self.root, peer.events_path)
         else:
             errors.append(f"{peer.kind} peer did not retain an event record")

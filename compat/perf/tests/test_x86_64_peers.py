@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -269,6 +270,26 @@ class PeerLifecycleTests(unittest.TestCase):
             peers._write_json(ROOT / forged["record_file"], forged)
             with self.assertRaisesRegex(peers.PeerError, "sequence-checked"):
                 peers.validate_context(ROOT, forged)
+
+    def test_sealed_dns_evidence_survives_retained_read_normalization(self) -> None:
+        # The DNS peer writes its event record itself (mkstemp: mode 0600).
+        # The adapter later adds read bits to every retained file before it
+        # seals the attempt, so the sealed peer identity must already carry
+        # the mode that host-side replay will observe.
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary_text:
+            temporary = Path(temporary_text)
+            cpu, allowed, invocation, client_root = self._inputs(temporary)
+            context = peers.start_context(
+                ROOT, row_id="resolver_hosts", mode="resolver_hosts",
+                invocation_work=invocation, client_root=client_root, cpu=cpu,
+                allowed_affinity=allowed, iterations=1,
+            )
+            context.stage_resolver_files()
+            evidence = context.stop()
+            for path in invocation.rglob("*"):
+                if path.is_file() and not path.is_symlink():
+                    os.chmod(path, stat.S_IMODE(path.stat().st_mode) | 0o444)
+            peers.validate_context(ROOT, evidence)
 
     def test_affinity_raw_pid_must_bind_the_started_peer(self) -> None:
         with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary_text:
