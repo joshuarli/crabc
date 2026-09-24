@@ -26,11 +26,14 @@ ORACLE_ENV = {
 ROLES = (
     "float_parse", "locale_ctype_locators", "locale_narrow", "locale_object_wide",
     "locale_wide_iconv", "locale_multibyte", "wide_character", "owned_strfmon",
-    "owned_wide_conversion",
+    "owned_wide_conversion", "uchar_stateful", "c32rtomb", "wcswcs", "locale_error_strings",
+    "text_locale_differential", "wide_stream_differential",
 )
 FRAME_NAMES = (
     "float-parse", "ctype-locators", "locale-narrow", "locale-object-wide",
     "locale-wide-iconv", "locale-multibyte", "wide-character", "strfmon", "wide-conversion",
+    "uchar-stateful", "c32rtomb", "wcswcs", "locale-error-strings", "text-locale-differential",
+    "wide-stream-differential",
 )
 SOURCE_SPECIFIC_ROLES = (
     "locale_object_wide", "locale_wide_iconv", "locale_multibyte",

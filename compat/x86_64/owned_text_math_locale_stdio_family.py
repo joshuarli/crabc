@@ -71,6 +71,14 @@ TEXT_LOCALE_NUMERIC_ROWS = (
     "text.wide-multibyte/wide-character",
     "text.wide-multibyte/wide-conversion",
     "text.iconv/utf16-32-iconv",
+    "numeric.parse-float-locale/differential-transcript",
+    "locale.core/error-strings",
+    "locale.core/differential-transcript",
+    "text.wide-multibyte/uchar",
+    "text.wide-multibyte/wcswcs",
+    "text.wide-multibyte/differential-transcript",
+    "text.wide-multibyte/wide-stream",
+    "text.iconv/differential-transcript",
 )
 STDIO_ENGINE_ROWS = (
     "stdio.file-backends",

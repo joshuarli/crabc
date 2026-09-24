@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unittest
@@ -26,7 +27,7 @@ DISPATCHER = ROOT / "scripts/dev-x86_64.sh"
 
 
 class OwnedTextLocaleNumericComponentTests(unittest.TestCase):
-    def test_fixed_eleven_row_contract_uses_existing_rich_probes(self) -> None:
+    def test_fixed_row_contract_uses_rich_probes_and_differential_transcripts(self) -> None:
         self.assertEqual(
             contract.ROWS,
             (
@@ -41,6 +42,14 @@ class OwnedTextLocaleNumericComponentTests(unittest.TestCase):
                 ("text.wide-multibyte", "wide-character", ("wide-character",)),
                 ("text.wide-multibyte", "wide-conversion", ("wide-conversion",)),
                 ("text.iconv", "utf16-32-iconv", ("locale-wide-iconv",)),
+                ("numeric.parse-float-locale", "differential-transcript", ("text-locale-differential",)),
+                ("locale.core", "error-strings", ("locale-error-strings",)),
+                ("locale.core", "differential-transcript", ("text-locale-differential",)),
+                ("text.wide-multibyte", "uchar", ("uchar-stateful", "c32rtomb")),
+                ("text.wide-multibyte", "wcswcs", ("wcswcs",)),
+                ("text.wide-multibyte", "differential-transcript", ("text-locale-differential",)),
+                ("text.wide-multibyte", "wide-stream", ("wide-stream-differential",)),
+                ("text.iconv", "differential-transcript", ("text-locale-differential",)),
             ),
         )
         self.assertEqual(contract.CAPABILITIES, (
@@ -63,6 +72,12 @@ class OwnedTextLocaleNumericComponentTests(unittest.TestCase):
             "compat/x86_64/locale_alias_contract_probe.c",
             "compat/x86_64/owned_strfmon_probe.c",
             "compat/x86_64/owned_wide_conversion_probe.c",
+            "compat/x86_64/libc_uchar_stateful_probe.c",
+            "compat/x86_64/libc_c32rtomb_probe.c",
+            "compat/x86_64/libc_wcswcs_probe.c",
+            "compat/x86_64/libc_locale_error_strings_probe.c",
+            "compat/x86_64/owned_text_locale_differential_probe.c",
+            "compat/x86_64/owned_wide_stream_differential_probe.c",
         }
         self.assertEqual({relative for _, relative, _, _ in contract.OBJECT_ROLES}, expected_sources)
         self.assertEqual(contract.ALIAS_ROLE, "locale-alias-contract")
@@ -102,8 +117,21 @@ class OwnedTextLocaleNumericComponentTests(unittest.TestCase):
             "crabc_x86_64_wide_character_probe",
             "crabc_x86_64_owned_strfmon_probe",
             "crabc_x86_64_owned_wide_conversion_probe",
+            "crabc_x86_64_uchar_stateful_probe",
+            "crabc_x86_64_c32rtomb_probe",
+            "crabc_x86_64_wcswcs_probe",
+            "crabc_x86_64_locale_error_strings_probe",
+            "crabc_x86_64_text_locale_differential_probe",
+            "crabc_x86_64_wide_stream_differential_probe",
         ):
             self.assertIn(callable_name, source)
+        # The wide-stream transcript reopens stdout, so it must stay last.
+        self.assertLess(source.index("crabc_x86_64_text_locale_differential_probe },"),
+                        source.index("crabc_x86_64_wide_stream_differential_probe },"))
+        self.assertEqual(contract.normal_roles()[-1][0], "wide-stream-differential")
+        self.assertEqual(receipt.NORMAL_FRAME_ROLES[-1], "wide-stream-differential")
+        self.assertEqual(receipt.NORMAL_FRAME_ROLES,
+                         tuple(role for role, _, _, _ in contract.normal_roles() if role != "driver"))
         self.assertNotIn("crabc_x86_64_locale_alias_contract_probe", source)
 
         for relative, callable_name, guard in (
@@ -115,6 +143,38 @@ class OwnedTextLocaleNumericComponentTests(unittest.TestCase):
             probe = (ROOT / relative).read_text(encoding="utf-8")
             self.assertIn(callable_name, probe)
             self.assertIn(guard, probe)
+
+    def test_every_frozen_spelling_is_imported_or_alias_proved(self) -> None:
+        """No frozen symbol of the four credited capabilities lacks an observer.
+
+        Normal-role imports cover every spelling except the musl `__*`
+        public/private locale aliases, which only the separate alias workload
+        can observe because it replaces the public definitions.
+        """
+        import json
+
+        roster = contract.load_capability_roster(ROOT)
+        alias = json.loads((ROOT / "compat/x86_64/locale_alias_contract.json").read_text(encoding="utf-8"))
+        alias_proved = set(alias["visible_aliases"].values()) | set(alias["reverse_visible_aliases"].values())
+        for capability, symbols in roster.items():
+            unobserved = [symbol for symbol in symbols
+                          if symbol not in contract.PROVIDER_SYMBOLS and symbol not in alias_proved]
+            self.assertEqual(unobserved, [], capability)
+        self.assertTrue(alias_proved <= set(roster["locale.core"]))
+
+    def test_differential_transcripts_carry_no_expected_values(self) -> None:
+        for relative, entry in (
+            ("compat/x86_64/owned_text_locale_differential_probe.c",
+             "int crabc_x86_64_text_locale_differential_probe(void)"),
+            ("compat/x86_64/owned_wide_stream_differential_probe.c",
+             "int crabc_x86_64_wide_stream_differential_probe(void)"),
+        ):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn(entry, source)
+            self.assertIn("carries no expected values", source)
+            # Transcript bytes bypass byte stdio, so a stream-engine defect
+            # cannot mask or fabricate a text/locale observation.
+            self.assertIsNone(re.search(r"\b(?:printf|puts|fputs|putchar)\s*\(", source), relative)
 
     def test_exact_coverage_boundary_and_abi_proof_are_not_symbol_only(self) -> None:
         roster = contract.load_capability_roster(ROOT)
@@ -170,7 +230,7 @@ class OwnedTextLocaleNumericComponentTests(unittest.TestCase):
 
     def test_document_states_the_remaining_wide_stdio_and_locale_gaps(self) -> None:
         document = DOCUMENT.read_text(encoding="utf-8")
-        self.assertIn("wide FILE/orientation/formatting", document)
+        self.assertIn("stream engine", document)
         self.assertIn("does not complete", document)
         self.assertIn("general locale database", document)
         self.assertIn("source-specific", document)

@@ -6,8 +6,8 @@ ET_REL workload and keeps the public-alias probe in a second ET_REL workload.
 This reader makes that distinction durable: every retained command, object,
 link receipt, copied dynamic payload, raw oracle stream, provider projection,
 and selected alias table is tied back to a physical artifact before it can
-credit one of the eleven fixed rows.  It is a finite component receipt, not a
-claim that locale or wide stdio is complete.
+credit one of the fixed contract rows.  It is a finite component receipt, not a
+family completion or a claim about the separately owned stdio stream engine.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ ALIAS_CONTRACT = Path("compat/x86_64/locale_alias_contract.json")
 ALIAS_SYMBOLS = Path("compat/x86_64/locale_alias_contract_symbols.py")
 
 # The aggregate has one source identity, one POSIX product boundary, three
-# report roots, and exactly the eleven source-to-row records.  Keeping this
+# report roots, and exactly the contract's source-to-row records.  Keeping this
 # literal list lets the family coordinator snapshot report roots without
 # guessing that they live below the aggregate receipt's parent directory.
 RECEIPT_FIELDS = (
@@ -69,6 +69,8 @@ SOURCE_SPECIFIC_UNCLOSED_GAPS = ()
 NORMAL_FRAME_ROLES = (
     "float-parse", "ctype-locators", "locale-narrow", "locale-object-wide",
     "locale-wide-iconv", "locale-multibyte", "wide-character", "strfmon", "wide-conversion",
+    "uchar-stateful", "c32rtomb", "wcswcs", "locale-error-strings", "text-locale-differential",
+    "wide-stream-differential",
 )
 ALIAS_SYMBOL_STEMS = (
     "oracle-static-symbols", "oracle-dynamic-symbols", "oracle-shared-symbols",

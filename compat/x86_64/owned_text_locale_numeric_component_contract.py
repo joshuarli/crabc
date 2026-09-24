@@ -2,8 +2,10 @@
 """Fixed behavior roster for the installed text/locale/numeric component.
 
 The frozen capability ledger owns the full C ABI inventory.  This component
-owns only the eleven behavior rows below.  Each row names an existing focused
-probe and remains finite even where its capability inventory is much larger.
+owns only the finite behavior rows below.  Each row names an existing focused
+probe or one of the two differential transcripts.  The transcripts carry no
+expected values: the runner requires their bytes to equal pinned musl's, so a
+row cannot pass on a candidate-chosen value.
 """
 
 from __future__ import annotations
@@ -37,6 +39,15 @@ ROWS = (
     ("text.wide-multibyte", "wide-character", ("wide-character",)),
     ("text.wide-multibyte", "wide-conversion", ("wide-conversion",)),
     ("text.iconv", "utf16-32-iconv", ("locale-wide-iconv",)),
+    # Rows below close the remaining frozen spellings of the four capabilities.
+    ("numeric.parse-float-locale", "differential-transcript", ("text-locale-differential",)),
+    ("locale.core", "error-strings", ("locale-error-strings",)),
+    ("locale.core", "differential-transcript", ("text-locale-differential",)),
+    ("text.wide-multibyte", "uchar", ("uchar-stateful", "c32rtomb")),
+    ("text.wide-multibyte", "wcswcs", ("wcswcs",)),
+    ("text.wide-multibyte", "differential-transcript", ("text-locale-differential",)),
+    ("text.wide-multibyte", "wide-stream", ("wide-stream-differential",)),
+    ("text.iconv", "differential-transcript", ("text-locale-differential",)),
 )
 
 # The public replacement definitions in locale_alias_contract_probe.c cannot
@@ -61,6 +72,14 @@ OBJECT_ROLES = (
     ("locale-alias-contract", "compat/x86_64/locale_alias_contract_probe.c", None, "alias"),
     ("strfmon", "compat/x86_64/owned_strfmon_probe.c", "main=crabc_text_locale_numeric_strfmon_private_main", "normal"),
     ("wide-conversion", "compat/x86_64/owned_wide_conversion_probe.c", "main=crabc_text_locale_numeric_wide_conversion_private_main", "normal"),
+    ("uchar-stateful", "compat/x86_64/libc_uchar_stateful_probe.c", "main=crabc_text_locale_numeric_uchar_stateful_private_main", "normal"),
+    ("c32rtomb", "compat/x86_64/libc_c32rtomb_probe.c", "main=crabc_text_locale_numeric_c32rtomb_private_main", "normal"),
+    ("wcswcs", "compat/x86_64/libc_wcswcs_probe.c", "main=crabc_text_locale_numeric_wcswcs_private_main", "normal"),
+    ("locale-error-strings", "compat/x86_64/libc_locale_error_strings_probe.c", "main=crabc_text_locale_numeric_locale_error_strings_private_main", "normal"),
+    ("text-locale-differential", "compat/x86_64/owned_text_locale_differential_probe.c", "main=crabc_text_locale_numeric_text_locale_differential_private_main", "normal"),
+    # Last: it reopens stdout around the stdout-only wide entries, so no later
+    # role observes a stream whose orientation it changed.
+    ("wide-stream-differential", "compat/x86_64/owned_wide_stream_differential_probe.c", "main=crabc_text_locale_numeric_wide_stream_differential_private_main", "normal"),
 )
 
 # These three source branches deliberately make candidate-specific assertions
@@ -140,31 +159,38 @@ PROVIDER_SYMBOLS = (
     "strtof_l", "strtold", "strtold_l", "wcstod", "wcstof", "wcstoimax", "wcstol",
     "wcstold", "wcstoll", "wcstoul", "wcstoull", "wcstoumax", "__strtod_l",
     "__strtof_l", "__strtold_l",
-    # locale.core observations (the remaining frozen locale names are not
-    # silently credited by this finite component).
-    "__ctype_b_loc", "__ctype_get_mb_cur_max", "__ctype_tolower_loc",
+    # locale.core observations.  The remaining frozen `__*` spellings are the
+    # public/private alias pairs proved by the separate alias workload.
+    "__ctype_b_loc", "__strerror_l", "__wcsftime_l", "__ctype_get_mb_cur_max", "__ctype_tolower_loc",
     "__ctype_toupper_loc", "duplocale", "freelocale", "isalnum_l", "isalpha_l",
     "isblank_l", "iscntrl_l", "isdigit_l", "isgraph_l", "islower_l", "isprint_l",
     "ispunct_l", "isspace_l", "isupper_l", "iswalnum_l", "iswalpha_l", "iswblank_l",
     "iswcntrl_l", "iswctype_l", "iswdigit_l", "iswgraph_l", "iswlower_l",
     "iswprint_l", "iswpunct_l", "iswspace_l", "iswupper_l", "iswxdigit_l",
     "isxdigit_l", "localeconv", "newlocale", "nl_langinfo", "nl_langinfo_l",
-    "setlocale", "strcasecmp", "strcasecmp_l", "strcoll", "strcoll_l", "strfmon",
+    "setlocale", "strcasecmp", "strcasecmp_l", "strcoll", "strcoll_l", "strerror_l", "strfmon",
     "strfmon_l", "strncasecmp", "strncasecmp_l", "strxfrm", "strxfrm_l", "tolower_l",
     "toupper_l", "towctrans_l", "towlower_l", "towupper_l", "uselocale", "wcscasecmp_l",
-    "wcscoll", "wcscoll_l", "wcsncasecmp_l", "wcsxfrm", "wcsxfrm_l", "wctrans_l",
+    "wcscoll", "wcscoll_l", "wcsftime_l", "wcsncasecmp_l", "wcsxfrm", "wcsxfrm_l", "wctrans_l",
     "wctype_l",
-    # text.wide-multibyte observations, excluding FILE-oriented calls owned
-    # by the subsequent stream-engine component.
-    "btowc", "iswalnum", "iswalpha", "iswblank", "iswcntrl", "iswctype", "iswdigit",
+    # text.wide-multibyte observations.  The FILE-oriented entries are
+    # observed here through the wide-stream transcript; their stream engine
+    # remains separately owned and proved by the stdio FILE-engine component.
+    "btowc", "c16rtomb", "c32rtomb", "iswalnum", "iswalpha", "iswblank", "iswcntrl", "iswctype", "iswdigit",
     "iswgraph", "iswlower", "iswprint", "iswpunct", "iswspace", "iswupper", "iswxdigit",
-    "mblen", "mbrlen", "mbrtowc", "mbsinit", "mbsnrtowcs", "mbsrtowcs", "mbstowcs",
+    "mblen", "mbrlen", "mbrtoc16", "mbrtoc32", "mbrtowc", "mbsinit", "mbsnrtowcs", "mbsrtowcs", "mbstowcs",
     "mbtowc", "towctrans", "towlower", "towupper", "wcrtomb", "wcpcpy", "wcpncpy",
     "wcscasecmp", "wcscat", "wcschr", "wcscmp", "wcscpy", "wcscspn", "wcsdup",
     "wcslen", "wcsncasecmp", "wcsncat", "wcsncmp", "wcsncpy", "wcsnlen", "wcsnrtombs",
     "wcspbrk", "wcsrchr", "wcsrtombs", "wcsspn", "wcsstr", "wcstok", "wcstombs",
-    "wcswidth", "wctob", "wctomb", "wctrans", "wctype", "wcwidth", "wmemchr",
-    "wmemcmp", "wmemcpy", "wmemmove", "wmemset",
+    "wcswcs", "wcswidth", "wctob", "wctomb", "wctrans", "wctype", "wcwidth", "wmemchr",
+    "wmemcmp", "wmemcpy", "wmemmove", "wmemset", "wcsftime",
+    "fgetwc", "fgetwc_unlocked", "fgetws", "fgetws_unlocked", "fputwc",
+    "fputwc_unlocked", "fputws", "fputws_unlocked", "fwide", "fwprintf", "fwscanf",
+    "getwc", "getwc_unlocked", "getwchar", "getwchar_unlocked", "putwc",
+    "putwc_unlocked", "putwchar", "putwchar_unlocked", "swprintf", "swscanf",
+    "ungetwc", "vfwprintf", "vfwscanf", "vswprintf", "vswscanf", "vwprintf",
+    "vwscanf", "wprintf", "wscanf",
     # text.iconv
     "iconv", "iconv_close", "iconv_open",
 )
@@ -210,7 +236,8 @@ def load_capability_roster(root: Path = ROOT) -> dict[str, tuple[str, ...]]:
         raise ContractError("numeric float roster is no longer the frozen 23-entry boundary")
     if result["text.iconv"] != ("iconv", "iconv_close", "iconv_open"):
         raise ContractError("iconv roster differs from the fixed UTF row")
-    if len(ROWS) != 11 or {row[0] for row in ROWS} != set(CAPABILITIES):
+    if len(ROWS) != len({(capability, row) for capability, row, _roles in ROWS}) or \
+            {row[0] for row in ROWS} != set(CAPABILITIES):
         raise ContractError("component row map is incomplete")
     role_names = {role for role, _source, _define, _group in OBJECT_ROLES}
     source_specific_role_names = {

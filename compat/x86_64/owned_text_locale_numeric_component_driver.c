@@ -26,6 +26,12 @@ int crabc_x86_64_locale_multibyte_probe(void);
 int crabc_x86_64_wide_character_probe(void);
 int crabc_x86_64_owned_strfmon_probe(void);
 int crabc_x86_64_owned_wide_conversion_probe(void);
+int crabc_x86_64_uchar_stateful_probe(void);
+int crabc_x86_64_c32rtomb_probe(void);
+int crabc_x86_64_wcswcs_probe(void);
+int crabc_x86_64_locale_error_strings_probe(void);
+int crabc_x86_64_text_locale_differential_probe(void);
+int crabc_x86_64_wide_stream_differential_probe(void);
 
 struct stage {
     const char *name;
@@ -42,6 +48,13 @@ static const struct stage stages[] = {
     { "wide-character", crabc_x86_64_wide_character_probe },
     { "strfmon", crabc_x86_64_owned_strfmon_probe },
     { "wide-conversion", crabc_x86_64_owned_wide_conversion_probe },
+    { "uchar-stateful", crabc_x86_64_uchar_stateful_probe },
+    { "c32rtomb", crabc_x86_64_c32rtomb_probe },
+    { "wcswcs", crabc_x86_64_wcswcs_probe },
+    { "locale-error-strings", crabc_x86_64_locale_error_strings_probe },
+    { "text-locale-differential", crabc_x86_64_text_locale_differential_probe },
+    /* Last: it reopens stdout around its stdout-only wide entries. */
+    { "wide-stream-differential", crabc_x86_64_wide_stream_differential_probe },
 };
 
 static size_t text_length(const char *text)

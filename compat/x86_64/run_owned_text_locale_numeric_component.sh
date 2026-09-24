@@ -119,12 +119,18 @@ readonly -a ROLE_SOURCES=(
     'locale-alias-contract|compat/x86_64/locale_alias_contract_probe.c|'
     'strfmon|compat/x86_64/owned_strfmon_probe.c|main=crabc_text_locale_numeric_strfmon_private_main'
     'wide-conversion|compat/x86_64/owned_wide_conversion_probe.c|main=crabc_text_locale_numeric_wide_conversion_private_main'
+    'uchar-stateful|compat/x86_64/libc_uchar_stateful_probe.c|main=crabc_text_locale_numeric_uchar_stateful_private_main'
+    'c32rtomb|compat/x86_64/libc_c32rtomb_probe.c|main=crabc_text_locale_numeric_c32rtomb_private_main'
+    'wcswcs|compat/x86_64/libc_wcswcs_probe.c|main=crabc_text_locale_numeric_wcswcs_private_main'
+    'locale-error-strings|compat/x86_64/libc_locale_error_strings_probe.c|main=crabc_text_locale_numeric_locale_error_strings_private_main'
+    'text-locale-differential|compat/x86_64/owned_text_locale_differential_probe.c|main=crabc_text_locale_numeric_text_locale_differential_private_main'
+    'wide-stream-differential|compat/x86_64/owned_wide_stream_differential_probe.c|main=crabc_text_locale_numeric_wide_stream_differential_private_main'
     'source-specific-driver|compat/x86_64/owned_text_locale_numeric_source_specific_driver.c|'
     'candidate-locale-object-wide-profile|compat/x86_64/libc_locale_object_wide_probe.c|CRABC_LOCALE_OBJECT_WIDE_FREESTANDING;CRABC_OWNED_LOCALE_ENVIRONMENT;main=crabc_text_locale_numeric_candidate_locale_object_wide_private_main'
     'candidate-locale-wide-iconv-profile|compat/x86_64/libc_locale_wide_iconv_probe.c|CRABC_LOCALE_WIDE_ICONV_FREESTANDING;main=crabc_text_locale_numeric_candidate_locale_wide_iconv_private_main'
     'candidate-locale-multibyte-profile|compat/x86_64/libc_locale_multibyte_probe.c|CRABC_LOCALE_MULTIBYTE_FREESTANDING;main=crabc_text_locale_numeric_candidate_locale_multibyte_private_main'
 )
-readonly -a NORMAL_ROLES=(driver float-parse ctype-locators locale-narrow locale-object-wide locale-wide-iconv locale-multibyte wide-character strfmon wide-conversion)
+readonly -a NORMAL_ROLES=(driver float-parse ctype-locators locale-narrow locale-object-wide locale-wide-iconv locale-multibyte wide-character strfmon wide-conversion uchar-stateful c32rtomb wcswcs locale-error-strings text-locale-differential wide-stream-differential)
 readonly -a SOURCE_SPECIFIC_ROLES=(source-specific-driver candidate-locale-object-wide-profile candidate-locale-wide-iconv-profile candidate-locale-multibyte-profile)
 declare -a ROLE_OBJECTS=() NORMAL_OBJECTS=() SOURCE_SPECIFIC_OBJECTS=() SEALED_SOURCES=()
 for entry in "${ROLE_SOURCES[@]}"; do
@@ -401,4 +407,4 @@ python3 -B "$RECEIPT" write-report --root "$ROOT" --work "$WORK" --static "$STAT
     --dynamic "$DYNAMIC_PRODUCT" --output "$WORK/owned-text-locale-numeric.json"
 python3 -B "$RECEIPT" validate-report --root "$ROOT" --report "$WORK/owned-text-locale-numeric.json"
 
-printf 'owned text/locale/numeric component: PASS (11 bounded Musl-parity rows; 3 non-credit source-specific candidate observations; selected normal imports rebound to physical static/dynamic providers; separate public-alias executable; static/static-PIE and dynamic PIE/non-PIE kernel/direct; no family completion) evidence: %s\n' "$WORK"
+printf 'owned text/locale/numeric component: PASS (19 bounded Musl-parity rows; 3 non-credit source-specific candidate observations; selected normal imports rebound to physical static/dynamic providers; separate public-alias executable; static/static-PIE and dynamic PIE/non-PIE kernel/direct; no family completion) evidence: %s\n' "$WORK"

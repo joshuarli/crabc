@@ -24,9 +24,10 @@ import owned_text_locale_numeric_component_contract as contract
 SCHEMA = "crabc.x86_64-owned-text-locale-numeric-provider-evidence/v1"
 REQUIRED_PROVIDER_SYMBOLS = contract.PROVIDER_SYMBOLS
 INSTALLED_HEADERS = (
-    "ctype.h", "errno.h", "fenv.h", "float.h", "iconv.h", "langinfo.h", "locale.h",
-    "monetary.h", "stddef.h", "stdint.h", "stdlib.h", "string.h", "strings.h", "sys/mman.h",
-    "time.h", "unistd.h", "wchar.h", "wctype.h", "features.h", "bits/alltypes.h",
+    "ctype.h", "errno.h", "fenv.h", "float.h", "iconv.h", "inttypes.h", "langinfo.h", "locale.h",
+    "monetary.h", "pthread.h", "stdarg.h", "stddef.h", "stdint.h", "stdio.h", "stdlib.h", "string.h",
+    "strings.h", "sys/mman.h", "time.h", "uchar.h", "unistd.h", "wchar.h", "wctype.h", "features.h",
+    "bits/alltypes.h",
 )
 HEADER_TRACE = re.compile(r"^\.+\s+(.+)$")
 COMPILER_ENVIRONMENT = (

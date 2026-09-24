@@ -12,7 +12,7 @@ The source-to-behavior map is finite and is stored in
 `owned_text_locale_numeric_component_contract.py` rather than inferred from an
 export inventory.
 
-| Capability | Row | Existing probe role |
+| Capability | Row | Probe role |
 | --- | --- | --- |
 | `numeric.parse-float-locale` | `float-parse` | `libc_float_parse_probe.c` |
 | `locale.core` | `ctype-locators` | `libc_locale_ctype_locators_probe.c` |
@@ -25,6 +25,47 @@ export inventory.
 | `text.wide-multibyte` | `wide-character` | `libc_wide_character_probe.c` |
 | `text.wide-multibyte` | `wide-conversion` | `owned_wide_conversion_probe.c` |
 | `text.iconv` | `utf16-32-iconv` | `libc_locale_wide_iconv_probe.c` |
+| `numeric.parse-float-locale` | `differential-transcript` | `owned_text_locale_differential_probe.c` |
+| `locale.core` | `error-strings` | `libc_locale_error_strings_probe.c` |
+| `locale.core` | `differential-transcript` | `owned_text_locale_differential_probe.c` |
+| `text.wide-multibyte` | `uchar` | `libc_uchar_stateful_probe.c`, `libc_c32rtomb_probe.c` |
+| `text.wide-multibyte` | `wcswcs` | `libc_wcswcs_probe.c` |
+| `text.wide-multibyte` | `differential-transcript` | `owned_text_locale_differential_probe.c` |
+| `text.wide-multibyte` | `wide-stream` | `owned_wide_stream_differential_probe.c` |
+| `text.iconv` | `differential-transcript` | `owned_text_locale_differential_probe.c` |
+
+Together the normal roles import every frozen spelling of the four credited
+capabilities except musl's 44 `__*` public/private locale alias names, which
+only the separate alias workload can observe (see below). The contract test
+`test_every_frozen_spelling_is_imported_or_alias_proved` enforces that closure
+against `compat/crabc-rs/coverage.toml`.
+
+The two differential transcripts carry no expected values. They serialize the
+exact observable result of each call (return value, `errno`, source and output
+pointer progress, output bytes, `mbstate_t` initial-state predicates, and locale
+handle relations) and write it with `write(2)`, so the byte stdio engine cannot
+mask or fabricate an observation. The runner requires those bytes to equal
+pinned musl's in every execution cell. `owned_text_locale_differential_probe.c`
+covers C and C.UTF-8 single-byte, corpus, byte-wise and pending-state
+`mbrtowc`/`mbrlen`/`mbtowc`/`mblen`; `wcrtomb`/`wctomb`/`btowc`/`wctob`;
+`mbs[n]rtowcs`/`wcs[n]rtombs`/`mbstowcs`/`wcstombs` at every small capacity;
+the UTF-16/32 `uchar.h` entries; full-range wide classification, case mapping
+and `wcwidth` as run-length transitions; wide string/memory functions;
+collation and case-insensitive comparison; narrow `_l` classification and
+the ctype tables; `nl_langinfo[_l]`; `strerror_l`/`__strerror_l`;
+`wcsftime`/`wcsftime_l`/`__wcsftime_l`; locale objects with explicit
+environment scenarios and a worker thread; every `iconv` pair in the fixed
+UTF/ASCII/`WCHAR_T` profile at each output capacity and truncated input; and
+wide/narrow numeric parsing with legacy decimal conversion. Inputs whose musl
+result is an intentional profile difference (arbitrary locale names, BOM,
+UCS-2, and legacy codepage iconv names) or undefined behavior are excluded
+and documented at the top of the probe.
+
+`owned_wide_stream_differential_probe.c` observes the thirty FILE-oriented
+`text.wide-multibyte` entries through anonymous memfd streams, memory streams,
+standard input replaced by a memfd, and standard output reopened with
+`freopen(NULL, "w", stdout)` around its stdout-only entries. It is the last
+normal stage so no later role sees a stream whose orientation it changed.
 
 The normal driver preserves each probe's semantic checks and adds ordered
 `begin`/payload/`ok` frames. It flushes `stdout` before a raw marker and after
@@ -87,10 +128,12 @@ above, and each pair retains the six raw `execution_cells`. The required
 coordinator can snapshot their nested raw evidence even when the aggregate
 receipt lives elsewhere.
 
-This component does not complete `locale.core`, `text.wide-multibyte`, the
-family, runtime qualification, promotion, or public x86 support. In
-particular, wide FILE/orientation/formatting behavior belongs to the separate
-stdio stream-engine receipt; conversion, strings, classification, width, and
-UTF16/32 iconv rows here cannot prove it. The scope also does not add a general locale database, legacy encoding registry, or general family claim. The
-frozen 26df supplied-product run is development evidence only; source-matched
-three-pair qualification remains the family coordinator checkpoint.
+This component does not complete the family, runtime qualification,
+promotion, or public x86 support. Its `wide-stream` row observes the wide C
+entries of `text.wide-multibyte`; the stream engine itself (buffering,
+positioning, locking, and byte/wide orientation for every stream kind) stays
+owned and proved by the separate stdio FILE-engine component. The scope also
+does not add a general locale database, legacy encoding registry, or general
+family claim. The frozen 26df supplied-product run is development evidence
+only; source-matched three-pair qualification remains the family coordinator
+checkpoint.
