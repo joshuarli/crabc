@@ -114,10 +114,8 @@ struct RuntimeObject {
 
 impl RuntimeObject {
     unsafe fn allocate(storage: ObjectStorage, identity: ObjectIdentity, index: usize, name: Option<LoadedName>, short_name: bool) -> Option<*mut Self> {
-        let address = unsafe { syscall6(SYS_MMAP, 0, core::mem::size_of::<Self>() as i64,
-            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
-        if is_linux_error(address) { return None; }
-        let node = address as *mut Self;
+        let node = super::x86_64_runtime_memory::allocate(
+            core::mem::size_of::<Self>(), core::mem::align_of::<Self>())?.cast::<Self>();
         unsafe { core::ptr::write(node, Self { link_map: LinkMap { address: 0, name: core::ptr::null(), dynamic: core::ptr::null(), next: core::ptr::null_mut(), previous: core::ptr::null_mut() }, storage, identity, index,
             next: core::ptr::null_mut(), previous: core::ptr::null_mut(), symbol_next: core::ptr::null_mut(), fini_next: core::ptr::null_mut(), needed_by: core::ptr::null_mut(), global: false, short_name,
             needed: LoaderVec::new(), dependency_scope: None, name: name.as_ref().map_or(ObjectName::EMPTY, LoadedName::view), owned_name: name,
@@ -206,7 +204,7 @@ impl Drop for UnpublishedObjects {
                 core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).callbacks));
                 core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).needed));
                 core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).owned_name));
-                syscall2(SYS_MUNMAP, node as i64, core::mem::size_of::<RuntimeObject>() as i64);
+                super::x86_64_runtime_memory::release(node.cast(), core::mem::size_of::<RuntimeObject>(), core::mem::align_of::<RuntimeObject>());
                 node = previous;
             }
         }
@@ -540,6 +538,7 @@ unsafe extern "C" fn runtime_fork_prepare(callback_lock: i32) -> i32 {
     let callbacks = (callback_lock != 0).then(CallbackGuard::acquire);
     let tid = unsafe { syscall1(186, 0) } as i32;
     if tid <= 0 { return -1; }
+    super::x86_64_runtime_lock::AllocationGuard::retain_for_fork();
     core::mem::forget(callbacks);
     core::mem::forget(guard);
     tid
@@ -549,6 +548,7 @@ unsafe extern "C" fn runtime_fork_prepare(callback_lock: i32) -> i32 {
 /// changes only copied process ownership: immutable graph/TLS provenance and
 /// every surviving FS-relative field remain untouched.
 unsafe extern "C" fn runtime_fork_complete(parent_tid: i32, child: i32, callback_lock: i32) {
+    unsafe { super::x86_64_runtime_lock::AllocationGuard::complete_fork(); }
     if child != 0 {
         let tid = unsafe { syscall1(186, 0) } as i32;
         let thread_pointer = unsafe { read_thread_pointer() } as *mut u8;

@@ -595,7 +595,7 @@ unsafe fn checked_write_span(
         return None;
     }
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    let _ = referenced;
+    let _ = (referenced, symbol_index);
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if let Some(index) = symbol_index {
         let symbol = unsafe { direct_symbol(object, index) }?;

@@ -53,6 +53,29 @@ impl CallbackGuard {
 impl Drop for CallbackGuard {
     fn drop(&mut self) { release(&CALLBACK_LOCK); }
 }
+// Innermost lock for the loader's small-block pool (`x86_64_runtime_memory`).
+// Pool operations run under or outside the graph lock and never take another
+// lock while holding it. Fork retains it last and releases it first.
+static ALLOCATION_LOCK: AtomicI32 = AtomicI32::new(0);
+
+pub(super) struct AllocationGuard(core::marker::PhantomData<*mut ()>);
+impl AllocationGuard {
+    pub(super) fn acquire() -> Self {
+        acquire(&ALLOCATION_LOCK);
+        Self(core::marker::PhantomData)
+    }
+    /// Retain the pool lock across one private fork syscall, after the graph
+    /// and callback locks, so no other thread's half-updated free list is
+    /// copied into the child.
+    pub(super) fn retain_for_fork() { acquire(&ALLOCATION_LOCK); }
+    /// Release the lock retained by [`Self::retain_for_fork`] in the parent or
+    /// the child, before any other fork completion work may allocate.
+    pub(super) unsafe fn complete_fork() { release(&ALLOCATION_LOCK); }
+}
+impl Drop for AllocationGuard {
+    fn drop(&mut self) { release(&ALLOCATION_LOCK); }
+}
+
 pub(super) struct RuntimeGuard(core::marker::PhantomData<*mut ()>);
 impl RuntimeGuard {
     pub(super) fn acquire() -> Self {
@@ -84,7 +107,11 @@ pub(super) fn wake_initialization(state: &AtomicI32) {
 #[cfg(test)]
 pub(super) unsafe fn isolated_mapping_probe(probe: unsafe fn(&RuntimeGuard) -> bool) {
     let guard = RuntimeGuard::acquire();
+    // As the product fork transaction does, keep the pool lock across the raw
+    // fork so a concurrent test thread's pool update is never half-copied.
+    AllocationGuard::retain_for_fork();
     let pid = unsafe { syscall1(57, 0) };
+    unsafe { AllocationGuard::complete_fork(); }
     if pid == 0 {
         let result = unsafe { probe(&guard) };
         unsafe { syscall1(60, if result { 0 } else { 1 }); core::hint::unreachable_unchecked(); }
