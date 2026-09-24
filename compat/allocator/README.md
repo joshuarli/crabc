@@ -1934,6 +1934,39 @@ that recoverable cleanup path. This does not qualify C-free dependency purity
 default selection, dynamic loader ownership, main/process teardown, promotion,
 public x86 support, or AArch64 behavior.
 
+The same worker contract is checked through installed products:
+
+```sh
+./scripts/dev-x86_64.sh owned-native-worker-lifecycle [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]
+```
+
+It builds (or accepts) native-shadow static and dynamic sysroots with
+`--allocator-lifecycle-test-audit`. That flag adds only the scalar
+`__crabc_x86_owned_allocator_worker_owner_test_audit`: the calling worker's
+owner and page-engine state, attached worker owners, and reclaimed worker
+descriptors. `compat/x86_64/owned_native_worker_lifecycle_probe.c` runs in
+static, static-PIE and dynamic PIE/non-PIE (kernel and direct loader) modes
+and must reproduce the pinned-musl transcript. The audited checks are:
+
+- A worker owner is attached before its start routine and before any
+  allocation.
+- Cleanup handlers and each TSD destructor iteration see that owner, for
+  return, `pthread_exit` and cancellation.
+- Every joined worker leaves no attached owner and one reclaimed descriptor.
+- A refused `pthread_create` (`EAGAIN` under `RLIMIT_AS`) leaves no owner,
+  and the next creation attaches normally.
+- The final worker's `atexit` callback runs on a fresh owner that has not
+  allocated, not on the finished one.
+
+Allocation, realloc, calloc and `posix_memalign` refusal with later valid
+use, and remote frees of live and exited workers' blocks of every size
+class, run in both builds. Three static products with a deliberate libc
+mutation each fail the matching check: no worker attach, native finish
+before TSD destructors, and no final-worker reinitialization. An attachment
+the allocator itself rejects is not reachable after installed startup, which
+initializes the process owner before any constructor; the pre-start
+rejection above remains its evidence.
+
 A separate dynamic OS-aligned singleton owner-exit route is available on native
 x86-64:
 

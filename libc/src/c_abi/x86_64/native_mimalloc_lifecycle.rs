@@ -671,3 +671,46 @@ static ALLOCATOR_LIFECYCLE_PHASE: AtomicU8 = AtomicU8::new(0);
 pub extern "C" fn __crabc_x86_owned_allocator_lifecycle_test_phase() -> c_int {
     c_int::from(ALLOCATOR_LIFECYCLE_PHASE.load(Ordering::Acquire))
 }
+
+/// Scalar worker-owner state for installed native lifecycle fixtures.
+///
+/// `owner_installed` is one while the calling worker's persistent native
+/// owner is attached (zero for the initial task, whose owner is separate).
+/// `page_engine_active` reports whether that owner has started a page engine,
+/// i.e. has allocated. The two counts are process-wide: attached later-worker
+/// owners, and descriptor-bearing workers whose TLS, stack and control
+/// mappings libc has released. No address or capability crosses this ABI.
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+#[repr(C)]
+pub struct WorkerOwnerLifecycleAudit {
+    pub owner_installed: usize,
+    pub page_engine_active: usize,
+    pub attached_worker_owners: usize,
+    pub reclaimed_worker_descriptors: usize,
+}
+
+/// Copies [`WorkerOwnerLifecycleAudit`] for the calling thread.
+///
+/// # Safety
+/// `output` names writable `WorkerOwnerLifecycleAudit` storage. The call
+/// enters one ordinary allocator operation and allocates nothing.
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_owned_allocator_worker_owner_test_audit(
+    output: *mut WorkerOwnerLifecycleAudit,
+) -> c_int {
+    let Some(output) = core::ptr::NonNull::new(output) else { return -1; };
+    let current = crabc_mimalloc::__crabc_runtime::native_runtime_current_thread_attachment_test_audit();
+    let admission = crabc_mimalloc::__crabc_runtime::native_runtime_fork_admission_test_audit();
+    // SAFETY: the caller supplies writable storage for this scalar copy.
+    unsafe {
+        output.as_ptr().write(WorkerOwnerLifecycleAudit {
+            owner_installed: current.persistent_owner_installed,
+            page_engine_active: current.page_engine_active,
+            attached_worker_owners: admission.active_later_thread_count,
+            reclaimed_worker_descriptors:
+                super::pthread_create_join::native_mimalloc_reclaimed_worker_descriptor_count(),
+        });
+    }
+    0
+}

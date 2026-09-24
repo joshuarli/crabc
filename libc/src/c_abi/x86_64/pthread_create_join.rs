@@ -624,8 +624,18 @@ const NATIVE_MIMALLOC_ATTACH_FATAL: i32 = 3;
 // This is an external audit witness because the reclaimed control page is no
 // longer readable after its final munmap. It counts only descriptor-bearing
 // workers whose TLS, stack, and control mappings all released successfully.
-#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[cfg(any(
+    feature = "native-mimalloc-shadow-test-audit",
+    all(feature = "native-mimalloc-shadow", feature = "x86-owned-allocator-lifecycle-test-audit"),
+))]
 static NATIVE_MIMALLOC_RECLAIMED_WORKER_DESCRIPTOR_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Descriptor-bearing workers whose TLS, stack and control mappings were all
+/// released, for the installed lifecycle audit. A scalar only.
+#[cfg(all(feature = "native-mimalloc-shadow", feature = "x86-owned-allocator-lifecycle-test-audit"))]
+pub(super) fn native_mimalloc_reclaimed_worker_descriptor_count() -> usize {
+    NATIVE_MIMALLOC_RECLAIMED_WORKER_DESCRIPTOR_COUNT.load(Ordering::Acquire)
+}
 
 #[cfg(feature = "native-mimalloc-shadow")]
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -1787,7 +1797,10 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
         unsafe { (*control).stack_released.store(1, Ordering::Release) };
     }
     let control_mapping = unsafe { (*control).control_mapping };
-    #[cfg(feature = "native-mimalloc-shadow-test-audit")]
+    #[cfg(any(
+        feature = "native-mimalloc-shadow-test-audit",
+        all(feature = "native-mimalloc-shadow", feature = "x86-owned-allocator-lifecycle-test-audit"),
+    ))]
     let reclaimed_native_descriptor = unsafe {
         !(*control)
             .native_allocator_descriptor
@@ -1798,7 +1811,10 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
     if is_linux_error(unmap_result) {
         return Err(positive_linux_error(unmap_result));
     }
-    #[cfg(feature = "native-mimalloc-shadow-test-audit")]
+    #[cfg(any(
+        feature = "native-mimalloc-shadow-test-audit",
+        all(feature = "native-mimalloc-shadow", feature = "x86-owned-allocator-lifecycle-test-audit"),
+    ))]
     if reclaimed_native_descriptor {
         NATIVE_MIMALLOC_RECLAIMED_WORKER_DESCRIPTOR_COUNT.fetch_add(1, Ordering::Release);
     }

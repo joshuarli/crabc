@@ -94,8 +94,9 @@ x86-owned-static-native-shadow = [
 ]
 x86-owned-dynamic-native-shadow = ["x86-owned-static-native-shadow"]
 # Scalar initialization/finalization phase for installed C/native differential
-# fixtures. No callbacks, allocator pointers, or default product selection.
-x86-owned-allocator-lifecycle-test-audit = []
+# fixtures and, with the native backend, scalar worker-owner state. No
+# callbacks, allocator pointers, or default product selection.
+x86-owned-allocator-lifecycle-test-audit = ["crabc-mimalloc?/native-runtime-test-audit"]
 # Legacy C temporary-name generation returns an allocator-owned pathname from
 # tempnam while tmpnam retains its source-compatible static-buffer path. Keep
 # both opt-in over the already audited strdup client so the default archive

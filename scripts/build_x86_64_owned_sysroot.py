@@ -801,7 +801,8 @@ def selected_allocator_archive(cargo_root: Path, allocator_backend: str) -> Path
     return archives[0]
 
 
-def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c") -> dict[str, object]:
+def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c",
+                         lifecycle_test_audit: bool = False) -> dict[str, object]:
     producer_tools = resolve_pinned_producer_tools()
     rustup_record = producer_tools["rustup"]
     if not isinstance(rustup_record, dict):
@@ -837,6 +838,10 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c") 
         "CC_SHELL_ESCAPED_FLAGS": "1",
     })
     selected_feature = "x86-owned-static-runtime" if accepted_c else "x86-owned-static-native-shadow"
+    # The explicit scalar lifecycle audit mirrors the dynamic producer's
+    # development flag. It selects no allocator and exposes no pointer.
+    if lifecycle_test_audit:
+        selected_feature += ",x86-owned-allocator-lifecycle-test-audit"
     dependency_graph = allocator_dependency_graph([rustup, "run", PINNED_TOOLCHAIN, "cargo"],
                                                  selected_feature, allocator_backend, environment)
     cargo_command = [
@@ -930,6 +935,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c") 
             "upstream_sha256": sha256_file(ROOT / "crabc-mimalloc/UPSTREAM.md"),
         }
     libc_provenance["dependency_graph"] = dependency_graph
+    libc_provenance["allocator_lifecycle_test_audit"] = lifecycle_test_audit
     libc_provenance["allocator_backend"].update({
         "crate": allocator_pin,
         "compiler": c_compiler,
@@ -1071,13 +1077,15 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
     return manifest
 
 
-def build(output: Path, *, allocator_backend: str = "accepted-c") -> dict[str, object]:
+def build(output: Path, *, allocator_backend: str = "accepted-c",
+          lifecycle_test_audit: bool = False) -> dict[str, object]:
     assert_native_target()
     output = validate_output_path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="crabc-x86-owned-sysroot.", dir=output.parent) as temporary:
         temporary_root = Path(temporary)
-        inputs = build_runtime_inputs(temporary_root, allocator_backend=allocator_backend)
+        inputs = build_runtime_inputs(temporary_root, allocator_backend=allocator_backend,
+                                      lifecycle_test_audit=lifecycle_test_audit)
         staged_output = temporary_root / "installed"
         manifest = assemble(staged_output, inputs)
         remove_owned_output(output)
@@ -1089,13 +1097,15 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default="accepted-c")
+    parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
     return parser.parse_args(arguments)
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
     try:
         parsed = parse_args(arguments)
-        manifest = build(parsed.output, allocator_backend=parsed.allocator_backend)
+        manifest = build(parsed.output, allocator_backend=parsed.allocator_backend,
+                         lifecycle_test_audit=parsed.allocator_lifecycle_test_audit)
     except BuildError as error:
         print(f"x86 owned static sysroot failed: {error}", file=sys.stderr)
         return 1
