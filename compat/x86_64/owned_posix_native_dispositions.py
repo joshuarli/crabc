@@ -1,4 +1,4 @@
-"""Four finite source/profile boundaries: aliases, atomics, crypt, and strptime.
+"""Three finite source/profile boundaries: atomics, crypt, and strptime.
 
 This owner does not execute or waive a test. It retains exact upstream raw
 failures and requires the source-specific companion or source contract that
@@ -6,7 +6,6 @@ each finite boundary names.
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 from pathlib import Path
 import re
@@ -32,20 +31,6 @@ PROFILE_SOURCES = ('COMPATIBILITY-PROFILE.md', 'compat/crabc-rs/crypt-profile.md
     'compat/x86_64/native-crypt-reference/README.md',
     STRPTIME_REFERENCE, 'compat/x86_64/native-strptime-reference/COPYRIGHT',
     'compat/x86_64/native-strptime-reference/README.md')
-
-# Exact tiny source inputs from the pinned OS-test tree. The complete native
-# collector also proves their upstream tree/revision and untouched source copies.
-OS_ALIAS_SOURCES = {}
-for _alias, _getter in (('seteuid', 'geteuid'), ('setegid', 'getegid')):
-    OS_ALIAS_SOURCES[_alias] = (f'/* Test whether a basic {_alias} invocation works. */\n\n'
-        '#include <unistd.h>\n\n#include "../basic.h"\n\nint main(void)\n{\n'
-        f'\tif ( {_alias}({_getter}()) < 0 )\n\t\terr(1, "{_alias}");\n\treturn 0;\n}}\n')
-for _alias, _kind in (('setreuid', 'uid'), ('setregid', 'gid')):
-    OS_ALIAS_SOURCES[_alias] = (f'/*[XSI]*/\n/* Test whether a basic {_alias} invocation works. */\n\n'
-        '#include <unistd.h>\n\n#include "../basic.h"\n\nint main(void)\n{\n'
-        f'\t{_kind}_t r{_kind} = get{_kind}();\n\t{_kind}_t e{_kind} = gete{_kind}();\n'
-        f'\tif ( {_alias}(r{_kind}, e{_kind}) < 0 )\n\t\terr(1, "{_alias}");\n\treturn 0;\n}}\n')
-
 
 # These are the complete address-taken C11 atomic failures in the pinned OS
 # include suite. The unusual space in one declaration is upstream source data.
@@ -186,22 +171,6 @@ def strptime_disposition(reader, source, *, candidate_status, candidate_stdout, 
     }
 
 
-def os_alias_disposition(reader, suite, outcome, source, candidate, oracle, companion):
-    alias = Path(outcome).stem
-    native.require(suite == 'basic' and outcome == 'unistd/' + alias + '.out' and alias in OS_ALIAS_SOURCES,
-                   'OS outcome has no selected profile disposition')
-    native.require(isinstance(companion, dict) and 'receipt' in companion
-                   and set(companion['selected_dynamic_entries']) == set(DYNAMIC_MODES),
-                   'OS credential companion proof required')
-    native.require(native.read_bytes(source) == OS_ALIAS_SOURCES[alias].encode(), 'OS credential alias source differs')
-    native.require(candidate == (alias + ': ENOTSUP\n').encode() and oracle == b'exit: 0\n',
-                   'OS credential alias exact raw outcomes differ')
-    return {'schema': SCHEMA, 'suite': suite, 'outcome': outcome, 'alias': alias,
-            'status': 'profile-qualified', 'raw_passed': False, 'source': reader.identity(source),
-            'profiles': profile_sources(reader.root), 'companion': companion['receipt'],
-            'selected_dynamic_entries': companion['selected_dynamic_entries']}
-
-
 def os_atomic_disposition(reader, suite, outcome, source, candidate, oracle, companion):
     symbol = Path(outcome).stem
     native.require(suite == 'include' and outcome == 'stdatomic/' + symbol + '.out'
@@ -220,74 +189,9 @@ def os_atomic_disposition(reader, suite, outcome, source, candidate, oracle, com
 
 
 def os_disposition(reader, suite, outcome, source, candidate, oracle, companions):
-    """Admit the two OS rosters only; every other raw mismatch rejects."""
-    native.require(isinstance(companions, dict) and set(companions) == {'credentials', 'atomic'},
+    """Admit the OS atomic roster only; every other raw mismatch rejects."""
+    native.require(isinstance(companions, dict) and set(companions) == {'atomic'},
                    'complete OS companion proofs required')
-    if suite == 'basic' and outcome in {'unistd/' + name + '.out' for name in OS_ALIAS_SOURCES}:
-        return os_alias_disposition(reader, suite, outcome, source, candidate, oracle, companions['credentials'])
     if suite == 'include' and outcome in {'stdatomic/' + name + '.out' for name in OS_ATOMIC_SOURCES}:
         return os_atomic_disposition(reader, suite, outcome, source, candidate, oracle, companions['atomic'])
     raise native.NativeObservationError('OS outcome has no selected profile disposition')
-
-
-def _retained_raw(root, leaf, record):
-    from owned_posix_family_execution import physical
-    native.keys(record, ('stdout', 'stderr', 'status'), 'profile companion raw streams')
-    values = {}
-    for stream, item in record.items():
-        native.keys(item, ('path', 'sha256', 'size', 'base64'), 'profile companion stream')
-        path = physical(root, leaf / item['path'])
-        native.require(path.is_relative_to(leaf), 'profile companion raw path escapes replay')
-        data = native.read_bytes(path)
-        native.same([item['sha256'], item['size'], item['base64']],
-                    [hashlib.sha256(data).hexdigest(), len(data), base64.b64encode(data).decode()],
-                    'profile companion physical raw identity')
-        values[stream] = data
-    native.require(values['status'] == b'0\n' and values['stderr'] == b'', 'profile companion execution failed')
-    return values
-
-
-def credentials_companion(root, matrix, matrix_receipt, product):
-    """The caller supplies the already fully validated family matrix.
-
-    Rebind all three physical source/object/receipt/raw replays here, including
-    direct setters. The composite independently validates the complete matrix
-    first; this function cannot manufacture a partial-matrix qualification.
-    """
-    import owned_posix_family_execution as family
-    import owned_posix_family_observations as observations
-    from owned_posix_family_observations import _credentials_helper
-    source = root / 'compat/x86_64/owned_credentials_profile_probe.c'
-    expected_source = family.source_file(root, str(source.relative_to(root)))
-    native.same(matrix['inputs']['dynamic_products']['primary']['path'], product.relative_to(root).as_posix(),
-                'credentials companion selected installed product')
-    native.same(matrix['inputs']['dynamic_products']['primary']['manifest_sha256'],
-                native.digest(product / 'share/crabc/manifest.json'), 'credentials companion installed manifest')
-    replays, hashes = {}, set()
-    for label, dynamic_label in family.PAIRS.items():
-        row = matrix['runs'][label]['credentials-profile']
-        native.same([row['static_product'], row['dynamic_product']], [label, dynamic_label], 'credentials replay products')
-        leaf = family.physical(root, root / row['leaf'])
-        native.same(row['receipt'], family.file_identity(root, root / row['receipt']['path']), 'credentials replay receipt')
-        objects = row['objects']
-        native.require(len(objects) == 1, 'credentials canonical object roster differs')
-        obj = next(iter(objects.values()))
-        native.same(obj['source'], expected_source, 'credentials canonical source')
-        native.same(obj['object'], family.file_identity(root, root / obj['object']['path']), 'credentials canonical object')
-        hashes.add(obj['object']['sha256'])
-        scenarios = row['observations']['scenarios']
-        native.keys(scenarios, observations.LAYOUTS['credentials-profile'].scenarios, 'credentials companion scenarios')
-        for scenario, record in scenarios.items():
-            native.same(record['kind'], 'differential', 'credentials scenario semantic kind')
-            native.keys(record['candidates'], observations.MODES, 'credentials complete product entries')
-            oracle = _retained_raw(root, leaf, record['oracle'])
-            if scenario in ('direct', 'aliases'):
-                _credentials_helper(root, scenario, leaf / record['oracle']['stdout']['path'])
-            for mode in observations.MODES:
-                candidate = _retained_raw(root, leaf, record['candidates'][mode])
-                native.require(candidate == oracle, 'credentials setter raw difference')
-        replays[label] = {'receipt': row['receipt'], 'objects': objects, 'scenarios': scenarios}
-    native.require(len(hashes) == 1, 'credentials replay object differs across products')
-    return {'receipt': matrix_receipt, 'replays': replays,
-            'selected_dynamic_entries': {mode: {'direct': replays['primary']['scenarios']['direct']['candidates'][mode],
-                'aliases': replays['primary']['scenarios']['aliases']['candidates'][mode]} for mode in DYNAMIC_MODES}}

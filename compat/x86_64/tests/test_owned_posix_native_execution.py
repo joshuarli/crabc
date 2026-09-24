@@ -117,7 +117,6 @@ class NativeExecutionTests(unittest.TestCase):
         self.patch(execution, 'require_live_oracle')
         self.patch(execution.crypt, 'validate_receipt', side_effect=lambda *args, **kwargs: {'vectors': [], 'vector_observations': {}})
         self.patch(execution.atomic, 'validate_receipt', side_effect=lambda *args, **kwargs: {'entries': {}})
-        self.patch(execution.dispositions, 'credentials_companion', return_value={'fixture': 'external credentials judge'})
         self.patch(execution.wordexp_policy, 'validate_companion', side_effect=self.wordexp_companion)
         self.profile_components = set()
         self.native_judge = self.patch(native, 'collect', side_effect=self.native_result)

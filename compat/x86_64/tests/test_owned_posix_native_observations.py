@@ -329,8 +329,6 @@ class NativeObservationsTests(unittest.TestCase):
         self.put(stage / aio_suspend_source.SOURCE_PATH, aio_suspend_source.FROZEN_SOURCE)
         if profile:
             import owned_posix_native_dispositions as dispositions
-            for alias, content in dispositions.OS_ALIAS_SOURCES.items():
-                self.put(stage / 'basic/unistd' / (alias + '.c'), content.encode())
             for symbol, content in dispositions.OS_ATOMIC_SOURCES.items():
                 self.put(stage / 'include/stdatomic' / (symbol + '.c'), content.encode())
         self.put(stage / 'GNUmakefile', b'pinned Make graph fixture\n')
@@ -542,8 +540,6 @@ class NativeObservationsTests(unittest.TestCase):
                 outcomes = {}
                 for name in expected:
                     value = b'good\n'
-                    if profile and suite == 'basic' and name.startswith('unistd/'):
-                        value = b'exit: 0\n' if side == 'musl' else (Path(name).stem + ': ENOTSUP\n').encode()
                     if profile and suite == 'include' and name.startswith('stdatomic/'):
                         value = b'undefined\n' if side == 'musl' else b'good\n'
                     path = self.put(root / 'out/linux' / suite / name, value)
@@ -606,11 +602,6 @@ class NativeObservationsTests(unittest.TestCase):
                         'argv': ['/control/ld-musl-x86_64.so.1', '/control/busybox', 'sh', '<original argv[1..]>']}}
             row['dynamic'].update(execution_control=control, adapter_errors=[],
                                   adapter_event_count=len(list((self.leaf / 'evidence' / suite / 'events').glob('*.json'))))
-            if profile and suite == 'basic':
-                row.update(passed=False, difference_count=4, differences=[
-                    {'case': name, 'dynamic': row['dynamic']['outcomes'][name], 'musl': row['musl']['outcomes'][name]}
-                    for name in expected if name.startswith('unistd/')])
-                report['passed'] = False
             if profile and suite == 'include':
                 row.update(passed=False, difference_count=6, differences=[
                     {'case': name, 'dynamic': row['dynamic']['outcomes'][name], 'musl': row['musl']['outcomes'][name]}
@@ -1161,9 +1152,7 @@ class NativeObservationsTests(unittest.TestCase):
         import owned_posix_native_dispositions as dispositions
         for path in (*dispositions.PROFILE_SOURCES, *math_oracle_defects.PROOF_SOURCES):
             self.copy_source(path)
-        return {'credentials': {'receipt': {'path': '.work/family/execution.json', 'sha256': 'b'*64},
-                    'selected_dynamic_entries': {mode: {} for mode in MODES}},
-                'crypt': {'vectors': dispositions.crypt_vectors(self.root),
+        return {'crypt': {'vectors': dispositions.crypt_vectors(self.root),
                     'receipt': {'path': '.work/crypt/crypt-profile.json', 'sha256': 'c'*64}},
                 'atomic': {'receipt': {'path': '.work/atomic/atomic-addressable-profile.json', 'sha256': 'd'*64},
                     'selected_dynamic_entries': {mode: {} for mode in MODES}},
@@ -1204,7 +1193,6 @@ class NativeObservationsTests(unittest.TestCase):
                      'diagnostic_reference': {'path': 'reference'},
                      'selected_dynamic_entries': {mode: {} for mode in MODES}}
         with patch.object(family, 'validate_receipt', return_value={'fixture': 'complete family matrix'}), \
-             patch.object(dispositions, 'credentials_companion', return_value={'fixture': 'credentials'}), \
              patch.object(crypt, 'validate_receipt', return_value={'vectors': [], 'vector_observations': {}}), \
              patch.object(atomic, 'validate_receipt', return_value={'entries': {}}), \
              patch.object(wordexp_policy, 'validate_companion', return_value=companion) as validate_wordexp:
@@ -1229,7 +1217,7 @@ class NativeObservationsTests(unittest.TestCase):
             definition['headers'] = {path: expected_hashes[name]['header'] for path in definition['headers']}
         return definitions
 
-    def test_native_os_profile_preserves_exact_ten_raw_failures(self):
+    def test_native_os_profile_preserves_exact_six_raw_failures(self):
         report = self.os_test_fixture(profile=True)
         proof = self.profile_companions()
         inputs = self.profile_input_paths()
@@ -1239,7 +1227,7 @@ class NativeObservationsTests(unittest.TestCase):
                                     root=self.root, profile_inputs=inputs)
             self.assertIs(report['passed'], False)
             self.assertEqual(result['qualification']['status'], 'profile-qualified')
-            self.assertEqual(len(result['qualification']['dispositions']), 10)
+            self.assertEqual(len(result['qualification']['dispositions']), 6)
             self.assertIs(result['qualification']['raw_passed'], False)
             include = next(row for row in report['suites'] if row['suite'] == 'include')
             include['differences'].append({'case': 'case.out', 'dynamic': {}, 'musl': {}})

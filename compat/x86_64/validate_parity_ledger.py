@@ -6667,8 +6667,7 @@ def require_posix_native_profile_companions(family: Mapping[str, Any]) -> None:
     execution = (ROOT / "compat" / "x86_64" / "owned_posix_native_execution.py").read_text(encoding="utf-8")
     require(
         "--atomic-addressable-profile" in execution
-        and "atomic_addressable_profile" in execution
-        and "Admit the two OS rosters only; every other raw mismatch rejects" in (ROOT / "compat" / "x86_64" / "owned_posix_native_dispositions.py").read_text(encoding="utf-8"),
+        and "atomic_addressable_profile" in execution,
         "libc.posix-runtime finite atomic profile collector is incomplete",
     )
     require(

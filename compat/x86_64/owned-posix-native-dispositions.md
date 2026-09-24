@@ -8,15 +8,10 @@ A qualified profile difference is never an upstream pass or an excluded unit.
 `owned_posix_native_observations.py` still validates every source, object,
 link, execution root, raw outcome and oracle observation.
 
-Only these five source boundaries may have a profile disposition:
+Only these four source boundaries may have a profile disposition. OS-test
+`basic` has none: owned products apply musl's process-wide credential
+setters, so its setter outcomes are exact raw matches.
 
-* OS-test `basic/unistd/{seteuid,setegid,setreuid,setregid}.out`: pinned musl
-  reports `exit: 0`; the candidate reports the exact alias and `ENOTSUP`.
-  The existing profile requires `-1/EOPNOTSUPP` without any ID mutation.
-  The full family matrix is mandatory. All three source-identical
-  `credentials-profile` replays must retain their direct-setter and alias
-  observations in all six modes. The installed product's four dynamic entries
-  are explicitly bound to the native aggregate's selected product.
 * OS-test `include/stdatomic/{atomic_flag_clear,atomic_flag_clear_explicit,
   atomic_flag_test_and_set,atomic_flag_test_and_set_explicit,atomic_signal_fence,
   atomic_thread_fence}.out`: the six untouched address-taken source forms retain

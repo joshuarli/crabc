@@ -27,7 +27,6 @@ import owned_posix_native_observations as native
 import owned_crypt_profile as crypt
 import owned_atomic_addressable_profile as atomic
 import owned_math_oracle_defects as math_oracle
-import owned_posix_native_dispositions as dispositions
 import owned_wordexp_upstream_policy as wordexp_policy
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -239,7 +238,6 @@ def _input_matrix(root, request):
             'wordexp expected native input must be checkout-relative')
     wordexp_expected_path = family.physical(root, root / wordexp_expected_value)
     wordexp_record = wordexp_policy.validate_companion(root, wordexp_path, wordexp_expected_path, product)
-    credentials = dispositions.credentials_companion(root, matrix, family.file_identity(root, path), product)
     inputs = {'crypt_profile': family.file_identity(root, crypt_path),
               'crypt_tree': tree_binding(root, crypt_path.parent),
               'atomic_addressable_profile': family.file_identity(root, atomic_path),
@@ -248,7 +246,7 @@ def _input_matrix(root, request):
               'wordexp_profile_tree': tree_binding(root, wordexp_path.parent),
               'wordexp_expected_native_inputs': family.file_identity(root, wordexp_expected_path),
               'wordexp_expected_native_inputs_tree': tree_binding(root, wordexp_expected_path.parent),
-              'profile_companions': {'credentials': credentials, 'crypt': crypt_record, 'atomic': atomic_record,
+              'profile_companions': {'crypt': crypt_record, 'atomic': atomic_record,
                                      'wordexp': wordexp_record},
               'family_execution': family.file_identity(root, path), 'source': source,
               'source_files': source_files(root), 'product': product_binding(root, product),

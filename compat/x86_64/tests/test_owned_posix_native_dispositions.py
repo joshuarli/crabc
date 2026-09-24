@@ -158,49 +158,34 @@ class NativeDispositionTests(unittest.TestCase):
                 candidate_status=1, candidate_stdout=raw, candidate_stderr=b'',
                 oracle_status=1, oracle_stdout=raw, oracle_stderr=b'')
 
-    def test_only_four_os_aliases_have_exact_profile_outcomes(self):
-        proof = {'receipt': {'path': '.work/family/execution.json', 'sha256': 'b'*64},
-                 'selected_dynamic_entries': {mode: {} for mode in dispositions.DYNAMIC_MODES}}
-        for alias in ('seteuid', 'setegid', 'setreuid', 'setregid'):
-            source = self.put(self.leaf / 'source-stage/basic/unistd' / (alias + '.c'),
-                              dispositions.OS_ALIAS_SOURCES[alias].encode())
-            observed = dispositions.os_alias_disposition(self.reader, 'basic', 'unistd/' + alias + '.out',
-                source, (alias + ': ENOTSUP\n').encode(), b'exit: 0\n', proof)
-            self.assertEqual(observed['alias'], alias)
-            self.assertIs(observed['raw_passed'], False)
-            for candidate, oracle in ((b'exit: 0\n', b'exit: 0\n'), (b'undefined\n', b'exit: 0\n'),
-                                       ((alias + ': ENOTSUP\n').encode(), b'exit: 1\n'),
-                                       ((alias + ': ENOTSUP\nextra\n').encode(), b'exit: 0\n')):
-                with self.assertRaises(native.NativeObservationError):
-                    dispositions.os_alias_disposition(self.reader, 'basic', 'unistd/' + alias + '.out',
-                        source, candidate, oracle, proof)
-        with self.assertRaises(native.NativeObservationError):
-            dispositions.os_alias_disposition(self.reader, 'basic', 'unistd/setuid.out', source, b'', b'', proof)
-
     def test_only_six_address_taken_atomic_outcomes_have_the_third_boundary(self):
         atomic = {'receipt': {'path': '.work/atomic/atomic-addressable-profile.json', 'sha256': 'c'*64},
                   'selected_dynamic_entries': {mode: {} for mode in dispositions.DYNAMIC_MODES}}
-        credentials = {'receipt': {'path': '.work/family/execution.json', 'sha256': 'b'*64},
-                       'selected_dynamic_entries': {mode: {} for mode in dispositions.DYNAMIC_MODES}}
         for symbol, content in dispositions.OS_ATOMIC_SOURCES.items():
             source = self.put(self.leaf / 'source-stage/include/stdatomic' / (symbol + '.c'), content.encode())
             observed = dispositions.os_disposition(self.reader, 'include', 'stdatomic/' + symbol + '.out', source,
-                b'good\n', b'undefined\n', {'credentials': credentials, 'atomic': atomic})
+                b'good\n', b'undefined\n', {'atomic': atomic})
             self.assertEqual(observed['symbol'], symbol)
             self.assertIs(observed['raw_passed'], False)
             for candidate, oracle in ((b'undefined\n', b'undefined\n'), (b'good\n', b'good\n'),
                                        (b'good\n', b'exit: 0\n'), (b'good\nextra\n', b'undefined\n')):
                 with self.assertRaises(native.NativeObservationError):
                     dispositions.os_disposition(self.reader, 'include', 'stdatomic/' + symbol + '.out', source,
-                        candidate, oracle, {'credentials': credentials, 'atomic': atomic})
+                        candidate, oracle, {'atomic': atomic})
         source = self.put(self.leaf / 'source-stage/include/stdatomic/atomic_load.c', b'#include <stdatomic.h>\n')
         with self.assertRaisesRegex(native.NativeObservationError, 'no selected'):
             dispositions.os_disposition(self.reader, 'include', 'stdatomic/atomic_load.out', source,
-                b'good\n', b'undefined\n', {'credentials': credentials, 'atomic': atomic})
+                b'good\n', b'undefined\n', {'atomic': atomic})
         with self.assertRaisesRegex(native.NativeObservationError, 'complete'):
             dispositions.os_disposition(self.reader, 'include', 'stdatomic/atomic_flag_clear.out',
                 self.leaf / 'source-stage/include/stdatomic/atomic_flag_clear.c', b'good\n', b'undefined\n',
-                {'atomic': atomic})
+                {'atomic': atomic, 'credentials': atomic})
+        # Owned credential setters are process-wide as in musl, so OS-test
+        # basic setter outcomes must match exactly; none has a disposition.
+        source = self.put(self.leaf / 'source-stage/basic/unistd/seteuid.c', b'/* seteuid */\n')
+        with self.assertRaisesRegex(native.NativeObservationError, 'no selected'):
+            dispositions.os_disposition(self.reader, 'basic', 'unistd/seteuid.out', source,
+                b'seteuid: ENOTSUP\n', b'exit: 0\n', {'atomic': atomic})
 
 
 if __name__ == '__main__':
