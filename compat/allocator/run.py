@@ -497,6 +497,12 @@ M2_X86_64_ARENA_CHECKS = (
         "kind": "c-rust-arena-lifecycle-differential",
         "target": "arena::owned::tests::emit_native_arena_lifecycle_trace",
     },
+    {
+        "expected_passed_test_count": 1,
+        "id": "arena-destruction-c-rust-differential",
+        "kind": "c-rust-arena-destruction-differential",
+        "target": "arena::owned::tests::destroy_all_retires_regular_external_and_huge_owners_with_exact_retries",
+    },
 )
 # This direct C/Rust record covers only src/init.c's detached static-preimage
 # substep: the original MI_MEMID_STATIC image, its kind-only memid
@@ -12682,6 +12688,50 @@ def _m2_x86_64_arena_lifecycle_producer() -> Any:
     return producer
 
 
+def _m2_x86_64_arena_destruction_producer() -> Any:
+    """Load the pinned C/Rust arena destruction producer."""
+
+    path = ALLOCATOR_ROOT / "arena_destroy.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_arena_destruction", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 arena destruction producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _run_m2_x86_64_arena_destruction_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the arena destruction producer against the aggregate's native binary."""
+
+    return _m2_x86_64_arena_destruction_producer().run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+    )
+
+
+def _m2_x86_64_arena_destruction_check_record(
+    check: Mapping[str, Any], evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Record the executed arena destruction differential."""
+
+    if (
+        evidence.get("status") != "passed"
+        or evidence.get("comparison", {}).get("status") != "matched"
+        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+    ):
+        raise HarnessError("native x86 M2 arena destruction receipt is invalid")
+    return {
+        "comparison_status": "matched",
+        "component": "arenas",
+        "command": list(evidence["rust_command"]),
+        "evidence_scope": "pinned-c-rust-arena-destruction-with-failed-regular-and-huge-release",
+        "id": check["id"],
+        "passed_test_count": evidence["rust_passed_test_count"],
+        "target": check["target"],
+    }
+
+
 def _m2_x86_64_metadata_ownership_producer() -> Any:
     """Load the pinned C/Rust metadata ownership producer."""
 
@@ -13002,6 +13052,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-aligned-overmap-cleanup-boundary-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
+                    "c-rust-arena-destruction-differential",
                     "c-rust-runtime-thp-source-environment-admission",
                     "c-rust-initialization-tld-source-matrix",
                     "c-rust-init-recursion-lifecycle",
@@ -13090,6 +13141,11 @@ def validate_x86_64_m2_memory_substrate_contract(
                     _m2_x86_64_arena_lifecycle_producer().TARGET
                 ):
                     raise HarnessError("native x86 M2 arena lifecycle evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-arena-destruction-differential":
+                if component_id != "arenas" or raw_check.get("target") != (
+                    _m2_x86_64_arena_destruction_producer().TARGET
+                ):
+                    raise HarnessError("native x86 M2 arena destruction evidence target is absent")
             elif raw_check.get("kind") == "c-rust-metadata-ownership-differential":
                 if component_id != "metadata" or raw_check.get("target") != (
                     _m2_x86_64_metadata_ownership_producer().TARGET
@@ -14652,6 +14708,17 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
             ),
         ),
     ]
+    _, arena_destruction_check = _m2_x86_64_check_by_id(
+        summary, "arena-destruction-c-rust-differential"
+    )
+    arena_owned_checks.append(
+        _m2_x86_64_arena_destruction_check_record(
+            arena_destruction_check,
+            _run_m2_x86_64_arena_destruction_evidence(
+                offline=offline, test_program=test_program, check=arena_destruction_check
+            ),
+        )
+    )
     initialization_checks = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence, initialization_teardown_evidence
     )
@@ -14678,7 +14745,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
                     *(check["id"] for check in initialization_checks),
                     *(check["id"] for check in fault_checks),
                     *(check["id"] for check in bitmap_checks),
-                    metadata_check["id"],
+                    *(check["id"] for check in metadata_checks),
                     *(check["id"] for check in arena_owned_checks),
                 }
             ),

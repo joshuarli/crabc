@@ -250,6 +250,12 @@
           "id": "arena-reservation-lifecycle-c-rust-differential",
           "kind": "c-rust-arena-lifecycle-differential",
           "target": "arena::owned::tests::emit_native_arena_lifecycle_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-destruction-c-rust-differential",
+          "kind": "c-rust-arena-destruction-differential",
+          "target": "arena::owned::tests::destroy_all_retires_regular_external_and_huge_owners_with_exact_retries"
         }
       ],
       "id": "arenas",

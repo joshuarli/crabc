@@ -4466,7 +4466,86 @@ mod tests {
             }
         }
 
+        // 21. The fresh OS page caller: success and release, a metadata or
+        // page-area commit failure whose cleanup unmap succeeds or fails,
+        // and a release whose unmap fails. Rust accounts each release once
+        // and retains a failed range for a raw retry without statistics.
         trace.marker(21);
+        {
+            use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner};
+            let mut options = lifecycle_options(32 * 1024, 0, false, false);
+            options.set(VmOption::DisallowArenaAlloc, 1);
+            let owner = LifecycleOwner {
+                process: process_with_options(options),
+                config: MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false),
+                backing: backing(),
+            };
+            let p = owner.process;
+            let retry = |claim: OsAlignedPageClaim| {
+                // SAFETY: the fixture process image outlives this raw retry.
+                assert!(unsafe { claim.retry_release() }.is_ok());
+            };
+            for variant in 0..6 {
+                let before = lifecycle_stats(owner);
+                let commit_failure = match variant { 1 | 3 => 1, 2 | 4 => 2, _ => 0 };
+                fault.set(match variant {
+                    1 | 2 => fault::Plan::at(fault::Point::Commit, commit_failure, Errno::NOMEM),
+                    3 | 4 => fault::Plan::at_pair(fault::Point::Commit, commit_failure,
+                        fault::Point::Unmap, 1, Errno::NOMEM),
+                    _ => fault::Plan::at(fault::Point::Commit, usize::MAX, Errno::NOMEM),
+                });
+                let result = OsAlignedPageClaim::allocate_for_process(p, owner.config, 4096, 1, none);
+                let commit_calls = fault.observed() as i64;
+                fault.set(fault::Plan::disabled());
+                trace.emit(variant);
+                trace.emit_bool(result.is_ok());
+                trace.emit(commit_calls);
+                let (claim, retained) = match result {
+                    Ok(claim) => (Some(claim), None),
+                    Err(failure) => match failure.into_owner() {
+                        Some(OsAlignedPageOwner::Claim(retained)) => (None, Some(retained)),
+                        Some(OsAlignedPageOwner::Published(_)) => panic!("an unpublished claim"),
+                        None => (None, None),
+                    },
+                };
+                trace.emit_bool(retained.is_some());
+                emit_lifecycle_stats_delta(&mut trace, owner, before);
+                if let Some(retained) = retained {
+                    retry(retained);
+                    emit_lifecycle_stats_delta(&mut trace, owner, before);
+                }
+                let Some(claim) = claim else { continue; };
+                let memory = claim.memory_id().unwrap();
+                trace.emit_bool(memory.kind() == MemoryKind::Os);
+                trace.emit_bool(memory.initially_committed());
+                trace.emit_bool(claim.slice_start().map(|start| start.as_ptr() as usize)
+                    == claim.base().ok().map(|base| base as usize + claim.layout().alignment()));
+                let after_alloc = lifecycle_stats(owner);
+                fault.set(if variant == 5 {
+                    fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM)
+                } else {
+                    fault::Plan::at(fault::Point::Unmap, usize::MAX, Errno::NOMEM)
+                });
+                let released = claim.release();
+                trace.emit(fault.observed() as i64);
+                fault.set(fault::Plan::disabled());
+                let retained = match released {
+                    Ok(()) => None,
+                    Err(failure) => match failure.into_owner() {
+                        OsAlignedPageOwner::Claim(claim) => Some(claim),
+                        OsAlignedPageOwner::Published(_) => panic!("an unpublished claim"),
+                    },
+                };
+                trace.emit_bool(retained.is_some());
+                emit_lifecycle_stats_delta(&mut trace, owner, after_alloc);
+                if let Some(retained) = retained {
+                    retry(retained);
+                    emit_lifecycle_stats_delta(&mut trace, owner, after_alloc);
+                }
+            }
+        }
+
+        trace.marker(22);
     }
 }
 

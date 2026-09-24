@@ -62,12 +62,39 @@ int __real_mprotect(void* addr, size_t length, int prot);
 static size_t fail_mprotect_ordinal;  // 0 disables the seam
 static size_t mprotect_calls;
 
+static bool mprotect_failed;
+
 int __wrap_mprotect(void* addr, size_t length, int prot) {
   if (fail_mprotect_ordinal != 0 && ++mprotect_calls == fail_mprotect_ordinal) {
+    mprotect_failed = true;
     errno = ENOMEM;
     return -1;
   }
   return __real_mprotect(addr, length, prot);
+}
+
+/* Unmap failure seam. Aligned OS allocation may trim with a varying number of
+   `munmap` calls, so a cleanup failure is armed only after the selected
+   commit failure; a release failure is armed directly around one release.
+   The failed range stays mapped and is recorded for the fixture to return. */
+int __real_munmap(void* addr, size_t length);
+static bool fail_munmap_after_mprotect;
+static bool fail_next_munmap;
+static size_t munmap_calls;
+static void* retained_addr;
+static size_t retained_length;
+
+int __wrap_munmap(void* addr, size_t length) {
+  munmap_calls++;
+  if (fail_next_munmap || (fail_munmap_after_mprotect && mprotect_failed)) {
+    fail_next_munmap = false;
+    fail_munmap_after_mprotect = false;
+    retained_addr = addr;
+    retained_length = length;
+    errno = ENOMEM;
+    return -1;
+  }
+  return __real_munmap(addr, length);
 }
 
 /* Every `madvise` (decommit and reset both reach it) is recorded with its
@@ -939,6 +966,73 @@ int main(void) {
     mi_option_set(mi_option_purge_delay, -1);
   }
 
+  /* 21. The fresh OS page caller (`mi_arenas_page_alloc_fresh_area` with
+         arena allocation disallowed, one 4-KiB-block small page, committed):
+         success and release; a metadata or page-area commit failure whose
+         `_mi_os_free` cleanup succeeds or fails; and a release whose unmap
+         fails. Pinned `mi_os_prim_free` applies statistics whether or not the
+         unmap succeeds and leaks the failed range; Rust accounts once and
+         retains the range for a raw retry, which adds no statistics. */
   emit_marker(21);
+  {
+    configure(true, 32 * 1024, 0, false);
+    mi_option_set(mi_option_disallow_arena_alloc, 1);
+    lifecycle_owner_t* const owner = fresh_owner();
+    owner->heap.numa_node = -1;
+    static mi_tld_t tld;
+    static mi_theap_t theap;
+    memset(&tld, 0, sizeof(tld));
+    memset(&theap, 0, sizeof(theap));
+    tld.subproc = &owner->subproc;
+    tld.numa_node = -1;
+    theap.tld = &tld;
+    mi_atomic_store_ptr_relaxed(mi_heap_t, &theap.heap, &owner->heap);
+    mi_atomic_store_ptr_relaxed(mi_subproc_t, &theap.subproc, &owner->subproc);
+    /* variant: 0 success, 1/2 commit failure at that call with cleanup
+       success, 3/4 the same with cleanup failure, 5 release failure. */
+    for (int variant = 0; variant < 6; variant++) {
+      const lifecycle_stats_t before = stats_of(owner);
+      const size_t commit_failure = (variant == 1 || variant == 3 ? 1 : variant == 2 || variant == 4 ? 2 : 0);
+      mprotect_calls = 0;
+      mprotect_failed = false;
+      fail_mprotect_ordinal = (commit_failure != 0 ? commit_failure : SIZE_MAX);  /* count only */
+      fail_munmap_after_mprotect = (variant == 3 || variant == 4);
+      retained_addr = NULL;
+      mi_memid_t memid = _mi_memid_none();
+      mi_arena_pages_t* arena_pages = NULL;
+      uint8_t* const start = mi_arenas_page_alloc_fresh_area(&theap, 1, 1, 1, false, true, &memid, &arena_pages);
+      fail_mprotect_ordinal = 0;
+      fail_munmap_after_mprotect = false;
+      emit(variant);
+      emit(start != NULL);
+      emit((int64_t)mprotect_calls);
+      emit(retained_addr != NULL);
+      emit_stats_delta(owner, before);
+      if (retained_addr != NULL) {
+        require(__real_munmap(retained_addr, retained_length) == 0);
+        emit_stats_delta(owner, before);
+      }
+      if (start == NULL) continue;
+      emit(memid.memkind == MI_MEM_OS);
+      emit(memid.initially_committed);
+      emit(start == (uint8_t*)memid.mem.os.base + MI_PAGE_ALIGN);
+      const lifecycle_stats_t after_alloc = stats_of(owner);
+      fail_next_munmap = (variant == 5);
+      munmap_calls = 0;
+      retained_addr = NULL;
+      _mi_os_free(&owner->subproc, memid.mem.os.base, memid.mem.os.size, memid);
+      fail_next_munmap = false;
+      emit((int64_t)munmap_calls);
+      emit(retained_addr != NULL);
+      emit_stats_delta(owner, after_alloc);
+      if (retained_addr != NULL) {
+        require(__real_munmap(retained_addr, retained_length) == 0);
+        emit_stats_delta(owner, after_alloc);
+      }
+    }
+    mi_option_set(mi_option_disallow_arena_alloc, 0);
+  }
+
+  emit_marker(22);
   return 0;
 }
