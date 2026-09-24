@@ -54,6 +54,37 @@ OS_PUBLICATION_BOUNDARY = {
     "rust_release": "one typed Claim or Published owner; raw retry never repeats source accounting",
     "excluded": "corrupted-alias provenance refusal, general metadata allocator, hardware huge/NUMA, and complete M2",
 }
+METADATA_PUBLICATION_PROFILE_DEFINE = "-DCRABC_M2_METADATA_PUBLICATION_PROFILE=1"
+METADATA_PUBLICATION_CHECK_ID = "metadata-publication-fault-receiver"
+METADATA_PUBLICATION_TARGET = "meta::tests::emit_metadata_publication_fault_receiver_trace"
+METADATA_PUBLICATION_BEGIN = "CRABC_MI_M2_METADATA_PUBLICATION_TRACE_BEGIN"
+METADATA_PUBLICATION_END = "CRABC_MI_M2_METADATA_PUBLICATION_TRACE_END"
+METADATA_PUBLICATION_DELTAS_BEGIN = "CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_BEGIN"
+METADATA_PUBLICATION_DELTAS_END = "CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_END"
+# Raw primitive counts are mechanism-specific (C sees each wrapped mmap hint
+# retry; Rust's FaultPlan sees one transition), so only the committed-byte
+# delta, which each failed fresh-page claim changes by its source rollback
+# accounting, is a shared value.
+METADATA_PUBLICATION_DELTA_KEYS = tuple(
+    f"metadata_publication.{selected}.committed_delta" for selected in range(1, 4)
+)
+METADATA_PUBLICATION_KEYS = tuple(
+    f"metadata_publication.{selected}.{field}" for selected in range(1, 4)
+    for field in ("request_failed", "no_capability", "fault_reached", "live_owner_intact",
+                  "reserved_restored", "committed_recorded", "retry_zeroed_malloc",
+                  "retry_page_published")
+)
+# The detached-Theap metadata request meets one persistently unavailable
+# primitive while its fresh page is claimed. Both languages keep their own
+# fault mechanism (C link-wrapped imports, Rust's test-only FaultPlan); the
+# receipt compares only observed ownership and accounting relations.
+METADATA_PUBLICATION_BOUNDARY = {
+    "source": "src/subproc.c:29-37; src/page.c:1048-1065; src/arena.c:781-869",
+    "cases": ["os-map-failure", "os-commit-failure", "arena-commit-failure"],
+    "c_fault": "persistent __wrap_mmap or __wrap_mprotect ENOMEM around one _mi_meta_zalloc",
+    "rust_fault": "FaultPlan::every(Map|Commit) around one MetadataEngine::zalloc",
+    "excluded": "PageMap submap publication (completed PageMap matrix), huge/NUMA hardware, cleanup-release failure (OS publication receiver)",
+}
 FAULT_PROFILE_DEFINE = "-DCRABC_M2_FAULT_SEAM_INVENTORY_PROFILE=1"
 HUGE_RETRY_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST=1"
 HUGE_TIMEOUT_CLOCK_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_TIMEOUT_CLOCK_HELPER_TEST=1"
@@ -211,6 +242,9 @@ RUST_TRACE_SOURCE_FILES = (
     "crabc-mimalloc/src/os_page.rs", "crabc-mimalloc/src/page_map.rs",
     "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/single_thread.rs",
 )
+METADATA_PUBLICATION_RUST_SOURCE_FILES = (
+    "crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/process_init.rs",
+)
 # This receipt reconstructs one selected C/Rust fault receiver and the private
 # caller-supplied default sink. The target still does not qualify general FILE
 # behavior, recursive output, ambient placement, or M2 as a whole.
@@ -228,7 +262,7 @@ DIAGNOSTIC_OWNER_BOUNDARY = {
 NONCLAIMS = (
     "This selected node-62 EPERM receiver proves current-source C/Rust private diagnostic delivery through the stored default sink and custom callback; it does not qualify general FILE short-write/error/buffering parity, recursive output, selected x86 libc startup, or ambient NUMA placement.",
     "This fixed primitive-response profile does not qualify successful hardware huge pages or physical NUMA placement.",
-    "Metadata allocation/publication remains stopped; ordinary OS publication has its separate required receiver.",
+    "Metadata allocation/publication is unadmitted until its separate receiver matches pinned C; ordinary OS publication has its own required receiver.",
     "This receipt leaves the fault-injection component and M2 partial.",
 )
 FRAGMENT_PATH = ROOT / "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
@@ -241,7 +275,7 @@ FAULT_COMPONENT_SOURCE_UNITS = [
     "src/os.c", "src/page-map.c", "src/prim/unix/prim.c", "src/options.c", "src/arena.c",
 ]
 FAULT_COMPONENT_UNQUALIFIED_IDS = (
-    "stopped-metadata-publication",
+    "metadata-publication-generic-retry",
     "remaining-ambient-and-hardware-fault-receivers",
 )
 SOURCE_ANCHORS = (
@@ -265,11 +299,11 @@ SOURCE_REQUIRED_DEFINITIONS = (
 BRANCH_OPEN_CONDITION = "The named source relation is bounded; it does not promote an unselected receiver."
 FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
     {
-        "id": "stopped-metadata-publication",
-        "source_scope": "PageMetadataMapping/meta allocation and publication receiver.",
+        "id": "metadata-publication-generic-retry",
+        "source_scope": "src/subproc.c:29-37 `_mi_meta_zalloc` through `_mi_malloc_generic` (src/page.c:1091-1116) and `mi_malloc_generic_fallback` (src/page.c:1048-1065) under a sustained primitive failure.",
         "required_evidence": [
-            "lifted metadata-publication authority boundary",
-            "native typed publication and rollback owner matrix",
+            "Rust `_mi_malloc_generic` small-queue search before `mi_malloc_generic_fallback` (pinned C claims six fresh pages, Rust four)",
+            "passing `allocator-fault-seam-inventory --metadata-publication-receiver` receipt",
         ],
     },
     {
@@ -282,7 +316,7 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
     },
 ]
 FAULT_COMPONENT_REMAINING_CONDITIONS = [
-    "Metadata-map publication remains stopped and unadmitted; the ordinary OS claim/publication receiver is required independently of hardware.",
+    "The metadata-publication receiver matches pinned C ownership, rollback, and retry relations but not its fresh-page claim count or committed accounting; the ordinary OS claim/publication receiver is required independently of hardware.",
     "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
     "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
     "The fault-injection component and M2 remain partial.",
@@ -557,7 +591,7 @@ UNQUALIFIED_BRANCHES: tuple[dict[str, str], ...] = ()
 STOPPED_RECEIVERS = (
     StoppedReceiver(
         "metadata-map-commit-publication",
-        "PageMetadataMapping/meta allocation and publication authority is stopped.",
+        "The separate metadata-publication receiver still differs from pinned C in `_mi_malloc_generic` fresh-page retry count.",
     ),
 )
 
@@ -2226,6 +2260,144 @@ def run_os_publication_receiver(*, offline: bool, test_program: Mapping[str, Any
         raise EvidenceError(str(error)) from error
 
 
+def _metadata_publication_c_command(runner: Any, compiler: str, source: Path, binary: Path) -> list[str]:
+    command = _canonical_m2_vm_c_compile_command(runner, compiler, source, binary)
+    command.insert(8, METADATA_PUBLICATION_PROFILE_DEFINE)
+    return command
+
+
+def _metadata_publication_rust_source_files() -> list[dict[str, Any]]:
+    """The OS receiver roster plus the metadata engine and its process owner."""
+
+    return [*_rust_trace_source_files(), *(
+        _local_file_record(ROOT / path) for path in METADATA_PUBLICATION_RUST_SOURCE_FILES
+    )]
+
+
+def _parse_metadata_publication_deltas(output: str, *, source: str) -> dict[str, int]:
+    """Read the signed committed-byte deltas that C and Rust must share."""
+
+    begin, end = METADATA_PUBLICATION_DELTAS_BEGIN, METADATA_PUBLICATION_DELTAS_END
+    if output.count(begin) != 1 or output.count(end) != 1 or output.index(end) < output.index(begin):
+        raise EvidenceError(f"{source} metadata publication delta markers changed")
+    values: dict[str, int] = {}
+    for line in output[output.index(begin) + len(begin):output.index(end)].strip().splitlines():
+        match = re.fullmatch(r"([a-z_.0-9]+)=(-?[0-9]+)", line)
+        if match is None or match.group(1) in values:
+            raise EvidenceError(f"{source} metadata publication delta is malformed: {line}")
+        values[match.group(1)] = int(match.group(2))
+    if tuple(values) != METADATA_PUBLICATION_DELTA_KEYS:
+        raise EvidenceError(f"{source} metadata publication delta roster changed")
+    return values
+
+
+def validate_metadata_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Replay the metadata-publication receiver from retained C/Rust streams."""
+    expected = {"schema", "format", "profile", "status", "boundary", "upstream",
+        "source_state_before", "source_state_after", "c_build", "c_run", "c_source_files",
+        "fixture", "rust_build", "rust_run", "rust_source_files"}
+    if set(report) != expected or report.get("schema") != SCHEMA or report.get("format") != FORMAT:
+        raise ValueError("metadata publication receiver schema changed")
+    if (report.get("profile") != "metadata-page-publication" or report.get("status") != "passed"
+        or report.get("boundary") != METADATA_PUBLICATION_BOUNDARY):
+        raise ValueError("metadata publication receiver boundary changed")
+    runner = _load_runner()
+    pin = runner.load_pin()
+    if report.get("upstream") != {"archive_sha256": pin["sha256"], "revision": pin["revision"]}:
+        raise ValueError("metadata publication upstream changed")
+    c_build = _validate_process_record(report.get("c_build"), label="metadata publication C build")
+    c_run = _validate_process_record(report.get("c_run"), label="metadata publication C run")
+    source = Path(c_build["cwd"])
+    command = c_build["command"]
+    if (source.name != "mimalloc-3.5.0" or Path(command[0]).name != "musl-gcc"
+        or len(command) < 3 or command[-2] != "-o"
+        or command != _metadata_publication_c_command(runner, command[0], source, Path(command[-1]))):
+        raise ValueError("metadata publication C source command changed")
+    if c_run["cwd"] != str(source) or c_run["command"] != [command[-1]]:
+        raise ValueError("metadata publication C execution changed")
+    if report.get("c_source_files") != list(PINNED_C_SOURCE_FILES) or report.get("fixture") != _local_file_record(FIXTURE):
+        raise ValueError("metadata publication C source identity changed")
+    rust_build = _validate_process_record(report.get("rust_build"), label="metadata publication Rust build")
+    rust_run = _validate_process_record(report.get("rust_run"), label="metadata publication Rust run")
+    if (Path(rust_build["command"][0]).name != "cargo"
+        or rust_build["command"][1:] != runner._m2_x86_64_vm_rust_build_command()[1:]
+        or rust_build["cwd"] != str(ROOT)):
+        raise ValueError("metadata publication Rust build changed")
+    if (rust_run["cwd"] != str(ROOT) or len(rust_run["command"]) != 5
+        or rust_run["command"][1:] != [METADATA_PUBLICATION_TARGET, "--exact", "--test-threads=1", "--nocapture"]
+        or not runner._m2_x86_64_vm_rust_binary_path_is_bound(rust_run["command"][0])
+        or runner.parse_rust_test_count(_combined_output(rust_run)) != 1
+        or report.get("rust_source_files") != _metadata_publication_rust_source_files()):
+        raise ValueError("metadata publication Rust receiver changed")
+    deltas = []
+    for language, record in (("C", c_run), ("Rust", rust_run)):
+        _parse_fixed_trace(_combined_output(record), begin=METADATA_PUBLICATION_BEGIN,
+            end=METADATA_PUBLICATION_END, keys=METADATA_PUBLICATION_KEYS, source=language)
+        deltas.append(_parse_metadata_publication_deltas(_combined_output(record), source=language))
+    if deltas[0] != deltas[1]:
+        raise ValueError(f"metadata publication committed accounting differs: C {deltas[0]} Rust {deltas[1]}")
+    before = runner.validate_runtime_ticket_zero_soak_source_state(report.get("source_state_before"), "metadata receiver before")
+    after = runner.validate_runtime_ticket_zero_soak_source_state(report.get("source_state_after"), "metadata receiver after")
+    if not before["worktree_clean"] or before != after:
+        raise ValueError("metadata publication requires one clean unchanged source revision")
+    return dict(report)
+
+
+def run_metadata_publication_receiver(
+    *, offline: bool, test_program: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the metadata-publication receiver as its own C/Rust relation."""
+    runner = _load_runner()
+    try:
+        runner.require_native_x86_64()
+        before = runner.m2_memory_substrate_source_state()
+        pin = runner.load_pin()
+        archive = runner.fetch_archive(pin, offline)
+        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with runner.temporary_directory(prefix="crabc-metadata-publication-source-") as temporary:
+            source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            c_files = _source_files(runner, source)
+            binary = artifacts / "m2-metadata-publication-oracle"
+            build = runner.command_record(_metadata_publication_c_command(runner, runner.require_tool("musl-gcc"), source, binary), cwd=source, timeout_seconds=300)
+            runner.write_json(artifacts / "metadata-publication-c-build.json", build)
+            runner.require_success(build, "metadata publication C build")
+            c_run = runner.command_record([str(binary)], cwd=source, timeout_seconds=90)
+            runner.write_json(artifacts / "metadata-publication-c-run.json", c_run)
+            runner.require_success(c_run, "metadata publication C receiver")
+            c_build = {**build, "cwd": str(source)}
+            c_run = {**c_run, "cwd": str(source)}
+        try:
+            _parse_fixed_trace(_combined_output(c_run), begin=METADATA_PUBLICATION_BEGIN,
+                end=METADATA_PUBLICATION_END, keys=METADATA_PUBLICATION_KEYS, source="pinned C")
+        except EvidenceError as error:
+            raise EvidenceError(f"{error}:\n{_combined_output(c_run)}") from error
+        if test_program is None:
+            test_program = runner._x86_64_unit_test_program(runner._m2_x86_64_vm_rust_execution(),
+                runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET, gate_name="metadata publication receiver")
+        rust_run = runner.command_record(runner._x86_64_program_check_command(test_program,
+            METADATA_PUBLICATION_TARGET, nocapture=True, gate_name="metadata publication receiver"), cwd=ROOT, timeout_seconds=300)
+        runner.write_json(artifacts / "metadata-publication-rust-run.json", rust_run)
+        runner.require_success(rust_run, "metadata publication Rust receiver")
+        report = {"schema": SCHEMA, "format": FORMAT, "profile": "metadata-page-publication",
+            "status": "passed", "boundary": METADATA_PUBLICATION_BOUNDARY,
+            "upstream": {"archive_sha256": pin["sha256"], "revision": pin["revision"]},
+            "source_state_before": before, "source_state_after": runner.m2_memory_substrate_source_state(),
+            "c_build": c_build, "c_run": c_run, "c_source_files": c_files,
+            "fixture": runner.artifact_record(FIXTURE),
+            "rust_build": {**test_program["build"], "cwd": str(ROOT)},
+            "rust_run": {**rust_run, "cwd": str(ROOT)},
+            "rust_source_files": _metadata_publication_rust_source_files()}
+        try:
+            validate_metadata_publication_report(report)
+        except ValueError as error:
+            raise EvidenceError(str(error)) from error
+        runner.write_json(artifacts / "metadata-publication.json", report)
+        return report
+    except runner.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+
+
 def run_evidence(
     *,
     offline: bool,
@@ -2368,6 +2540,7 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument("--os-publication-receiver", action="store_true")
+    parser.add_argument("--metadata-publication-receiver", action="store_true")
     parser.add_argument("--canonical-m2-vm-c-compile-regression", action="store_true")
     parser.add_argument("--retry-helper-regression", action="store_true")
     parser.add_argument("--timeout-clock-helper-regression", action="store_true")
@@ -2380,6 +2553,7 @@ def main() -> int:
         selected_modes = sum((
             arguments.compile_only,
             arguments.os_publication_receiver,
+            arguments.metadata_publication_receiver,
             arguments.canonical_m2_vm_c_compile_regression,
             arguments.retry_helper_regression,
             arguments.timeout_clock_helper_regression,
@@ -2392,6 +2566,11 @@ def main() -> int:
         if arguments.os_publication_receiver:
             run_os_publication_receiver(offline=arguments.offline)
             print("allocator x86-64 fault seam inventory: OS publication C/Rust receiver PASS (63 relations)")
+            return 0
+        if arguments.metadata_publication_receiver:
+            run_metadata_publication_receiver(offline=arguments.offline)
+            print("allocator x86-64 fault seam inventory: metadata publication C/Rust receiver PASS "
+                  f"({len(METADATA_PUBLICATION_KEYS)} relations)")
             return 0
         if arguments.compile_only:
             compile_huge_branch_profile(offline=arguments.offline)

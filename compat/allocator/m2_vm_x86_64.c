@@ -801,6 +801,19 @@ static struct {
 } os_publication_probe;
 #endif
 
+/* The metadata publication profile keeps one primitive unavailable while a
+ * detached-Theap `_mi_meta_zalloc` request needs a fresh page. The pinned
+ * arena/OS/page bodies still choose the retry, rollback, and NULL result. */
+#if defined(CRABC_M2_METADATA_PUBLICATION_PROFILE)
+static struct {
+  bool active;
+  bool fail_mmap;
+  bool fail_mprotect;
+  size_t mmap_faults;
+  size_t mprotect_faults;
+} metadata_publication_probe;
+#endif
+
 int __wrap_munmap(void* address, size_t length) {
 #if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
   if (os_publication_probe.active && address == os_publication_probe.base) {
@@ -875,6 +888,13 @@ int __wrap_munmap(void* address, size_t length) {
 
 void* __wrap_mmap(void* address, size_t length, int protection, int flags,
                   int descriptor, off_t offset) {
+#if defined(CRABC_M2_METADATA_PUBLICATION_PROFILE)
+  if (metadata_publication_probe.active && metadata_publication_probe.fail_mmap) {
+    metadata_publication_probe.mmap_faults++;
+    errno = ENOMEM;
+    return MAP_FAILED;
+  }
+#endif
 #if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
   if (os_publication_probe.active && (os_publication_probe.selected == 1
       || ((os_publication_probe.selected == 4 || os_publication_probe.selected == 6)
@@ -1032,6 +1052,13 @@ void* __wrap_mmap(void* address, size_t length, int protection, int flags,
 }
 
 int __wrap_mprotect(void* address, size_t length, int protection) {
+#if defined(CRABC_M2_METADATA_PUBLICATION_PROFILE)
+  if (metadata_publication_probe.active && metadata_publication_probe.fail_mprotect) {
+    metadata_publication_probe.mprotect_faults++;
+    errno = ENOMEM;
+    return -1;
+  }
+#endif
 #if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
   if (os_publication_probe.active) {
     os_publication_probe.commits++;
@@ -3765,7 +3792,93 @@ static bool capture_aligned_overmap_matrix_child(
   return captured;
 }
 
-#if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
+#if defined(CRABC_M2_METADATA_PUBLICATION_PROFILE)
+/* One COW child per case: a live 64-byte detached-Theap block, then a 1 KiB
+ * `_mi_meta_zalloc` whose fresh page meets a persistently failing `mmap`
+ * (case 1) or `mprotect` commit (cases 2-3). Cases 1-2 take the source OS
+ * page path; case 3 carves from the arena the live block already reserved.
+ * Facts match `meta::tests::emit_metadata_publication_fault_receiver_trace`. */
+static unsigned metadata_publication_case;
+static int run_metadata_publication_child(int descriptor) {
+  mi_process_init();
+  mi_option_set(mi_option_arena_reserve, 64 * 1024);
+  mi_option_set(mi_option_arena_eager_commit, 0);
+  mi_option_set(mi_option_page_commit_on_demand, 0);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set(mi_option_disallow_arena_alloc, metadata_publication_case != 3);
+  mi_option_set(mi_option_show_errors, 0);
+  mi_option_set(mi_option_verbose, 0);
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  mi_memid_t warm_memid = _mi_memid_none();
+  uint8_t* const warm = (uint8_t*)_mi_meta_zalloc(subproc, 64, &warm_memid);
+  if (warm == NULL) return 50;
+  memset(warm, 0xa5, 64);
+  mi_page_t* const warm_page = _mi_ptr_page(warm);
+  const int64_t reserved = subproc->stats.reserved.current;
+  const int64_t committed = subproc->stats.committed.current;
+  memset(&metadata_publication_probe, 0, sizeof(metadata_publication_probe));
+  metadata_publication_probe.fail_mmap = metadata_publication_case == 1;
+  metadata_publication_probe.fail_mprotect = metadata_publication_case != 1;
+  metadata_publication_probe.active = true;
+  mi_memid_t failed_memid = _mi_memid_create(MI_MEM_STATIC);
+  void* const failed = _mi_meta_zalloc(subproc, 1024, &failed_memid);
+  metadata_publication_probe.active = false;
+  bool facts[8] = {0};
+  facts[0] = failed == NULL;
+  facts[1] = failed_memid.memkind == MI_MEM_NONE;
+  facts[2] = (metadata_publication_case == 1 ? metadata_publication_probe.mmap_faults
+                                             : metadata_publication_probe.mprotect_faults) != 0;
+  bool pattern = true;
+  for (size_t i = 0; i < 64; i++) pattern = pattern && warm[i] == 0xa5;
+  facts[3] = pattern && _mi_safe_ptr_page(warm) == warm_page
+      && _mi_meta_is_meta_page(subproc, warm_page);
+  facts[4] = reserved == subproc->stats.reserved.current;
+  /* A failed OS-page commit is rolled back through `_mi_os_free`, whose
+   * still-committed accounting releases the whole mapping's commit charge
+   * although the failed `mprotect` never added one. The exact delta is a
+   * compared value rather than an asserted invariant. */
+  const int64_t committed_delta = subproc->stats.committed.current - committed;
+  facts[5] = true;
+  mi_memid_t retry_memid = _mi_memid_none();
+  uint8_t* const retry = (uint8_t*)_mi_meta_zalloc(subproc, 1024, &retry_memid);
+  bool zero = retry != NULL;
+  for (size_t i = 0; zero && i < 1024; i++) zero = retry[i] == 0;
+  facts[6] = zero && retry_memid.memkind == MI_MEM_MALLOC;
+  mi_page_t* const retry_page = (retry == NULL ? NULL : _mi_safe_ptr_page(retry));
+  facts[7] = retry_page != NULL && retry_page != warm_page
+      && _mi_meta_is_meta_page(subproc, retry_page);
+  if (retry != NULL) _mi_meta_free(subproc, retry, retry_memid);
+  _mi_meta_free(subproc, warm, warm_memid);
+  if (!facts[0] && failed != NULL) _mi_meta_free(subproc, failed, failed_memid);
+  struct { bool facts[8]; int64_t committed_delta; } record;
+  memcpy(record.facts, facts, sizeof(facts));
+  record.committed_delta = committed_delta;
+  return write(descriptor, &record, sizeof(record)) == sizeof(record) ? 0 : 40;
+}
+
+int main(void) {
+  const char* fields[] = {"request_failed", "no_capability", "fault_reached", "live_owner_intact",
+      "reserved_restored", "committed_recorded", "retry_zeroed_malloc", "retry_page_published"};
+  int64_t deltas[3] = {0};
+  puts("CRABC_MI_M2_METADATA_PUBLICATION_TRACE_BEGIN");
+  for (unsigned selected = 1; selected <= 3; selected++) {
+    struct { bool facts[8]; int64_t committed_delta; } record;
+    memset(&record, 0, sizeof(record));
+    metadata_publication_case = selected;
+    if (!capture_large_page_retry_child("metadata publication child",
+        run_metadata_publication_child, &record, sizeof(record))) return 1;
+    for (size_t i = 0; i < 8; i++)
+      printf("metadata_publication.%u.%s=%u\n", selected, fields[i], (unsigned)record.facts[i]);
+    deltas[selected - 1] = record.committed_delta;
+  }
+  puts("CRABC_MI_M2_METADATA_PUBLICATION_TRACE_END");
+  puts("CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_BEGIN");
+  for (unsigned selected = 1; selected <= 3; selected++)
+    printf("metadata_publication.%u.committed_delta=%lld\n", selected, (long long)deltas[selected - 1]);
+  puts("CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_END");
+  return 0;
+}
+#elif defined(CRABC_M2_OS_PUBLICATION_PROFILE)
 /* Each case starts from the same real process initialization in a COW child.
  * A PageMap fault requires a previously absent lazy submap. If the source's
  * normal high hint shares an already present submap, release that successful

@@ -5398,6 +5398,115 @@ mod tests {
         .expect("the canonical metadata OS singleton regression remains current-thread local");
     }
 
+    /// The canonical metadata-publication fault receiver: `_mi_meta_zalloc`
+    /// (`src/subproc.c:29-37`) reaching a fresh detached-Theap page through
+    /// `mi_arenas_page_alloc_fresh_area` (`src/arena.c:781-869`) while one
+    /// primitive stays unavailable. Each case is one fresh process owner.
+    /// A failed request publishes no capability, rolls its private mapping
+    /// back, and leaves the live metadata owner, its PageMap entry, and the
+    /// engine usable: the same request succeeds once the primitive recovers.
+    /// `m2_vm_x86_64.c`'s metadata publication profile prints the same facts
+    /// from pinned C with persistent `mmap`/`mprotect` failures.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_metadata_publication_fault_receiver_trace() {
+        const WARM_SIZE: usize = 64;
+        const REQUEST_SIZE: usize = 1024;
+        const CASES: [(&str, bool, fault::Point); 3] = [
+            ("os-map-failure", true, fault::Point::Map),
+            ("os-commit-failure", true, fault::Point::Commit),
+            ("arena-commit-failure", false, fault::Point::Commit),
+        ];
+        let mut deltas = [0i64; 3];
+        std::println!("CRABC_MI_M2_METADATA_PUBLICATION_TRACE_BEGIN");
+        for (selected, (name, disallow_arena, point)) in CASES.into_iter().enumerate() {
+            let facts = thread::spawn(move || {
+                let config = config();
+                let allocator = MetaAllocator::test_static_owner();
+                let process = crate::process_init::ProcessMainInitializationStorage::test_static_owner();
+                let main_static = crate::main_theap::MainStaticAttachmentStorage::test_static_owner();
+                let subprocess = allocator.test_default_subprocess();
+                let page_map_storage = crate::process_page_map::ProcessPageMapStorage::test_static_owner();
+                let mut options = crate::config::VmOptions::uninitialized();
+                options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+                options.set(crate::config::VmOption::ArenaReserve, 64 * 1024);
+                options.set(crate::config::VmOption::ArenaEagerCommit, 0);
+                options.set(crate::config::VmOption::PageCommitOnDemand, 0);
+                options.set(crate::config::VmOption::AllowLargeOsPages, 0);
+                options.set(crate::config::VmOption::DisallowArenaAlloc, i64::from(disallow_arena));
+                let owner = unsafe {
+                    process.initialize_with_test_components_and_vm_options(
+                        config, options, main_static, subprocess, allocator, page_map_storage,
+                    )
+                }
+                .expect("the source process publishes canonical metadata backing");
+                let binding = owner.ready().expect("READY").process_backing().expect("process backing");
+                let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+                let statistics = || binding.process().subprocess().vm_statistics().snapshot();
+
+                let mut warm = allocator.zalloc(config, WARM_SIZE).expect("warm metadata");
+                let warm_pointer = warm.pointer();
+                unsafe { warm_pointer.as_ptr().write_bytes(0xa5, WARM_SIZE) };
+                let warm_page = unsafe { map.checked_lookup(warm_pointer.as_ptr()) };
+                assert!(!warm_page.is_null());
+
+                let fault = fault::install(fault::Plan::disabled());
+                let before = statistics();
+                fault.set(fault::Plan::every(point, crabc_core::Errno::NOMEM));
+                let failed = allocator.zalloc(config, REQUEST_SIZE);
+                let reached = fault.observed() != 0;
+                fault.set(fault::Plan::disabled());
+                let after = statistics();
+                let mut facts = [false; 8];
+                facts[0] = failed.is_err();
+                facts[1] = matches!(failed, Err(MetaError::AllocationUnavailable));
+                facts[2] = reached;
+                facts[3] = unsafe { core::slice::from_raw_parts(warm_pointer.as_ptr(), WARM_SIZE) }
+                    .iter().all(|byte| *byte == 0xa5)
+                    && unsafe { map.checked_lookup(warm_pointer.as_ptr()) } == warm_page;
+                facts[4] = after.reserved_current == before.reserved_current;
+                // A failed OS-page commit rolls back through the source
+                // still-committed release accounting; the exact delta is
+                // compared with pinned C rather than asserted here.
+                let committed_delta = after.committed_current - before.committed_current;
+                facts[5] = true;
+                let retry = allocator.zalloc(config, REQUEST_SIZE);
+                facts[6] = retry.as_ref().is_ok_and(|block| {
+                    block.memory_id().kind() == MemoryKind::Malloc
+                        && unsafe { core::slice::from_raw_parts(block.pointer().as_ptr(), REQUEST_SIZE) }
+                            .iter().all(|byte| *byte == 0)
+                });
+                facts[7] = retry.as_ref().is_ok_and(|block| {
+                    let page = unsafe { map.checked_lookup(block.pointer().as_ptr()) };
+                    !page.is_null() && page != warm_page
+                });
+                drop(fault);
+                if let Ok(mut retry) = retry { allocator.free(&mut retry).unwrap(); }
+                allocator.free(&mut warm).unwrap();
+                // The process and canonical metadata owners stay process-lived.
+                core::mem::forget(owner);
+                (facts, committed_delta)
+            })
+            .join()
+            .expect("metadata publication fault case");
+            let (facts, committed_delta) = facts;
+            deltas[selected] = committed_delta;
+            let case = selected + 1;
+            assert!(facts.iter().all(|fact| *fact), "metadata publication case {case} ({name}): {facts:?}");
+            for (field, value) in ["request_failed", "no_capability", "fault_reached", "live_owner_intact",
+                "reserved_restored", "committed_recorded", "retry_zeroed_malloc", "retry_page_published"]
+                .into_iter().zip(facts) {
+                std::println!("metadata_publication.{case}.{field}={}", u8::from(value));
+            }
+        }
+        std::println!("CRABC_MI_M2_METADATA_PUBLICATION_TRACE_END");
+        std::println!("CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_BEGIN");
+        for (index, delta) in deltas.into_iter().enumerate() {
+            std::println!("metadata_publication.{}.committed_delta={delta}", index + 1);
+        }
+        std::println!("CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_END");
+    }
+
     #[test]
     fn source_retained_metadata_transfer_preserves_typed_owner_across_thread_handoff() {
         let allocator = static_allocator();

@@ -611,11 +611,11 @@
     ],
     "unqualified_failure_matrix": [
       {
-        "id": "stopped-metadata-publication",
-        "source_scope": "PageMetadataMapping/meta allocation and publication receiver.",
+        "id": "metadata-publication-generic-retry",
+        "source_scope": "src/subproc.c:29-37 `_mi_meta_zalloc` through `_mi_malloc_generic` (src/page.c:1091-1116) and `mi_malloc_generic_fallback` (src/page.c:1048-1065) under a sustained primitive failure.",
         "required_evidence": [
-          "lifted metadata-publication authority boundary",
-          "native typed publication and rollback owner matrix"
+          "Rust `_mi_malloc_generic` small-queue search before `mi_malloc_generic_fallback` (pinned C claims six fresh pages, Rust four)",
+          "passing `allocator-fault-seam-inventory --metadata-publication-receiver` receipt"
         ]
       },
       {
@@ -642,7 +642,7 @@
       }
     ],
     "remaining_conditions": [
-      "Metadata-map publication remains stopped and unadmitted; the ordinary OS claim/publication receiver is required independently of hardware.",
+      "The metadata-publication receiver matches pinned C ownership, rollback, and retry relations but not its fresh-page claim count or committed accounting; the ordinary OS claim/publication receiver is required independently of hardware.",
       "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
       "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
       "The fault-injection component and M2 remain partial."

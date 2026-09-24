@@ -5083,6 +5083,8 @@ pub(crate) mod fault {
     // failed. Setup `unmap`s before a later metadata `commit` must not
     // consume the cleanup `unmap` injection intended to follow that commit.
     static SECOND_ENABLED: AtomicBool = AtomicBool::new(false);
+    // `Plan::every` keeps the primary point failing on each occurrence.
+    static PERSISTENT: AtomicBool = AtomicBool::new(false);
     // The bounded option/hint/large/THP witness needs two source large-map
     // failures followed by one independent best-effort THP advisory failure.
     // Keep that third edge explicit rather than letting an unrelated map
@@ -5254,6 +5256,7 @@ pub(crate) mod fault {
         error: Errno,
         second_error: Errno,
         third_error: Errno,
+        persistent: bool,
     }
 
     impl Plan {
@@ -5268,6 +5271,7 @@ pub(crate) mod fault {
                 error: Errno::NOMEM,
                 second_error: Errno::NOMEM,
                 third_error: Errno::NOMEM,
+                persistent: false,
             }
         }
 
@@ -5282,6 +5286,7 @@ pub(crate) mod fault {
                 error,
                 second_error: error,
                 third_error: error,
+                persistent: false,
             }
         }
 
@@ -5296,6 +5301,7 @@ pub(crate) mod fault {
                 error,
                 second_error: error,
                 third_error: error,
+                persistent: false,
             }
         }
 
@@ -5321,6 +5327,7 @@ pub(crate) mod fault {
                 error,
                 second_error: error,
                 third_error: error,
+                persistent: false,
             }
         }
 
@@ -5347,6 +5354,7 @@ pub(crate) mod fault {
                 error,
                 second_error,
                 third_error: second_error,
+                persistent: false,
             }
         }
 
@@ -5374,6 +5382,7 @@ pub(crate) mod fault {
                 error,
                 second_error: error,
                 third_error: error,
+                persistent: false,
             }
         }
 
@@ -5402,7 +5411,18 @@ pub(crate) mod fault {
                 error,
                 second_error,
                 third_error,
+                persistent: false,
             }
+        }
+        /// Fails every occurrence of one point until the plan is replaced.
+        ///
+        /// A one-shot ordinal cannot model an unavailable primitive: the
+        /// source retries fresh page selection after a failed candidate, so
+        /// only a sustained failure reaches the caller's failure branch.
+        pub(crate) const fn every(point: Point, error: Errno) -> Self {
+            let mut plan = Self::at(point, usize::MAX, error);
+            plan.persistent = true;
+            plan
         }
     }
 
@@ -5809,6 +5829,7 @@ pub(crate) mod fault {
     fn set(plan: Plan) {
         SELECTED_POINT.store(plan.point, Ordering::Relaxed);
         FAILURE_ORDINAL.store(plan.ordinal, Ordering::Relaxed);
+        PERSISTENT.store(plan.persistent, Ordering::Relaxed);
         SECOND_SELECTED_POINT.store(plan.second_point, Ordering::Relaxed);
         SECOND_FAILURE_ORDINAL.store(plan.second_ordinal, Ordering::Relaxed);
         THIRD_SELECTED_POINT.store(plan.third_point, Ordering::Relaxed);
@@ -5833,7 +5854,7 @@ pub(crate) mod fault {
             let ordinal = FAILURE_ORDINAL.load(Ordering::Acquire);
             if ordinal != 0 {
                 let observed = OBSERVED.fetch_add(1, Ordering::AcqRel) + 1;
-                if observed == ordinal {
+                if observed == ordinal || PERSISTENT.load(Ordering::Acquire) {
                     SECOND_ENABLED.store(true, Ordering::Release);
                     let error = FAILURE_ERROR.load(Ordering::Acquire);
                     // SAFETY: `Plan` obtains `error` from a valid `Errno`, so
