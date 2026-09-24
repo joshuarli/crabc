@@ -56,10 +56,14 @@
 //! `_mi_subprocs_unsafe_destroy_all` at process destruction, which, as in
 //! source, destroys a child even under threads that still belong to it.
 //!
+//! A finishing child thread hands its pages with live blocks to the child
+//! main Heap ([`ChildThreadMember::thread_done`]); [`free_child_block_nonlocal`]
+//! frees such blocks, or blocks of another thread's page, from any thread.
+//!
 //! Not yet covered: nested children, deferred-free callbacks on the child
-//! allocation route, and abandoning a finishing child thread's live pages
-//! (such a thread stays a member and keeps its child alive until process
-//! destruction). Live
+//! allocation route, reclaiming an abandoned child page into the freeing or
+//! allocating thread, and abandoning an OS-backed child page (such a thread
+//! stays a member and keeps its child alive until process destruction). Live
 //! child metadata blocks at destruction are released with the child arenas,
 //! as in source. The source `_mi_thread_locals_thread_done` call in
 //! `mi_subproc_destroy` releases the destroying thread's dynamic thread-local
@@ -497,9 +501,9 @@ pub(crate) enum ChildThreadDoneError {
     WrongThread,
     /// `child` is not the context that admitted the member.
     WrongChild,
-    /// A live block remains on one of the thread's pages. Source abandons
-    /// such pages to the child main Heap; this port has no child abandonment
-    /// route yet, so the member stays attached with its roots installed.
+    /// A page could not be handed to the child main Heap: an OS-backed page
+    /// (whose abandoned list has no Rust owner yet) or a failed page
+    /// transition. The member's engine is terminal.
     PagesRemain,
     /// Page drain or release could not run; the member is unchanged.
     PageEngine(ChildMetadataPageEngineError),
@@ -599,17 +603,16 @@ impl ChildThreadMember {
     }
 
     /// Pinned `_mi_thread_done` (`init.c:452-480`) for this child thread:
-    /// clear the fast slot, count the thread out of the child's `threads`
-    /// statistic, reset the default and cached roots to the empty Theap,
-    /// then detach and free the Theap and TLD (`mi_thread_theaps_done`,
-    /// `mi_tld_free`).
-    ///
-    /// Every block allocated through the thread must be freed first; see
-    /// [`ChildThreadDoneError::PagesRemain`].
+    /// release its all-free pages and abandon every page with a live block
+    /// to the child main Heap, clear the fast slot, count the thread out of
+    /// the child's `threads` statistic, reset the default and cached roots to
+    /// the empty Theap, then detach and free the Theap and TLD
+    /// (`mi_thread_theaps_done`, `mi_tld_free`). Blocks that outlive the
+    /// thread stay valid; any thread may free them later.
     ///
     /// # Safety
     /// The caller is the admitted thread, no allocation through this member
-    /// is live or in progress, `child` is the context that admitted it, and
+    /// is in progress, `child` is the context that admitted it, and
     /// no other operation on the child runs concurrently with this call.
     pub(crate) unsafe fn thread_done(
         &mut self,
@@ -622,12 +625,13 @@ impl ChildThreadMember {
         if !self.owner.belongs_to(child) {
             return Err(ChildThreadDoneError::WrongChild);
         }
-        // Rust has no child page abandonment yet, so prove before the first
-        // source step that every page drains; source `_mi_theap_collect_abandon`
-        // would otherwise abandon the rest.
+        // init.c:392-395 `_mi_theap_collect_abandon`: release the all-free
+        // pages and hand every page with a live block to the child main Heap.
         // SAFETY: forwarded current-thread and quiescence obligations.
         let drained = unsafe {
-            self.owner.with_page_engine(binding, |_child, engine| engine.finish_pages_in_place())
+            self.owner.with_page_engine(binding, |_child, engine| unsafe {
+                engine.collect_abandon_for_thread_done()
+            })
         }
         .map_err(ChildThreadDoneError::PageEngine)?;
         if !drained {
@@ -980,6 +984,41 @@ pub(crate) unsafe fn native_child_thread_free_local(
         Ok(Ok(())) => NativePageFreeResult::Freed,
         Ok(Err(_)) | Err(_) => NativePageFreeResult::Retained,
     })
+}
+
+/// Frees a block on a page of a child subprocess's main Heap that the
+/// current thread does not own (`mi_free_block_mt` with collection); see
+/// `single_thread::free_child_page_block_nonlocal`. `None` when the block's
+/// page belongs to the process main subprocess.
+///
+/// # Safety
+/// `allocation` is an exact live allocation observed through `binding`'s
+/// PageMap, and its child is not destroyed during the call.
+pub(crate) unsafe fn free_child_block_nonlocal(
+    binding: ProcessMainBackingBinding,
+    allocation: crate::process_page_map::LiveAllocationPointer,
+) -> Option<crate::single_thread::ChildNonlocalFreeResult> {
+    use crate::single_thread::ChildNonlocalFreeResult;
+    // SAFETY: the live block keeps its page and Heap alive.
+    let (heap, identity) = unsafe { crate::types::Heap::child_main_heap_of_page(allocation.page()) }?;
+    // `ChildSubprocessImage` is `repr(C)` with its identity first, and the
+    // live block keeps its child allocated for the call.
+    // SAFETY: as above; the image is pinned in its parent metadata block.
+    let child = unsafe { core::pin::Pin::new_unchecked(&*identity.as_ptr().cast::<crate::subproc::ChildSubprocessImage>()) };
+    let Ok(child_process) = crate::os::ChildVmProcess::new(binding.process(), child) else {
+        return Some(ChildNonlocalFreeResult::Refused);
+    };
+    let Ok(pair) = crate::process_arena::ChildProcessPageArenaLease::join(binding.page_map(), child_process) else {
+        return Some(ChildNonlocalFreeResult::Refused);
+    };
+    // SAFETY: this free touches only the PageMap range of the one page that
+    // its publication claims, as a child page engine does for its own pages.
+    let Ok(page_map) = (unsafe { pair.page_map_for_owned_ranges() }) else {
+        return Some(ChildNonlocalFreeResult::Refused);
+    };
+    let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
+    // SAFETY: forwarded; `backing` pairs this child's arenas with `page_map`.
+    Some(unsafe { crate::single_thread::free_child_page_block_nonlocal(allocation, page_map, &backing, heap) })
 }
 
 /// Production `mi_heap_new` on the current child thread; see
@@ -1477,6 +1516,92 @@ pub(crate) mod tests {
                 main_identity,
             )));
 
+            // Page handoff at thread finish; see `handoff_main` in the C
+            // oracle. A thread finishes with three live blocks, then this
+            // thread (outside the child, so never reclaiming) frees two.
+            let mut fourth = unsafe { new_child(registry, attachment, &mut heap_owner) }
+                .expect("the handoff child is created");
+            let handoff_heap = fourth.main_heap_pointer().expect("a ready child Heap");
+            let shared = Shared((&mut fourth, binding));
+            let [small0, small1, medium] = std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    let shared = shared;
+                    let (child, binding) = shared.0;
+                    // SAFETY: a fresh thread owns its pristine roots; the
+                    // joined scope excludes every other child operation.
+                    let Ok(ChildThreadAddOutcome::Added(mut member)) = (unsafe { add_current_thread(child, binding) }) else {
+                        panic!("a fresh thread joins the handoff child");
+                    };
+                    // SAFETY: the admitted thread runs its own page engine.
+                    let blocks = unsafe {
+                        member.with_page_engine(binding, |_image, engine| {
+                            let small0 = engine.allocate(64, false).expect("allocates");
+                            let freed = engine.allocate(64, false).expect("allocates");
+                            let small1 = engine.allocate(64, false).expect("allocates");
+                            let medium = engine.allocate(3000, false).expect("allocates");
+                            // SAFETY: the exact live block allocated above.
+                            unsafe { engine.free(freed) }.expect("frees");
+                            [small0, small1, medium].map(|block| block.as_ptr().addr())
+                        })
+                    }
+                    .expect("the admitted thread's page engine runs");
+                    // SAFETY: the admitted thread; its live blocks are handed off.
+                    unsafe { member.thread_done(child, binding) }.expect("the thread finishes with live blocks");
+                    drop(member);
+                    blocks
+                })
+                .join()
+                .expect("the handoff thread completes")
+            });
+            let block = |address: usize| core::ptr::NonNull::new(address as *mut u8).unwrap();
+            let page_of = |address: usize| {
+                // SAFETY: the block is live and observed through the fixture PageMap.
+                unsafe { binding.page_map().lookup_live_allocation(block(address)) }
+                    .expect("the PageMap is ready").expect("a live block").page()
+            };
+            let abandoned = |trace: &mut Vec<i64>, page: core::ptr::NonNull<crate::types::Page>| {
+                // SAFETY: the page holds a live block; raw scalar reads only.
+                let state = unsafe { crate::types::Page::abandonment_state_at(page) };
+                let thread = unsafe { state.xthread_id.as_ref() }.load(core::sync::atomic::Ordering::Relaxed)
+                    & !(crate::types::PAGE_FLAG_MASK as usize);
+                trace.push(i64::from(thread <= crate::types::THREAD_ID_ABANDONED_MAPPED));
+                trace.push(i64::from(thread == crate::types::THREAD_ID_ABANDONED_MAPPED));
+                let bin = crate::size_class::bin(state.block_size).expect("a sized page");
+                // SAFETY: the child main Heap is live.
+                trace.push(unsafe { handoff_heap.as_ref() }.abandoned_count(bin).unwrap() as i64);
+                trace.push(unsafe { *state.used.as_ptr() } as i64);
+            };
+            let free_remote = |address: usize| {
+                // SAFETY: as above; this thread is outside the child.
+                let allocation = unsafe { binding.page_map().lookup_live_allocation(block(address)) }
+                    .unwrap().unwrap();
+                unsafe { free_child_block_nonlocal(binding, allocation) }.expect("a child page")
+            };
+            let (small_page, medium_page) = (page_of(small0), page_of(medium));
+            let handoff_facts = fourth.test_created_child_facts(parent).unwrap();
+            trace.push(handoff_facts.live_threads as i64);
+            trace.push(i64::from(small_page != medium_page && page_of(small1) == small_page));
+            // SAFETY: both pages hold live blocks.
+            trace.push(i64::from(unsafe {
+                small_page.as_ref().heap() == handoff_heap.as_ptr() && medium_page.as_ref().heap() == handoff_heap.as_ptr()
+            }));
+            abandoned(&mut trace, small_page);
+            abandoned(&mut trace, medium_page);
+            assert_eq!(free_remote(small0), crate::single_thread::ChildNonlocalFreeResult::Freed);
+            abandoned(&mut trace, small_page);
+            // SAFETY: the medium page still holds its live block.
+            let medium_bin = crate::size_class::bin(unsafe { medium_page.as_ref() }.block_size()).unwrap();
+            assert_eq!(free_remote(medium), crate::single_thread::ChildNonlocalFreeResult::Released);
+            // SAFETY: the child main Heap is live.
+            trace.push(unsafe { handoff_heap.as_ref() }.abandoned_count(medium_bin).unwrap() as i64);
+            // SAFETY: the child has no threads; its last live block goes with
+            // its arenas, as in source.
+            unsafe {
+                destroy_child(fourth, registry, binding, &mut [], attachment, &mut heap_owner)
+            }
+            .expect("the handoff child is destroyed with a live abandoned block");
+            trace.push(registry_members(registry).len() as i64);
+
             for (index, value) in trace.iter().enumerate() {
                 std::println!("m6.subproc.lifecycle.{index}={value}");
             }
@@ -1494,6 +1619,57 @@ pub(crate) mod tests {
             .ready_child_subprocess_inputs()
             .expect("the isolated runtime is READY")
             .0
+    }
+
+    /// Through the production entry points, a child thread finishes with
+    /// live blocks: its pages pass to the child main Heap, another thread
+    /// frees one block (the page stays abandoned) and the only block of
+    /// another page (the page is released), and `native_subproc_destroy`
+    /// then destroys the child with its last block still live.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_child_thread_finishes_with_live_blocks_and_the_child_is_destroyed() {
+        use crate::runtime_lifecycle::{
+            finish_current_thread_native_after_user_destructors, native_allocate_aligned, native_free,
+            prepare_native_later_thread_arena, test_initialize_process_from_host_environment,
+            NativePageAllocationResult, NativePageFreeResult, ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_child_thread_finishes_with_live_blocks_and_the_child_is_destroyed",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("the initial thread creates a child");
+                let blocks = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: the fresh thread registers its own descriptor once.
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    // SAFETY: a fresh thread owns its pristine roots.
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let allocate = |size| match native_allocate_aligned(size, 16, false) {
+                        NativePageAllocationResult::Allocated(block) => block.as_ptr().addr(),
+                        _ => panic!("child allocation"),
+                    };
+                    let blocks = [allocate(64), allocate(64), allocate(3000)];
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                    blocks
+                })
+                .join()
+                .expect("the child thread finishes with live blocks");
+                let free = |address: usize| {
+                    // SAFETY: each block is live and freed once.
+                    unsafe { native_free(core::ptr::NonNull::new(address as *mut u8).unwrap()) }
+                };
+                assert_eq!(free(blocks[0]), NativePageFreeResult::Freed, "the page stays abandoned");
+                assert_eq!(free(blocks[2]), NativePageFreeResult::Freed, "the page is released");
+                // SAFETY: the id is live and the remaining block is never used again.
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+            },
+        );
     }
 
     /// The production entry points in a fresh runtime process. Two fresh

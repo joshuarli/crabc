@@ -11144,6 +11144,24 @@ fn native_free_pointer_first_local(
 fn native_free_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
 ) -> NativePageFreeResult {
+    // A page of a child subprocess takes that child's own `mi_free_block_mt`
+    // route: its abandoned pages belong to the child main Heap and arenas,
+    // never to the process-main W03 tail below.
+    // SAFETY: the exact live allocation keeps its page and Heap alive.
+    if unsafe { crate::types::Heap::child_main_heap_of_page(allocation.page()) }.is_some() {
+        use crate::single_thread::ChildNonlocalFreeResult;
+        let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+            .ready_child_subprocess_inputs()
+        else {
+            return NativePageFreeResult::Retained;
+        };
+        // SAFETY: forwarded exact-live-allocation contract; the live block
+        // keeps its child alive.
+        return match unsafe { crate::subproc::lifecycle::free_child_block_nonlocal(binding, allocation) } {
+            Some(ChildNonlocalFreeResult::Freed | ChildNonlocalFreeResult::Released) => NativePageFreeResult::Freed,
+            _ => NativePageFreeResult::Retained,
+        };
+    }
     let detached = allocation.page_state() == LiveAllocationPageState::Detached;
     // SAFETY: `allocation` is the exact current PageMap-derived source
     // pointer. The facts callback returns the matching process-wide

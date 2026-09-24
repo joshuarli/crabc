@@ -3013,8 +3013,14 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             registry_unlinked = true;
             // SAFETY: the registry edge is gone and the caller guarantees
             // that no thread, client, or producer reaches the child; source
-            // releases these pages only with the child arenas.
-            Ok(unsafe { engine.detach_pages_for_subprocess_destroy() })
+            // releases these pages, and those that finished threads
+            // abandoned, only with the child arenas.
+            Ok(unsafe {
+                engine.detach_pages_for_subprocess_destroy()
+                    && engine.unregister_arena_pages_for_subprocess_destroy(
+                        child.get_ref().identity().arena_backing().registry(),
+                    )
+            })
         });
         if registry_unlinked {
             self.stage = ChildMainHeapStage::RegistryUnlinked;

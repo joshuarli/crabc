@@ -1393,6 +1393,159 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
     }
 }
 
+/// Result of [`free_child_page_block_nonlocal`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildNonlocalFreeResult {
+    /// The block joined its live owner's (or a concurrent claimant's)
+    /// thread-free list, or the claimed abandoned page stays abandoned.
+    Freed,
+    /// The claimed abandoned page became all free and was released to its
+    /// child arena.
+    Released,
+    /// A step failed after the claim: the page stays owned by this free and
+    /// is never reused (fail-closed).
+    Retained,
+    /// The publication itself was refused before any change.
+    Refused,
+}
+
+/// Pinned `mi_free_block_mt(page, block, allow_collect = true)` and
+/// `mi_free_try_collect_mt` (`free.c:372-514`) for a block on a page of a
+/// child subprocess's main Heap that the freeing thread does not own.
+///
+/// A page with a live owner receives the block on its thread-free list. An
+/// abandoned page is claimed by the publication; this free then collects it
+/// and either releases it to the child arena when it became all free
+/// (`_mi_arenas_page_unabandon` then `_mi_arenas_page_free`), reabandons a
+/// no-longer-mostly-used full page into the mapped bitmap, or unowns it
+/// again. It never reclaims the page into the freeing thread's Theap: the
+/// source does so only when that thread has a Theap for the page's Heap
+/// (`_mi_page_associated_theap_peek`), which this route does not look up
+/// yet, so a thread of the same child declines where source may reclaim.
+/// OS-backed singleton pages are retained rather than released.
+///
+/// # Safety
+/// `allocation` is an exact live allocation on a page of the child whose
+/// main Heap is `heap`, observed through the process PageMap that
+/// `page_map` projects for owned ranges; `backing` pairs that child's arenas
+/// with the same PageMap. The child stays alive through the call.
+pub(crate) unsafe fn free_child_page_block_nonlocal(
+    allocation: LiveAllocationPointer,
+    page_map: &PageMap,
+    backing: &impl PageBacking<'static>,
+    heap: NonNull<Heap>,
+) -> ChildNonlocalFreeResult {
+    // SAFETY: forwarded exact-live-allocation contract.
+    let claim = match unsafe { remote_free::push_post_owner_exit_live_allocation(allocation) } {
+        Ok(remote_free::LiveRemoteFreePublish::PublishedToOwner) => return ChildNonlocalFreeResult::Freed,
+        Ok(remote_free::LiveRemoteFreePublish::ClaimedAbandonedPage(claim)) => claim,
+        Err(_) => return ChildNonlocalFreeResult::Refused,
+    };
+    // SAFETY: the claim owns the page's low bit; this reads one scalar.
+    let singleton = unsafe { Page::abandonment_state_at(claim.page()) }.reserved == 1;
+    if singleton {
+        // SAFETY: the exact claim is consumed once; the terminal callback
+        // releases an arena singleton in source order and retains others.
+        let result = unsafe {
+            abandoned::continue_post_owner_exit_singleton_remote_claim(claim, |release| {
+                match release.backing() {
+                    abandoned::ClaimedPostOwnerExitSingletonBacking::Arena => {
+                        match release_claimed_process_arena_singleton_page(
+                            page_map, backing, release.page(), release.memory(),
+                        ) {
+                            ClaimedProcessArenaTerminalRelease::Released => {
+                                abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released
+                            }
+                            _ => abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(release),
+                        }
+                    }
+                    abandoned::ClaimedPostOwnerExitSingletonBacking::OsOrExternal => {
+                        abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(release)
+                    }
+                }
+            })
+        };
+        return match result {
+            Ok(abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released) => ChildNonlocalFreeResult::Released,
+            Ok(abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(release)) => {
+                // The retained owner keeps the page claimed forever.
+                core::mem::forget(release);
+                ChildNonlocalFreeResult::Retained
+            }
+            Err(failure) => {
+                core::mem::forget(failure);
+                ChildNonlocalFreeResult::Retained
+            }
+        };
+    }
+    // SAFETY: as above; `select_map` pairs the child main Heap with the
+    // page's arena `pages_main` bitmap, and the terminal callback releases
+    // the page in source order (PageMap, ordinary bit, metadata, slices).
+    let result = unsafe {
+        abandoned::continue_post_owner_exit_remote_claim(
+            claim,
+            |memory, block_size| {
+                let arena = backing.arena_for_memory(memory)
+                    .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)?;
+                select_child_main_mapped_abandoned_page(&arena, heap, memory, block_size)
+            },
+            |page| abandoned::collect_post_owner_exit_local_free_false(page),
+            |_candidate| abandoned::ReclaimOnFreeOutcome::Declined,
+            |release| match release_claimed_process_regular_arena_page(
+                page_map, backing, release.page(), release.memory(),
+            ) {
+                ClaimedProcessArenaTerminalRelease::Released => {
+                    abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Released
+                }
+                _ => abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(release),
+            },
+        )
+    };
+    match result {
+        Ok(abandoned::ClaimedPostOwnerExitRegularFreeResult::Released) => ChildNonlocalFreeResult::Released,
+        Ok(abandoned::ClaimedPostOwnerExitRegularFreeResult::TerminalReleaseRetained(release)) => {
+            core::mem::forget(release);
+            ChildNonlocalFreeResult::Retained
+        }
+        Ok(_) => ChildNonlocalFreeResult::Freed,
+        Err(failure) => {
+            core::mem::forget(failure);
+            ChildNonlocalFreeResult::Retained
+        }
+    }
+}
+
+/// The mapped-abandoned capability of a child main Heap's arena page; the
+/// child counterpart of `select_process_main_mapped_abandoned_page`.
+fn select_child_main_mapped_abandoned_page(
+    arena: &ArenaView<'static>,
+    heap: NonNull<Heap>,
+    memory: MemoryId,
+    block_size: usize,
+) -> Result<MainArenaMappedAbandonedPage<'static>, AbandonError> {
+    let Some(arena_memory) = memory.arena_memory() else {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    };
+    if arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut()
+        || memory.kind() != MemoryKind::Arena
+    {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    if !matches!(
+        size_class::page_kind_for_block_size(block_size),
+        Some(PageKind::Small | PageKind::Medium | PageKind::Large)
+    ) {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+    let Some(bin) = size_class::bin(block_size) else {
+        return Err(AbandonError::InvalidPageGeometry);
+    };
+    if bin >= ARENA_BIN_COUNT || bin == BIN_FULL {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    arena.main_heap_abandoned_page(heap, bin).ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+}
+
 /// Consumes a coherent PageMap pointer observation through the source
 /// post-owner-exit publication and lower process-facts continuation.
 ///
@@ -2781,6 +2934,62 @@ impl<'child, 'map, Session: TheapPageSession>
         self.shutdown_complete = true;
         true
     }
+
+    /// Removes the process PageMap range of every page still registered in
+    /// the child's arenas, walking each arena's ordinary `pages_main` bitmap:
+    /// at subprocess destruction these are the pages that finished threads
+    /// abandoned to the child main Heap, live blocks included. Source leaves
+    /// them to `_mi_arenas_unsafe_destroy_all` (`subproc.c:238-239`); the
+    /// PageMap removal keeps a stale lookup from reaching metadata in an
+    /// unmapped arena. No page, bitmap, or statistic changes.
+    ///
+    /// # Safety
+    /// As for [`Self::detach_pages_for_subprocess_destroy`]; `registry` is
+    /// the child's arena registry, whose arenas this engine's backing owns.
+    pub(crate) unsafe fn unregister_arena_pages_for_subprocess_destroy(
+        &mut self,
+        registry: &crate::arena::ArenaRegistry,
+    ) -> bool {
+        for index in 0..registry.count() {
+            // SAFETY: the child arenas stay mapped until destruction.
+            let Some(arena) = (unsafe { registry.arena_at(index) }) else { continue };
+            // SAFETY: as above.
+            let Some(view) = (unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }) else {
+                return false;
+            };
+            // SAFETY: the in-place ordinary bitmap of a live arena.
+            let Some(pages) = (unsafe { view.pages() }) else { return false };
+            for slice in 0..arena.slice_count {
+                if pages.is_set_range(slice, 1) != Some(true) {
+                    continue;
+                }
+                let Some(slice_start) = view.slice_start(slice) else { return false };
+                // SAFETY: destruction excludes every other PageMap writer.
+                let Some(page) = NonNull::new(unsafe { self.page_map.checked_lookup(slice_start) }) else {
+                    continue;
+                };
+                // SAFETY: a registered page's metadata is live.
+                let memory = unsafe { page.as_ref() }.memid();
+                let Some(arena_memory) = memory.arena_memory() else { return false };
+                if arena_memory.arena != core::ptr::from_ref(arena).cast_mut()
+                    || arena_memory.slice_index as usize != slice
+                {
+                    return false;
+                }
+                let Some(size) = (arena_memory.slice_count as usize).checked_mul(ARENA_SLICE_SIZE) else {
+                    return false;
+                };
+                let Some(page_map_size) = arena_page_map_size(page, slice_start, size) else {
+                    return false;
+                };
+                // SAFETY: the validated range maps exactly this page.
+                if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
+                    return false;
+                }
+            }
+        }
+        true
+    }
 }
 
 impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> {
@@ -2837,13 +3046,26 @@ impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> 
         Ok(())
     }
 
-    /// The all-free part of source `_mi_theap_collect_abandon` for a
-    /// finishing child thread: force-collect every page's remote and local
-    /// frees, release each page that becomes empty, then require that no
-    /// page is left. A page with a live block remains attached and the
-    /// result is `false`; child pages have no abandonment route yet.
+    /// The all-free part of source `_mi_theap_collect_abandon`: force-collect
+    /// every page's remote and local frees, release each page that becomes
+    /// empty, then require that no page is left. A page with a live block
+    /// remains attached and the result is `false`.
     pub(crate) fn finish_pages_in_place(&mut self) -> bool {
         self.collect_all_pages_for_allocation_retry() && self.finish_quiescent_in_place()
+    }
+
+    /// Source `_mi_theap_collect_abandon` for this finishing child thread;
+    /// see `collect_abandon_child_thread_done`. On success the Theap owns no
+    /// page and the engine may finish.
+    ///
+    /// # Safety
+    /// The caller is the finishing thread this session belongs to.
+    pub(crate) unsafe fn collect_abandon_for_thread_done(&mut self) -> bool {
+        let theap = self.session.theap_pointer();
+        let Some(thread) = self.session.thread_id() else { return false };
+        // SAFETY: forwarded; the session owns this Theap's local fields.
+        let abandoned = unsafe { self.collect_abandon_child_thread_done(theap, thread) };
+        abandoned && self.finish_quiescent_in_place()
     }
 }
 
@@ -9719,7 +9941,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
                 arena: &self.arena,
                 arena_lifetime: PhantomData,
                 page_map: self.page_map,
-                main_heap,
+                main_heap: Some(main_heap),
                 heap,
                 pending_os_release: &mut self.pending_os_release,
                 collection_poison: &mut self.collection_poison,
@@ -36304,7 +36526,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let result = {
             let mut callbacks = ProductionOwnerExitCallbacks {
                 thread, arena: &self.arena, arena_lifetime: PhantomData,
-                page_map: self.page_map, main_heap, heap,
+                page_map: self.page_map, main_heap: Some(main_heap), heap,
                 pending_os_release: &mut self.pending_os_release,
                 collection_poison: &mut self.collection_poison,
                 page_commit_poison: self.page_commit_poison,
@@ -36333,6 +36555,69 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if !empty || !self.permits_terminal_process_retirement() { return false; }
         self.shutdown_complete = true;
         true
+    }
+
+    /// `_mi_theap_collect_abandon` (`theap.c:95-156`) for a finishing thread
+    /// of a child subprocess: the retired-page prepass, then every queue
+    /// through `BIN_FULL`, force- and false-collecting each page, releasing
+    /// the all-free ones, and abandoning the rest to the child main Heap
+    /// (`page.c:291-304`, `arena.c:1304-1356`). A nonfull regular arena page
+    /// becomes mapped-abandoned in its arena's `pages_main.pages_abandoned`
+    /// with the Heap's `abandoned_count`; a full page or an arena singleton
+    /// stays unmapped. An OS-backed page cannot be abandoned yet (the child
+    /// main Heap's OS-abandoned list has no Rust owner), so the traversal
+    /// stops and the result is `false`. Deferred-free callbacks do not run.
+    ///
+    /// # Safety
+    /// This runs on the finishing thread that owns `theap`, whose identity is
+    /// `thread`, inside its own child page session, with no other operation
+    /// on its TLD/Theap. A `false` result leaves this engine terminal.
+    pub(crate) unsafe fn collect_abandon_child_thread_done(
+        &mut self,
+        theap: NonNull<Theap>,
+        thread: LiveThreadId,
+    ) -> bool {
+        if self.pending_os_release.is_some() || self.collection_poison.is_some() || self.page_commit_poison {
+            return false;
+        }
+        // SAFETY: forwarded ownership of the live Theap.
+        let heap = match NonNull::new(unsafe { theap.as_ref().heap() }) {
+            Some(heap) => heap,
+            None => return false,
+        };
+        if !unsafe { theap.as_ref().matches_thread(thread) && theap.as_ref().allows_page_abandon() } {
+            return false;
+        }
+        let result = {
+            let mut callbacks = ProductionOwnerExitCallbacks {
+                thread, arena: &self.arena, arena_lifetime: PhantomData,
+                page_map: self.page_map, main_heap: None, heap,
+                pending_os_release: &mut self.pending_os_release,
+                collection_poison: &mut self.collection_poison,
+                page_commit_poison: self.page_commit_poison,
+                #[cfg(test)]
+                page_free_collect_failure_once: &mut self.page_free_collect_failure_once,
+            };
+            let prepass = TheapCollectAbandonFieldPrepass::new(
+                |_theap: &mut TheapCollectAbandonFieldAccess,
+                 _callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, Backing>| Ok(()),
+                |theap: &mut TheapCollectAbandonFieldAccess,
+                 callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, Backing>| {
+                    callbacks.collect_retired_prepass(theap)
+                },
+            );
+            // SAFETY: forwarded exclusive ownership of the Theap's queues,
+            // direct cache, count, and retirement fields.
+            unsafe { theap_collect_abandon_queues_at(theap, prepass, &mut callbacks) }
+        };
+        if result.is_err() { return false; }
+        let empty = unsafe {
+            let image = theap.as_ref();
+            image.page_count() == 0
+                && (0..=BIN_FULL).all(|bin| image.queue(bin).is_some_and(|queue| queue.is_empty()))
+                && (0..PAGES_DIRECT).all(|index| image.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
+        };
+        empty && self.pending_os_release.is_none() && self.collection_poison.is_none()
     }
 
     /// Ends a successfully drained vanished engine without reopening its
@@ -41606,7 +41891,10 @@ struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map, B: PageBacking<
     arena: &'state B,
     arena_lifetime: PhantomData<&'arena ()>,
     page_map: &'map PageMap,
-    main_heap: MainStaticHeapLease<'main>,
+    /// The process main Heap lease that serializes its OS-abandoned list, or
+    /// `None` for a child-subprocess Theap, whose OS pages cannot be
+    /// abandoned yet (see `collect_abandon_child_thread_done`).
+    main_heap: Option<MainStaticHeapLease<'main>>,
     heap: NonNull<Heap>,
     pending_os_release: &'state mut Option<OsAlignedPageOwner>,
     collection_poison: &'state mut Option<RetainedPageCollectPoison>,
@@ -42033,6 +42321,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
     ) -> Result<(), ProductionOwnerExitError> {
         let mut heap = self
             .main_heap
+            .ok_or(ProductionOwnerExitError::UnsupportedPage)?
             .lock_heap()
             .map_err(|_| ProductionOwnerExitError::Abandon)?;
         // SAFETY: source abandoned identity is already established inside the
@@ -42052,6 +42341,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
     ) -> Result<(), ProductionOwnerExitError> {
         let mut heap = self
             .main_heap
+            .ok_or(ProductionOwnerExitError::UnsupportedPage)?
             .lock_heap()
             .map_err(|_| ProductionOwnerExitError::Abandon)?;
         // SAFETY: `AbandonResult::Empty` retained this exact low-bit owner;

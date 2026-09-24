@@ -52,7 +52,7 @@
     },
     "differential:subprocess-lifecycle": {
       "runner": "compat/allocator/subprocess_lifecycle.py",
-      "scope": "Pinned-C/Rust root-child subprocess create/add-thread/visit/statistics/destroy traces: list order and sequence, child main Heap and metadata Theap membership, first child arena, refusal of a thread already in the main subprocess, a fresh thread's admission, allocation, and thread-done statistics, Heap visitation with early stop, the destroy-time statistics merge, and destruction with a live metadata block."
+      "scope": "Pinned-C/Rust root-child subprocess create/add-thread/visit/statistics/destroy traces: list order and sequence, child main Heap and metadata Theap membership, first child arena, refusal of a thread already in the main subprocess, a fresh thread's admission, allocation, and thread-done statistics, Heap visitation with early stop, the destroy-time statistics merge, destruction with a live metadata block, and the page handoff of a thread that finishes with live blocks (mapped abandonment and abandoned counts, a non-reclaiming free that keeps a page abandoned, one that releases it, and destruction with a live abandoned block)."
     },
     "fault:heap-lifecycle": {
       "runner": null,
@@ -319,7 +319,7 @@
         "unit:subprocess"
       ],
       "blocked_by": [
-        "Crate-private `subproc::lifecycle` composes `mi_subproc_new`, `mi_subproc_visit_heaps`, and `mi_subproc_destroy` for root children of the process main subprocess only when the child has no non-main Heap and no thread; live metadata pages go with the child arenas as in source. Crate-private production entry points (`native_subproc_new`, `native_subproc_add_current_thread`, `native_subproc_visit_heaps`, `native_subproc_destroy`) share one child across threads; the native runtime allocate, free, realloc, and thread-exit entries route an admitted thread through its own child Theap; and process destruction destroys every child before main (`_mi_subprocs_unsafe_destroy_all`), under any threads that still belong to it. But a finishing child thread cannot abandon live pages, so `mi_subproc_destroy` still refuses a child with threads, and nested children, subprocess statistics entries, and public C symbols do not exist."
+        "Crate-private `subproc::lifecycle` composes `mi_subproc_new`, `mi_subproc_visit_heaps`, and `mi_subproc_destroy` for root children of the process main subprocess only when the child has no non-main Heap and no thread; live metadata pages go with the child arenas as in source. Crate-private production entry points (`native_subproc_new`, `native_subproc_add_current_thread`, `native_subproc_visit_heaps`, `native_subproc_destroy`) share one child across threads; the native runtime allocate, free, realloc, and thread-exit entries route an admitted thread through its own child Theap; and process destruction destroys every child before main (`_mi_subprocs_unsafe_destroy_all`), under any threads that still belong to it. A finishing child thread hands its live pages to the child main Heap and any thread may free their blocks, but a free by a thread of the same child never reclaims such a page, allocation never reuses abandoned pages, OS-backed child pages cannot be abandoned, `mi_subproc_destroy` refuses a child with threads, and nested children, subprocess statistics entries, and public C symbols do not exist."
       ]
     },
     {

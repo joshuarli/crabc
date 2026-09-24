@@ -31,9 +31,9 @@ static bool visit_count(mi_heap_t* heap, void* arg) {
   return state->result;
 }
 
-static int64_t values[96];
+static int64_t values[128];
 static size_t value_count;
-static void push(int64_t value) { require(value_count < 96); values[value_count++] = value; }
+static void push(int64_t value) { require(value_count < 128); values[value_count++] = value; }
 
 /* A fresh thread joins `subproc`, allocates and frees one block, and runs
    `mi_thread_done`. Its fields follow the main-thread fields in order. */
@@ -73,6 +73,33 @@ static void* worker_main(void* arg) {
   wpush(worker, subproc->stats.threads.current);
   wpush(worker, subproc->stats.theaps.current);
   return NULL;
+}
+
+/* A fresh thread joins `subproc`, allocates three 64-byte blocks on one
+   page and one 3000-byte block on another, frees the middle 64-byte block,
+   and finishes with the other three live: `_mi_thread_done` hands both pages
+   to the child main Heap as abandoned pages. */
+typedef struct handoff_s { mi_subproc_t* subproc; void* small[2]; void* medium; } handoff_t;
+
+static void* handoff_main(void* arg) {
+  handoff_t* const handoff = (handoff_t*)arg;
+  mi_subproc_add_current_thread(_mi_subproc_to_id(handoff->subproc));
+  handoff->small[0] = mi_malloc(64);
+  void* const freed = mi_malloc(64);
+  handoff->small[1] = mi_malloc(64);
+  handoff->medium = mi_malloc(3000);
+  require(handoff->small[0] != NULL && freed != NULL && handoff->small[1] != NULL && handoff->medium != NULL);
+  mi_free(freed);
+  mi_thread_done();
+  return NULL;
+}
+
+/* The abandoned-page facts of one page of `heap`. */
+static void push_abandoned(mi_heap_t* heap, mi_page_t* page) {
+  push(mi_page_is_abandoned(page));
+  push(mi_page_is_abandoned_mapped(page));
+  push((int64_t)mi_atomic_load_relaxed(&heap->abandoned_count[_mi_bin(mi_page_block_size(page))]));
+  push((int64_t)page->used);
 }
 
 int main(void) {
@@ -188,6 +215,33 @@ int main(void) {
   push((int64_t)member_count());
   push(_mi_subproc_from_id(mi_subproc_current()) == main_subproc
        && _mi_subproc_from_id(mi_subproc_main()) == main_subproc);
+
+  /* Page handoff at thread finish (init.c:377-421, theap.c:95-156,
+     page.c:291-304, arena.c:1304-1356), then frees from a thread outside
+     the child, which never reclaims (free.c:372-493). */
+  mi_subproc_t* const fourth = _mi_subproc_from_id(mi_subproc_new());
+  require(fourth != NULL);
+  handoff_t handoff = { fourth, { NULL, NULL }, NULL };
+  require(pthread_create(&thread, NULL, &handoff_main, &handoff) == 0);
+  require(pthread_join(thread, NULL) == 0);
+  mi_heap_t* const handoff_heap = fourth->heap_main;
+  mi_page_t* const small_page = _mi_ptr_page(handoff.small[0]);
+  mi_page_t* const medium_page = _mi_ptr_page(handoff.medium);
+  push((int64_t)mi_atomic_load_relaxed(&fourth->thread_count));
+  push(small_page != medium_page && _mi_ptr_page(handoff.small[1]) == small_page);
+  push(mi_page_heap(small_page) == handoff_heap && mi_page_heap(medium_page) == handoff_heap);
+  push_abandoned(handoff_heap, small_page);
+  push_abandoned(handoff_heap, medium_page);
+  /* A free that leaves a live block keeps the page abandoned and mapped. */
+  mi_free(handoff.small[0]);
+  push_abandoned(handoff_heap, small_page);
+  /* The last block of a page unabandons and frees it. */
+  const size_t medium_bin = _mi_bin(mi_page_block_size(medium_page));
+  mi_free(handoff.medium);
+  push((int64_t)mi_atomic_load_relaxed(&handoff_heap->abandoned_count[medium_bin]));
+  /* The child is destroyed with one live block on an abandoned page. */
+  mi_subproc_destroy(_mi_subproc_to_id(fourth));
+  push((int64_t)member_count());
 
   for (size_t i = 0; i < value_count; i++) {
     printf("m6.subproc.lifecycle.%zu=%lld\n", i, (long long)values[i]);

@@ -65,7 +65,12 @@ thread already in the main subprocess and admitting a fresh thread that
 allocates, frees, and finishes, Heap visitation with an early stop, and the
 destroy-time statistics merge into the main subprocess, which keeps counting
 the child's pages because they are released only with its arenas, including
-a child destroyed with a live metadata block. Destroying a child that still
+a child destroyed with a live metadata block. A last section covers the page
+handoff at thread finish: a child thread that finishes with live blocks
+abandons its pages to the child main Heap (mapped, with the Heap's
+`abandoned_count`), a thread outside the child frees one block (the page stays
+abandoned) and the only block of another page (the page is released), and the
+child is destroyed with a live abandoned block. Destroying a child that still
 has threads or non-main Heaps is not covered yet. Logs live
 under `x86_64/subprocess-lifecycle` in the allocator artifacts directory.
 

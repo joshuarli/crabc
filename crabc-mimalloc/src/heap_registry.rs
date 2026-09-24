@@ -318,6 +318,72 @@ impl Heap {
         target.merge_from_and_reset(&self.statistics);
     }
 
+    /// Whether this is the main Heap of its subprocess: the Heap whose Theaps
+    /// use the fast thread-local key (`heap.c:136`), for the process main
+    /// subprocess or a child.
+    #[inline]
+    pub(crate) fn is_subprocess_main(&self) -> bool {
+        self.theap_slot == crate::thread_local::TLS_FAST_KEY_RAW as usize && !self.subprocess.is_null()
+    }
+
+    /// Source `mi_heap_ensure_arena_pages` (`arena.c:699-723`) for the main
+    /// Heap of a child subprocess: point its slot for `arena_index` at that
+    /// arena's in-place `pages_main`, which the Heap's page, abandoned-page,
+    /// and visit transitions read. An already identical slot is the normal
+    /// fast path; a different image is refused.
+    ///
+    /// # Safety
+    /// `pages` is the `pages_main` image of the live arena with that index in
+    /// this Heap's subprocess, and the Heap stays live for the call.
+    pub(crate) unsafe fn ensure_child_main_arena_pages(
+        &self,
+        arena_index: usize,
+        pages: core::ptr::NonNull<super::ArenaPages>,
+    ) -> bool {
+        if arena_index >= self.arena_pages.len() || !self.is_subprocess_main() || self.memid.kind() == super::MemoryKind::Static {
+            return false;
+        }
+        let current = self.arena_pages[arena_index].load(Ordering::Acquire);
+        if current == pages.as_ptr() {
+            return true;
+        }
+        if !current.is_null() {
+            return false;
+        }
+        let Ok(guard) = self.arena_pages_lock.lock() else { return false };
+        let current = self.arena_pages[arena_index].load(Ordering::Acquire);
+        let installed = if current.is_null() {
+            self.arena_pages[arena_index].store(pages.as_ptr(), Ordering::Release);
+            true
+        } else {
+            current == pages.as_ptr()
+        };
+        guard.unlock().is_ok() && installed
+    }
+
+    /// The child subprocess whose main Heap owns `page`, or `None` for a page
+    /// of the process main subprocess. Only the page's `heap` identity and
+    /// that Heap's immutable subprocess identity are read.
+    ///
+    /// # Safety
+    /// `page` is live page metadata (for example, the page of a live block),
+    /// and its Heap stays live for the call.
+    pub(crate) unsafe fn child_main_heap_of_page(
+        page: core::ptr::NonNull<super::Page>,
+    ) -> Option<(core::ptr::NonNull<Heap>, core::ptr::NonNull<SubprocessIdentity>)> {
+        // SAFETY: a raw field read; the page's Heap identity is immutable
+        // while one of its blocks is live.
+        let heap = core::ptr::NonNull::new(unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).heap)) })?;
+        // SAFETY: forwarded Heap liveness; immutable after initialization.
+        let heap_ref = unsafe { heap.as_ref() };
+        let subprocess = core::ptr::NonNull::new(heap_ref.subprocess)?;
+        // SAFETY: a Heap's subprocess outlives the Heap.
+        if unsafe { subprocess.as_ref() }.is_process_main() || !heap_ref.is_subprocess_main() {
+            return None;
+        }
+        Some((heap, subprocess))
+    }
+
     /// The first Theap on this Heap's list other than `except`, with the TLD
     /// it names: one step of source `_mi_heap_detach_theaps`
     /// (`theap.c:381-411`) at process destruction, where the caller detaches

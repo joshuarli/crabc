@@ -2817,10 +2817,11 @@ impl<'arena> ArenaView<'arena> {
         })
     }
 
-    /// Returns the sole production capability for a static-main mapped
-    /// abandoned page. It proves the main Heap still points at this arena's
-    /// embedded `pages_main` image before allowing a bitmap publication to
-    /// mutate its paired `abandoned_count` entry.
+    /// Returns the sole production capability for a mapped abandoned page of
+    /// a subprocess main Heap (the static process main Heap or a child's).
+    /// It proves the main Heap still points at this arena's embedded
+    /// `pages_main` image before allowing a bitmap publication to mutate its
+    /// paired `abandoned_count` entry.
     #[inline]
     pub(crate) fn main_heap_abandoned_page(
         &self,
@@ -2832,7 +2833,7 @@ impl<'arena> ArenaView<'arena> {
         // atomic arena-pages slot before binding the counter capability.
         let heap_ref = unsafe { heap.as_ref() };
         let pages = NonNull::from(&self.arena().pages_main);
-        if !heap_ref.is_main_static()
+        if !heap_ref.is_subprocess_main()
             || heap_ref.arena_pages_at(self.arena().arena_index) != Some(pages)
         {
             return None;

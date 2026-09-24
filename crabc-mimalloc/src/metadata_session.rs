@@ -240,6 +240,11 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         // grants this operation exclusive local-field authority.
         unsafe { self.theap.as_ref() }
     }
+
+    /// The Theap this session owns, as an address for field-scoped source
+    /// traversals that must not form a whole-Theap borrow.
+    #[inline]
+    pub(crate) fn theap_pointer(&self) -> NonNull<Theap> { self.theap }
 }
 
 impl<'session, 'image> ChildMetadataTheapPageSession<'session, 'image> {
@@ -326,7 +331,16 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
     }
 
     fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, _config: MemoryConfig) -> bool {
-        unsafe { arena.pages().is_some() }
+        // `mi_heap_ensure_arena_pages` points the child main Heap at the
+        // arena's in-place `pages_main` (`arena.c:699-723`).
+        // SAFETY: the session retains the child Heap and the claimed arena.
+        unsafe {
+            arena.pages().is_some()
+                && self.heap.as_ref().ensure_child_main_arena_pages(
+                    arena.arena().arena_index,
+                    NonNull::from(&arena.arena().pages_main),
+                )
+        }
     }
     fn set_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
         let Some(memory) = memory.arena_memory() else { return false; };
@@ -416,7 +430,16 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
     }
 
     fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, _config: MemoryConfig) -> bool {
-        unsafe { arena.pages().is_some() }
+        // `mi_heap_ensure_arena_pages` points the child main Heap at the
+        // arena's in-place `pages_main` (`arena.c:699-723`).
+        // SAFETY: the session retains the child Heap and the claimed arena.
+        unsafe {
+            arena.pages().is_some()
+                && self.heap.as_ref().ensure_child_main_arena_pages(
+                    arena.arena().arena_index,
+                    NonNull::from(&arena.arena().pages_main),
+                )
+        }
     }
     fn set_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
         let Some(memory) = memory.arena_memory() else { return false; };

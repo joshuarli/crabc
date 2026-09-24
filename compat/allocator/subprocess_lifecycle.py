@@ -14,7 +14,7 @@ import run as harness
 
 
 TEST = "subproc::lifecycle::tests::source_ordered_child_subprocess_lifecycle_trace"
-FIELD_COUNT = 59
+FIELD_COUNT = 76
 
 
 def trace(output: str) -> list[int]:
