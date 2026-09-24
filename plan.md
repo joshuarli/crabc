@@ -44,13 +44,16 @@ are not transferable passes for a different revision.
      propose `[[family.verified_slice]]` commits; rerun their command on
      merged `main` before merging one. Run native verification in a frozen
      worktree, never the integration checkout.
-  3. Remaining repository-file digests: image-input receipts and readers that
-     still pin the retired core image `sha256:5990e55b…`, allocator API
-     coverage/shadow ABI/evidence manifests, owned `.list` and fixture pins in
-     the mimalloc visibility, errno-alias, syscall-alias and utmpx readers, the
-     native perf profile, and the Lua admission test. Keep frozen AArch64
-     baseline, pinned-musl header identity, upstream reference copies, and
-     archive/toolchain/image provenance pins.
+  3. Single-source the core image identity: about ten readers and runners
+     repeat `sha256:307d75f0…`, and the loader structural-owner and locale-alias
+     readers still pin the retired `sha256:5990e55b…`, so a rebuild breaks them.
+     Remaining low-churn repository-file pins: owned `.list` digests in the
+     dynamic sysroot builder and the mimalloc visibility, errno-alias and
+     syscall-alias readers, utmpx's link-authority pin, shadow-ABI and churn
+     fixtures, the native perf profile, the Lua admission test, and image-input
+     receipts. Keep the frozen AArch64 baseline, pinned-musl header identity,
+     upstream reference copies, adapted-upstream-test patch pins, and
+     archive/toolchain provenance.
 - **Other open defects:** fourteen runners pin optimizer shape (raw-syscall
   provider counts, call edges; lane `pattern`); static and dynamic products
   install different `crt1.o` (lane `crt-dynamic`); owned `sysconf` lacks musl's
