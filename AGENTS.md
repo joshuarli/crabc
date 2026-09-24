@@ -130,12 +130,13 @@ primitives remain in reviewed dependencies, including vectorized ones.
   inside the owning checkout's ignored `.work/` boundary. Honor stricter
   launcher paths and existing ignored report locations. No external scratch,
   symlink escapes, or shared mutable build outputs.
-- Use current user/global orchestration instructions for models and capacity.
+- Use `.claude/skills/lanes` and `.claude/agents/crabc-lane.md` for parallel
+  lane work; current user orchestration instructions still govern models.
   Parallelize useful independent implementation in isolated worktrees; give
   shared state one owner and integrate continuously. Do not invent work to
   fill slots or require a scheduling board, handoff schema, or wave ceremony.
-  Do not throttle agent or build/test concurrency; qualifying benchmarks need
-  an uncontended host.
+  Run at most 16 concurrent lane agents; do not throttle builds within a lane;
+  qualifying benchmarks need an uncontended host.
 - `plan.md` is the only implementation plan and repository-wide progress
   handoff. Update its small Progress status section in place when the frontier
   changes. Put required per-capability/source state in existing manifests and

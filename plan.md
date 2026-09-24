@@ -52,43 +52,47 @@ are not transferable passes for a different revision.
   are recorded below.
 - **Preservation:** Pre-upgrade dirty worktree source is under
   `refs/archive/pre-toolchain*`. AArch64 remains paused and frozen.
-- **Paused handoff (2026-09-24):** All lane agents are stopped; no native
-  build runs. `main` integrates the paused handoff (`2261f8e20`, `6a4d6adac`,
-  `f6c8da3c2`; merged allocator unit suite 1,159/1,159 at `f6c8da3c2`), the
-  closed `ed4db0ba6` compiler_builtins identity gap (`55126b9e5`), the
-  fail-closed `consumer.source-build` gate (Lua static/dynamic/admission and
-  the 34/34 corpus diagnostic passed at `df3afdbed`), the fail-closed
-  `allocator-m6` gate, musl-exact allocation ownership for owned
-  search/gettext state plus the shared `__qsort_r` export, and the M2 test
-  binary fix for Cargo's per-unit layout. Keep `ed4db0ba6` itself out of
-  `main`. Every other lane branch `lane/<id>` keeps its lane-verified but
-  unintegrated commits, then one final `WIP(lane <id>)` commit with unverified
-  edits from the stopped agent; review, finish, and verify before merging.
-  Notable unintegrated increments: `consumer.rust-std-lto` and
-  `compat.loader-corpus` gate work (`std-lto`, `source-build`), the ordered
-  chain executor (`qual-chain`), the executable release scorecard
-  (`runtime-perf`), locale receipt admission (`abi-selection`), the offline
-  mimalloc tag identity (`m4`), RuntimeV1 native facade table
-  (`runtime-facades`), and a POSIX admission candidate (`posix`) that must be
-  rerun on a stable merged revision. `lane/m2-init-fault` repeats the merged
-  M2 fix; drop it on rebase. `unwinder-owned-cleanup` has passed only on the
-  b1a84 products. Preserve the frozen POSIX (`posix-runtime-f5904a276`) and
-  active-source unwinder (`unwinder-products-b1a84d8a9`) evidence and the
-  allocator SIGSEGV core/log. Old stash entries are archived under
-  `refs/archive/stash/*`.
+- **Lanes settled (2026-09-24):** No lane agent or lane worktree remains.
+  `main` integrated the paused handoff, the `ed4db0ba6` identity fix, the M2
+  test-binary fix, the fail-closed `allocator-m6`, `consumer.source-build`,
+  and `compat.loader-corpus` gates, the ordered qualification-chain executor
+  (every gate `ready` with named unmet conditions), the executable release
+  scorecard, the owned static product suite, owned dynamic link inspection,
+  musl-exact search/gettext allocation, locale receipt and hidden-body ABI
+  selection, the offline mimalloc tag identity, the child fork repair port,
+  shared pthread product arguments, the resolver family coordinator, and
+  selected-private slices for `text.iconv`, `text.wide-multibyte`, four stdio
+  engine capabilities, `runtime.private-facades`, and `process.globals`
+  (`campaign-status`: 180 implemented, 34 selected-private, 9 missing).
+  Parked on their branches, each ending in a `WIP(lane <id>)` commit:
+  `posix` (a POSIX admission candidate to rerun on merged `main`, plus an
+  experimental registry lock), `pattern` (regex rework; musl transcript
+  differs), `math-time`, `loader`, `m3`, `m6`, `m7`, `alloc-perf` (conflict
+  with `main`), `m2-init-fault` and `m5-exit` (fail the Rust check),
+  `m5-remote` (fails a runner test), `crt-dynamic`, `dynamic-product`,
+  `std-lto`, `m2-vm-arenas`, `alloc-fork` (unfinished), `m5-stress` (an
+  untested arena singleton PageMap span fix), and `m4` (scratch probes only).
+  Keep `ed4db0ba6` out of `main`. Preserve the frozen POSIX
+  (`posix-runtime-f5904a276`) and active-source unwinder
+  (`unwinder-products-b1a84d8a9`) evidence and the allocator SIGSEGV core/log.
+  Old stash entries are under `refs/archive/stash/*`.
 - **Open cross-lane defects (one owner each):** 358 runner scripts still build
   with plain `cargo rustc` and fail to link `rust_eh_personality` on the pinned
   nightly (`libc-resolver-runtime` included); generalize `2261f8e20`.
-  `run_pthread_c11_header_abi.sh` loses matches under `pipefail` through
-  `printf | grep -q`; use a here-string. `scripts/check_structure.py` walks
-  lane worktrees under `.work/`. Static and dynamic products install different
-  `usr/lib/crt1.o`; the combined sysroot needs one entry valid for static
-  `ET_EXEC` and dynamic non-PIE, keeping the static/shared split in libc's
-  `__libc_start_main` as the frozen AArch64 `crt/src/normal_entry.rs` did.
-  Owned `sysconf` lacks `_SC_NPROCESSORS_ONLN`/`_CONF` and
-  `_SC_PHYS_PAGES`/`_SC_AVPHYS_PAGES`. Rust page block pops clear
-  `retire_expire`, which pinned `mi_page_malloc_zero` never touches (`lane/m3`
-  WIP). `emit_x86_64_automatic_arena_reservation_trace` assumes thread timing.
+  `run_pthread_c11_header_abi.sh` and about 500 other `pipefail` sites lose
+  matches through `printf | grep -q`; use here-strings. Static and dynamic
+  products install different `usr/lib/crt1.o`; the combined sysroot needs one
+  entry valid for static `ET_EXEC` and dynamic non-PIE, keeping the
+  static/shared split in libc's `__libc_start_main` as the frozen AArch64
+  `crt/src/normal_entry.rs` did. Owned `sysconf` lacks
+  `_SC_NPROCESSORS_ONLN`/`_CONF` and `_SC_PHYS_PAGES`/`_SC_AVPHYS_PAGES`. Rust
+  page block pops clear `retire_expire`, which pinned `mi_page_malloc_zero`
+  never touches (`lane/m3`). Pre-existing host test failures:
+  `compat/x86_64/tests/test_runner.py` (8), `test_header_callable_inventory.py`
+  (the BSD random quartet awaits the `abi-bsd-receipt` integration),
+  `compat/x86_64/test_owned_dynamic_driver.py` outside the image, and the perf
+  descriptor-closure test. `scripts/check_structure.py` walks worktrees under
+  `.work/`.
 
 ## Parallel lanes
 
@@ -103,9 +107,11 @@ boundary is reported to the integration owner, which assigns exactly one fixer;
 lanes never fix it locally in parallel. Assignments are bounded, unique
 deliverables. Never use `git stash`: `refs/stash` is shared by every worktree.
 Implementation overlaps freely; family and milestone qualification still follows
-the dependency order below and in `campaign-status`. Agent and build concurrency
-is deliberately unthrottled (user direction, 2026-09-23); only qualifying
-performance measurements wait for an uncontended host.
+the dependency order below and in `campaign-status`. Run at most 16 lane agents
+at once (`.claude/settings.json`); builds inside a lane are not throttled, and
+qualifying performance measurements wait for an uncontended host. The
+`.claude/skills/lanes` skill, `.claude/agents/crabc-lane.md`, and
+`scripts/lanes/` hold the orchestration workflow and integration helpers.
 
 | Lane | Owns |
 | --- | --- |
