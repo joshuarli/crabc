@@ -10337,6 +10337,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "selected_munmap",
         "allocation failure rollback",
         "parent-return deletion",
+        # Owned products keep musl's public node allocation edge; only the
+        # allocator-free selected archive may use private node mappings.
+        "#[cfg(crabc_x86_owned_runtime)]\nglobal_asm!(",
+        "__crabc_x86_tsearch_cabi_malloc:\n    jmp malloc",
+        "__crabc_x86_tsearch_cabi_free:\n    jmp free",
+        '#[cfg(not(crabc_x86_owned_runtime))]\nunsafe extern "C" {\n    #[link_name = "__mmap"]',
     ):
         if required not in search_tree_text:
             errors.append(
@@ -10395,6 +10401,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "MAXIMUM_SIZE",
         "wrapping_mul(31)",
         '#[linkage = "weak"]',
+        # Owned products keep musl's public table calloc/free edge; only the
+        # allocator-free selected archive may use private table mappings.
+        "#[cfg(crabc_x86_owned_runtime)]\ncore::arch::global_asm!(",
+        "__crabc_x86_hsearch_cabi_calloc:\n    jmp calloc",
+        "__crabc_x86_hsearch_cabi_free:\n    jmp free",
+        '#[cfg(not(crabc_x86_owned_runtime))]\nunsafe extern "C" {\n    #[link_name = "__mmap"]',
     ):
         if required not in search_hash_table_text:
             errors.append(
@@ -10448,6 +10460,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "catopen` always reports `ENOENT`",
         "catalog-file/NLSPATH/LANG lookup",
         "ENOMEM",
+        # Owned products keep musl's public textdomain malloc and private
+        # __libc_calloc binding records; the fixed store is archive-only.
+        "#[cfg(crabc_x86_owned_runtime)]\nmod state {",
+        "__crabc_x86_textdomain_cabi_malloc:\n    jmp malloc",
+        "allocator::allocate_zeroed_internal(bytes)",
+        "#[cfg(not(crabc_x86_owned_runtime))]\nmod state {",
     ):
         if required not in gettext_catalog_text:
             errors.append(

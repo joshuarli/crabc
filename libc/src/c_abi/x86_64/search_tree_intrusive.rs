@@ -11,29 +11,39 @@
 //! parent-return deletion, including musl's arbitrary root-deletion result.
 //!
 //! The caller owns the root pointer and every key. Musl obtains each private
-//! 32-byte node with `malloc` and releases it with `free`. This selected x86
-//! archive keeps public and hidden C allocator exports absent: each node owns
-//! one zero-filled private 4096-byte mapping, released by `tdelete` or
-//! `tdestroy`. This intentional mechanism difference retains allocation
-//! failure rollback, node identity, key ownership, and lifetime semantics; the
-//! native differential proves it with RLIMIT_AS and mincore. It does not select
-//! a public allocator, general containers, process/environment state,
-//! stdio/locale, libc.so, CRT, loader, sysroot, family promotion, or public x86
-//! support.
+//! 32-byte node with `malloc` and releases it with `free`. Installed owned
+//! products (`crabc_x86_owned_runtime`) keep exactly that edge: both calls
+//! resolve at the ELF lookup boundary, so an executable's malloc-family
+//! replacement observes every node as it does under musl's `dynamic.list`.
+//!
+//! The frozen dependency-free selected-static archive has no C allocator.
+//! There, and only there, each node owns one zero-filled private 4096-byte
+//! mapping, released by `tdelete` or `tdestroy`. That mechanism difference
+//! retains allocation failure rollback, node identity, key ownership, and
+//! lifetime semantics; the native differential proves it with RLIMIT_AS and
+//! mincore. Neither route selects general containers, process/environment
+//! state, stdio/locale, family promotion, or public x86 support.
 
 use core::arch::global_asm;
 use core::ffi::{c_int, c_void};
 use core::mem::{align_of, offset_of, size_of};
 use core::ptr::{self, null_mut};
 
+#[cfg(not(crabc_x86_owned_runtime))]
 use super::errno;
 
 const MAX_HEIGHT: usize = size_of::<*mut c_void>() * 8 * 3 / 2;
+#[cfg(not(crabc_x86_owned_runtime))]
 const NODE_MAPPING_SIZE: usize = 4_096;
+#[cfg(not(crabc_x86_owned_runtime))]
 const PROT_READ: c_int = 0x1;
+#[cfg(not(crabc_x86_owned_runtime))]
 const PROT_WRITE: c_int = 0x2;
+#[cfg(not(crabc_x86_owned_runtime))]
 const MAP_PRIVATE: c_int = 0x02;
+#[cfg(not(crabc_x86_owned_runtime))]
 const MAP_ANONYMOUS: c_int = 0x20;
+#[cfg(not(crabc_x86_owned_runtime))]
 const ENOMEM: c_int = 12;
 
 const PREORDER: c_int = 0;
@@ -45,6 +55,7 @@ type Compare = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 type WalkAction = unsafe extern "C" fn(*const c_void, c_int, c_int);
 type FreeKey = Option<unsafe extern "C" fn(*mut c_void)>;
 
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe extern "C" {
     #[link_name = "__mmap"]
     fn selected_mmap(
@@ -58,6 +69,40 @@ unsafe extern "C" {
 
     #[link_name = "__munmap"]
     fn selected_munmap(address: *mut c_void, length: usize) -> c_int;
+}
+
+// Musl's tsearch/tdelete/tdestroy call public malloc/free, and musl keeps
+// both preemptible in libc.so. Keep these calls at the ELF lookup boundary:
+// LTO could otherwise bind a Rust extern spelling directly to this crate's
+// own allocator definitions and bypass an executable's replacement.
+#[cfg(crabc_x86_owned_runtime)]
+global_asm!(
+    r#"
+    .text
+    .p2align 4
+    .globl __crabc_x86_tsearch_cabi_malloc
+    .hidden __crabc_x86_tsearch_cabi_malloc
+    .type __crabc_x86_tsearch_cabi_malloc,@function
+__crabc_x86_tsearch_cabi_malloc:
+    jmp malloc
+    .size __crabc_x86_tsearch_cabi_malloc, .-__crabc_x86_tsearch_cabi_malloc
+
+    .p2align 4
+    .globl __crabc_x86_tsearch_cabi_free
+    .hidden __crabc_x86_tsearch_cabi_free
+    .type __crabc_x86_tsearch_cabi_free,@function
+__crabc_x86_tsearch_cabi_free:
+    jmp free
+    .size __crabc_x86_tsearch_cabi_free, .-__crabc_x86_tsearch_cabi_free
+"#
+);
+
+#[cfg(crabc_x86_owned_runtime)]
+unsafe extern "C" {
+    #[link_name = "__crabc_x86_tsearch_cabi_malloc"]
+    fn node_malloc(size: usize) -> *mut c_void;
+    #[link_name = "__crabc_x86_tsearch_cabi_free"]
+    fn node_free(pointer: *mut c_void);
 }
 
 #[repr(C)]
@@ -126,6 +171,35 @@ unsafe fn set_node_height(node: *mut Node, height: c_int) {
     unsafe { ptr::addr_of_mut!((*node).height).write(height) };
 }
 
+/// Obtain one uninitialized node through musl's public `malloc` edge.
+///
+/// A null result is musl's allocation failure; the public allocator owns its
+/// errno publication and the tree remains unchanged.
+#[cfg(crabc_x86_owned_runtime)]
+#[inline]
+unsafe fn allocate_node(key: *const c_void) -> *mut Node {
+    // SAFETY: the tail forwards one size to the selected C `malloc`; a
+    // non-null result is suitably aligned writable storage for `Node`.
+    let node = unsafe { node_malloc(size_of::<Node>()) }.cast::<Node>();
+    if node.is_null() {
+        return null_mut();
+    }
+    unsafe { set_node_key(node, key) };
+    unsafe { set_child(node, 0, null_mut()) };
+    unsafe { set_child(node, 1, null_mut()) };
+    unsafe { set_node_height(node, 1) };
+    node
+}
+
+/// Release one node through musl's public `free` edge.
+#[cfg(crabc_x86_owned_runtime)]
+#[inline]
+unsafe fn release_node(node: *mut Node) {
+    // SAFETY: `node` came from `allocate_node` and is no longer reachable.
+    unsafe { node_free(node.cast::<c_void>()) };
+}
+
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 unsafe fn allocate_node(key: *const c_void) -> *mut Node {
     let mapping = unsafe {
@@ -154,6 +228,7 @@ unsafe fn allocate_node(key: *const c_void) -> *mut Node {
     node
 }
 
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 unsafe fn release_node(node: *mut Node) {
     let saved_errno = unsafe { errno::get_errno() };

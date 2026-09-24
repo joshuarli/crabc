@@ -588,6 +588,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-wcsftime [DYNAMIC_SYSROOT]  compare installed wide calendar formatting with musl
   owned-strfmon [DYNAMIC_SYSROOT]  compare installed monetary formatting with musl
   owned-fmtmsg [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed fmtmsg and cancellation semantics
+  owned-c-abi-compat [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed search/gettext/diagnostic/allocation C ABI compatibility against musl
   owned-utmpx [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify the complete inert musl utmpx source boundary
   owned-process-trio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed clone/vfork/daemon semantics against musl
   owned-underscore-fork [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed _Fork against musl
@@ -6972,7 +6973,7 @@ case "$command" in
     native-thread-signal-abi) ;;
     owned-system-cancellation) ;;
     owned-rand) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-strfmon) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -7212,7 +7213,7 @@ case "$command" in
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
-    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy|owned-regex)
+    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy|owned-regex)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
@@ -9283,6 +9284,10 @@ case "$command" in
     owned-fmtmsg)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_fmtmsg.sh "$@"
+        ;;
+    owned-c-abi-compat)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_c_abi_compat.sh "$@"
         ;;
     owned-underscore-fork)
         ensure_image

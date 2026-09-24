@@ -1,13 +1,22 @@
 //! Bounded static Linux/x86-64 gettext and message-catalog ABI boundary.
 //!
-//! This private selected-static leaf owns the installed `<libintl.h>` and
-//! `<nl_types.h>` entry points, but not a general localization subsystem.
-//! `gettext` and its domain/plural variants preserve musl's no-catalog
-//! identity fallback; `textdomain` and `bindtextdomain` retain one fixed
-//! current-domain buffer and at most four permanent binding records; the
-//! codeset entry accepts only UTF-8; and the message-catalog entry points are
-//! an explicit no-catalog profile. `catopen` always reports `ENOENT`,
-//! `catgets` returns its caller default, and `catclose` owns no mapping.
+//! This leaf owns the installed `<libintl.h>` and `<nl_types.h>` entry points,
+//! but not a general localization subsystem. `gettext` and its domain/plural
+//! variants preserve musl's no-catalog identity fallback; the codeset entry
+//! accepts only UTF-8; and the message-catalog entry points are an explicit
+//! no-catalog profile. `catopen` always reports `ENOENT`, `catgets` returns
+//! its caller default, and `catclose` owns no mapping.
+//!
+//! Domain and binding state has two storage owners selected at build time:
+//!
+//! - Installed owned products (`crabc_x86_owned_runtime`) keep musl's
+//!   ownership exactly. `textdomain` obtains its NAME_MAX+1 current-domain
+//!   buffer from public `malloc` once, and `bindtextdomain` prepends unbounded
+//!   permanent records from the private `__libc_calloc`-shaped seam, so an
+//!   executable's malloc-family replacement observes the same calls as musl.
+//! - The frozen dependency-free selected-static archive has no C allocator.
+//!   It retains one fixed current-domain buffer and at most four permanent
+//!   binding records.
 //!
 //! The local lock serializes calls through this selected leaf. It does not
 //! make direct use of a returned domain/directory pointer concurrent with a
@@ -28,14 +37,16 @@
 //! - `src/locale/{catopen,catgets,catclose}.c` supplies the public catalog
 //!   signatures and ordinary error/default conventions.
 //!
-//! Musl's full path allocates unbounded domains and bindings, consults locale
-//! and environment state, loads/mmap's `.mo` and message-catalog files, and
-//! parses plural expressions. The x86 archive deliberately selects none of
-//! those mechanisms: there is no catalog-file/NLSPATH/LANG lookup, locale
-//! database, plural parser, mmap, allocator, dynamic TLS, loader, or general
-//! gettext framework. The fixed four-binding capacity reports `ENOMEM` before
-//! state changes. This is not general gettext/catalog parity, libc.so, a CRT,
-//! a sysroot, family completion, promotion, or public x86 support.
+//! Musl's full path also consults locale and environment state, loads/mmap's
+//! `.mo` and message-catalog files, and parses plural expressions. This leaf
+//! deliberately selects none of those mechanisms: there is no
+//! catalog-file/NLSPATH/LANG lookup, locale database, plural parser, mmap,
+//! dynamic TLS, loader, or general gettext framework. The supported locales
+//! name no message catalog, so musl's own lookup would also reach its
+//! identity fallback. In the allocator-free archive the fixed four-binding
+//! capacity reports `ENOMEM` before state changes. This is not general
+//! gettext/catalog parity, family completion, promotion, or public x86
+//! support.
 
 #[cfg(not(all(
     target_os = "linux",
@@ -46,12 +57,13 @@ compile_error!("the x86 static gettext/catalog leaf requires little-endian Linux
 
 use core::ffi::{c_char, c_int, c_ulong, c_void};
 use core::hint::spin_loop;
-use core::ptr::{self, null_mut};
+use core::ptr::null_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::errno;
 
 const EINVAL: c_int = 22;
+#[cfg(not(crabc_x86_owned_runtime))]
 const ENOMEM: c_int = 12;
 const ENOENT: c_int = 2;
 const DOMAIN_CAPACITY: usize = 256;
@@ -59,35 +71,10 @@ const MAX_DOMAIN_LENGTH: usize = DOMAIN_CAPACITY - 1;
 const DIRECTORY_CAPACITY: usize = 4_096;
 // musl calls strnlen(dirname, PATH_MAX) then rejects a result >= PATH_MAX.
 const MAX_DIRECTORY_LENGTH: usize = DIRECTORY_CAPACITY - 1;
-const BINDING_CAPACITY: usize = 4;
-
 static DEFAULT_DOMAIN: [u8; 9] = *b"messages\0";
 static UTF8_CODESET: [u8; 6] = *b"UTF-8\0";
 
 static CATALOG_LOCK: AtomicBool = AtomicBool::new(false);
-static mut CURRENT_DOMAIN_SET: bool = false;
-static mut CURRENT_DOMAIN: [u8; DOMAIN_CAPACITY] = [0; DOMAIN_CAPACITY];
-
-#[derive(Clone, Copy)]
-struct Binding {
-    used: bool,
-    active: bool,
-    domain_length: usize,
-    directory_length: usize,
-    domain: [u8; DOMAIN_CAPACITY],
-    directory: [u8; DIRECTORY_CAPACITY],
-}
-
-const EMPTY_BINDING: Binding = Binding {
-    used: false,
-    active: false,
-    domain_length: 0,
-    directory_length: 0,
-    domain: [0; DOMAIN_CAPACITY],
-    directory: [0; DIRECTORY_CAPACITY],
-};
-
-static mut BINDINGS: [Binding; BINDING_CAPACITY] = [EMPTY_BINDING; BINDING_CAPACITY];
 
 /// Artifact-local state lock.
 ///
@@ -166,56 +153,341 @@ unsafe fn string_matches(
     true
 }
 
-#[inline]
-unsafe fn binding_at(index: usize) -> *mut Binding {
-    debug_assert!(index < BINDING_CAPACITY);
-    // SAFETY: callers retain the checked fixed array index and the state lock.
-    unsafe { ptr::addr_of_mut!(BINDINGS).cast::<Binding>().add(index) }
-}
+/// Musl-owned domain and binding storage for installed owned products.
+///
+/// Every function requires the caller to hold [`CatalogLock`].
+#[cfg(crabc_x86_owned_runtime)]
+mod state {
+    use core::ffi::{c_char, c_int, c_void};
+    use core::mem::size_of;
+    use core::ptr::{self, null_mut};
 
-#[inline]
-unsafe fn binding_domain_matches(
-    binding: *mut Binding,
-    domain: *const c_char,
-    domain_length: usize,
-) -> bool {
-    // SAFETY: callers hold the state lock and `binding` addresses this fixed
-    // array. A non-used record has no matching domain.
-    if !unsafe { ptr::addr_of!((*binding).used).read() } {
-        return false;
+    use super::{copy_c_string, string_matches, DEFAULT_DOMAIN, DOMAIN_CAPACITY};
+
+    // Pinned `textdomain.c` calls public `malloc`, which musl keeps
+    // preemptible in libc.so. Keep the call at the ELF lookup boundary so LTO
+    // cannot bind it directly to this crate's allocator definition.
+    core::arch::global_asm!(
+        r#"
+    .text
+    .p2align 4
+    .globl __crabc_x86_textdomain_cabi_malloc
+    .hidden __crabc_x86_textdomain_cabi_malloc
+    .type __crabc_x86_textdomain_cabi_malloc,@function
+__crabc_x86_textdomain_cabi_malloc:
+    jmp malloc
+    .size __crabc_x86_textdomain_cabi_malloc, .-__crabc_x86_textdomain_cabi_malloc
+"#
+    );
+
+    unsafe extern "C" {
+        #[link_name = "__crabc_x86_textdomain_cabi_malloc"]
+        fn domain_malloc(size: usize) -> *mut c_void;
     }
-    let stored_length = unsafe { ptr::addr_of!((*binding).domain_length).read() };
-    let stored = ptr::addr_of!((*binding).domain).cast::<u8>();
-    unsafe { string_matches(stored, stored_length, domain, domain_length) }
-}
 
-#[inline]
-unsafe fn binding_pair_matches(
-    binding: *mut Binding,
-    domain: *const c_char,
-    domain_length: usize,
-    directory: *const c_char,
-    directory_length: usize,
-) -> bool {
-    if !unsafe { binding_domain_matches(binding, domain, domain_length) } {
-        return false;
+    /// Musl's `struct binding` header; the domain and directory bytes follow.
+    #[repr(C)]
+    struct Binding {
+        next: *mut Binding,
+        directory_length: c_int,
+        active: c_int,
+        domain: *mut c_char,
+        directory: *mut c_char,
     }
-    let stored_length = unsafe { ptr::addr_of!((*binding).directory_length).read() };
-    let stored = ptr::addr_of!((*binding).directory).cast::<u8>();
-    unsafe { string_matches(stored, stored_length, directory, directory_length) }
+
+    const _: () = assert!(size_of::<Binding>() == 32);
+
+    static mut CURRENT_DOMAIN: *mut c_char = null_mut();
+    static mut BINDINGS: *mut Binding = null_mut();
+
+    #[inline]
+    unsafe fn c_length(value: *const c_char) -> usize {
+        let mut length = 0usize;
+        // SAFETY: stored records hold NUL-terminated strings they own.
+        while unsafe { value.cast::<u8>().add(length).read() } != 0 {
+            length += 1;
+        }
+        length
+    }
+
+    #[inline]
+    unsafe fn same(stored: *const c_char, value: *const c_char, length: usize) -> bool {
+        unsafe { string_matches(stored.cast::<u8>(), c_length(stored), value, length) }
+    }
+
+    pub(super) unsafe fn current_domain() -> *mut c_char {
+        let current = unsafe { ptr::addr_of!(CURRENT_DOMAIN).read() };
+        if current.is_null() {
+            DEFAULT_DOMAIN.as_ptr().cast_mut().cast::<c_char>()
+        } else {
+            current
+        }
+    }
+
+    /// Copy one validated domain into musl's lazily allocated buffer.
+    ///
+    /// A failed first allocation returns null with the allocator's errno.
+    pub(super) unsafe fn set_current_domain(domain: *const c_char, length: usize) -> *mut c_char {
+        let mut current = unsafe { ptr::addr_of!(CURRENT_DOMAIN).read() };
+        if current.is_null() {
+            // SAFETY: the tail forwards musl's NAME_MAX+1 request to `malloc`.
+            current = unsafe { domain_malloc(DOMAIN_CAPACITY) }.cast::<c_char>();
+            if current.is_null() {
+                return null_mut();
+            }
+            unsafe { ptr::addr_of_mut!(CURRENT_DOMAIN).write(current) };
+        }
+        // SAFETY: `length` is at most NAME_MAX, so the inclusive NUL fits.
+        unsafe { copy_c_string(current.cast::<u8>(), domain, length) };
+        current
+    }
+
+    pub(super) unsafe fn active_directory(domain: *const c_char, length: usize) -> *mut c_char {
+        let mut binding = unsafe { ptr::addr_of!(BINDINGS).read() };
+        while !binding.is_null() {
+            // SAFETY: records are permanent and only mutated under the lock.
+            unsafe {
+                if (*binding).active != 0 && same((*binding).domain, domain, length) {
+                    return (*binding).directory;
+                }
+                binding = (*binding).next;
+            }
+        }
+        null_mut()
+    }
+
+    /// Find or prepend one permanent binding, then make it the domain's sole
+    /// active record, exactly as musl's `bindtextdomain`.
+    pub(super) unsafe fn bind(
+        domain: *const c_char,
+        domain_length: usize,
+        directory: *const c_char,
+        directory_length: usize,
+    ) -> *mut c_char {
+        let mut selected = unsafe { ptr::addr_of!(BINDINGS).read() };
+        while !selected.is_null() {
+            unsafe {
+                if same((*selected).domain, domain, domain_length)
+                    && same((*selected).directory, directory, directory_length)
+                {
+                    break;
+                }
+                selected = (*selected).next;
+            }
+        }
+        if selected.is_null() {
+            let bytes = size_of::<Binding>() + domain_length + directory_length + 2;
+            // SAFETY: musl's `__libc_calloc` seam; records are never freed.
+            selected = unsafe { super::super::allocator::allocate_zeroed_internal(bytes) }.cast::<Binding>();
+            if selected.is_null() {
+                return null_mut();
+            }
+            unsafe {
+                let strings = selected.cast::<u8>().add(size_of::<Binding>());
+                let stored_domain = strings.cast::<c_char>();
+                let stored_directory = strings.add(domain_length + 1).cast::<c_char>();
+                copy_c_string(stored_domain.cast::<u8>(), domain, domain_length);
+                copy_c_string(stored_directory.cast::<u8>(), directory, directory_length);
+                selected.write(Binding {
+                    next: ptr::addr_of!(BINDINGS).read(),
+                    directory_length: directory_length as c_int,
+                    active: 0,
+                    domain: stored_domain,
+                    directory: stored_directory,
+                });
+                ptr::addr_of_mut!(BINDINGS).write(selected);
+            }
+        }
+        unsafe { (*selected).active = 1 };
+        let mut other = unsafe { ptr::addr_of!(BINDINGS).read() };
+        while !other.is_null() {
+            unsafe {
+                if other != selected && same((*other).domain, domain, domain_length) {
+                    (*other).active = 0;
+                }
+                other = (*other).next;
+            }
+        }
+        unsafe { (*selected).directory }
+    }
 }
 
-#[inline]
-unsafe fn binding_directory_pointer(binding: *mut Binding) -> *mut c_char {
-    unsafe { ptr::addr_of_mut!((*binding).directory).cast::<c_char>() }
-}
+/// Fixed domain and binding storage for the allocator-free selected archive.
+///
+/// Every function requires the caller to hold [`CatalogLock`].
+#[cfg(not(crabc_x86_owned_runtime))]
+mod state {
+    use core::ffi::c_char;
+    use core::ptr::{self, null_mut};
 
-#[inline]
-unsafe fn current_domain_pointer() -> *mut c_char {
-    if unsafe { ptr::addr_of!(CURRENT_DOMAIN_SET).read() } {
-        ptr::addr_of_mut!(CURRENT_DOMAIN).cast::<c_char>()
-    } else {
-        DEFAULT_DOMAIN.as_ptr().cast_mut().cast::<c_char>()
+    use super::{copy_c_string, errno, string_matches, DEFAULT_DOMAIN, DIRECTORY_CAPACITY, DOMAIN_CAPACITY, ENOMEM};
+
+    pub(super) const BINDING_CAPACITY: usize = 4;
+
+    static mut CURRENT_DOMAIN_SET: bool = false;
+    static mut CURRENT_DOMAIN: [u8; DOMAIN_CAPACITY] = [0; DOMAIN_CAPACITY];
+
+    #[derive(Clone, Copy)]
+    struct Binding {
+        used: bool,
+        active: bool,
+        domain_length: usize,
+        directory_length: usize,
+        domain: [u8; DOMAIN_CAPACITY],
+        directory: [u8; DIRECTORY_CAPACITY],
+    }
+
+    const EMPTY_BINDING: Binding = Binding {
+        used: false,
+        active: false,
+        domain_length: 0,
+        directory_length: 0,
+        domain: [0; DOMAIN_CAPACITY],
+        directory: [0; DIRECTORY_CAPACITY],
+    };
+
+    static mut BINDINGS: [Binding; BINDING_CAPACITY] = [EMPTY_BINDING; BINDING_CAPACITY];
+
+    #[inline]
+    unsafe fn binding_at(index: usize) -> *mut Binding {
+        debug_assert!(index < BINDING_CAPACITY);
+        // SAFETY: callers retain the checked fixed array index and the state lock.
+        unsafe { ptr::addr_of_mut!(BINDINGS).cast::<Binding>().add(index) }
+    }
+
+    #[inline]
+    unsafe fn binding_domain_matches(
+        binding: *mut Binding,
+        domain: *const c_char,
+        domain_length: usize,
+    ) -> bool {
+        // SAFETY: callers hold the state lock and `binding` addresses this fixed
+        // array. A non-used record has no matching domain.
+        if !unsafe { ptr::addr_of!((*binding).used).read() } {
+            return false;
+        }
+        let stored_length = unsafe { ptr::addr_of!((*binding).domain_length).read() };
+        let stored = ptr::addr_of!((*binding).domain).cast::<u8>();
+        unsafe { string_matches(stored, stored_length, domain, domain_length) }
+    }
+
+    #[inline]
+    unsafe fn binding_pair_matches(
+        binding: *mut Binding,
+        domain: *const c_char,
+        domain_length: usize,
+        directory: *const c_char,
+        directory_length: usize,
+    ) -> bool {
+        if !unsafe { binding_domain_matches(binding, domain, domain_length) } {
+            return false;
+        }
+        let stored_length = unsafe { ptr::addr_of!((*binding).directory_length).read() };
+        let stored = ptr::addr_of!((*binding).directory).cast::<u8>();
+        unsafe { string_matches(stored, stored_length, directory, directory_length) }
+    }
+
+    #[inline]
+    unsafe fn binding_directory_pointer(binding: *mut Binding) -> *mut c_char {
+        unsafe { ptr::addr_of_mut!((*binding).directory).cast::<c_char>() }
+    }
+
+    pub(super) unsafe fn current_domain() -> *mut c_char {
+        if unsafe { ptr::addr_of!(CURRENT_DOMAIN_SET).read() } {
+            ptr::addr_of_mut!(CURRENT_DOMAIN).cast::<c_char>()
+        } else {
+            DEFAULT_DOMAIN.as_ptr().cast_mut().cast::<c_char>()
+        }
+    }
+
+    pub(super) unsafe fn set_current_domain(domain: *const c_char, length: usize) -> *mut c_char {
+        unsafe {
+            copy_c_string(ptr::addr_of_mut!(CURRENT_DOMAIN).cast::<u8>(), domain, length);
+            ptr::addr_of_mut!(CURRENT_DOMAIN_SET).write(true);
+            current_domain()
+        }
+    }
+
+    pub(super) unsafe fn active_directory(domain: *const c_char, length: usize) -> *mut c_char {
+        for index in 0..BINDING_CAPACITY {
+            let binding = unsafe { binding_at(index) };
+            if unsafe { binding_domain_matches(binding, domain, length) }
+                && unsafe { ptr::addr_of!((*binding).active).read() }
+            {
+                return unsafe { binding_directory_pointer(binding) };
+            }
+        }
+        null_mut()
+    }
+
+    pub(super) unsafe fn bind(
+        domainname: *const c_char,
+        domain_length: usize,
+        dirname: *const c_char,
+        directory_length: usize,
+    ) -> *mut c_char {
+        let mut matched = None;
+        let mut vacant = None;
+        for index in 0..BINDING_CAPACITY {
+            let binding = unsafe { binding_at(index) };
+            if unsafe { !ptr::addr_of!((*binding).used).read() } {
+                if vacant.is_none() {
+                    vacant = Some(index);
+                }
+                continue;
+            }
+            if unsafe {
+                binding_pair_matches(
+                    binding,
+                    domainname,
+                    domain_length,
+                    dirname,
+                    directory_length,
+                )
+            } {
+                matched = Some(index);
+                break;
+            }
+        }
+
+        let selected = if let Some(index) = matched {
+            index
+        } else if let Some(index) = vacant {
+            let binding = unsafe { binding_at(index) };
+            unsafe {
+                copy_c_string(
+                    ptr::addr_of_mut!((*binding).domain).cast::<u8>(),
+                    domainname,
+                    domain_length,
+                );
+                copy_c_string(
+                    ptr::addr_of_mut!((*binding).directory).cast::<u8>(),
+                    dirname,
+                    directory_length,
+                );
+                ptr::addr_of_mut!((*binding).domain_length).write(domain_length);
+                ptr::addr_of_mut!((*binding).directory_length).write(directory_length);
+                ptr::addr_of_mut!((*binding).used).write(true);
+            }
+            index
+        } else {
+            unsafe { errno::set_errno(ENOMEM) };
+            return null_mut();
+        };
+
+        for index in 0..BINDING_CAPACITY {
+            let binding = unsafe { binding_at(index) };
+            if index != selected
+                && unsafe { binding_domain_matches(binding, domainname, domain_length) }
+            {
+                unsafe { ptr::addr_of_mut!((*binding).active).write(false) };
+            }
+        }
+        let binding = unsafe { binding_at(selected) };
+        unsafe {
+            ptr::addr_of_mut!((*binding).active).write(true);
+            binding_directory_pointer(binding)
+        }
     }
 }
 
@@ -256,17 +528,9 @@ pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
     };
     let _lock = CatalogLock::acquire();
     if domainname.is_null() {
-        return unsafe { current_domain_pointer() };
+        return unsafe { state::current_domain() };
     }
-    unsafe {
-        copy_c_string(
-            ptr::addr_of_mut!(CURRENT_DOMAIN).cast::<u8>(),
-            domainname,
-            length,
-        );
-        ptr::addr_of_mut!(CURRENT_DOMAIN_SET).write(true);
-        current_domain_pointer()
-    }
+    unsafe { state::set_current_domain(domainname, length) }
 }
 
 /// Set or query one bounded permanent gettext domain binding.
@@ -286,15 +550,7 @@ pub unsafe extern "C" fn bindtextdomain(
             return null_mut();
         };
         let _lock = CatalogLock::acquire();
-        for index in 0..BINDING_CAPACITY {
-            let binding = unsafe { binding_at(index) };
-            if unsafe { binding_domain_matches(binding, domainname, domain_length) }
-                && unsafe { ptr::addr_of!((*binding).active).read() }
-            {
-                return unsafe { binding_directory_pointer(binding) };
-            }
-        }
-        return null_mut();
+        return unsafe { state::active_directory(domainname, domain_length) };
     }
 
     let Some(domain_length) = (unsafe { bytes_at_most(domainname, MAX_DOMAIN_LENGTH) }) else {
@@ -307,68 +563,7 @@ pub unsafe extern "C" fn bindtextdomain(
     };
 
     let _lock = CatalogLock::acquire();
-    let mut matched = None;
-    let mut vacant = None;
-    for index in 0..BINDING_CAPACITY {
-        let binding = unsafe { binding_at(index) };
-        if unsafe { !ptr::addr_of!((*binding).used).read() } {
-            if vacant.is_none() {
-                vacant = Some(index);
-            }
-            continue;
-        }
-        if unsafe {
-            binding_pair_matches(
-                binding,
-                domainname,
-                domain_length,
-                dirname,
-                directory_length,
-            )
-        } {
-            matched = Some(index);
-            break;
-        }
-    }
-
-    let selected = if let Some(index) = matched {
-        index
-    } else if let Some(index) = vacant {
-        let binding = unsafe { binding_at(index) };
-        unsafe {
-            copy_c_string(
-                ptr::addr_of_mut!((*binding).domain).cast::<u8>(),
-                domainname,
-                domain_length,
-            );
-            copy_c_string(
-                ptr::addr_of_mut!((*binding).directory).cast::<u8>(),
-                dirname,
-                directory_length,
-            );
-            ptr::addr_of_mut!((*binding).domain_length).write(domain_length);
-            ptr::addr_of_mut!((*binding).directory_length).write(directory_length);
-            ptr::addr_of_mut!((*binding).used).write(true);
-        }
-        index
-    } else {
-        unsafe { errno::set_errno(ENOMEM) };
-        return null_mut();
-    };
-
-    for index in 0..BINDING_CAPACITY {
-        let binding = unsafe { binding_at(index) };
-        if index != selected
-            && unsafe { binding_domain_matches(binding, domainname, domain_length) }
-        {
-            unsafe { ptr::addr_of_mut!((*binding).active).write(false) };
-        }
-    }
-    let binding = unsafe { binding_at(selected) };
-    unsafe {
-        ptr::addr_of_mut!((*binding).active).write(true);
-        binding_directory_pointer(binding)
-    }
+    unsafe { state::bind(domainname, domain_length, dirname, directory_length) }
 }
 
 /// Query or select musl's UTF-8-only gettext codeset spelling.

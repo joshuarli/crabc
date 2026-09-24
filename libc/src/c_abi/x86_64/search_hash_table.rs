@@ -16,35 +16,85 @@
 //! public `ENTRY`, `ACTION`, and `struct hsearch_data` spellings and feature
 //! profile.
 //!
-//! Musl allocates its opaque table record and entry array through `calloc` and
-//! releases them through `free`. This selected x86 archive deliberately keeps
-//! public and hidden C allocation symbols absent. Each opaque record instead
-//! owns one zero-filled private mapping for its table and one for its current
-//! entry array; growth maps the replacement before rehashing and unmaps the
-//! old array only after success. The mechanism difference is unobservable
-//! through the specified API except VM granularity and is exercised under a
-//! temporary address-space ceiling with mapping-liveness probes in the native
-//! differential. Repeated `hcreate[_r]` on a live record intentionally retains
-//! musl's overwrite-and-leak behavior; `hdestroy[_r]` releases only the
-//! currently recorded table and is idempotent after clearing that record.
+//! Musl allocates its opaque 24-byte table record and entry array through
+//! `calloc` and releases them through `free`. Installed owned products
+//! (`crabc_x86_owned_runtime`) keep exactly those public edges, including
+//! `free(NULL)` from a repeated destroy, so an executable's malloc-family
+//! replacement observes the same calls as under musl's `dynamic.list`.
+//!
+//! The frozen dependency-free selected-static archive has no C allocator.
+//! There, and only there, each opaque record owns one zero-filled private
+//! mapping for its table and one for its current entry array; growth maps the
+//! replacement before rehashing and unmaps the old array only after success.
+//! That mechanism difference is unobservable through the specified API except
+//! VM granularity and is exercised under a temporary address-space ceiling
+//! with mapping-liveness probes in the native differential. Both routes keep
+//! musl's grow-then-release order. Repeated `hcreate[_r]` on a live record
+//! intentionally retains musl's overwrite-and-leak behavior; `hdestroy[_r]`
+//! releases only the currently recorded table and is idempotent after
+//! clearing that record.
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::{align_of, offset_of, size_of};
 use core::ptr::{self, null_mut};
 
+#[cfg(not(crabc_x86_owned_runtime))]
 use super::errno;
 
 const MINIMUM_SIZE: usize = 8;
 const MAXIMUM_SIZE: usize = usize::MAX / 2 + 1;
+#[cfg(not(crabc_x86_owned_runtime))]
 const PAGE_SIZE: usize = 4_096;
+#[cfg(not(crabc_x86_owned_runtime))]
 const PAGE_MASK: usize = PAGE_SIZE - 1;
+#[cfg(not(crabc_x86_owned_runtime))]
 const TABLE_MAPPING_SIZE: usize = PAGE_SIZE;
+#[cfg(not(crabc_x86_owned_runtime))]
 const PROT_READ: c_int = 0x1;
+#[cfg(not(crabc_x86_owned_runtime))]
 const PROT_WRITE: c_int = 0x2;
+#[cfg(not(crabc_x86_owned_runtime))]
 const MAP_PRIVATE: c_int = 0x02;
+#[cfg(not(crabc_x86_owned_runtime))]
 const MAP_ANONYMOUS: c_int = 0x20;
+#[cfg(not(crabc_x86_owned_runtime))]
 const ENOMEM: c_int = 12;
 
+// Musl's hcreate/hsearch/hdestroy call public calloc/free, and musl keeps
+// both preemptible in libc.so. Keep these calls at the ELF lookup boundary:
+// LTO could otherwise bind a Rust extern spelling directly to this crate's
+// own allocator definitions and bypass an executable's replacement.
+#[cfg(crabc_x86_owned_runtime)]
+core::arch::global_asm!(
+    r#"
+    .text
+    .p2align 4
+    .globl __crabc_x86_hsearch_cabi_calloc
+    .hidden __crabc_x86_hsearch_cabi_calloc
+    .type __crabc_x86_hsearch_cabi_calloc,@function
+__crabc_x86_hsearch_cabi_calloc:
+    jmp calloc
+    .size __crabc_x86_hsearch_cabi_calloc, .-__crabc_x86_hsearch_cabi_calloc
+
+    .p2align 4
+    .globl __crabc_x86_hsearch_cabi_free
+    .hidden __crabc_x86_hsearch_cabi_free
+    .type __crabc_x86_hsearch_cabi_free,@function
+__crabc_x86_hsearch_cabi_free:
+    jmp free
+    .size __crabc_x86_hsearch_cabi_free, .-__crabc_x86_hsearch_cabi_free
+"#
+);
+
+#[cfg(crabc_x86_owned_runtime)]
+unsafe extern "C" {
+    #[link_name = "__crabc_x86_hsearch_cabi_calloc"]
+    fn table_calloc(count: usize, size: usize) -> *mut c_void;
+    #[link_name = "__crabc_x86_hsearch_cabi_free"]
+    fn table_free(pointer: *mut c_void);
+}
+
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe extern "C" {
     #[link_name = "__mmap"]
     fn selected_mmap(
@@ -69,11 +119,15 @@ pub struct Entry {
 }
 
 /// Private table state addressed by the public opaque GNU record.
+///
+/// The owned layout is musl's 24-byte `struct __tab`; the allocator-free
+/// archive additionally records its current entry mapping length.
 #[repr(C)]
 struct Table {
     entries: *mut Entry,
     mask: usize,
     used: usize,
+    #[cfg(not(crabc_x86_owned_runtime))]
     entries_mapping_size: usize,
 }
 
@@ -95,8 +149,13 @@ const _: () = {
     assert!(offset_of!(HsearchData, table) == 0);
     assert!(offset_of!(HsearchData, unused1) == 8);
     assert!(offset_of!(HsearchData, unused2) == 12);
-    assert!(size_of::<Table>() <= TABLE_MAPPING_SIZE);
 };
+
+#[cfg(not(crabc_x86_owned_runtime))]
+const _: () = assert!(size_of::<Table>() <= TABLE_MAPPING_SIZE);
+
+#[cfg(crabc_x86_owned_runtime)]
+const _: () = assert!(size_of::<Table>() == 24);
 
 static mut GLOBAL_TABLE: HsearchData = HsearchData {
     table: null_mut(),
@@ -144,11 +203,13 @@ unsafe fn set_table_used(table: *mut Table, used: usize) {
     unsafe { ptr::addr_of_mut!((*table).used).write(used) };
 }
 
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 unsafe fn table_entries_mapping_size(table: *mut Table) -> usize {
     unsafe { ptr::addr_of!((*table).entries_mapping_size).read() }
 }
 
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 unsafe fn set_table_entries_mapping_size(table: *mut Table, length: usize) {
     unsafe { ptr::addr_of_mut!((*table).entries_mapping_size).write(length) };
@@ -164,6 +225,7 @@ unsafe fn clear_entry_key(entry: *mut Entry) {
     unsafe { ptr::addr_of_mut!((*entry).key).write(null_mut()) };
 }
 
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 fn mapping_size(bytes: usize) -> Option<usize> {
     let rounded = bytes.checked_add(PAGE_MASK)? & !PAGE_MASK;
@@ -174,6 +236,7 @@ fn mapping_size(bytes: usize) -> Option<usize> {
     }
 }
 
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 unsafe fn map_zeroed(length: usize) -> *mut c_void {
     // SAFETY: the private owner requests a fresh anonymous writable mapping.
@@ -199,6 +262,7 @@ unsafe fn map_zeroed(length: usize) -> *mut c_void {
     }
 }
 
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 unsafe fn release_mapping(address: *mut c_void, length: usize) {
     let saved_errno = unsafe { errno::get_errno() };
@@ -254,32 +318,30 @@ unsafe fn lookup(key: *const c_char, hash: usize, state: *mut HsearchData) -> *m
     }
 }
 
+/// Grow the current entry array, keeping the old array usable on failure.
+///
+/// # Safety
+///
+/// `state` addresses an exclusively accessible live table record.
 unsafe fn resize(requested: usize, state: *mut HsearchData) -> c_int {
     let table = unsafe { state_table(state) };
     let old_entries = unsafe { table_entries(table) };
     let old_size = unsafe { table_mask(table).wrapping_add(1) };
+    #[cfg(not(crabc_x86_owned_runtime))]
     let old_mapping_size = unsafe { table_entries_mapping_size(table) };
     let requested = requested.min(MAXIMUM_SIZE);
     let mut new_size = MINIMUM_SIZE;
     while new_size < requested {
         new_size = new_size.wrapping_mul(2);
     }
-    let Some(entry_bytes) = new_size.checked_mul(size_of::<Entry>()) else {
-        unsafe { errno::set_errno(ENOMEM) };
+    let Some(new_entries) = (unsafe { allocate_entries(new_size) }) else {
         return 0;
     };
-    let Some(new_mapping_size) = mapping_size(entry_bytes) else {
-        unsafe { errno::set_errno(ENOMEM) };
-        return 0;
-    };
-    let new_entries = unsafe { map_zeroed(new_mapping_size) }.cast::<Entry>();
-    if new_entries.is_null() {
-        return 0;
-    }
 
-    unsafe { set_table_entries(table, new_entries) };
+    unsafe { set_table_entries(table, new_entries.entries) };
     unsafe { set_table_mask(table, new_size.wrapping_sub(1)) };
-    unsafe { set_table_entries_mapping_size(table, new_mapping_size) };
+    #[cfg(not(crabc_x86_owned_runtime))]
+    unsafe { set_table_entries_mapping_size(table, new_entries.mapping_size) };
     if old_entries.is_null() {
         return 1;
     }
@@ -295,10 +357,75 @@ unsafe fn resize(requested: usize, state: *mut HsearchData) -> c_int {
         }
         old_index = old_index.wrapping_add(1);
     }
+    #[cfg(not(crabc_x86_owned_runtime))]
     unsafe { release_mapping(old_entries.cast::<c_void>(), old_mapping_size) };
+    #[cfg(crabc_x86_owned_runtime)]
+    // SAFETY: the rehash copied every live entry out of the old array.
+    unsafe { table_free(old_entries.cast::<c_void>()) };
     1
 }
 
+/// One zero-filled entry array and, without a C allocator, its mapping size.
+struct EntryArray {
+    entries: *mut Entry,
+    #[cfg(not(crabc_x86_owned_runtime))]
+    mapping_size: usize,
+}
+
+/// Allocate musl's `calloc(newsize, sizeof(ENTRY))` entry array.
+///
+/// The public `calloc` owns multiplication overflow and its `ENOMEM`.
+#[cfg(crabc_x86_owned_runtime)]
+unsafe fn allocate_entries(count: usize) -> Option<EntryArray> {
+    // SAFETY: the tail forwards both counts to the selected C `calloc`.
+    let entries = unsafe { table_calloc(count, size_of::<Entry>()) }.cast::<Entry>();
+    (!entries.is_null()).then_some(EntryArray { entries })
+}
+
+#[cfg(not(crabc_x86_owned_runtime))]
+unsafe fn allocate_entries(count: usize) -> Option<EntryArray> {
+    let Some(entry_bytes) = count.checked_mul(size_of::<Entry>()) else {
+        unsafe { errno::set_errno(ENOMEM) };
+        return None;
+    };
+    let Some(mapping_size) = mapping_size(entry_bytes) else {
+        unsafe { errno::set_errno(ENOMEM) };
+        return None;
+    };
+    let entries = unsafe { map_zeroed(mapping_size) }.cast::<Entry>();
+    (!entries.is_null()).then_some(EntryArray { entries, mapping_size })
+}
+
+/// Create a table record and its minimum entry array, as musl's `__hcreate_r`.
+#[cfg(crabc_x86_owned_runtime)]
+unsafe fn create(requested: usize, state: *mut HsearchData) -> c_int {
+    // SAFETY: the tail forwards one zero-filled record request to `calloc`.
+    let table = unsafe { table_calloc(1, size_of::<Table>()) }.cast::<Table>();
+    unsafe { set_state_table(state, table) };
+    if table.is_null() {
+        return 0;
+    }
+    if unsafe { resize(requested, state) } == 0 {
+        unsafe { table_free(table.cast::<c_void>()) };
+        unsafe { set_state_table(state, null_mut()) };
+        return 0;
+    }
+    1
+}
+
+/// Release the current record through musl's exact `__hdestroy_r` calls,
+/// including `free(NULL)` when no table is recorded.
+#[cfg(crabc_x86_owned_runtime)]
+unsafe fn destroy(state: *mut HsearchData) {
+    let table = unsafe { state_table(state) };
+    if !table.is_null() {
+        unsafe { table_free(table_entries(table).cast::<c_void>()) };
+    }
+    unsafe { table_free(table.cast::<c_void>()) };
+    unsafe { set_state_table(state, null_mut()) };
+}
+
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe fn create(requested: usize, state: *mut HsearchData) -> c_int {
     let table = unsafe { map_zeroed(TABLE_MAPPING_SIZE) }.cast::<Table>();
     unsafe { set_state_table(state, table) };
@@ -313,6 +440,7 @@ unsafe fn create(requested: usize, state: *mut HsearchData) -> c_int {
     1
 }
 
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe fn destroy(state: *mut HsearchData) {
     let table = unsafe { state_table(state) };
     if !table.is_null() {

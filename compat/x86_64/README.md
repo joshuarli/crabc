@@ -250,6 +250,19 @@ dynamic allocation-boundary check for caller-owned `asprintf` bytes, passwd
 temporary `getline` cleanup, and AIO list-state ownership. Its [component record](owned-c-allocation-interposition.md)
 keeps those executable allocator edges distinct from the FILE-lifetime receipt.
 
+`./scripts/dev-x86_64.sh owned-c-abi-compat [--static-sysroot STATIC] [DYNAMIC]`
+runs the selected `libc.c-abi-compat` search, queue, hash-table, `__qsort_r`,
+gettext, diagnostic-string, legacy-observation, and malloc-family policy
+behavior through installed static/static-PIE and dynamic PIE/non-PIE
+kernel/direct products against pinned musl. A second executable replaces the
+public malloc family and requires musl's exact allocation trace: `tsearch`
+nodes and `hsearch` tables use public `malloc`/`calloc`/`free`, `textdomain`
+uses public `malloc`, and `bindtextdomain` records use the private
+`__libc_calloc` seam. The candidate-only `profile` scenario checks the
+documented inert `setkey`/`encrypt` and no-catalog `catgets`/`catclose` limits.
+The allocator-free selected-static archive keeps its private mapping and
+fixed four-binding mechanisms; only owned products select musl's ownership.
+
 [owned-string-temporary-alias-contract.md](owned-string-temporary-alias-contract.md)
 records the standalone native proof for the five selected musl weak aliases:
 `stpcpy`, `stpncpy`, `strchrnul`, `memrchr`, and `mkostemps`. It is run directly
