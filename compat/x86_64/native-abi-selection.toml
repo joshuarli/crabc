@@ -546,13 +546,13 @@ disposition = "public-provider"
 owner = "x86-qsort-context-body"
 family = "libc.c-abi-compat"
 artifacts = ["candidate-static", "candidate-shared"]
-sources = ["libc/src/c_abi/x86_64/callback_algorithms.rs"]
+sources = ["libc/src/c_abi/x86_64/callback_algorithms.rs", "compat/crabc-rs/coverage.toml"]
 members = ["__qsort_r"]
 members_file = ""
 expected_type = "FUNC"
 delegated_members = []
-placement_metadata = {}
-reason = "Direct __qsort_r context ABI body; qsort_r is its separate WEAK same-definition alias."
+placement_metadata = {"candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Direct __qsort_r context ABI body; qsort_r is its separate WEAK same-definition alias. Musl's archive keeps the helper a hidden global and its libc.so does not export it; the frozen crabc shared ABI exports it as a candidate-only GLOBAL DEFAULT function."
 static_metadata_rule = "selected-native-oracle-function"
 
 [[owner_groups]]

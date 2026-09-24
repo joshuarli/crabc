@@ -408,6 +408,14 @@ class SourceOwnerPolicyTests(unittest.TestCase):
         self.assertEqual(qsort['selection']['group'], 'source-owned-qsort-context-body')
         self.assertIn('Direct __qsort_r context ABI body', qsort['selection']['reason'])
         self.assertNotIn('qsort_r', self.groups['source-owned-qsort-context-body']['members'])
+        # Musl hides the helper from libc.so; only the frozen crabc
+        # candidate-only dynamic export selects its shared placement.
+        self.assertEqual(qsort['expected_placements'], [
+            {'artifact_key': 'candidate-static', 'metadata': {'type': 'FUNC'}, 'metadata_rule': 'selected-native-oracle-function'},
+            {'artifact_key': 'candidate-shared', 'metadata': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}, 'metadata_rule': 'explicit'},
+        ])
+        coverage = selection.tomllib.loads((ROOT / 'compat/crabc-rs/coverage.toml').read_text(encoding='utf-8'))
+        self.assertIn('__qsort_r', coverage['dynamic_exports']['candidate_only_symbols'])
         startup = self.records['__libc_start_main']
         self.assertEqual(startup['selection']['group'], 'source-owned-crt-libc-startup-boundary')
         self.assertEqual([row['artifact_key'] for row in startup['expected_placements']], ['candidate-static', 'candidate-shared'])
