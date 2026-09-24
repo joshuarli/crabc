@@ -1,0 +1,289 @@
+{
+  "schema": "crabc-mimalloc-x86_64-m4-gate",
+  "format": 1,
+  "upstream": {
+    "version": "3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801"
+  },
+  "inventory": {
+    "authority": "compat/allocator/api-v3.5.0.json",
+    "groups": [
+      "aligned-allocation",
+      "extended-allocation",
+      "standard-allocation"
+    ],
+    "additional_items": [
+      "mi_collect"
+    ],
+    "disjoint_from": [
+      "compat/allocator/m6-gate-v3.5.0.json",
+      "compat/allocator/m7-gate-x86_64-v3.5.0.json"
+    ],
+    "excluded_items": {
+      "mi_chunkbin_t": "M7: the `mi_stats_t` chunk-bin enumeration of the statistics profile, not an allocation operation.",
+      "mi_commit_fun_t": "M6: the commit callback type of `mi_manage_os_memory_ex` managed memory.",
+      "mi_deferred_free_fun": "M7: the callback type of `mi_register_deferred_free`.",
+      "mi_error_fun": "M7: the callback type of `mi_register_error`.",
+      "mi_malloc_size": "M8: defined only by src/alloc-override.c under MI_MALLOC_OVERRIDE, the owned-libc `malloc_size`/`malloc_usable_size` override integration.",
+      "mi_malloc_usable_size": "M8: defined only by src/alloc-override.c under MI_MALLOC_OVERRIDE, the owned-libc `malloc_usable_size` override integration.",
+      "mi_output_fun": "M7: the callback type of `mi_register_output`."
+    }
+  },
+  "evidence": {
+    "differential:operations": {
+      "command": null,
+      "scope": "One checked-in C driver runs as two separate processes, linked once against the pinned C v3.5.0 release library and once against the native adapter, and both address-free traces must be equal: allocation, zeroing, calloc/mallocn overflow, usable and good size across every size class, the realloc family (ceil-half reuse, grow/shrink copy, rezalloc/recalloc tail zeroing, reallocf release, reallocarray/reallocarr errno), expand, the aligned family (natural, over-allocated, offset, OS-aligned singleton, invalid alignment), posix_memalign/memalign/valloc/pvalloc/aligned_alloc argument rules, umalloc/urealloc/ufree block sizes, free_size/free_aligned, and the strdup/realpath/dupenv conveniences with errno after each call."
+    },
+    "differential:page-kinds": {
+      "command": null,
+      "scope": "The same two-process driver compares the small, medium, large, and huge-singleton geometry both allocators select: block and usable size at each class boundary and MI_*_OBJ_SIZE_MAX edge, alignment of consecutive blocks, reuse of a freed block by the next same-class request, and huge-singleton release on free."
+    },
+    "differential:collection": {
+      "command": null,
+      "scope": "The same two-process driver compares `mi_collect(false)` and `mi_collect(true)` through observable effects after frees, deferred retirement, and page reuse: which previously freed blocks are reissued, and the committed-memory result both allocators report through the process's own mapping state."
+    },
+    "differential:oom-failure": {
+      "command": null,
+      "scope": "Under a fixed RLIMIT_AS both processes refuse the same OS-backed requests: NULL results and errno for malloc/calloc/aligned/realloc/posix_memalign, preservation of the old block and its bytes on realloc and aligned-realloc failure, reallocf release, and the `mi_option_retry_on_oom` retry outcome."
+    },
+    "unit:native-operations": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--native-tests"
+      ],
+      "scope": "The focused native-engine integration regressions for aligned and ordinary reallocation, owner-local and foreign reallocation, pointer-first usable size, and huge-singleton local free."
+    },
+    "adapter:export-boundary": {
+      "command": null,
+      "scope": "The native adapter builds as a static library whose defined global symbols are exactly the M4 external functions, compiles against the pinned `include/mimalloc.h` prototypes, links with no C mimalloc object, and executes on native x86-64."
+    },
+    "upstream:test-api": {
+      "command": null,
+      "scope": "Unmodified pinned `test/test-api.c` with `testhelper.h` compiles against the pinned headers, links against the native adapter only, and every M4-owned check reports `ok.` (the heap-os1, heap-os2, heap-many, and arena_reserve checks belong to M6)."
+    }
+  },
+  "gates": [
+    {
+      "id": "m4.allocation",
+      "required": true,
+      "items": [
+        "mi_calloc",
+        "mi_malloc",
+        "mi_malloc_small",
+        "mi_mallocn",
+        "mi_new",
+        "mi_new_n",
+        "mi_new_nothrow",
+        "mi_ucalloc",
+        "mi_umalloc",
+        "mi_umalloc_small",
+        "mi_uzalloc_small",
+        "mi_zalloc",
+        "mi_zalloc_small"
+      ],
+      "acceptance": "Default-Theap allocation follows src/alloc.c: `mi_malloc(0)` returns a distinct minimal block, requests above MI_MAX_ALLOC_SIZE and overflowing counts fail with the source errno, zeroing entries return zeroed usable bytes, the `u` forms report the page block size, and the `mi_new` family follows the plain-C `mi_try_new_handler` (error message, abort unless nothrow).",
+      "evidence": [
+        "differential:operations",
+        "adapter:export-boundary"
+      ],
+      "blocked_by": [
+        "No unprefixed `mi_*` C ABI exists over the native `__crabc_runtime` engine; the only C-callable routes are libc's malloc family and the prefixed single-thread `crabc_test_*` adapter.",
+        "The native runtime reports a client's usable size but not its page block size, which the `u` forms return."
+      ]
+    },
+    {
+      "id": "m4.free",
+      "required": true,
+      "items": [
+        "mi_cfree",
+        "mi_free",
+        "mi_free_aligned",
+        "mi_free_size",
+        "mi_free_size_aligned",
+        "mi_free_small",
+        "mi_ufree"
+      ],
+      "acceptance": "Every free form reaches src/free.c `mi_free_nonnull` after the PageMap lookup (NULL and unmapped pointers are no-ops; the sized and aligned forms ignore their hints in release), `mi_cfree` frees only a pointer `_mi_checked_ptr_page` maps and reports whether it did, and `mi_ufree` reports the freed page block size (0 when unmapped).",
+      "evidence": [
+        "differential:operations",
+        "adapter:export-boundary"
+      ],
+      "blocked_by": [
+        "No unprefixed `mi_*` C ABI exists over the native engine, and the native free boundary rejects an unmapped pointer where the source free forms return without effect."
+      ]
+    },
+    {
+      "id": "m4.realloc",
+      "required": true,
+      "items": [
+        "mi__expand",
+        "mi_expand",
+        "mi_new_realloc",
+        "mi_new_reallocn",
+        "mi_realloc",
+        "mi_reallocarr",
+        "mi_reallocarray",
+        "mi_reallocf",
+        "mi_reallocn",
+        "mi_recalloc",
+        "mi_rezalloc",
+        "mi_urealloc"
+      ],
+      "acceptance": "Reallocation follows `mi_theap_realloc_zero_ex`: NULL allocates, zero size returns a zero-initialized minimal block, ceil-half same-Heap reuse, copy of min(old usable, new size), zeroing of the source tail range, the old block survives every failure, and the alloc-posix.c errno rules; `mi_expand` never moves.",
+      "evidence": [
+        "differential:operations",
+        "unit:native-operations",
+        "adapter:export-boundary"
+      ],
+      "blocked_by": [
+        "No unprefixed `mi_*` C ABI exists over the native engine.",
+        "The native runtime has no `mi_expand` entry (the engine's `expand_in_place` is unexposed) and no pre/post block-size result for `mi_urealloc`."
+      ]
+    },
+    {
+      "id": "m4.aligned",
+      "required": true,
+      "items": [
+        "mi_aligned_alloc",
+        "mi_aligned_offset_recalloc",
+        "mi_aligned_recalloc",
+        "mi_calloc_aligned",
+        "mi_calloc_aligned_at",
+        "mi_malloc_aligned",
+        "mi_malloc_aligned_at",
+        "mi_memalign",
+        "mi_new_aligned",
+        "mi_new_aligned_nothrow",
+        "mi_posix_memalign",
+        "mi_realloc_aligned",
+        "mi_realloc_aligned_at",
+        "mi_recalloc_aligned",
+        "mi_recalloc_aligned_at",
+        "mi_rezalloc_aligned",
+        "mi_rezalloc_aligned_at",
+        "mi_umalloc_aligned",
+        "mi_uzalloc_aligned",
+        "mi_zalloc_aligned",
+        "mi_zalloc_aligned_at"
+      ],
+      "acceptance": "Aligned allocation follows src/alloc-aligned.c: power-of-two validation, the small free-head fast path, natural alignment, over-allocation with interior pointers through MI_PAGE_MAX_OVERALLOC_ALIGN, OS-aligned singletons above it (offset refused), `pointer + offset` alignment for the `_at` forms, the aligned ceil-half reuse predicate and tail zeroing for reallocation, and the alloc-posix.c `posix_memalign`/`memalign`/`aligned_alloc` rules.",
+      "evidence": [
+        "differential:operations",
+        "unit:native-operations",
+        "adapter:export-boundary"
+      ],
+      "blocked_by": [
+        "No unprefixed `mi_*` C ABI exists over the native engine.",
+        "The native runtime exposes only zero-offset aligned allocation and reallocation; the engine's `allocate_aligned_at`/`reallocate_aligned_at` forms are unreachable from it."
+      ]
+    },
+    {
+      "id": "m4.usable-size",
+      "required": true,
+      "items": [
+        "mi_good_size",
+        "mi_malloc_good_size",
+        "mi_usable_size"
+      ],
+      "acceptance": "`mi_usable_size` follows `_mi_usable_size` (NULL and unowned pointers report 0, interior aligned pointers report the adjusted extent) and `mi_good_size` returns the source bin or OS-page rounding for every request, including requests above MI_MAX_ALLOC_SIZE.",
+      "evidence": [
+        "differential:operations",
+        "adapter:export-boundary"
+      ],
+      "blocked_by": [
+        "No unprefixed `mi_*` C ABI exists over the native engine."
+      ]
+    },
+    {
+      "id": "m4.source-conveniences",
+      "required": true,
+      "items": [
+        "mi_check_owned",
+        "mi_dupenv_s",
+        "mi_is_redirected",
+        "mi_mbsdup",
+        "mi_pvalloc",
+        "mi_realpath",
+        "mi_strdup",
+        "mi_strndup",
+        "mi_valloc",
+        "mi_wcsdup",
+        "mi_wdupenv_s"
+      ],
+      "acceptance": "The alloc.c and alloc-posix.c conveniences allocate through the default Theap with the source length limits, errno results (`mi_wdupenv_s` is EINVAL on Linux), `mi_path_max` realpath buffer, OS-page `valloc`/`pvalloc` rounding, `mi_is_redirected` false, and `mi_check_owned` answering `mi_any_heap_contains` from the safe PageMap lookup.",
+      "evidence": [
+        "differential:operations",
+        "adapter:export-boundary"
+      ],
+      "blocked_by": [
+        "No unprefixed `mi_*` C ABI exists over the native engine, and no native safe-pointer PageMap query answers `mi_check_owned` for an arbitrary pointer."
+      ]
+    },
+    {
+      "id": "m4.collection",
+      "required": true,
+      "items": [
+        "mi_collect"
+      ],
+      "acceptance": "`mi_collect(force)` runs `mi_theap_collect_ex` on the calling thread's default Theap: retired-page and deferred collection, abandoned-page and free-list collection, freeing empty pages, and with `force` the arena purge and forced reclamation the source performs.",
+      "evidence": [
+        "differential:collection",
+        "adapter:export-boundary"
+      ],
+      "blocked_by": [
+        "The native runtime has no collection entry: default-Theap collection runs only inside owner exit, fork preparation, and the forced deferred-free OOM retry."
+      ]
+    },
+    {
+      "id": "m4.page-kinds",
+      "required": true,
+      "items": [],
+      "acceptance": "Small, medium, large, and huge-singleton pages are selected at the source size-class boundaries and freed back through their owners, with the same block sizes, alignments, and reuse as pinned C.",
+      "evidence": [
+        "differential:page-kinds",
+        "unit:native-operations"
+      ],
+      "blocked_by": [
+        "No differential compares the page kind, block size, and reuse the native engine selects at each class boundary with pinned C."
+      ]
+    },
+    {
+      "id": "m4.oom-failure",
+      "required": true,
+      "items": [],
+      "acceptance": "OS refusal propagates as the source NULL/errno result without corrupting allocator state, every failed reallocation preserves the old block and its bytes, and `mi_option_retry_on_oom` retries as the source does.",
+      "evidence": [
+        "differential:oom-failure",
+        "unit:native-operations"
+      ],
+      "blocked_by": [
+        "No differential exercises OS-refused allocation through the native engine; only invalid-size requests are covered by the focused regressions."
+      ]
+    },
+    {
+      "id": "m4.c-adapter",
+      "required": true,
+      "items": [],
+      "acceptance": "One native adapter exports exactly the M4 external functions with the pinned `mimalloc.h` prototypes over `__crabc_runtime`, attaches and finishes threads through the source thread-done key, and contains no C mimalloc object.",
+      "evidence": [
+        "adapter:export-boundary"
+      ],
+      "blocked_by": [
+        "No native `mi_*` adapter exists."
+      ]
+    },
+    {
+      "id": "m4.upstream",
+      "required": true,
+      "items": [],
+      "acceptance": "The unmodified pinned `test/test-api.c` passes every M4-owned check through the native adapter.",
+      "evidence": [
+        "upstream:test-api"
+      ],
+      "blocked_by": [
+        "The unmodified file cannot link against a native adapter: beyond the M4 exports it references `mi_option_disable` (M7), `mi_reserve_os_memory`, `mi_heap_new`, `mi_heap_malloc`, `mi_heap_malloc_aligned`, `mi_heap_delete`, `mi_heap_destroy` (M6), and `mi_stats_get` (M7)."
+      ]
+    }
+  ]
+}
