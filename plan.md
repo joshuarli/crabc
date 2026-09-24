@@ -32,9 +32,12 @@ are not transferable passes for a different revision.
   `rust-std-lto`), plus `performance.release`. C mimalloc remains the
   selected backend; allocator M2–M11 remain open. Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
-  member per libc module). The development engine harness measures the Rust
-  local path at roughly 0.04× pinned C single-thread (contended host; the
-  0.25× sanity gate is not met).
+  member per libc module). On an idle host the development engine harness
+  measures the Rust local path at 0.067× pinned C single-thread (0.25× sanity
+  gate not met; the pinned-C direct-page malloc and local-free fast paths are
+  not yet ported) and the Rust engine scales 3.0× on four workers. The
+  114-row runtime scorecard runs end to end; startup whole-process syscalls
+  (58 vs musl's 11) and ~2× PSS fail every row.
 - **Resume here, in order:**
   1. Family admissions are the critical path: every selected-private
      capability completes when its family is admitted. Get one passing
