@@ -101,6 +101,16 @@ run_capture() {
     run_recorded "$output" timeout 20 "$@"
 }
 
+# Failure reclamation paces 32768 detached-worker creations with 100 us
+# sleeps: at a load average above 100 one run took about ten seconds. Its hang
+# bound, like the probe's own alarm for that mode, is therefore 120 seconds;
+# the reclamation result itself is unchanged.
+run_reclamation() {
+    local output="$1"
+    shift
+    run_recorded "$output" timeout 120 "$@"
+}
+
 # Product builds, compiles and links have no execution deadline: their
 # duration measures host load, not the timer behavior under test.
 run_build() {
@@ -316,7 +326,7 @@ if [ -n "$static_product" ]; then
         validate_sealed_link "$static_product" "$work/probe.o" "$work/$mode" "$receipt" "$mode"
         run_capture "$work/$mode-ordinary.stdout" "$work/$mode" ordinary
         compare_oracle "$work/oracle-ordinary" "$work/$mode-ordinary" "$mode/ordinary"
-        run_capture "$work/$mode-failure.stdout" "$work/$mode" failure
+        run_reclamation "$work/$mode-failure.stdout" "$work/$mode" failure
     done
 fi
 
@@ -337,9 +347,9 @@ for mode in pie non-pie; do
     run_capture "$work/direct-$mode-ordinary.stdout" \
         chroot "$work/execution-root" "$interpreter" "/consumer-$mode" dynamic
     compare_oracle "$work/oracle-dynamic" "$work/direct-$mode-ordinary" "dynamic-$mode/direct"
-    run_capture "$work/dynamic-$mode-failure.stdout" \
+    run_reclamation "$work/dynamic-$mode-failure.stdout" \
         chroot "$work/execution-root" "/consumer-$mode" failure
-    run_capture "$work/direct-$mode-failure.stdout" \
+    run_reclamation "$work/direct-$mode-failure.stdout" \
         chroot "$work/execution-root" "$interpreter" "/consumer-$mode" failure
 done
 validate_timer_application_compile

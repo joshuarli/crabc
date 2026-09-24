@@ -360,8 +360,10 @@ int main(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "failure-once")) return failure_once();
     dynamic_tls = argc > 1 && !strcmp(argv[1], "dynamic");
+    /* Reclamation paces 32768 detached-worker creations with sleeps, so its
+     * duration follows host scheduling; its hang bound matches the runner's. */
+    if (argc > 1 && !strcmp(argv[1], "failure")) { alarm(120); failure_reclamation(); return 0; }
     alarm(20);
-    if (argc > 1 && !strcmp(argv[1], "failure")) { failure_reclamation(); return 0; }
     if (argc > 2) plugin_path = argv[2];
     creator_cancellation();
     kernel_timer(); thread_timer(); thread_timer_contract();
