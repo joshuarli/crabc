@@ -1,0 +1,354 @@
+{
+  "schema": "crabc-mimalloc-x86_64-m7-gate",
+  "format": 1,
+  "upstream": {
+    "version": "3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801"
+  },
+  "inventory": {
+    "authority": "compat/allocator/api-v3.5.0.json",
+    "groups": [
+      "callbacks",
+      "options",
+      "statistics-process-information"
+    ],
+    "additional_items": [
+      "mi_arenas_print",
+      "mi_debug_show_arenas",
+      "mi_thread_stats_print_out",
+      "mi_version"
+    ],
+    "mode_classifications": [
+      "architecture-profile",
+      "debug-mode",
+      "guarded-mode",
+      "instrumentation-mode",
+      "secure-mode"
+    ],
+    "additional_modes": [
+      "MI_CHECK_FULL",
+      "MI_DEBUG_FULL",
+      "MI_DEBUG_INTERNAL",
+      "MI_NO_PADDING",
+      "MI_PADDING",
+      "MI_SECURE_FULL",
+      "MI_TRACK_ASAN",
+      "MI_TRACK_ETW",
+      "MI_TRACK_VALGRIND",
+      "MI_XMALLOC"
+    ],
+    "disjoint_from": [
+      "compat/allocator/m6-gate-v3.5.0.json"
+    ]
+  },
+  "evidence": {
+    "differential:options-environment": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--options-differential"],
+      "scope": "Separate pinned-C and Rust processes install the same environment images and compare every descriptor's name, legacy spelling, KiB unit, value, init state, and mi_option_get_size; the TID-normalized deprecated/invalid warning fragments in table order; the boolean-versus-mi_option_set store path (guarded coupling); the clamp, size, set_default, enable/disable, and out-of-range results; and the complete mi_options_print_out output."
+    },
+    "differential:deferred-free-callback": {
+      "command": ["python3", "compat/allocator/x86_64_deferred_free_callback_evidence.py", "--offline"],
+      "scope": "Pinned C and Rust agree on deferred-free registration, generic-allocation heartbeat, force-on-OOM, owner-exit invocation, legal nested allocation, and recursion suppression."
+    },
+    "differential:diagnostic-output-owner": {
+      "command": [
+        "python3", "compat/allocator/x86_64_diagnostic_output_owner_evidence.py", "collect",
+        "--archive", ".work/allocator-x86_64/allocator-cache/mimalloc-3.5.0.tar.gz"
+      ],
+      "scope": "Pinned C and Rust agree on output registration, delayed-buffer flushing, NULL registration, post-init stderr routing, the warning cap, and final-statistics output."
+    },
+    "differential:error-message": {
+      "command": null,
+      "scope": "Pinned C and Rust agree on mi_register_error, the verbose/show_errors/max_errors gate of mi_show_error_message, the error prefix, handler invocation, and the source error code handed to the libc errno boundary."
+    },
+    "differential:option-effects": {
+      "command": null,
+      "scope": "For every descriptor with an allocator effect, a pinned-C/Rust trace in which mi_option_set before first use changes the same VM, arena, purge, reclaim, page-queue, and PageMap decision."
+    },
+    "differential:statistics": {
+      "command": null,
+      "scope": "Pinned-C/Rust mi_stats_* and mi_process_info values, JSON, and printed output for the selected MI_STAT level, normalized for addresses and times."
+    },
+    "differential:visitation-profiles": {
+      "command": null,
+      "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
+    },
+    "differential:debug-profile": {
+      "command": null,
+      "scope": "Pinned-C/Rust assertion, debug-fill, padding, and arena-print behavior of the MI_DEBUG/MI_SHOW_ERRORS/MI_PADDING profiles, with source-backed applicability for the sanitizer and tracking modes."
+    },
+    "differential:secure-profile": {
+      "command": null,
+      "scope": "Pinned-C/Rust encoded free lists, guard pages, randomized allocation, and double-free/corruption detection under each MI_SECURE level and MI_FREE_IS_CHECKED."
+    },
+    "differential:guarded-profile": {
+      "command": null,
+      "scope": "Pinned-C/Rust sampled guard-page allocation, guarded option effects, and Theap sample-rate/size-bound state under MI_GUARDED."
+    },
+    "differential:optional-isa": {
+      "command": null,
+      "scope": "Pinned-C/Rust results of the MI_OPT_ARCH and MI_OPT_SIMD bitmap/allocation paths on a CPU that supports them."
+    },
+    "audit:default-baseline": {
+      "command": null,
+      "scope": "The default x86-64 artifact keeps baseline x86_64-unknown-linux-musl target features and the release configuration image when every optional M7 profile is compiled out."
+    }
+  },
+  "gates": [
+    {
+      "id": "m7.options-environment",
+      "required": true,
+      "items": [
+        "mi_option_allow_large_os_pages",
+        "mi_option_allow_thp",
+        "mi_option_arena_eager_commit",
+        "mi_option_arena_is_numa_local",
+        "mi_option_arena_max_object_size",
+        "mi_option_arena_purge_mult",
+        "mi_option_arena_reserve",
+        "mi_option_deprecated_abandoned_page_purge",
+        "mi_option_deprecated_eager_commit",
+        "mi_option_deprecated_eager_commit_delay",
+        "mi_option_deprecated_max_segment_reclaim",
+        "mi_option_deprecated_page_reset",
+        "mi_option_deprecated_purge_extend_delay",
+        "mi_option_deprecated_segment_cache",
+        "mi_option_deprecated_segment_reset",
+        "mi_option_deprecated_visit_abandoned",
+        "mi_option_destroy_on_exit",
+        "mi_option_disable",
+        "mi_option_disallow_arena_alloc",
+        "mi_option_disallow_os_alloc",
+        "mi_option_eager_region_commit",
+        "mi_option_enable",
+        "mi_option_generic_collect",
+        "mi_option_get",
+        "mi_option_get_clamp",
+        "mi_option_get_size",
+        "mi_option_guarded_max",
+        "mi_option_guarded_min",
+        "mi_option_guarded_precise",
+        "mi_option_guarded_sample_rate",
+        "mi_option_guarded_sample_seed",
+        "mi_option_is_enabled",
+        "mi_option_large_os_pages",
+        "mi_option_limit_os_alloc",
+        "mi_option_max_errors",
+        "mi_option_max_vabits",
+        "mi_option_max_warnings",
+        "mi_option_minimal_purge_size",
+        "mi_option_os_tag",
+        "mi_option_page_commit_on_demand",
+        "mi_option_page_cross_thread_max_reclaim",
+        "mi_option_page_full_retain",
+        "mi_option_page_max_candidates",
+        "mi_option_page_max_reclaim",
+        "mi_option_page_reclaim_on_free",
+        "mi_option_pagemap_commit",
+        "mi_option_purge_decommits",
+        "mi_option_purge_delay",
+        "mi_option_reserve_huge_os_pages",
+        "mi_option_reserve_huge_os_pages_at",
+        "mi_option_reserve_os_memory",
+        "mi_option_reset_decommits",
+        "mi_option_reset_delay",
+        "mi_option_retry_on_oom",
+        "mi_option_set",
+        "mi_option_set_default",
+        "mi_option_set_enabled",
+        "mi_option_set_enabled_default",
+        "mi_option_show_errors",
+        "mi_option_show_stats",
+        "mi_option_t",
+        "mi_option_use_numa_nodes",
+        "mi_option_verbose",
+        "mi_options_print",
+        "mi_options_print_out",
+        "mi_version"
+      ],
+      "compile_time_modes": [],
+      "acceptance": "The complete `mi_options[]` table of src/options.c:112-177 (47 descriptors, release defaults, legacy spellings, KiB units) is one process image beside the output owner; `_mi_options_init` initializes it in table order after the verbose `process init` line, with each deprecated-spelling and invalid-value warning in source order and the warning cap applied after the loop; the environment grammar, boolean direct stores versus `mi_option_set` (guarded min/max coupling), UNINIT retry on an unavailable environment, the accessor and mutator semantics, and `mi_options_print_out` equal the pinned C behavior; raw `mi_option_t` values map to descriptors with the source out-of-range results.",
+      "evidence": [
+        "differential:options-environment"
+      ],
+      "blocked_by": [
+        "The accessors exist only as crate-private `OutputOwner` operations; no public or prefixed test-adapter C ABI maps raw `mi_option_t` values and the process owner to them."
+      ]
+    },
+    {
+      "id": "m7.option-effects",
+      "required": true,
+      "items": [],
+      "compile_time_modes": [],
+      "acceptance": "Every descriptor with an allocator effect is read from the one process descriptor table at its source read point, so `mi_option_set` before first use changes later behavior exactly as in C. Deprecated descriptors, `os_tag` (a macOS-only Mach VM tag at src/prim/unix/prim.c:371), and `retry_on_oom` (read only by the Windows primitive) have no selected Linux effect; the guarded descriptors belong to m7.guarded.",
+      "evidence": [
+        "differential:option-effects"
+      ],
+      "blocked_by": [
+        "`VmPolicy` reads its separately resolved `VmOptions` image rather than the process descriptor table, so a later `mi_option_set` cannot reach arena_eager_commit, purge_decommits, allow_large_os_pages, reserve_huge_os_pages, reserve_huge_os_pages_at, reserve_os_memory, purge_delay, use_numa_nodes, disallow_os_alloc, destroy_on_exit, arena_reserve, arena_purge_mult, disallow_arena_alloc, generic_collect, page_commit_on_demand, allow_thp, minimal_purge_size, arena_max_object_size, or arena_is_numa_local.",
+        "The engine fixes the release default of page_reclaim_on_free (src/theap.c:229, src/free.c:500), page_full_retain (src/theap.c:230-231), page_max_candidates (src/page.c:805), max_vabits (src/page-map.c:41,273), pagemap_commit (src/page-map.c:61,299), page_max_reclaim, and page_cross_thread_max_reclaim (src/free.c:455,462) instead of reading the descriptor.",
+        "`max_errors` has no reader until the `_mi_error_message` route exists (m7.callbacks)."
+      ]
+    },
+    {
+      "id": "m7.callbacks",
+      "required": true,
+      "items": [
+        "mi_register_deferred_free",
+        "mi_register_error",
+        "mi_register_output"
+      ],
+      "compile_time_modes": [
+        "MI_XMALLOC"
+      ],
+      "acceptance": "Deferred-free heartbeat/force timing (src/page.c:987-1004) runs outside owner/engine/TLD/Theap projections; `mi_register_output` flushes the delayed buffer and switches routes as in src/options.c; `mi_register_error` and `_mi_error_message` report through the source verbose/show_errors/max_errors gate and either call the registered handler or return the source error code for libc's errno policy; `MI_XMALLOC` aborts on allocation failure.",
+      "evidence": [
+        "differential:deferred-free-callback",
+        "differential:diagnostic-output-owner",
+        "differential:error-message"
+      ],
+      "blocked_by": [
+        "`mi_register_error`, `_mi_error_message`, `mi_show_error_message`, and the default error policy are absent.",
+        "The `MI_XMALLOC` abort-on-allocation-failure profile is absent.",
+        "`mi_register_output` and `mi_register_deferred_free` have no public or prefixed C ABI mapping, and deferred-free has no `mi_collect` invocation evidence."
+      ]
+    },
+    {
+      "id": "m7.statistics",
+      "required": true,
+      "items": [
+        "mi_process_info",
+        "mi_process_info_print",
+        "mi_process_info_print_out",
+        "mi_stat_count_t",
+        "mi_stat_counter_t",
+        "mi_stats_as_json",
+        "mi_stats_get",
+        "mi_stats_get_bin_size",
+        "mi_stats_get_json",
+        "mi_stats_print",
+        "mi_stats_print_out",
+        "mi_stats_reset",
+        "mi_stats_t",
+        "mi_thread_stats_print_out"
+      ],
+      "compile_time_modes": [],
+      "acceptance": "The public `mi_stats_t` image and process-wide accessors of include/mimalloc-stats.h and src/stats.c (get, JSON, print, reset, bin sizes, `mi_process_info`) and every producer of the selected statistics level equal the pinned C values and output.",
+      "evidence": [
+        "differential:statistics"
+      ],
+      "blocked_by": [
+        "No public statistics accessor, JSON renderer, print route, reset, or `mi_process_info` API exists; only the final-output scalar image is rendered.",
+        "Statistics producers gated on `MI_STAT > 0` are absent."
+      ]
+    },
+    {
+      "id": "m7.visitation",
+      "required": true,
+      "items": [],
+      "compile_time_modes": [],
+      "acceptance": "Heap, abandoned-page, Theap, and subprocess visitation (interfaces owned by M6) enumerate the source areas and blocks under every M7 profile, including debug padding, secure encoding, and guard pages, and visitor callbacks run outside owner/engine/TLD/Theap projections.",
+      "evidence": [
+        "differential:visitation-profiles"
+      ],
+      "blocked_by": [
+        "No area or block visitation exists, and no M7 profile exists to visit under."
+      ]
+    },
+    {
+      "id": "m7.debug",
+      "required": true,
+      "items": [
+        "mi_arenas_print",
+        "mi_debug_show_arenas"
+      ],
+      "compile_time_modes": [
+        "MI_CHECK_FULL",
+        "MI_DEBUG",
+        "MI_DEBUG_FULL",
+        "MI_DEBUG_INTERNAL",
+        "MI_DEBUG_TSAN",
+        "MI_DEBUG_UBSAN",
+        "MI_NO_DEBUG",
+        "MI_NO_PADDING",
+        "MI_PADDING",
+        "MI_SHOW_ERRORS",
+        "MI_TRACK",
+        "MI_TRACK_ASAN",
+        "MI_TRACK_ETW",
+        "MI_TRACK_VALGRIND"
+      ],
+      "acceptance": "Compile-time debug profiles select their own option defaults (for example `show_errors = 1` under `MI_DEBUG || MI_SHOW_ERRORS`), assertion levels, debug fill, and padding as in the pinned source; `mi_debug_show_arenas`/`mi_arenas_print` print the source arena image; sanitizer and tracking modes carry source-backed applicability decisions.",
+      "evidence": [
+        "differential:debug-profile"
+      ],
+      "blocked_by": [
+        "The engine selects only `DEBUG_LEVEL = 0` and `PADDING_SIZE = 0`; no debug, show-errors, or padding profile, assertion level, or debug fill exists.",
+        "`mi_debug_show_arenas` and `mi_arenas_print` are absent.",
+        "No applicability decision exists for the TSAN/UBSAN and Valgrind/ASAN/ETW modes."
+      ]
+    },
+    {
+      "id": "m7.secure",
+      "required": true,
+      "items": [],
+      "compile_time_modes": [
+        "MI_FREE_IS_CHECKED",
+        "MI_SECURE",
+        "MI_SECURE_FULL"
+      ],
+      "acceptance": "Each `MI_SECURE` level (encoded free lists, guard pages, randomized allocation, double-free and corruption detection) and `MI_FREE_IS_CHECKED` behave as the pinned source, including the `secure level` and free-list lines of `mi_options_print_out`.",
+      "evidence": [
+        "differential:secure-profile"
+      ],
+      "blocked_by": [
+        "The engine selects only `SECURE_LEVEL = 0`, unencoded free lists, and unchecked free."
+      ]
+    },
+    {
+      "id": "m7.guarded",
+      "required": true,
+      "items": [],
+      "compile_time_modes": [
+        "MI_GUARDED"
+      ],
+      "acceptance": "The `MI_GUARDED` profile selects its guarded sample-rate default, samples guard-page allocations from the guarded options through `_mi_theap_guarded_init`, disables `allow_large_os_pages` with the source warning in `_mi_options_init`, and prints the guarded build line.",
+      "evidence": [
+        "differential:guarded-profile"
+      ],
+      "blocked_by": [
+        "The engine selects only `GUARDED = false`; no guarded allocation path, Theap guarded state, or guarded option effect exists."
+      ]
+    },
+    {
+      "id": "m7.optional-isa",
+      "required": true,
+      "items": [],
+      "compile_time_modes": [
+        "MI_NO_OPT_ARCH",
+        "MI_OPT_ARCH",
+        "MI_OPT_SIMD"
+      ],
+      "acceptance": "The optional `MI_OPT_ARCH` (x86-64 `-march=haswell -mavx2`) and `MI_OPT_SIMD` profiles are compile-time opt-in and produce the pinned C results on a CPU that supports them.",
+      "evidence": [
+        "differential:optional-isa"
+      ],
+      "blocked_by": [
+        "No optional ISA profile or `MI_OPT_SIMD` bitmap path exists."
+      ]
+    },
+    {
+      "id": "m7.baseline",
+      "required": true,
+      "items": [],
+      "compile_time_modes": [],
+      "acceptance": "With every optional M7 profile compiled out, the default x86-64 artifact keeps the baseline target features and release configuration; no M7 profile raises the baseline.",
+      "evidence": [
+        "audit:default-baseline"
+      ],
+      "blocked_by": [
+        "No default-artifact target-feature and configuration audit exists."
+      ]
+    }
+  ]
+}
