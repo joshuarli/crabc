@@ -11930,8 +11930,132 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 
 [[family.verified_slice]]
+id = "thread.pthread-c11"
+description = "Private native x86 `thread.pthread-c11` capability inside still-planned `libc.pthread-tls`. The frozen surface is the 132 exports matched by `compat/crabc-rs/coverage.toml`'s `call_once`, `cnd_*`, `mtx_*`, `pthread_*`, `thrd_*`, and `tss_*` patterns. Every one of them is called by an installed runner whose command builds current static and dynamic owned products and compares pinned musl, static ET_EXEC, static PIE, and dynamic PIE/non-PIE with kernel and direct-loader entry, each built from the installed product and compared byte for byte with the pinned-musl stream. The runners cover thread creation, join, try/timed join, detach, exit and cancellation with cleanup handlers; pthread and C11 TSD with destructor rearming, deleted keys, the full 128-key application range, and musl key reuse; normal, recursive, error-checking, timed, robust, and priority-inheritance mutexes and their attributes; private, shared, timed, and cancelled conditions; rwlocks, barriers, spinlocks, and pthread_once/call_once including a cancelled initializer; attributes, scheduling, scope, concurrency, affinity, CPU clocks, cross-thread task names, pthread_kill and pthread_sigmask; and C11 thread, mutex, condition, and TSS adapters. Those runs consume the installed CRT, libc.so, loader, and sysroot without selecting their capabilities. It does not complete the family or support public x86."
+capabilities = ["thread.pthread-c11"]
+source_owners = [
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/clone.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/dynamic_tls.rs",
+  "libc/src/c_abi/x86_64/thread_pointer.rs",
+  "libc/src/c_abi/x86_64/pthread_identity.rs",
+  "libc/src/c_abi/x86_64/pthread_create_join.rs",
+  "libc/src/c_abi/x86_64/pthread_attr.rs",
+  "libc/src/c_abi/x86_64/pthread_attr_lifecycle.rs",
+  "libc/src/c_abi/x86_64/pthread_affinity.rs",
+  "libc/src/c_abi/x86_64/pthread_cpuclock.rs",
+  "libc/src/c_abi/x86_64/owned_pthread_name.rs",
+  "libc/src/c_abi/x86_64/pthread_scheduling.rs",
+  "libc/src/c_abi/x86_64/pthread_getconcurrency.rs",
+  "libc/src/c_abi/x86_64/pthread_setconcurrency.rs",
+  "libc/src/c_abi/x86_64/pthread_signal.rs",
+  "libc/src/c_abi/x86_64/thread_signal.rs",
+  "libc/src/c_abi/x86_64/signal_control.rs",
+  "libc/src/c_abi/x86_64/pthread_cancel.rs",
+  "libc/src/c_abi/x86_64/pthread_atfork.rs",
+  "libc/src/c_abi/x86_64/pthread_tsd.rs",
+  "libc/src/c_abi/x86_64/pthread_mutex.rs",
+  "libc/src/c_abi/x86_64/pthread_mutexattr_protocol_query.rs",
+  "libc/src/c_abi/x86_64/pthread_mutexattr_pshared_query.rs",
+  "libc/src/c_abi/x86_64/pthread_mutexattr_robust_query.rs",
+  "libc/src/c_abi/x86_64/pthread_mutexattr_type_query.rs",
+  "libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs",
+  "libc/src/c_abi/x86_64/pthread_mutex_prioceiling_query.rs",
+  "libc/src/c_abi/x86_64/pthread_vmlock.rs",
+  "libc/src/c_abi/x86_64/pthread_cond.rs",
+  "libc/src/c_abi/x86_64/owned_pthread_cond.rs",
+  "libc/src/c_abi/x86_64/pthread_condattr_clock.rs",
+  "libc/src/c_abi/x86_64/pthread_condattr_pshared.rs",
+  "libc/src/c_abi/x86_64/pthread_rwlock.rs",
+  "libc/src/c_abi/x86_64/pthread_barrier.rs",
+  "libc/src/c_abi/x86_64/pthread_barrierattr_pshared.rs",
+  "libc/src/c_abi/x86_64/pthread_spin_init.rs",
+  "libc/src/c_abi/x86_64/pthread_spin_destroy.rs",
+  "libc/src/c_abi/x86_64/pthread_spin_operations.rs",
+  "libc/src/c_abi/x86_64/pthread_once.rs",
+  "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+  "libc/src/c_abi/x86_64/c11_sync.rs",
+  "libc/src/c_abi/x86_64/thrd_yield.rs",
+  "compat/x86_64/owned_pthread_product_arguments.sh",
+  "compat/x86_64/run_pthread_wait_witness.py",
+  "compat/x86_64/owned_pthread_join_cancel_probe.c",
+  "compat/x86_64/run_owned_pthread_join_cancel.sh",
+  "compat/x86_64/owned_pthread_mutex_probe.c",
+  "compat/x86_64/run_owned_pthread_mutex.sh",
+  "compat/x86_64/owned_pthread_scheduling_probe.c",
+  "compat/x86_64/run_owned_pthread_scheduling.sh",
+  "compat/x86_64/owned_pthread_spin_probe.c",
+  "compat/x86_64/run_owned_pthread_spin.sh",
+  "compat/x86_64/owned_pthread_cond_timed_probe.c",
+  "compat/x86_64/owned_pthread_cond_cancel_probe.c",
+  "compat/x86_64/owned_pthread_cond_shared_probe.c",
+  "compat/x86_64/run_owned_pthread_cond_timed.sh",
+  "compat/x86_64/run_owned_pthread_cond_cancel.sh",
+  "compat/x86_64/owned_pthread_getattr_probe.c",
+  "compat/x86_64/run_owned_pthread_getattr.sh",
+  "compat/x86_64/owned_pthread_cpuclock_probe.c",
+  "compat/x86_64/run_owned_pthread_cpuclock.sh",
+  "scripts/build_x86_64_owned_sysroot.py",
+  "scripts/build_x86_64_owned_dynamic_sysroot.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/thread supplies the behavior oracle for every selected export; libc/src/c_abi/x86_64 source files carry their per-file musl mappings. Installed products select owned_pthread_name.rs, a port of src/thread/pthread_{set,get}name_np.c including the /proc/self/task/<tid>/comm path for another thread; the frozen private archive keeps its self-only leaf.",
+  "Pinned musl malloc creates no pthread key, so an application owns all PTHREAD_KEYS_MAX=128 keys. The installed C mimalloc backend creates one key through the public entry into its `_mi_heap_default_key`; the owned key table gives that one creation a private slot beyond the application range, and resumes key search at the last created key as musl next_key = j does.",
+  "Linux 5.10 x86-64 clone, futex, tkill/tgkill, sched_*affinity, sched_* scheduling, prctl, and clock_gettime system calls and the Variant-II %fs thread pointer are the kernel and ELF boundaries used by the installed products.",
+]
+x86_header_prerequisites = [
+  "Each runner compiles its probe with the pinned musl compiler against its own headers and with the installed product driver against the installed include tree; pthread.h, threads.h, sched.h, signal.h, and time.h supply every selected declaration and record layout.",
+]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-pthread-join-cancel", scope = "Join, tryjoin, and timed join status and deadlines; cancellation at entry and while blocked, disabled and masked states, cleanup and target reclamation; cleanup handlers before TSD destructors, four rearming destructor passes, C11 TSS destructors, deleted keys, the 128-key limit with errno preserved, and musl key reuse." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-pthread-mutex", scope = "Recursive, error-checking, timed, robust-owner, priority-inheritance, and condition-paired mutexes; mutex-attribute round trips and EINVAL rejection; C11 mtx and cnd signal, broadcast, and expired timed wait." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-pthread-cond-timed", scope = "Realtime and monotonic timed conditions, condition attributes, pending-wait validation, C11 timed waits, robust timeout/cancel/unrecoverable relock, private and process-shared handoffs across fork." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-pthread-cond-cancel", scope = "Main and worker condition-wait cancellation at entry and while blocked, disabled and masked states, signaled waits, and mutex reacquisition before cleanup." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-pthread-spin", scope = "Private and process-shared spinlock contention and publication; rwlock attributes, try and timed acquisition, and process-shared rwlock and barrier across fork; barrier attributes; a cancelled pthread_once initializer rerun by a waiter; contended C11 call_once." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-pthread-scheduling", scope = "Scheduling parameters, policy, priority, inherit/explicit attributes, and pthread_setattr_default_np/pthread_getattr_default_np defaults with errno preservation; inherited pthread_sigmask; scope, concurrency, and affinity on self and a live worker; cross-thread task names with and without /proc; pthread_kill; C11 identity, thrd_exit, detached C11 thread with TSS, and thrd_sleep status." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-pthread-getattr", scope = "pthread_getattr_np stack, guard, and detach metadata for main, caller, and live threads, custom stacks, and guard sizes." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-pthread-cpuclock", scope = "pthread_getcpuclockid for a held main thread, the caller, and a live worker, clock_gettime acceptance, and errno preservation." },
+]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX/C11 behavior oracle for src/thread and the thread-facing parts of src/signal and src/sched." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Thread, futex, signal, scheduling, affinity, and task-name system calls used by the installed products." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pthread and C11 record layouts and the Variant-II TLS ABI." }]
+
+[[family.verified_slice]]
+id = "time.posix-timer-thread-notify"
+description = "Private native x86 `time.posix-timer-thread-notify` capability inside still-planned `libc.pthread-tls`: `SIGEV_THREAD` notification through `timer_create`. The capability has no exported symbol of its own. One installed runner builds current static and dynamic owned products and compares pinned musl, static ET_EXEC, static PIE, and dynamic PIE/non-PIE with kernel and direct-loader entry, each built from the installed product and compared byte for byte with the pinned-musl stream. It covers one detached notification thread per timer regardless of the caller's joinable attributes, the requested stack size, application signals blocked in that thread, one thread across periodic expirations with overrun counts, callback normal return, pthread_exit, cancellation, and self-deletion with identity, errno, TLS, allocation, cleanup, and TSD reset between notifications, timer_delete during a running callback ending notification and the thread, creator cancellation, forked children, and failure reclamation. Those runs consume the installed CRT, libc.so, loader, and sysroot without selecting their capabilities. It does not complete the family or support public x86."
+capabilities = ["time.posix-timer-thread-notify"]
+source_owners = [
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/owned_posix_timers.rs",
+  "libc/src/c_abi/x86_64/pthread_create_join.rs",
+  "libc/src/c_abi/x86_64/pthread_attr.rs",
+  "libc/src/c_abi/x86_64/pthread_cancel.rs",
+  "libc/src/c_abi/x86_64/pthread_tsd.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/dynamic_tls.rs",
+  "compat/x86_64/owned_posix_timers_probe.c",
+  "compat/x86_64/owned_posix_timers_tls.c",
+  "compat/x86_64/owned_posix_timers_evidence.py",
+  "compat/x86_64/run_owned_posix_timers.sh",
+  "scripts/build_x86_64_owned_sysroot.py",
+  "scripts/build_x86_64_owned_dynamic_sysroot.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/time/timer_create.c, timer_delete.c, timer_getoverrun.c, timer_gettime.c, timer_settime.c, and src/env/__reset_tls.c map to owned_posix_timers.rs: a SIGEV_THREAD timer starts one detached thread with application signals blocked, which waits for SIGTIMER with sigwaitinfo, runs the callback, and resets TLS and TSD after pthread_exit or cancellation; a negative timer handle names that thread.",
+  "Linux 5.10 x86-64 timer_create=222 with SIGEV_THREAD_ID, rt_sigtimedwait, tkill, and timer_delete are the kernel boundary; SIGTIMER is signal 32.",
+]
+x86_header_prerequisites = [
+  "The probe uses signal.h struct sigevent with sigev_notify_function and sigev_notify_attributes, time.h timer and clock declarations, and pthread.h attributes, compiled against pinned musl headers and the installed include tree.",
+]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-posix-timers", scope = "Separate application and callback TLS objects linked through pinned musl and every installed mode; raw stdout/stderr/status and executable receipts retained. Thread notification contract, callback normal/exit/cancel/self-delete with TLS and TSD reset, deletion during a callback, creator cancellation, fork, and failure reclamation." },
+]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and POSIX behavior oracle for src/time/timer_*.c SIGEV_THREAD notification." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "POSIX timer, signal-wait, and thread-directed signal system calls." }]
+
+[[family.verified_slice]]
 id = "process.atfork-exit-hooks"
-description = "Private native x86 C process atfork/exit-hooks slice inside still-planned `libc.pthread-tls`. It selects one fixed-capacity, single-threaded `pthread_atfork`/`fork` transition and the already selected bounded child ordinary-exit callback dispatch. A live selected worker closes admission and its successful join reopens the route; concurrent selected-worker lifecycle calls remain excluded. Separately, the archive preserves musl's private weak `__ldso_atfork` and `__aio_atfork` fallbacks without routing the selected fork path through either. The latter is an inert archive override seam only: no AIO queue, lock, request-cancellation, or file-descriptor coordination behavior is selected. It cannot promote a general process, fork, exit, or pthread runtime, nor a loader or AIO runtime."
+description = "Private native x86 `process.atfork-exit-hooks` capability inside still-planned `libc.pthread-tls`: the private `__fork_handler` and `__funcs_on_exit` dispatchers behind `pthread_atfork`/`fork` and `atexit`/`__cxa_atexit`/`exit`. The frozen private archive keeps its fixed-capacity single-threaded route, recorded by the first command. The installed products allocate one process-lifetime record per registration; the second command builds current static and dynamic owned products and compares pinned musl, static ET_EXEC, static PIE, and dynamic PIE/non-PIE with kernel and direct-loader entry, each built from the installed product and compared byte for byte with the pinned-musl stream. It covers 67 to 70 ordered prepare/parent/child callbacks, registration from child, parent, and worker threads, a failed fork completing the parent route, atexit/__cxa_atexit newest-first order, registration during exit, hooks inherited by a fork child, and exit from a worker thread. The archive also preserves musl's private weak `__ldso_atfork` and `__aio_atfork` fallbacks without routing fork through them. Those runs consume the installed CRT, libc.so, loader, and sysroot without selecting their capabilities. It does not complete the family or support public x86."
 source_owners = [
   "compat/upstreams.toml",
   "libc/src/lib.rs",
@@ -11947,6 +12071,13 @@ source_owners = [
   "compat/x86_64/run_libc_pthread_atfork.sh",
   "compat/x86_64/static_c_abi_exports.txt",
   "scripts/dev-x86_64.sh",
+  "libc/src/c_abi/x86_64/process_exit.rs",
+  "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs",
+  "libc/src/c_abi/x86_64/dynamic_tls.rs",
+  "compat/x86_64/owned_atfork_registry_probe.c",
+  "compat/x86_64/run_owned_atfork_registry.sh",
+  "scripts/build_x86_64_owned_sysroot.py",
+  "scripts/build_x86_64_owned_dynamic_sysroot.py",
 ]
 x86_abi_prerequisites = [
   "Pinned musl 1.2.6 src/thread/pthread_atfork.c::__fork_handler/pthread_atfork and src/process/fork.c::fork map reverse prepare, forward parent-or-child callback order, the parent route after a raw fork error, and the private C hook dispatcher.",
@@ -11954,11 +12085,16 @@ x86_abi_prerequisites = [
   "The selected static archive has a 32-record no-allocation registry protected across raw fork=57. A live selected worker reservation or mapping makes fork fail closed with EAGAIN before prepare callbacks, while successful join reopens admission. The caller must still have no foreign thread, callback-driven worker creation, concurrent selected-worker lifecycle call, or other concurrent runtime state.",
   "The preexisting bounded atexit/exit/__funcs_on_exit block is exercised only in the child after all child atfork hooks. It remains a private no-allocation LIFO ordinary-exit block, not a concurrent process-exit protocol.",
   "A fixture-local PR_SET_NO_NEW_PRIVS classic-BPF filter returns EPERM from x86 fork=57 and musl's x86 clone=56 primitive. Both paths must run forward parent callbacks after reverse prepare callbacks and publish the raw error only after those callbacks.",
+  "Installed products replace the 32-record table with one allocated process-lifetime record per registration, taken before the registry lock from the internal allocator as musl __libc_malloc does; registration from a selected worker and fork after joining it are admitted. Exit hooks run through process_exit.rs from static_startup.rs or the dynamic lifecycle, newest first, including hooks registered while exiting.",
 ]
 x86_header_prerequisites = [
   "The shared fixture preprocesses project pthread.h, errno.h, stdatomic.h, stdint.h, stdlib.h, sys/prctl.h, sys/syscall.h, sys/types.h, sys/wait.h, and unistd.h. It ratchets exact pthread_atfork, fork, atexit, and exit function-pointer declarations plus Linux x86 fork=57, clone=56, prctl=157, seccomp=317, wait4=61, exit=60, and exit_group=231 values without claiming header closure.",
+  "The installed-product probe compiles against pinned musl headers and the installed include tree for pthread.h, stdlib.h, sys/wait.h, and unistd.h, declaring the ABI-level __cxa_atexit itself.",
 ]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-atfork", scope = "Pinned-musl project-header C reference plus a dependency-free x86 `crabc-libc` archive and `-nostdlib -static` candidate. The same fixture proves reverse prepare and forward parent/child hook order, child-only atexit/exit dispatch after child hooks, parent errno preservation, deterministic EPERM raw-fork failure with the parent route before errno publication, and child reaping. Candidate-only checks prove 32-record ENOMEM exhaustion, fail-closed EAGAIN before callbacks while a selected worker is live, and successful fork admission after joining that worker. The pinned musl source/static-manifest binding and candidate ELF checks prove default-visible STB_WEAK `__ldso_atfork` and `__aio_atfork` in the staged archive and ordinary candidate; caller STB_GLOBAL private overrides win after `fork` extracts the archive member. The AIO override traps on any later dispatch while the selected fork paths complete, so neither fallback is invoked and no AIO queue/lock, request-cancellation, or file-descriptor coordination behavior is selected. Archive/final-ELF/disassembly checks require pthread_atfork/fork/__fork_handler and bounded ordinary-exit routing, direct errno TPOFF access, raw fork=57, no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocator, or ambient runtime. It excludes recursive callbacks, callback-driven worker creation, foreign/concurrent threads and selected-worker lifecycle calls, signal masking/safety, allocator/TSD/cancellation/synchronization/loader reset, loader locks/resets/mapping/finalization, general fork/process-exit/pthread behavior, family completion, promotion, and public x86 support." }]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-atfork", scope = "Pinned-musl project-header C reference plus a dependency-free x86 `crabc-libc` archive and `-nostdlib -static` candidate. The same fixture proves reverse prepare and forward parent/child hook order, child-only atexit/exit dispatch after child hooks, parent errno preservation, deterministic EPERM raw-fork failure with the parent route before errno publication, and child reaping. Candidate-only checks prove 32-record ENOMEM exhaustion, fail-closed EAGAIN before callbacks while a selected worker is live, and successful fork admission after joining that worker. The pinned musl source/static-manifest binding and candidate ELF checks prove default-visible STB_WEAK `__ldso_atfork` and `__aio_atfork` in the staged archive and ordinary candidate; caller STB_GLOBAL private overrides win after `fork` extracts the archive member. The AIO override traps on any later dispatch while the selected fork paths complete, so neither fallback is invoked and no AIO queue/lock, request-cancellation, or file-descriptor coordination behavior is selected. Archive/final-ELF/disassembly checks require pthread_atfork/fork/__fork_handler and bounded ordinary-exit routing, direct errno TPOFF access, raw fork=57, no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocator, or ambient runtime. It excludes recursive callbacks, callback-driven worker creation, foreign/concurrent threads and selected-worker lifecycle calls, signal masking/safety, allocator/TSD/cancellation/synchronization/loader reset, loader locks/resets/mapping/finalization, general fork/process-exit/pthread behavior, family completion, promotion, and public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-atfork-registry", scope = "Resource-sized installed registry: 67 to 70 ordered callbacks, child/parent/worker registration, failed-fork parent completion; atexit/__cxa_atexit order, registration during exit, fork-inherited hooks, and exit from a worker thread." },
+]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/thread/pthread_atfork.c and src/process/fork.c on the selected ordering/error path, plus its private `weak_alias(dummy, __aio_atfork)` archive seam; src/aio/aio.c::__aio_atfork's AIO locks/tasks, allocated handler list, signal masking, complete runtime quiescence, and general exit semantics remain unselected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "fork=57, clone=56, wait4=61, exit=60, exit_group=231, pipe=22, prctl=157, seccomp=317, and direct initial-TLS errno boundary used only by the freestanding fixture/candidate." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 callback/function-pointer ABI and Variant-II initial-exec TLS used only by this static candidate." }]
 capabilities = ["process.atfork-exit-hooks"]
 

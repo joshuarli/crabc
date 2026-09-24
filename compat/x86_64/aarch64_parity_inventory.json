@@ -1208,7 +1208,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "thread.pthread-c11",
       "x86_family": "libc.pthread-tls"
     },
@@ -1268,7 +1268,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "time.posix-timer-thread-notify",
       "x86_family": "libc.pthread-tls"
     },
@@ -1347,8 +1347,8 @@
   ],
   "capability_state_counts": {
     "implemented-foundation": 180,
-    "missing": 8,
-    "selected-private": 35
+    "missing": 6,
+    "selected-private": 37
   },
   "families": [
     {
@@ -1449,7 +1449,7 @@
       "contract_state": "selected-private",
       "id": "libc.pthread-tls",
       "verified_artifact_count": 39,
-      "verified_slice_count": 1
+      "verified_slice_count": 3
     },
     {
       "aarch64_gates": [
