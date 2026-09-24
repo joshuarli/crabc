@@ -75,27 +75,17 @@ class ArchitectureRatchetTests(unittest.TestCase):
         self.assertTrue(report["summary"]["static_analysis_only"])
         self.assertIn("promotion-qualified runtime/artifact evidence", report["summary"]["unmet"])
         ceilings = self.manifest["ratchet_baseline"]["static_signal_ceiling"]
-        selected_source_metrics = {
-            "local_hot_path_process_scheduler_ops",
-            "local_hot_path_global_pagemap_leases",
-            "per_call_engine_park_resume",
-            "exited_owner_admission_survives_thread_exit",
-        }
+        # Only the structural PageMap mutation lease is still selected. The
+        # ticket-zero scheduler, per-call park/resume, and exited-owner
+        # admission scaffolding are test-only and may not return.
+        still_selected_metrics = {"local_hot_path_global_pagemap_leases"}
         self.assertEqual(report["ratchet"]["regressions"], sorted(report["ratchet"]["regressions"]))
         for name, metric in report["metrics"].items():
             self.assertLessEqual(metric["source_indicator_count"], ceilings[name])
-            if name in selected_source_metrics:
-                self.assertGreater(metric["source_indicator_count"], 0)
-            else:
-                self.assertEqual(metric["source_indicator_count"], 0)
-        self.assertEqual(
-            set(report["forbidden_scaffolding_compiled"]["found"]),
-            {
-                "exited_owner_admission_claim",
-                "per_call_parked_engine",
-                "process_global_page_owner_scheduler",
-            },
-        )
+            if name not in still_selected_metrics:
+                self.assertEqual(metric["source_indicator_count"], 0, name)
+        self.assertEqual(report["forbidden_scaffolding_compiled"]["found"], {})
+        self.assertNotIn("forbidden production scaffolding is still selected", report["summary"]["unmet"])
         phase_ef = report["phase_ef_forbidden_scaffolding"]
         self.assertEqual(
             phase_ef["test_only_audits"]["selected_in_production"],
@@ -851,6 +841,43 @@ struct DisabledScaffold;
             (root / "runtime.rs").write_text(source, encoding="utf-8")
             forbidden = RATCHET.collect_forbidden_scaffolding(root, manifest)
         self.assertEqual(set(forbidden["found"]), {"production_only"})
+
+    def test_cfg_test_match_arm_with_a_path_pattern_masks_only_that_arm(self) -> None:
+        # A `Type::Variant(..) =>` arm starts with an identifier followed by a
+        # colon, like a struct field. Masking must still end at that arm's own
+        # block, leaving every following production arm selected.
+        source = """\
+fn production(state: State) -> usize {
+    match state {
+        State::Active(value) => {
+            value
+        }
+        #[cfg(test)]
+        State::Parked(parked) => {
+            match parked.resume() {
+                Ok(value) => { let lease = test_only_lease(); value }
+                Err(_) => 0,
+            }
+        }
+        State::Dormant { lease } => {
+            let lease = lease.begin_page_lifecycle();
+            lease
+        }
+        #[cfg(test)]
+        State::Expression(value) => value + test_only_lease(),
+        State::Retained => 0,
+    }
+}
+"""
+        masked = RATCHET.production_rust_source(
+            source, self.manifest["phase_bc_call_graph"]["cfg_environment"]
+        )
+        self.assertNotIn("test_only_lease", masked)
+        self.assertNotIn("State::Parked", masked)
+        self.assertNotIn("State::Expression", masked)
+        self.assertIn("State::Active(value)", masked)
+        self.assertIn(".begin_page_lifecycle()", masked)
+        self.assertIn("State::Retained => 0,", masked)
 
     def test_production_cfg_masks_many_excluded_items_without_repeated_full_source_rewrites(
         self,

@@ -41,6 +41,18 @@ fn native_initial_local_sequence_keeps_page_out_of_legacy_scheduler() {
     };
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the live initial source anchor establishes a readable scalar baseline");
+    // This process has run no retired ticket-zero fixture, so the cold
+    // anchor allocation above is the only initial-owner construction. It
+    // builds the persistent owner directly into initial-thread compiler TLS
+    // rather than starting and moving a scheduler-guarded staging slot.
+    assert_eq!(
+        baseline.native_scheduler_transition_count, 0,
+        "constructing the initial source owner claims no legacy scheduler transition"
+    );
+    assert_eq!(
+        baseline.page_owner_ready, 1,
+        "the directly constructed initial source owner is ready for local operations"
+    );
 
     let local = match native_allocate_aligned(53, 16, false) {
         NativePageAllocationResult::Allocated(block) => block,

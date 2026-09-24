@@ -952,10 +952,8 @@ pub unsafe fn begin_native_allocator_source_fork_quiescence(
     let interval = unsafe { begin_native_allocator_fork_quiescence(registry)? };
     let mut valid = super::RUNTIME_PROCESS.is_active()
         && super::RUNTIME_PROCESS.logical_process_done.load(Ordering::Acquire) == super::PROCESS_DONE_OPEN
-        && super::RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == super::PAGE_OWNER_INITIAL_PERSISTENT
-        && !super::RUNTIME_PROCESS.has_active_post_exit_route()
-        && !super::RUNTIME_PROCESS.has_pending_post_exit_completion()
-        && !super::RUNTIME_PROCESS.has_retained_post_exit_route()
+        && super::RUNTIME_PROCESS.initial_owner_is_installed()
+        && !super::RUNTIME_PROCESS.has_retired_post_exit_route_state()
         && super::RUNTIME_FORK_ADMISSION.state.load(Ordering::Acquire) & super::FORK_GATE_HELD == 0;
     registry.visit_descriptors(&mut |descriptor| {
         if !valid { return; }

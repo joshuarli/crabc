@@ -401,7 +401,47 @@ def excluded_cfg_item_end(source: str, attribute_end: int) -> int:
                 return index
         return None
 
-    field = re.match(r"(?:pub(?:\([^)]*\))?\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:", source[cursor:])
+    def match_arm_end() -> int | None:
+        """End one `pattern => body` match arm, or None for another item.
+
+        The pattern may contain nested delimiters (tuple/struct patterns).
+        A block body ends at its own closing brace (plus an optional comma);
+        an expression body ends at its top-level comma or before the
+        enclosing brace. Without this, a cfg-excluded arm followed only by
+        block arms would mask every later production arm.
+        """
+
+        nesting: list[str] = []
+        pairs = {"(": ")", "[": "]", "{": "}"}
+        index = cursor
+        while index < len(source):
+            character = source[index]
+            if character in pairs:
+                nesting.append(pairs[character])
+            elif nesting and character == nesting[-1]:
+                nesting.pop()
+            elif not nesting and character in ",;}":
+                return None
+            elif not nesting and source.startswith("=>", index):
+                body = index + 2
+                whitespace = re.match(r"\s*", source[body:])
+                assert whitespace is not None
+                body += whitespace.end()
+                if source.startswith("{", body):
+                    end = matching_rust_delimiter(source, body, "{", "}") + 1
+                    trailing = re.match(r"\s*,", source[end:])
+                    return end + trailing.end() if trailing is not None else end
+                return None
+            index += 1
+        return None
+
+    arm_end = match_arm_end()
+    if arm_end is not None:
+        return arm_end
+
+    # `Type::Variant` paths also start with an identifier and a colon; only a
+    # single colon introduces a field declaration.
+    field = re.match(r"(?:pub(?:\([^)]*\))?\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:(?!:)", source[cursor:])
     if field is not None:
         return delimited_end({",", ";"}) or len(source)
 
@@ -1303,9 +1343,15 @@ def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str,
             *production_matches(runtime, r"\.suspend\(\)"),
             *production_matches(runtime, r"\.resume\("),
         ],
+        # A live worker's own `Option<AttachedWorkerAdmission>` TLS slot is
+        # not an exited-owner claim. A non-optional admission field or
+        # parameter is how a detached route carried it past thread exit, so
+        # that shape remains an indicator under either spelling.
         "exited_owner_admission_survives_thread_exit": [
             *production_matches(runtime, r"\bstruct\s+LaterThreadAdmissionClaim\b"),
-            *production_matches(runtime, r"\badmission\s*:\s*LaterThreadAdmissionClaim\b"),
+            *production_matches(
+                runtime, r"\badmission\s*:\s*(?:LaterThreadAdmissionClaim|AttachedWorkerAdmission)\b"
+            ),
         ],
         # Throughput and metadata plateau are runtime measurements. Keeping
         # their source signal sets empty records that source inspection has no

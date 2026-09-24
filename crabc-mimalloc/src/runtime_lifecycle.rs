@@ -167,28 +167,50 @@ const PROCESS_DONE_COMPLETE: u8 = 2;
 #[cfg(feature = "native-runtime-test-audit")]
 const INITIAL_TLD_NUMA_NODE_UNAVAILABLE: i32 = i32::MIN;
 
-// A separate process-long owner state keeps the original no-page lifecycle
-// intact until an internal ticket-zero request needs the first native page.
-// `BUSY` closes one complete source PageMap mutation operation; it is not a
-// general allocator lock. Every parked count represents that many distinct
-// current-thread-only suspended engines, each of which released its long
-// PageMap guard. The scheduler permits another complete operation only by
-// claiming the one `BUSY` state, so multiple parked owners never imply
-// concurrent mutation of plain PageMap entries.
+// One-way publication of the initial thread's persistent source owner.
+//
+// Pinned initialization gives ticket zero static TLD/Theap storage; the Rust
+// page engine for that Theap is constructed once, on the initial thread, and
+// moved directly into its pinned compiler-TLS owner cell. This word records
+// only that one-way construction so cross-thread lifecycle decisions (process
+// done, destroy capture) can ask whether the owner exists without projecting
+// another thread's TLS. It is not an operation scheduler: no ordinary
+// allocation, free, reallocation, or usable-size query reads or writes it.
+// Terminal failure is represented by the process `PROCESS_RETAINED` state.
+const INITIAL_OWNER_ABSENT: u8 = 0;
+const INITIAL_OWNER_INSTALLING: u8 = 1;
+const INITIAL_OWNER_INSTALLED: u8 = 2;
+
+// Retired ticket-zero page-owner scheduler.
+//
+// Before persistent owners existed, one process-static staging engine and
+// this state word serialized every native page operation: `BUSY` closed one
+// complete source PageMap mutation operation and every parked count named a
+// distinct current-thread-only suspended engine. Production no longer selects
+// the staging slot, the scheduler, parked engines, or the `ticket_zero_*`
+// friend seam. They compile only under `cfg(test)` and the default-off
+// `native-runtime-test-audit` feature so the historical fixtures and the
+// ticket-zero C soak adapter keep their original capability boundary.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PAGE_OWNER_COLD: usize = 0;
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PAGE_OWNER_STARTING: usize = 1;
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PAGE_OWNER_READY: usize = 2;
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PAGE_OWNER_BUSY: usize = 3;
-/// The process-static ticket-zero slot was moved into the initial thread's
-/// compiler-TLS owner cell.  This is an ownership publication used only at
-/// the one-time promotion boundary; ordinary initial local operations never
-/// inspect or transition this word.
+/// The legacy staging slot was moved into, or bypassed by direct
+/// construction of, the initial thread's compiler-TLS owner cell.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PAGE_OWNER_INITIAL_PERSISTENT: usize = 4;
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PAGE_OWNER_PARKED_BASE: usize = 5;
 /// Compatibility spelling for the first parked owner. Callers that need the
 /// number of independently suspended engines use
 /// [`page_owner_parked_count`] instead of treating this as one global route.
+#[cfg(test)]
 const PAGE_OWNER_PARKED: usize = PAGE_OWNER_PARKED_BASE;
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PAGE_OWNER_RETAINED: usize = usize::MAX;
 
 /// Encodes a nonzero number of independently suspended normal engines.
@@ -197,6 +219,7 @@ const PAGE_OWNER_RETAINED: usize = usize::MAX;
 /// claim its permanent owner without a count conversion. `RETAINED` stays
 /// outside the representable parked range, ensuring no arithmetic overflow
 /// can make a terminal process look quiescent.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 #[inline]
 const fn page_owner_parked_state(count: usize) -> Option<usize> {
     if count == 0 {
@@ -214,6 +237,7 @@ const fn page_owner_parked_state(count: usize) -> Option<usize> {
 /// deliberately have no count: none represents a retryable collection of
 /// suspended owner tokens.  In particular, the initial persistent owner is
 /// not a parked compatibility engine that another thread may borrow.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 #[inline]
 const fn page_owner_parked_count(state: usize) -> Option<usize> {
     if state == PAGE_OWNER_READY {
@@ -229,6 +253,7 @@ const fn page_owner_parked_count(state: usize) -> Option<usize> {
 /// or re-parked.  Both `BUSY` and any nonzero parked count still represent a
 /// live, typed runtime transition; callers that retain their own parked token
 /// may retry rather than treating that ordinary count change as terminal.
+#[cfg(test)]
 #[inline]
 const fn page_owner_transition_is_retryable(state: usize) -> bool {
     state == PAGE_OWNER_BUSY
@@ -242,6 +267,7 @@ const fn page_owner_transition_is_retryable(state: usize) -> bool {
 /// parked-session callers must continue to use
 /// [`page_owner_transition_is_retryable`], which deliberately excludes
 /// `READY` because their own token must remain represented by a nonzero count.
+#[cfg(test)]
 #[inline]
 const fn page_owner_session_begin_is_retryable(state: usize) -> bool {
     state == PAGE_OWNER_BUSY || page_owner_parked_count(state).is_some()
@@ -291,63 +317,86 @@ const NATIVE_C_MALLOC_ALIGNMENT: usize = 16;
 // free plus two same-page atomic publishers. Keeping all three clients in the
 // already-covered direct-cache source page exercises the upstream multi-push
 // remote-head transition without introducing a new page geometry.
+#[cfg(test)]
 const OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS: usize = 3;
+#[cfg(test)]
 const OWNER_EXIT_NON_DIRECT_SMALL_CLIENT_SLOTS: usize = 1;
+#[cfg(test)]
 const OWNER_EXIT_NON_DIRECT_SMALL_REQUEST: usize = SMALL_SIZE_MAX + 1;
+#[cfg(test)]
 const OWNER_EXIT_FULL_MEDIUM_REQUEST: usize = 64 * 1024;
+#[cfg(test)]
 const OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS: usize =
     MEDIUM_PAGE_SIZE / OWNER_EXIT_FULL_MEDIUM_REQUEST;
 // Keep the force-empty large page in a distinct source bin from the live
 // large member below. Its one remote client lets the existing aggregate
 // traversal prove the required page-empty-during-exit branch without turning
 // this runtime witness into a separate geometry-specific route.
+#[cfg(test)]
 const OWNER_EXIT_FORCE_EMPTY_LARGE_REQUEST: usize = MEDIUM_MAX_OBJ_SIZE + 1;
+#[cfg(test)]
 const OWNER_EXIT_PRE_EXIT_REMOTE_CLIENT_SLOTS: usize = 2;
+#[cfg(test)]
 const OWNER_EXIT_LIVE_LARGE_REQUEST: usize = MEDIUM_MAX_OBJ_SIZE + 64 * 1024;
+#[cfg(test)]
 const OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS: usize = 2;
 // Keep one live arena singleton in the same aggregate coordinator. This is
 // deliberately a normal unaligned request just above the regular-large range:
 // source owner exit must retain its PageMap-only terminal tail until B frees
 // its one opaque client, unlike the force-empty large member above.
+#[cfg(test)]
 const OWNER_EXIT_ARENA_SINGLETON_REQUEST: usize = LARGE_MAX_OBJ_SIZE + 1;
 // This stays inside the source's OS-aligned singleton profile while crossing
 // the `MI_SMALL_MAX_OBJ_SIZE` boundary that moves a full singleton from
 // `BIN_HUGE` to `BIN_FULL`. Its 128 KiB alignment exceeds the in-arena path
 // and remains below the 256 MiB metadata-alignment ceiling.
+#[cfg(test)]
 const OWNER_EXIT_OS_SINGLETON_REQUEST: usize = SMALL_MAX_OBJ_SIZE + 1;
+#[cfg(test)]
 const OWNER_EXIT_OS_SINGLETON_ALIGNMENT: usize = 128 * 1024;
 // This has the same source-rounded medium geometry as the mixed owner-exit
 // witness, but it returns one local free after two live clients. The source
 // owner-exit collector transfers that deferred block into the immediate head
 // required by the existing sole-medium adoption route.
+#[cfg(test)]
 const OWNER_EXIT_RECLAIM_MEDIUM_REQUEST: usize = OWNER_EXIT_FULL_MEDIUM_REQUEST;
 // This request stays inside the source direct-cache range. The direct-small
 // predecessor below validates its complete rounded cache image through the
 // existing specialized source drain; it is deliberately not reclassified as
 // a `SoleImmediateMedium` aggregate result.
+#[cfg(test)]
 const OWNER_EXIT_RECLAIM_DIRECT_SMALL_REQUEST: usize = 37;
+#[cfg(test)]
 const OWNER_EXIT_RECLAIM_CLIENT_SLOTS: usize = 2;
+#[cfg(test)]
 const OWNER_EXIT_NON_DIRECT_SMALL_START: usize = OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS;
+#[cfg(test)]
 const OWNER_EXIT_LIVE_LARGE_START: usize =
     OWNER_EXIT_NON_DIRECT_SMALL_START + OWNER_EXIT_NON_DIRECT_SMALL_CLIENT_SLOTS;
+#[cfg(test)]
 const OWNER_EXIT_MAPPED_MEDIUM_START: usize =
     OWNER_EXIT_LIVE_LARGE_START + OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS;
+#[cfg(test)]
 const OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START: usize =
     OWNER_EXIT_MAPPED_MEDIUM_START + (OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS - 1);
 // The third medium begins full, then A locally frees one exact client before
 // owner exit. Its remaining clients therefore reach the general aggregate as
 // an initially mapped, non-full regular member, distinct from both the
 // pre-exit-normalized and source-unmapped full-medium members above.
+#[cfg(test)]
 const OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START: usize =
     OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START + OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS;
+#[cfg(test)]
 const OWNER_EXIT_ARENA_SINGLETON_INDEX: usize =
     OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START + (OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS - 1);
+#[cfg(test)]
 const OWNER_EXIT_OS_SINGLETON_INDEX: usize = OWNER_EXIT_ARENA_SINGLETON_INDEX + 1;
 // This is the inline portion of the private client registry for the internal
 // generic page-bearing TLS owner. It covers the largest source aggregate used
 // by the focused owner-exit fixtures. Ordinary native sessions may grow a
 // private metadata-backed overflow beyond it; client identity remains inside
 // the session and never becomes a public registry or a routing capability.
+#[cfg(test)]
 const RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS: usize = OWNER_EXIT_OS_SINGLETON_INDEX + 1;
 // Preparation sees the two pre-exit source clients before their joined remote
 // publications. They are deliberately absent from the post-exit route after
@@ -355,6 +404,7 @@ const RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS: usize = OWNER_EXIT_OS_SINGLETON_I
 // A owns the live engine. Keep that source-fixture capacity separate from the
 // B-side opaque-client array so neither identity can be forgotten nor
 // accidentally handed to B twice.
+#[cfg(test)]
 const RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS: usize =
     RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS + OWNER_EXIT_PRE_EXIT_REMOTE_CLIENT_SLOTS;
 
@@ -397,6 +447,7 @@ fn note_native_scheduler_transition() {
 /// This is a Rust-only friend interface for future bounded integration tests;
 /// it has no C ABI and does not select the libc allocation backend.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub enum TicketZeroPageAllocationResult {
     Allocated(core::ptr::NonNull<u8>),
     Unavailable,
@@ -407,6 +458,7 @@ pub enum TicketZeroPageAllocationResult {
 /// Result of returning one exact private ticket-zero native allocation.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub enum TicketZeroPageFreeResult {
     Freed,
     Unavailable,
@@ -453,6 +505,7 @@ pub enum NativePageFreeResult {
 /// finishes the worker attachment. No pointer crosses the boundary.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub enum TicketZeroLaterThreadPageResult {
     Completed,
     Unavailable,
@@ -470,10 +523,12 @@ pub enum TicketZeroLaterThreadPageResult {
 /// still holds the exclusive engine lifecycle.
 #[doc(hidden)]
 #[must_use = "the remote-free publication must be published or returned to its runtime callback"]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub struct TicketZeroRemoteFreeProducer<'owner> {
     producer: RemoteFreeProducer<'owner>,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 impl<'owner> TicketZeroRemoteFreeProducer<'owner> {
     /// Publishes this one logical handoff to the live owner page's source
     /// remote-free head. It never exposes the transferred client pointer.
@@ -1063,7 +1118,7 @@ pub struct TicketZeroOwnerExitFreeRoute<'main> {
     /// source-shaped short-to-long adoption transition. It is not an exposed
     /// scheduler or allocation capability.
     pair: ProcessPageArenaLease,
-    admission: LaterThreadAdmissionClaim,
+    admission: AttachedWorkerAdmission,
     _consumer: PhantomData<&'main mut ()>,
 }
 
@@ -1084,13 +1139,13 @@ unsafe impl Send for TicketZeroOwnerExitFreeRoute<'_> {}
 #[must_use = "this proof must immediately complete the detached worker lifecycle"]
 #[cfg(test)]
 pub struct TicketZeroOwnerExitRouteFinished {
-    admission: LaterThreadAdmissionClaim,
+    admission: AttachedWorkerAdmission,
 }
 
 #[cfg(test)]
 impl TicketZeroOwnerExitRouteFinished {
     #[inline]
-    fn into_admission(self) -> LaterThreadAdmissionClaim {
+    fn into_admission(self) -> AttachedWorkerAdmission {
         self.admission
     }
 
@@ -1117,13 +1172,13 @@ impl TicketZeroOwnerExitRouteFinished {
 #[must_use = "a poisoned owner-exit result must retain its exact worker admission claim"]
 #[cfg(test)]
 pub struct TicketZeroOwnerExitRoutePoisoned {
-    admission: LaterThreadAdmissionClaim,
+    admission: AttachedWorkerAdmission,
 }
 
 #[cfg(test)]
 impl TicketZeroOwnerExitRoutePoisoned {
     #[inline]
-    fn into_admission(self) -> LaterThreadAdmissionClaim {
+    fn into_admission(self) -> AttachedWorkerAdmission {
         self.admission
     }
 }
@@ -1144,7 +1199,7 @@ pub struct TicketZeroOwnerExitReclaimRoute {
     clients: DetachedOwnerExitClientLedger,
     request: usize,
     pair: ProcessPageArenaLease,
-    admission: LaterThreadAdmissionClaim,
+    admission: AttachedWorkerAdmission,
 }
 
 // SAFETY: this contains no former TLD/Theap borrow. The sole mapped route is
@@ -1255,7 +1310,7 @@ struct NativeSoleMappedRegularPostExitRoute {
     /// it stays coupled to the route just as the aggregate native route does
     /// so a future source transition cannot substitute another process pair.
     _pair: ProcessPageArenaLease,
-    admission: LaterThreadAdmissionClaim,
+    admission: AttachedWorkerAdmission,
 }
 
 #[cfg(test)]
@@ -1296,7 +1351,7 @@ impl NativePostExitFreeRoute {
     }
 
     #[inline]
-    fn admission_ptr(&self) -> *const LaterThreadAdmissionClaim {
+    fn admission_ptr(&self) -> *const AttachedWorkerAdmission {
         match self {
             Self::Aggregate(route) => core::ptr::addr_of!(route.admission),
             Self::SoleMappedRegular(route) => core::ptr::addr_of!(route.admission),
@@ -1416,7 +1471,7 @@ fn classify_detached_owner_exit_free<'main>(
 fn detached_owner_exit_released_all<'main>(
     clients: &mut DetachedOwnerExitClientLedger,
     has_remaining_clients: bool,
-    admission: LaterThreadAdmissionClaim,
+    admission: AttachedWorkerAdmission,
 ) -> TicketZeroOwnerExitFreeOutcome<'main> {
     if has_remaining_clients {
         // A completed route cannot have an unconsumed private alias. The
@@ -2309,10 +2364,12 @@ pub type TicketZeroOwnerExitReclaimConsumer = fn(
 /// neither receiver obtains a client pointer or an owner capability.
 #[doc(hidden)]
 #[must_use = "both remote-free publications must be published or returned to the runtime callback"]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub struct TicketZeroRemoteFreeProducerPair<'owner> {
     producers: RemoteFreeProducerPair<'owner>,
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 impl<'owner> TicketZeroRemoteFreeProducerPair<'owner> {
     #[inline]
     pub fn split(
@@ -2338,6 +2395,7 @@ impl<'owner> TicketZeroRemoteFreeProducerPair<'owner> {
 /// 5B witness. A higher-ranked function pointer proves the adapter cannot
 /// retain either capability beyond the owner's scoped engine lifetime.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub type TicketZeroRemoteFreePublisher = for<'owner> fn(
     TicketZeroRemoteFreeProducerPair<'owner>,
 ) -> Result<(), TicketZeroRemoteFreeProducerPair<'owner>>;
@@ -2347,6 +2405,7 @@ pub type TicketZeroRemoteFreePublisher = for<'owner> fn(
 /// its higher-ranked lifetime prevents the publisher from retaining it after
 /// the owner has resumed.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub type TicketZeroSingleRemoteFreePublisher = for<'owner> fn(
     TicketZeroRemoteFreeProducer<'owner>,
 ) -> Result<(), TicketZeroRemoteFreeProducer<'owner>>;
@@ -2453,10 +2512,10 @@ pub enum ThreadFinalProcessExitOwnerResult {
 /// Both values are written once before `PROCESS_ACTIVE` is Release-published
 /// and are never moved, mutated, or dropped by this slice. The heap witness
 /// must be minted by the ticket-zero thread before workers exist; worker TPIDR
-/// identities may use only the already-published copy. The separate page-owner
-/// staging slot moves exactly once, under a zero-admission gate, into the
-/// initial thread's pinned compiler-TLS owner; it is unavailable afterward
-/// and every legacy access is guarded by `page_owner_state`. Main-thread
+/// identities may use only the already-published copy. The initial thread's
+/// page engine is not stored here: it is constructed once, under a
+/// zero-admission gate, directly into that thread's pinned compiler-TLS owner
+/// and `initial_owner` records only that one-way publication. Main-thread
 /// teardown needs a complete process-exit/fork contract and remains
 /// deliberately out of scope while later workers can still carry source list
 /// members.
@@ -2493,10 +2552,17 @@ struct RuntimeProcessStorage {
     process_done_retained_worker_count: AtomicUsize,
     owner: UnsafeCell<MaybeUninit<ProcessMainThread>>,
     main_heap: UnsafeCell<MaybeUninit<MainStaticHeapLease<'static>>>,
-    /// The ticket-zero staging owner is absent until the private native seam
-    /// asks it for a valid allocation. It stays here only until the one-time
-    /// zero-admission promotion into pinned initial TLS; afterward
-    /// `PAGE_OWNER_INITIAL_PERSISTENT` keeps legacy static-slot access closed.
+    /// `INITIAL_OWNER_*`: whether the initial thread's persistent source
+    /// owner has been constructed into its compiler-TLS cell. Written only by
+    /// the initial thread while later admission is closed; read by
+    /// cross-thread process-done and destroy preflights.
+    initial_owner: AtomicU8,
+    /// Retired scheduler: the ticket-zero staging owner is absent until a
+    /// legacy fixture asks it for a valid allocation. It stays here only
+    /// until the one-time zero-admission promotion into pinned initial TLS;
+    /// afterward `PAGE_OWNER_INITIAL_PERSISTENT` keeps static-slot access
+    /// closed.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     page_owner_state: AtomicUsize,
     /// Counts only detached routes whose source aggregate still owns live
     /// page clients. This is deliberately narrower than `page_owner_state`'s
@@ -2504,12 +2570,14 @@ struct RuntimeProcessStorage {
     /// no-page completion, and ticket zero must remain unavailable until that
     /// B lifecycle consumes the token. A source-active route, by contrast,
     /// lets ticket zero run a private operation beside its separate token.
+    #[cfg(test)]
     active_post_exit_route_count: AtomicUsize,
     /// Counts terminal source routes that have moved their parked scheduler
     /// token into a matched B worker's no-page completion. This is separate
     /// from source-active routes: even another live route must not reopen
     /// ticket zero while any B still owes the terminal lifecycle that releases
     /// its exact A-side worker-admission claim.
+    #[cfg(test)]
     pending_post_exit_completion_count: AtomicUsize,
     /// Counts routes whose source transition has become terminally retained.
     /// Such a route keeps its scheduler token and A-side admission forever,
@@ -2517,7 +2585,9 @@ struct RuntimeProcessStorage {
     /// ticket zero even if a separate route remains source-active; otherwise
     /// that live sibling would accidentally turn a retained terminal owner
     /// back into a private-operation admission.
+    #[cfg(test)]
     retained_post_exit_route_count: AtomicUsize,
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     page_owner: UnsafeCell<MaybeUninit<MainStaticRuntimeFirstArenaPageAllocator>>,
 }
 
@@ -2532,6 +2602,7 @@ struct RuntimeProcessStorage {
 /// mutation at once. Dropping an unfinished claim retains the process instead
 /// of reopening ticket zero over a possibly live map entry.
 #[must_use = "a runtime dormant-pair operation must finish, park, or retain its page owner"]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 struct RuntimeDormantPageOperation {
     runtime: &'static RuntimeProcessStorage,
     pair: Option<ProcessPageArenaLease>,
@@ -2556,6 +2627,7 @@ struct RuntimeDormantPageOperation {
 /// and through the fresh B worker's ordinary no-page finish. It may decrement
 /// exactly one parked owner only after that B lifecycle has detached.
 #[must_use = "a parked detached post-exit token must finish with B or remain terminally retained"]
+#[cfg(test)]
 struct RuntimeParkedPostExitRoute {
     runtime: &'static RuntimeProcessStorage,
     /// The source route still owns at least one exact client. Once its final
@@ -2583,6 +2655,7 @@ struct RuntimeParkedPostExitRoute {
 /// operation remains non-parkable and must finish empty before any parked
 /// owner resumes.
 #[must_use = "a runtime persistent page engine must finish, park, or retain its page owner"]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 struct RuntimePersistentPageEngine<'attachment, 'main> {
     allocator: Option<MainHeapThreadProcessPageAllocator<'attachment, 'main>>,
     operation: Option<RuntimeDormantPageOperation>,
@@ -2603,12 +2676,14 @@ struct RuntimePersistentPageEngine<'attachment, 'main> {
 /// mutation operation. A drop makes both the map and the runtime page owner
 /// terminal.
 #[must_use = "a runtime parked engine must resume or retain its exact live state"]
+#[cfg(test)]
 struct RuntimeParkedPersistentPageEngine {
     runtime: &'static RuntimeProcessStorage,
     paused: Option<MainHeapThreadPausedProcessPageAllocator>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 enum RuntimePersistentPageEngineBeginError {
     Unavailable,
     /// A separately typed bounded operation currently owns the lower
@@ -2620,6 +2695,7 @@ enum RuntimePersistentPageEngineBeginError {
 }
 
 #[must_use = "a failed runtime persistent-engine suspension retains its exact owner"]
+#[cfg(test)]
 enum RuntimePersistentPageEngineSuspendFailure<'attachment, 'main> {
     /// The live engine was unchanged; only its original A-side runtime claim
     /// may retry the split.
@@ -2644,6 +2720,7 @@ enum RuntimePersistentPageEngineSuspendFailure<'attachment, 'main> {
 }
 
 #[must_use = "a failed runtime persistent-engine resume retains its exact state token"]
+#[cfg(test)]
 enum RuntimePersistentPageEngineResumeFailure {
     /// Another complete operation currently owns the runtime's `BUSY` claim.
     /// The A-side token remains intact and may retry after that operation.
@@ -2671,6 +2748,7 @@ enum RuntimePersistentPageEngineResumeFailure {
 }
 
 #[must_use = "a failed runtime persistent-engine finish retains its exact source owner"]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 enum RuntimePersistentPageEngineFinishFailure<'attachment, 'main> {
     Allocator(MainHeapThreadProcessPageAllocatorFinishError<'attachment, 'main>),
     PageOwnerRetained,
@@ -2681,6 +2759,7 @@ enum RuntimePersistentPageEngineFinishFailure<'attachment, 'main> {
 /// the still-attached page session, while the attachment error identifies the
 /// pre-transition condition for focused lifecycle evidence.
 #[must_use = "a failed runtime persistent-engine thread-exit transition retains its exact source owner"]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 enum RuntimePersistentPageEngineThreadExitDrainFailure<'attachment, 'main> {
     Retained {
         engine: RuntimePersistentPageEngine<'attachment, 'main>,
@@ -2691,12 +2770,15 @@ enum RuntimePersistentPageEngineThreadExitDrainFailure<'attachment, 'main> {
 // SAFETY: the x86 source once gate (or the paused AArch64 COLD -> INITIALIZING
 // CAS) gives one writer exclusive access to `owner`. The final owner is written
 // before PROCESS_ACTIVE's Release store
-// and is thereafter read immutably. The independent page-owner scheduler
-// admits ticket zero only from READY and one complete later-main mutation at
-// a time; parked engines hold only current-thread typed tokens. Terminal
-// retention never mutates either owner.
+// and is thereafter read immutably. `initial_owner` is an atomic one-way
+// publication; the initial page engine itself lives in that thread's
+// compiler-TLS cell, never in this shared storage. In test/audit builds the
+// retired page-owner scheduler admits the staging slot only from READY and
+// one complete later-main mutation at a time; parked engines hold only
+// current-thread typed tokens. Terminal retention never mutates either owner.
 unsafe impl Sync for RuntimeProcessStorage {}
 
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 impl RuntimeDormantPageOperation {
     /// Restores this scheduler operation after a lower PageMap `try_lock`
     /// refusal that happened before it borrowed a session or mutated an
@@ -2775,6 +2857,7 @@ impl RuntimeDormantPageOperation {
     /// attachment-bound allocator state to resume: its already-detached
     /// source route acquires the PageMap boundary independently for each
     /// exact free.
+    #[cfg(test)]
     fn park_detached_post_exit(self) -> Result<RuntimeParkedPostExitRoute, Self> {
         if !self.may_park {
             self.runtime.retain_page_owner();
@@ -2825,6 +2908,7 @@ impl RuntimeDormantPageOperation {
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 impl Drop for RuntimeDormantPageOperation {
     fn drop(&mut self) {
         if self.active {
@@ -2837,6 +2921,7 @@ impl Drop for RuntimeDormantPageOperation {
     }
 }
 
+#[cfg(test)]
 impl RuntimeParkedPostExitRoute {
     /// Converts this token from a source-active detached route into B's
     /// terminal no-page completion. The token itself stays parked until B
@@ -2933,6 +3018,7 @@ impl RuntimeParkedPostExitRoute {
     }
 }
 
+#[cfg(test)]
 impl Drop for RuntimeParkedPostExitRoute {
     fn drop(&mut self) {
         if self.active {
@@ -2944,6 +3030,7 @@ impl Drop for RuntimeParkedPostExitRoute {
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
     /// Copies the retained all-free predicates for the one legacy
     /// persistent-worker regression. The engine remains the sole owner of
@@ -2958,6 +3045,7 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
     }
 
     #[inline]
+    #[cfg(test)]
     fn allocate(&mut self, request: usize, zero: bool) -> Option<core::ptr::NonNull<u8>> {
         self.allocator
             .as_mut()
@@ -2971,6 +3059,7 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
     /// engine. It may not have crossed a producer, post-exit route, or any
     /// foreign pointer domain.
     #[inline]
+    #[cfg(test)]
     unsafe fn free(
         &mut self,
         block: core::ptr::NonNull<u8>,
@@ -3015,6 +3104,7 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
         )
     }
 
+    #[cfg(test)]
     fn suspend(
         mut self,
     ) -> Result<
@@ -3141,6 +3231,7 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
     }
 }
 
+#[cfg(test)]
 impl RuntimeParkedPersistentPageEngine {
     fn resume<'attachment, 'main>(
         mut self,
@@ -3228,6 +3319,7 @@ impl RuntimeParkedPersistentPageEngine {
     }
 }
 
+#[cfg(test)]
 impl Drop for RuntimeParkedPersistentPageEngine {
     fn drop(&mut self) {
         if self.paused.is_some() {
@@ -3255,10 +3347,16 @@ impl RuntimeProcessStorage {
             process_done_retained_worker_count: AtomicUsize::new(0),
             owner: UnsafeCell::new(MaybeUninit::uninit()),
             main_heap: UnsafeCell::new(MaybeUninit::uninit()),
+            initial_owner: AtomicU8::new(INITIAL_OWNER_ABSENT),
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             page_owner_state: AtomicUsize::new(PAGE_OWNER_COLD),
+            #[cfg(test)]
             active_post_exit_route_count: AtomicUsize::new(0),
+            #[cfg(test)]
             pending_post_exit_completion_count: AtomicUsize::new(0),
+            #[cfg(test)]
             retained_post_exit_route_count: AtomicUsize::new(0),
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             page_owner: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
@@ -3267,6 +3365,7 @@ impl RuntimeProcessStorage {
     /// The route increments this narrower count before publishing its parked
     /// scheduler token, so ticket zero cannot observe a route token without
     /// the capability that permits its private interleaving.
+    #[cfg(test)]
     fn register_active_post_exit_route(&self) -> bool {
         let mut observed = self.active_post_exit_route_count.load(Ordering::Acquire);
         loop {
@@ -3290,6 +3389,7 @@ impl RuntimeProcessStorage {
     /// created B's typed completion. The remaining parked scheduler token is
     /// intentionally not represented here: it blocks ticket zero until B
     /// completes ordinary no-page teardown.
+    #[cfg(test)]
     fn unregister_active_post_exit_route(&self) -> bool {
         let mut observed = self.active_post_exit_route_count.load(Ordering::Acquire);
         loop {
@@ -3310,6 +3410,7 @@ impl RuntimeProcessStorage {
     }
 
     #[inline]
+    #[cfg(test)]
     fn has_active_post_exit_route(&self) -> bool {
         self.active_post_exit_route_count.load(Ordering::Acquire) != 0
     }
@@ -3318,6 +3419,7 @@ impl RuntimeProcessStorage {
     /// capability. This ordering leaves no interval in which another live
     /// route could make ticket zero appear available while B still owes a
     /// normal no-page lifecycle.
+    #[cfg(test)]
     fn register_pending_post_exit_completion(&self) -> bool {
         let mut observed = self
             .pending_post_exit_completion_count
@@ -3341,6 +3443,7 @@ impl RuntimeProcessStorage {
 
     /// Removes one B completion only after its exact parked scheduler token
     /// has left the count during B's ordinary no-page finish.
+    #[cfg(test)]
     fn finish_pending_post_exit_completion(&self) -> bool {
         let mut observed = self
             .pending_post_exit_completion_count
@@ -3363,6 +3466,7 @@ impl RuntimeProcessStorage {
     }
 
     #[inline]
+    #[cfg(test)]
     fn has_pending_post_exit_completion(&self) -> bool {
         self.pending_post_exit_completion_count.load(Ordering::Acquire) != 0
     }
@@ -3370,6 +3474,7 @@ impl RuntimeProcessStorage {
     /// Registers one terminally retained route before it drops its
     /// source-active capability. There is deliberately no matching decrement:
     /// the route owns source state that no normal B finalizer may release.
+    #[cfg(test)]
     fn register_retained_post_exit_route(&self) -> bool {
         let mut observed = self.retained_post_exit_route_count.load(Ordering::Acquire);
         loop {
@@ -3390,8 +3495,38 @@ impl RuntimeProcessStorage {
     }
 
     #[inline]
+    #[cfg(test)]
     fn has_retained_post_exit_route(&self) -> bool {
         self.retained_post_exit_route_count.load(Ordering::Acquire) != 0
+    }
+
+    /// Whether a retired detached post-exit route still owns runtime state.
+    ///
+    /// Only the `cfg(test)` historical route fixtures can create such a
+    /// route; production post-owner-exit frees reach their page-local
+    /// abandoned/W03 terminal state at the free boundary and leave no
+    /// runtime-level route, token, or admission behind.
+    #[inline]
+    fn has_retired_post_exit_route_state(&self) -> bool {
+        #[cfg(test)]
+        {
+            self.has_active_post_exit_route()
+                || self.has_pending_post_exit_completion()
+                || self.has_retained_post_exit_route()
+        }
+        #[cfg(not(test))]
+        {
+            false
+        }
+    }
+
+    /// Whether the initial thread's persistent source owner has been
+    /// constructed into its compiler-TLS cell and the process is not
+    /// terminally retained.
+    #[inline]
+    fn initial_owner_is_installed(&self) -> bool {
+        self.initial_owner.load(Ordering::Acquire) == INITIAL_OWNER_INSTALLED
+            && self.state.load(Ordering::Acquire) != PROCESS_RETAINED
     }
 
     #[inline]
@@ -3438,18 +3573,22 @@ impl RuntimeProcessStorage {
     ) -> SelectedProcessDoneResult {
         if !self.is_active()
             || self.state.load(Ordering::Acquire) == PROCESS_RETAINED
-            || self.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_RETAINED
-            || self.has_active_post_exit_route()
-            || self.has_pending_post_exit_completion()
-            || self.has_retained_post_exit_route()
+            || self.has_retired_post_exit_route_state()
         {
             return SelectedProcessDoneResult::Retained;
         }
 
-        // No partial page-engine or process scheduler transition may be
-        // renamed source retention. C's process-done path runs only after
-        // libc selected the unique final task; a BUSY or parked Rust owner
-        // would require a missing explicit transition owner instead.
+        // No partial initial-owner construction may be renamed source
+        // retention. C's process-done path runs only after libc selected the
+        // unique final task; an in-flight construction would require a
+        // missing explicit transition owner instead.
+        match self.initial_owner.load(Ordering::Acquire) {
+            INITIAL_OWNER_ABSENT | INITIAL_OWNER_INSTALLED => {}
+            INITIAL_OWNER_INSTALLING | _ => return SelectedProcessDoneResult::Retained,
+        }
+        // The retired scheduler's fixtures may still hold a BUSY or parked
+        // legacy engine; that is equally not a completed source owner.
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
         match self.page_owner_state.load(Ordering::Acquire) {
             PAGE_OWNER_COLD | PAGE_OWNER_READY | PAGE_OWNER_INITIAL_PERSISTENT => {}
             PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _ => {
@@ -3694,6 +3833,23 @@ impl RuntimeProcessStorage {
             return false;
         }
 
+        // The initial owner is constructed only on this thread, so while it
+        // crosses `fork` the publication word is either absent (no page was
+        // ever needed) or installed in this thread's pinned cell.
+        #[cfg(not(any(test, feature = "native-runtime-test-audit")))]
+        return match self.initial_owner.load(Ordering::Acquire) {
+            INITIAL_OWNER_ABSENT => true,
+            // `before_fork_with` invokes this preparation while the
+            // admission gate is held at count zero, so no later owner can
+            // borrow or transition the direct initial engine during this
+            // temporary source collection/inspection.
+            INITIAL_OWNER_INSTALLED => {
+                current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate()
+            }
+            INITIAL_OWNER_INSTALLING | _ => false,
+        };
+
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
         match self.page_owner_state.load(Ordering::Acquire) {
             // The historical no-page case remains valid.
             PAGE_OWNER_COLD => true,
@@ -3812,27 +3968,161 @@ impl RuntimeProcessStorage {
     }
 
     /// Makes the permanent native page owner terminal together with the
-    /// runtime bridge. This is the only fallback for a runtime scheduler
-    /// claim that can no longer prove whether its live engine, PageMap lease,
-    /// or current-thread attachment still owns source state.
+    /// runtime bridge. A source owner that can no longer prove whether its
+    /// live engine or current-thread attachment still owns source state is
+    /// retained, never reconstructed or routed through another owner.
     #[inline]
     fn retain_page_owner(&self) {
         self.retain();
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
         self.page_owner_state
             .store(PAGE_OWNER_RETAINED, Ordering::Release);
     }
 
-    /// Starts the hidden ticket-zero native owner without reserving an arena.
+    /// Constructs the initial thread's lazy first-arena page owner without
+    /// reserving an arena.
     ///
     /// This uses only the immutable process coordinator: the permanent
     /// session itself is designed to coexist with the copied shared-main Heap
-    /// witness already held by pthread lifecycle code. Any startup failure is
-    /// terminal, because retrying could reuse a partially claimed ticket-zero
-    /// page image under a different process/lifecycle observation.
+    /// witness already held by pthread lifecycle code. Any failure retains the
+    /// process, because retrying could reuse a partially claimed ticket-zero
+    /// page image under a different process/lifecycle observation. The caller
+    /// decides where the one returned owner lives; the permanent session it
+    /// carries latches terminal if that owner is ever dropped.
+    fn construct_initial_page_owner(
+        &'static self,
+        arena_storage: &'static ProcessSharedArenaStorage,
+    ) -> Option<MainStaticRuntimeFirstArenaPageAllocator> {
+        // SAFETY: allocation admission follows the final owner write and
+        // takes its shared immutable view; `ProcessMainThread` converts the
+        // static attachment through its shared permanent-session transition,
+        // so it never conflicts with the stored main-Heap lease.
+        let Some(owner) = (unsafe { self.allocation_owner() }) else {
+            self.retain_page_owner();
+            return None;
+        };
+        let Ok(allocation) = owner.allocation() else {
+            self.retain_page_owner();
+            return None;
+        };
+        let backing = allocation.process_backing();
+        let Ok(session) = owner.begin_process_lifetime_page_session() else {
+            self.retain_page_owner();
+            return None;
+        };
+        let page_owner = match backing {
+            Ok(backing) => MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                session, backing, arena_storage,
+            ),
+            // Explicit-config fixtures and the paused architecture retain
+            // their historical constructor. Native x86 requires source VM policy.
+            #[cfg(any(not(target_arch = "x86_64"), test))]
+            Err(ProcessMainInitError::VmPolicyUnavailable) => {
+                let Ok(page_map) = allocation.page_map() else {
+                    self.retain_page_owner();
+                    return None;
+                };
+                MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
+                    session, page_map, arena_storage,
+                )
+            }
+            Err(_) => {
+                self.retain_page_owner();
+                return None;
+            }
+        };
+        match page_owner {
+            Ok(page_owner) => Some(page_owner),
+            Err(_) => {
+                self.retain_page_owner();
+                None
+            }
+        }
+    }
+
+    /// Claims the one initial-owner construction on the initial thread.
+    ///
+    /// The caller holds the zero-admission gate, so no later attachment can
+    /// observe or borrow the returned owner before it is pinned in the
+    /// initial thread's compiler-TLS cell. A refused claim or construction
+    /// failure leaves `INITIAL_OWNER_INSTALLING` (or a retained process) in
+    /// place: there is no retry that could construct a second permanent
+    /// page session.
+    fn take_initial_page_owner_for_promotion(
+        &'static self,
+    ) -> Option<MainStaticRuntimeFirstArenaPageAllocator> {
+        if !self.is_on_initial_allocation_thread()
+            || self
+                .initial_owner
+                .compare_exchange(
+                    INITIAL_OWNER_ABSENT,
+                    INITIAL_OWNER_INSTALLING,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+        {
+            return None;
+        }
+        // A retired-scheduler fixture may already have started the legacy
+        // static staging owner. Move that exact image rather than building a
+        // second permanent session; otherwise exclude the legacy start while
+        // the direct owner is constructed.
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
+        match self.page_owner_state.compare_exchange(
+            PAGE_OWNER_READY,
+            PAGE_OWNER_BUSY,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                #[cfg(feature = "native-runtime-test-audit")]
+                note_native_scheduler_transition();
+                // SAFETY: the held admission gate excludes every later
+                // attachment, and READY -> BUSY excludes every legacy
+                // ticket-zero operation. This is the sole move out of the
+                // initialized static staging slot; the INITIAL_PERSISTENT
+                // publication keeps it closed afterward.
+                return Some(unsafe { (&*self.page_owner.get()).assume_init_read() });
+            }
+            Err(PAGE_OWNER_COLD) => {
+                if self
+                    .page_owner_state
+                    .compare_exchange(
+                        PAGE_OWNER_COLD,
+                        PAGE_OWNER_BUSY,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_err()
+                {
+                    return None;
+                }
+            }
+            Err(_) => return None,
+        }
+        self.construct_initial_page_owner(ProcessSharedArenaStorage::global())
+    }
+
+    /// Publishes the completed one-way initial-owner construction.
+    #[inline]
+    fn publish_initial_owner_installed(&self) {
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
+        self.page_owner_state
+            .store(PAGE_OWNER_INITIAL_PERSISTENT, Ordering::Release);
+        self.initial_owner
+            .store(INITIAL_OWNER_INSTALLED, Ordering::Release);
+    }
+
+    /// Starts the retired ticket-zero staging owner without reserving an
+    /// arena. Only historical fixtures reach this static slot; production
+    /// constructs the initial owner directly into compiler TLS.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn start_ticket_zero_page_owner(&'static self) -> bool {
         self.start_ticket_zero_page_owner_with_storage(ProcessSharedArenaStorage::global())
     }
 
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn start_ticket_zero_page_owner_with_storage(
         &'static self,
         arena_storage: &'static ProcessSharedArenaStorage,
@@ -3854,53 +4144,8 @@ impl RuntimeProcessStorage {
             Err(observed) if page_owner_parked_count(observed).is_some() => return true,
             Err(PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _) => return false,
         }
-
-        // SAFETY: allocation admission follows the final owner write and
-        // takes its shared immutable view; `ProcessMainThread` converts the
-        // static attachment through its shared permanent-session transition,
-        // so it never conflicts with the stored main-Heap lease.
-        let Some(owner) = (unsafe { self.allocation_owner() }) else {
-            self.retain();
-            self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
+        let Some(page_owner) = self.construct_initial_page_owner(arena_storage) else {
             return false;
-        };
-        let allocation = match owner.allocation() {
-            Ok(allocation) => allocation,
-            Err(_) => { self.retain_page_owner(); return false; }
-        };
-        let backing = allocation.process_backing();
-        let session = match owner.begin_process_lifetime_page_session() {
-            Ok(session) => session,
-            Err(_) => {
-                self.retain();
-                self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
-                return false;
-            }
-        };
-        let page_owner = match backing {
-            Ok(backing) => MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
-                session, backing, arena_storage,
-            ),
-            // Explicit-config fixtures and the paused architecture retain
-            // their historical constructor. Native x86 requires source VM policy.
-            #[cfg(any(not(target_arch = "x86_64"), test))]
-            Err(ProcessMainInitError::VmPolicyUnavailable) => {
-                let Ok(page_map) = allocation.page_map() else {
-                    self.retain_page_owner(); return false;
-                };
-                MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
-                    session, page_map, arena_storage,
-                )
-            }
-            Err(_) => { self.retain_page_owner(); return false; }
-        };
-        let page_owner = match page_owner {
-            Ok(owner) => owner,
-            Err(_) => {
-                self.retain();
-                self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
-                return false;
-            }
         };
         // SAFETY: this COLD -> STARTING winner remains the sole writer until
         // the READY publication below. The stored owner is process-lifetime
@@ -3921,6 +4166,7 @@ impl RuntimeProcessStorage {
     ///
     /// Returning `None` means this private route is inactive or recursively
     /// busy; it never asks the C allocator to interpret a native pointer.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn with_ticket_zero_page_owner<R>(
         &'static self,
         operation: impl FnOnce(&mut MainStaticRuntimeFirstArenaPageAllocator) -> R,
@@ -3928,6 +4174,7 @@ impl RuntimeProcessStorage {
         self.with_ticket_zero_page_owner_with_storage(ProcessSharedArenaStorage::global(), operation)
     }
 
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn with_ticket_zero_page_owner_with_storage<R>(
         &'static self,
         arena_storage: &'static ProcessSharedArenaStorage,
@@ -3964,11 +4211,19 @@ impl RuntimeProcessStorage {
         let parked_count = page_owner_parked_count(observed)
             .expect("the ticket-zero scheduler admitted only ready or parked states");
         let ticket_zero_was_parked = owner.has_parked_live_engine();
-        if self.has_pending_post_exit_completion()
-            || self.has_retained_post_exit_route()
-            || (observed != PAGE_OWNER_READY
-                && !ticket_zero_was_parked
-                && !self.has_active_post_exit_route())
+        // Detached post-exit routes exist only in the `cfg(test)` route
+        // fixtures; the audit-feature witnesses never create one.
+        #[cfg(test)]
+        let (pending_completion, retained_route, active_route) = (
+            self.has_pending_post_exit_completion(),
+            self.has_retained_post_exit_route(),
+            self.has_active_post_exit_route(),
+        );
+        #[cfg(not(test))]
+        let (pending_completion, retained_route, active_route) = (false, false, false);
+        if pending_completion
+            || retained_route
+            || (observed != PAGE_OWNER_READY && !ticket_zero_was_parked && !active_route)
         {
             // A pending B completion always wins, even beside another live
             // source route. Otherwise a normal parked engine owns the only
@@ -4019,6 +4274,7 @@ impl RuntimeProcessStorage {
     /// the worker holds the source map lifecycle lease. The callback must
     /// finish its own page engine empty; an error retains both permanent
     /// owners instead of manufacturing a second page lifecycle.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn with_dormant_page_pair<R>(
         &'static self,
         operation: impl FnOnce(ProcessPageArenaLease) -> Result<R, ()>,
@@ -4066,6 +4322,7 @@ impl RuntimeProcessStorage {
     /// result so a completing or re-parking engine changes only its own
     /// membership; no operation can reopen ticket zero while another
     /// suspended engine remains live.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn begin_dormant_page_operation(
         &'static self,
         expected_state: usize,
@@ -4117,6 +4374,7 @@ impl RuntimeProcessStorage {
     /// count; an empty finish restores exactly the count observed before this
     /// engine began. Each complete engine operation remains serialized by the
     /// one `BUSY` transition and the lower PageMap mutation lease.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn begin_persistent_later_engine<'attachment, 'main>(
         &'static self,
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,
@@ -4150,6 +4408,7 @@ impl RuntimeProcessStorage {
     /// parked-owner count. It remains deliberately non-parkable: this path is
     /// for scoped interleavings such as a remote publication, not for creating
     /// another current-thread session.
+    #[cfg(test)]
     fn begin_interleaving_persistent_later_engine<'attachment, 'main>(
         &'static self,
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,
@@ -4173,11 +4432,13 @@ impl RuntimeProcessStorage {
     }
 
     #[inline]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn page_owner_has_started(&self) -> bool {
         self.page_owner_state.load(Ordering::Acquire) != PAGE_OWNER_COLD
     }
 
     #[inline]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn page_owner_unavailable_result(&self) -> TicketZeroPageAllocationResult {
         if self.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_RETAINED
             || self.state.load(Ordering::Acquire) == PROCESS_RETAINED
@@ -4449,15 +4710,20 @@ struct RuntimeForkAdmission {
     callback_child_rearm_generation: AtomicUsize,
 }
 
-/// One linear claim in the runtime's later-worker admission count.
+/// One linear claim in the runtime's later-worker fork-admission count.
 ///
-/// A normal worker keeps this in its TLS slot. A worker that has detached its
-/// Theap/TLD transfers it into the opaque post-exit route, which can return it
-/// only in [`TicketZeroOwnerExitRouteFinished`] after terminal PageMap
-/// release. This prevents an ordinary no-page finalizer from decrementing the
-/// admission count while a process route still owns client-visible pages.
+/// Production holds it only in the attached worker's own TLS slot and
+/// releases it when that worker finishes `_mi_thread_done`. Pages the worker
+/// leaves live belong to source page/process abandonment state from then on,
+/// so no exited owner's admission waits for a later thread's free or exit. A
+/// failed finish keeps the claim in the retained slot as the one terminal
+/// record that keeps fork conservative; it is never guessed away.
+///
+/// Only the retired `cfg(test)` post-exit route fixtures still move a claim
+/// out of the slot into a detached route, which returns it in
+/// [`TicketZeroOwnerExitRouteFinished`] after terminal PageMap release.
 #[must_use = "a later-worker admission claim must finish normally or remain terminally retained"]
-struct LaterThreadAdmissionClaim {
+struct AttachedWorkerAdmission {
     _private: (),
 }
 
@@ -4574,7 +4840,7 @@ impl RuntimeForkAdmission {
     /// Claims one later-thread lifecycle admission. A concurrent fork waits
     /// only while it crosses the raw kernel boundary; it never observes a
     /// half-published attachment as absent.
-    fn claim_later_thread(&self) -> Option<LaterThreadAdmissionClaim> {
+    fn claim_later_thread(&self) -> Option<AttachedWorkerAdmission> {
         loop {
             let observed = self.state.load(Ordering::Acquire);
             if observed & FORK_GATE_HELD != 0 {
@@ -4591,7 +4857,7 @@ impl RuntimeForkAdmission {
                 .compare_exchange_weak(observed, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                return Some(LaterThreadAdmissionClaim { _private: () });
+                return Some(AttachedWorkerAdmission { _private: () });
             }
         }
     }
@@ -4602,8 +4868,8 @@ impl RuntimeForkAdmission {
     /// unsafe child into a preserving one.
     fn release_later_thread(
         &self,
-        claim: LaterThreadAdmissionClaim,
-    ) -> Result<(), LaterThreadAdmissionClaim> {
+        claim: AttachedWorkerAdmission,
+    ) -> Result<(), AttachedWorkerAdmission> {
         loop {
             let observed = self.state.load(Ordering::Acquire);
             let count = observed & FORK_GATE_COUNT_MASK;
@@ -7568,14 +7834,14 @@ enum NativePersistentThreadOwnerAccessError {
 
 /// The initial thread's continuously owned source page engine.
 ///
-/// Pinned initialization gives ticket zero static storage, but that storage
-/// does not require an ordinary operation to pass through the historical
-/// process scheduler.  At one explicit promotion boundary the complete
-/// `MainStaticRuntimeFirstArenaPageAllocator` moves from its process-static
-/// staging slot into this compiler-TLS cell.  The cell then owns the exact
-/// session, active engine, and any long PageMap lifecycle for the initial
-/// thread's lifetime.  It contains no route, registry, client ledger, or
-/// scheduler token.
+/// Pinned initialization gives ticket zero static TLD/Theap storage, but that
+/// storage does not require an ordinary operation to pass through a process
+/// scheduler.  At one explicit construction boundary the complete
+/// `MainStaticRuntimeFirstArenaPageAllocator` is built directly into this
+/// compiler-TLS cell (historical fixtures may instead move a legacy staging
+/// image here).  The cell then owns the exact session and active engine for
+/// the initial thread's lifetime.  It contains no route, registry, client
+/// ledger, or scheduler token.
 /// One caller-stack callback lease for the permanent initial source owner.
 ///
 /// It carries no compiler-TLS owner, page engine, session, or TLD borrow. The
@@ -7868,9 +8134,8 @@ impl NativeInitialPersistentThreadOwner {
     ///
     /// The caller must have already held the fork-admission gate with zero
     /// later admissions. That gate excludes the only other runtime owners;
-    /// the current initial thread then uses its pinned TLS cell rather than
-    /// the vacated process-static staging slot to collect/inspect the source
-    /// state.
+    /// the current initial thread then uses its pinned TLS cell, the only
+    /// home of its page engine, to collect/inspect the source state.
     #[inline]
     fn prepare_quiescent_for_held_fork_gate(&mut self) -> bool {
         self.deferred_free_callback_active.load(Ordering::Acquire) == 0
@@ -7897,7 +8162,7 @@ struct ThreadLifecycleSlot {
     /// complete post-destructor finish. Retained states intentionally keep
     /// their claim in the parent, making later fork preservation reject
     /// rather than treating ambiguous source ownership as quiescent.
-    admission: Option<LaterThreadAdmissionClaim>,
+    admission: Option<AttachedWorkerAdmission>,
     #[cfg(test)]
     /// The opaque per-attachment generation matched by completed registry
     /// entries. It is never exposed beyond this module and makes an old
@@ -7927,9 +8192,9 @@ struct ThreadLifecycleSlot {
     /// the legacy ticket-zero scheduler.
     initial_native_persistent_owner:
         PersistentCompilerTlsOwnerCell<NativeInitialPersistentThreadOwner>,
-    /// Distinguishes an installed initial persistent source owner from the
-    /// untouched process-static staging slot.  This is current-thread state,
-    /// never a pointer lookup or process routing record.
+    /// Distinguishes an installed initial persistent source owner from a
+    /// thread that has not yet constructed one.  This is current-thread
+    /// state, never a pointer lookup or process routing record.
     initial_native_persistent_owner_installed: bool,
     /// Historical direct-test-only page-owner state. Production native owners
     /// remain continuously stored and use pointer/PageMap operations instead.
@@ -8213,7 +8478,8 @@ impl ThreadLifecycleSlot {
     /// TLS state. An existing claim is an impossible double-owner image; keep
     /// both claims nonreleasable rather than dropping either count silently.
     #[inline]
-    fn retain_terminal_admission(&mut self, admission: LaterThreadAdmissionClaim) {
+    #[cfg(test)]
+    fn retain_terminal_admission(&mut self, admission: AttachedWorkerAdmission) {
         if let Some(previous) = self.admission.replace(admission) {
             core::mem::forget(previous);
         }
@@ -8451,11 +8717,12 @@ fn current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate(
         .unwrap_or(false)
 }
 
-/// Uses the direct initial source owner after its one-time promotion.
+/// Uses the direct initial source owner after its one-time construction.
 ///
-/// This performs no `page_owner_state` read, scheduler claim, parked-engine
-/// resume, route/registry lookup, or PageMap lease acquisition. The compiler
-/// TLS cell itself is the reentrancy and exact-current-thread boundary.
+/// This performs no process-wide owner-state read, scheduler claim,
+/// parked-engine resume, route/registry lookup, or PageMap lease acquisition.
+/// The compiler TLS cell itself is the reentrancy and exact-current-thread
+/// boundary.
 fn with_current_thread_native_initial_persistent_owner<R>(
     operation: impl FnOnce(&mut NativeInitialPersistentThreadOwner) -> R,
 ) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
@@ -8514,14 +8781,15 @@ fn with_pointer_associated_initial_persistent_owner<R>(
     }
 }
 
-/// Moves the one initialized static ticket-zero engine into the initial
-/// thread's persistent compiler-TLS owner cell.
+/// Constructs the one initial-thread source page engine directly into the
+/// initial thread's persistent compiler-TLS owner cell.
 ///
 /// The short admission gate is used only here, at startup/promotion, to
-/// exclude a later attachment while the process-static staging slot is moved.
-/// It is released before any ordinary allocation, free, realloc, or usable
-/// size query. Once publication succeeds, later-worker preparation refuses to
-/// borrow the vacated static slot rather than recreating a scheduler path.
+/// exclude a later attachment while the one permanent page session is claimed
+/// and pinned. It is released before any ordinary allocation, free, realloc,
+/// or usable size query. No process-static staging slot or operation
+/// scheduler participates; a failure retains the process rather than
+/// retrying a second permanent session.
 fn begin_current_thread_native_initial_persistent_owner(
 ) -> Result<(), NativeInitialPersistentThreadOwnerAccessError> {
     if !RUNTIME_PROCESS.is_on_initial_allocation_thread() {
@@ -8532,30 +8800,9 @@ fn begin_current_thread_native_initial_persistent_owner(
     }
 
     let promoted = RUNTIME_FORK_ADMISSION.with_no_later_thread_admissions(|| {
-        if !RUNTIME_PROCESS.start_ticket_zero_page_owner() {
+        let Some(allocator) = RUNTIME_PROCESS.take_initial_page_owner_for_promotion() else {
             return Err(());
-        }
-        if RUNTIME_PROCESS
-            .page_owner_state
-            .compare_exchange(
-                PAGE_OWNER_READY,
-                PAGE_OWNER_BUSY,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_err()
-        {
-            return Err(());
-        }
-        #[cfg(feature = "native-runtime-test-audit")]
-        note_native_scheduler_transition();
-
-        // SAFETY: the temporary admission gate excludes every later
-        // attachment, and READY -> BUSY excludes every legacy ticket-zero
-        // operation. This is the sole move out of the initialized static
-        // staging slot. No ordinary local operation can observe it there
-        // again after the INITIAL_PERSISTENT publication below.
-        let allocator = unsafe { (&*RUNTIME_PROCESS.page_owner.get()).assume_init_read() };
+        };
         let owner = NativeInitialPersistentThreadOwner {
             allocator,
             deferred_free_callback_generation: 0,
@@ -8567,19 +8814,15 @@ fn begin_current_thread_native_initial_persistent_owner(
         ) {
             Ok(()) => {
                 set_current_thread_initial_native_owner_installed(true);
-                RUNTIME_PROCESS
-                    .page_owner_state
-                    .store(PAGE_OWNER_INITIAL_PERSISTENT, Ordering::Release);
+                RUNTIME_PROCESS.publish_initial_owner_installed();
                 Ok(())
             }
             Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
-                // The cell rejected the offered owner before consuming it;
-                // restore exactly the same static image before terminalizing
-                // the impossible transfer.
-                unsafe { (*RUNTIME_PROCESS.page_owner.get()).write(owner.allocator) };
-                RUNTIME_PROCESS
-                    .page_owner_state
-                    .store(PAGE_OWNER_READY, Ordering::Release);
+                // The pinned cell rejected the offered owner before consuming
+                // it. The owner has not published a page; dropping it latches
+                // its permanent page session terminal, and the caller below
+                // retains the process instead of offering a retry.
+                drop(owner);
                 Err(())
             }
             Err(PersistentCompilerTlsOwnerInitializeError::Owner(never)) => match never {},
@@ -8589,9 +8832,8 @@ fn begin_current_thread_native_initial_persistent_owner(
     match promoted {
         Some(Ok(())) => Ok(()),
         Some(Err(())) | None => {
-            // An existing or racing worker can no longer be allowed to borrow
-            // a static slot that this initial thread attempted to make
-            // persistent. There is no safe scheduler-based recovery here.
+            // An existing or racing worker can no longer be allowed to observe
+            // a half-constructed initial owner. There is no safe recovery.
             RUNTIME_PROCESS.retain_page_owner();
             Err(NativeInitialPersistentThreadOwnerAccessError::Retained)
         }
@@ -8614,15 +8856,15 @@ fn with_current_thread_native_initial_persistent_allocator<R>(
     }
 }
 
-/// Promotes the initial static owner while native-shadow startup establishes
-/// the source-dormant pair that later workers may use.
+/// Constructs the initial owner while native-shadow startup establishes the
+/// source-dormant pair that later workers may use.
 ///
 /// This dormant-only preparation may create the persistent initial owner
 /// while the process is still cold. It is deliberately not a steady
-/// allocation or free path: promotion holds the short fork-admission gate
+/// allocation or free path: construction holds the short fork-admission gate
 /// exactly once, after which the owner remains pinned in initial-thread
 /// compiler TLS. A live or terminal initial engine is retained rather than
-/// being lent or reconstructed through the former static slot.
+/// being lent or reconstructed through another owner.
 fn prepare_current_thread_native_initial_persistent_owner_for_later_thread() -> bool {
     let prepared = with_current_thread_native_initial_persistent_allocator(true, |owner| {
         (
@@ -8725,7 +8967,7 @@ fn with_current_thread_native_persistent_owner<R>(
 }
 
 /// Forms the immutable process pair used once during native-owner promotion.
-/// It does not claim or inspect `RuntimeProcessStorage::page_owner_state`.
+/// It claims no process-wide owner state and inspects no other thread's owner.
 fn current_native_process_page_backing() -> Option<ProcessPageBackingLease> {
     // SAFETY: the final process owner is permanently published before use.
     let owner = unsafe { RUNTIME_PROCESS.allocation_owner() }?;
@@ -9310,6 +9552,7 @@ pub fn finish_selected_default_release_process_after_user_atexit() -> SelectedPr
 /// invalid size fails before permanent page-session startup, preserving the
 /// existing no-page runtime lifecycle.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub fn ticket_zero_allocate(request: usize, zero: bool) -> TicketZeroPageAllocationResult {
     #[cfg(target_arch = "x86_64")]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
@@ -9336,6 +9579,7 @@ pub fn ticket_zero_allocate(request: usize, zero: bool) -> TicketZeroPageAllocat
 /// owner. It remains a Rust-only friend boundary until the nondefault libc
 /// shadow backend proves the corresponding C ABI route.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub fn ticket_zero_allocate_aligned(
     request: usize,
     alignment: usize,
@@ -9359,6 +9603,7 @@ pub fn ticket_zero_allocate_aligned(
 }
 
 #[inline]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn ticket_zero_allocation_result(
     result: Option<Option<core::ptr::NonNull<u8>>>,
 ) -> TicketZeroPageAllocationResult {
@@ -9383,6 +9628,7 @@ fn ticket_zero_allocation_result(
 /// This compatibility helper is not an alternative allocator owner: it merely
 /// lets existing internal fixtures keep using their historical spelling once
 /// the exact static engine has moved into the initial thread's TLS cell.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn ticket_zero_initial_persistent_allocate(
     request: usize,
     alignment: Option<usize>,
@@ -9412,6 +9658,7 @@ fn ticket_zero_initial_persistent_allocate(
 
 /// Preserves the private ticket-zero reallocation seam after the direct
 /// initial owner has been installed.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 unsafe fn ticket_zero_initial_persistent_reallocate(
     block: Option<core::ptr::NonNull<u8>>,
     new_size: usize,
@@ -9443,6 +9690,7 @@ unsafe fn ticket_zero_initial_persistent_reallocate(
 }
 
 /// Preserves the private ticket-zero free spelling after native promotion.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 unsafe fn ticket_zero_initial_persistent_free(
     block: core::ptr::NonNull<u8>,
 ) -> TicketZeroPageFreeResult {
@@ -9476,6 +9724,7 @@ unsafe fn ticket_zero_initial_persistent_free(
 
 /// Preserves the private ticket-zero usable-size spelling after native
 /// promotion without reopening the process-static owner staging slot.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 unsafe fn ticket_zero_initial_persistent_usable_size(
     block: core::ptr::NonNull<u8>,
 ) -> Option<usize> {
@@ -9508,6 +9757,7 @@ unsafe fn ticket_zero_initial_persistent_usable_size(
 /// preserves a non-null old block. This is not valid for a libc/C-backend
 /// pointer and does not select a C allocator route.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub unsafe fn ticket_zero_reallocate(
     block: Option<core::ptr::NonNull<u8>>,
     new_size: usize,
@@ -9550,6 +9800,7 @@ pub unsafe fn ticket_zero_reallocate(
 /// `block` must be a current unique result of [`ticket_zero_allocate`] or
 /// [`ticket_zero_reallocate`]. It must not be a libc/C-backend pointer.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageFreeResult {
     #[cfg(target_arch = "x86_64")]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
@@ -9607,6 +9858,7 @@ pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageF
 /// retained, or does not recognize the pointer; it deliberately does not
 /// reinterpret a foreign C-backend allocation.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub unsafe fn ticket_zero_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
     #[cfg(target_arch = "x86_64")]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
@@ -10765,6 +11017,7 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
 /// The raw allocator implementation remains for source-level state audits.
 /// It does not install compiler-TLS state, while the preparation implementation
 /// below records every live client before a worker may suspend.
+#[cfg(test)]
 trait OwnerExitClientAllocator {
     type Client;
     type AllocationError;
@@ -10786,6 +11039,7 @@ trait OwnerExitClientAllocator {
     fn current_allocation_page_reserved_client(&self, client: &Self::Client) -> Option<usize>;
 }
 
+#[cfg(test)]
 impl<'attachment, 'main> OwnerExitClientAllocator
     for MainHeapThreadProcessPageAllocator<'attachment, 'main>
 {
@@ -10825,6 +11079,7 @@ impl<'attachment, 'main> OwnerExitClientAllocator
     }
 }
 
+#[cfg(test)]
 fn free_owner_exit_clients<A: OwnerExitClientAllocator>(
     allocator: &mut A,
     clients: &mut [Option<A::Client>],
@@ -10850,6 +11105,7 @@ fn free_owner_exit_clients<A: OwnerExitClientAllocator>(
 // still source-unmapped, while the arena member uses its PageMap-only terminal
 // tail and the OS member uses its private-list/clipped-map tail. Every request
 // remains inside the existing general traversal profile.
+#[cfg(test)]
 struct OwnerExitMappedRegularWorkload<Client> {
     direct_small: [Option<Client>; OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS],
     non_direct_small: [Option<Client>; OWNER_EXIT_NON_DIRECT_SMALL_CLIENT_SLOTS],
@@ -10863,6 +11119,7 @@ struct OwnerExitMappedRegularWorkload<Client> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum OwnerExitMappedRegularWorkloadError {
     DirectSmallAllocation,
     NonDirectSmallAllocation,
@@ -10880,6 +11137,7 @@ enum OwnerExitMappedRegularWorkloadError {
     OsSingletonAllocation,
 }
 
+#[cfg(test)]
 impl<Client> OwnerExitMappedRegularWorkload<Client> {
     fn allocate<A>(allocator: &mut A) -> Result<Self, OwnerExitMappedRegularWorkloadError>
     where
@@ -11159,6 +11417,7 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
     }
 }
 
+#[cfg(test)]
 impl OwnerExitMappedRegularWorkload<core::ptr::NonNull<u8>> {
     /// The direct source-state audits predate the linear TLS preparation and
     /// inspect the same raw private array while A still owns its engine. They
@@ -11259,10 +11518,12 @@ impl OwnerExitMappedRegularWorkload<PreparedOwnerExitClient> {
 /// two private live clients and at least one immediate local free block. A's
 /// general owner-exit traversal must therefore return the established sole
 /// mapped-medium route rather than an aggregate registry.
+#[cfg(test)]
 struct OwnerExitReclaimWorkload<Client> {
     blocks: [Option<Client>; OWNER_EXIT_RECLAIM_CLIENT_SLOTS],
 }
 
+#[cfg(test)]
 impl<Client> OwnerExitReclaimWorkload<Client> {
     fn allocate<A>(allocator: &mut A) -> Result<Self, ()>
     where
@@ -11323,6 +11584,7 @@ impl<Client> OwnerExitReclaimWorkload<Client> {
     }
 }
 
+#[cfg(test)]
 impl OwnerExitReclaimWorkload<core::ptr::NonNull<u8>> {
     /// Raw source-state audits retain the historical optional-array shape;
     /// the TLS preparation consumes the stricter all-present linear array.
@@ -11341,10 +11603,12 @@ impl OwnerExitReclaimWorkload<core::ptr::NonNull<u8>> {
 /// `abandon_mapped_small_or_medium_to_process_route` boundary. That boundary,
 /// rather than this fixed request, validates the complete rounded direct-cache
 /// image and refuses every non-direct or malformed shape before A tears down.
+#[cfg(test)]
 struct OwnerExitDirectSmallReclaimWorkload<Client> {
     blocks: [Option<Client>; OWNER_EXIT_RECLAIM_CLIENT_SLOTS],
 }
 
+#[cfg(test)]
 impl<Client> OwnerExitDirectSmallReclaimWorkload<Client> {
     fn allocate<A>(allocator: &mut A) -> Result<Self, ()>
     where
@@ -11407,6 +11671,7 @@ impl<Client> OwnerExitDirectSmallReclaimWorkload<Client> {
     }
 }
 
+#[cfg(test)]
 impl OwnerExitDirectSmallReclaimWorkload<core::ptr::NonNull<u8>> {
     /// The direct-small state audit needs the first client separately because
     /// the source drain names it before validating the complete route image.
@@ -11461,6 +11726,7 @@ fn retain_current_thread_detached_owner_exit() {
 /// path still has a live or suspended engine and must also terminally close
 /// ticket zero's dormant-pair scheduler.
 #[inline]
+#[cfg(test)]
 fn retain_current_thread_live_page_owner() {
     let slot = current_thread_slot();
     slot.state = ThreadLifecycleState::Retained;
@@ -11470,7 +11736,7 @@ fn retain_current_thread_live_page_owner() {
 #[inline]
 #[cfg(test)]
 fn retain_current_thread_detached_owner_exit_with_admission(
-    admission: LaterThreadAdmissionClaim,
+    admission: AttachedWorkerAdmission,
 ) {
     let slot = current_thread_slot();
     slot.retain_terminal_admission(admission);
@@ -13951,6 +14217,7 @@ fn install_mapped_regular_owner_exit_reclaim_page_owner(
 // the reuse check observes local page ownership rather than a freshly released
 // page or a ticket-zero handoff. The final singleton is larger than one large
 // page to require a multi-page source singleton span.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PERSISTENT_WORKER_LOCAL_REQUESTS: [(usize, u8); 7] = [
     (37, 0x11),
     (37, 0x22),
@@ -13962,6 +14229,7 @@ const PERSISTENT_WORKER_LOCAL_REQUESTS: [(usize, u8); 7] = [
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 enum PersistentLocalWorkerError {
     AllocationFailed,
     PatternMismatch,
@@ -13969,6 +14237,7 @@ enum PersistentLocalWorkerError {
 }
 
 #[inline]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 unsafe fn fill_worker_pattern(block: core::ptr::NonNull<u8>, size: usize, seed: u8) {
     for offset in 0..size {
         // SAFETY: the caller proves this exact current allocation has at
@@ -13983,6 +14252,7 @@ unsafe fn fill_worker_pattern(block: core::ptr::NonNull<u8>, size: usize, seed: 
 }
 
 #[inline]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 unsafe fn worker_pattern_matches(block: core::ptr::NonNull<u8>, size: usize, seed: u8) -> bool {
     for offset in 0..size {
         // SAFETY: the caller proves this exact current allocation has at
@@ -13996,6 +14266,7 @@ unsafe fn worker_pattern_matches(block: core::ptr::NonNull<u8>, size: usize, see
 }
 
 #[inline]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn free_persistent_worker_block(
     allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
     block: &mut Option<core::ptr::NonNull<u8>>,
@@ -14006,6 +14277,7 @@ fn free_persistent_worker_block(
     unsafe { allocator.free(block) }.map_err(|_| PersistentLocalWorkerError::Free)
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn free_remaining_persistent_worker_blocks(
     allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
     blocks: &mut [Option<core::ptr::NonNull<u8>>; PERSISTENT_WORKER_LOCAL_REQUESTS.len()],
@@ -14022,6 +14294,7 @@ fn free_remaining_persistent_worker_blocks(
 /// witness. It has no transfer, remote-free, abandonment, or owner-exit
 /// operation: every pointer stays private to this thread and is freed before
 /// its enclosing engine can finish.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn run_persistent_local_worker_workload(
     allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
 ) -> Result<(), PersistentLocalWorkerError> {
@@ -14097,6 +14370,7 @@ fn run_persistent_local_worker_workload(
 /// completes the existing all-free source thread-exit transaction. It proves
 /// that the prefixed C fixture exercises the typed scheduler without widening
 /// its ABI.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn run_runtime_persistent_local_worker_lifecycle<'attachment, 'main>(
     runtime: &'static RuntimeProcessStorage,
     attachment: &'attachment mut MainHeapThreadAttachment<'main>,
@@ -14164,6 +14438,7 @@ fn run_runtime_persistent_local_worker_lifecycle<'attachment, 'main>(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 enum PersistentLocalWorkerResult {
     Completed,
     AllocationFailed,
@@ -14175,6 +14450,7 @@ enum PersistentLocalWorkerResult {
 /// completion class, while focused regressions retain the actual failure
 /// rather than erasing it through `Result::ok`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 enum PersistentLocalWorkerLifecycleError {
     AttachmentUnavailable,
     Begin(RuntimePersistentPageEngineBeginError),
@@ -14193,10 +14469,13 @@ enum PersistentLocalWorkerLifecycleError {
 // read-only engine observation below supplies the exact current capacity, so
 // the owner fills one page without crossing into a successor before B publishes
 // the remote free.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PERSISTENT_REMOTE_REQUEST: usize = 37;
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 const PERSISTENT_REMOTE_BLOCK_SLOTS: usize = SMALL_PAGE_SIZE / PERSISTENT_REMOTE_REQUEST;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 enum PersistentRemoteWorkerError {
     AllocationFailed,
     PublicationFailed,
@@ -14206,6 +14485,7 @@ enum PersistentRemoteWorkerError {
 }
 
 #[inline]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn free_persistent_remote_worker_block(
     allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
     block: &mut Option<core::ptr::NonNull<u8>>,
@@ -14216,6 +14496,7 @@ fn free_persistent_remote_worker_block(
     unsafe { allocator.free(block) }.map_err(|_| PersistentRemoteWorkerError::Free)
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn free_remaining_persistent_remote_worker_blocks(
     allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
     blocks: &mut [Option<core::ptr::NonNull<u8>>; PERSISTENT_REMOTE_BLOCK_SLOTS],
@@ -14239,6 +14520,7 @@ fn free_remaining_persistent_remote_worker_blocks(
 /// pointers. The owner remains stopped until the callback returns both tokens
 /// as published or not-published, so this is not an owner-exit or general
 /// asynchronous path.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn run_persistent_remote_worker_workload(
     allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
     publish: TicketZeroRemoteFreePublisher,
@@ -14312,6 +14594,7 @@ fn run_persistent_remote_worker_workload(
 /// publication and join. Its `READY -> BUSY -> READY` transition therefore
 /// stays coupled to the exact engine that collects the remote frees, while
 /// the publisher remains unable to obtain a general page operation.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 fn run_runtime_persistent_remote_worker_lifecycle<'attachment, 'main>(
     runtime: &'static RuntimeProcessStorage,
     attachment: &'attachment mut MainHeapThreadAttachment<'main>,
@@ -14347,6 +14630,7 @@ fn run_runtime_persistent_remote_worker_lifecycle<'attachment, 'main>(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 enum PersistentRemoteWorkerResult {
     Completed,
     AllocationFailed,
@@ -14430,6 +14714,7 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
 /// private client ledger; a scoped source interleaving moves two opaque client
 /// keys outside that ledger only for B to hand C/D their bounded producers.
 #[derive(Clone, Copy)]
+#[cfg(test)]
 enum ParkedSessionPostExitPublication {
     Ordinary,
     ScopedDirectSmallRemoteFree,
@@ -15489,6 +15774,7 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim(
 /// pointer, does not route libc allocation, and is deliberately not a
 /// concurrent or general worker-owner API.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub fn ticket_zero_later_thread_persistent_local_workload() -> TicketZeroLaterThreadPageResult {
     match attach_current_thread() {
         ThreadAttachResult::Attached => {}
@@ -15539,6 +15825,7 @@ pub fn ticket_zero_later_thread_persistent_local_workload() -> TicketZeroLaterTh
 /// create concurrent page engines, owner-exit handling, or a libc allocation
 /// route.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub fn ticket_zero_later_thread_remote_free_roundtrip(
     publish: TicketZeroRemoteFreePublisher,
 ) -> TicketZeroLaterThreadPageResult {
@@ -15593,6 +15880,7 @@ pub fn ticket_zero_later_thread_remote_free_roundtrip(
 /// completes the already-existing worker attachment teardown. The request
 /// must be valid for the native engine.
 #[doc(hidden)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub fn ticket_zero_later_thread_page_roundtrip(
     request: usize,
     zero: bool,

@@ -183,11 +183,7 @@ pub mod __crabc_runtime {
     pub use crate::runtime_lifecycle::{
         SelectedProcessDoneResult, ThreadAttachResult, ThreadFinalProcessExitOwnerResult,
         ThreadFinishResult,
-        TicketZeroLaterThreadPageResult,
-        TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
         NativePageAllocationResult, NativePageFreeResult,
-        TicketZeroRemoteFreeProducer, TicketZeroRemoteFreeProducerPair,
-        TicketZeroSingleRemoteFreePublisher,
         after_fork_child, after_fork_parent,
         attach_current_thread, before_fork,
         finish_current_thread_after_user_destructors,
@@ -200,6 +196,17 @@ pub mod __crabc_runtime {
         native_reallocate_zeroed, native_reallocate_aligned_zeroed,
         native_usable_size,
         NativeDeferredFreeCallback, register_native_deferred_free_callback,
+    };
+
+    // The retired ticket-zero scheduler's friend seam. Production selects the
+    // persistent pointer-first `native_*` owners above; only historical
+    // fixtures and the test-only ticket-zero C soak adapter drive these.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    pub use crate::runtime_lifecycle::{
+        TicketZeroLaterThreadPageResult,
+        TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
+        TicketZeroRemoteFreeProducer, TicketZeroRemoteFreeProducerPair,
+        TicketZeroSingleRemoteFreePublisher,
         ticket_zero_allocate, ticket_zero_free,
         ticket_zero_allocate_aligned, ticket_zero_usable_size,
         ticket_zero_later_thread_page_roundtrip,

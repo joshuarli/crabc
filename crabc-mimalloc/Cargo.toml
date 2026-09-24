@@ -32,7 +32,9 @@ required-features = ["native-runtime-test-audit"]
 name = "native_live_remote_owner_registry_reuse"
 path = "tests/native_live_remote_owner_registry_reuse.rs"
 # Repeated native remote-free epochs remain a direct persistent PageMap
-# witness; the historical target name does not select a registry audit.
+# witness; the historical target name does not select a registry audit. Its
+# ticket-zero epochs use the retired scheduler seam behind the audit feature.
+required-features = ["native-runtime-test-audit"]
 
 [[test]]
 name = "native_post_exit_failed_os_release"
@@ -144,6 +146,91 @@ path = "tests/native_ordinary_mapped_regular_reclaim.rs"
 # fresh span, plus its exact Medium-only source scenarios.
 required-features = ["native-runtime-test-audit"]
 
+# These direct lifecycle witnesses still drive the retired ticket-zero
+# scheduler's `ticket_zero_*` friend seam for their initial-thread clients.
+# Production selects only the persistent pointer-first `native_*` owners, so
+# that seam and these targets compile only with the default-off audit feature.
+
+[[test]]
+name = "native_aggregate_post_exit_reclaim"
+path = "tests/native_aggregate_post_exit_reclaim.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_initial_out_of_order_post_exit_free"
+path = "tests/native_initial_out_of_order_post_exit_free.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_initial_post_exit_free"
+path = "tests/native_initial_post_exit_free.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_live_remote_free"
+path = "tests/native_live_remote_free.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_owner_local_reallocate"
+path = "tests/native_owner_local_reallocate.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_page_local_live_remote_protocol"
+path = "tests/native_page_local_live_remote_protocol.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_parallel_local_workers"
+path = "tests/native_parallel_local_workers.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_parked_compatibility_local_cycles"
+path = "tests/native_parked_compatibility_local_cycles.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_post_exit_claimed_remote_producers"
+path = "tests/native_post_exit_claimed_remote_producers.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_post_exit_lifecycle"
+path = "tests/native_post_exit_lifecycle.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_post_exit_split_releaser_lifecycle"
+path = "tests/native_post_exit_split_releaser_lifecycle.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_post_exit_terminal_proof_fork_gate"
+path = "tests/native_post_exit_terminal_proof_fork_gate.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_post_exit_with_local_session"
+path = "tests/native_post_exit_with_local_session.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_sole_post_exit_lifecycle"
+path = "tests/native_sole_post_exit_lifecycle.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_three_post_exit_lifecycle"
+path = "tests/native_three_post_exit_lifecycle.rs"
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_two_live_remote_owners"
+path = "tests/native_two_live_remote_owners.rs"
+required-features = ["native-runtime-test-audit"]
+
 [features]
 default = []
 # Private, allocation-backed process context used only by the standalone
@@ -161,7 +248,10 @@ tls-codegen-probe = []
 # Enables read-only scalar lifecycle and fork-admission audits used by focused
 # PageMap post-exit regressions and the test-only ticket-zero C soak adapter.
 # They expose no raw client address, PageMap root, allocator, or release
-# capability and are absent from normal builds.
+# capability and are absent from normal builds. The same default-off feature
+# retains the retired ticket-zero scheduler's `ticket_zero_*` friend seam that
+# those historical witnesses and the adapter still drive; production owners
+# never select it.
 native-runtime-test-audit = []
 # Enables one deliberately narrow direct-test injection: the next allocator
 # `munmap` fails during a pointer-first PageMap terminal release. It is absent

@@ -145,10 +145,8 @@ pub fn capture_native_process_destroy_request()
         return Err(NativeProcessDestroyError::AlreadyCompleted);
     }
     if !RUNTIME_PROCESS.is_active()
-        || RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) != PAGE_OWNER_INITIAL_PERSISTENT
-        || RUNTIME_PROCESS.has_active_post_exit_route()
-        || RUNTIME_PROCESS.has_pending_post_exit_completion()
-        || RUNTIME_PROCESS.has_retained_post_exit_route()
+        || !RUNTIME_PROCESS.initial_owner_is_installed()
+        || RUNTIME_PROCESS.has_retired_post_exit_route_state()
     { return Err(NativeProcessDestroyError::UnsupportedOwner); }
     let owner = unsafe { RUNTIME_PROCESS.active_owner() }.ok_or(NativeProcessDestroyError::Inactive)?;
     let ready = owner.ready().map_err(|_| NativeProcessDestroyError::Inactive)?;
