@@ -287,12 +287,15 @@ unsafe fn run_parallel(
                             reach_next_end = reach_next_end.add(1);
                         }
                     } else if unsafe { tag_order(num_tags as c_int, (*tnfa).tag_directions, temporary_tags, *(*reach_position.add(state_id)).tags) } {
+                        // regexec.c:437-447 publishes the winning path's
+                        // tags from `tmp_tags` before `tmp_tags` takes the
+                        // displaced buffer, so copy before the swap.
                         unsafe {
-                            core::mem::swap(&mut *(*reach_position.add(state_id)).tags, &mut temporary_tags);
                             if (*transition).state == (*tnfa).final_state {
                                 match_end_offset = position; new_match = true;
                                 for index in 0..num_tags { *match_tags.add(index) = *temporary_tags.add(index); }
                             }
+                            core::mem::swap(&mut *(*reach_position.add(state_id)).tags, &mut temporary_tags);
                         }
                     }
                 }

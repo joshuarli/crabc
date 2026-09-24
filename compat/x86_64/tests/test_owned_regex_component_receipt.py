@@ -123,7 +123,7 @@ class OwnedRegexComponentReceiptTests(unittest.TestCase):
             if "copy-audit" in label:
                 stdout = b"{}\n"
             if label == "oracle-run" or label.endswith("-run") or label.endswith("-kernel") or label.endswith("-direct"):
-                stdout = module.ORACLE_STDOUT
+                stdout = b"match fixture nsub=0 so=0 eo=1\n" + module.ORACLE_COMPLETION
             if label == "object-imports":
                 stdout = b"".join(f"{name} U\n".encode() for name in module.API)
             if label in {"oracle-providers", "static-archive-providers", "static-providers", "static-pie-providers"}:

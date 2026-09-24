@@ -913,37 +913,11 @@ unsafe fn parse_atom(context: *mut TreParseContext, mut string: *const c_char) -
                     if !extended {
                         return REG_BADRPT;
                     }
-                    // In an ERE the escaped spelling falls through to the
-                    // source's literal parser below.
-                    let mut wide = 0i32;
-                    let length = unsafe {
-                        super::super::locale_multibyte::mbtowc(&mut wide, string, usize::MAX)
-                    };
-                    if length < 0 {
-                        return REG_BADPAT;
-                    }
-                    node = unsafe {
-                        tre_ast_new_literal(
-                            (*context).memory,
-                            wide as c_long,
-                            wide as c_long,
-                            (*context).position,
-                        )
-                    };
-                    unsafe {
-                        (*context).position += 1;
-                        string = source_add(string, length as usize);
-                    }
-                    // This path has already completed parse_literal, so do
-                    // not apply the common one-byte switch increment.
-                    if node.is_null() {
-                        return REG_ESPACE;
-                    }
-                    unsafe {
-                        (*context).node = node;
-                        (*context).string = string;
-                    }
-                    return REG_OK;
+                    // In an ERE the escaped spelling falls through
+                    // regcomp.c:855-871 to `goto parse_literal`, which
+                    // consumes the escaped character itself (with its
+                    // REG_ICASE pairing) instead of the common increment.
+                    return unsafe { parse_literal_atom(context, string) };
                 }
                 b'|' => {
                     if !extended {
@@ -960,33 +934,8 @@ unsafe fn parse_atom(context: *mut TreParseContext, mut string: *const c_char) -
                         }
                         return REG_OK;
                     } else {
-                        let mut wide = 0i32;
-                        let length = unsafe {
-                            super::super::locale_multibyte::mbtowc(&mut wide, string, usize::MAX)
-                        };
-                        if length < 0 {
-                            return REG_BADPAT;
-                        }
-                        node = unsafe {
-                            tre_ast_new_literal(
-                                (*context).memory,
-                                wide as c_long,
-                                wide as c_long,
-                                (*context).position,
-                            )
-                        };
-                        unsafe {
-                            (*context).position += 1;
-                            string = source_add(string, length as usize);
-                        }
-                        if node.is_null() {
-                            return REG_ESPACE;
-                        }
-                        unsafe {
-                            (*context).node = node;
-                            (*context).string = string;
-                        }
-                        return REG_OK;
+                        // ERE `\|` falls through to `goto parse_literal`.
+                        return unsafe { parse_literal_atom(context, string) };
                     }
                 }
                 value if !extended && value.wrapping_sub(b'1') < 9 => {
@@ -1005,33 +954,11 @@ unsafe fn parse_atom(context: *mut TreParseContext, mut string: *const c_char) -
                     }
                 }
                 _ => {
-                    let mut wide = 0i32;
-                    let length = unsafe {
-                        super::super::locale_multibyte::mbtowc(&mut wide, string, usize::MAX)
-                    };
-                    if length < 0 {
-                        return REG_BADPAT;
-                    }
-                    node = unsafe {
-                        tre_ast_new_literal(
-                            (*context).memory,
-                            wide as c_long,
-                            wide as c_long,
-                            (*context).position,
-                        )
-                    };
-                    unsafe {
-                        (*context).position += 1;
-                        string = source_add(string, length as usize);
-                    }
-                    if node.is_null() {
-                        return REG_ESPACE;
-                    }
-                    unsafe {
-                        (*context).node = node;
-                        (*context).string = string;
-                    }
-                    return REG_OK;
+                    // "extension: accept unknown escaped char as a literal":
+                    // the source reaches the shared `parse_literal` label, so
+                    // REG_ICASE pairs an escaped letter exactly as it pairs
+                    // an unescaped one.
+                    return unsafe { parse_literal_atom(context, string) };
                 }
             }
             string = unsafe { source_add(string, 1) };

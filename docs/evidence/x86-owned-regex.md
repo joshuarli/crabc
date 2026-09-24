@@ -35,6 +35,17 @@ definition, so this runtime does not claim that extension. C/POSIX/C.UTF-8
 locale behavior is supplied by the existing wide-character and multibyte
 owners; this leaf does not add a locale database or a Rust regex API.
 
+## Intentional differences
+
+These are confined to inputs on which the pinned source reads or moves outside
+the caller's NUL-terminated subject; `owned_regex::execute::run_backtrack`
+treats them as failed backreferences and backtracks as for any mismatch.
+
+- A backreference into a still-open group (undefined by POSIX, accepted by
+  musl) can yield a negative length. musl compares under the wrapped `size_t`
+  length and, on equality, moves the matcher backwards; for example
+  `\(a\(\2\|x\)b\)*` on `abab` never terminates.
+
 ## Installed-product proof
 
 `./scripts/dev-x86_64.sh owned-regex [--static-sysroot STATIC_SYSROOT]
@@ -51,8 +62,19 @@ signedness, or entry signature. It then checks leftmost-longest matching,
 captures, BRE backreferences including the empty backreference progress edge,
 newline anchors, character classes, case folding, C.UTF-8 byte offsets,
 `REG_NOTBOL`, `REG_NOTEOL`, `REG_NOSUB`, source-shaped compile/free/recompile,
-and `regerror` table/truncation behavior. Each owned executable's stdout and
-stderr must exactly match the pinned musl execution. The retained object has
+final-state tag publication when a later path wins the tag order,
+`REG_ICASE` pairing of escaped literals, and `regerror` table/truncation
+behavior; each directed case checks its own expected offsets. A deterministic
+differential corpus then compiles fixed, structured (nested groups,
+alternation, repetition, BRE backreferences to closed groups), and token-soup
+BRE/ERE patterns under eight flag sets in both `C` and `C.UTF-8`, and
+executes each compiled pattern on fixed, generated, and long subjects under all
+`REG_NOTBOL`/`REG_NOTEOL` combinations. Every compile status, `re_nsub`,
+execute status, and all ten `regmatch_t` slots fold into one printed FNV-1a
+digest per block, so the transcript is judged by comparison with musl rather
+than by a checked-in copy; `--corpus-trace` and `--corpus-trace-subjects`
+print each observation to localize a divergence. Each owned executable's
+stdout and stderr must exactly match the pinned musl execution. The retained object has
 exactly one undefined public row for each of `regcomp`, `regexec`, `regerror`,
 and `regfree`; pinned musl, the static archive and linked static entries, and
 the dynamic shared object each retain the corresponding provider rows.
@@ -65,8 +87,8 @@ and copied dynamic execution payloads. Before it interprets the four API rows,
 it reruns the sealed read-only `env -i`/`nm` or `readelf` command against the
 rehashed physical object, archive, executable, or shared object and requires
 the retained raw stream to match exactly. It rejects ambient header origins and
-reconstructs the exact fourteen-line musl transcript before admitting each
-candidate entry. A full receipt records static ET_EXEC, static PIE, and both
+requires the musl transcript to be complete (its final completion line, empty
+stderr, zero status) before admitting each byte-identical candidate entry. A full receipt records static ET_EXEC, static PIE, and both
 kernel and direct entries for dynamic PIE and non-PIE; a supplied dynamic
 product alone yields the explicitly non-complete four-cell development mode.
 `--require-static` rejects that development mode. Neither shape closes a

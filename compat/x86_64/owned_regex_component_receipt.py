@@ -40,7 +40,7 @@ HEADERS = (
     "locale.h", "regex.h", "stddef.h", "stdio.h", "stdlib.h", "string.h",
     "features.h", "bits/alltypes.h",
 )
-ORACLE_STDOUT = b"""match ere-leftmost-longest nsub=0 so=1 eo=3\nmatch ere-captures nsub=1 so=1 eo=3\nmatch bre-backreference nsub=1 so=1 eo=3\nmatch bre-empty-backreference nsub=1 so=0 eo=0\nmatch newline-anchor nsub=0 so=0 eo=1\nmatch negated-class nsub=0 so=2 eo=4\nmatch icase nsub=0 so=0 eo=1\nmatch utf8-byte-offsets nsub=0 so=1 eo=5\nnomatch notbol\nnomatch noteol\nnosub-preserves-pmatch\ncompile-regfree-recompile\nregerror-table-and-truncation\nowned-regex-installed-header-ok\n"""
+ORACLE_COMPLETION = b"owned-regex-installed-header-ok\n"
 API = ("regcomp", "regexec", "regerror", "regfree")
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 SOURCE_PATHS = {
@@ -468,8 +468,12 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
     for header in HEADERS:
         require(mounted(root, dynamic / "usr/include" / header) in trace_paths,
                 f"installed header trace omitted {header}")
-    require(raw["oracle-run"]["stdout"] == ORACLE_STDOUT and raw["oracle-run"]["stderr"] == b"",
-            "pinned musl regex oracle transcript differs")
+    # The probe self-checks its directed contracts and exits nonzero on any
+    # failure; its differential corpus is judged by candidate equality below.
+    oracle_stdout = raw["oracle-run"]["stdout"]
+    require((oracle_stdout == ORACLE_COMPLETION or oracle_stdout.endswith(b"\n" + ORACLE_COMPLETION))
+            and raw["oracle-run"]["stderr"] == b"",
+            "pinned musl regex oracle transcript is incomplete")
     for label, kind in (("object-imports", "U"), ("oracle-providers", "T")):
         require(raw[label]["stderr"] == b"", f"{label} emitted stderr")
         require(replay_symbol_reader(root, label, plan[label]) == raw[label]["stdout"],
