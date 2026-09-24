@@ -194,6 +194,10 @@ class M7OptionsTraceTests(unittest.TestCase):
         for scenario in gate.OPTIONS_ERROR_SCENARIOS:
             lines += [f"error.{scenario}.environment=", f"error.{scenario}.results=0/0/12",
                       f"error.{scenario}.messages="]
+        for scenario in gate.OPTIONS_RECURSION_SCENARIOS:
+            lines += [f"recursion.{scenario}.{suffix}=" for suffix in (
+                "environment", "init.messages", "init.verbose", "final_verbose",
+                "direct.messages", "direct.verbose")]
         lines += ["api.print=7631", gate.OPTIONS_TRACE_END]
         return "\n".join(line for line in lines if line != drop) + "\n"
 
@@ -203,7 +207,7 @@ class M7OptionsTraceTests(unittest.TestCase):
         libtest = "running 1 test\ntest tests::trace ... " + self.trace() + "ok\n"
         self.assertEqual(gate.parse_options_trace(libtest, "Rust"), gate.parse_options_trace(self.trace(), "C"))
         for drop in ("scenario.guarded_boolean.messages=", "scenario.cap.option.show_errors=0,1,0",
-                     "error.capped.results=0/0/12"):
+                     "error.capped.results=0/0/12", "recursion.invalid_verbose.init.verbose="):
             with self.assertRaisesRegex(harness.HarnessError, "lacks"):
                 gate.require_complete_options_trace(
                     gate.parse_options_trace(self.trace(drop=drop), "trace"), "trace"

@@ -69,6 +69,9 @@ OPTIONS_SCENARIOS = (
     "guarded_numeric", "size_without_digits", "cap", "overlong",
 )
 OPTIONS_ERROR_SCENARIOS = ("hidden", "capped", "verbose")
+# Recursive-output scenarios: a registered callback that reads `verbose` and
+# re-enters `_mi_warning_message` during startup and one direct warning.
+OPTIONS_RECURSION_SCENARIOS = ("invalid_verbose", "show_errors", "capped")
 OPTION_EFFECTS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_option_effects_oracle.c"
 OPTION_EFFECTS_RUST_TEST = "diagnostic_output::tests::source_option_effects_trace_for_pinned_c_comparison"
 OPTION_EFFECTS_TRACE_BEGIN = "CRABC_MI_M7_OPTION_EFFECTS_TRACE_BEGIN"
@@ -424,6 +427,11 @@ def require_complete_options_trace(trace: Mapping[str, str], description: str) -
         for suffix in ("environment", "results", "messages"):
             if f"error.{scenario}.{suffix}" not in trace:
                 raise harness.HarnessError(f"{description} lacks error.{scenario}.{suffix}")
+    for scenario in OPTIONS_RECURSION_SCENARIOS:
+        for suffix in ("environment", "init.messages", "init.verbose", "final_verbose",
+                       "direct.messages", "direct.verbose"):
+            if f"recursion.{scenario}.{suffix}" not in trace:
+                raise harness.HarnessError(f"{description} lacks recursion.{scenario}.{suffix}")
     if not trace.get("api.print"):
         raise harness.HarnessError(f"{description} lacks the options print")
 

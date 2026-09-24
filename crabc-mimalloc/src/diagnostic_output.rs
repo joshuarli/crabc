@@ -38,7 +38,7 @@ use crabc_core::{Errno, thread::thread_pointer_identity};
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void, CStr};
 use core::fmt::{self, Write};
-use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI64, AtomicIsize, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 const INITIAL_MAX_WARNING_COUNT: isize = 16;
 /// `mi_max_error_count`'s static initializer (`src/options.c:15`).
@@ -95,11 +95,10 @@ impl RuntimeStderrOutput {
     /// preserve the selected `fputs(message, stderr)` FILE behavior, including
     /// its locking, buffering, and error/short-write semantics. Pinned
     /// `_mi_prim_out_stderr` deliberately ignores `fputs`'s integer result.
-    /// During this private slice it must also not synchronously reenter
-    /// `warning_from_source_options` or `MbindWarningRoute`: staged invalid
-    /// `verbose` restoration precedes foreign delivery. A raw descriptor
-    /// write, an ambient symbol lookup, or a no-op callback does not satisfy
-    /// this capability.
+    /// It may synchronously reenter the allocator's diagnostic routes, as
+    /// pinned C permits (the Linux `mi_recurse_enter_prim` always succeeds).
+    /// A raw descriptor write, an ambient symbol lookup, or a no-op callback
+    /// does not satisfy this capability.
     #[inline]
     pub const unsafe fn new(invoke: unsafe extern "C" fn(*const c_char)) -> Self {
         Self { invoke }
@@ -955,9 +954,9 @@ pub(crate) struct OutputOwner {
     callback: AtomicPtr<()>,
     argument: AtomicPtr<c_void>,
     warning_count: AtomicUsize,
-    max_warning_count: isize,
+    max_warning_count: AtomicIsize,
     error_count: AtomicUsize,
-    max_error_count: isize,
+    max_error_count: AtomicIsize,
     error_handler: AtomicPtr<()>,
     error_argument: AtomicPtr<c_void>,
     source_options: UnsafeCell<core::mem::MaybeUninit<ProcessSourceOptions>>,
@@ -976,6 +975,10 @@ struct PendingSourceWarning {
     kind: SourceMessageKind,
     options: DiagnosticOptionSnapshot,
     message: SourceFormattedMessage,
+    /// The invalid-`verbose` warning of `mi_option_init`, which C delivers
+    /// with `verbose` briefly set to one and restores to zero only after
+    /// `_mi_warning_message` returns.
+    temporary_verbose: bool,
 }
 
 /// The two gated message families of `options.c`: `_mi_warning_message`
@@ -993,13 +996,12 @@ enum SourceMessageKind {
 /// releases `source_options_lock` before any caller-supplied FILE/callback
 /// invocation while retaining the gate's selected lazy-read order.
 ///
-/// For the one temporary invalid-`verbose` state, the staged owner restores
-/// the descriptor before foreign delivery. Pinned C restores it after
-/// `_mi_warning_message` returns. Therefore this private slice excludes
-/// synchronous reentry from a delivery callback or FILE primitive into
-/// `warning_from_source_options` or `MbindWarningRoute`; it does not claim
-/// source recursive-output parity. Existing `warning` and `raw_message`
-/// reentry contracts are unchanged.
+/// For the one temporary invalid-`verbose` state, staging restores the
+/// descriptor so the parent gate continues with C's restored value, and
+/// delivery sets it to one again around that warning's own output, restoring
+/// zero after it returns, as pinned `mi_option_init` does. A delivery
+/// callback or FILE primitive therefore observes the source option state
+/// and may reenter any diagnostic route: no lock is held across delivery.
 struct PendingSourceWarnings {
     entries: [core::mem::MaybeUninit<PendingSourceWarning>; PENDING_SOURCE_WARNINGS],
     length: usize,
@@ -1016,8 +1018,19 @@ impl PendingSourceWarnings {
 
     fn push_kind(&mut self, kind: SourceMessageKind, options: DiagnosticOptionSnapshot, message: SourceFormattedMessage) {
         debug_assert!(self.length < PENDING_SOURCE_WARNINGS);
-        self.entries[self.length].write(PendingSourceWarning { kind, options, message });
+        self.entries[self.length].write(PendingSourceWarning {
+            kind, options, message, temporary_verbose: false,
+        });
         self.length += 1;
+    }
+
+    /// Marks every entry staged since `start` as delivered with `verbose`
+    /// temporarily set to one.
+    fn mark_temporary_verbose_from(&mut self, start: usize) {
+        for index in start..self.length {
+            // SAFETY: `push_kind` initialized every entry below `length`.
+            unsafe { self.entries[index].assume_init_mut() }.temporary_verbose = true;
+        }
     }
 
     unsafe fn deliver(self, output: &OutputOwner) {
@@ -1028,9 +1041,20 @@ impl PendingSourceWarnings {
             // SAFETY: source descriptor serialization ended before this
             // dispatch; caller-supplied callback lifetime obligations remain
             // exactly those of OutputOwner::warning.
+            if entry.temporary_verbose {
+                // `desc->value = 1` before `_mi_warning_message`: plain
+                // descriptor stores, as in C, on the installed atomic table.
+                // SAFETY: staging ran against the installed table.
+                unsafe { output.source_options_ref_unlocked() }.set_value(SourceOption::Verbose, 1);
+            }
             match entry.kind {
                 SourceMessageKind::Warning => unsafe { output.warning(entry.options, entry.message) },
                 SourceMessageKind::Error => unsafe { output.error(entry.options, entry.message) },
+            }
+            if entry.temporary_verbose {
+                // `desc->value = 0` after the warning returns.
+                // SAFETY: as above.
+                unsafe { output.source_options_ref_unlocked() }.set_value(SourceOption::Verbose, 0);
             }
         }
     }
@@ -1054,9 +1078,9 @@ impl OutputOwner {
             callback: AtomicPtr::new(core::ptr::null_mut()),
             argument: AtomicPtr::new(core::ptr::null_mut()),
             warning_count: AtomicUsize::new(0),
-            max_warning_count: INITIAL_MAX_WARNING_COUNT,
+            max_warning_count: AtomicIsize::new(INITIAL_MAX_WARNING_COUNT),
             error_count: AtomicUsize::new(0),
-            max_error_count: INITIAL_MAX_ERROR_COUNT,
+            max_error_count: AtomicIsize::new(INITIAL_MAX_ERROR_COUNT),
             error_handler: AtomicPtr::new(core::ptr::null_mut()),
             error_argument: AtomicPtr::new(core::ptr::null_mut()),
             source_options: UnsafeCell::new(core::mem::MaybeUninit::uninit()),
@@ -1072,7 +1096,7 @@ impl OutputOwner {
     /// warning emitters. The source does not reset `warning_count` here.
     #[inline]
     pub(crate) fn initialize_options(&mut self, options: DiagnosticOptionSnapshot) {
-        self.max_warning_count = options.max_warnings;
+        self.max_warning_count.store(options.max_warnings, Ordering::Relaxed);
     }
 
     /// Performs the option prefix of `mi_process_init_once`
@@ -1083,14 +1107,21 @@ impl OutputOwner {
     /// invalid value) before the loop. Every source descriptor is then
     /// initialized in table order, with each
     /// deprecated-spelling or invalid-value warning delivered before the next
-    /// descriptor. The exclusive startup borrow proves that no dispatcher can
-    /// observe the inline option image until the loop has completed and the
-    /// post-pass warning cap has replaced the initial 16. Unavailable
-    /// environment reads remain UNINIT, exactly for a later lock-serialized
-    /// source retry. The selected profile is not `MI_GUARDED`, so the source's
-    /// guarded large-page adjustment is absent.
+    /// descriptor. Unavailable environment reads remain UNINIT, exactly for a
+    /// later lock-serialized source retry. The selected profile is not
+    /// `MI_GUARDED`, so the source's guarded large-page adjustment is absent.
+    ///
+    /// # Safety
+    ///
+    /// This is the one startup call for this owner: no other thread may use
+    /// it until this returns, and it must not be called twice. The only
+    /// permitted overlap is synchronous reentry from this call's own
+    /// deliveries (a registered callback or the default FILE primitive),
+    /// which C also permits; such reentry takes the descriptor lock that
+    /// the startup loop does not hold across delivery. The environment
+    /// reader has the [`ProcessDiagnosticInputs`] obligations.
     pub(crate) unsafe fn initialize_source_options(
-        &mut self,
+        &self,
         environment_reader: VmOptionEnvironmentReader,
     ) {
         let options = ProcessSourceOptions::new(environment_reader);
@@ -1124,9 +1155,11 @@ impl OutputOwner {
         // `_mi_options_init` assigns the global error and warning caps only
         // after its complete descriptor loop. A warning above therefore used
         // the source initial cap of 16 before this write.
-        // SAFETY: the exclusive startup borrow still excludes other access.
-        self.max_error_count = unsafe { self.source_options_ref_unlocked() }.value(SourceOption::MaxErrors) as isize;
-        self.max_warning_count = unsafe { self.source_option_snapshot_unlocked() }.max_warnings;
+        // SAFETY: the installed table's slots are atomic.
+        let max_errors = unsafe { self.source_options_ref_unlocked() }.value(SourceOption::MaxErrors) as isize;
+        let max_warnings = unsafe { self.source_option_snapshot_unlocked() }.max_warnings;
+        self.max_error_count.store(max_errors, Ordering::Relaxed);
+        self.max_warning_count.store(max_warnings, Ordering::Relaxed);
     }
 
     /// Emits through the retained descriptor state, retrying only entries that
@@ -1139,12 +1172,8 @@ impl OutputOwner {
     /// This has the same callback registration and in-flight delivery
     /// obligations as [`Self::warning`]. The source environment reader's
     /// process-lifetime stability requirement is documented by
-    /// [`ProcessDiagnosticInputs`]. The registered callback/default FILE
-    /// primitive must not synchronously call this source-option route or
-    /// [`MbindWarningRoute`]: this private staged owner restores temporary
-    /// invalid-`verbose` state before foreign delivery, unlike pinned C's
-    /// recursive-output sequence. This does not narrow `warning` or
-    /// `raw_message` reentry.
+    /// [`ProcessDiagnosticInputs`]. The registered callback or default FILE
+    /// primitive may synchronously reenter this route, as in pinned C.
     pub(crate) unsafe fn warning_from_source_options(&self, message: SourceFormattedMessage) {
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let mut pending = PendingSourceWarnings::new();
@@ -1166,8 +1195,8 @@ impl OutputOwner {
     ///
     /// # Safety
     ///
-    /// The same callback registration, in-flight delivery, and no-reentry
-    /// obligations as [`Self::warning_from_source_options`] apply.
+    /// The same callback registration and in-flight delivery obligations as
+    /// [`Self::warning_from_source_options`] apply.
     unsafe fn with_source_options<R>(
         &self,
         operation: impl FnOnce(&Self, &mut PendingSourceWarnings) -> R,
@@ -1546,8 +1575,9 @@ impl OutputOwner {
     }
 
     /// Replays `mi_option_init`'s invalid branch after DEFAULTED. Verbose is
-    /// temporarily one only while staging its own warning, and is restored
-    /// before the parent gate continues.
+    /// temporarily one while staging its own warning and is restored before
+    /// the parent gate continues; delivery repeats the temporary one around
+    /// that warning's output (see [`PendingSourceWarnings`]).
     unsafe fn collect_invalid_source_option_unlocked(
         &self,
         option: SourceOption,
@@ -1557,11 +1587,13 @@ impl OutputOwner {
             let snapshot = unsafe { self.source_option_snapshot_unlocked() };
             if snapshot.verbose == 0 {
                 unsafe { self.source_option_set_value_unlocked(SourceOption::Verbose, 1) };
+                let start = pending.length;
                 unsafe {
                     self.collect_warning_from_source_options_unlocked(
                         invalid_source_option_message(option), pending,
                     )
                 };
+                pending.mark_temporary_verbose_from(start);
                 unsafe { self.source_option_set_value_unlocked(SourceOption::Verbose, 0) };
                 return;
             }
@@ -1812,7 +1844,9 @@ impl OutputOwner {
         options: DiagnosticOptionSnapshot,
         message: SourceFormattedMessage,
     ) {
-        self.gated_output(options, &self.warning_count, self.max_warning_count, WARNING_PREFIX_HEAD, message);
+        self.gated_output(
+            options, &self.warning_count, self.max_warning_count.load(Ordering::Relaxed), WARNING_PREFIX_HEAD, message,
+        );
     }
 
     /// Emits the selected `mi_show_error_message` path: the warning gate with
@@ -1823,7 +1857,9 @@ impl OutputOwner {
     /// The same obligations as [`Self::warning`] apply.
     #[inline]
     unsafe fn error(&self, options: DiagnosticOptionSnapshot, message: SourceFormattedMessage) {
-        self.gated_output(options, &self.error_count, self.max_error_count, ERROR_PREFIX_HEAD, message);
+        self.gated_output(
+            options, &self.error_count, self.max_error_count.load(Ordering::Relaxed), ERROR_PREFIX_HEAD, message,
+        );
     }
 
     fn gated_output(
@@ -2378,9 +2414,8 @@ impl<'owner> HugePageWarningRoute<'owner> {
     /// # Safety
     ///
     /// The caller must preserve the process startup dispatch serialization and
-    /// every [`OutputOwner`] callback lifetime obligation, including this
-    /// private slice's exclusion of synchronous source-option-route reentry
-    /// from delivery. `numa_node` must have passed the source
+    /// every [`OutputOwner`] callback lifetime obligation. `numa_node` must
+    /// have passed the source
     /// `0 <= node < 8 * MI_INTPTR_SIZE - 1` predicate.
     #[inline]
     pub(crate) unsafe fn mbind_failure(&self, numa_node: i32, errno: Errno) {
@@ -2437,7 +2472,7 @@ mod tests {
     use crabc_core::{Errno, thread::thread_pointer_identity};
     use core::cell::UnsafeCell;
     use core::ffi::{c_char, c_void, CStr};
-    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
     use std::sync::{Mutex, MutexGuard};
 
     const MAX_MESSAGES: usize = 80;
@@ -4187,6 +4222,13 @@ mod tests {
             std::println!("error.{scenario}.results={}", results.join(","));
             std::println!("error.{scenario}.messages={}", normalized_capture(&capture));
         }
+        for (scenario, entries) in recursion_trace_scenarios() {
+            let environment: std::vec::Vec<std::string::String> =
+                entries.iter().map(|entry| hex(&entry[..entry.len() - 1])).collect();
+            std::println!("recursion.{scenario}.environment={}", environment.join(":"));
+            install_option_trace_environment(&entries);
+            run_recursion_scenario(scenario);
+        }
         for (name, identity) in [("zero", 0), ("small", 0xA), ("wide", 0xA_BC0D)] {
             std::println!(
                 "format.thread_prefix.{name}={}",
@@ -4298,6 +4340,88 @@ mod tests {
             }
         }
         std::println!("CRABC_MI_M7_OPTION_EFFECTS_TRACE_END");
+    }
+
+    /// Environment images for recursive diagnostic output, mirrored by the
+    /// pinned C probe.
+    fn recursion_trace_scenarios() -> std::vec::Vec<(&'static str, std::vec::Vec<std::vec::Vec<u8>>)> {
+        std::vec![
+            ("invalid_verbose", environment_entries(&[b"mimalloc_verbose=bogus"])),
+            ("show_errors", environment_entries(&[b"mimalloc_show_errors=1", b"mimalloc_arena_reserve=bogus"])),
+            ("capped", environment_entries(&[
+                b"mimalloc_show_errors=1", b"mimalloc_max_warnings=0",
+                b"mimalloc_arena_reserve=bogus", b"mimalloc_purge_delay=bogus",
+            ])),
+        ]
+    }
+
+    static RECURSION_OWNER: AtomicPtr<OutputOwner> = AtomicPtr::new(core::ptr::null_mut());
+    static RECURSION_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static RECURSION_REENTRIES: AtomicUsize = AtomicUsize::new(0);
+    static RECURSION_VERBOSE: [core::sync::atomic::AtomicI64; MAX_MESSAGES] =
+        [const { core::sync::atomic::AtomicI64::new(0) }; MAX_MESSAGES];
+
+    /// The C probe's `recursive_output`: read `verbose` through
+    /// `mi_option_get` on every delivery and re-enter `_mi_warning_message`
+    /// on the first one.
+    unsafe extern "C" fn recursive_output(message: *const c_char, argument: *mut c_void) {
+        if !RECURSION_ACTIVE.load(Ordering::Relaxed) {
+            // SAFETY: forwarded unchanged.
+            unsafe { capture_output(message, argument) };
+            return;
+        }
+        // SAFETY: the scenario keeps the owner live at this address while
+        // its callback is registered.
+        let owner = unsafe { &*RECURSION_OWNER.load(Ordering::Relaxed) };
+        // SAFETY: the argument is the scenario's live capture.
+        let capture = unsafe { &*(argument as *const Capture) };
+        let index = capture.count();
+        // SAFETY: reentry from the registered callback is source behavior.
+        let verbose = unsafe { owner.option_get(SourceOption::Verbose) }.expect("installed option table");
+        if let Some(slot) = RECURSION_VERBOSE.get(index) {
+            slot.store(verbose, Ordering::Relaxed);
+        }
+        // SAFETY: forwarded unchanged.
+        unsafe { capture_output(message, argument) };
+        if RECURSION_REENTRIES.fetch_add(1, Ordering::Relaxed) == 0 {
+            // SAFETY: as above.
+            unsafe { owner.warning_from_source_options(source_message(b"reentered warning\n\0")) };
+        }
+    }
+
+    fn print_recursion(scenario: &str, step: &str, capture: &Capture) {
+        std::println!("recursion.{scenario}.{step}.messages={}", normalized_capture(capture));
+        let verbose: std::vec::Vec<std::string::String> = (0..capture.count().min(MAX_MESSAGES))
+            .map(|index| std::format!("{}", RECURSION_VERBOSE[index].load(Ordering::Relaxed)))
+            .collect();
+        std::println!("recursion.{scenario}.{step}.verbose={}", verbose.join(","));
+    }
+
+    /// The C probe's `run_recursion_scenario` against the installed
+    /// environment. The caller holds DIAGNOSTIC_ENVIRONMENT_TEST_LOCK.
+    fn run_recursion_scenario(scenario: &str) {
+        let capture = Capture::new();
+        let owner = output_owner();
+        RECURSION_ACTIVE.store(false, Ordering::Relaxed);
+        // SAFETY: the capture and owner outlive every delivery below, and
+        // registration precedes the serialized startup dispatch.
+        unsafe { owner.register_output(Some(recursive_output), capture_argument(&capture)) };
+        capture.reset();
+        RECURSION_OWNER.store(core::ptr::from_ref(&owner).cast_mut(), Ordering::Relaxed);
+        RECURSION_REENTRIES.store(0, Ordering::Relaxed);
+        RECURSION_ACTIVE.store(true, Ordering::Relaxed);
+        // SAFETY: the caller holds the environment lock for the owner's life.
+        unsafe { owner.initialize_source_options(option_trace_environment_reader) };
+        print_recursion(scenario, "init", &capture);
+        let (value, state) = owner.source_option_image_for_test(SourceOption::Verbose);
+        std::println!("recursion.{scenario}.final_verbose={value},{}", option_state_code(state));
+        capture.reset();
+        RECURSION_REENTRIES.store(0, Ordering::Relaxed);
+        // SAFETY: the registered capture and owner remain live.
+        unsafe { owner.warning_from_source_options(source_message(b"direct warning\n\0")) };
+        print_recursion(scenario, "direct", &capture);
+        RECURSION_ACTIVE.store(false, Ordering::Relaxed);
+        RECURSION_OWNER.store(core::ptr::null_mut(), Ordering::Relaxed);
     }
 
     /// Environment images for the `_mi_error_message` gate, mirrored by the

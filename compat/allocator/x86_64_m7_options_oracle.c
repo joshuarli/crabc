@@ -191,6 +191,73 @@ static void run_error_scenario(const char* scenario, const char* const* entries,
   run_error_scenario(name, entries, (count == 1 && entries[0] == NULL) ? 0 : count); \
 } while (0)
 
+/* Recursive diagnostic output. The registered callback reads `verbose`
+   through `mi_option_get` on every delivery and, on its first delivery,
+   re-enters `_mi_warning_message`. Pinned C restores a temporarily enabled
+   invalid `verbose` only after that warning's delivery returns, and has no
+   recursion guard on Linux, so both the observed values and the nested
+   fragments are source behavior. */
+static capture_t recursion_capture;
+static long recursion_verbose[MAX_MESSAGES];
+static int recursion_reentries;
+static bool recursion_active;
+
+static void recursive_output(const char* message, void* argument) {
+  /* The registration flush only captures: reading `verbose` there would
+     initialize it inside `mi_register_output`. */
+  if (!recursion_active) { capture_output(message, argument); return; }
+  const size_t index = recursion_capture.count;
+  const long verbose = mi_option_get(mi_option_verbose);
+  if (index < MAX_MESSAGES) recursion_verbose[index] = verbose;
+  capture_output(message, argument);
+  if (recursion_reentries == 0) {
+    recursion_reentries++;
+    _mi_warning_message("reentered warning\n");
+  }
+}
+
+static void print_recursion(const char* scenario, const char* step) {
+  printf("recursion.%s.%s.messages=", scenario, step);
+  print_capture(&recursion_capture);
+  printf("recursion.%s.%s.verbose=", scenario, step);
+  for (size_t i = 0; i < recursion_capture.count && i < MAX_MESSAGES; i++) {
+    printf("%s%ld", i == 0 ? "" : ",", recursion_verbose[i]);
+  }
+  printf("\n");
+}
+
+static void run_recursion_scenario(const char* scenario, const char* const* entries, size_t count) {
+  printf("recursion.%s.environment=", scenario);
+  for (size_t i = 0; i < count; i++) {
+    if (i != 0) printf(":");
+    print_hex(entries[i], strlen(entries[i]));
+    scenario_vector[i] = (char*)entries[i];
+  }
+  printf("\n");
+  scenario_vector[count] = NULL;
+  environ = scenario_vector;
+  reset_options();
+  memset(&recursion_capture, 0, sizeof(recursion_capture));
+  recursion_active = false;
+  mi_register_output(&recursive_output, &recursion_capture);
+  recursion_capture.count = 0;
+  recursion_reentries = 0;
+  recursion_active = true;
+  initialize_options();
+  print_recursion(scenario, "init");
+  printf("recursion.%s.final_verbose=%ld,%d\n", scenario,
+         mi_options[mi_option_verbose].value, (int)mi_options[mi_option_verbose].init);
+  recursion_capture.count = 0;
+  recursion_reentries = 0;
+  _mi_warning_message("direct warning\n");
+  print_recursion(scenario, "direct");
+}
+
+#define RECURSION_RUN(name, ...) do { \
+  static const char* const entries[] = { __VA_ARGS__ }; \
+  run_recursion_scenario(name, entries, sizeof(entries) / sizeof(entries[0])); \
+} while (0)
+
 /* `mi_vfprintf_thread`'s `"%sthread 0x%tx: "` prefix for fixed identities. */
 static void print_thread_prefix(const char* name, uintptr_t identity) {
   char prefix[64];
@@ -388,6 +455,10 @@ int main(void) {
   ERROR_RUN("hidden", NULL);
   ERROR_RUN("capped", "mimalloc_show_errors=1", "mimalloc_max_errors=1");
   ERROR_RUN("verbose", "mimalloc_verbose=1", "mimalloc_max_errors=0");
+  RECURSION_RUN("invalid_verbose", "mimalloc_verbose=bogus");
+  RECURSION_RUN("show_errors", "mimalloc_show_errors=1", "mimalloc_arena_reserve=bogus");
+  RECURSION_RUN("capped", "mimalloc_show_errors=1", "mimalloc_max_warnings=0",
+                "mimalloc_arena_reserve=bogus", "mimalloc_purge_delay=bogus");
   print_thread_prefix("zero", 0);
   print_thread_prefix("small", 0xA);
   print_thread_prefix("wide", 0xABC0D);
