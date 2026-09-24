@@ -33,10 +33,11 @@ fn main() {
         let ready: unsafe extern "C" fn() -> c_int = std::mem::transmute(ready_symbol);
         let release: unsafe extern "C" fn() -> c_int = std::mem::transmute(release_symbol);
         let running = std::thread::spawn(move || unsafe { run() });
-        for _ in 0..10_000 {
-            if ready() == 1 {
-                break;
-            }
+        // A fixed yield count races the worker's first scheduling on a loaded
+        // host. Wait on elapsed time instead; the runner's timeout remains
+        // the outer bound for a plugin that never reaches its close stage.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while ready() != 1 && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
         if ready() != 1 {
