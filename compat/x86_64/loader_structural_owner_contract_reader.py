@@ -660,9 +660,13 @@ def validate_source_algorithms(root: Path = ROOT) -> dict[str, object]:
     require("dependency_constructors: owned_dependency_constructors" in lifecycle,
             "selected lifecycle does not retain owned constructor plan")
     crt_body = rust_function_body(crt, "pub unsafe extern \"C\" fn __crabc_x86_64_dynamic_executable_init")
+    # The installed product builds this CRT with crabc_owned_dynamic_runtime:
+    # the retained callback constructs dependencies and then the main image,
+    # so the CRT-owned _init/init-array walk is compiled only for legacy roots.
     _ordered(crt_body, (
         "__crabc_preinit_array_start_address()", "if let Some(callback) = dependency_constructors",
-        "callback();", "_init();", "__crabc_init_array_start_address()",
+        "callback();", "#[cfg(not(crabc_owned_dynamic_runtime))]", "_init();",
+        "__crabc_init_array_start_address()",
     ), "owned CRT constructor tail")
     lock = _source(root, "ldso/src/x86_64_runtime_lock.rs")
     validate_runtime_lock_source(lock)

@@ -682,6 +682,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   unwinder-frame-bounds  run the standalone CFI and DWARF expression regression
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   crt-dynamic-link-contract  audit the closed x86 Rust CRT dynamic-PIE link boundary
+  owned-crt-dynamic-startup [DYNAMIC_SYSROOT]  compare installed dynamic CRT entry, lifecycle and link interface with musl
   consumer-static-pie-lto  run the private no-std crabc-rs O3/full-LTO owned-runtime consumer
   consumer-native-facade-lto  run the private filesystem/pipe/eventfd crabc-rs full-LTO consumer
   libc-pthread-create-join-tls  run the static x86 crabc-libc private create/exit/join TLS slice
@@ -7227,6 +7228,7 @@ case "$command" in
     crt-object-bundle) ;;
     unwinder-build|unwinder-cleanup|unwinder-owned-cleanup|unwinder-metadata-bounds|unwinder-eh-frame-bounds|unwinder-dynamic-bounds|unwinder-indirect-personality-bounds|unwinder-metadata-target-bounds|unwinder-frame-bounds) ;;
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
+    owned-crt-dynamic-startup) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     headers-layouts-aggregate) ;;
@@ -10051,6 +10053,13 @@ PY
         [ "$#" -eq 0 ] || fail "crt-dynamic-link-contract takes no arguments"
         ensure_image
         run_crt_dynamic_link_contract_probe
+        ;;
+    owned-crt-dynamic-startup)
+        prepare_owned_dynamic_product_argument "$command" "$@"
+        ensure_image
+        run_musl_oracle
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_crt_dynamic_startup.sh \
+            "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
         ;;
     consumer-static-pie-lto)
         [ "$#" -eq 0 ] || fail "consumer-static-pie-lto takes no arguments"

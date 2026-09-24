@@ -33,8 +33,20 @@ class DynamicEntryModes(unittest.TestCase):
         self.assertEqual(pie.entry_contract, "owned-dynamic-pie-entry")
         self.assertEqual(executable.undefined_symbols, pie.undefined_symbols)
         self.assertNotIn("__crabc_x86_static_tls_bootstrap", executable.undefined_symbols)
+        # The installed owned loader constructs and finalizes the main image;
+        # these entries dispatch only preinit and never call _init/_fini.
+        self.assertEqual(executable.undefined_symbols, builder.OWNED_DYNAMIC_RUNTIME_BOUNDARIES)
+        self.assertTrue({"_init", "_fini"}.isdisjoint(executable.undefined_symbols))
+        self.assertIn("__preinit_array_start", executable.undefined_symbols)
         for name in ("rcrt1.o", "crti.o", "crtn.o"):
             self.assertEqual(selected[name], next(item for item in builder.OBJECTS if item.name == name))
+
+    def test_private_lifecycle_modes_keep_the_crt_owned_main_array_walk(self):
+        for dynamic_main_thread, general in ((True, False), (False, True)):
+            args = SimpleNamespace(dynamic_main_thread_runtime_v1=dynamic_main_thread,
+                                   general_dynamic_lifecycle=general, owned_dynamic_sysroot=False)
+            pie = next(item for item in builder.selected_objects(args) if item.name == "Scrt1.o")
+            self.assertTrue({"_init", "_fini"}.issubset(pie.undefined_symbols))
 
 
 if __name__ == "__main__":

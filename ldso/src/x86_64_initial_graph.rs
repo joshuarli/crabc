@@ -1828,6 +1828,7 @@ unsafe fn parse_mapped(
                 // This remains the established Rust Scrt1 route. Its marker
                 // selects ownership; exact private relocation agreement is
                 // checked during relocation before the handoff is written.
+                // That CRT dispatches only the executable preinit array.
                 let init = main_init?;
                 let fini = main_fini?;
                 if !virtual_range_in_executable_load(phdr, phnum, init, 1)
@@ -1861,17 +1862,20 @@ unsafe fn parse_mapped(
                             && virtual_range_in_readable_file_load(phdr, phnum, address, length) => {}
                     _ => return None,
                 }
-                // The registry dispatches these conventional main callbacks
-                // after every dependency; zero/absent legacy tags and arrays
-                // are ordinary ELF shapes rather than an ownership selector.
-                general_init = main_init;
-                general_fini = main_fini;
-                general_fini_array = main_fini_array;
-                general_fini_len = main_fini_array_len;
-                init_array_virtual_address = main_init_array;
-                init_array_byte_len = main_init_array_len;
             }
         }
+        // In both CRT modes the registry constructs the main image after
+        // every initial dependency and links it into the reverse-construction
+        // finalizer list before its constructors run, as musl dynlink.c's
+        // do_init_fini does; runtime-loaded objects constructed later are
+        // finalized first. Zero/absent legacy tags and arrays are ordinary ELF
+        // shapes rather than an ownership selector.
+        general_init = main_init;
+        general_fini = main_fini;
+        general_fini_array = main_fini_array;
+        general_fini_len = main_fini_array_len;
+        init_array_virtual_address = main_init_array;
+        init_array_byte_len = main_init_array_len;
     }
     object.strsz = usize::try_from(strtab_byte_len?).ok()?;
     if !terminated || object.strsz == 0 { return None; }
@@ -1962,19 +1966,23 @@ unsafe fn parse_mapped(
         }
         _ => return None,
     }
+    // The installed runtime registry, not either CRT, dispatches the main
+    // image's init/fini tags. The owned CRT mode has already rejected a
+    // zero-length array or legacy tag above; the conventional mode admits
+    // those ordinary no-op shapes.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    let conventional_main = !mapped && object.main_crt_mode == MainCrtMode::Conventional;
+    let registry_main = !mapped;
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    let conventional_main = false;
+    let registry_main = false;
     match (init_array_virtual_address, init_array_byte_len) {
         (None, None) => {}
         (Some(address), Some(byte_len))
-            if general_initial_graph && (mapped || conventional_main) => {
+            if general_initial_graph && (mapped || registry_main) => {
             let pointer_size = core::mem::size_of::<usize>() as u64;
             if byte_len == 0 {
                 // A conventional executable may retain a zero-length array
                 // pair. It is a no-op, not a request to select another CRT.
-                if !conventional_main {
+                if !registry_main {
                     return None;
                 }
             } else if byte_len % pointer_size != 0
@@ -1995,8 +2003,9 @@ unsafe fn parse_mapped(
                 return None;
             }
         }
-        // The executable's constructors are deliberately CRT-owned.  A
-        // main-image init tag is a malformed request for this handoff.
+        // Outside the installed runtime, the executable's constructors are
+        // deliberately CRT-owned. A main-image init tag that reaches here is
+        // a malformed request for those private handoffs.
         (Some(_), Some(_)) if !mapped => return None,
         (Some(address), Some(byte_len)) if byte_len % 8 == 0 && virtual_range_in_load(phdr, phnum, address, byte_len) => {
             object.init_array = runtime_address(base, address)? as *const usize;
@@ -2014,7 +2023,7 @@ unsafe fn parse_mapped(
             (general_fini, &mut object.general_fini),
         ] {
             if let Some(address) = address {
-                if address == 0 && conventional_main {
+                if address == 0 && registry_main {
                     continue;
                 }
                 if address == 0 || !virtual_range_in_executable_load(phdr, phnum, address, 1) {
@@ -2025,7 +2034,7 @@ unsafe fn parse_mapped(
         }
         match (general_fini_array, general_fini_len) {
             (None, None) => {}
-            (Some(_), Some(0)) if conventional_main => {}
+            (Some(_), Some(0)) if registry_main => {}
             (Some(address), Some(byte_len))
                 if byte_len != 0 && byte_len % 8 == 0 && address % 8 == 0
                     && byte_len <= (MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES * 8) as u64

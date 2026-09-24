@@ -4,9 +4,11 @@
 //! RELRO finish before this plan is attached to the canonical graph owner.
 //! Callback addresses are copied, so finalization never rereads ELF arrays.
 //! Immutable plans and atomic execution states share that owner's lifetime;
-//! no lock is held across foreign code. The established owned CRT keeps the
-//! main image outside this plan; the installed conventional musl CRT puts its
-//! main object last after the dependency postorder.
+//! no lock is held across foreign code. Legacy private roots keep the main
+//! image outside this plan for their CRT-owned array walk. The installed
+//! runtime puts the main object last after the dependency postorder for both
+//! the owned Rust CRT and the conventional musl CRT, as musl dynlink.c's
+//! main_ctor_queue does.
 //!
 //! This is process finalization, not dlclose: all initial mappings remain
 //! resident. Recursive or repeated finalization is a no-op once claimed.
@@ -48,6 +50,8 @@ pub(super) fn owned_crt_handoff_address() -> u64 {
 }
 
 /// Called by the owned CRT only after libc state and executable preinit.
+/// The installed runtime constructs every initial dependency and then the
+/// main image; legacy private roots construct dependencies only.
 #[cfg(crabc_dynamic_main_thread_runtime_v1)]
 unsafe extern "C" fn owned_dependency_constructors() {
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -126,10 +130,10 @@ impl GeneralInitialLifecycle {
         for &index in order.indices() {
             unsafe { append_object_lifecycle(&mut plan, objects.get(index)?, index, false) }?;
         }
+        // The installed runtime owns main DT_INIT/DT_INIT_ARRAY/DT_FINI_ARRAY
+        // and DT_FINI in both CRT modes; the owned CRT runs only preinit.
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        if objects[0].main_crt_mode == MainCrtMode::Conventional {
-            unsafe { append_object_lifecycle(&mut plan, &objects[0], 0, true) }?;
-        }
+        unsafe { append_object_lifecycle(&mut plan, &objects[0], 0, true) }?;
         Some(plan)
     }
 
@@ -316,19 +320,30 @@ mod tests {
         let phdr = [1u64 | (5u64 << 32), 0, 0x1000, 0, 0x1000, 0x1000, 0x1000];
         let mut init = [0x1010usize, 0x1020];
         let mut fini = [0x1030usize, 0x1040];
-        let mut state = GeneralInitialLoaderState::new(
-            ObjectIdentity { device: 1, inode: 1 },
-            // This fixture is intentionally the existing owned-CRT route,
-            // whose main callbacks remain CRT-owned and outside this plan.
-            // A conventional main is a queued plan node and would instead
-            // require a valid main lifecycle shape.
-            Object {
-                general_fini_count: usize::MAX,
-                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-                main_crt_mode: MainCrtMode::Owned,
-                ..EMPTY_OBJECT
-            },
-        );
+        // Legacy private roots keep main callbacks CRT-owned and outside this
+        // plan; the invalid main fini count proves they are never copied.
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        let main = Object { general_fini_count: usize::MAX, ..EMPTY_OBJECT };
+        // The installed runtime queues the owned-CRT main last, exactly like
+        // the conventional CRT, so it is finalized before its dependencies.
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let mut main_init = [0x1060usize];
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let mut main_fini = [0x1070usize];
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let main = Object {
+            phdr: phdr.as_ptr().cast(),
+            phnum: 1,
+            init_array: main_init.as_ptr(),
+            init_count: main_init.len(),
+            general_init: 0x1002,
+            general_fini_array: main_fini.as_ptr(),
+            general_fini_count: main_fini.len(),
+            general_fini: 0x1080,
+            main_crt_mode: MainCrtMode::Owned,
+            ..EMPTY_OBJECT
+        };
+        let mut state = GeneralInitialLoaderState::new(ObjectIdentity { device: 1, inode: 1 }, main);
         {
             let (graph, objects) = state.discovery_mut().unwrap();
             let ObjectAdmission::New { index } = graph.admit_mapped(
@@ -356,6 +371,15 @@ mod tests {
             state.objects_during_transaction().unwrap(),
         ) }.unwrap();
         assert_eq!(plan.objects[0].object_index, 1);
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        assert_eq!(plan.count, 1);
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        {
+            assert_eq!(plan.count, 2);
+            assert_eq!(plan.objects[1].object_index, 0);
+            main_init.fill(0);
+            main_fini.fill(0);
+        }
         // Neither init nor fini dispatch may read the ELF arrays again.
         init.fill(0);
         fini.fill(0);
@@ -376,7 +400,13 @@ mod tests {
         let mut observed = Vec::new();
         plan.initialize_with(|address| observed.push(address));
         plan.finalize_with(|address| observed.push(address));
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         assert_eq!(observed, [0x1001, 0x1010, 0x1020, 0x1040, 0x1030, 0x1050]);
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(observed, [
+            0x1001, 0x1010, 0x1020, 0x1002, 0x1060,
+            0x1070, 0x1080, 0x1040, 0x1030, 0x1050,
+        ]);
         assert_eq!(retained.ready_objects().unwrap()[0].map_provenance, ObjectMapProvenance::KernelMain);
         unsafe { GeneralInitialLoaderState::reset_publication_for_test() };
     }

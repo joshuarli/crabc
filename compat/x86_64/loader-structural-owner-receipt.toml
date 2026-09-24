@@ -416,7 +416,7 @@ selected_path = "general_dlfcn.rs"
 graph = "ldso/src/x86_64_general_initial_lifecycle.rs::owned_dependency_constructors"
 handoff = "OwnedCrtHandoffV1.dependency_constructors"
 crt = "crt/src/x86_64_dynamic_startup.rs::__crabc_x86_64_dynamic_executable_init"
-order = "executable preinit, retained dependency constructors, _init, executable init array"
+order = "executable preinit, then retained initial constructors: dependencies, then the main image's DT_INIT and DT_INIT_ARRAY"
 
 [[selected_runtime.candidate_cell]]
 id = "dynamic-pie-kernel"

@@ -105,6 +105,15 @@ STATIC_PIE_LIBC_BOUNDARIES = STATIC_PIE_BOUNDARIES + (
     "__crabc_x86_static_tls_bootstrap",
 )
 
+# The installed owned dynamic entries dispatch only the executable preinit
+# array; the owned loader constructs and finalizes the main image through its
+# DT_INIT/DT_INIT_ARRAY/DT_FINI_ARRAY/DT_FINI tags, as pinned musl does. The
+# shared array-boundary bridges still name the init/fini arrays, but no
+# `_init`/`_fini` call remains in these objects.
+OWNED_DYNAMIC_RUNTIME_BOUNDARIES = tuple(
+    name for name in STATIC_PIE_BOUNDARIES if name not in {"_init", "_fini"}
+) + (X86_64_OWNED_CRT_HANDOFF_BOUNDARY, X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY)
+
 OWNED_CRT_NOTE = (
     struct.pack("<III", 6, 4, 0x43525401)
     + b"CRABC\0\0\0"
@@ -228,7 +237,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--owned-dynamic-sysroot",
         action="store_true",
-        help="build authenticated dynamic crt1.o and Scrt1.o for the owned installed product",
+        help=(
+            "build authenticated dynamic crt1.o and Scrt1.o for the owned installed product, "
+            "whose loader constructs and finalizes the main image"
+        ),
     )
     return parser.parse_args()
 
@@ -243,8 +255,12 @@ def selected_objects(args: argparse.Namespace) -> tuple[ObjectSpec, ...]:
         replace(
             spec,
             source_name="x86_64_Scrt1.rs",
-            undefined_symbols=STATIC_PIE_BOUNDARIES
-            + (X86_64_OWNED_CRT_HANDOFF_BOUNDARY, X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY),
+            undefined_symbols=(
+                OWNED_DYNAMIC_RUNTIME_BOUNDARIES
+                if owned
+                else STATIC_PIE_BOUNDARIES
+                + (X86_64_OWNED_CRT_HANDOFF_BOUNDARY, X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY)
+            ),
             entry_contract=("owned-dynamic-exec-entry" if spec.name == "crt1.o" else
                             "owned-dynamic-pie-entry" if args.general_dynamic_lifecycle or owned else spec.entry_contract),
         )
@@ -721,6 +737,14 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 *(
                     ["--cfg", "crabc_general_dynamic_lifecycle"]
                     if spec.entry_contract in {"owned-dynamic-pie-entry", "owned-dynamic-exec-entry"}
+                    else []
+                ),
+                # Only the installed product pairs these entries with the
+                # owned loader that constructs and finalizes the main image.
+                *(
+                    ["--cfg", "crabc_owned_dynamic_runtime"]
+                    if args.owned_dynamic_sysroot
+                    and spec.entry_contract in {"owned-dynamic-pie-entry", "owned-dynamic-exec-entry"}
                     else []
                 ),
                 str(source),

@@ -137,12 +137,15 @@ relocation or RELRO, and after registry publication.
 
 For all four candidate cells, the tail is fixed to the owned CRT handoff, never
 an unconstrained `dispatch or jump` choice. Under the selected lifecycle plus
-dynamic-main-thread cfg, the graph retains the dependency plan;
+dynamic-main-thread cfg, the graph retains the initial plan: the dependency
+postorder, then the main image last, as musl's `main_ctor_queue`.
 `x86_64_general_initial_lifecycle.rs::owned_dependency_constructors` exposes
 it through `OwnedCrtHandoffV1`. After libc state and executable preinit,
 `crt/src/x86_64_dynamic_startup.rs::__crabc_x86_64_dynamic_executable_init`
-runs the retained dependency constructors, then `_init` and the executable init
-array. Kernel cells use `run`'s mapped-main branch; direct cells use its
+runs that retained plan, which ends with the main image's `DT_INIT` and
+`DT_INIT_ARRAY`; the installed CRT is built with `crabc_owned_dynamic_runtime`
+and compiles its own `_init`/init-array walk only for legacy private roots.
+Kernel cells use `run`'s mapped-main branch; direct cells use its
 `x86_64_direct_entry::prepare` branch. The report records that named branch and
 owned-CRT tail per candidate cell.
 

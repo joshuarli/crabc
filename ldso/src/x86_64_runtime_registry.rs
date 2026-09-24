@@ -223,17 +223,11 @@ impl PreparedInitialRegistry {
                 // the kernel image out of short-name and $ORIGIN selection.
                 unsafe { (*node).link_map.name = x86_64_library_search::application_name(); }
             }
-            if let Some((init, fini)) = lifecycle.callback_plan(index) {
-                unsafe { (*node).callbacks(init, fini) }?;
-            } else if index == 0 {
-                // The established owned CRT owns its main callbacks. The
-                // conventional musl path has a main plan and therefore never
-                // enters this pre-initialized state.
-                unsafe { (*node).callback_state.store(INITIALIZED, Ordering::Relaxed); }
-            } else {
-                // Every admitted dependency must have a preflighted plan.
-                return None;
-            }
+            // Every admitted object, including the main image in both CRT
+            // modes, must have a preflighted plan: the registry alone claims
+            // its construction and its reverse-construction finalization.
+            let (init, fini) = lifecycle.callback_plan(index)?;
+            unsafe { (*node).callbacks(init, fini) }?;
         }
         for index in 0..graph.object_count() {
             let node = by_index.as_slice()[index];
@@ -255,16 +249,14 @@ impl PreparedInitialRegistry {
         registry.initial_count = nodes.count;
         registry.initial_tls_count = objects.iter().map(|object| object.tls_module_id).max().unwrap_or(0);
         registry.tls_count = registry.initial_tls_count;
+        // Musl's main_ctor_queue: the dependency postorder, then main last.
         let plan = graph.dependency_first_plan().ok()?;
-        let conventional_main = lifecycle.callback_plan(0).is_some();
-        let initial_count = plan.indices().len().checked_add(conventional_main as usize)?;
+        let initial_count = plan.indices().len().checked_add(1)?;
         let mut initial_order = LoaderBuffer::new(initial_count, core::ptr::null_mut::<RuntimeObject>())?;
         for (slot, &index) in plan.indices().iter().enumerate() {
             initial_order.as_mut_slice()[slot] = by_index.as_slice()[index];
         }
-        if conventional_main {
-            *initial_order.as_mut_slice().last_mut()? = by_index.as_slice()[0];
-        }
+        *initial_order.as_mut_slice().last_mut()? = by_index.as_slice()[0];
         registry.initial_order = Some(initial_order);
         // Initial symbol scope is breadth-first, not depth-first map order.
         let mut order = LoaderBuffer::new(nodes.count, core::ptr::null_mut::<RuntimeObject>())?;

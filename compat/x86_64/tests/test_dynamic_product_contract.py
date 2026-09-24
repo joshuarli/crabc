@@ -86,6 +86,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "lazy-pie",
                 "lazy-non-pie",
                 "constructor-exit",
+                "crt-dynamic-startup",
                 "pthread-signal",
                 "pthread-exit",
                 "fork",

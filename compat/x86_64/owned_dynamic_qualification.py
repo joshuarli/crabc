@@ -49,6 +49,7 @@ CASES = {
     "lazy-pie": ("run_general_dynamic_lazy.sh", "--dynamic-pie"),
     "lazy-non-pie": ("run_general_dynamic_lazy.sh", "--dynamic-non-pie"),
     "constructor-exit": ("run_general_dynamic_constructor_exit.sh", None),
+    "crt-dynamic-startup": ("run_owned_crt_dynamic_startup.sh", None),
     "pthread-signal": ("run_general_dynamic_pthread_signal.sh", None),
     "pthread-exit": ("run_general_dynamic_pthread_exit.sh", None),
     "fork": ("run_general_dynamic_fork.sh", None),

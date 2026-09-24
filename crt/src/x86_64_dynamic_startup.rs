@@ -14,6 +14,17 @@
 //! This is not the static startup path. In particular, it must not install
 //! static TLS itself or call `__crabc_x86_static_tls_bootstrap`: an interpreter
 //! owns relocation and initial thread state before it transfers control here.
+//!
+//! The installed owned product (`crabc_owned_dynamic_runtime`) divides main
+//! lifecycle ownership as pinned musl 1.2.6 `ldso/dynlink.c` does: this CRT
+//! runs only the executable preinit array and then the loader's initial
+//! constructor callback. The loader constructs every initial dependency and
+//! finally the main image (DT_INIT, then DT_INIT_ARRAY), linking each object
+//! into its reverse-construction finalizer list before its constructors run.
+//! Main finalizers therefore run from the loader's process finalizer at their
+//! musl position: after later runtime-loaded objects, before initial
+//! dependencies, and only when main construction completed. The private
+//! freestanding and legacy RuntimeV1 routes keep the CRT-owned array walk.
 
 #[cfg(crabc_dynamic_main_thread_runtime_v1)]
 use core::ffi::c_int;
@@ -69,7 +80,9 @@ struct InitialProcess {
 
 unsafe extern "C" {
     fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32;
+    #[cfg(not(crabc_owned_dynamic_runtime))]
     fn _init();
+    #[cfg(not(crabc_owned_dynamic_runtime))]
     fn _fini();
     fn __libc_start_main(
         main: Option<ApplicationMain>,
@@ -198,12 +211,17 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init() {
         if let Some(callback) = dependency_constructors {
             callback();
         }
-        _init();
-        invoke_linker_array(
-            __crabc_init_array_start_address(),
-            __crabc_init_array_end_address(),
-            ArrayOrder::Forward,
-        );
+        // The installed owned loader's callback has already constructed the
+        // main image as the last node of its initial queue.
+        #[cfg(not(crabc_owned_dynamic_runtime))]
+        {
+            _init();
+            invoke_linker_array(
+                __crabc_init_array_start_address(),
+                __crabc_init_array_end_address(),
+                ArrayOrder::Forward,
+            );
+        }
     }
 }
 
@@ -238,8 +256,15 @@ unsafe fn configure_owned_loader_handoff(handoff: *const OwnedCrtHandoffV1) -> O
     process_fini
 }
 
+/// Executable finalization callback passed to libc's `__libc_start_main`.
+///
+/// Under `crabc_owned_dynamic_runtime` this is intentionally empty: libc still
+/// calls it before the loader's process finalizer, but the main image's
+/// DT_FINI_ARRAY and DT_FINI belong to that finalizer's reverse-construction
+/// list, exactly as in pinned musl's `__libc_exit_fini`.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_fini() {
+    #[cfg(not(crabc_owned_dynamic_runtime))]
     unsafe {
         invoke_linker_array(
             __crabc_fini_array_start_address(),
@@ -253,6 +278,8 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_fini() {
 #[derive(Clone, Copy)]
 enum ArrayOrder {
     Forward,
+    // The installed owned product's loader walks the main fini array.
+    #[cfg(not(crabc_owned_dynamic_runtime))]
     Reverse,
 }
 
@@ -288,6 +315,7 @@ unsafe fn invoke_linker_array(
                 unsafe { invoke_linker_entry(core::ptr::read(start.wrapping_add(index))) };
             }
         }
+        #[cfg(not(crabc_owned_dynamic_runtime))]
         ArrayOrder::Reverse => {
             let mut index = count;
             while index != 0 {
