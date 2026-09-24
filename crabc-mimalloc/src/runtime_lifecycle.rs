@@ -17908,6 +17908,9 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     struct StartupStderrCapture {
         calls: AtomicUsize,
+        /// Deliveries of the delayed buffer, which always begins with the
+        /// verbose `process init` line in the fixtures that enable verbose.
+        delayed_flushes: AtomicUsize,
         length: AtomicUsize,
         bytes: [core::sync::atomic::AtomicU8; 512],
     }
@@ -17915,6 +17918,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     static STARTUP_STDERR_CAPTURE: StartupStderrCapture = StartupStderrCapture {
         calls: AtomicUsize::new(0),
+        delayed_flushes: AtomicUsize::new(0),
         length: AtomicUsize::new(0),
         bytes: [const { core::sync::atomic::AtomicU8::new(0) }; 512],
     };
@@ -17923,7 +17927,11 @@ mod tests {
     unsafe extern "C" fn capture_startup_stderr(message: *const core::ffi::c_char) {
         STARTUP_STDERR_CAPTURE.calls.fetch_add(1, Ordering::AcqRel);
         // SAFETY: the source output primitive passes a NUL-terminated message.
-        for &byte in unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes() {
+        let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+        if message.starts_with(b"mimalloc: process init: ") {
+            STARTUP_STDERR_CAPTURE.delayed_flushes.fetch_add(1, Ordering::AcqRel);
+        }
+        for &byte in message {
             let index = STARTUP_STDERR_CAPTURE.length.fetch_add(1, Ordering::AcqRel);
             if let Some(slot) = STARTUP_STDERR_CAPTURE.bytes.get(index) {
                 slot.store(byte, Ordering::Release);
@@ -18238,8 +18246,10 @@ mod tests {
                     "post-init output may allocate through the published initial owner");
                 assert_eq!(STARTUP_RECURSION_REENTERED_STARTUP.load(Ordering::Acquire), 1,
                     "a recursive startup call returns without waiting on its own once");
-                let flushed = STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire);
-                assert_eq!(flushed, 1, "the recursive call did not flush a second time");
+                // The one delayed flush is followed by `_mi_options_post_init`'s
+                // verbose `mi_options_print`, one delivery per line.
+                assert_eq!(STARTUP_STDERR_CAPTURE.delayed_flushes.load(Ordering::Acquire), 1,
+                    "the recursive call did not flush a second time");
                 assert!(process_is_active());
                 assert!(native_round_trip(48));
             },
@@ -18259,7 +18269,7 @@ mod tests {
                 assert!(initialize_process());
                 assert_eq!(STARTUP_RECURSION_RESULT.load(Ordering::Acquire), 1);
                 assert_eq!(STARTUP_RECURSION_REENTERED_STARTUP.load(Ordering::Acquire), 1);
-                assert_eq!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire), 1);
+                assert_eq!(STARTUP_STDERR_CAPTURE.delayed_flushes.load(Ordering::Acquire), 1);
                 assert!(native_round_trip(64));
             },
         );
