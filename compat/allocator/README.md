@@ -107,8 +107,12 @@ directory.
 gate. [`m5-gate-x86_64-v3.5.0.json`](m5-gate-x86_64-v3.5.0.json) gives each M5
 condition of `plan.md` one gate and names its evidence: groups of
 `crabc-mimalloc/tests/native_*` targets (every target belongs to exactly one
-group), allocator-container runners, and runtime-launcher suites the gate
-cannot execute, which therefore keep their gates blocked. It writes
+group), allocator-container runners, and revision-bound receipts of the
+runtime-launcher native-shadow runners (`libc-native-mimalloc-shadow-pthread-teardown`,
+`owned-native-allocator-stress`), which the gate reads through
+[`native_shadow_receipt.py`](../x86_64/native_shadow_receipt.py) and accepts
+only when they seal the current checkout and every case passed. Run those
+runners on the tree before the gate. It writes
 `x86_64/m5-gate/report.json` under the allocator artifacts directory and exits
 nonzero until every gate passes. `--gate ID` runs one gate's evidence,
 `--check` validates the contract alone, and `--reader-tests` runs its checker

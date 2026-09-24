@@ -36,6 +36,14 @@
 #   CRABC_NATIVE_ALLOCATOR_SOAK_INTERVAL  rounds per drained checkpoint (60)
 #   CRABC_NATIVE_ALLOCATOR_SOAK_WATCHDOG  seconds per soak process (900)
 #   CRABC_NATIVE_ALLOCATOR_SKIP           "stress" or "soak" to run only the other
+#
+# Every run publishes a revision-bound receipt through
+# `native_shadow_receipt.py` under `.work/x86_64/reports/native-shadow/
+# owned-native-allocator-stress/latest`: the source seal, digests of every
+# executed program and product provenance file, each case's exit status and
+# raw logs in order, and whether every knob above held its default. The
+# previous receipt is withdrawn before the first case, so a failed or
+# interrupted run leaves either a failing receipt or none.
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -55,6 +63,12 @@ soak_workers="${CRABC_NATIVE_ALLOCATOR_SOAK_WORKERS:-8}"
 soak_interval="${CRABC_NATIVE_ALLOCATOR_SOAK_INTERVAL:-60}"
 soak_watchdog="${CRABC_NATIVE_ALLOCATOR_SOAK_WATCHDOG:-900}"
 skip="${CRABC_NATIVE_ALLOCATOR_SKIP:-}"
+readonly receipt_runner=owned-native-allocator-stress
+canonical=yes
+for knob in STRESS_CASES STRESS_TIMEOUT SOAK_SEEDS SOAK_ROUNDS SOAK_WORKERS SOAK_INTERVAL SOAK_WATCHDOG SKIP; do
+    knob="CRABC_NATIVE_ALLOCATOR_$knob"
+    [ -z "${!knob+x}" ] || canonical=no
+done
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -95,6 +109,32 @@ work="$(mktemp -d "$TMPDIR/owned-native-allocator-stress.XXXXXX")"
 readonly work
 chmod a+rx "$work"
 printf 'native-allocator-stress evidence: %s\n' "$work"
+
+rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+receipt_cases=()
+receipt_products=()
+# Publishes this run's receipt on every exit. A failure outside a case (a
+# build, an oracle mismatch, or the soak growth judge) is its own case.
+publish_receipt() {
+    local status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ]; then
+        printf '%s\n' "$status" >"$work/runner.status"
+        receipt_cases+=("runner=$status:runner.status")
+    fi
+    local -a arguments=(--runner "$receipt_runner" --work "$work" --canonical "$canonical")
+    local entry
+    for entry in "${receipt_cases[@]}"; do arguments+=(--case "$entry"); done
+    for entry in "${receipt_products[@]}"; do arguments+=(--product "$entry"); done
+    for entry in STRESS_CASES="$stress_cases" STRESS_TIMEOUT="$stress_timeout" SOAK_SEEDS="$soak_seeds" \
+        SOAK_ROUNDS="$soak_rounds" SOAK_WORKERS="$soak_workers" SOAK_INTERVAL="$soak_interval" \
+        SOAK_WATCHDOG="$soak_watchdog" SKIP="$skip"; do
+        arguments+=(--parameter "$entry")
+    done
+    python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" write "${arguments[@]}" || status=1
+    exit "$status"
+}
+trap publish_receipt EXIT
 
 # Verify the pinned archive and extract the exact stress member and the
 # public headers it includes; nothing else from the archive is compiled.
@@ -156,6 +196,12 @@ for backend, audit, product in selections:
     if backend != 'native-shadow' or audit is not True:
         raise SystemExit(f'{product}: not a native-shadow product with the lifecycle test audit')
 PY
+receipt_products+=(
+    "c-static-manifest=$c_static_sysroot/share/crabc/manifest.json"
+    "static-manifest=$static_sysroot/share/crabc/manifest.json"
+    "static-libc-provenance=$static_sysroot/share/crabc/libc-static.provenance.json"
+    "dynamic-libc-provenance=$dynamic_sysroot/share/crabc/libc-shared.provenance.json"
+)
 
 # Builds the soak probe for every mode; product builds add the audit.
 build_soak() {
@@ -167,6 +213,8 @@ build_soak() {
     "$dynamic_sysroot/bin/crabc-cc-dynamic" --dynamic-pie -DCRABC_NATIVE_ALLOCATOR_AUDIT "${flags[@]}" \
         "$soak_probe" -o "$work/soak-dynamic-pie"
     cp "$work/soak-dynamic-pie" "$work/execution-root/soak-dynamic-pie"
+    local mode
+    for mode in "${modes[@]}"; do receipt_products+=("soak-$mode=$work/soak-$mode"); done
 }
 
 # Builds the pinned stress source for every mode. Its `<mimalloc.h>` include
@@ -188,6 +236,8 @@ build_stress() {
     "$dynamic_sysroot/bin/crabc-cc-dynamic" --dynamic-pie -pthread "$work/stress-dynamic-pie.o" \
         -o "$work/stress-dynamic-pie"
     cp "$work/stress-dynamic-pie" "$work/execution-root/stress-dynamic-pie"
+    local mode
+    for mode in "${modes[@]}"; do receipt_products+=("stress-$mode=$work/stress-$mode"); done
 }
 
 # Runs one built program in one mode; retains stdout, stderr, status, and
@@ -207,6 +257,7 @@ run_mode() {
     end=$(date +%s)
     printf '%s\n' "$status" >"$work/$label.status"
     printf '%s\n' "$((end - start))" >"$work/$label.seconds"
+    receipt_cases+=("$label=$status:$label.stdout,$label.stderr,$label.status,$label.seconds")
     if [ "$status" -ne 0 ] || [ -s "$work/$label.stderr" ]; then
         printf 'native-allocator-stress: %s exited %s after %ss\n' "$label" "$status" "$((end - start))" >&2
         head -c 4096 "$work/$label.stderr" >&2
@@ -294,5 +345,6 @@ for label, record in summary.items():
 if failures:
     raise SystemExit('native-allocator-soak: ' + '; '.join(failures))
 PY
+    receipt_cases+=("soak-growth=0:soak-summary.json")
 fi
 printf 'owned native-allocator stress/soak: PASS (musl, pinned-C static-PIE, audited native-shadow static-PIE/dynamic PIE); evidence: %s\n' "$work"

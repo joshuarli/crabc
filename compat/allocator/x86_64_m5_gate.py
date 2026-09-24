@@ -8,7 +8,7 @@ churn, upstream pthread stress, and early codegen/performance proof"
 (plan.md Milestones). The reviewed contract `m5-gate-x86_64-v3.5.0.json`
 gives each of those conditions one gate and names the evidence it requires.
 
-Evidence is one of three shapes:
+Evidence is one of four shapes:
 
 * `native_tests`: `crabc-mimalloc/tests/native_*` integration targets, run
   together with their default-off audit and fault features. Every such
@@ -16,9 +16,13 @@ Evidence is one of three shapes:
   runtime witness cannot silently fall outside the milestone.
 * `command`: an allocator-container command (`python3 <script> ...`). The
   one `{scratch}` placeholder names this run's fresh per-evidence directory.
-* `command: null`: evidence that exists only outside this launcher (for
-  example the runtime launcher's installed-sysroot suites). It is declared
-  missing here, so a gate that depends on it must name a blocker.
+* `receipt`: a runtime-launcher runner's revision-bound receipt, read and
+  validated through the shared `compat/x86_64/native_shadow_receipt.py`
+  reader: it must seal this exact checkout, record a canonical run, cite
+  digest-matching raw logs, and contain at least one passing case of the
+  named family with every case passing.
+* `command: null`: evidence that exists only outside this launcher. It is
+  declared missing here, so a gate that depends on it must name a blocker.
 
 A gate passes only when it carries no reviewed blocker and every evidence
 entry executed successfully on this run. Runnable evidence is always
@@ -34,6 +38,9 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import run as harness
+
+sys.path.insert(0, str(harness.ROOT / "compat/x86_64"))
+import native_shadow_receipt  # noqa: E402
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m5-gate-x86_64-v3.5.0.json"
@@ -104,7 +111,7 @@ def validate_contract(
     evidence = contract.get("evidence")
     if not isinstance(evidence, Mapping) or not evidence:
         raise harness.HarnessError("M5 allocator gate lacks an evidence registry")
-    runnable: dict[str, list[str]] = {}
+    runnable: dict[str, list[str] | dict[str, str]] = {}
     claimed: dict[str, str] = {}
     for evidence_id, record in evidence.items():
         if not isinstance(record, Mapping) or not isinstance(record.get("scope"), str) or not record["scope"]:
@@ -131,9 +138,21 @@ def validate_contract(
             if sum(argument.count(SCRATCH_PLACEHOLDER) for argument in command) > 1:
                 raise harness.HarnessError(f"M5 evidence {evidence_id} names more than one scratch directory")
             runnable[evidence_id] = command
+        elif shape == {"receipt"}:
+            check = record["receipt"]
+            if (
+                not isinstance(check, Mapping)
+                or set(check) != {"runner", "case_prefix"}
+                or not isinstance(check["runner"], str)
+                or not native_shadow_receipt.RUNNER_RE.match(check["runner"])
+                or not isinstance(check["case_prefix"], str)
+                or not check["case_prefix"]
+            ):
+                raise harness.HarnessError(f"M5 evidence {evidence_id} names a malformed receipt check")
+            runnable[evidence_id] = dict(check)
         else:
             raise harness.HarnessError(
-                f"M5 evidence {evidence_id} must record scope with exactly native_tests or command"
+                f"M5 evidence {evidence_id} must record scope with exactly native_tests, command, or receipt"
             )
     unclaimed = sorted(native_targets - set(claimed))
     if unclaimed:
@@ -208,10 +227,36 @@ def gate_report(
     }
 
 
-def run_evidence(runnable: Mapping[str, Sequence[str]], artifacts: Path) -> dict[str, dict[str, Any]]:
+def check_receipt(check: Mapping[str, str], root: Path = harness.ROOT) -> tuple[bool, str]:
+    """Validate one runner receipt; the message names its seal or its defect."""
+
+    try:
+        receipt = native_shadow_receipt.read_receipt(root, check["runner"], case_prefix=check["case_prefix"])
+    except native_shadow_receipt.ReceiptError as error:
+        return False, str(error)
+    cases = receipt.case_ids(check["case_prefix"])
+    return True, (
+        f"{check['runner']}: {len(cases)} passing {check['case_prefix']!r} cases of "
+        f"{len(receipt.cases)} at {receipt.source['revision']} "
+        f"(worktree {receipt.source['worktree_sha256']}); {harness.relative(receipt.path)}\n"
+        + "".join(f"  {case}\n" for case in cases)
+    )
+
+
+def run_evidence(runnable: Mapping[str, Any], artifacts: Path) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
     for evidence_id, command in runnable.items():
         name = evidence_id.replace(":", "-")
+        log = artifacts / f"{name}.log"
+        if isinstance(command, Mapping):
+            passed, message = check_receipt(command)
+            log.write_text(message + "\n")
+            results[evidence_id] = {
+                "log": harness.relative(log),
+                "receipt": dict(command),
+                "status": "passed" if passed else "failed",
+            }
+            continue
         # Evidence that refuses to overwrite its own receipt gets a directory
         # that this gate run alone owns.
         scratch = artifacts / name
@@ -219,7 +264,6 @@ def run_evidence(runnable: Mapping[str, Sequence[str]], artifacts: Path) -> dict
         scratch.mkdir(parents=True)
         command = [argument.replace(SCRATCH_PLACEHOLDER, str(scratch)) for argument in command]
         record = harness.command_record(command, cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
-        log = artifacts / f"{name}.log"
         log.write_text(str(record["stdout"]) + str(record["stderr"]))
         results[evidence_id] = {
             "command": list(command),

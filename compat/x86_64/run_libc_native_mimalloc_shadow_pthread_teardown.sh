@@ -6,6 +6,15 @@
 # default x86 remains C mimalloc. The selected archive still has an incidental
 # C mimalloc build dependency through the owned-static aggregate, so this is
 # neither a C-free graph claim nor promotion evidence.
+#
+# Every run publishes a revision-bound receipt through
+# `native_shadow_receipt.py` under `.work/x86_64/reports/native-shadow/
+# libc-native-mimalloc-shadow-pthread-teardown/latest`: the source seal,
+# digests of every executed candidate, reference, and source-runtime receipt,
+# each recorded case exit with the runner transcript, and a final `runner`
+# case carrying the script's own exit status. The previous receipt is
+# withdrawn first, so a failed or interrupted run leaves a failing receipt or
+# none. Overriding the probe timeout makes the run non-canonical.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -47,6 +56,34 @@ export CARGO_HOME="$ROOT_DIR/.work/x86_64/cargo"
 mkdir -p "$CARGO_HOME"
 case_exit_dir="$work_dir/case-exits"
 mkdir -p "$case_exit_dir"
+readonly receipt_runner=libc-native-mimalloc-shadow-pthread-teardown
+receipt_canonical=yes
+[ -z "${CRABC_NATIVE_MIMALLOC_SHADOW_PROBE_TIMEOUT+x}" ] || receipt_canonical=no
+rm -rf "$ROOT_DIR/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+# The runner transcript is the raw log every receipt case cites.
+exec > >(tee -a "$work_dir/runner.log") 2> >(tee -a "$work_dir/runner.log" >&2)
+
+publish_receipt() {
+    local status="$1"
+    local -a arguments=(--runner "$receipt_runner" --work "$work_dir" --canonical "$receipt_canonical"
+        --parameter "EXECUTION_TIMEOUT=$EXECUTION_TIMEOUT")
+    local path name
+    for path in "$case_exit_dir"/*.exit; do
+        [ -f "$path" ] || continue
+        name="$(basename "$path" .exit)"
+        arguments+=(--case "$name=$(cat "$path"):case-exits/$name.exit,runner.log")
+    done
+    printf '%s\n' "$status" >"$work_dir/runner.status"
+    arguments+=(--case "runner=$status:runner.status,runner.log")
+    for path in "$work_dir"/musl-*reference "$work_dir"/native-shadow-*candidate \
+        "$work_dir"/source-runtime-*/receipt.json; do
+        [ -f "$path" ] || continue
+        name="${path#"$work_dir"/}"
+        arguments+=(--product "${name//\//-}=$path")
+    done
+    python3 -B "$ROOT_DIR/compat/x86_64/native_shadow_receipt.py" write "${arguments[@]}" >&2
+}
+
 cleanup() {
     status=$?
     # The normal raw-copy cohort needs its source-runtime receipts, final-link
@@ -54,6 +91,7 @@ cleanup() {
     # focused physical-destroy lane already has the same provenance need.
     printf 'x86 selected native-mimalloc pthread teardown retained evidence: %s\n' \
         "$work_dir" >&2
+    publish_receipt "$status" || status=1
     exit "$status"
 }
 trap cleanup EXIT

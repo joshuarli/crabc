@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -72,14 +74,14 @@ class M5GateContractTests(unittest.TestCase):
 
     def test_missing_evidence_requires_a_reviewed_blocker(self) -> None:
         unblocked = copy.deepcopy(self.contract)
-        self.gate_record(unblocked, "m5.upstream-stress")["blocked_by"] = []
+        self.gate_record(unblocked, "m5.codegen-performance")["blocked_by"] = []
         with self.assertRaisesRegex(harness.HarnessError, "missing evidence without a blocker"):
             self.validate(unblocked)
 
     def test_malformed_evidence_or_gate_identity_is_rejected(self) -> None:
         both = copy.deepcopy(self.contract)
         both["evidence"]["differential:reclaim-on-free"]["native_tests"] = ["native_reclaim_on_free"]
-        with self.assertRaisesRegex(harness.HarnessError, "exactly native_tests or command"):
+        with self.assertRaisesRegex(harness.HarnessError, "exactly native_tests, command, or receipt"):
             self.validate(both)
 
         absent_runner = copy.deepcopy(self.contract)
@@ -93,6 +95,11 @@ class M5GateContractTests(unittest.TestCase):
         reordered["gates"].reverse()
         with self.assertRaisesRegex(harness.HarnessError, "order or identity"):
             self.validate(reordered)
+
+        malformed = copy.deepcopy(self.contract)
+        malformed["evidence"]["receipt:seeded-soak"]["receipt"] = {"runner": "../escape", "case_prefix": "soak-"}
+        with self.assertRaisesRegex(harness.HarnessError, "malformed receipt check"):
+            self.validate(malformed)
 
         unused = copy.deepcopy(self.contract)
         unused["evidence"]["differential:unused"] = {"command": None, "scope": "unused"}
@@ -121,6 +128,34 @@ class M5GateContractTests(unittest.TestCase):
             next(record for record in report["gates"] if record["id"] == "m5.generic-exit")["status"],
             "blocked",
         )
+
+    def test_receipt_evidence_is_runnable_and_passes_only_on_a_valid_receipt(self) -> None:
+        summary = self.validate()
+        for evidence_id in ("receipt:libc-shadow-pthread-teardown", "receipt:upstream-test-stress",
+                            "receipt:seeded-soak"):
+            self.assertIn(evidence_id, summary["runnable_evidence"])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / ".gitignore").write_text(".work/\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                            "commit", "-qm", "base"], cwd=root, check=True)
+            check = {"runner": "owned-native-allocator-stress", "case_prefix": "soak-"}
+            passed, message = gate.check_receipt(check, root)
+            self.assertFalse(passed)
+            self.assertIn("no receipt", message)
+            work = root / ".work/x86_64/tmp/run"
+            work.mkdir(parents=True)
+            (work / "soak.stdout").write_text("summary\n")
+            gate.native_shadow_receipt.write_receipt(
+                root, check["runner"], work, {"soak-static-pie": work / "soak.stdout"},
+                [("soak-1-static-pie", 0, [work / "soak.stdout"])], {}, True,
+            )
+            passed, message = gate.check_receipt(check, root)
+            self.assertTrue(passed, message)
+            passed, message = gate.check_receipt(dict(check, case_prefix="stress-"), root)
+            self.assertFalse(passed)
 
 
 if __name__ == "__main__":

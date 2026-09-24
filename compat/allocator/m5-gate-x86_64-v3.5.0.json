@@ -126,17 +126,30 @@
       ],
       "scope": "Executed steady-state hot paths and static reachability of the Rust engine against pinned C: instruction counts, helper calls, atomics, divisions, and any syscall, panic, or formatting code on the traced paths."
     },
-    "runtime:libc-shadow-pthread-teardown": {
-      "command": null,
-      "scope": "`./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown`: selected libc native-mimalloc-shadow worker attach and teardown through the owned runtime."
-    },
-    "runtime:owned-native-allocator-stress": {
-      "command": null,
-      "scope": "`./scripts/dev-x86_64.sh owned-native-allocator-stress`: unmodified pinned test-stress.c at 1-8 workers and the seeded, watchdog-bound audited soak through static-PIE and dynamic native-shadow products, compared with musl and pinned C."
-    },
     "perf:engine-early-proof": {
       "command": null,
       "scope": "`./compat/allocator/run-x86_64.sh allocator-perf-engine`: native versus pinned-C local, four-thread, and cross-thread engine throughput on an uncontended host."
+    },
+    "receipt:libc-shadow-pthread-teardown": {
+      "receipt": {
+        "runner": "libc-native-mimalloc-shadow-pthread-teardown",
+        "case_prefix": "native-"
+      },
+      "scope": "The current tree's receipt from `./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown`: selected libc native-mimalloc-shadow worker normal-return, explicit-exit, internal-allocator-override, and normal-main-return process-done cases through the owned static runtime, each against its pinned-musl reference."
+    },
+    "receipt:upstream-test-stress": {
+      "receipt": {
+        "runner": "owned-native-allocator-stress",
+        "case_prefix": "stress-"
+      },
+      "scope": "The current tree's canonical receipt from `./scripts/dev-x86_64.sh owned-native-allocator-stress`: unmodified pinned test-stress.c at 1-8 and 32 workers, including large-object mode, through audited native-shadow static-PIE and dynamic PIE and the pinned-C product, each reproducing musl's output."
+    },
+    "receipt:seeded-soak": {
+      "receipt": {
+        "runner": "owned-native-allocator-stress",
+        "case_prefix": "soak-"
+      },
+      "scope": "The same receipt's seeded, watchdog-bound soak: independent owners, remote free, transfer, exit-before-free, cleanup, and cancellation across small through huge sizes, with exact drained checkpoints and bounded PageMap, arena, metadata, and RSS growth."
     }
   },
   "gates": [
@@ -193,11 +206,9 @@
       "required": true,
       "acceptance": "The selected libc native-mimalloc-shadow product passes its ABI and pthread lifecycle suite.",
       "evidence": [
-        "runtime:libc-shadow-pthread-teardown"
+        "receipt:libc-shadow-pthread-teardown"
       ],
-      "blocked_by": [
-        "The selected-libc shadow evidence runs only under the runtime launcher against installed sysroots, and it publishes no revision-bound receipt this gate can verify."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m5.state-auditing",
@@ -214,22 +225,18 @@
       "acceptance": "Deterministic churn and a seeded soak complete with bounded metadata and exact final state.",
       "evidence": [
         "native:deterministic-churn",
-        "runtime:owned-native-allocator-stress"
+        "receipt:seeded-soak"
       ],
-      "blocked_by": [
-        "The seeded soak runs only under the runtime launcher and publishes no revision-bound receipt this gate can verify."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m5.upstream-stress",
       "required": true,
       "acceptance": "Unmodified pinned test-stress.c passes across its worker, scale, and large-object matrix through the native products.",
       "evidence": [
-        "runtime:owned-native-allocator-stress"
+        "receipt:upstream-test-stress"
       ],
-      "blocked_by": [
-        "The upstream pthread stress runs only under the runtime launcher and publishes no revision-bound receipt this gate can verify."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m5.codegen-performance",
