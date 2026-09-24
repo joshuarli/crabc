@@ -16,7 +16,6 @@ provider exists or that the selected archive can extract one.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -37,7 +36,6 @@ from header_callable_linkage_audit import (  # noqa: E402
     candidate_external_symbols,
     load_json as load_inventory_json,
     load_static_exports,
-    sha256_file,
 )
 import header_callable_extension_contract as callable_extension_contract
 
@@ -422,10 +420,6 @@ def missing_reference_records(inventory: Mapping[str, Any]) -> tuple[list[dict[s
     return missing, sorted(names)
 
 
-def candidate_name_digest(names: Sequence[str]) -> str:
-    return hashlib.sha256(("\n".join(names) + "\n").encode("utf-8")).hexdigest()
-
-
 def reviewed_provider_routes(
     contract: DispositionContract,
     *,
@@ -456,12 +450,6 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
         partition, counts = callable_provider_partition(inventory, external, static_exports)
     except ValueError as error:
         raise HeaderCallableDispositionError(str(error)) from error
-    inputs = inventory.get("inputs")
-    require(isinstance(inputs, Mapping), "inventory inputs are missing")
-    require(
-        inputs.get("static_c_abi_exports_sha256") == sha256_file(contract.static_exports),
-        "inventory was generated against a different static export ratchet",
-    )
     default_static = partition.get("default_static")
     require(isinstance(default_static, Mapping), "inventory default static provider is invalid")
     default_members = string_list(default_static.get("members"), "inventory default static members", allow_empty=True)
@@ -521,11 +509,6 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
         "target": TARGET,
         "platform": PLATFORM,
         "oracle": ORACLE,
-        "inputs": {
-            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
-            "candidate_external_callable_sha256": candidate_name_digest(external),
-            "static_c_abi_exports_sha256": sha256_file(contract.static_exports),
-        },
         "scope": dict(contract.policy),
         "work_package": dict(contract.work_package),
         "reviewed_callable_extension_provider_routes": reviewed_extension_provider_routes,

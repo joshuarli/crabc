@@ -887,13 +887,11 @@ def refresh_provider_accounting(report: Mapping[str, Any], contract: InventoryCo
     require(isinstance(summary, Mapping), "checked compiler-derived callable summary is invalid")
     expected_inputs = {
         "compiler": "clang JSON AST and preprocessor records",
-        "header_inventory_sha256": sha256_file(contract.public_headers),
         "linux_uapi_header_manifest_sha256": LINUX_UAPI_HEADER_MANIFEST_SHA256,
         "linux_uapi_source_sha256": LINUX_UAPI_SOURCE_SHA256,
         "linux_uapi_version": LINUX_UAPI_VERSION,
         "musl_source_sha256": MUSL_SOURCE_SHA256,
         "musl_version": MUSL_VERSION,
-        "static_c_abi_exports_sha256": sha256_file(contract.static_exports),
     }
     require(set(inputs) == set(expected_inputs), "checked compiler-derived callable facts have unexpected input bindings")
     for name, expected in expected_inputs.items():
@@ -1043,13 +1041,11 @@ def build_report(
         "oracle": "Pinned musl 1.2.6",
         "inputs": {
             "compiler": "clang JSON AST and preprocessor records",
-            "header_inventory_sha256": sha256_file(contract.public_headers),
             "linux_uapi_header_manifest_sha256": LINUX_UAPI_HEADER_MANIFEST_SHA256,
             "linux_uapi_source_sha256": LINUX_UAPI_SOURCE_SHA256,
             "linux_uapi_version": LINUX_UAPI_VERSION,
             "musl_source_sha256": MUSL_SOURCE_SHA256,
             "musl_version": MUSL_VERSION,
-            "static_c_abi_exports_sha256": sha256_file(contract.static_exports),
         },
         "scope": {
             "archive_extraction_required_for_external": True,

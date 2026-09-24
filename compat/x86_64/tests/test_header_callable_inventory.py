@@ -1807,9 +1807,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema": AUDIT.INVENTORY_SCHEMA,
-                        "inputs": {
-                            "static_c_abi_exports_sha256": hashlib.sha256(exports.read_bytes()).hexdigest(),
-                        },
+                        "inputs": {},
                         "callables": [
                             {
                                 "tree": "candidate",

@@ -417734,13 +417734,11 @@
   "contract_schema": "crabc.x86_64-header-callable-inventory/v2",
   "inputs": {
     "compiler": "clang JSON AST and preprocessor records",
-    "header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "linux_uapi_header_manifest_sha256": "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e",
     "linux_uapi_source_sha256": "dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43",
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
-    "musl_version": "1.2.6",
-    "static_c_abi_exports_sha256": "3698b538aea4c357f0536bacf340bf4c0c520a6b8cc6d34a8e119b4ce1c655b3"
+    "musl_version": "1.2.6"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",

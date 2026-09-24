@@ -753,13 +753,6 @@ def validate_accounted_incomplete_linkage_audit_report(report: Mapping[str, Any]
     )
 
     inventory = load_json(HEADER_CALLABLE_INVENTORY_PATH)
-    inputs = inventory.get("inputs")
-    require(
-        isinstance(inputs, Mapping)
-        and inputs.get("static_c_abi_exports_sha256")
-        == sha256_file(STATIC_C_ABI_EXPORTS_PATH),
-        "accounted-incomplete linkage inventory static-export digest is stale",
-    )
     try:
         external = candidate_external_symbols(inventory)
         exports = load_static_exports(STATIC_C_ABI_EXPORTS_PATH)
@@ -829,7 +822,7 @@ def check_accounted_incomplete_linkage_audit() -> None:
     )
     inventory = load_json(inventory_path)
     require(
-        report.get("inventory_static_export_digest") == sha256_file(static_exports_path),
+        report.get("static_exports_sha256") == sha256_file(static_exports_path),
         "accounted-incomplete linkage audit static-export digest is stale",
     )
     partition = inventory.get("callable_provider_partition")

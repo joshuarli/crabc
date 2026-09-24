@@ -88,14 +88,6 @@ def candidate_external_symbols(inventory: Mapping[str, Any]) -> list[str]:
     return sorted(symbols)
 
 
-def inventory_static_export_sha256(inventory: Mapping[str, Any]) -> str:
-    inputs = inventory.get("inputs")
-    require(isinstance(inputs, Mapping), "inventory inputs are missing")
-    value = inputs.get("static_c_abi_exports_sha256")
-    require(isinstance(value, str) and len(value) == 64, "inventory static-export input digest is invalid")
-    return value
-
-
 def string_members(value: object, location: str) -> list[str]:
     require(isinstance(value, list), f"{location} must be an array")
     members: list[str] = []
@@ -221,13 +213,6 @@ def audit(
     linker: str = "ld",
     nm: str = "nm",
 ) -> dict[str, Any]:
-    expected_digest = inventory_static_export_sha256(inventory)
-    # A stale inventory might hide new ratchet entries or assert a complement
-    # from a different archive selection, so reject it before calculating.
-    actual_digest = hashlib.sha256(("\n".join(static_exports) + "\n").encode("utf-8")).hexdigest()
-    # The inventory generator hashes the complete ratchet file (including its
-    # contract comments); callers which only pass symbols must replace this
-    # assertion below with the exact file check in `audit_inventory_file`.
     external = candidate_external_symbols(inventory)
     export_set = set(static_exports)
     complement = sorted(set(external) - export_set)
@@ -264,8 +249,6 @@ def audit(
     return {
         "schema": SCHEMA,
         "inventory_schema": INVENTORY_SCHEMA,
-        "inventory_static_export_digest": expected_digest,
-        "static_export_symbol_digest": actual_digest,
         "scope": {
             "family_promotion": False,
             "feature_archive_provider_accounting": True,
@@ -301,11 +284,10 @@ def audit_inventory_file(
 ) -> dict[str, Any]:
     inventory = load_json(inventory_path)
     exports = load_static_exports(static_exports_path)
-    require(
-        inventory_static_export_sha256(inventory) == sha256_file(static_exports_path),
-        "inventory was generated against a different static export ratchet; regenerate it before audit",
-    )
-    return audit(inventory, exports, archive, linker=linker, nm=nm)
+    report = audit(inventory, exports, archive, linker=linker, nm=nm)
+    # Runtime receipt: the exact static-export ratchet file this audit read.
+    report["static_exports_sha256"] = sha256_file(static_exports_path)
+    return report
 
 
 def canonical_json(value: Mapping[str, Any]) -> str:

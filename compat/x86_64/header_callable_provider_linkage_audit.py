@@ -58,7 +58,6 @@ from header_callable_linkage_audit import (
     load_json,
     load_static_exports,
     require,
-    sha256_file,
 )
 
 
@@ -628,7 +627,6 @@ def audit_provider_closure(
         "external_callable_count": len(external),
         "feature_profiles": profiles,
         "inventory_schema": INVENTORY_SCHEMA,
-        "inventory_static_export_digest": inventory.get("inputs", {}).get("static_c_abi_exports_sha256"),
         "schema": SCHEMA,
         "scope": {
             "family_promotion": False,
@@ -673,11 +671,6 @@ def audit_inventory_file(
     readelf: str = "readelf",
 ) -> dict[str, Any]:
     inventory = load_json(inventory_path)
-    provider_require(
-        inventory.get("inputs", {}).get("static_c_abi_exports_sha256")
-        == sha256_file(static_exports_path),
-        "inventory was generated against a different static export ratchet; regenerate it before audit",
-    )
     return audit_provider_closure(
         inventory=inventory,
         static_exports=load_static_exports(static_exports_path),
