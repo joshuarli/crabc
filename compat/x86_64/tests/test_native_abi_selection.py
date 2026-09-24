@@ -420,6 +420,20 @@ class SourceOwnerPolicyTests(unittest.TestCase):
         self.assertEqual(startup['selection']['group'], 'source-owned-crt-libc-startup-boundary')
         self.assertEqual([row['artifact_key'] for row in startup['expected_placements']], ['candidate-static', 'candidate-shared'])
 
+    def test_x86_only_public_functions_select_explicit_shared_exports(self):
+        group = self.groups['x86-only-public-functions']
+        self.assertEqual(group['members'], ['arch_prctl', 'ioperm', 'iopl'])
+        self.assertIn('arch_prctl', self.groups['feature-abi-only-callables']['delegated_members'])
+        self.assertTrue({'ioperm', 'iopl'} <= set(self.groups['declared-callable-providers']['delegated_members']))
+        for name in group['members']:
+            record = self.records[name]
+            self.assertEqual(record['selection']['group'], group['id'])
+            self.assertEqual(record['unresolved'], [])
+            self.assertEqual(record['expected_placements'], [
+                {'artifact_key': 'candidate-static', 'metadata': {'type': 'FUNC'}, 'metadata_rule': 'selected-native-oracle-function'},
+                {'artifact_key': 'candidate-shared', 'metadata': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}, 'metadata_rule': 'explicit'},
+            ])
+
     def test_crt_definition_placements_keep_entry_bridges_and_handoff_distinct(self):
         source_groups = [group for group in self.groups.values() if group['id'].startswith('source-crt-')]
         self.assertEqual({name for group in source_groups for name in group['members']}, CRT_OWNER_NAMES)
@@ -458,7 +472,7 @@ __crabc_x86_regex_cabi_free __crabc_x86_regex_cabi_malloc __crabc_x86_regex_cabi
 __stpcpy __stpncpy __strchrnul __memrchr __memcpy_fwd
 __dn_expand __inet_aton __crabc_x86_host_cache_cabi_free __crabc_x86_host_cache_cabi_malloc
 __tsearch_balance __crabc_x86_passwd_cabi_free __crabc_x86_shadow_cabi_malloc
-__crabc_x86_fixed_graph_dlfcn_record
+__crabc_x86_fixed_graph_dlfcn_record __stack_chk_fail_local
 '''.split())
 PRIVATE_NOTYPE_LABELS = frozenset({'__crabc_x86_cp_begin', '__crabc_x86_cp_cancel', '__crabc_x86_cp_end', '__memcpy_fwd'})
 
@@ -492,7 +506,8 @@ class PrivateImplementationBodyPolicyTests(unittest.TestCase):
             self.assertEqual(record['selection']['disposition'], 'private-provider', name)
             self.assertEqual(record['unresolved'], [], name)
             placements = {row['artifact_key']: row['metadata'] for row in record['expected_placements']}
-            self.assertEqual(placements['candidate-static'], {'type': kind, 'binding': 'GLOBAL', 'visibility': 'HIDDEN'}, name)
+            binding = 'WEAK' if name == '__stack_chk_fail_local' else 'GLOBAL'
+            self.assertEqual(placements['candidate-static'], {'type': kind, 'binding': binding, 'visibility': 'HIDDEN'}, name)
             if name == '__crabc_x86_fixed_graph_dlfcn_record':
                 self.assertEqual(set(placements), {'candidate-static'})
             else:

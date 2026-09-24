@@ -38,7 +38,7 @@ sources = ["compat/x86_64/header_callable_disposition.toml", "compat/x86_64/feat
 members = []
 members_file = ""
 expected_type = "FUNC"
-delegated_members = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_flag_test_and_set", "atomic_flag_test_and_set_explicit", "atomic_signal_fence", "atomic_thread_fence", "tgkill"]
+delegated_members = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_flag_test_and_set", "atomic_flag_test_and_set_explicit", "atomic_signal_fence", "atomic_thread_fence", "ioperm", "iopl", "tgkill"]
 placement_metadata = {}
 reason = "Installed native external functions select their checked provider routes. Declaration, exact binding, extraction and family evidence remain separate."
 static_metadata_rule = "selected-native-oracle-function"
@@ -54,7 +54,7 @@ sources = ["compat/x86_64/feature_archive_roster.py", "compat/x86_64/parity.toml
 members = []
 members_file = ""
 expected_type = "FUNC"
-delegated_members = ["_dl_debug_state", "_fini", "_init"]
+delegated_members = ["_dl_debug_state", "_fini", "_init", "arch_prctl"]
 placement_metadata = {}
 reason = "Exact ABI-only FUNC provider members from the selected feature roster; no OBJECT inference."
 static_metadata_rule = "selected-native-oracle-function"
@@ -138,6 +138,22 @@ delegated_members = []
 placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
 static_metadata_rule = "explicit"
 reason = "Six addressable atomic functions and tgkill have explicit native source contracts independent of oracle presence."
+
+[[owner_groups]]
+id = "x86-only-public-functions"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-architecture-controls"
+family = "libc.posix-runtime"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/arch_prctl.rs", "libc/src/c_abi/x86_64/io_permissions.rs", "compat/x86_64/header_callable_disposition.toml", "compat/x86_64/feature_archive_roster.py"]
+members = ["arch_prctl", "ioperm", "iopl"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "x86-only public functions exported by pinned musl 1.2.6 x86 libc.so. The frozen AArch64 dynamic ledger has no row to inherit, so their shared GLOBAL DEFAULT placement is explicit; static metadata still comes from the selected oracle definition."
+static_metadata_rule = "selected-native-oracle-function"
 
 [[owner_groups]]
 id = "source-owned-stdio-io-aliases"
@@ -875,6 +891,22 @@ placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL
 reason = "Hidden static-product trampoline returning the unavailable fixed-graph dlfcn record. The shared libc defines no such spelling; its loader-backed dlfcn route is separate."
 static_metadata_rule = "explicit"
 
+[[owner_groups]]
+id = "private-stack-check-fail-local-alias"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-stack-check-fail"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/stack_chk_fail.rs"]
+members = ["__stack_chk_fail_local"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "WEAK", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Source-faithful musl weak_alias(__stack_chk_fail, __stack_chk_fail_local): a hidden weak same-address companion in the archive, localized in the shared libc. It is never an installed C identity."
+static_metadata_rule = "explicit"
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]
@@ -954,14 +986,6 @@ sources = ["crabc-rs/src/lib.rs", "compat/x86_64/native-abi-selection.md"]
 disposition = "unresolved"
 reason = "No current native getter import does not establish full native cfile/dl/runtime_thread consumer parity."
 requirements = ["explicit native facade consumer/protocol selection and complete evidence"]
-
-[[structural_groups]]
-id = "unattributed-static-source"
-members = ["DW.ref.endhostent", "__stack_chk_fail_local"]
-sources = ["AGENTS.md", "compat/x86_64/native-abi-selection.md"]
-disposition = "unresolved"
-reason = "Exact source attribution remains unresolved; no unwinder investigation is authorized."
-requirements = ["authorized exact owner accounting; retained d8 source audit267e737f only preserves unresolved observations"]
 
 [[structural_groups]]
 id = "restricted-static-source"

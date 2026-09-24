@@ -700,7 +700,8 @@ selects `candidate-static` as `GLOBAL HIDDEN` and `candidate-shared` as the
 localized `.symtab` definition, `LOCAL HIDDEN`. The four NOTYPE code labels
 (`__memcpy_fwd` and the three cancellable-syscall window labels) use NOTYPE.
 The static-only `__crabc_x86_fixed_graph_dlfcn_record` trampoline has no shared
-placement. The musl-named bodies among them (`__pthread_*`, `__stpcpy`,
+placement. The source-faithful `weak_alias(__stack_chk_fail,
+__stack_chk_fail_local)` companion keeps its `WEAK HIDDEN` archive binding. The musl-named bodies among them (`__pthread_*`, `__stpcpy`,
 `__strchrnul`, `__memrchr`, `__mkostemps`, `__mremap`, `__ptsname_r`,
 `__dn_expand`, `__inet_aton`, `__fesetround`, `__tsearch_balance`) have the same
 hidden static shape as pinned musl. The rest are crabc seams such as C
@@ -753,6 +754,14 @@ a differential workload must identify a separate oracle adapter over
 `syscall(SYS_tgkill)` and reuse the unchanged installed-header workload object.
 The declaration, provider, exact metadata, and required ratchet addition must
 land together; a raw musl comparison still records it as an extra identity.
+
+`arch_prctl`, `ioperm`, and `iopl` are x86-only public functions that pinned
+musl 1.2.6 exports from its x86 `libc.so`. The frozen AArch64 dynamic ledger
+has no row for them to inherit. The `x86-only-public-functions` group therefore
+records their shared `FUNC GLOBAL DEFAULT` placement explicitly and still takes
+static metadata from the selected oracle definition. It delegates them out of
+the header and ABI-only provider routes and grants no other x86-only name a
+shared-metadata default.
 
 The bundled C allocator's upstream API is not an installed crabc API.
 `libc/src/allocator_mimalloc.rs` owns the public allocation wrappers and states
