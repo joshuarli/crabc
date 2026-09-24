@@ -659,6 +659,9 @@ def new_transaction_directory(identifier: str) -> Path:
     )
     if path.is_symlink() or path.resolve() != path:
         raise QualificationRunError("new qualification receipt transaction is not physical")
+    # mkdtemp is owner-only; the native container runs as root, and the host
+    # dispatcher must still be able to resolve a receipt for revalidation.
+    path.chmod(0o755)
     return path
 
 

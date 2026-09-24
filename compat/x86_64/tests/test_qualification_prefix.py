@@ -500,6 +500,9 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
         self.assertEqual(receipt['qualified_gates'], list(manifest.CHAIN))
         self.assertEqual([case['gate'] for case in receipt['cases']], list(manifest.CHAIN))
         self.assertEqual(runner.validate_chain_receipt(path), receipt)
+        # The root-owned container transaction stays readable by the host
+        # dispatcher that translates --validate-receipt paths.
+        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o755)
 
     def test_failed_gate_seals_an_intact_failure_that_is_never_a_pass(self):
         self.environment['QUALIFICATION_FIXTURE_FAIL'] = manifest.CHAIN[2]
