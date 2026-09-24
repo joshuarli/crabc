@@ -60,10 +60,16 @@ with an error callback that continues or aborts. Each block prints one
 FNV-1a digest of every result, so the transcript is judged by comparison with
 musl; the `-trace` selector spellings print each observation.
 
-With `FNM_PATHNAME`, fnmatch.c's component scan advances by `pat_next`'s
-step, which is zero for an invalid multibyte pattern character, so musl never
-returns once the scan reaches one; the corpus therefore skips `FNM_PATHNAME`
-for patterns that are invalid in the current locale.
+One intentional difference is confined to input on which musl never returns.
+With `FNM_PATHNAME`, fnmatch.c's component scan advances by `pat_next`'s step,
+which is zero for an invalid multibyte pattern character, so musl loops
+forever once the scan reaches one (for example `fnmatch("\377", "",
+FNM_PATHNAME)` in `C.UTF-8`). `owned_fnmatch::fnmatch_with_mode` returns
+`FNM_NOMATCH`, the answer `fnmatch_internal` gives for any component
+containing that character. The corpus skips `FNM_PATHNAME` for patterns that
+are invalid in the current locale; the `fnmatch-pathname-unmatchable` selector
+runs five such calls in alarmed children, and the runner requires each musl
+child to die of `SIGALRM` and each owned child to report `FNM_NOMATCH`.
 
 Word-expansion preflight is covered by the separate installed `wordexp`
 component. Its `nocmd-source` selector in `owned_wordexp_probe.c` checks the

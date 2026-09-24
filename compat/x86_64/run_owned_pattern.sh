@@ -20,6 +20,7 @@ readonly CASES=(
     glob-literal
     glob-nested
     glob-dangling-mark
+    fnmatch-pathname-unmatchable
     fnmatch-corpus
     glob-corpus
     all
@@ -114,8 +115,34 @@ run_case_in_root() {
     fi
 }
 
+# `fnmatch-pathname-unmatchable` is the one intentional difference: pinned musl
+# never returns (its child dies of SIGALRM) where the owned entry reports
+# FNM_NOMATCH. Both transcripts are fixed rather than compared.
+readonly UNMATCHABLE_SELECTOR=fnmatch-pathname-unmatchable
+readonly UNMATCHABLE_CASES=5
+unmatchable_transcript() {
+    local outcome="$1" index
+    for ((index = 0; index < UNMATCHABLE_CASES; index++)); do
+        printf 'pathname-unmatchable case=%d %s\n' "$index" "$outcome"
+    done
+    printf 'owned-pattern-%s-ok\n' "$UNMATCHABLE_SELECTOR"
+}
+
+check_unmatchable_output() {
+    local label="$1" outcome="$2"
+    if ! cmp <(unmatchable_transcript "$outcome") "$work/$label-$UNMATCHABLE_SELECTOR.stdout" ||
+        [ -s "$work/$label-$UNMATCHABLE_SELECTOR.stderr" ]; then
+        printf 'owned pattern %s %s: outcome differs\n' "$label" "$UNMATCHABLE_SELECTOR" >&2
+        return 1
+    fi
+}
+
 compare_case_output() {
     local label="$1" selector="$2"
+    if [ "$selector" = "$UNMATCHABLE_SELECTOR" ]; then
+        check_unmatchable_output "$label" "result=1"
+        return
+    fi
     if ! cmp "$work/oracle-$selector.stdout" "$work/$label-$selector.stdout"; then
         printf 'owned pattern %s %s: stdout differs from pinned musl\n' "$label" "$selector" >&2
         return 1
@@ -131,6 +158,7 @@ run_oracle_cases() {
     for selector in "${CASES[@]}"; do
         run_case_in_root "$work/oracle-root" oracle "$selector"
     done
+    check_unmatchable_output oracle "source-nontermination signal=14"
 }
 
 assert_static_symbols() {

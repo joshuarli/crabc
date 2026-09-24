@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static int failure_line;
@@ -505,8 +506,8 @@ static void fnmatch_observe(struct corpus_state *state, const char *pattern,
     const char *subject)
 {
     /* musl never returns from FNM_PATHNAME when its component scan reaches an
-     * invalid multibyte pattern character, so FNM_PATHNAME skips any pattern
-     * that is not valid in this locale. */
+     * invalid multibyte pattern character (`fnmatch-pathname-unmatchable`),
+     * so FNM_PATHNAME skips any pattern that is not valid in this locale. */
     int pathname = mbstowcs(0, pattern, 0) != (size_t)-1;
     int flags;
 
@@ -594,6 +595,51 @@ static int fnmatch_corpus(int trace)
 {
     CHECK(fnmatch_corpus_locale("C", trace) == 0);
     CHECK(fnmatch_corpus_locale("C.UTF-8", trace) == 0);
+    return 0;
+}
+
+/*
+ * `fnmatch-pathname-unmatchable`: FNM_PATHNAME over an invalid pattern byte.
+ *
+ * musl's FNM_PATHNAME component scan advances by `pat_next`'s step, which is
+ * zero for an invalid multibyte pattern character (UNMATCHABLE), so it never
+ * returns once the scan reaches one.  Without FNM_PATHNAME the same character
+ * makes fnmatch_internal return FNM_NOMATCH, and a component containing it can
+ * never match; the owned translation returns that FNM_NOMATCH instead (the
+ * intentional difference in owned-pattern.md).  Each call runs in a child with
+ * an alarm: the runner requires every pinned musl child to die of SIGALRM and
+ * every owned child to report FNM_NOMATCH, so this selector's transcript is
+ * checked against those fixed outcomes rather than compared across runtimes.
+ */
+static int fnmatch_pathname_unmatchable_case(void)
+{
+    static const char *const cases[][2] = {
+        {"\377", ""}, {"\377", "\377"}, {"a/\377", "a/b"}, {"\\\377/b", "x/b"},
+        {"*\303", "\303"},
+    };
+    size_t index;
+
+    CHECK(setlocale(LC_CTYPE, "C.UTF-8") != 0);
+    for (index = 0; index != sizeof cases / sizeof *cases; ++index) {
+        pid_t child;
+        int status;
+
+        CHECK(fflush(stdout) == 0);
+        child = fork();
+        CHECK(child >= 0);
+        if (child == 0) {
+            alarm(1);
+            printf("pathname-unmatchable case=%zu result=%d\n", index,
+                fnmatch(cases[index][0], cases[index][1], FNM_PATHNAME));
+            _exit(fflush(stdout) == 0 ? 0 : 127);
+        }
+        CHECK(waitpid(child, &status, 0) == child);
+        if (WIFSIGNALED(status))
+            printf("pathname-unmatchable case=%zu source-nontermination signal=%d\n",
+                index, WTERMSIG(status));
+        else
+            CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    }
     return 0;
 }
 
@@ -756,6 +802,7 @@ static int glob_corpus(int trace)
 
 static int run_selected_case(const char *selector)
 {
+    if (!strcmp(selector, "fnmatch-pathname-unmatchable")) return fnmatch_pathname_unmatchable_case();
     if (!strcmp(selector, "fnmatch-corpus")) return fnmatch_corpus(0);
     if (!strcmp(selector, "fnmatch-corpus-trace")) return fnmatch_corpus(1);
     if (!strcmp(selector, "glob-corpus")) return glob_corpus(0);

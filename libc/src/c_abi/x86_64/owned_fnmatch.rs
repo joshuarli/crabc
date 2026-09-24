@@ -769,6 +769,14 @@ pub(super) unsafe fn fnmatch_with_mode(
                 if separator == END || separator == b'/' as c_int {
                     break separator;
                 }
+                // Intentional difference: `pat_next` reports an invalid
+                // multibyte character as UNMATCHABLE with a zero step, so
+                // fnmatch.c's scan (`p+=inc`) never advances or returns.
+                // fnmatch_internal rejects any component containing it, so
+                // FNM_NOMATCH is the only answer the source can reach.
+                if separator == UNMATCHABLE {
+                    return FNM_NOMATCH;
+                }
                 pattern_separator = unsafe { pattern_separator.add(pattern_step) };
             };
             if separator != unsafe { byte(string_separator) as c_int }
