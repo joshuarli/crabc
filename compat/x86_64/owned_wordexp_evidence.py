@@ -145,6 +145,7 @@ WORD_EXP_CASES = {
     "engine-parameter-word": ("normal", ("--engine-parameter-word",), b"owned-wordexp-engine-parameter-word: PASS\n", "engine-source-red"),
     "engine-diagnostics": ("normal", ("--engine-diagnostics",), b"owned-wordexp-engine-diagnostics: PASS\n", "engine-source-red"),
     "engine-sigpipe": ("normal", ("--engine-sigpipe",), b"owned-wordexp-engine-sigpipe: PASS\n", "engine-source-red"),
+    "engine-invalid-multibyte-pattern": ("normal", ("--engine-invalid-multibyte-pattern",), b"owned-wordexp-engine-invalid-multibyte-pattern: PASS\n", "source-match"),
     "badchar-record": ("normal", ("--badchar-record",), b"owned-wordexp-badchar-record: PASS\n", "badchar-record-source-red"),
     "source-policy": ("normal", ("--source-policy",), SOURCE_POLICY_CANDIDATE_TRACE, "upstream-source-policy"),
 }

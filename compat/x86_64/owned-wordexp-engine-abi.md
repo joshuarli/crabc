@@ -35,6 +35,7 @@ control; all other shapes are `FAIL`.
 | `--engine-parameter-word` | A selected parameter-error word runs its marker command once before `WRDE_SYNTAX`; an unselected branch skips it. `WRDE_NOCMD` returns `WRDE_CMDSUB` for both syntactic command forms without a marker. |
 | `--engine-diagnostics` | Quiet selected errors write no diagnostic. `WRDE_SHOWERR` emits raw fd-2 `wordexp: NAME: MESSAGE\n` output, distinguishing the omitted default body from an explicit-empty body, without changing parent `ferror(stderr)`. |
 | `--engine-sigpipe` | A child with default `SIGPIPE` and a broken fd 2 dies by `SIGPIPE`; ignored-`SIGPIPE` returns `WRDE_SYNTAX` with an unchanged append record and restores the complete prior action. |
+| `--engine-invalid-multibyte-pattern` | In `C.UTF-8`, an invalid multibyte byte in a pathname pattern (`/\377*`, `/*/\377`, `\\\377*`) or a parameter-removal pattern never matches: the pathname word stays literal and no prefix or suffix is removed through it. Each call runs in an alarmed child, so a nonterminating matcher fails the cell. This agrees with pinned musl. |
 
 Each checked release sets `errno = E2BIG`, calls `wordfree`, and requires
 that errno to remain unchanged while count/vector clear and offsets survive.
@@ -50,7 +51,17 @@ The exact pinned-musl control output is:
 --engine-parameter-word   SOURCE-RED nocmd-parameter-word-badchar
 --engine-diagnostics      SOURCE-RED quiet-shell-diagnostic
 --engine-sigpipe          SOURCE-RED shell-child-no-raw-sigpipe
+--engine-invalid-multibyte-pattern  PASS
 ```
+
+The invalid-multibyte selector accounts for the fnmatch `FNM_PATHNAME`
+difference in [owned-pattern.md](owned-pattern.md): musl's component scan
+never returns once it reaches an invalid pattern byte, and the owned
+`fnmatch_with_mode` now returns `FNM_NOMATCH` there. Word expansion never
+takes that path. Pathname expansion matches one component at a time without
+`FNM_PATHNAME`, and parameter removal matches whole values, so these inputs
+terminated with the same words before and after that fix; a static product
+built without it passes this selector unchanged.
 
 The undefined append source result must expose precisely the offset-two
 three-word record `old-one old-two new-root`. The NOCMD source result requires

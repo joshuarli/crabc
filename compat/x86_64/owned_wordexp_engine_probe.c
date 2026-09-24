@@ -25,6 +25,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <locale.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -47,6 +48,8 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&wordfree),
 #define WORDEXP_ENGINE_SELECTOR "CRABC_WORDEXP_ENGINE_SELECTOR"
 #define WORDEXP_ENGINE_EMPTY "CRABC_WORDEXP_ENGINE_EMPTY"
 #define WORDEXP_ENGINE_MARKER "CRABC_WORDEXP_ENGINE_MARKER"
+#define WORDEXP_ENGINE_INVALID "CRABC_WORDEXP_ENGINE_INVALID"
+#define WORDEXP_ENGINE_INVALID_ONLY "CRABC_WORDEXP_ENGINE_INVALID_ONLY"
 #define WORDEXP_ENGINE_PATH_CAPACITY 4096
 #define WORDEXP_ENGINE_BUDGET_LIMIT 128
 
@@ -1037,6 +1040,87 @@ cleanup:
     return result;
 }
 
+/* Invalid multibyte bytes in C.UTF-8 patterns.
+ *
+ * musl's fnmatch treats an invalid multibyte pattern byte as UNMATCHABLE, and
+ * its FNM_PATHNAME component scan never returns once it reaches one (the
+ * `fnmatch-pathname-unmatchable` difference in owned-pattern.md). Word
+ * expansion shares that matcher but never takes the FNM_PATHNAME path:
+ * pathname expansion matches one component at a time and parameter removal
+ * matches whole values. Each input therefore terminates in both runtimes,
+ * leaves a pathname pattern literal, and never removes a prefix or suffix
+ * through the invalid byte. Every call runs in a child under an alarm so a
+ * nonterminating matcher is a failure instead of a cell timeout. */
+static int wordexp_engine_invalid_multibyte_child(const char *source,
+    const char *expected)
+{
+    wordexp_t words = { 0 };
+    pid_t child;
+    int status;
+
+    if (fflush(stdout) != 0)
+        return 0;
+    child = fork();
+    if (child < 0)
+        return 0;
+    if (child == 0) {
+        int valid;
+
+        alarm(10);
+        valid = wordexp(source, &words, 0) == 0 &&
+            wordexp_engine_check_complete(&words, 0, &expected, 1) &&
+            wordexp_engine_release(&words, 0);
+        _exit(valid ? 0 : 1);
+    }
+    return waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+        WEXITSTATUS(status) == 0;
+}
+
+static int wordexp_engine_invalid_multibyte_pattern_case(void)
+{
+    static const char *const sources[] = {
+        "/\377*", "/*/\377", "\\\377*",
+        "${" WORDEXP_ENGINE_INVALID "#\377}",
+        "${" WORDEXP_ENGINE_INVALID "%\377*}",
+        "${" WORDEXP_ENGINE_INVALID "##*\377}",
+        "${" WORDEXP_ENGINE_INVALID_ONLY "#\377}",
+        "${" WORDEXP_ENGINE_INVALID_ONLY "%?}",
+    };
+    static const char *const expected[] = {
+        "/\377*", "/*/\377", "\377*", "a\377b", "a\377b", "a\377b", "\377",
+        "\377",
+    };
+    struct wordexp_engine_environment_slot invalid = { 0 };
+    struct wordexp_engine_environment_slot invalid_only = { 0 };
+    size_t index;
+    int result = 1;
+
+    if (setlocale(LC_CTYPE, "C.UTF-8") == NULL)
+        return 1;
+    if (wordexp_engine_save_environment(&invalid, WORDEXP_ENGINE_INVALID) != 0 ||
+        wordexp_engine_save_environment(&invalid_only,
+            WORDEXP_ENGINE_INVALID_ONLY) != 0)
+        goto cleanup;
+    if (setenv(WORDEXP_ENGINE_INVALID, "a\377b", 1) != 0 ||
+        setenv(WORDEXP_ENGINE_INVALID_ONLY, "\377", 1) != 0) {
+        result = 2;
+        goto cleanup;
+    }
+    for (index = 0; index < sizeof sources / sizeof sources[0]; ++index) {
+        if (!wordexp_engine_invalid_multibyte_child(sources[index],
+                expected[index])) {
+            result = 3 + (int)index;
+            goto cleanup;
+        }
+    }
+    result = WORDEXP_ENGINE_PASS;
+cleanup:
+    if (wordexp_engine_restore_environment(&invalid_only) != 0 ||
+        wordexp_engine_restore_environment(&invalid) != 0)
+        return 12;
+    return result;
+}
+
 #ifdef CRABC_WORDEXP_RESULT_PRIVATE_TEST
 /* These are fixture-only controls from owned_wordexp_result_failure.rs. They
  * are intentionally absent from normal archives and are never declared by an
@@ -1325,6 +1409,9 @@ static int wordexp_engine_run_selector(const char *selector)
             wordexp_engine_diagnostics_case());
     if (strcmp(selector, "--engine-sigpipe") == 0)
         return wordexp_engine_emit_result("sigpipe", wordexp_engine_sigpipe_case());
+    if (strcmp(selector, "--engine-invalid-multibyte-pattern") == 0)
+        return wordexp_engine_emit_result("invalid-multibyte-pattern",
+            wordexp_engine_invalid_multibyte_pattern_case());
 #ifdef CRABC_WORDEXP_RESULT_PRIVATE_TEST
     if (strcmp(selector, "--engine-result-failure") == 0)
         return wordexp_engine_emit_result("result-failure",
