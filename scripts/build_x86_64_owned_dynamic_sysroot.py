@@ -19,7 +19,10 @@ import re
 import tomllib
 
 sys.dont_write_bytecode = True
-import build_x86_64_owned_sysroot as common
+# Qualification cases run with PYTHONSAFEPATH=1, which omits this script's
+# directory from sys.path; name it so sibling imports still resolve.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build_x86_64_owned_sysroot as common  # noqa: E402
 
 ROOT = common.ROOT
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"

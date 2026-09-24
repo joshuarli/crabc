@@ -19,8 +19,11 @@ import subprocess
 import sys
 from typing import Any, Mapping, Sequence
 
-import run as LUA
-import run_x86_dynamic as DYNAMIC
+# Qualification cases run with PYTHONSAFEPATH=1, which omits this script's
+# directory from sys.path; name it so sibling imports still resolve.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run as LUA  # noqa: E402
+import run_x86_dynamic as DYNAMIC  # noqa: E402
 
 
 ROOT = LUA.ROOT

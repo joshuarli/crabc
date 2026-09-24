@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -10,8 +11,11 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
-import run as LUA
-import run_x86_dynamic as DYNAMIC
+# Qualification cases run with PYTHONSAFEPATH=1, which omits this script's
+# directory from sys.path; name it so sibling imports still resolve.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run as LUA  # noqa: E402
+import run_x86_dynamic as DYNAMIC  # noqa: E402
 
 ROOT = LUA.ROOT
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
@@ -272,6 +276,7 @@ def validate() -> dict[str, object]:
 
 
 def main() -> int:
+    argparse.ArgumentParser(description=__doc__).parse_args()
     try:
         report = validate()
     except (LUA.RunnerError, QUALIFICATION.QualificationError, OSError, ValueError) as error:

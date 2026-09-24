@@ -7,9 +7,13 @@ import argparse
 import json
 import math
 import sys
+from pathlib import Path
 from typing import Sequence
 
-import run as LUA
+# Qualification cases run with PYTHONSAFEPATH=1, which omits this script's
+# directory from sys.path; name it so sibling imports still resolve.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run as LUA  # noqa: E402
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
