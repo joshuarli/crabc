@@ -102,8 +102,18 @@ printf 'owned crypt runtime evidence: %s\n' "$work"
 
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
+# Disposable products are siblings of the evidence leaf, never children: the
+# profile reader rejects a product inside the leaf because leaf children are
+# execution copies of the product rather than the product itself.
+built_products=''
 if [ "$dynamic_was_supplied" -eq 0 ]; then
-    provided_dynamic="$work/dynamic-product"
+    built_products="$(mktemp -d "$TMPDIR/owned-crypt-runtime-products.XXXXXX")"
+    chmod a+rx "$built_products"
+    printf 'owned crypt runtime disposable products: %s\n' "$built_products"
+fi
+
+if [ "$dynamic_was_supplied" -eq 0 ]; then
+    provided_dynamic="$built_products/dynamic-product"
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
         --output "$provided_dynamic" >"$work/dynamic-build.json"
 fi
@@ -116,7 +126,7 @@ static_product=''
 if [ "$static_was_supplied" -eq 1 ]; then
     static_product="$provided_static"
 elif [ "$dynamic_was_supplied" -eq 0 ]; then
-    static_product="$work/static-product"
+    static_product="$built_products/static-product"
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
         --output "$static_product" >"$work/static-build.json"
 fi
