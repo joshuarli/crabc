@@ -72,6 +72,8 @@ static int c11_exit_worker(void *arg) {
     CHECK((thrd_equal)(thrd_current(),*observed));
     thrd_exit(33);
 }
+static atomic_int usr1_seen;
+static void on_usr1(int signal_number) { (void)signal_number; atomic_store(&usr1_seen,1); }
 static tss_t surface_key;
 static atomic_int detached_done;
 static int c11_detached_worker(void *arg) {
@@ -117,6 +119,13 @@ static int surface(void) {
         CHECK(pthread_setname_np(t,"crabc-worker")==ENOENT);
         CHECK(pthread_getname_np(t,name,sizeof name)==ENOENT);
     }
+    /* pthread_kill: signal 0 probes the live worker, an invalid signal is
+     * EINVAL, and a self-directed signal is handled before the call returns. */
+    errno=77;
+    CHECK(pthread_kill(t,0)==0);
+    CHECK(pthread_kill(t,-1)==EINVAL && pthread_kill(t,_NSIG)==EINVAL && errno==77);
+    CHECK(signal(SIGUSR1,on_usr1)!=SIG_ERR);
+    CHECK(pthread_kill(pthread_self(),SIGUSR1)==0 && atomic_load(&usr1_seen) && errno==77);
     atomic_store(&named_release,1);
     CHECK(pthread_join(t,&result)==0 && result==(void *)5);
 
@@ -147,7 +156,7 @@ static int surface(void) {
     CHECK(thrd_sleep(&(struct timespec){0},NULL)==0);
     errno=77;
     CHECK(thrd_sleep(&(struct timespec){.tv_nsec=-1},NULL)==-2 && errno==77);
-    puts("pthread scope, concurrency, affinity, names, and C11 identity/exit: PASS");
+    puts("pthread scope, concurrency, affinity, names, kill, and C11 identity/exit: PASS");
     return 0;
 }
 int main(int argc, char **argv) {

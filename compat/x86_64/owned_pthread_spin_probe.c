@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <threads.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -201,10 +202,40 @@ static void once_case(void)
     puts("owned-pthread-once-cancellation-ok");
 }
 
+/* C11 call_once runs its function exactly once among contending callers,
+ * and every caller returns only after that call has completed. */
+static once_flag c11_once = ONCE_FLAG_INIT;
+static atomic_int c11_once_runs, c11_once_published;
+static void c11_once_function(void)
+{
+    for (int i = 0; i < 1000; i++) sched_yield();
+    atomic_fetch_add(&c11_once_runs, 1);
+    atomic_store(&c11_once_published, 1);
+}
+
+static void *c11_once_caller(void *unused)
+{
+    (void)unused;
+    call_once(&c11_once, c11_once_function);
+    return (void *)(long)atomic_load(&c11_once_published);
+}
+
+static void call_once_case(void)
+{
+    pthread_t callers[4];
+    void *result;
+    for (int i = 0; i < 4; i++) require(pthread_create(&callers[i], NULL, c11_once_caller, NULL) == 0);
+    for (int i = 0; i < 4; i++) require(pthread_join(callers[i], &result) == 0 && result == (void *)1);
+    call_once(&c11_once, c11_once_function);
+    require(atomic_load(&c11_once_runs) == 1);
+    puts("owned-c11-call-once-ok");
+}
+
 int main(void)
 {
     rwlock_case();
     once_case();
+    call_once_case();
     struct state private;
     initialize(&private, PTHREAD_PROCESS_PRIVATE);
     pthread_t workers[4];
