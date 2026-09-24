@@ -258,6 +258,167 @@ grep -Fxq 'dlfcn contract: complete' "$work/dlfcn-contract-candidate.stdout"
 grep -Fxq 'destructor dlopen: null; Cannot dlopen while program is exiting.' "$work/dlfcn-contract-candidate.stdout"
 printf 'general dlfcn contract: PASS (musl differential, diagnostics, scope, modes, introspection); evidence: %s\n' "$work"
 
+# Failed multi-object load rollback: a TLS dependency is mapped before a later
+# dependency is missing or lacks a relocated symbol. Musl's rtld_fail cleanup
+# publishes nothing; a retry succeeds once the complete dependency appears.
+rollback_source="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_dso.c"
+rollback_consumer="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_rollback.c"
+mkdir "$work/rollback" "$work/oracle/rollback"
+"$driver" --dynamic-shared-object -DFR_TLS "$rollback_source" -o "$work/rollback/libfr_tls.so"
+"$driver" --dynamic-shared-object -DFR_LATE "$rollback_source" -o "$work/rollback/libfr_late.so"
+"$driver" --dynamic-shared-object -DFR_LATE -DOMIT_PROVIDED "$rollback_source" -o "$work/rollback/libfr_late_omit.so"
+"$driver" --dynamic-shared-object -DFR_ROOT "$rollback_source" \
+    --application-dso "$work/rollback/libfr_tls.so" --application-dso "$work/rollback/libfr_late.so" \
+    -o "$work/rollback/libfr_root.so"
+"$driver" "$entry_mode" "$rollback_consumer" -o "$work/rollback/consumer"
+"$oracle_cc" -fPIC -shared -DFR_TLS "$rollback_source" -Wl,-z,now,-soname,libfr_tls.so -o "$work/oracle/rollback/libfr_tls.so"
+"$oracle_cc" -fPIC -shared -DFR_LATE "$rollback_source" -Wl,-z,now,-soname,libfr_late.so -o "$work/oracle/rollback/libfr_late.so"
+"$oracle_cc" -fPIC -shared -DFR_LATE -DOMIT_PROVIDED "$rollback_source" \
+    -Wl,-z,now,-soname,libfr_late.so -o "$work/oracle/rollback/libfr_late_omit.so"
+"$oracle_cc" -fPIC -shared -DFR_ROOT "$rollback_source" -L"$work/oracle/rollback" -Wl,--no-as-needed \
+    -l:libfr_tls.so -l:libfr_late.so -Wl,-z,now,-soname,libfr_root.so -o "$work/oracle/rollback/libfr_root.so"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$rollback_consumer" -pthread -o "$work/oracle/rollback/consumer"
+cp "$work/rollback/consumer" "$work/execution-root/rollback"
+for mode in missing unresolved; do
+    for side in candidate oracle; do
+        if [ "$side" = candidate ]; then
+            built="$work/rollback" directory="$work/execution-root/rollback-$mode"
+        else
+            built="$work/oracle/rollback" directory="$work/oracle/rollback-$mode"
+        fi
+        mkdir "$directory"
+        cp "$built/libfr_root.so" "$built/libfr_tls.so" "$directory/"
+        cp "$built/libfr_late.so" "$directory/libfr_late.so.next"
+        [ "$mode" = missing ] || cp "$built/libfr_late_omit.so" "$directory/libfr_late.so"
+    done
+    status=0
+    LD_LIBRARY_PATH="/rollback-$mode" timeout 20 chroot "$work/execution-root" /rollback "/rollback-$mode" "$mode" \
+        >"$work/rollback-$mode-candidate.stdout" 2>"$work/rollback-$mode-candidate.stderr" || status=$?
+    LD_LIBRARY_PATH="$work/oracle/rollback-$mode" timeout 20 "$work/oracle/rollback/consumer" \
+        "$work/oracle/rollback-$mode" "$mode" \
+        >"$work/rollback-$mode-oracle.stdout" 2>"$work/rollback-$mode-oracle.stderr"
+    if [ "$status" -ne 0 ] || ! cmp -s "$work/rollback-$mode-oracle.stdout" "$work/rollback-$mode-candidate.stdout"; then
+        printf 'general failed-load rollback (%s): FAIL status=%s; evidence: %s\n' "$mode" "$status" "$work" >&2
+        diff -u "$work/rollback-$mode-oracle.stdout" "$work/rollback-$mode-candidate.stdout" >&2 || true
+        exit 1
+    fi
+    grep -Fxq 'rollback contract: complete' "$work/rollback-$mode-candidate.stdout"
+done
+printf 'general failed-load rollback: PASS (musl differential, missing and unresolved later dependency after TLS); evidence: %s\n' "$work"
+
+# Concurrent successful and failed loads beside dlsym/dl_iterate_phdr readers.
+# The failed graph is the rollback fixture above; readers must never observe
+# it, and every published global success must stay resolvable.
+concurrent_consumer="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_concurrent.c"
+for index in $(seq 0 15); do
+    "$driver" --dynamic-shared-object -DCC_OK -DINDEX="$index" "$rollback_source" -o "$work/rollback/libcc_ok$index.so"
+    "$oracle_cc" -fPIC -shared -DCC_OK -DINDEX="$index" "$rollback_source" \
+        -Wl,-z,now,-soname,"libcc_ok$index.so" -o "$work/oracle/rollback/libcc_ok$index.so"
+done
+"$driver" "$entry_mode" "$concurrent_consumer" -o "$work/rollback/concurrent"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$concurrent_consumer" -pthread -o "$work/oracle/rollback/concurrent"
+cp "$work/rollback/concurrent" "$work/execution-root/concurrent"
+for mode in missing unresolved; do
+    for side in candidate oracle; do
+        if [ "$side" = candidate ]; then
+            built="$work/rollback" directory="$work/execution-root/concurrent-$mode"
+        else
+            built="$work/oracle/rollback" directory="$work/oracle/concurrent-$mode"
+        fi
+        mkdir "$directory"
+        cp "$built/libfr_root.so" "$built/libfr_tls.so" "$built"/libcc_ok*.so "$directory/"
+        [ "$mode" = missing ] || cp "$built/libfr_late_omit.so" "$directory/libfr_late.so"
+    done
+    for round in 1 2 3; do
+        status=0
+        LD_LIBRARY_PATH="/concurrent-$mode" timeout 60 chroot "$work/execution-root" /concurrent "$mode" \
+            >"$work/concurrent-$mode-candidate.stdout" 2>"$work/concurrent-$mode-candidate.stderr" || status=$?
+        LD_LIBRARY_PATH="$work/oracle/concurrent-$mode" timeout 60 "$work/oracle/rollback/concurrent" "$mode" \
+            >"$work/concurrent-$mode-oracle.stdout" 2>"$work/concurrent-$mode-oracle.stderr"
+        if [ "$status" -ne 0 ] || ! cmp -s "$work/concurrent-$mode-oracle.stdout" "$work/concurrent-$mode-candidate.stdout"; then
+            printf 'general concurrent load (%s round %s): FAIL status=%s; evidence: %s\n' "$mode" "$round" "$status" "$work" >&2
+            diff -u "$work/concurrent-$mode-oracle.stdout" "$work/concurrent-$mode-candidate.stdout" >&2 || true
+            exit 1
+        fi
+    done
+    grep -Fxq 'concurrent contract: complete' "$work/concurrent-$mode-candidate.stdout"
+done
+printf 'general concurrent load: PASS (musl differential, success/failure loads beside dlsym and dl_iterate_phdr readers); evidence: %s\n' "$work"
+
+# dlfcn reentry from runtime constructors: nested NOLOAD of an unconstructed
+# root, self reopen/close, nested loads and a pending caller-visible error.
+reentrant_consumer="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_reentrant.c"
+mkdir "$work/reentrant" "$work/oracle/reentrant"
+"$driver" --dynamic-shared-object -DRE_DEP "$rollback_source" -o "$work/reentrant/libre_dep.so"
+"$driver" --dynamic-shared-object -DRE_PLAIN "$rollback_source" -o "$work/reentrant/libre_plain.so"
+"$driver" --dynamic-shared-object -DRE_ROOT "$rollback_source" \
+    --application-dso "$work/reentrant/libre_dep.so" -o "$work/reentrant/libre_root.so"
+"$driver" --dynamic-shared-object -DRE_PLAIN "$rollback_source" -o "$work/reentrant/libre_missing.so"
+"$driver" --dynamic-shared-object -DRE_SHARED_FAIL "$rollback_source" --application-dso "$work/reentrant/libre_dep.so" \
+    --application-dso "$work/reentrant/libre_missing.so" -o "$work/reentrant/libre_sharedfail.so"
+"$driver" "$entry_mode" "$reentrant_consumer" -o "$work/reentrant/consumer"
+"$oracle_cc" -fPIC -shared -DRE_DEP "$rollback_source" -Wl,-z,now,-soname,libre_dep.so -o "$work/oracle/reentrant/libre_dep.so"
+"$oracle_cc" -fPIC -shared -DRE_PLAIN "$rollback_source" -Wl,-z,now,-soname,libre_plain.so -o "$work/oracle/reentrant/libre_plain.so"
+"$oracle_cc" -fPIC -shared -DRE_ROOT "$rollback_source" -L"$work/oracle/reentrant" -Wl,--no-as-needed \
+    -l:libre_dep.so -Wl,-z,now,-soname,libre_root.so -o "$work/oracle/reentrant/libre_root.so"
+"$oracle_cc" -fPIC -shared -DRE_PLAIN "$rollback_source" -Wl,-z,now,-soname,libre_missing.so -o "$work/oracle/reentrant/libre_missing.so"
+"$oracle_cc" -fPIC -shared -DRE_SHARED_FAIL "$rollback_source" -L"$work/oracle/reentrant" -Wl,--no-as-needed \
+    -l:libre_dep.so -l:libre_missing.so -Wl,-z,now,-soname,libre_sharedfail.so -o "$work/oracle/reentrant/libre_sharedfail.so"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$reentrant_consumer" -o "$work/oracle/reentrant/consumer"
+# The shared-failure object's second dependency is absent at run time.
+rm "$work/reentrant/libre_missing.so" "$work/oracle/reentrant/libre_missing.so"
+mkdir "$work/execution-root/reentrant"
+cp "$work"/reentrant/libre_*.so "$work/execution-root/reentrant/"
+cp "$work/reentrant/consumer" "$work/execution-root/reentrant-consumer"
+status=0
+LD_LIBRARY_PATH=/reentrant timeout 20 chroot "$work/execution-root" /reentrant-consumer \
+    >"$work/reentrant-candidate.stdout" 2>"$work/reentrant-candidate.stderr" || status=$?
+LD_LIBRARY_PATH="$work/oracle/reentrant" timeout 20 "$work/oracle/reentrant/consumer" \
+    >"$work/reentrant-oracle.stdout" 2>"$work/reentrant-oracle.stderr"
+if [ "$status" -ne 0 ] || ! cmp -s "$work/reentrant-oracle.stdout" "$work/reentrant-candidate.stdout"; then
+    printf 'general constructor reentry: FAIL status=%s; evidence: %s\n' "$status" "$work" >&2
+    diff -u "$work/reentrant-oracle.stdout" "$work/reentrant-candidate.stdout" >&2 || true
+    exit 1
+fi
+grep -Fxq 'reentrant contract: complete' "$work/reentrant-candidate.stdout"
+printf 'general constructor reentry: PASS (musl differential, nested NOLOAD/self/new loads and pending dlerror); evidence: %s\n' "$work"
+
+# Malformed inputs musl's map_library rejects with ENOEXEC. Both roots mutate
+# their own copy of the same valid source object.
+malformed_consumer="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_malformed.c"
+malformed_cases=(empty short relocatable core truncated-phdr no-phdr no-dynamic needs)
+mkdir "$work/execution-root/malformed" "$work/oracle/malformed"
+"$driver" --dynamic-shared-object -DPLAIN "$rollback_source" -o "$work/execution-root/malformed/libmf_valid.so"
+"$oracle_cc" -fPIC -shared -DPLAIN "$rollback_source" -Wl,-z,now,-soname,libmf_valid.so -o "$work/oracle/malformed/libmf_valid.so"
+# libmf_needs.so links against a valid libmf_dep.so that is then replaced by
+# a relocatable copy, so the rejection is reported for a dependency.
+"$driver" --dynamic-shared-object -DPLAIN "$rollback_source" -o "$work/execution-root/malformed/libmf_dep.so"
+"$driver" --dynamic-shared-object -DPROVIDER "$rollback_source" \
+    --application-dso "$work/execution-root/malformed/libmf_dep.so" -o "$work/execution-root/malformed/libmf_needs.so"
+"$oracle_cc" -fPIC -shared -DPLAIN "$rollback_source" -Wl,-z,now,-soname,libmf_dep.so -o "$work/oracle/malformed/libmf_dep.so"
+"$oracle_cc" -fPIC -shared -DPROVIDER "$rollback_source" -L"$work/oracle/malformed" -Wl,--no-as-needed -l:libmf_dep.so \
+    -Wl,-z,now,-soname,libmf_needs.so -o "$work/oracle/malformed/libmf_needs.so"
+for directory in "$work/execution-root/malformed" "$work/oracle/malformed"; do
+    python3 -B "$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_malformed.py" "$directory/libmf_valid.so" "$directory"
+    mv "$directory/libmf_relocatable.so" "$directory/libmf_dep.so"
+    python3 -B "$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_malformed.py" "$directory/libmf_valid.so" "$directory" relocatable
+done
+"$driver" "$entry_mode" "$malformed_consumer" -o "$work/execution-root/malformed-consumer"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$malformed_consumer" -o "$work/oracle/malformed-consumer"
+status=0
+LD_LIBRARY_PATH=/malformed timeout 20 chroot "$work/execution-root" /malformed-consumer "${malformed_cases[@]}" \
+    >"$work/malformed-candidate.stdout" 2>"$work/malformed-candidate.stderr" || status=$?
+LD_LIBRARY_PATH="$work/oracle/malformed" timeout 20 "$work/oracle/malformed-consumer" "${malformed_cases[@]}" \
+    >"$work/malformed-oracle.stdout" 2>"$work/malformed-oracle.stderr"
+if [ "$status" -ne 0 ] || ! cmp -s "$work/malformed-oracle.stdout" "$work/malformed-candidate.stdout"; then
+    printf 'general malformed input: FAIL status=%s; evidence: %s\n' "$status" "$work" >&2
+    diff -u "$work/malformed-oracle.stdout" "$work/malformed-candidate.stdout" >&2 || true
+    exit 1
+fi
+grep -Fxq 'malformed contract: complete' "$work/malformed-candidate.stdout"
+printf 'general malformed input: PASS (musl differential, %s map_library rejections, one as a dependency, and a later valid load); evidence: %s\n' \
+    "${#malformed_cases[@]}" "$work"
+
 if [ "$skip_search" = 0 ]; then
     bash "$ROOT/compat/x86_64/run_general_dynamic_search.sh" "$installed"
 else

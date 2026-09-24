@@ -19,50 +19,9 @@
 #include <string.h>
 #include <sys/auxv.h>
 
+#include "general_dynamic_dlfcn_contract.h"
+
 extern int dc_init_next_shared(void);
-
-static const char *base_name(const char *path)
-{
-    if (!path) return "(null)";
-    const char *slash = strrchr(path, '/');
-    return slash ? slash + 1 : path;
-}
-
-/* Print the pending diagnostic with every absolute path reduced to its
- * final component, so candidate and oracle roots compare byte for byte. */
-static void show_error(const char *label)
-{
-    const char *error = dlerror();
-    if (!error) {
-        printf("%s: (none)\n", label);
-        return;
-    }
-    char output[1024];
-    size_t used = 0;
-    for (size_t index = 0; error[index] && used + 3 < sizeof output;) {
-        if (error[index] != '/') {
-            output[used++] = error[index++];
-            continue;
-        }
-        size_t end = index, last = index;
-        while (error[end] && error[end] != ' ' && error[end] != ':' && error[end] != ')') {
-            if (error[end] == '/') last = end;
-            ++end;
-        }
-        output[used++] = '<';
-        output[used++] = '>';
-        for (size_t copy = last + 1; copy < end && used + 1 < sizeof output; ++copy)
-            output[used++] = error[copy];
-        index = end;
-    }
-    output[used] = 0;
-    printf("%s: %s\n", label, output);
-}
-
-static const char *result(const void *handle)
-{
-    return handle ? "handle" : "null";
-}
 
 static const char *main_name(const char *name)
 {

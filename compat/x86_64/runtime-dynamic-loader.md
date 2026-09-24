@@ -304,6 +304,33 @@ undefined-symbol failures are musl differentials, while malformed ELF cases
 are owned fail-closed tests. The materialized product gate repeats these
 consumers through both freshly installed and extracted sealed drivers.
 
+Four further musl differentials share `general_dynamic_dlfcn_contract_dso.c`
+and the path-reducing output helpers in `general_dynamic_dlfcn_contract.h`.
+`general_dynamic_dlfcn_contract_rollback.c` fails a root whose TLS
+dependency maps before a later dependency is missing or lacks a relocated
+symbol: no constructor runs, no image or `dlpi_adds` is published, NOLOAD
+reports both objects unloaded, and once the complete dependency is renamed
+into place the retry constructs dependency-first and a thread that existed
+across the failure reads the new TLS module. `..._concurrent.c` runs that
+failure repeatedly beside sixteen global successes (half adding TLS) and
+two dlsym/`dl_iterate_phdr` readers; readers never observe a rolled-back
+object, published definitions and their TLS stay resolvable, images and
+`dlpi_adds` only grow, and each thread keeps its own `dlerror`. It runs three
+rounds per failure kind and prints only invariant counts. `..._reentrant.c`
+reopens an unconstructed root with NOLOAD from its dependency's constructor,
+which runs the root constructor nested, as musl `do_init_fini` skips only
+objects the calling thread is visiting. That constructor consumes the
+caller's pending error, reopens and closes itself, is found through its
+handle but not `RTLD_DEFAULT` under `RTLD_LOCAL`, loads a new object, rolls
+back a nested failure sharing the constructing dependency, and leaves a
+failed open pending across the successful outer `dlopen`.
+`..._malformed.c` with `..._malformed.py` covers the inputs `map_library`
+rejects with `ENOEXEC`: empty and short files, `ET_REL` and `ET_CORE`, a
+program-header table past EOF, no program headers, no `PT_DYNAMIC`, and a
+relocatable dependency; none publishes an image and a valid load follows.
+Musl does not validate the ELF identity or machine before mapping, so those
+owned rejections stay outside the differential.
+
 `run_general_dynamic_constructor_exit.sh` separately compares the same exiting
 constructor as a runtime-new DSO and an initial dependency. Both retain the
 completed earlier dependency's destructor but skip the incomplete object's
