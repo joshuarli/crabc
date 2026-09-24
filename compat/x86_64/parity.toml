@@ -20034,10 +20034,10 @@ depends_on = ["oracle.musl-toolchain", "compat.abi-differential", "libc.pthread-
 category = "compatibility-gate"
 description = "Pinned OS-test, libc-test, signal/process, and pthread stress evidence for selected x86 C/POSIX behavior. One private admission artifact consumes five real selected static transactions while the dynamic canonical suites and prerequisites remain incomplete."
 aarch64_gates = ["os-test", "libc-test", "pthread-stress", "signal-process"]
-source_owners = ["compat/os-test", "libc-test-harness", "compat/pthread-stress", "compat/signal-process", "compat/x86_64/qualification_posix_abi.json", "compat/x86_64/run_qualification_posix_abi.py", "scripts/dev-x86_64.sh"]
+source_owners = ["compat/os-test", "libc-test-harness", "compat/pthread-stress", "compat/signal-process", "compat/x86_64/qualification_posix_abi.json", "compat/x86_64/run_qualification_posix_abi.py", "compat/x86_64/qualification_gates.py", "compat/x86_64/owned_posix_native_execution.py", "scripts/dev-x86_64.sh"]
 x86_abi_prerequisites = ["x86 process, signal, TLS, pthread, and selected POSIX record behavior", "fresh process-group execution"]
 x86_header_prerequisites = ["Shared source compiles once with pinned musl headers and links once per native runtime candidate."]
-native_evidence = [{ state = "required", command = "Define native x86 OS-test, libc-test, pthread-stress, and signal-process gates", scope = "Preserve raw exit/stdout/stderr comparisons and isolated execution." }]
+native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR", scope = "Qualification reads one published native POSIX aggregate receipt (`qualification-manifest --publish compat.posix-process posix-native RECEIPT`). On one installed dynamic product it runs the pinned differential, frozen os-test, signal-process, native pthread-stress, and finite libc-test components in that order against pinned musl, retaining raw exit/stdout/stderr and isolated execution; the gate reader reconstructs the receipt from current source and rejects a partial or reordered roster. The static five-case admission remains separate and non-promoting." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "Selected POSIX/process behavior oracle." }]
 capabilities = []
 status = "planned"

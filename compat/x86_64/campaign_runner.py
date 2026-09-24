@@ -55,13 +55,37 @@ def report_gate(report: Mapping[str, Any], gate_name: str) -> Mapping[str, Any]:
 
 def blocker_payload(gate_name: str, gate: Mapping[str, Any]) -> dict[str, Any]:
     """Preserve report details rather than translating them into a stale summary."""
-    return {
+    payload = {
         "gate": gate_name,
         "state": gate.get("state"),
         "machine_gate_defined": gate.get("machine_gate_defined"),
         "incomplete_families": gate.get("incomplete_families"),
         "transition_commands": gate.get("transition_commands"),
     }
+    if gate_name == "qualification":
+        payload["chain_conditions"] = qualification_chain_conditions()
+    return payload
+
+
+def qualification_chain_conditions() -> list[dict[str, Any]]:
+    """Name every ordered gate's unmet declared conditions without Docker.
+
+    Host evaluation covers prerequisite families, reader registration and
+    checked-in completion checks. Reader rows that need the pinned image stay
+    listed as native reads; they cannot pass here.
+    """
+    import qualification_gates
+
+    rows = []
+    for result in qualification_gates.evaluate_chain(native=False):
+        rows.append(
+            {
+                "gate": result["gate"],
+                "unmet": [row for row in result["conditions"] if row["met"] is False],
+                "native_reads": [row["id"] for row in result["conditions"] if row["met"] is None],
+            }
+        )
+    return rows
 
 
 def require_repository_file(relative: Path, description: str) -> None:
@@ -180,6 +204,12 @@ def execute_gate(report: Mapping[str, Any], gate_name: str) -> int:
     if gate.get("pass") is not True:
         print(json.dumps(blocker_payload(gate_name, gate), indent=2, sort_keys=True))
         return 1
+    if gate_name == "qualification":
+        # Qualification is the ordered chain itself. Each gate re-reads its
+        # own evidence against current source and checks its prerequisite
+        # families; re-running every family's placeholder-bearing development
+        # commands here would neither add proof nor be executable verbatim.
+        return execute_terminal_machine_gate(gate_name, gate)
 
     for family_id, command in gate_commands(report, gate):
         completed = subprocess.run(command, cwd=ROOT, check=False)

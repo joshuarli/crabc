@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -76,29 +77,52 @@ class QualificationPrefixTests(unittest.TestCase):
 
     def test_prefix_execution_runs_predecessors_but_not_the_planned_suffix(self):
         report = manifest.load_contract()
-        for gate in report['promotion_chain'][:2]:
-            gate['state'] = 'ready'
-        case = {'id': 'case'}
-        with patch.object(manifest, 'load_contract', return_value=report), patch.object(
-            manifest, 'write_or_check'
-        ), patch.object(runner, 'load_case_manifest', return_value={'cases': [case]}), patch.object(
-            runner, 'verify_case_runner'
-        ), patch.object(runner, 'require_pinned_native_execution') as native, patch.object(
-            runner, 'run_case'
-        ) as execute, patch('builtins.print'):
-            self.assertEqual(runner.main(['--through', manifest.CHAIN[1]]), 0)
-        native.assert_called_once()
-        self.assertEqual([call.args[0]['id'] for call in execute.call_args_list], list(manifest.CHAIN[:2]))
+        for gate in report['promotion_chain'][2:]:
+            gate['state'] = 'planned'
+        executed = []
 
-    def test_all_ready_declarations_still_do_not_open_full_qualification(self):
+        def passed_case(transaction, order, gate, case):
+            executed.append(gate['id'])
+            return {'order': order, 'gate': gate['id'], 'id': case['id'], 'outcome': 'passed', 'error': None}
+
+        with tempfile.TemporaryDirectory() as directory:
+            receipts = Path(directory)
+            with patch.object(runner, 'require_pinned_native_execution') as native, patch.object(
+                runner, 'source_identity', return_value={'revision': 'r', 'content_sha256': 'c'}
+            ), patch.object(runner, 'execution_inputs', return_value={'inputs': 1}), patch.object(
+                runner, 'ensure_physical_receipt_directory', return_value=receipts
+            ), patch.object(runner, 'execute_chain_case', side_effect=passed_case):
+                path, receipt = runner.run_chain(report, manifest.CHAIN[1])
+        native.assert_called_once()
+        self.assertEqual(executed, list(manifest.CHAIN[:2]))
+        self.assertEqual(receipt['outcome'], 'passed')
+        self.assertEqual(receipt['qualified_gates'], list(manifest.CHAIN[:2]))
+        self.assertFalse(receipt['complete_chain'])
+
+    def test_full_chain_runs_every_ready_gate_and_stops_at_the_first_failure(self):
         report = manifest.load_contract()
-        for gate in report['promotion_chain']:
-            gate['state'] = 'ready'
-        with patch.object(manifest, 'load_contract', return_value=report), patch.object(
-            manifest, 'write_or_check'
-        ), patch.object(runner, 'run_case') as execute, patch('builtins.print'):
-            self.assertEqual(runner.main([]), 1)
-        execute.assert_not_called()
+        executed = []
+
+        def case_result(transaction, order, gate, case):
+            executed.append(gate['id'])
+            outcome = 'failed' if gate['id'] == manifest.CHAIN[3] else 'passed'
+            return {'order': order, 'gate': gate['id'], 'id': case['id'], 'outcome': outcome,
+                    'error': 'exited 1' if outcome == 'failed' else None}
+
+        with tempfile.TemporaryDirectory() as directory:
+            receipts = Path(directory)
+            with patch.object(runner, 'require_pinned_native_execution'), patch.object(
+                runner, 'source_identity', return_value={'revision': 'r', 'content_sha256': 'c'}
+            ), patch.object(runner, 'execution_inputs', return_value={'inputs': 1}), patch.object(
+                runner, 'ensure_physical_receipt_directory', return_value=receipts
+            ), patch.object(runner, 'execute_chain_case', side_effect=case_result):
+                path, receipt = runner.run_chain(report, manifest.CHAIN[-1])
+                self.assertEqual(json.loads(path.read_text()), receipt)
+        self.assertEqual(executed, list(manifest.CHAIN[:4]))
+        self.assertEqual(receipt['outcome'], 'failed')
+        self.assertIn(f'{manifest.CHAIN[3]}/gate-conditions did not pass', receipt['error'])
+        self.assertEqual(receipt['qualified_gates'], list(manifest.CHAIN[:3]))
+        self.assertFalse(receipt['complete_chain'])
 
     def test_private_admission_is_a_receipted_non_promoting_prefix(self):
         report = manifest.load_contract()
@@ -395,6 +419,132 @@ time.sleep(60)
             with patch.object(runner, "evidence_path", side_effect=lambda path, *unused: path):
                 with self.assertRaisesRegex(runner.QualificationRunError, "fields drifted"):
                     runner.validate_private_admission_receipt(receipt)
+
+
+GATE_FIXTURE = """import os
+import sys
+
+gate = sys.argv[1]
+if gate in os.environ.get("QUALIFICATION_FIXTURE_FAIL", "").split(","):
+    print(f"x86 qualification gate {gate}: UNMET (fixture)")
+    raise SystemExit(1)
+print(f"x86 qualification gate {gate}: PASS")
+"""
+
+
+class ChainReceiptRoundTripTests(unittest.TestCase):
+    """Dispatch a real fixture chain, then reread its physical receipt."""
+
+    def setUp(self):
+        scratch = ROOT / '.work/x86_64/tmp/qualification-chain-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        for relative in (manifest.PRIVATE_ADMISSION[0][1], manifest.PRIVATE_ADMISSION[0][3][1]):
+            destination = self.root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes((ROOT / relative).read_bytes())
+        self.gate_runner = self.root / 'compat/x86_64/gate_fixture.py'
+        self.gate_runner.write_text(GATE_FIXTURE, encoding='utf-8')
+        document = json.loads(manifest.CONTRACT_PATH.read_text(encoding='utf-8'))
+        runner_hash = hashlib.sha256(self.gate_runner.read_bytes()).hexdigest()
+        for gate in document['promotion_chain']:
+            relative = f"compat/x86_64/qualification-gates/{gate['id']}.json"
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                'schema': manifest.CASE_SCHEMA, 'gate': gate['id'], 'target': manifest.TARGET,
+                **{key: gate[key] for key in ('oracle', 'provenance', 'purity', 'isolation')},
+                'cases': [{'id': 'gate-conditions',
+                           'command': ['python3', 'compat/x86_64/gate_fixture.py', gate['id']],
+                           'runner_sha256': runner_hash,
+                           'expected_stdout_line': f"x86 qualification gate {gate['id']}: PASS",
+                           'timeout_seconds': 30}],
+            }), encoding='utf-8')
+            gate['case_manifest'] = {'path': relative, 'sha256': manifest.sha256_file(path)}
+        self.contract = self.root / 'compat/x86_64/qualification_manifest.json'
+        self.contract.write_text(json.dumps(document), encoding='utf-8')
+        self.receipts = self.root / 'receipts'
+        self.receipts.mkdir()
+        self.source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64}
+        self.inputs = {'tools': 'fixture'}
+        self.environment = {'PATH': os.environ['PATH'], 'LC_ALL': 'C'}
+        for target, name, value in (
+            (manifest, 'ROOT', self.root), (manifest, 'CONTRACT_PATH', self.contract),
+            (runner, 'ROOT', self.root),
+        ):
+            patcher = patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for name, value in (
+            ('require_pinned_native_execution', None),
+            ('ensure_physical_receipt_directory', self.receipts),
+        ):
+            patcher = patch.object(runner, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for name, attribute in (('source_identity', 'source'), ('execution_inputs', 'inputs'),
+                                ('controlled_environment', 'environment')):
+            patcher = patch.object(runner, name, side_effect=lambda attribute=attribute: getattr(self, attribute))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def run_chain(self, through=manifest.CHAIN[-1]):
+        return runner.run_chain(manifest.load_contract(), through)
+
+    def test_passing_chain_receipt_is_reread_from_physical_logs(self):
+        path, receipt = self.run_chain()
+        self.assertEqual(receipt['outcome'], 'passed')
+        self.assertTrue(receipt['complete_chain'])
+        self.assertEqual(receipt['qualified_gates'], list(manifest.CHAIN))
+        self.assertEqual([case['gate'] for case in receipt['cases']], list(manifest.CHAIN))
+        self.assertEqual(runner.validate_chain_receipt(path), receipt)
+
+    def test_failed_gate_seals_an_intact_failure_that_is_never_a_pass(self):
+        self.environment['QUALIFICATION_FIXTURE_FAIL'] = manifest.CHAIN[2]
+        path, receipt = self.run_chain()
+        self.assertEqual(receipt['outcome'], 'failed')
+        self.assertEqual(receipt['qualified_gates'], list(manifest.CHAIN[:2]))
+        self.assertEqual(len(receipt['cases']), 3)
+        self.assertIn('UNMET (fixture)', (path.parent / receipt['cases'][-1]['stdout']['path']).read_text())
+        self.assertEqual(runner.validate_chain_receipt(path)['outcome'], 'failed')
+
+        forged = dict(receipt, outcome='passed', error=None)
+        path.chmod(0o644)
+        path.write_text(json.dumps(forged), encoding='utf-8')
+        with self.assertRaisesRegex(runner.QualificationRunError, 'claims a pass'):
+            runner.validate_chain_receipt(path)
+
+    def test_changed_log_source_or_runner_rejects_the_receipt(self):
+        path, receipt = self.run_chain(manifest.CHAIN[1])
+        log = path.parent / receipt['cases'][0]['stdout']['path']
+        original = log.read_bytes()
+        log.chmod(0o644)
+        log.write_bytes(original.replace(b'PASS', b'pass'))
+        with self.assertRaisesRegex(runner.QualificationRunError, 'stdout changed'):
+            runner.validate_chain_receipt(path)
+        log.write_bytes(original)
+        self.assertEqual(runner.validate_chain_receipt(path)['outcome'], 'passed')
+
+        self.source = {'revision': 'c' * 40, 'content_sha256': 'd' * 64}
+        with self.assertRaisesRegex(runner.QualificationRunError, 'source is stale'):
+            runner.validate_chain_receipt(path)
+        self.source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64}
+
+        self.gate_runner.write_text(GATE_FIXTURE + '# changed\n', encoding='utf-8')
+        with self.assertRaisesRegex(manifest.QualificationManifestError, 'runner hash does not match'):
+            runner.validate_chain_receipt(path)
+
+    def test_dispatch_prints_the_failing_gate_conditions_and_exits_nonzero(self):
+        self.environment['QUALIFICATION_FIXTURE_FAIL'] = manifest.CHAIN[0]
+        stderr = SimpleNamespace(buffer=io.BytesIO(), write=lambda text: stderr.buffer.write(text.encode()))
+        with patch.object(manifest, 'write_or_check'), patch.object(runner.sys, 'stderr', stderr):
+            self.assertEqual(runner.main([]), 1)
+        output = stderr.buffer.getvalue().decode()
+        self.assertIn(f'x86 qualification gate {manifest.CHAIN[0]}: UNMET (fixture)', output)
+        self.assertIn('x86 qualification chain: FAILED', output)
+
 
 if __name__ == '__main__':
     unittest.main()

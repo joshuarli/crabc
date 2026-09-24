@@ -1,0 +1,23 @@
+{
+  "schema": "crabc.x86_64-qualification-case-manifest/v1",
+  "gate": "consumer.rust-std-lto",
+  "target": {
+    "triple": "x86_64-unknown-linux-musl",
+    "system": "Linux",
+    "machine": "x86_64",
+    "endianness": "little"
+  },
+  "oracle": "frozen-aarch64-rust-std-lto-consumer-contract",
+  "provenance": "pinned-rust-toolchain-and-owned-crabc-runtime",
+  "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
+  "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
+  "cases": [
+    {
+      "id": "gate-conditions",
+      "command": ["python3", "compat/x86_64/run_qualification_gate.py", "consumer.rust-std-lto"],
+      "runner_sha256": "6ff8cee82b1470b93b212da65bc32cebee403ad0b19d5e617bb2710120174e58",
+      "expected_stdout_line": "x86 qualification gate consumer.rust-std-lto: PASS",
+      "timeout_seconds": 7200
+    }
+  ]
+}

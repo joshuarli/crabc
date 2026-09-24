@@ -7,6 +7,8 @@ import copy
 import hashlib
 import importlib.util
 import json
+import platform
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -36,15 +38,35 @@ class QualificationManifestTests(unittest.TestCase):
     def document(self) -> dict[str, object]:
         return json.loads(qualification.CONTRACT_PATH.read_text(encoding="utf-8"))
 
-    def test_checked_in_contract_has_the_exact_planned_chain_and_private_admission(self) -> None:
+    def test_checked_in_contract_declares_every_ordered_gate_executable(self) -> None:
         report = qualification.load_contract()
         self.assertEqual(report["execution"], qualification.EXECUTION_CONTRACT)
         self.assertEqual(
             tuple(row["id"] for row in report["promotion_chain"]),
             qualification.CHAIN,
         )
+        # Ready means executable and pinned, never completed.
+        self.assertEqual(report["ready_gate_count"], len(qualification.CHAIN))
+        self.assertEqual(report["runnable_prefix"], list(qualification.CHAIN))
+        self.assertEqual(report["completed_gate_count"], 0)
         self.assertEqual(report["incomplete_gates"], list(qualification.CHAIN))
         self.assertFalse(report["promotion_ready"])
+        gate_runner = ROOT / "compat/x86_64/run_qualification_gate.py"
+        for gate in report["promotion_chain"]:
+            with self.subTest(gate=gate["id"]):
+                self.assertEqual(gate["state"], "ready")
+                if not gate["case_manifest"].startswith("compat/x86_64/qualification-gates/"):
+                    # A lane-owned dedicated case (consumer.source-build) is
+                    # pinned by the same contract; its content is tested there.
+                    continue
+                case_manifest = json.loads((ROOT / gate["case_manifest"]).read_text(encoding="utf-8"))
+                self.assertEqual(case_manifest["cases"], [{
+                    "id": "gate-conditions",
+                    "command": ["python3", "compat/x86_64/run_qualification_gate.py", gate["id"]],
+                    "runner_sha256": hashlib.sha256(gate_runner.read_bytes()).hexdigest(),
+                    "expected_stdout_line": f"x86 qualification gate {gate['id']}: PASS",
+                    "timeout_seconds": gate["timeout_seconds"],
+                }])
         self.assertEqual(report["private_admission"], [
             {
                 "id": "posix-abi-admission",
@@ -131,13 +153,25 @@ class QualificationManifestTests(unittest.TestCase):
             "timeout_seconds": 1,
         }
         process = Mock()
+        process.pid = 2**22 + 1
         process.communicate.return_value = (
             b"x86 static crabc-libc resolver runtime: PASS\n",
             b"",
         )
         process.returncode = 0
-        with patch.object(runner.subprocess, "Popen", return_value=process) as popen:
-            runner.run_case({"id": "compat.resolver-network"}, case)
+        with tempfile.TemporaryDirectory() as directory:
+            receipts = Path(directory)
+            transaction = receipts / "transaction"
+            (transaction / "cases").mkdir(parents=True)
+            with patch.object(runner.subprocess, "Popen", return_value=process) as popen, patch.object(
+                runner, "ensure_physical_receipt_directory", return_value=receipts
+            ):
+                record = runner.execute_chain_case(transaction, 1, {"id": "compat.resolver-network"}, case)
+            self.assertEqual(record["outcome"], "passed")
+            self.assertEqual(
+                (transaction / record["stdout"]["path"]).read_bytes(),
+                b"x86 static crabc-libc resolver runtime: PASS\n",
+            )
         self.assertEqual(
             popen.call_args.kwargs["env"]["TMPDIR"],
             qualification.EXECUTION_CONTRACT["temporary_directory"],
@@ -146,6 +180,32 @@ class QualificationManifestTests(unittest.TestCase):
             popen.call_args.args[0],
             ["bash", "compat/x86_64/run_libc_resolver_runtime.sh"],
         )
+
+    @unittest.skipUnless(
+        sys.platform == "linux" and platform.machine() in {"x86_64", "amd64"},
+        "the x86 dispatcher refuses non-native hosts before argument validation",
+    )
+    def test_dispatcher_rejects_malformed_operations_before_starting_a_container(self) -> None:
+        for arguments, message in (
+            (["--through", "compat.unknown"], "unknown prefix endpoint"),
+            (["--status", "extra"], "accepts no arguments"),
+            (["--publish", "compat.unknown", "posix-native", "receipt.json"], "unknown gate"),
+            (["--publish", "compat.posix-process", "Posix Native", "receipt.json"], "invalid publication"),
+            (["--publish", "compat.posix-process", "posix-native", "/etc/passwd"], "below the physical checkout .work"),
+        ):
+            with self.subTest(arguments=arguments):
+                completed = subprocess.run(
+                    [str(ROOT / "scripts/dev-x86_64.sh"), "qualification-manifest", *arguments],
+                    cwd=ROOT,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 2, completed.stderr)
+                self.assertIn(message, completed.stderr)
+                self.assertNotIn("docker", completed.stderr.lower())
 
     def test_execution_boundary_drift_is_rejected(self) -> None:
         document = self.document()
@@ -280,7 +340,7 @@ class QualificationManifestTests(unittest.TestCase):
             ), patch.object(runner.subprocess, "Popen") as popen:
                 popen.side_effect = AssertionError("runner bytes must be checked before Popen")
                 with self.assertRaisesRegex(runner.QualificationRunError, "runner bytes changed"):
-                    runner.run_case({"id": "compat.abi-differential"}, case)
+                    runner.execute_chain_case(root, 1, {"id": "compat.abi-differential"}, case)
                 popen.assert_not_called()
 
     def test_generated_manifest_is_deterministic_and_checkable(self) -> None:
@@ -294,12 +354,17 @@ class QualificationManifestTests(unittest.TestCase):
                 qualification.write_or_check(generated, report, check=True)
 
     def test_runner_refuses_planned_chain_without_starting_any_child(self) -> None:
-        with patch.object(runner, "require_native_linux_x86_64") as native, patch.object(
-            runner, "run_case"
-        ) as run_case, patch("sys.stderr"):
-            self.assertEqual(runner.main([]), 1)
+        report = qualification.load_contract()
+        report["promotion_chain"][1]["state"] = "planned"
+        with patch.object(qualification, "load_contract", return_value=report), patch.object(
+            qualification, "write_or_check"
+        ), patch.object(runner, "require_native_linux_x86_64") as native, patch.object(
+            runner, "execute_chain_case"
+        ) as execute:
+            with self.assertRaisesRegex(runner.QualificationRunError, "planned dependencies: compat.posix-process"):
+                runner.main([])
         native.assert_not_called()
-        run_case.assert_not_called()
+        execute.assert_not_called()
 
     def test_runner_refuses_a_stale_generated_projection(self) -> None:
         report = qualification.load_contract()

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -132,6 +133,8 @@ REQUIRED_GATE_FIELDS = {
     "timeout_seconds",
 }
 READY_GATE_FIELDS = REQUIRED_GATE_FIELDS | {"case_manifest"}
+# A fixed case-command word is a selector, never an option, path, or glob.
+FIXED_ARGUMENT = re.compile(r"[a-z0-9][a-z0-9._-]*")
 
 
 class QualificationManifestError(ValueError):
@@ -191,11 +194,25 @@ def load_json(path: Path, description: str) -> dict[str, Any]:
     return document
 
 
-def validated_command(value: object, location: str) -> tuple[str, ...]:
+def validated_command(value: object, location: str, *, fixed_arguments: bool = False) -> tuple[str, ...]:
+    """Accept one interpreter, one repository runner, and optional fixed words.
+
+    Case manifests may pass fixed selector words (for example a gate id) to a
+    shared pinned runner. The words are part of the hashed case manifest, are
+    never shell-parsed, and cannot look like options or paths.
+    """
     require(isinstance(value, list) and value, f"{location} must be a nonempty argv array")
     command = tuple(nonempty_string(item, f"{location}[{index}]") for index, item in enumerate(value))
     require(command[0] in {"python3", "bash"}, f"{location} has an unapproved executable")
-    require(len(command) == 2, f"{location} must select exactly one repository runner")
+    if fixed_arguments:
+        require(len(command) >= 2, f"{location} must select exactly one repository runner")
+        for index, word in enumerate(command[2:], start=2):
+            require(
+                FIXED_ARGUMENT.fullmatch(word) is not None,
+                f"{location}[{index}] must be a fixed selector word",
+            )
+    else:
+        require(len(command) == 2, f"{location} must select exactly one repository runner")
     _, runner = repository_file(command[1], f"{location}[1]")
     require(runner.suffix in {".py", ".sh"}, f"{location} runner has an invalid suffix")
     return command
@@ -252,7 +269,9 @@ def validate_ready_cases(gate: Mapping[str, object], location: str) -> dict[str,
         require(case_id not in case_ids, f"{location} case manifest duplicates case {case_id}")
         case_ids.add(case_id)
         command = validated_command(
-            item.get("command"), f"{location} case manifest cases[{case_index}].command"
+            item.get("command"),
+            f"{location} case manifest cases[{case_index}].command",
+            fixed_arguments=True,
         )
         _, runner = repository_file(
             command[1], f"{location} case manifest cases[{case_index}].command[1]"
@@ -322,8 +341,8 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
     return {"schema": SCHEMA, "contract_sha256": sha256_file(CONTRACT_PATH), "target": TARGET, "policy": dict(policy), "execution": dict(EXECUTION_CONTRACT), "private_admission": admission, "promotion_chain": normalized, "completed_gate_count": 0, "ready_gate_count": ready_count, "runnable_prefix": runnable_prefix, "incomplete_gates": incomplete, "promotion_ready": False}
 
 
-def load_contract(path: Path = CONTRACT_PATH) -> dict[str, object]:
-    return validate_contract(load_json(path, "qualification contract"))
+def load_contract(path: Path | None = None) -> dict[str, object]:
+    return validate_contract(load_json(CONTRACT_PATH if path is None else path, "qualification contract"))
 
 
 def write_or_check(path: Path, report: Mapping[str, object], check: bool) -> None:

@@ -1,6 +1,6 @@
 {
   "completed_gate_count": 0,
-  "contract_sha256": "79f3cdce96070eb3e9d6dd5bbfd59b63fdc995a75fb4a1978e2e906aa5ed29a4",
+  "contract_sha256": "c93a082c1889cfc4a6a6ad9ea3f3b5aaaa80451da2acf29f44be9e719a7e372a",
   "execution": {
     "cargo_home": "/workspace/.work/x86_64/cargo",
     "dispatcher_command": [
@@ -44,16 +44,22 @@
   ],
   "promotion_chain": [
     {
+      "case_count": 1,
+      "case_manifest": "compat/x86_64/qualification-gates/compat.abi-differential.json",
+      "case_manifest_sha256": "a26d6b726850260a01ef851dda1e3414515cffd826c5d4c2acbd89de84b0a67d",
       "depends_on": [],
       "id": "compat.abi-differential",
       "isolation": "clean-native-linux-x86_64-worktree-and-scrubbed-environment",
       "oracle": "pinned-musl-1.2.6-and-frozen-linux-amd64-abi",
       "provenance": "separate-pinned-musl-oracle-and-owned-crabc-candidate",
       "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
-      "state": "planned",
+      "state": "ready",
       "timeout_seconds": 7200
     },
     {
+      "case_count": 1,
+      "case_manifest": "compat/x86_64/qualification-gates/compat.posix-process.json",
+      "case_manifest_sha256": "e3c88020411bf57c35a8e81fd5d936aa2039bf6e56f3ccd96579abf9e44990f3",
       "depends_on": [
         "compat.abi-differential"
       ],
@@ -62,10 +68,13 @@
       "oracle": "pinned-musl-1.2.6-and-linux-5.10-process-abi",
       "provenance": "separate-pinned-musl-oracle-and-owned-crabc-candidate",
       "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
-      "state": "planned",
+      "state": "ready",
       "timeout_seconds": 7200
     },
     {
+      "case_count": 1,
+      "case_manifest": "compat/x86_64/qualification-gates/compat.resolver-network.json",
+      "case_manifest_sha256": "108e720bb2f8f1befd79045b963745037de8d2ba8c2df1ef15f90580c489e4f2",
       "depends_on": [
         "compat.abi-differential",
         "compat.posix-process"
@@ -75,7 +84,7 @@
       "oracle": "pinned-musl-1.2.6-and-controlled-linux-resolver-network",
       "provenance": "separate-pinned-musl-oracle-and-owned-crabc-candidate",
       "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
-      "state": "planned",
+      "state": "ready",
       "timeout_seconds": 7200
     },
     {
@@ -96,6 +105,9 @@
       "timeout_seconds": 7200
     },
     {
+      "case_count": 1,
+      "case_manifest": "compat/x86_64/qualification-gates/consumer.rust-std-lto.json",
+      "case_manifest_sha256": "54bc101b6700d7fcaaaafb4323211abff1bd3098aa0d5b5de870e83d6eb8f655",
       "depends_on": [
         "compat.abi-differential",
         "compat.posix-process",
@@ -107,7 +119,7 @@
       "oracle": "frozen-aarch64-rust-std-lto-consumer-contract",
       "provenance": "pinned-rust-toolchain-and-owned-crabc-runtime",
       "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
-      "state": "planned",
+      "state": "ready",
       "timeout_seconds": 7200
     },
     {
@@ -130,6 +142,9 @@
       "timeout_seconds": 7200
     },
     {
+      "case_count": 1,
+      "case_manifest": "compat/x86_64/qualification-gates/capability.accounting.json",
+      "case_manifest_sha256": "5322d35ca8bb8b11d08731db64a557834c69373ffbdd5839b1ad5b70c2a2a5e9",
       "depends_on": [
         "compat.abi-differential",
         "compat.posix-process",
@@ -143,10 +158,13 @@
       "oracle": "immutable-aarch64-frozen-baseline-and-current-x86-ledger",
       "provenance": "machine-validated-frozen-baseline-and-parity-ledger",
       "purity": "reject-unmapped-selected-private-or-artifact-only-progress",
-      "state": "planned",
+      "state": "ready",
       "timeout_seconds": 1800
     },
     {
+      "case_count": 1,
+      "case_manifest": "compat/x86_64/qualification-gates/performance.release.json",
+      "case_manifest_sha256": "d4cd4c9415ea54e561e2b51168611afa5039d74e798f8bea1294a2d63a027618",
       "depends_on": [
         "compat.abi-differential",
         "compat.posix-process",
@@ -161,13 +179,22 @@
       "oracle": "project-performance-contract-and-pinned-musl-1.2.6-comparison-lane",
       "provenance": "controlled-native-x86_64-hardware-and-owned-crabc-runtime",
       "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
-      "state": "planned",
+      "state": "ready",
       "timeout_seconds": 14400
     }
   ],
   "promotion_ready": false,
-  "ready_gate_count": 2,
-  "runnable_prefix": [],
+  "ready_gate_count": 8,
+  "runnable_prefix": [
+    "compat.abi-differential",
+    "compat.posix-process",
+    "compat.resolver-network",
+    "compat.loader-corpus",
+    "consumer.rust-std-lto",
+    "consumer.source-build",
+    "capability.accounting",
+    "performance.release"
+  ],
   "schema": "crabc.x86_64-qualification-manifest/v2",
   "target": {
     "endianness": "little",

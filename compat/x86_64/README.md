@@ -62,20 +62,19 @@ The campaign status/family commands validate the frozen baseline, ledger, and
 generated C-ABI evidence matrix. Product and promotion commands report blockers
 until their real gates pass; a private fixture or focused leaf never promotes.
 
-The case-pinned qualification runner executes only through the pinned
-`qualification-manifest` dispatcher surface. Inside that native image it
-requires the checkout-local `.work/x86_64` work, temporary and mutable Cargo
-directories, the fixed `/opt/cargo/bin` and `/opt/rustup` Rust paths, and the
-pinned musl oracle compiler before starting a registered case. It never
-executes a qualification case directly on the host. Its
-`qualification-manifest --private-admission` operation records the closed
-five-case POSIX/ABI admission as ignored per-case and prefix receipts; it is
-explicitly non-promoting. `qualification-manifest --validate-receipt PATH`
-rechecks the current source, tools, musl inputs, logs and retained same-object
-artifacts. Ready ordered prefixes may be selected with
-`qualification-manifest --through GATE`; planned predecessors remain blockers,
-and prefix execution makes no completion claim. The full receipt contract and
-remaining gates are recorded in [qualification-prefix-execution.md](qualification-prefix-execution.md).
+The ordered qualification chain executes only through the pinned
+`qualification-manifest` dispatcher surface, never directly on the host.
+Inside the native image it requires the checkout-local `.work/x86_64` work,
+temporary and mutable Cargo directories, the fixed `/opt/cargo/bin` and
+`/opt/rustup` Rust paths, and the pinned musl oracle compiler. With no
+arguments it runs all eight gates in order (`--through GATE` runs a prefix),
+stops at the first unmet gate, and writes a source-bound receipt that
+`--validate-receipt PATH` rereads; each gate names its unmet prerequisite
+families, unread evidence and completion checks. `--status` evaluates every
+gate independently, `--publish` selects retained leaf receipts for gate
+readers, and `--private-admission` keeps the non-promoting five-case
+POSIX/ABI admission. [qualification-chain.md](qualification-chain.md) owns
+the gate conditions, reader registration, publication and receipt contract.
 
 Use `./scripts/dev-x86_64.sh --help` and the owning ledger's evidence commands
 for focused gates. The dispatcher owns the command roster; this guide does not

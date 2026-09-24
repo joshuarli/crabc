@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Execute an explicitly selected, non-promoting ordered qualification prefix.
+"""Execute the ordered x86 qualification chain as a source-bound receipt.
 
-Ready declarations pin case manifests and runner bytes. A prefix always starts
-at the first gate and includes every predecessor; later planned gates do not
-block it. Case execution alone is not a source/tool/runtime/artifact-bound
-qualification receipt, so the default full-qualification entry stays closed.
+Ready declarations pin case manifests and runner bytes. The no-argument form
+executes the complete chain; ``--through GATE`` executes the contiguous prefix
+ending at that gate. Every selected predecessor runs again in the same
+invocation, execution stops at the first failing case, and a receipt binding
+the clean revision, tool/runtime inputs and raw case logs is written for the
+failure as well as for success. Only a passing receipt that revalidates
+against the current checkout (``--validate-receipt``) is qualification
+evidence; a planned gate is a named blocker and is never skipped.
+
+``--status`` evaluates each gate's conditions independently as a diagnostic,
+and ``--publish`` selects a retained receipt for a gate's evidence reader.
+The fixed private admission remains a separate non-promoting receipt.
 """
 
 from __future__ import annotations
@@ -295,16 +303,6 @@ def load_case_manifest(gate: Mapping[str, object]) -> dict[str, Any]:
     return manifest.load_json(case_path, f"{gate['id']} case manifest")
 
 
-def verify_case_output(gate_id: str, case: Mapping[str, Any], returncode: int, stdout: bytes, stderr: bytes) -> None:
-    if returncode != 0:
-        raise QualificationRunError(f"{gate_id}/{case['id']} exited {returncode}")
-    marker = str(case["expected_stdout_line"]).encode("utf-8")
-    lines = [line for line in stdout.splitlines() if line]
-    if lines.count(marker) != 1 or not lines or lines[-1] != marker:
-        raise QualificationRunError(f"{gate_id}/{case['id']} did not emit one final completion marker")
-    del stderr
-
-
 def verify_case_runner(gate: Mapping[str, object], case: Mapping[str, Any]) -> None:
     """Rehash the repository runner immediately before starting it.
 
@@ -313,7 +311,7 @@ def verify_case_runner(gate: Mapping[str, object], case: Mapping[str, Any]) -> N
     and ``Popen``: a changed runner cannot satisfy a receipt for old bytes.
     """
     command = case.get("command")
-    if not isinstance(command, list) or len(command) != 2 or not all(
+    if not isinstance(command, list) or len(command) < 2 or not all(
         isinstance(token, str) and token for token in command
     ):
         raise QualificationRunError(f"{gate['id']}/{case.get('id')} has an invalid runner command")
@@ -329,31 +327,6 @@ def verify_case_runner(gate: Mapping[str, object], case: Mapping[str, Any]) -> N
         raise QualificationRunError(str(error)) from error
     if observed_hash != expected_hash:
         raise QualificationRunError(f"{gate['id']}/{case.get('id')} runner bytes changed after case validation")
-
-
-def run_case(gate: Mapping[str, object], case: Mapping[str, Any]) -> None:
-    command = case["command"]
-    assert isinstance(command, list)
-    verify_case_runner(gate, case)
-    process = subprocess.Popen(command, cwd=ROOT, env=controlled_environment(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-    try:
-        stdout, stderr = process.communicate(timeout=case["timeout_seconds"])
-    except subprocess.TimeoutExpired as error:
-        os.killpg(process.pid, signal.SIGKILL)
-        stdout, stderr = process.communicate()
-        if stdout:
-            sys.stderr.buffer.write(stdout)
-        if stderr:
-            sys.stderr.buffer.write(stderr)
-        raise QualificationRunError(f"{gate['id']}/{case['id']} timed out after {case['timeout_seconds']}s") from error
-    try:
-        verify_case_output(str(gate["id"]), case, process.returncode, stdout, stderr)
-    except QualificationRunError:
-        if stdout:
-            sys.stderr.buffer.write(stdout)
-        if stderr:
-            sys.stderr.buffer.write(stderr)
-        raise
 
 
 def require(condition: bool, message: str) -> None:
@@ -676,11 +649,8 @@ def read_json(path: Path, label: str, owner: Path | None = None) -> dict[str, An
     return value
 
 
-def transaction_directory(admission: Mapping[str, object]) -> Path:
+def new_transaction_directory(identifier: str) -> Path:
     root = ensure_physical_receipt_directory()
-    identifier = admission.get("id")
-    if not isinstance(identifier, str) or not identifier:
-        raise QualificationRunError("private admission has no identifier")
     path = Path(
         tempfile.mkdtemp(
             prefix=f"{identifier}-{time.time_ns()}-",
@@ -690,6 +660,13 @@ def transaction_directory(admission: Mapping[str, object]) -> Path:
     if path.is_symlink() or path.resolve() != path:
         raise QualificationRunError("new qualification receipt transaction is not physical")
     return path
+
+
+def transaction_directory(admission: Mapping[str, object]) -> Path:
+    identifier = admission.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        raise QualificationRunError("private admission has no identifier")
+    return new_transaction_directory(identifier)
 
 
 def verify_private_admission_runner(admission: Mapping[str, object]) -> None:
@@ -1118,6 +1095,8 @@ def run_private_admission(report: Mapping[str, object]) -> Path:
     return receipt
 
 
+
+
 def select_promotion_prefix(report: Mapping[str, object], through: str) -> list[Mapping[str, object]]:
     """Select exactly the first N gates, with no skipped or imported dependency.
 
@@ -1137,16 +1116,393 @@ def select_promotion_prefix(report: Mapping[str, object], through: str) -> list[
     return selected
 
 
-def incomplete_payload(report: Mapping[str, object]) -> str:
-    return json.dumps({"target": manifest.TARGET["triple"], "promotion_ready": False, "incomplete_gates": report["incomplete_gates"], "private_admission": [row["id"] for row in report["private_admission"]], "runnable_prefix": report["runnable_prefix"], "reason": "private admission and ready declarations are not completion; source/tool/runtime/artifact-bound execution receipts remain required"}, indent=2, sort_keys=True)
+CHAIN_RECEIPT_KIND = "ordered-chain"
+CHAIN_RECEIPT_FIELDS = frozenset({
+    "schema",
+    "kind",
+    "target",
+    "through",
+    "contract_sha256",
+    "gates",
+    "qualified_gates",
+    "complete_chain",
+    "source_before",
+    "source_after",
+    "inputs_before",
+    "inputs_after",
+    "started_at_unix_ns",
+    "finished_at_unix_ns",
+    "duration_ns",
+    "cases",
+    "outcome",
+    "error",
+})
+CHAIN_CASE_FIELDS = frozenset({
+    "order",
+    "gate",
+    "id",
+    "command",
+    "runner_sha256",
+    "expected_stdout_line",
+    "timeout_seconds",
+    "exit_status",
+    "outcome",
+    "error",
+    "started_at_unix_ns",
+    "finished_at_unix_ns",
+    "duration_ns",
+    "stdout",
+    "stderr",
+})
+
+
+def gate_conditions_module() -> Any:
+    """Import the gate evaluator from this checkout, never an ambient module."""
+    directory = str(Path(__file__).resolve().parent)
+    if directory not in sys.path:
+        sys.path.insert(0, directory)
+    import qualification_gates
+
+    return qualification_gates
+
+
+def chain_case_directory(order: int, gate_id: str, case_id: str) -> str:
+    return f"cases/{order:02d}-{gate_id}-{case_id}"
+
+
+def case_marker_passed(case: Mapping[str, Any], exit_status: object, stdout: bytes) -> bool:
+    marker = str(case["expected_stdout_line"]).encode("utf-8")
+    lines = [line for line in stdout.splitlines() if line]
+    return exit_status == 0 and lines.count(marker) == 1 and bool(lines) and lines[-1] == marker
+
+
+def execute_chain_case(
+    transaction: Path,
+    order: int,
+    gate: Mapping[str, object],
+    case: Mapping[str, Any],
+) -> dict[str, object]:
+    """Run one pinned case in its own session and retain its raw streams.
+
+    The private-admission descendant boundary is reused unchanged: the
+    receipt process is a temporary child subreaper, so a leaf that escapes
+    the case session is still killed and reaped on timeout, and a daemon left
+    after completion fails the case instead of outliving its receipt.
+    """
+    verify_case_runner(gate, case)
+    command = case["command"]
+    assert isinstance(command, list)
+    directory = transaction / chain_case_directory(order, str(gate["id"]), str(case["id"]))
+    evidence_path(directory, transaction)
+    directory.mkdir(mode=0o755)
+    error: str | None = None
+    exit_status: int | str
+    started_at_unix_ns = time.time_ns()
+    with private_admission_subreaper() as descendants:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=controlled_environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        descendants.register_private_runner(process)
+        try:
+            stdout, stderr = process.communicate(timeout=case["timeout_seconds"])
+            exit_status = process.returncode
+            try:
+                descendants.reject_unexpected_descendants()
+            except QualificationRunError as failure:
+                error = str(failure)
+        except subprocess.TimeoutExpired:
+            exit_status = "timeout"
+            error = f"timed out after {case['timeout_seconds']}s"
+            try:
+                descendants.terminate_and_reap(process)
+            except QualificationRunError as failure:
+                error = f"{error}; {failure}"
+            try:
+                stdout, stderr = process.communicate(timeout=10)
+            except subprocess.TimeoutExpired as late:
+                stdout, stderr = late.stdout or b"", late.stderr or b""
+            try:
+                descendants.reap_adopted_descendants()
+            except QualificationRunError as failure:
+                error = f"{error}; {failure}"
+    finished_at_unix_ns = time.time_ns()
+    streams: dict[str, dict[str, str]] = {}
+    for name, value in (("stdout", stdout), ("stderr", stderr)):
+        path = directory / f"{name}.log"
+        write_new_bytes(path, value)
+        streams[name] = {
+            "path": relative_evidence_path(transaction, path),
+            "sha256": sha256_file(path, f"{gate['id']}/{case['id']} {name}"),
+        }
+    passed = error is None and case_marker_passed(case, exit_status, stdout)
+    if error is None and not passed:
+        error = f"exited {exit_status} without its single final completion marker"
+    return {
+        "order": order,
+        "gate": gate["id"],
+        "id": case["id"],
+        "command": list(command),
+        "runner_sha256": case["runner_sha256"],
+        "expected_stdout_line": case["expected_stdout_line"],
+        "timeout_seconds": case["timeout_seconds"],
+        "exit_status": exit_status,
+        "outcome": "passed" if passed else "failed",
+        "error": error,
+        "started_at_unix_ns": started_at_unix_ns,
+        "finished_at_unix_ns": finished_at_unix_ns,
+        "duration_ns": finished_at_unix_ns - started_at_unix_ns,
+        **streams,
+    }
+
+
+def chain_roster(selected: Sequence[Mapping[str, object]]) -> list[tuple[Mapping[str, object], Mapping[str, Any]]]:
+    """Load every selected case manifest before any case can start."""
+    roster: list[tuple[Mapping[str, object], Mapping[str, Any]]] = []
+    for gate in selected:
+        cases = load_case_manifest(gate)["cases"]
+        for case in cases:
+            assert isinstance(case, Mapping)
+            verify_case_runner(gate, case)
+            roster.append((gate, case))
+    return roster
+
+
+def qualified_gate_ids(
+    selected: Sequence[Mapping[str, object]], cases: Sequence[Mapping[str, object]]
+) -> list[str]:
+    """Return the leading selected gates whose every case passed."""
+    passed: dict[str, int] = {}
+    for record in cases:
+        if record["outcome"] == "passed":
+            passed[str(record["gate"])] = passed.get(str(record["gate"]), 0) + 1
+    qualified: list[str] = []
+    for gate in selected:
+        expected = len(load_case_manifest(gate)["cases"])
+        if passed.get(str(gate["id"])) != expected:
+            break
+        qualified.append(str(gate["id"]))
+    return qualified
+
+
+def chain_gate_records(selected: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    return [
+        {
+            "id": gate["id"],
+            "case_manifest": gate["case_manifest"],
+            "case_manifest_sha256": gate["case_manifest_sha256"],
+        }
+        for gate in selected
+    ]
+
+
+def run_chain(report: Mapping[str, object], through: str) -> tuple[Path, dict[str, object]]:
+    """Execute one ordered prefix (or the whole chain) and seal its receipt."""
+    selected = select_promotion_prefix(report, through)
+    roster = chain_roster(selected)
+    require_pinned_native_execution()
+    source_before = source_identity()
+    inputs_before = execution_inputs()
+    transaction = new_transaction_directory(f"chain-{through}")
+    (transaction / "cases").mkdir(mode=0o755)
+    records: list[dict[str, object]] = []
+    error: str | None = None
+    started_at_unix_ns = time.time_ns()
+    for order, (gate, case) in enumerate(roster, start=1):
+        record = execute_chain_case(transaction, order, gate, case)
+        records.append(record)
+        if record["outcome"] != "passed":
+            error = f"{gate['id']}/{case['id']} did not pass: {record['error']}"
+            break
+    finished_at_unix_ns = time.time_ns()
+    try:
+        source_after = source_identity()
+        if source_after != source_before:
+            raise QualificationRunError("source changed during qualification chain")
+        inputs_after = execution_inputs()
+        if inputs_after != inputs_before:
+            raise QualificationRunError("tool or runtime input changed during qualification chain")
+    except QualificationRunError as failure:
+        source_after = {"revision": "unavailable", "content_sha256": "unavailable"}
+        inputs_after = {"unavailable": True}
+        if error is None:
+            error = str(failure)
+    qualified = qualified_gate_ids(selected, records)
+    outcome = "passed" if error is None else "failed"
+    value: dict[str, object] = {
+        "schema": manifest.RECEIPT_SCHEMA,
+        "kind": CHAIN_RECEIPT_KIND,
+        "target": manifest.TARGET,
+        "through": through,
+        "contract_sha256": report["contract_sha256"],
+        "gates": chain_gate_records(selected),
+        "qualified_gates": qualified,
+        "complete_chain": outcome == "passed" and through == manifest.CHAIN[-1],
+        "source_before": dict(source_before),
+        "source_after": dict(source_after),
+        "inputs_before": dict(inputs_before),
+        "inputs_after": dict(inputs_after),
+        "started_at_unix_ns": started_at_unix_ns,
+        "finished_at_unix_ns": finished_at_unix_ns,
+        "duration_ns": finished_at_unix_ns - started_at_unix_ns,
+        "cases": records,
+        "outcome": outcome,
+        "error": error,
+    }
+    receipt = transaction / "receipt.json"
+    write_new_json(receipt, value)
+    return receipt, value
+
+
+def validate_chain_case(
+    transaction: Path,
+    order: int,
+    gate: Mapping[str, object],
+    case: Mapping[str, Any],
+    record: object,
+) -> bool:
+    """Recheck one retained case record against its pinned case and raw logs."""
+    label = f"{gate['id']}/{case['id']}"
+    if not isinstance(record, Mapping) or set(record) != CHAIN_CASE_FIELDS:
+        raise QualificationRunError(f"qualification chain case record fields drifted: {label}")
+    expected = {
+        "order": order,
+        "gate": gate["id"],
+        "id": case["id"],
+        "command": case["command"],
+        "runner_sha256": case["runner_sha256"],
+        "expected_stdout_line": case["expected_stdout_line"],
+        "timeout_seconds": case["timeout_seconds"],
+    }
+    if any(record.get(name) != value for name, value in expected.items()):
+        raise QualificationRunError(f"qualification chain case record drifted from its pinned case: {label}")
+    timing = (record["started_at_unix_ns"], record["finished_at_unix_ns"], record["duration_ns"])
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in timing) or timing[1] < timing[0] or timing[2] != timing[1] - timing[0]:
+        raise QualificationRunError(f"qualification chain case timing drifted: {label}")
+    directory = chain_case_directory(order, str(gate["id"]), str(case["id"]))
+    raw: dict[str, bytes] = {}
+    for stream in ("stdout", "stderr"):
+        value = record[stream]
+        if not isinstance(value, Mapping) or set(value) != {"path", "sha256"} or value.get("path") != f"{directory}/{stream}.log":
+            raise QualificationRunError(f"qualification chain case {stream} escapes its case: {label}")
+        path = transaction / str(value["path"])
+        if evidence_path(path, transaction) != path or sha256_file(path, f"{label} {stream}") != value["sha256"]:
+            raise QualificationRunError(f"qualification chain case {stream} changed: {label}")
+        raw[stream] = path.read_bytes()
+    passed = record["error"] is None and case_marker_passed(case, record["exit_status"], raw["stdout"])
+    if record["outcome"] != ("passed" if passed else "failed"):
+        raise QualificationRunError(f"qualification chain case outcome differs from its raw result: {label}")
+    if not passed and not (isinstance(record["error"], str) and record["error"]):
+        raise QualificationRunError(f"qualification chain failed case has no error: {label}")
+    return passed
+
+
+def validate_chain_receipt(path: Path) -> dict[str, object]:
+    """Reject stale source, inputs, pins, logs or roster; return the receipt.
+
+    A failed chain receipt can validate as an intact record of that failure.
+    Only ``outcome == "passed"`` is qualification evidence for its prefix.
+    """
+    path = evidence_path(path)
+    transaction = path.parent
+    evidence_path(transaction)
+    receipt = read_json(path, "qualification chain receipt", transaction)
+    if set(receipt) != CHAIN_RECEIPT_FIELDS:
+        raise QualificationRunError("qualification chain receipt fields drifted")
+    if receipt["schema"] != manifest.RECEIPT_SCHEMA or receipt["kind"] != CHAIN_RECEIPT_KIND or receipt["target"] != manifest.TARGET:
+        raise QualificationRunError("qualification chain receipt contract drifted")
+    through = receipt["through"]
+    if not isinstance(through, str) or through not in manifest.CHAIN:
+        raise QualificationRunError("qualification chain receipt names an unknown endpoint")
+    report = manifest.load_contract()
+    if receipt["contract_sha256"] != report["contract_sha256"]:
+        raise QualificationRunError("qualification chain receipt was produced for a different contract")
+    selected = select_promotion_prefix(report, through)
+    if receipt["gates"] != chain_gate_records(selected):
+        raise QualificationRunError("qualification chain receipt gate roster or case manifests drifted")
+    timing = (receipt["started_at_unix_ns"], receipt["finished_at_unix_ns"], receipt["duration_ns"])
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in timing) or timing[1] < timing[0] or timing[2] != timing[1] - timing[0]:
+        raise QualificationRunError("qualification chain receipt timing drifted")
+    source = source_identity()
+    if receipt["source_before"] != source or receipt["source_after"] != source:
+        raise QualificationRunError("qualification chain receipt source is stale")
+    inputs = execution_inputs()
+    if receipt["inputs_before"] != inputs or receipt["inputs_after"] != inputs:
+        raise QualificationRunError("qualification chain receipt tool or runtime inputs drifted")
+    roster = chain_roster(selected)
+    records = receipt["cases"]
+    if not isinstance(records, list) or not records or len(records) > len(roster):
+        raise QualificationRunError("qualification chain receipt case roster drifted")
+    outcomes = [
+        validate_chain_case(transaction, order, gate, case, record)
+        for order, ((gate, case), record) in enumerate(zip(roster, records), start=1)
+    ]
+    if not all(outcomes[:-1]):
+        raise QualificationRunError("qualification chain receipt continued after a failed case")
+    expected_names = {
+        chain_case_directory(order, str(gate["id"]), str(case["id"])).split("/", 1)[1]
+        for order, (gate, case) in enumerate(roster[: len(records)], start=1)
+    }
+    actual_names = set()
+    for entry in (transaction / "cases").iterdir():
+        if entry.is_symlink() or not entry.is_dir():
+            raise QualificationRunError("qualification chain case roster contains an unexpected entry")
+        actual_names.add(entry.name)
+    if actual_names != expected_names:
+        raise QualificationRunError("qualification chain case directories drifted")
+    complete = len(records) == len(roster) and all(outcomes)
+    if receipt["outcome"] == "passed":
+        if not complete or receipt["error"] is not None:
+            raise QualificationRunError("qualification chain receipt claims a pass without every case passing")
+    elif receipt["outcome"] != "failed" or not isinstance(receipt["error"], str) or not receipt["error"]:
+        raise QualificationRunError("qualification chain receipt outcome is invalid")
+    if receipt["qualified_gates"] != qualified_gate_ids(selected, records):
+        raise QualificationRunError("qualification chain receipt qualified-gate list drifted")
+    if receipt["complete_chain"] is not (receipt["outcome"] == "passed" and through == manifest.CHAIN[-1]):
+        raise QualificationRunError("qualification chain receipt completion flag drifted")
+    return receipt
+
+
+def receipt_kind(path: Path) -> object:
+    path = evidence_path(path)
+    return read_json(path, "qualification receipt", path.parent).get("kind")
+
+
+def failed_case_stdout(receipt_path: Path, receipt: Mapping[str, object]) -> bytes:
+    cases = receipt.get("cases")
+    if not isinstance(cases, list) or not cases or not isinstance(cases[-1], Mapping):
+        return b""
+    stdout = cases[-1].get("stdout")
+    if not isinstance(stdout, Mapping) or not isinstance(stdout.get("path"), str):
+        return b""
+    return (receipt_path.parent / stdout["path"]).read_bytes()
+
+
+def run_status() -> int:
+    """Evaluate every gate natively and independently; never a chain result."""
+    require_pinned_native_execution()
+    gates = gate_conditions_module()
+    results = gates.evaluate_chain(native=True)
+    print(json.dumps(results, indent=2, sort_keys=True))
+    for result in results:
+        state = "PASS" if result["passed"] else "UNMET (" + ", ".join(result["unmet"]) + ")"
+        print(f"x86 qualification status: {result['gate']}: {state}")
+    return 0 if all(result["passed"] for result in results) else 1
 
 
 def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-contract", action="store_true", help="validate planning and pins without native execution")
     parser.add_argument("--private-admission", action="store_true", help="execute and retain the fixed non-promoting private admission receipt")
-    parser.add_argument("--through", choices=manifest.CHAIN, help="execute the ready prefix through this gate without a qualification claim")
-    parser.add_argument("--validate-receipt", type=Path, help="revalidate one ignored private-admission receipt in the pinned native image")
+    parser.add_argument("--through", choices=manifest.CHAIN, help="execute and receipt the ordered prefix ending at this gate")
+    parser.add_argument("--validate-receipt", type=Path, help="revalidate one ignored chain or private-admission receipt in the pinned native image")
+    parser.add_argument("--status", action="store_true", help="evaluate every gate's conditions independently (diagnostic; no receipt)")
+    parser.add_argument("--publish", nargs=3, metavar=("GATE", "PUBLICATION", "RECEIPT"), help="validate a retained receipt and select it for one gate's evidence reader")
     return parser
 
 
@@ -1160,6 +1516,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
             parsed.private_admission,
             parsed.through,
             parsed.validate_receipt,
+            parsed.status,
+            parsed.publish,
         )
     )
     if operation_count > 1:
@@ -1167,13 +1525,23 @@ def main(arguments: Sequence[str] | None = None) -> int:
     report = manifest.load_contract()
     # The checked-in generated projection is a second immutable handoff point:
     # a caller cannot execute a source contract while ignoring stale generated
-    # state consumed by a future campaign integration.
+    # state consumed by the campaign report.
     manifest.write_or_check(manifest.GENERATED_PATH, report, check=True)
     if parsed.check_contract:
         print(f"x86 qualification manifest contract: PASS ({len(report['promotion_chain'])} ordered gates; {report['ready_gate_count']} ready; no execution-completion claim)")
         return 0
     if parsed.validate_receipt is not None:
         require_pinned_native_execution()
+        if receipt_kind(parsed.validate_receipt) == CHAIN_RECEIPT_KIND:
+            receipt = validate_chain_receipt(parsed.validate_receipt)
+            if receipt["outcome"] != "passed":
+                print(f"x86 qualification chain receipt: FAILED (intact record; {receipt['error']})", file=sys.stderr)
+                return 1
+            print(
+                f"x86 qualification chain receipt: PASS (through {receipt['through']}; "
+                f"qualified {', '.join(receipt['qualified_gates'])}; complete_chain={receipt['complete_chain']})"
+            )
+            return 0
         receipt = validate_private_admission_receipt(parsed.validate_receipt)
         print(f"x86 qualification private admission receipt: PASS ({receipt['id']}; non-promoting)")
         return 0
@@ -1181,23 +1549,29 @@ def main(arguments: Sequence[str] | None = None) -> int:
         receipt = run_private_admission(report)
         print(f"x86 qualification private admission receipt: PASS ({receipt}; non-promoting)")
         return 0
-    if parsed.through is None:
-        print(incomplete_payload(report), file=sys.stderr)
+    if parsed.status:
+        return run_status()
+    if parsed.publish:
+        require_pinned_native_execution()
+        gate, publication, receipt_path = parsed.publish
+        gates = gate_conditions_module()
+        try:
+            pointer = gates.publish(gate, publication, receipt_path)
+        except gates.GateError as error:
+            raise QualificationRunError(str(error)) from error
+        print(f"x86 qualification evidence published: {gate} {publication} -> {pointer}")
+        return 0
+    through = parsed.through or manifest.CHAIN[-1]
+    receipt_path, receipt = run_chain(report, through)
+    if receipt["outcome"] != "passed":
+        sys.stderr.buffer.write(failed_case_stdout(receipt_path, receipt))
+        print(f"x86 qualification chain: FAILED ({receipt['error']}); receipt: {receipt_path}", file=sys.stderr)
         return 1
-    selected = select_promotion_prefix(report, parsed.through)
-    # Validate every selected case manifest and runner before any case starts.
-    # Immediate pre-Popen checks remain in run_case as well.
-    cases = [(gate, load_case_manifest(gate)) for gate in selected]
-    for gate, case_manifest in cases:
-        for case in case_manifest["cases"]:
-            verify_case_runner(gate, case)
-    require_pinned_native_execution()
-    for gate, case_manifest in cases:
-        for case in case_manifest["cases"]:
-            assert isinstance(case, Mapping)
-            run_case(gate, case)
-        print(f"x86 qualification prefix execution: {gate['id']}: PASS (non-promoting)")
-    print(f"x86 qualification prefix execution: PASS (through {parsed.through}; execution receipts and final chain qualification remain required)")
+    validate_chain_receipt(receipt_path)
+    print(
+        f"x86 qualification chain: PASS (through {through}; qualified {', '.join(receipt['qualified_gates'])}; "
+        f"complete_chain={receipt['complete_chain']}); receipt: {receipt_path}"
+    )
     return 0
 
 

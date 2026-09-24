@@ -1,0 +1,23 @@
+{
+  "schema": "crabc.x86_64-qualification-case-manifest/v1",
+  "gate": "capability.accounting",
+  "target": {
+    "triple": "x86_64-unknown-linux-musl",
+    "system": "Linux",
+    "machine": "x86_64",
+    "endianness": "little"
+  },
+  "oracle": "immutable-aarch64-frozen-baseline-and-current-x86-ledger",
+  "provenance": "machine-validated-frozen-baseline-and-parity-ledger",
+  "purity": "reject-unmapped-selected-private-or-artifact-only-progress",
+  "isolation": "clean-native-linux-x86_64-worktree-and-scrubbed-environment",
+  "cases": [
+    {
+      "id": "gate-conditions",
+      "command": ["python3", "compat/x86_64/run_qualification_gate.py", "capability.accounting"],
+      "runner_sha256": "6ff8cee82b1470b93b212da65bc32cebee403ad0b19d5e617bb2710120174e58",
+      "expected_stdout_line": "x86 qualification gate capability.accounting: PASS",
+      "timeout_seconds": 1800
+    }
+  ]
+}

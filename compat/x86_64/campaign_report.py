@@ -259,6 +259,12 @@ def validate_qualification_manifest() -> dict[str, Any]:
         "qualification manifest completed gate count is invalid",
     )
     require(
+        isinstance(value.get("ready_gate_count"), int)
+        and not isinstance(value.get("ready_gate_count"), bool)
+        and 0 <= value["ready_gate_count"] <= len(QUALIFICATION_CHAIN),
+        "qualification manifest ready gate count is invalid",
+    )
+    require(
         isinstance(value.get("promotion_ready"), bool),
         "qualification manifest promotion readiness is invalid",
     )
@@ -569,8 +575,16 @@ def build_report() -> dict[str, Any]:
 
     qualification_promotion_ready = qualification_manifest_report["promotion_ready"]
     assert isinstance(qualification_promotion_ready, bool)
+    qualification_ready_count = qualification_manifest_report["ready_gate_count"]
+    assert isinstance(qualification_ready_count, int)
+    # The machine contract is complete once every ordered gate has a pinned,
+    # executable case manifest. Whether the chain passes is decided only by
+    # the terminal runner's source-bound receipt; the declaration-level
+    # ``promotion_ready`` is permanently false and must not gate execution.
     qualification_contract_status = (
-        COMPLETED_STATUS if qualification_promotion_ready else "planned"
+        COMPLETED_STATUS
+        if qualification_ready_count == len(QUALIFICATION_CHAIN)
+        else "planned"
     )
     promotion_product_contract_status = (
         COMPLETED_STATUS
@@ -588,6 +602,7 @@ def build_report() -> dict[str, Any]:
     qualification_summary = {
         "contract_sha256": qualification_manifest_report.get("contract_sha256"),
         "promotion_chain": [gate["id"] for gate in qualification_chain],
+        "ready_gate_count": qualification_ready_count,
         "completed_gate_count": qualification_completed_count,
         "incomplete_gates": list(qualification_incomplete),
         "promotion_ready": qualification_promotion_ready,

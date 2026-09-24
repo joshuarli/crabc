@@ -82,7 +82,13 @@ class CampaignReportTests(unittest.TestCase):
         self.assertFalse(promotion_gate["machine_gate_defined"])
         self.assertFalse(promotion_gate["pass"])
         qualification_gate = value["gates"]["qualification"]
-        self.assertEqual(qualification_gate["contract_status"], "planned")
+        # Every ordered gate is executable; families still block the gate.
+        self.assertEqual(qualification_gate["contract_status"], "foundation-verified")
+        self.assertEqual(qualification_gate["state"], "blocked")
+        self.assertEqual(
+            qualification_gate["manifest"]["ready_gate_count"],
+            len(report.QUALIFICATION_CHAIN),
+        )
         self.assertEqual(
             qualification_gate["machine_gate_command"],
             report.QUALIFICATION_RUNNER_COMMAND,

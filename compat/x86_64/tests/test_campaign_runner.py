@@ -50,6 +50,37 @@ class CampaignRunnerTests(unittest.TestCase):
         self.assertIn("compat.abi-differential", payload["incomplete_families"])
         self.assertTrue(payload["machine_gate_defined"])
         self.assertEqual(completed.stderr, "")
+        # Every ordered gate names its own unmet conditions, not a milestone.
+        self.assertEqual(
+            [row["gate"] for row in payload["chain_conditions"]],
+            list(campaign_report.QUALIFICATION_CHAIN),
+        )
+        for row in payload["chain_conditions"]:
+            self.assertIn("prerequisite-families", [condition["id"] for condition in row["unmet"]])
+
+    def test_ready_qualification_runs_only_the_pinned_ordered_chain(self) -> None:
+        report = {
+            "families": [
+                {
+                    "id": "complete",
+                    "commands": ["./scripts/dev-x86_64.sh owned-loader-synthetic DYNAMIC_SYSROOT"],
+                }
+            ],
+            "gates": {
+                "qualification": {
+                    "pass": True,
+                    "required_families": ["complete"],
+                    "machine_gate_command": campaign_report.QUALIFICATION_RUNNER_COMMAND,
+                }
+            },
+        }
+        passed = subprocess.CompletedProcess([], 0)
+        with mock.patch.object(campaign_runner.subprocess, "run", return_value=passed) as run:
+            self.assertEqual(campaign_runner.execute_gate(report, "qualification"), 0)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["./scripts/dev-x86_64.sh", "qualification-manifest"]],
+        )
 
     def test_qualification_machine_gate_is_closed_to_its_pinned_runner(self) -> None:
         self.assertEqual(
