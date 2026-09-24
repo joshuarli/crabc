@@ -824,7 +824,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "process.control",
       "x86_family": "libc.posix-runtime"
     },
@@ -1070,7 +1070,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "system.kernel-admin",
       "x86_family": "libc.posix-runtime"
     },
@@ -1436,7 +1436,7 @@
       "contract_state": "selected-private",
       "id": "libc.posix-runtime",
       "verified_artifact_count": 172,
-      "verified_slice_count": 7
+      "verified_slice_count": 9
     },
     {
       "aarch64_gates": [

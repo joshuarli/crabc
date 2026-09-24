@@ -2740,7 +2740,7 @@ capabilities = ["filesystem.stat-compat"]
 
 [[family.verified_slice]]
 id = "process.credentials"
-description = "Private native x86 static `crabc-libc` credential slice within the same dependency-free selected `libc.a`: it resolves `setgroups`, `setuid`, `setgid`, `setresuid`, and `setresgid` through direct Linux status-to-initial-TLS-errno translation. The profile-limited `seteuid`, `setegid`, `setreuid`, and `setregid` instead return `-1` with `EOPNOTSUPP` and leave identity unchanged, because this artifact does not own musl's process-wide all-thread credential rendezvous. Its freestanding fixture uses only all-ones no-change requests and rejected inputs, so it does not mutate its evidence process."
+description = "Private native x86 static `crabc-libc` credential slice within the same dependency-free selected `libc.a`: it resolves `setgroups`, `setuid`, `setgid`, `setresuid`, and `setresgid` through direct Linux status-to-initial-TLS-errno translation. The profile-limited `seteuid`, `setegid`, `setreuid`, and `setregid` instead return `-1` with `EOPNOTSUPP` and leave identity unchanged, because this artifact does not own musl's process-wide all-thread credential rendezvous. Its freestanding fixture uses only all-ones no-change requests and rejected inputs, so it does not mutate its evidence process. Installed products compose the same leaf: `owned-credentials-profile` compares every direct setter, including real single-threaded ID transitions, with pinned musl in all six static and dynamic modes, and retains the four-alias profile result. Direct setters remain calling-task operations, unlike musl's process-wide rendezvous."
 source_owners = [
   "COMPATIBILITY-PROFILE.md",
   "libc/Cargo.toml",
@@ -2760,6 +2760,9 @@ source_owners = [
   "compat/x86_64/run_libc_credentials.sh",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
+  "libc/src/c_abi/x86_64/credential_observation.rs",
+  "compat/x86_64/owned_credentials_profile_probe.c",
+  "compat/x86_64/run_owned_credentials_profile.sh",
 ]
 x86_abi_prerequisites = [
   "Linux/x86-64 setuid=105 and setgid=106 take one unsigned 32-bit uid_t/gid_t word in rdi; setgroups=116 takes LP64 size_t and a gid_t pointer in rdi/rsi; setresuid=117 and setresgid=119 take three unsigned 32-bit identity words in rdi/rsi/rdx",
@@ -2767,7 +2770,10 @@ x86_abi_prerequisites = [
   "The static candidate has a PT_TLS errno datum with initial-exec TPOFF access and no TLSGD/TLSDESC/GOTTPOFF or __tls_get_addr. Its fixture-local startup writes one x86 Variant-II thread-pointer self word at %fs:0 and reserves the one negative-offset errno slot; this is a test harness prerequisite, not a CRT or TLS-lifecycle contract",
 ]
 x86_header_prerequisites = ["The candidate preprocesses the project `errno.h`, `grp.h`, `stddef.h`, `sys/types.h`, `sys/syscall.h`, and `unistd.h` surfaces. It selects only the named credential setter declarations, x86 syscall constants, LP64/identity type facts, and errno profile result, not a general installed x86 header or C ABI claim."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-credentials", scope = "Pinned-musl C reference plus the true dependency-free x86 `crabc-libc` static archive and freestanding C candidate. The gate proves archive/link ownership, no interpreter/DT_NEEDED/unresolved symbol or dynamic TLS resolver, direct all-ones setresuid/setresgid no-change behavior, EINVAL translation for rejected setuid/setgid/setgroups inputs, and the documented EOPNOTSUPP no-mutation profile result for the four aliases. The fixture-local initial TLS setup does not select libc.so, dynamic TLS, pthreads, general startup, allocator, sysroot, or public x86 support." }]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh libc-credentials", scope = "Pinned-musl C reference plus the true dependency-free x86 `crabc-libc` static archive and freestanding C candidate. The gate proves archive/link ownership, no interpreter/DT_NEEDED/unresolved symbol or dynamic TLS resolver, direct all-ones setresuid/setresgid no-change behavior, EINVAL translation for rejected setuid/setgid/setgroups inputs, and the documented EOPNOTSUPP no-mutation profile result for the four aliases. The fixture-local initial TLS setup does not select libc.so, dynamic TLS, pthreads, general startup, allocator, sysroot, or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-credentials-profile", scope = "One installed-driver object runs against pinned musl, owned static/static-PIE, and dynamic PIE/non-PIE kernel/direct entries. In mapped user namespaces every direct setter matches musl for current-ID, all-ones no-change, and rejected calls, and the four aliases return the selected -1/EOPNOTSUPP profile result with unchanged IDs. As container root, disposable single-threaded children compare raw results and kernel IDs for real setgroups replacement/clearing, distinct setresuid/setresgid words, unprivileged saved-ID exchanges and EPERM rejections, and root setuid/setgid. The direct setters change only the calling task; musl's all-thread credential rendezvous is neither provided nor tested." },
+]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "C credential setter and errno behavior oracle, with the four intentional profile-limited aliases recorded separately." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Credential syscall register, unsigned identity-word, raw errno, and no-change-selector contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Static initial-exec TLS and x86 Variant-II thread-pointer record contract for the fixture-only startup shim." }, { kind = "standard", source = "POSIX credential APIs and COMPATIBILITY-PROFILE.md", role = "Specified credential API boundary and the explicit unsupported-alias profile result." }]
 capabilities = ["process.credentials"]
 
@@ -3542,7 +3548,7 @@ oracle = [
 
 [[family.verified_slice]]
 id = "static-c-environment"
-description = "Private selected `static-c-environment` slice for exactly `process.environment-mutation`: the frozen C capability is `clearenv`, `setenv`, and `unsetenv`, with pinned-musl behavior and native x86 evidence. The `environ` aliases, `getenv`, and `putenv` are supporting ABI and ownership machinery only; they do not select `process.globals`. The opt-in `x86-environment-runtime` feature switches only the environment owner in `static_c_abi.rs`; default selected-static builds retain the dependency-free bounded `environment.rs` leaf. Its mixed-runtime candidate resolves `getenv`, `setenv`, `putenv`, `unsetenv`, `clearenv`, and the musl-shaped one-object `__environ`/`environ`/`_environ`/`___environ` aliases. `environment_runtime.rs` follows musl's `oldenv` and `__env_rm_add` ownership rules: first-match lookup, copied tracked `setenv` storage, caller-owned `putenv` strings, in-place direct-vector replacement/removal, append-vector reuse or direct-vector copy with retirement of the prior owned vector, duplicate removal, and null-publishing `clearenv` with tracked-string reclamation. Real static `crt1`/`crti`/`crtn` startup publishes validated initial `envp` before ordinary `.init_array` constructors; the constructor mutation is visible in `main`. The candidate grows beyond the legacy 128-entry/16-KiB limits, while callers retain ordinary C synchronization for returned values, direct `environ` writes, and caller-owned `putenv` storage; it does not supply async-signal safety, fork recovery, or exec/spawn lifecycle. The feature composes the existing x86 C allocator wrapper and bundled backend, plus an exact eleven-member candidate-local pinned-musl backend-support tail that is checked to exclude musl environment and allocator entries. Fixture-only linker allocation wrappers prove three pre-publication ENOMEM rollbacks, but explicitly exclude post-publication ownership-registry allocation failure. It does not select `secure_getenv`, privileged/auxv secure-execution policy, a general thread-safe environment lifecycle, libc.so, CRT completion, dynamic TLS, loader, sysroot, `memory.allocator-basic`, family completion, promotion, or public x86 support."
+description = "Private selected `static-c-environment` slice for exactly `process.environment-mutation`: the frozen C capability is `clearenv`, `setenv`, and `unsetenv`, with pinned-musl behavior and native x86 evidence. The `environ` aliases, `getenv`, and `putenv` are supporting ABI and ownership machinery only; they do not select `process.globals`. The opt-in `x86-environment-runtime` feature switches only the environment owner in `static_c_abi.rs`; default selected-static builds retain the dependency-free bounded `environment.rs` leaf. Its mixed-runtime candidate resolves `getenv`, `setenv`, `putenv`, `unsetenv`, `clearenv`, and the musl-shaped one-object `__environ`/`environ`/`_environ`/`___environ` aliases. `environment_runtime.rs` follows musl's `oldenv` and `__env_rm_add` ownership rules: first-match lookup, copied tracked `setenv` storage, caller-owned `putenv` strings, in-place direct-vector replacement/removal, append-vector reuse or direct-vector copy with retirement of the prior owned vector, duplicate removal, and null-publishing `clearenv` with tracked-string reclamation. Real static `crt1`/`crti`/`crtn` startup publishes validated initial `envp` before ordinary `.init_array` constructors; the constructor mutation is visible in `main`. The candidate grows beyond the legacy 128-entry/16-KiB limits, while callers retain ordinary C synchronization for returned values, direct `environ` writes, and caller-owned `putenv` storage; it does not supply async-signal safety, fork recovery, or exec/spawn lifecycle. The feature composes the existing x86 C allocator wrapper and bundled backend, plus an exact eleven-member candidate-local pinned-musl backend-support tail that is checked to exclude musl environment and allocator entries. Fixture-only linker allocation wrappers prove three pre-publication ENOMEM rollbacks, but explicitly exclude post-publication ownership-registry allocation failure. It does not select `secure_getenv`, privileged/auxv secure-execution policy, a general thread-safe environment lifecycle, libc.so, CRT completion, dynamic TLS, loader, sysroot, `memory.allocator-basic`, family completion, promotion, or public x86 support. Installed products select `environment_runtime.rs`: `owned-environment-lifecycle` compares `setenv`, `unsetenv`, and `clearenv` with pinned musl in all six static and dynamic modes, including name validation and allocation-failure rollback."
 capabilities = ["process.environment-mutation"]
 source_owners = [
   "compat/upstreams.toml",
@@ -3585,6 +3591,8 @@ source_owners = [
   "plan.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
+  "compat/x86_64/owned_environment_lifecycle_probe.c",
+  "compat/x86_64/run_owned_environment_lifecycle.sh",
 ]
 x86_abi_prerequisites = [
   "The x86 LP64 environment vector is a null-terminated sequence of eight-byte char pointers; `__environ`, `environ`, `_environ`, and `___environ` are weak ELF aliases with one address and one pointer-sized object. Direct public assignment remains visible to selected lookup and mutation calls.",
@@ -3602,12 +3610,13 @@ native_evidence = [
   { state = "verified", command = "./scripts/dev-x86_64.sh stdlib-header-abi", scope = "Pinned-musl/project C11/C++17 `<stdlib.h>` profile compilation proves the frozen getenv/setenv/unsetenv/putenv/clearenv declaration visibility, exact function types, project-header provenance, and unmangled C++ linkage. It does not prove runtime ownership, archive linkage, `process.globals`, family completion, promotion, or public x86 support." },
   { state = "verified", command = "./scripts/dev-x86_64.sh unistd-header-abi", scope = "Pinned-musl/project GNU C/C++ `<unistd.h>` profile compilation proves the x86 LP64 `environ` object declaration, type, project-header provenance, and C++ linkage. It supports environment mutation but does not select `process.globals`, general headers, family completion, promotion, or public x86 support." },
   { state = "verified", command = "./scripts/dev-x86_64.sh libc-environment", scope = "Pinned-musl C reference plus a freestanding `--features x86-environment-runtime` x86 crabc-libc candidate. Under `env -i CRABC_X86_INITIAL=entry`, the real crabc crt1/crti/crtn candidate proves constructor-before-main initial-environment publication: the constructor sees entry-stack envp, same-address environment aliases, and lookup before its setenv mutation becomes visible in main. The shared route proves first-match lookup, copied setenv/no-overwrite behavior, caller-owned putenv mutation, putenv no-equals duplicate removal, validation EINVAL, clearenv, in-place direct-vector replacement/removal, direct reassignment after an owned oldenv vector, over-128-entry growth, and repeated unsetenv/clearenv string reclamation. Fixture-only malloc/realloc linker wrappers prove replacement copied-string malloc, direct-vector append allocation, and owned-vector append realloc ENOMEM failures leave the published environment unchanged; post-publication ownership-registry allocation failure is excluded. The gate closes the supporting environment object export surface, requires the allocator witness and bundled backend, requires an exact eleven-member candidate-local pinned-musl backend-support tail while rejecting musl environment or allocator implementations, and rejects an interpreter, DT_NEEDED, unresolved symbols, dynamic TLS, and glibc. It does not select secure_getenv, secure execution, exec/spawn, caller-uncoordinated environment concurrency, `process.globals`, a general process environment, an owned product link interface, CRT completion, loader, sysroot, `memory.allocator-basic`, family completion, promotion, or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-environment-lifecycle", scope = "One installed-driver C object compares pinned musl with owned static/static-PIE and dynamic PIE/non-PIE kernel/direct products, with sealed link receipts and retained raw status/stdout/stderr. It covers copied replacement, duplicate removal, clear, null/empty/'='-name EINVAL rejection with success-path errno preservation, direct environ and borrowed-value boundaries, fixture-seccomp ENOMEM rollback, fork snapshots, and exec/spawn child environments." },
 ]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping for src/env/__environ.c, getenv.c, setenv.c, putenv.c, unsetenv.c, and clearenv.c: aliases, first-match replacement/caller-owned storage, unsetenv duplicate removal, and clear behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Eight-byte LP64 pointer-vector, weak ELF alias, initial entry stack, initial-exec errno TLS, and Variant-II thread-pointer fixture contract." }]
 
 [[family.verified_slice]]
 id = "process.signal"
-description = "Private native x86 selected-private frozen `process.signal` capability inside still-planned `libc.posix-runtime`. Its exact 34-spelling C roster is `__libc_current_sigrtmax`, `__libc_current_sigrtmin`, `__sysv_signal`, `bsd_signal`, `kill`, `killpg`, `psiginfo`, `psignal`, `raise`, `sigaction`, `sigaddset`, `sigaltstack`, `sigandset`, `sigdelset`, `sigemptyset`, `sigfillset`, `sighold`, `sigignore`, `siginterrupt`, `sigisemptyset`, `sigismember`, `sigorset`, `sigpause`, `sigpending`, `sigprocmask`, `sigqueue`, `sigrelse`, `sigset`, `signal`, `signalfd`, `sigsuspend`, `sigtimedwait`, `sigwait`, and `sigwaitinfo`. The aggregate composes the existing independently bounded default leaves with the opt-in `x86-signal-legacy-aliases`, `x86-signal-sysv-helpers`, and `x86-signal-reporting` closures; the frozen default selected-static archive and `static_c_abi_exports.txt` remain unchanged, while the combined feature archive adds exactly `__sysv_signal`, `bsd_signal`, `psiginfo`, `psignal`, `sighold`, `sigignore`, `sigrelse`, and `sigset`. The reporting pair maps pinned-musl `psignal`/`psiginfo` over the selected fixed `strsignal`, permanent `stderr`, and initial-TLS errno substrate: normal/null-prefix bytes, `si_signo` forwarding, and success-only errno restoration are selected, but callers must externally serialize all selected stderr use, it is not async-signal-safe, and it does not claim musl's general FILE lock, locale/orientation state, or partial-short-write buffering behavior. `./scripts/dev-x86_64.sh libc-process-signal` reruns every component's direct header/ABI/static differential before ratcheting the combined feature closure. This selection is not a general signal-management framework, process lifecycle or pthread/cancellation policy, a default-archive widening, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
+description = "Private native x86 selected-private frozen `process.signal` capability inside still-planned `libc.posix-runtime`. Its exact 34-spelling C roster is `__libc_current_sigrtmax`, `__libc_current_sigrtmin`, `__sysv_signal`, `bsd_signal`, `kill`, `killpg`, `psiginfo`, `psignal`, `raise`, `sigaction`, `sigaddset`, `sigaltstack`, `sigandset`, `sigdelset`, `sigemptyset`, `sigfillset`, `sighold`, `sigignore`, `siginterrupt`, `sigisemptyset`, `sigismember`, `sigorset`, `sigpause`, `sigpending`, `sigprocmask`, `sigqueue`, `sigrelse`, `sigset`, `signal`, `signalfd`, `sigsuspend`, `sigtimedwait`, `sigwait`, and `sigwaitinfo`. The aggregate composes the existing independently bounded default leaves with the opt-in `x86-signal-legacy-aliases`, `x86-signal-sysv-helpers`, and `x86-signal-reporting` closures; the frozen default selected-static archive and `static_c_abi_exports.txt` remain unchanged, while the combined feature archive adds exactly `__sysv_signal`, `bsd_signal`, `psiginfo`, `psignal`, `sighold`, `sigignore`, `sigrelse`, and `sigset`. The reporting pair maps pinned-musl `psignal`/`psiginfo` over the selected fixed `strsignal`, permanent `stderr`, and initial-TLS errno substrate: normal/null-prefix bytes, `si_signo` forwarding, and success-only errno restoration are selected, but callers must externally serialize all selected stderr use, it is not async-signal-safe, and it does not claim musl's general FILE lock, locale/orientation state, or partial-short-write buffering behavior. `./scripts/dev-x86_64.sh libc-process-signal` reruns every component's direct header/ABI/static differential before ratcheting the combined feature closure. This selection is not a general signal-management framework, process lifecycle or pthread/cancellation policy, a default-archive widening, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support. Installed products compose the owned signal providers: `owned-posix-signals` and `owned-signal-helpers` together run all 34 spellings from installed-header objects against pinned musl in all six static and dynamic modes."
 source_owners = [
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
@@ -3669,6 +3678,17 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/tests/test_parity_ledger.py",
   "scripts/dev-x86_64.sh",
+  "libc/src/c_abi/x86_64/owned_siginterrupt.rs",
+  "libc/src/c_abi/x86_64/owned_signal_pause.rs",
+  "libc/src/c_abi/x86_64/owned_signal_helpers.rs",
+  "libc/src/c_abi/x86_64/owned_system_configuration.rs",
+  "compat/x86_64/owned-posix-signals.toml",
+  "compat/x86_64/owned_posix_signals.py",
+  "compat/x86_64/owned_posix_signals_probe.c",
+  "compat/x86_64/owned_cancellation_proc_witness.h",
+  "compat/x86_64/run_owned_posix_signals.sh",
+  "compat/x86_64/owned_signal_helpers_probe.c",
+  "compat/x86_64/run_owned_signal_helpers.sh",
 ]
 x86_abi_prerequisites = [
   "The aggregate preserves each component's existing System V AMD64 LP64 boundary: scalar signal/pid/int arguments and results use the normal integer registers, pointer and public sigset_t/sigaction/stack_t/siginfo_t records remain caller-owned, and the focused component gates retain their individual Linux syscall, restorer, errno, and initial-TLS contracts. It deliberately does not invent a monolithic signal-state ABI.",
@@ -3679,7 +3699,11 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = [
   "The aggregate reuses the component-local pinned-musl/project C/C++ signal, signalfd, and unistd declaration/layout matrices. The dedicated psignal matrix proves POSIX/X/Open/GNU/BSD visibility, strict C/C++ hiding, exact psignal/psiginfo pointer signatures, project-header provenance, and unmangled C++ linkage. These combined proofs retain each component's feature-profile boundary and do not claim installed-header closure or a general C signal ABI.",
 ]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-process-signal", scope = "The selected-private aggregate reruns the sixteen closed component gates for realtime min/max, legacy aliases, execution/control, set mutation/binary/predicate/pending, altstack, SysV helpers, siginterrupt, sigpause, signalfd, sigsuspend/readiness waits, and the psignal/psiginfo reporting differential. Each retains its own pinned-musl/project-header, static-closure, and nonselection proof. The final combined-feature archive check requires `x86-signal-legacy-aliases x86-signal-sysv-helpers x86-signal-reporting`, preserves every default selected-static export, and permits exactly the eight historical/reporting additions `__sysv_signal`, `bsd_signal`, `psiginfo`, `psignal`, `sighold`, `sigignore`, `sigrelse`, and `sigset`. The reporting gate proves normal/null-prefix output, si_signo forwarding, success-only errno restoration, and EBADF/EAGAIN failure behavior; it does not claim general diagnostics, async-signal safety, musl FILE lock/locale/orientation state, partial-short-write equivalence, default-archive widening, family completion, promotion, or public x86 support." }]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh libc-process-signal", scope = "The selected-private aggregate reruns the sixteen closed component gates for realtime min/max, legacy aliases, execution/control, set mutation/binary/predicate/pending, altstack, SysV helpers, siginterrupt, sigpause, signalfd, sigsuspend/readiness waits, and the psignal/psiginfo reporting differential. Each retains its own pinned-musl/project-header, static-closure, and nonselection proof. The final combined-feature archive check requires `x86-signal-legacy-aliases x86-signal-sysv-helpers x86-signal-reporting`, preserves every default selected-static export, and permits exactly the eight historical/reporting additions `__sysv_signal`, `bsd_signal`, `psiginfo`, `psignal`, `sighold`, `sigignore`, `sigrelse`, and `sigset`. The reporting gate proves normal/null-prefix output, si_signo forwarding, success-only errno restoration, and EBADF/EAGAIN failure behavior; it does not claim general diagnostics, async-signal safety, musl FILE lock/locale/orientation state, partial-short-write equivalence, default-archive widening, family completion, promotion, or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-posix-signals", scope = "One installed-driver object compares pinned musl with owned static/static-PIE and dynamic PIE/non-PIE kernel/direct entries across eleven scenarios: set operations and realtime limits, actions/masks/pending delivery, queued/process-group delivery, suspend and its cancellation, interrupt bookkeeping, alternate stacks, signalfd, and sigwait/sigwaitinfo/sigtimedwait pending, timeout, invalid-timeout, and EINTR-restart results. Raw status/stdout/stderr must be equal in every cell." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-signal-helpers", scope = "One installed-driver object compares pinned musl with the same six installed cells for __sysv_signal, bsd_signal, sighold, sigignore, sigrelse, sigset, psignal, and psiginfo: alias binding, action/mask transactions, EINTR and cancellation bookkeeping, and reporting bytes, FILE orientation/locale, and error state." },
+]
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for the component-local signal wrappers and the psignal/psiginfo reporting pair; each component retains its separately bounded semantic evidence." },
   { kind = "aarch64-contract", source = "compat/crabc-rs/coverage.toml", role = "Frozen exact 34-symbol process.signal ABI-only roster; the selected private x86 aggregate accounts for that complete capability without creating a Rust signal facade or public platform-support claim." },
@@ -3687,6 +3711,95 @@ oracle = [
 ]
 capabilities = ["process.signal"]
 
+
+[[family.verified_slice]]
+id = "installed-process-control"
+description = "Private native x86 installed `process.control` slice inside still-planned `libc.posix-runtime`. One installed-header C object exercises the complete frozen 44-name roster against pinned musl 1.2.6 through owned static, static-PIE, and dynamic PIE/non-PIE kernel/direct entry: `fork`, `clone`, `vfork`, `daemon`; `posix_spawn`/`posix_spawnp` through all seven file actions; the eight exec entries; `nice`; `setpgid`/`setpgrp`/`setsid`; `wait`/`waitpid`/`waitid`/`wait3`/`wait4`; and all fourteen `posix_spawnattr_*` entries. Every process-state change runs in a disposable child. The one stated difference is `fexecve`: Linux 5.10 always has `execveat`, so a seccomp-forced ENOSYS is returned directly instead of taking musl's pre-5.10 procfs fallback. It does not select a process supervisor, family completion, promotion, or public x86 support."
+source_owners = [
+  "libc/src/c_abi/x86_64/owned_process_trio.rs",
+  "libc/src/c_abi/x86_64/pthread_atfork.rs",
+  "libc/src/c_abi/x86_64/owned_spawn.rs",
+  "libc/src/c_abi/x86_64/posix_spawn_file_actions.rs",
+  "libc/src/c_abi/x86_64/posix_spawn_file_actions_init.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_init.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_destroy.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_getflags.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_getschedparam.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_signal_fields.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_setpgroup.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_setschedparam.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_setschedpolicy.rs",
+  "libc/src/c_abi/x86_64/process_exec.rs",
+  "libc/src/c_abi/x86_64/process_exec_env.rs",
+  "libc/src/c_abi/x86_64/process_exec_path.rs",
+  "libc/src/c_abi/x86_64/process_exec_execl.rs",
+  "libc/src/c_abi/x86_64/process_exec_execle.rs",
+  "libc/src/c_abi/x86_64/process_exec_execlp.rs",
+  "libc/src/c_abi/x86_64/process_resources.rs",
+  "libc/src/c_abi/x86_64/process_context.rs",
+  "libc/src/c_abi/x86_64/child_reaping.rs",
+  "libc/src/c_abi/x86_64/wait_extensions.rs",
+  "compat/x86_64/owned_process_control_probe.c",
+  "compat/x86_64/run_owned_process_control.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 LP64 C linkage: pid_t, id_t, and int are 32-bit, posix_spawnattr_t is 336 bytes with 8-byte alignment, and clone's variadic tail follows the x86 va_list convention.",
+  "Linux 5.10 x86-64 syscalls fork=57, vfork=58, clone=56, execve=59, execveat=322, wait4=61, waitid=247, setpgid=109, setsid=112, and getpriority/setpriority for nice, with raw -4095..-1 results translated to -1 plus errno or returned as spawn error codes.",
+]
+x86_header_prerequisites = ["The workload compiles once against installed `<unistd.h>`, `<sched.h>`, `<spawn.h>`, `<sys/wait.h>`, `<sys/resource.h>`, `<fcntl.h>`, and `<signal.h>` and asserts every roster declaration's exact type."]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-process-control", scope = "Builds the owned static and dynamic products, compiles one object with the installed dynamic driver, links it to pinned musl and every owned mode with sealed receipts and provider-symbol checks, and requires equal status and empty stderr, with musl's fexecve-seccomp=9 against the stated direct ENOSYS=38. It proves fork identity, clone argument rejection and callback status, vfork exec, daemon(1, 1) under a subreaper, both spawn entries through every file action plus missing-image ENOENT and EBADF constructor errors, exec aliases, nice, group/session transitions, deterministic waits, and spawn-attribute roundtrips." },
+]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Source mapping and behavior oracle for src/process, src/linux/clone.c, wait3.c, wait4.c, src/legacy/daemon.c, and src/unistd process-group entries." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Process creation, image replacement, wait, and process-group syscall contracts." }]
+capabilities = ["process.control"]
+
+[[family.verified_slice]]
+id = "installed-kernel-admin"
+description = "Private native x86 installed `system.kernel-admin` slice inside still-planned `libc.posix-runtime`. Four installed-header workloads together run all 42 frozen names against pinned musl 1.2.6 through owned static, static-PIE, and dynamic PIE/non-PIE kernel/direct entry: `owned-linux-control` (acct, capget, capset, delete_module, init_module, fanotify_init, fanotify_mark, klogctl, pivot_root, quotactl, reboot, setns, swapon, swapoff, unshare, process_vm_readv, process_vm_writev, ptrace), `owned-kernel-residual` (__sched_cpucount, confstr, fpathconf, getdtablesize, gethostid, membarrier, pathconf, personality, prctl, sched_getparam, sched_getscheduler, sched_setparam, sched_setscheduler, setdomainname, sethostname, syscall, sysconf, ulimit), `owned-syslog` (closelog, openlog, setlogmask, syslog, vsyslog), and `owned-system-cancellation` (system). Privileged operations are proven only through invalid or nonexistent targets and exact raw errno routing. It does not select a kernel-administration policy layer, family completion, promotion, or public x86 support."
+source_owners = [
+  "libc/src/c_abi/x86_64/owned_linux_control.rs",
+  "libc/src/c_abi/x86_64/owned_syslog.rs",
+  "libc/src/c_abi/x86_64/owned_stdio_process.rs",
+  "libc/src/c_abi/x86_64/sched_cpucount.rs",
+  "libc/src/c_abi/x86_64/owned_system_configuration.rs",
+  "libc/src/c_abi/x86_64/gethostid.rs",
+  "libc/src/c_abi/x86_64/membarrier.rs",
+  "libc/src/c_abi/x86_64/personality.rs",
+  "libc/src/c_abi/x86_64/owned_static_prctl.rs",
+  "libc/src/c_abi/x86_64/sched_getparam.rs",
+  "libc/src/c_abi/x86_64/sched_getscheduler.rs",
+  "libc/src/c_abi/x86_64/sched_setparam.rs",
+  "libc/src/c_abi/x86_64/sched_setscheduler.rs",
+  "libc/src/c_abi/x86_64/uts_identity.rs",
+  "libc/src/c_abi/x86_64/owned_static_syscall.rs",
+  "libc/src/c_abi/x86_64/ulimit.rs",
+  "compat/x86_64/owned_linux_control_probe.c",
+  "compat/x86_64/run_owned_linux_control.sh",
+  "compat/x86_64/owned_kernel_residual_probe.c",
+  "compat/x86_64/owned_kernel_residual_link_probe.c",
+  "compat/x86_64/run_owned_kernel_residual.sh",
+  "compat/x86_64/owned_syslog_probe.c",
+  "compat/x86_64/owned_syslog_evidence.py",
+  "compat/x86_64/run_owned_syslog.sh",
+  "compat/x86_64/owned_system_cancellation_probe.c",
+  "compat/x86_64/owned_system_cancellation_child.c",
+  "compat/x86_64/run_owned_system_cancellation.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 LP64 C linkage, including the variadic prctl, syscall, and ulimit entries whose integer arguments are read as long words from the x86 va_list.",
+  "Linux 5.10 x86-64 syscall numbers and raw -4095..-1 error results for the administrative, scheduler, UTS, process-memory, ptrace, and syslog(2) entries; ptrace PEEK results return data words with errno untouched as musl does.",
+]
+x86_header_prerequisites = ["Each workload compiles once against the installed product headers, including `<sys/klog.h>`, `<sys/module.h>`, `<sys/fanotify.h>`, `<sys/quota.h>`, `<sys/reboot.h>`, `<sys/swap.h>`, `<sys/ptrace.h>`, `<sys/uio.h>`, `<sched.h>`, `<syslog.h>`, `<ulimit.h>`, `<sys/prctl.h>`, `<unistd.h>`, and `<stdlib.h>`; `pivot_root` uses musl's unprototyped extern spelling."]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-linux-control", scope = "One installed-driver object against pinned musl and the six owned cells: raw-errno equality for every administrative entry on invalid targets, capget version negotiation, process_vm_readv/writev round trips, and ptrace TRACEME/PEEK/POKE/CONT word semantics." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-kernel-residual", scope = "One project-header object against pinned musl and the six owned cells: __sched_cpucount, configuration queries including signal-stack sysconf, fixed-zero gethostid, membarrier, personality, variadic prctl/syscall/ulimit, scheduler ENOSYS with output preservation, and contained UTS and seccomp negatives." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-syslog", scope = "One installed-header object against pinned musl and the six owned cells through a private AF_UNIX /dev/log and console: openlog/closelog state, setlogmask, syslog and vsyslog formatting, and main, worker, fork, and deferred-cancellation cases." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-system-cancellation", scope = "Two installed-header objects against pinned musl and the owned static/static-PIE and dynamic kernel/direct cells: system and pclose waits, the null-command branch, pending and disabled cancellation, signal disposition during the wait, and child ownership." },
+]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Source mapping and behavior oracle for src/linux, src/conf, src/misc/syslog.c, src/process/system.c, and the scheduler and UTS entries." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Administrative, scheduler, process-memory, ptrace, and syslog(2) syscall contracts." }]
+capabilities = ["system.kernel-admin"]
 [[family.verified_slice]]
 id = "static-c-filesystem-extensions-selection"
 description = "Private native x86 selected-private frozen `filesystem.extensions` capability inside still-planned `libc.posix-runtime`. Its exact five-spelling AArch64 ABI-only roster is `mktemp`, `name_to_handle_at`, `open_by_handle_at`, `tempnam`, and `tmpnam`. The aggregate composes default `static-c-mktemp`, opt-in `x86-file-handles`, and opt-in `x86-temporary-names` over its allocator/string-duplication closure. The frozen default selected-static archive and `static_c_abi_exports.txt` remain unchanged: only the combined x86-temporary-names,x86-file-handles profile owns all five. `./scripts/dev-x86_64.sh libc-filesystem-extensions` reruns every component gate before proving that exact roster. This selects no safe Rust temporary-name or file-handle API, general temporary-file/filesystem/allocator policy, family completion, promotion, or public x86 support."

@@ -3622,9 +3622,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         credential_commands = {
             evidence["command"] for evidence in credentials["native_evidence"]
         }
-        self.assertEqual(
-            credential_commands, {"./scripts/dev-x86_64.sh libc-credentials"}
-        )
+        self.assertIn("./scripts/dev-x86_64.sh libc-credentials", credential_commands)
         self.assertIn("EOPNOTSUPP", credentials["description"])
         self.assertIn(
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
@@ -4176,13 +4174,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn(
             "compat/x86_64/libc_environment_start.S", environment["source_owners"]
         )
-        self.assertEqual(
-            {evidence["command"] for evidence in environment["native_evidence"]},
+        self.assertLessEqual(
             {
                 "./scripts/dev-x86_64.sh stdlib-header-abi",
                 "./scripts/dev-x86_64.sh unistd-header-abi",
                 "./scripts/dev-x86_64.sh libc-environment",
             },
+            {evidence["command"] for evidence in environment["native_evidence"]},
         )
         for phrase in (
             "Private selected `static-c-environment` slice",
