@@ -19308,12 +19308,12 @@ source_owners = [
   "libc/src/c_abi/x86_64/owned_dynamic.list",
   "scripts/build_x86_64_owned_sysroot.py",
   "scripts/build_x86_64_owned_dynamic_sysroot.py",
-  "compat/x86_64/owned_process_globals.py",
+  "compat/x86_64/owned_c_abi_provider_closure.py",
   "compat/x86_64/owned_process_globals_probe.c",
   "compat/x86_64/run_owned_process_globals.sh",
   "compat/x86_64/libc_process_globals_empty_argv_launcher.c",
   "compat/x86_64/run_libc_process_globals_getopt.sh",
-  "compat/x86_64/tests/test_owned_process_globals.py",
+  "compat/x86_64/tests/test_owned_c_abi_provider_closure.py",
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/tests/test_aarch64_parity_inventory.py",
   "compat/x86_64/tests/test_parity_ledger.py",
@@ -19331,7 +19331,7 @@ x86_header_prerequisites = [
 ]
 native_evidence = [
   { state = "verified", command = "./scripts/dev-x86_64.sh libc-process-globals-getopt", scope = "Pinned-musl static reference plus a true freestanding x86 `-nostdlib -static` candidate linked through the selected default archive. It proves constructor-before-main program-name publication, an empty-argv launch (Linux 5.18 and newer substitute one empty argv[0]; older supported kernels reach the validated AT_EXECFN fallback), weak same-address `optreset`/`program_invocation_name`/`program_invocation_short_name`/`__posix_getopt` aliases, the `__optpos` parser cursor, short/GNU-long/long-only parsing, and initial-TLS errno without dynamic TLS. It does not own environment, timezone, signgam, or h_errno storage." },
-  { state = "verified", command = "./scripts/dev-x86_64.sh owned-process-globals", scope = "Builds or accepts one owned static and dynamic product pair and compares the 31-name roster's owned libc.a/libc.so type, binding, visibility, object size, version, alias partition, and archive-index extraction with pinned musl libc.a/libc.so. One installed-driver PIE object and one non-PIE object run through pinned musl and sealed owned static, static PIE, dynamic PIE, and dynamic non-PIE links with kernel, direct-interpreter, and empty-argv launcher entry; stdout, stderr, and status must equal musl for the same object and link class. Both non-PIE dynamic consumers must own R_X86_64_COPY storage for every data group. It does not claim strong application overrides, DSO interposition beyond COPY storage, secure execution, resolver/netdb, math/timezone family completion, promotion, or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-process-globals", scope = "Builds or accepts one owned static and dynamic product pair and compares the 31-name roster's owned libc.a/libc.so type, binding, visibility, object size, version, whole-library storage identity (each spelling shares its address with exactly the spellings musl shares it with), and archive-index extraction with pinned musl libc.a/libc.so. One installed-driver PIE object and one non-PIE object run through pinned musl and sealed owned static, static PIE, dynamic PIE, and dynamic non-PIE links with kernel, direct-interpreter, and empty-argv launcher entry; stdout, stderr, and status must equal musl for the same object and link class. Both non-PIE dynamic consumers must own R_X86_64_COPY storage for every data group. It does not claim strong application overrides, DSO interposition beyond COPY storage, secure execution, resolver/netdb, math/timezone family completion, promotion, or public x86 support." },
 ]
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, x86 libc.a/libc.so provider metadata, and same-object static/dynamic execution oracle for environment, program-name, getopt, h_errno, signgam, and timezone globals, including COPY-relocated executable storage and ABI-only `__optpos` binding." },
