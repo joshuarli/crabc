@@ -22,7 +22,7 @@ Update this section in place when the frontier changes. Recorded checkpoints
 are not transferable passes for a different revision.
 
 - **State:** `campaign-status` reports 9/26 families `foundation-verified` and
-  180 implemented, 35 selected-private, and 8 missing capabilities; all eight
+  180 implemented, 43 selected-private, and 0 missing capabilities; all eight
   ordered qualification gates are executable and fail closed on named unmet
   conditions. C mimalloc remains the selected backend; allocator M2–M11 remain
   open. Every freestanding-C runner builds `libc.a` through
@@ -31,32 +31,18 @@ are not transferable passes for a different revision.
   local path at roughly 0.04× pinned C single-thread (contended host; the
   0.25× sanity gate is not met).
 - **Resume here, in order:**
-  1. Run the `libc.posix-runtime` admission sequence
-     (`compat/x86_64/owned-posix-native-execution.md`) in a frozen checkout of
-     merged `main`; `.work/worktrees/main-verify` is prepared for this. Lane
-     `posix` stopped mid dry-run after the static step passed; its branch
-     holds one unverified fork/`pthread_kill` fix. Then run
-     `owned-pthread-family` on the same matrix for `libc.pthread-tls`.
-  2. Every lane agent stopped at the account session limit on 2026-09-24.
-     Each `lane/*` branch ends in any finished-but-unreported commits plus a
-     `WIP(lane <id>)` commit, rebased near `main`. Resume them with fresh
-     agents at the defined efforts (`crabc-lane` medium, `crabc-routine` low
-     for mechanical work), one brief per lane naming its branch head:
-     `pattern` (behavior-level rewrite of the fourteen codegen-shape
-     runners), `posix`, `crt-dynamic` (pthread-tls capability slices),
-     `math-time` (stdio engine capability slices), `loader`
-     (`loader.dlfcn-*` slices), `dynamic-product` (combined-gate leaf
-     readers), `std-lto` (std/LTO development lanes with eh-frame-hdr),
-     `alloc-fork` (allocator interposition and DSO composition), `alloc-perf`
-     (local-path structural costs; ~0.04× C, gate 0.25×), `m2-vm-arenas`
-     (reservation flake, theap arm, vm-primitives, metadata),
-     `m2-init-fault` (metadata-publication fault receiver), `m3`,
-     `m5-remote` (reclaim-on-free; x86 integration tests attaching), `m5-exit`
-     (upstream stress and soak; destroy order once m6 exposes child
-     destroy), `m6` (child entry-point branch; child destroy API;
-     `mi_heap_new`), `m7` (process-done split, VmPolicy options, error
-     call sites). Rerun a lane's cited command on merged `main` before
-     merging a `[[family.verified_slice]]` change.
+  1. Family admissions are the critical path: every selected-private
+     capability completes when its family is admitted. Get one passing
+     `materialized-dynamic-sysroot` qualification on a clean checkout (lane
+     `dynamic-product`), then run the `libc.posix-runtime` admission
+     sequence (`owned-posix-native-execution.md`) in a frozen checkout of
+     merged `main` (`.work/worktrees/main-verify`), then `libc.pthread-tls`,
+     `libc.text-math-locale-stdio` (lane `pattern` builds its aggregate),
+     `libc.resolver`, `libc.c-abi-compat`, `ldso.dynamic-runtime`, and the
+     sysroot families in dependency order.
+  2. Keep 16 lanes running (`.work/tmp/lane-agents.txt` holds the map and
+     backlog). Merge a lane's `[[family.verified_slice]]` change only after
+     rerunning its cited commands in the frozen checkout.
   3. Remaining low-churn repository-file pins (`compat/x86_64/core_image.py`
      now names the core image once): owned `.list` digests in the
      dynamic sysroot builder and the mimalloc visibility, errno-alias and
