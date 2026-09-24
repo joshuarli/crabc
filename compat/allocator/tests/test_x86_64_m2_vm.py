@@ -836,6 +836,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 _m2_x86_64_metadata_check_records=metadata_records_producer,
                 run_m2_x86_64_metadata_lifecycle_differential=metadata_lifecycle_producer,
                 _run_m2_x86_64_metadata_ownership_evidence=mock.Mock(return_value={}),
+                _run_m2_x86_64_initialization_teardown_evidence=mock.Mock(return_value={}),
             ),
             mock.patch.object(RUNNER, "_run_m2_x86_64_initialization_evidence", return_value={}) as initialization_producer,
             mock.patch.object(RUNNER, "_m2_x86_64_initialization_check_records", return_value=initialization_records),

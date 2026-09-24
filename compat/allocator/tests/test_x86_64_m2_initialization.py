@@ -14,7 +14,7 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
             RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin()
         )
 
-    def test_initialization_component_has_only_the_named_fragment_and_two_receipts(self) -> None:
+    def test_initialization_component_has_only_the_named_fragment_and_its_receipts(self) -> None:
         pin = RUNNER.load_pin()
         contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
         summary = RUNNER.validate_x86_64_m2_memory_substrate_contract(contract, pin)
@@ -41,6 +41,10 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
                     "c-rust-init-recursion-lifecycle",
                     "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace",
                     1,
+                ),
+                *(
+                    (check_id, kind, target, 1)
+                    for check_id, kind, target in RUNNER._m2_x86_64_initialization_producer().AUTOMATIC_TEARDOWN_CHECKS
                 ),
             ],
         )

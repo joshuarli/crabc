@@ -300,11 +300,6 @@
         "id": "non-main-heap-later-attachment-and-dynamic-cache-publication",
         "source_scope": "src/heap.c `_mi_heap_theap_get_or_init` and the remaining generic/later Heap keys, exclusive-arena allocation, regular TLS, cached Theap, and DynamicTheapAttachment routes beyond the selected ordinary main Heap fixed-root caller.",
         "required_evidence": ["typed non-main Heap/DynamicTheap storage owner", "native generic later-Heap publication matrix"]
-      },
-      {
-        "id": "automatic-thread-and-process-teardown",
-        "source_scope": "src/init.c automatic thread setup/destructor and process shutdown routes.",
-        "required_evidence": ["runtime callback/destructor ownership", "native automatic teardown and shutdown lifecycle evidence"]
       }
     ],
     "checks": [
@@ -319,11 +314,59 @@
         "kind": "c-rust-init-recursion-lifecycle",
         "target": "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace",
         "expected_passed_test_count": 1
+      },
+      {
+        "id": "initialization-automatic-pthread-destructor-c-oracle",
+        "kind": "c-oracle-teardown-receipt",
+        "target": "x86_64_automatic_pthread_destructor_evidence",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "initialization-cancellation-pthread-destructor-c-oracle",
+        "kind": "c-oracle-teardown-receipt",
+        "target": "x86_64_cancellation_pthread_destructor_evidence",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "initialization-process-done-pthread-key-c-oracle",
+        "kind": "c-oracle-teardown-receipt",
+        "target": "x86_64_process_done_pthread_key_evidence",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "initialization-owner-exit-phases-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::tests::native_later_thread_statistics_follow_source_attach_and_normal_a_b_c_exit",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "initialization-process-destroy-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::destroy::tests::physical_destroy_transfers_live_worker_before_arena_and_page_map_release",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "initialization-fork-repair-worker-origin-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::fork_repair_tests::worker_origin_child_repairs_initial_owner_and_preserves_live_clients",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "initialization-fork-repair-initial-origin-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::fork_repair_tests::initial_origin_child_repairs_worker_owner_and_preserves_live_clients",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "initialization-fork-repair-joined-worker-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::fork_repair_tests::joined_worker_clients_survive_prepared_fork_in_parent_and_child",
+        "expected_passed_test_count": 1
       }
     ],
     "remaining_conditions": [
       "The selected ordinary later-main rows compare the direct pinned-C `_mi_thread_init_with_heap(mi_heap_main())` caller's Malloc TLD/Theap, dual list, default/fixed-TLS root, counter, and explicit-finish post-state with Rust's `MainHeapThreadAttachment`. The C fixtures separately verify source order. Rust does not alias that order or infer allocation attempts from tickets. The paired Theap-failure row compares only retained failure post-state under source-specific C and typed Rust faults.",
-      "Automatic pthread-destructor, process-shutdown, and fork routes remain unqualified.",
+      "Automatic teardown is qualified by the pinned-C automatic, cancellation, and process-done pthread-key receipts and by the Rust owner-exit phase, physical process-destroy, and fork-repair owners. Their installed-product composition (natural return, pthread_exit, cancellation, and fork through libc) is proven by the runtime lane's `owned-native-allocator-stress` and `owned-native-allocator-fork`, not by this allocator gate.",
       "The embedded receipt's Rust-only startup rows (missing facts, concurrent entry, PageMap-failure retention, startup-output recursion) are ownership evidence; only the first-allocation entropy fault and loader tail are compared with pinned C."
     ]
   }

@@ -698,6 +698,24 @@ def validate_source_state(state: object) -> None:
         raise EvidenceError("initialization evidence was not collected from a clean source revision")
 
 
+# Automatic thread/process teardown and fork repair: pinned-C source routes
+# run by their own C-oracle producers, then the Rust owners that the libc
+# thread-exit, process-destroy, and fork hooks drive. `run.py` executes both
+# halves in the M2 gate; installed-product composition stays a runtime gate.
+AUTOMATIC_TEARDOWN_C_ORACLE_KIND = "c-oracle-teardown-receipt"
+AUTOMATIC_TEARDOWN_RUST_KIND = "rust-teardown-owner"
+AUTOMATIC_TEARDOWN_CHECKS = (
+    ("initialization-automatic-pthread-destructor-c-oracle", AUTOMATIC_TEARDOWN_C_ORACLE_KIND, "x86_64_automatic_pthread_destructor_evidence"),
+    ("initialization-cancellation-pthread-destructor-c-oracle", AUTOMATIC_TEARDOWN_C_ORACLE_KIND, "x86_64_cancellation_pthread_destructor_evidence"),
+    ("initialization-process-done-pthread-key-c-oracle", AUTOMATIC_TEARDOWN_C_ORACLE_KIND, "x86_64_process_done_pthread_key_evidence"),
+    ("initialization-owner-exit-phases-rust", AUTOMATIC_TEARDOWN_RUST_KIND, "runtime_lifecycle::tests::native_later_thread_statistics_follow_source_attach_and_normal_a_b_c_exit"),
+    ("initialization-process-destroy-rust", AUTOMATIC_TEARDOWN_RUST_KIND, "runtime_lifecycle::destroy::tests::physical_destroy_transfers_live_worker_before_arena_and_page_map_release"),
+    ("initialization-fork-repair-worker-origin-rust", AUTOMATIC_TEARDOWN_RUST_KIND, "runtime_lifecycle::fork_repair_tests::worker_origin_child_repairs_initial_owner_and_preserves_live_clients"),
+    ("initialization-fork-repair-initial-origin-rust", AUTOMATIC_TEARDOWN_RUST_KIND, "runtime_lifecycle::fork_repair_tests::initial_origin_child_repairs_worker_owner_and_preserves_live_clients"),
+    ("initialization-fork-repair-joined-worker-rust", AUTOMATIC_TEARDOWN_RUST_KIND, "runtime_lifecycle::fork_repair_tests::joined_worker_clients_survive_prepared_fork_in_parent_and_child"),
+)
+
+
 def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
     try:
         fragment = json.loads(path.read_text(encoding="utf-8"))
@@ -744,6 +762,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
     expected_checks = (
         ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches", 7),
         ("initialization-explicit-worker-recovery-lifecycle", "c-rust-init-recursion-lifecycle", "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace", 1),
+        *((check_id, kind, target, 1) for check_id, kind, target in AUTOMATIC_TEARDOWN_CHECKS),
     )
     checks = component.get("checks")
     if not isinstance(checks, list) or [

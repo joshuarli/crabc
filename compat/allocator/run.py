@@ -13006,6 +13006,8 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-initialization-tld-source-matrix",
                     "c-rust-init-recursion-lifecycle",
                     "c-rust-fault-seam-inventory",
+                    "c-oracle-teardown-receipt",
+                    "rust-teardown-owner",
                 }
                 or not isinstance(raw_check.get("target"), str)
                 or type(raw_check.get("expected_passed_test_count")) is not int
@@ -13049,6 +13051,20 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or not (ALLOCATOR_ROOT / "x86_64_initialization_tld_evidence.py").is_file()
                 ):
                     raise HarnessError("native x86 M2 initialization evidence target is absent")
+            elif raw_check.get("kind") in {"c-oracle-teardown-receipt", "rust-teardown-owner"}:
+                teardown = {
+                    check_id: (kind, target)
+                    for check_id, kind, target in _m2_x86_64_initialization_producer().AUTOMATIC_TEARDOWN_CHECKS
+                }
+                if (
+                    component_id != "initialization"
+                    or teardown.get(raw_check.get("id")) != (raw_check.get("kind"), raw_check.get("target"))
+                    or (
+                        raw_check.get("kind") == "c-oracle-teardown-receipt"
+                        and not (ALLOCATOR_ROOT / f"{raw_check['target']}.py").is_file()
+                    )
+                ):
+                    raise HarnessError("native x86 M2 automatic-teardown evidence target is absent")
             elif raw_check.get("kind") == "c-rust-fault-seam-inventory":
                 if (
                     component_id != "fault-injection"
@@ -13386,6 +13402,55 @@ def _run_m2_x86_64_initialization_evidence(*, offline: bool) -> dict[str, Any]:
         offline=offline,
         report_path=ARTIFACT_ROOT / "x86_64/initialization-tld-matrix.json",
     )
+
+
+def _m2_x86_64_teardown_oracle(module_name: str) -> Any:
+    """Load one fixed pinned-C automatic-teardown producer by its check target."""
+
+    path = ALLOCATOR_ROOT / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(f"crabc_m2_{module_name}", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError(f"native x86 M2 teardown producer {module_name} is absent")
+    producer = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = producer
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _run_m2_x86_64_initialization_teardown_evidence(
+    *, offline: bool, test_program: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run the pinned-C teardown receipts and the Rust teardown owners once."""
+
+    checks = _m2_x86_64_initialization_producer().AUTOMATIC_TEARDOWN_CHECKS
+    c_oracles: dict[str, Any] = {}
+    rust_runs: dict[str, Any] = {}
+    for check_id, kind, target in checks:
+        if kind == "c-oracle-teardown-receipt":
+            producer = _m2_x86_64_teardown_oracle(target)
+            try:
+                c_oracles[check_id] = producer.run_evidence(
+                    offline=offline,
+                    report_path=ARTIFACT_ROOT / f"x86_64/m2-memory-substrate/{check_id}.json",
+                )
+            except producer.EvidenceError as error:
+                raise HarnessError(f"native x86 M2 {check_id} failed: {error}") from error
+        else:
+            result = command_record(
+                _x86_64_program_check_command(
+                    test_program, target, nocapture=False, gate_name="native x86 M2 teardown owner"
+                ),
+                cwd=ROOT,
+                timeout_seconds=int(test_program["execution"]["timeout_seconds"]),
+            )
+            require_success(result, f"native x86 M2 {check_id}")
+            rust_runs[check_id] = {
+                "command": list(result["command"]),
+                "passed_test_count": parse_rust_test_count(
+                    str(result["stdout"]) + "\n" + str(result["stderr"])
+                ),
+            }
+    return {"c_oracles": c_oracles, "rust_owners": rust_runs}
 
 
 def _run_m2_x86_64_fault_evidence(
@@ -14058,9 +14123,9 @@ def _m2_x86_64_metadata_check_records(
 
 
 def _m2_x86_64_initialization_check_records(
-    summary: Mapping[str, Any], evidence: object
+    summary: Mapping[str, Any], evidence: object, teardown_evidence: object = None
 ) -> list[dict[str, Any]]:
-    """Bind the two initialization M2 checks to one closed native receipt."""
+    """Bind the initialization M2 checks to their closed native receipts."""
 
     component = next(item for item in summary["components"] if item["id"] == "initialization")
     checks = {check["id"]: check for check in component["checks"]}
@@ -14114,7 +14179,62 @@ def _m2_x86_64_initialization_check_records(
             "passed_test_count": worker["expected_passed_test_count"],
             "target": worker["target"],
         },
+        *_m2_x86_64_initialization_teardown_check_records(checks, teardown_evidence),
     ]
+
+
+def _m2_x86_64_initialization_teardown_check_records(
+    checks: Mapping[str, Mapping[str, Any]], evidence: object
+) -> list[dict[str, Any]]:
+    """Validate each executed pinned-C teardown receipt and Rust owner run."""
+
+    teardown = _m2_x86_64_initialization_producer().AUTOMATIC_TEARDOWN_CHECKS
+    if any(check_id not in checks for check_id, _, _ in teardown):
+        raise HarnessError("native x86 M2 automatic-teardown check roster is absent")
+    if (
+        not isinstance(evidence, Mapping)
+        or set(evidence) != {"c_oracles", "rust_owners"}
+        or not isinstance(evidence["c_oracles"], Mapping)
+        or not isinstance(evidence["rust_owners"], Mapping)
+    ):
+        raise HarnessError("native x86 M2 automatic-teardown evidence is absent")
+    records = []
+    for check_id, kind, target in teardown:
+        check = checks[check_id]
+        if kind == "c-oracle-teardown-receipt":
+            producer = _m2_x86_64_teardown_oracle(target)
+            try:
+                producer.validate_report(evidence["c_oracles"].get(check_id))
+            except producer.EvidenceError as error:
+                raise HarnessError(f"native x86 M2 {check_id} receipt is invalid") from error
+            records.append({
+                "comparison_status": "pinned-c-source-receipt",
+                "component": "initialization",
+                "command": ["python3", f"compat/allocator/{target}.py", "--offline"],
+                "evidence_scope": "pinned-c-automatic-teardown-source-route",
+                "id": check_id,
+                "passed_test_count": check["expected_passed_test_count"],
+                "target": target,
+            })
+        else:
+            run = evidence["rust_owners"].get(check_id)
+            if (
+                not isinstance(run, Mapping)
+                or run.get("passed_test_count") != check["expected_passed_test_count"]
+                or not isinstance(run.get("command"), list)
+                or target not in run["command"]
+            ):
+                raise HarnessError(f"native x86 M2 {check_id} Rust owner run is invalid")
+            records.append({
+                "comparison_status": "rust-owner-verified",
+                "component": "initialization",
+                "command": list(run["command"]),
+                "evidence_scope": "rust-teardown-and-fork-repair-owner",
+                "id": check_id,
+                "passed_test_count": check["expected_passed_test_count"],
+                "target": target,
+            })
+    return records
 
 
 def _m2_x86_64_fault_check_records(
@@ -14220,6 +14340,7 @@ def m2_x86_64_memory_substrate_report(
     runtime_thp_evidence: Mapping[str, Any] | None = None,
     initialization_evidence: Mapping[str, Any] | None = None,
     fault_evidence: Mapping[str, Any] | None = None,
+    initialization_teardown_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render native M2 receipts while keeping every open component partial."""
 
@@ -14236,7 +14357,7 @@ def m2_x86_64_memory_substrate_report(
         summary, vm_evidence, runtime_thp_evidence
     )
     expected_initialization_records = _m2_x86_64_initialization_check_records(
-        summary, initialization_evidence
+        summary, initialization_evidence, initialization_teardown_evidence
     )
     expected_fault_records = _m2_x86_64_fault_check_records(summary, fault_evidence)
     expected_anchors = {
@@ -14410,6 +14531,9 @@ def m2_x86_64_memory_substrate_report(
             "x86-64-source-indexed-fault-seam-inventory-admission": dict(
                 fault_evidence
             ) if fault_evidence is not None else {},
+            "x86-64-initialization-automatic-teardown-and-fork-repair": dict(
+                initialization_teardown_evidence
+            ) if initialization_teardown_evidence is not None else {},
         },
         "source": dict(source_attestation),
         "target": dict(summary["target"]),
@@ -14506,6 +14630,9 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     )
     runtime_thp_evidence = _run_m2_x86_64_runtime_thp_configuration_evidence()
     initialization_evidence = _run_m2_x86_64_initialization_evidence(offline=offline)
+    initialization_teardown_evidence = _run_m2_x86_64_initialization_teardown_evidence(
+        offline=offline, test_program=test_program
+    )
     fault_evidence = _run_m2_x86_64_fault_evidence(
         offline=offline, test_program=test_program, vm_evidence=vm_evidence
     )
@@ -14526,7 +14653,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         ),
     ]
     initialization_checks = _m2_x86_64_initialization_check_records(
-        summary, initialization_evidence
+        summary, initialization_evidence, initialization_teardown_evidence
     )
     fault_checks = _m2_x86_64_fault_check_records(summary, fault_evidence)
     focused_checks = [
@@ -14574,6 +14701,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         runtime_thp_evidence=runtime_thp_evidence,
         initialization_evidence=initialization_evidence,
         fault_evidence=fault_evidence,
+        initialization_teardown_evidence=initialization_teardown_evidence,
     )
     write_json(M2_X86_64_MEMORY_SUBSTRATE_REPORT, report)
     return report
