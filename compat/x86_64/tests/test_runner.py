@@ -259,7 +259,7 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("#define CHAR_MAX 127", limits)
 
     def test_fixed_locale_profile_capability_slice_stays_narrow(self) -> None:
-        """Selected locale.core proof stays at setlocale/localeconv only."""
+        """The freestanding locale.core profile seam stays at setlocale/localeconv."""
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
         ).read_text(encoding="utf-8")
@@ -339,7 +339,7 @@ unsafe fn join_selected_worker_inner(
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
-        self.assertIn('id = "locale.core-fixed-profile"', parity)
+        self.assertIn('id = "locale.core"', parity)
         self.assertIn('capabilities = ["locale.core"]', parity)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-locale-profile"', parity

@@ -14002,7 +14002,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_slice]]
 id = "numeric.parse-float-locale"
-description = "Private native x86 completion of the AArch64 `numeric.parse-float-locale` capability. The selected static archive owns all twenty-three ledger symbols: narrow `atof`/`strto*`, ignored-locale public and weak-internal `_l` wrappers, arbitrary-length wide floating and integer conversions, musl-compatible static-buffer `ecvt`/`fcvt`, caller-buffered `gcvt`, and in-place `getsubopt`. C/POSIX/C.UTF-8 share the fixed decimal grammar; no arbitrary locale map, locale-dependent radix, public FILE, general printf, allocator, libc.so, CRT, loader, or sysroot is selected. The family stays planned and the repository retains promotion_ready=false and public_support=false."
+description = "Private native x86 selected-private completion of the AArch64 `numeric.parse-float-locale` capability inside still-planned `libc.text-math-locale-stdio`. The selected static archive and the installed owned static and dynamic products own all twenty-three ledger symbols: narrow `atof`/`strto*`, ignored-locale public and weak-internal `_l` wrappers, arbitrary-length wide floating and integer conversions, musl-compatible static-buffer `ecvt`/`fcvt`, caller-buffered `gcvt`, and in-place `getsubopt`. C/POSIX/C.UTF-8 share the fixed decimal grammar. Pinned musl 1.2.6 and every supplied static/static-PIE and dynamic PIE/non-PIE kernel/direct cell must produce identical bytes for the focused float probe and the expected-value-free differential transcript; musl calls with undefined behavior (fcvt stack overflow for large values with a negative digit count, ecvt/fcvt of non-finite values) are excluded. No arbitrary locale map, locale-dependent radix, family completion, promotion, or public x86 support is selected; the repository retains promotion_ready=false and public_support=false."
 source_owners = [
   "compat/upstreams.toml",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -14025,6 +14025,15 @@ source_owners = [
   "compat/x86_64/libc_float_parse_probe.c",
   "compat/x86_64/libc_float_parse_start.S",
   "compat/x86_64/run_libc_float_parse.sh",
+  "compat/x86_64/owned_text_locale_differential_probe.c",
+  "compat/x86_64/owned_text_locale_numeric_component_contract.py",
+  "compat/x86_64/owned_text_locale_numeric_component_driver.c",
+  "compat/x86_64/owned_text_locale_numeric_component_evidence.py",
+  "compat/x86_64/owned_text_locale_numeric_component_receipt.py",
+  "compat/x86_64/run_owned_text_locale_numeric_component.sh",
+  "compat/x86_64/owned-text-locale-numeric-component.md",
+  "compat/x86_64/tests/test_owned_text_locale_numeric_component.py",
+  "compat/x86_64/run_owned_numeric_calendar.sh",
   "compat/x86_64/aarch64_parity_inventory.py",
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/tests/test_aarch64_parity_inventory.py",
@@ -14041,7 +14050,11 @@ x86_abi_prerequisites = [
   "The private shgetc refill invokes only the selected wide adapter's one-byte callback. The narrow pseudo-FILE cannot reach it for valid NUL-terminated input; no public FILE layout, __uflow, __toread, formatted stdio, allocator, or locale database is imported.",
 ]
 x86_header_prerequisites = ["The project-first/pinned-musl GNU-profile C11/C++17 matrix proves all twenty public declarations across stdlib.h, wchar.h, inttypes.h, and locale.h, including locale_t, wchar_t, intmax_t, x87 long double, and unmangled C++ linkage. The three weak `__strto*_l` ABI aliases intentionally have no public declaration."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-float-parse", scope = "Pinned-musl project-header C reference plus one dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. Function-pointer calls cover every one of the twenty-three capability symbols; narrow decimal/hex grammar, end pointers, errno, flags, all-four-direction rounding, and raw binary80; ignored locale handles; refill-spanning wide input, Unicode whitespace, non-ASCII termination, arbitrary-length wide integers and overflow; exact ecvt/fcvt/gcvt strings; and getsubopt mutation. ELF checks ratchet exact exports, initial-exec errno TLS, x87 fldt/fstpt/fprem, and reject unresolved symbols, dynamic TLS, allocation, printf/FILE, ambient runtime, promotion, and public x86 support." }]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-text-locale-numeric-component", scope = "Supplied owned static and dynamic products: one installed-header ET_REL workload linked to pinned musl 1.2.6 and to static, static-PIE, and dynamic PIE/non-PIE kernel/direct executables. The receipt requires identical stdout/stderr/status in all six cells, physical static and dynamic providers for all twenty-three spellings, and the ordered stage frames of the `float-parse` and `differential-transcript` rows. It does not complete the family, promotion, or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-numeric-calendar", scope = "The installed numeric/calendar component compares narrow/wide float conversion, exact values and end pointers, errno and locale isolation against pinned musl across the same six product cells. It is bounded component evidence, not family completion." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh libc-float-parse", scope = "Pinned-musl project-header C reference plus one dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. Function-pointer calls cover every one of the twenty-three capability symbols; narrow decimal/hex grammar, end pointers, errno, flags, all-four-direction rounding, and raw binary80; ignored locale handles; refill-spanning wide input, Unicode whitespace, non-ASCII termination, arbitrary-length wide integers and overflow; exact ecvt/fcvt/gcvt strings; and getsubopt mutation. ELF checks ratchet exact exports, initial-exec errno TLS, x87 fldt/fstpt/fprem, and reject unresolved symbols, dynamic TLS, allocation, printf/FILE, ambient runtime, promotion, and public x86 support." },
+]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and differential behavior oracle for every selected narrow, wide, fixed-locale, legacy-decimal, and suboption entry." }, { kind = "aarch64-contract", source = "libc/src/c_abi.rs, libc/src/decimal_conversions.rs, libc/src/locale_exports.rs, and libc/src/program_utils_exports.rs", role = "Existing AArch64 symbol/semantic mapping; x86 deliberately removes the older wide-parser narrowing cap and uses binary80 rather than binary128 long double." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64, st0 binary80, LP64 integer, four-byte wchar_t, and initial-exec errno fixture ABI." }]
 capabilities = ["numeric.parse-float-locale"]
 
@@ -15850,54 +15863,61 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/locale/setlocale.c, locale_map.c, localeconv.c, src/ctype/__ctype_get_mb_cur_max.c, and the selected src/multibyte internal/state/conversion leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/size_t convention plus wchar_t, wint_t, mbstate_t, lconv, C/C++ linkage, and initial-exec errno TLS fixture contract." }]
 
 [[family.verified_slice]]
-id = "locale.core-fixed-profile"
-description = "Private native x86 selected-private `locale.core` fixed-profile slice inside still-planned `libc.text-math-locale-stdio`. It consumes that capability only at the `setlocale`/`localeconv` seam: one dependency-free `crabc-libc` archive resolves exactly those two entries into a strict C11/C++17 header matrix and a shared project-header fixture which first executes through pinned musl 1.2.6 and then a true `-nostdlib -static --gc-sections` candidate. The fixed global profile accepts only `C`, `POSIX`, and `C.UTF-8`; musl's built-in C.UTF-8 map changes `LC_CTYPE` alone, so direct `LC_ALL` C.UTF-8 and a mixed-state query serialize exactly as `C.UTF-8;C;C;C;C;C`, while non-CTYPE C.UTF-8 and POSIX normalize to C. `localeconv` returns the stable immutable POSIX record with decimal point `.`, empty text fields, and all fourteen monetary char fields `CHAR_MAX`. Candidate-only negative checks reject `setlocale(category, \"\")`, arbitrary map names, and non-returned LC_ALL forms without changing state. The candidate has no TLS, environment lookup, allocation, locale object, conversion, collation, iconv, gettext, numeric, time, or stdio dependency. This selected-private accounting does not claim every broader legacy `locale.core` spelling, family completion, promotion, or public x86 support; general locale or legacy-encoding databases, libc.so, CRT, loader, and sysroot remain excluded."
+id = "locale.core"
+description = "Private native x86 selected-private `locale.core` slice inside still-planned `libc.text-math-locale-stdio`. The installed owned static and dynamic products provide all 110 frozen spellings for exactly the `C`, `POSIX`, and `C.UTF-8` profile: `setlocale` with musl's six-component `;` `LC_ALL` list and `LC_ALL`/category/`LANG` environment precedence, immutable `localeconv`, built-in `newlocale`/`duplocale`/`freelocale`/`uselocale` objects with base inheritance and per-thread selection, `nl_langinfo[_l]`, narrow and wide `_l` classification and case mapping, byte-order collation and case-insensitive comparison, `strfmon[_l]`, `strerror_l`, `wcsftime_l`, the musl ctype table locators and `__ctype_get_mb_cur_max`, and the 44 musl `__*` public/private alias names. One installed-header ET_REL workload imports every non-alias spelling and pinned musl 1.2.6 plus every static/static-PIE and dynamic PIE/non-PIE kernel/direct cell must produce identical bytes, including the expected-value-free differential transcript; the separate alias executable proves the alias layout. Musl's synthesized UTF-8 map for any other name, including slash, leading-dot, and non-profile `LC_ALL` components, is a deliberate profile difference: the candidate fails those names without changing state, retained only as non-credit source-specific evidence. This slice establishes no locale database, collation or monetary data, message catalog, family completion, promotion, or public x86 support."
 capabilities = ["locale.core"]
 source_owners = [
   "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
-  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
-  "compat/ratchet/aarch64-dynamic.json",
-  "libc/Cargo.toml",
-  "libc/src/lib.rs",
-  "libc/src/c_abi.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
   "libc/src/c_abi/x86_64/locale_multibyte.rs",
-  "include/features.h",
-  "include/limits.h",
+  "libc/src/c_abi/x86_64/locale_objects.rs",
+  "libc/src/c_abi/x86_64/locale_narrow.rs",
+  "libc/src/c_abi/x86_64/locale_ctype.rs",
   "include/locale.h",
-  "include/stddef.h",
-  "include/stdint.h",
-  "compat/x86_64/locale_profile_header_abi_probe.c",
-  "compat/x86_64/locale_profile_header_abi_probe.cpp",
-  "compat/x86_64/run_locale_profile_header_abi.sh",
-  "compat/x86_64/static_c_abi_exports.txt",
+  "include/langinfo.h",
+  "include/monetary.h",
+  "include/ctype.h",
+  "include/wctype.h",
+  "include/strings.h",
   "compat/x86_64/libc_locale_profile_probe.c",
-  "compat/x86_64/libc_locale_profile_start.S",
   "compat/x86_64/run_libc_locale_profile.sh",
-  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/libc_locale_ctype_locators_probe.c",
+  "compat/x86_64/libc_locale_narrow_probe.c",
+  "compat/x86_64/libc_locale_object_wide_probe.c",
+  "compat/x86_64/libc_locale_error_strings_probe.c",
+  "compat/x86_64/locale_alias_contract_probe.c",
+  "compat/x86_64/locale_alias_contract.json",
+  "compat/x86_64/owned_strfmon_probe.c",
+  "compat/x86_64/owned_locale_probe.c",
+  "compat/x86_64/run_owned_locale.sh",
+  "compat/x86_64/owned_text_locale_differential_probe.c",
+  "compat/x86_64/owned_text_locale_numeric_component_contract.py",
+  "compat/x86_64/owned_text_locale_numeric_component_driver.c",
+  "compat/x86_64/owned_text_locale_numeric_component_evidence.py",
+  "compat/x86_64/owned_text_locale_numeric_component_receipt.py",
+  "compat/x86_64/run_owned_text_locale_numeric_component.sh",
+  "compat/x86_64/owned-text-locale-numeric-component.md",
+  "compat/x86_64/tests/test_owned_text_locale_numeric_component.py",
   "compat/x86_64/aarch64_parity_inventory.json",
-  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
-  "compat/x86_64/tests/test_runner.py",
-  "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
-  "compat/x86_64/README.md",
-  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
-  "System V AMD64 passes the signed 32-bit locale category and char-pointer request in general-purpose registers, returns the char * result in rax, and returns the `struct lconv *` in rax. The strict x86 public record is 96-byte/align-8 LP64 storage: ten pointers followed by fourteen one-byte char fields.",
-  "Pinned musl 1.2.6 src/locale/setlocale.c serializes the process-global six categories and src/locale/locale_map.c makes built-in C.UTF-8 effective only for LC_CTYPE; src/locale/localeconv.c supplies the immutable POSIX record with `.`/empty strings and CHAR_MAX monetary fields. The candidate keeps only those built-ins and intentionally does not translate musl's environment/map allocator path.",
-  "The selected x86 leaf owns only atomically locked fixed global category state and a reusable LC_ALL buffer. Its true static candidate uses no TLS, syscall, errno, allocator, locale object, locale database, environment, or ambient-runtime seam; the fixture's raw write=1 exists solely to emit a comparable digest.",
+  "Linux/x86-64 little-endian LP64: `locale_t` is a pointer-sized opaque handle, `struct lconv` is 96-byte/align-8 storage of ten pointers and fourteen chars, `nl_item` is a signed 32-bit category/index pair, and `wint_t`/`wctype_t`/`wctrans_t` cross the SysV AMD64 integer and pointer ABI.",
+  "Pinned musl 1.2.6 src/locale/{setlocale,locale_map,localeconv,newlocale,duplocale,freelocale,uselocale,langinfo,strfmon,strcoll,strxfrm,wcscoll,wcsxfrm,strerror_l}.c, src/ctype/*_l.c and __ctype_*_loc.c, and src/string/strcasecmp.c/strncasecmp.c are the MIT behavior oracle. Only the builtin C and CTYPE-only C.UTF-8 maps are translated; locale_map.c's file loading and synthesized maps are outside the profile.",
 ]
 x86_header_prerequisites = [
-  "The dedicated strict project-first/pinned-musl C11/C++17 matrix proves only unconditional locale.h declarations: the six category values, 96-byte lconv offsets/types, setlocale char *(*)(int, const char *), localeconv struct lconv *(*)(void), and unmangled C++ references. Feature-gated locale_t, locale objects, `_l` APIs, collation, conversion, and monetary formatting remain outside this header proof.",
-  "The shared C runtime fixture preprocesses project limits.h, locale.h, stddef.h, stdint.h, and features.h before both pinned-musl and candidate links. It differentially covers C/POSIX/C.UTF-8 queries/selections, CTYPE-only mixed serialization, the complete immutable lconv record, invalid categories, and candidate-only rejection of environment/arbitrary-map/non-returned mixed forms without state mutation.",
+  "Every role is compiled through the supplied installed `locale.h`, `langinfo.h`, `monetary.h`, `ctype.h`, `wctype.h`, `strings.h`, `string.h`, and `wchar.h` with `-std=c11 -D_GNU_SOURCE -fno-builtin`; header traces must stay inside the installed product. The existing locale profile, narrow, and object/wide C/C++ header matrices remain the declaration proof.",
 ]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-profile", scope = "Pinned-musl 1.2.6 project-header C execution and strict C11/C++17 declaration/linkage oracle plus one dependency-free x86 crabc-libc archive and true `-nostdlib -static --gc-sections` candidate. The common digest proves initial C state, each LC query, C/POSIX/C.UTF-8 selection, exact C.UTF-8;C;C;C;C;C serialization, immutable 96-byte lconv contents, and invalid-category rejection. The candidate alone rejects empty environment selection, arbitrary map names, and unreturned mixed forms without state mutation; that intentional fixed-profile difference is not attributed to musl's general map path. The archive's aggregate export ratchet and final-ELF checks require setlocale/localeconv at the selected boundary and reject unresolved symbols, interpreter/DT_NEEDED, PT_TLS/dynamic TLS, conversion, locale-object, allocation, environment, gettext, numeric, time, stdio, and ambient runtime dependencies. It selects only this fixed locale.core seam, not general locale behavior, family completion, promotion, or public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration/source/behavior oracle for src/locale/setlocale.c, locale_map.c, and localeconv.c: category serialization, CTYPE-only built-in C.UTF-8, and immutable POSIX lconv. The candidate deliberately excludes locale_map.c's environment lookup, arbitrary-name map loading, and allocation paths." }, { kind = "aarch64-contract", source = "libc/src/c_abi.rs plus compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv and compat/ratchet/aarch64-dynamic.json", role = "Existing AArch64 project ownership and global export evidence for setlocale/localeconv only. It establishes the current project C ABI seam but is not a behavioral fallback for the x86 fixed-profile rejection boundary." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 int/pointer return and argument ABI, 96-byte align-8 lconv layout, unconditional C/C++ linkage, and a static candidate without a TLS requirement." }]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-text-locale-numeric-component", scope = "Supplied owned static and dynamic products: one installed-header ET_REL workload linked to pinned musl 1.2.6 and to static, static-PIE, and dynamic PIE/non-PIE kernel/direct executables. The receipt requires identical stdout/stderr/status in all six cells, physical static and dynamic providers for every imported locale.core spelling, the separate public/private alias executable, and the ordered stage frames of the `ctype-locators`, `narrow-ctype-collation`, `object-wide`, `alias-contract`, `strfmon`, `error-strings`, and `differential-transcript` rows, plus non-credit candidate rejection of non-profile names. It does not complete the family, promotion, or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-locale", scope = "The v3 installed locale component compares environment precedence and default selection, locale-object base inheritance, and two pthread locales against pinned musl across the same six product cells, and separately requires transactional candidate rejection of unsupported environment names. It is bounded component evidence, not family completion." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-profile", scope = "Pinned-musl 1.2.6 project-header C execution and strict C11/C++17 declaration/linkage oracle plus one dependency-free x86 crabc-libc archive and true `-nostdlib -static --gc-sections` candidate. The common digest proves initial C state, each LC query, C/POSIX/C.UTF-8 selection, exact C.UTF-8;C;C;C;C;C serialization, immutable 96-byte lconv contents, and invalid-category rejection. The common digest also covers musl's six-component `LC_ALL` list over profile names; the candidate alone rejects empty environment selection, arbitrary map names, and lists naming a non-profile locale without state mutation; that intentional fixed-profile difference is not attributed to musl's general map path. The archive's aggregate export ratchet and final-ELF checks require setlocale/localeconv at the selected boundary and reject unresolved symbols, interpreter/DT_NEEDED, PT_TLS/dynamic TLS, conversion, locale-object, allocation, environment, gettext, numeric, time, stdio, and ambient runtime dependencies. It is the freestanding fixed-profile seam beneath the installed locale.core slice, not family completion, promotion, or public x86 support." },
+]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT behavior oracle for every frozen locale.core spelling under the fixed C/POSIX/C.UTF-8 profile, compared byte-for-byte through the same installed-header object." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 locale_t/lconv/nl_item/wint_t conventions, public/private alias symbol layout, and static/shared provider ownership." }]
 
 [[family.verified_slice]]
 id = "text.wide-multibyte"
@@ -15953,7 +15973,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_slice]]
 id = "text.iconv"
-description = "Private native x86 selected-private `text.iconv` slice inside still-planned `libc.text-math-locale-stdio`. The installed owned static and dynamic products provide `iconv_open`, `iconv`, and `iconv_close` for exactly ASCII, UTF-8, UTF-16LE/BE, UTF-32LE/BE (including musl's UCS-4LE/BE spellings), and native `WCHAR_T` through musl's `fuzzycmp` name matching and empty-name UTF-8 default. Pinned musl 1.2.6 and every supplied static/static-PIE and dynamic PIE/non-PIE kernel/direct cell must produce identical bytes for every ordered pair at each output capacity, every truncated input prefix, reset forms, malformed-input EILSEQ progress, incomplete-input EINVAL, E2BIG no-progress, and ASCII `*` substitution counts. Musl's stateful BOM UTF-16/UTF-32, UCS-2, and legacy codepage spellings are deliberately unsupported and fail with EINVAL; that candidate-only rejection is retained as non-credit source-specific evidence. This slice establishes no general encoding registry, locale database, family completion, promotion, or public x86 support."
+description = "Private native x86 selected-private `text.iconv` slice inside still-planned `libc.text-math-locale-stdio`. The installed owned static and dynamic products provide `iconv_open`, `iconv`, and `iconv_close` for exactly ASCII, UTF-8, UTF-16LE/BE, UTF-32LE/BE (including musl's UCS-4LE/BE spellings), and native `WCHAR_T` through musl's `fuzzycmp` name matching and empty-name UTF-8 default. Pinned musl 1.2.6 and every supplied static/static-PIE and dynamic PIE/non-PIE kernel/direct cell must produce identical bytes for every ordered pair at each output capacity, every truncated input prefix, reset forms, malformed-input EILSEQ progress (an invalid available continuation byte wins over a truncated tail, as in musl's `mbrtowc`), incomplete-input EINVAL, E2BIG no-progress, and ASCII `*` substitution counts. Musl's stateful BOM UTF-16/UTF-32, UCS-2, and legacy codepage spellings are deliberately unsupported and fail with EINVAL; that candidate-only rejection is retained as non-credit source-specific evidence. This slice establishes no general encoding registry, locale database, family completion, promotion, or public x86 support."
 capabilities = ["text.iconv"]
 source_owners = [
   "AGENTS.md",

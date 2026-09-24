@@ -8874,13 +8874,18 @@ def require_uchar_stateful_artifact(family: Mapping[str, Any]) -> None:
 
 
 TEXT_COMPONENT_COMMAND = "./scripts/dev-x86_64.sh owned-text-locale-numeric-component"
-TEXT_COMPONENT_SLICES = ("text.wide-multibyte", "text.iconv")
+TEXT_COMPONENT_SLICES = (
+    "numeric.parse-float-locale",
+    "locale.core",
+    "text.wide-multibyte",
+    "text.iconv",
+)
 
 
 def require_text_component_slices(family: Mapping[str, Any]) -> None:
-    """Bind the text.wide-multibyte and text.iconv slices to their component.
+    """Bind the four text/locale/numeric capability slices to their component.
 
-    Both selections rest on the installed text/locale/numeric component. The
+    Each selection rests on the installed text/locale/numeric component. The
     ledger may select either capability only while that component's machine
     contract carries rows for it and observes every frozen spelling, either as
     an installed-header ET_REL import or through the separate public/private
@@ -8923,7 +8928,7 @@ def require_text_component_slices(family: Mapping[str, Any]) -> None:
         evidence = selected.get("native_evidence")
         require(
             isinstance(evidence, list)
-            and [entry.get("command") for entry in evidence] == [TEXT_COMPONENT_COMMAND],
+            and TEXT_COMPONENT_COMMAND in [entry.get("command") for entry in evidence],
             f"{capability} slice must use the installed text/locale/numeric component",
         )
         require(
