@@ -13,6 +13,12 @@
  * between aio_suspend's predicate and the observation. controlled_second_live
  * uses an already-readable pipe and a separate empty pipe to prove the one
  * completion boundary without relying on regular-file scheduling.
+ *
+ * Pinned musl 1.2.6 aio.c keeps a descriptor's queue, with the
+ * seekable/append classification of the file it was created for, until the
+ * last worker's cleanup releases it after publishing completion. The pipes
+ * therefore take numbers the regular file never used;
+ * owned_aio_fd_reuse_probe.c observes that incarnation defect separately.
  */
 #define _GNU_SOURCE
 
@@ -118,6 +124,19 @@ failure:
 	return -1;
 }
 
+/* Move a new descriptor to a number no earlier AIO request used. */
+static int fresh_descriptor(int *descriptor)
+{
+	static int next_number = 64;
+	int moved = fcntl(*descriptor, F_DUPFD, next_number);
+
+	if (moved < 0 || close(*descriptor))
+		return -1;
+	*descriptor = moved;
+	next_number = moved + 1;
+	return 0;
+}
+
 static int controlled_second_live(void)
 {
 	char first_byte = 0;
@@ -133,6 +152,8 @@ static int controlled_second_live(void)
 	int second_reaped = 0;
 
 	if (pipe(first_pipe) || pipe(second_pipe)
+		|| fresh_descriptor(&first_pipe[0]) || fresh_descriptor(&first_pipe[1])
+		|| fresh_descriptor(&second_pipe[0]) || fresh_descriptor(&second_pipe[1])
 		|| write(first_pipe[1], "a", 1) != 1)
 		goto failure;
 	first.aio_fildes = first_pipe[0];
