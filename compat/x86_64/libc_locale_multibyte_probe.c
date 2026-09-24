@@ -104,21 +104,30 @@ static int check_named_locale_selection(void)
         return 26;
     if (setlocale(LC_ALL + 1, "C") != NULL || MB_CUR_MAX != 1)
         return 27;
+    /*
+     * Musl's LC_ALL parser: six `;` components, the last reused once the
+     * name is exhausted and extra components ignored. Only LC_CTYPE keeps
+     * the builtin C.UTF-8 map, so every other component normalizes to C.
+     */
+    if (!text_equal(setlocale(LC_ALL, "POSIX;C;C;C;C;C"), "C") ||
+        !text_equal(setlocale(LC_ALL, "C;C;C;C;C;C"), "C") ||
+        !text_equal(setlocale(LC_ALL, "C;C.UTF-8;C;C;C;C"), "C") ||
+        MB_CUR_MAX != 1)
+        return 28;
+    if (!text_equal(setlocale(LC_ALL,
+            "C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8"), mixed) ||
+        !text_equal(setlocale(LC_ALL, "C.UTF-8;C"), mixed) || MB_CUR_MAX != 4)
+        return 29;
+    if (!text_equal(setlocale(LC_ALL, "C"), "C") || MB_CUR_MAX != 1)
+        return 30;
 #ifdef CRABC_LOCALE_MULTIBYTE_FREESTANDING
     /*
-     * The selected candidate admits a mixed LC_ALL value only in the exact
-     * spelling it returns itself. Direct POSIX remains selected above, but
-     * POSIX components and redundant six-component uniform forms are not
-     * silently broadened into a general locale-name parser.
+     * Pinned musl synthesizes a UTF-8 map for any other component name. The
+     * fixed profile rejects such a list without changing its state.
      */
-    if (setlocale(LC_ALL, "POSIX;C;C;C;C;C") != NULL ||
-        setlocale(LC_ALL, "C;C;C;C;C;C") != NULL ||
-        setlocale(LC_ALL, "C;C.UTF-8;C;C;C;C") != NULL ||
-        setlocale(LC_ALL,
-            "C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8") != NULL)
-        return 28;
-    if (!text_equal(setlocale(LC_ALL, NULL), "C") || MB_CUR_MAX != 1)
-        return 29;
+    if (setlocale(LC_ALL, "C.UTF-8;en_US.UTF-8;C;C;C;C") != NULL ||
+        !text_equal(setlocale(LC_ALL, NULL), "C") || MB_CUR_MAX != 1)
+        return 31;
 #endif
     return 0;
 }

@@ -28,8 +28,9 @@
 //!
 //! Environment-backed `setlocale(category, "")` is selected only by the owned
 //! runtime, with `LC_ALL`, category, then `LANG` precedence and a `C.UTF-8`
-//! default. Arbitrary locale-map names and mixed-name parser variants beyond
-//! the exact serialized six-category form remain unselected. The separate
+//! default. `LC_ALL` names follow musl's six-component `;` parser, with every
+//! component limited to a profile name or, in the owned runtime, an empty
+//! environment request. Arbitrary locale-map names remain unselected. The separate
 //! `locale_objects` leaf can override this global CTYPE mode for the selected
 //! main/worker Static Initial TLS v1 paths without changing this module's
 //! process-global named-category owner. An
@@ -267,72 +268,71 @@ unsafe fn named_locale_mode(name: *const c_char) -> Option<bool> {
     }
 }
 
-/// Parse one returned mixed `LC_ALL` component, ending at `;` or NUL.
+/// Musl's `LOCALE_NAME_MAX`: a longer `LC_ALL` component is not copied.
+const LOCALE_NAME_MAX: usize = 23;
+
+/// Resolve one `LC_ALL` component of `length` bytes at `component`.
 ///
-/// Only the `C` and `C.UTF-8` spellings occur in this artifact's returned
-/// serialization: direct `POSIX` selection normalizes to `C`. The caller has
-/// already established that `cursor` points into a valid C string. Returning
-/// the delimiter rather than advancing it makes the six-category delimiter
-/// rule explicit at the only accepted mixed-form boundary.
-unsafe fn parse_locale_component(cursor: *const u8) -> Option<(bool, *const u8)> {
-    for (mode, name) in [(false, &C_NAME[..]), (true, &UTF8_NAME[..])] {
+/// Returns the category's C.UTF-8 mode, or `None` for a name outside the
+/// fixed profile. An empty component is musl's environment request; only the
+/// owned runtime has an environment owner to resolve it.
+unsafe fn locale_component_mode(category: usize, component: *const u8, length: usize) -> Option<bool> {
+    if length == 0 {
+        #[cfg(crabc_x86_owned_runtime)]
+        // SAFETY: category is below LC_ALL; the public setlocale contract
+        // excludes concurrent environment mutation.
+        return unsafe { environment_locale_mode(category as c_int) };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        return None;
+    }
+    for (utf8, name) in [(false, &C_NAME[..]), (false, &POSIX_NAME[..]), (true, &UTF8_NAME[..])] {
         let bytes = &name[..name.len() - 1];
-        let mut matches = true;
-        for (index, byte) in bytes.iter().enumerate() {
-            // SAFETY: cursor points into the caller's NUL-terminated name.
-            if unsafe { core::ptr::read(cursor.add(index)) } != *byte {
-                matches = false;
-                break;
-            }
-        }
-        if matches {
-            // SAFETY: the matched name prefix is readable, and the caller's
-            // C string supplies its following delimiter or NUL byte.
-            let delimiter = unsafe { cursor.add(bytes.len()) };
-            let value = unsafe { core::ptr::read(delimiter) };
-            if value == b';' || value == 0 {
-                return Some((mode, delimiter));
-            }
+        if bytes.len() == length
+            // SAFETY: the caller measured `length` readable bytes before the
+            // component's `;` or NUL delimiter.
+            && bytes.iter().enumerate().all(|(index, byte)| unsafe { core::ptr::read(component.add(index)) } == *byte)
+        {
+            return Some(utf8);
         }
     }
     None
 }
 
+/// Parse an `LC_ALL` name with musl `setlocale.c`'s six-component rule.
+///
+/// Components are separated by `;`. Once the name is exhausted, each later
+/// category reuses the last component, so a plain `C.UTF-8` selects every
+/// category and `C.UTF-8;C` selects C for the other five; components after
+/// the sixth are ignored. Musl's builtin C.UTF-8 map affects only LC_CTYPE,
+/// so only component 0 can set the UTF-8 bit. Every component must be a
+/// profile name (or, in the owned runtime, an empty environment request);
+/// musl's fallback of copying no over-long component is an unsupported name
+/// here. The state is published only after all six components resolve.
 unsafe fn parse_all_locale_state(name: *const c_char) -> Option<u8> {
-    if let Some(mode) = unsafe { named_locale_mode(name) } {
-        return Some(if mode { LC_CTYPE_UTF8_MASK } else { 0 });
-    }
-
     let mut cursor = name.cast::<u8>();
     let mut state = 0u8;
     for category in 0..LOCALE_CATEGORY_COUNT {
-        let (utf8, delimiter) = unsafe { parse_locale_component(cursor) }?;
-        // Musl's builtin C.UTF-8 map has an effect only in LC_CTYPE. The
-        // returned mixed form therefore contains C.UTF-8 only in component 0.
-        if category != LC_CTYPE as usize && utf8 {
+        let mut end = 0usize;
+        // SAFETY: the caller's C string is readable through its NUL.
+        while !matches!(unsafe { core::ptr::read(cursor.add(end)) }, 0 | b';') {
+            end += 1;
+        }
+        if end > LOCALE_NAME_MAX {
             return None;
+        }
+        // SAFETY: `cursor` has `end` readable bytes before its delimiter.
+        let utf8 = unsafe { locale_component_mode(category, cursor, end) }?;
+        // SAFETY: `end` indexes the delimiter just read above. At the NUL,
+        // musl's `p` stays put and later categories reparse this component.
+        if unsafe { core::ptr::read(cursor.add(end)) } == b';' {
+            // SAFETY: the byte after a `;` belongs to the same C string.
+            cursor = unsafe { cursor.add(end + 1) };
         }
         if category == LC_CTYPE as usize && utf8 {
             state |= LC_CTYPE_UTF8_MASK;
         }
-        // SAFETY: parse_locale_component returned this delimiter within the
-        // caller-owned NUL-terminated string.
-        let delimiter_value = unsafe { core::ptr::read(delimiter) };
-        if category + 1 == LOCALE_CATEGORY_COUNT {
-            if delimiter_value != 0 {
-                return None;
-            }
-        } else if delimiter_value != b';' {
-            return None;
-        } else {
-            // SAFETY: the semicolon is followed by the next component in the
-            // same C string; its validity is checked on the next iteration.
-            cursor = unsafe { delimiter.add(1) };
-        }
     }
-    // Direct C/POSIX and C.UTF-8 forms have their own spellings. Accept only
-    // the one mixed CTYPE-UTF-8 serialization this leaf can return.
-    (state == LC_CTYPE_UTF8_MASK).then_some(state)
+    Some(state)
 }
 
 #[inline]
@@ -460,8 +460,8 @@ pub(super) unsafe fn environment_locale_mode(category: c_int) -> Option<bool> {
 /// Select or query the bounded global C/POSIX/C.UTF-8 category state.
 ///
 /// `locale` must be null or a readable NUL-terminated C string. A non-null
-/// name accepts only `C`, `POSIX`, `C.UTF-8`, or the exact six-component
-/// semicolon serialization returned for a mixed `LC_ALL` state. The pinned
+/// name accepts only `C`, `POSIX`, and `C.UTF-8`; for `LC_ALL` it may also be
+/// musl's `;`-separated per-category list of those names. The pinned
 /// built-in `C.UTF-8` map affects `LC_CTYPE` alone, so a global selection
 /// serializes as `C.UTF-8;C;C;C;C;C`. In the owned runtime an empty name
 /// resolves supported names from the environment; the freestanding artifact
@@ -629,6 +629,37 @@ unsafe fn decode_mbrtowc(current: u32, source: *const c_char, count: usize, utf8
         wide: 0,
         writes_wide: false,
         error: false,
+    }
+}
+
+/// One UTF-8 decode from the initial conversion state, as musl's `iconv`
+/// obtains it through `mbrtowc` with a fresh local `mbstate_t`.
+pub(super) enum Utf8Decode {
+    /// A complete scalar and the number of bytes it consumed.
+    Scalar(u32, usize),
+    /// A lead or available continuation byte is invalid (`EILSEQ`).
+    Invalid,
+    /// Every available byte is a valid prefix of a longer sequence (`EINVAL`).
+    Incomplete,
+}
+
+/// Decode one non-ASCII UTF-8 sequence with musl's `mbrtowc` transition
+/// table, which rejects an invalid available continuation byte before it
+/// reports an incomplete tail.
+///
+/// # Safety
+///
+/// `source` must be readable for `count` bytes, and `count` must be nonzero.
+pub(super) unsafe fn decode_utf8_initial(source: *const u8, count: usize) -> Utf8Decode {
+    // SAFETY: forwarded caller contract; a zero initial state needs no
+    // mbstate_t storage and the outcome is not published anywhere.
+    let outcome = unsafe { decode_mbrtowc(0, source.cast(), count, true) };
+    if outcome.error {
+        Utf8Decode::Invalid
+    } else if outcome.result == MB_RET_INCOMPLETE {
+        Utf8Decode::Incomplete
+    } else {
+        Utf8Decode::Scalar(outcome.wide as u32, outcome.result)
     }
 }
 

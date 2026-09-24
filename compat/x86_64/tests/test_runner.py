@@ -202,10 +202,7 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(f"fn {symbol}(", implementation)
             self.assertIn(f"\n{symbol}\n", exports)
         for snippet in (
-            "[(false, &C_NAME[..]), (true, &UTF8_NAME[..])]",
             "LC_CTYPE_UTF8_MASK",
-            "category != LC_CTYPE as usize && utf8",
-            "(state == LC_CTYPE_UTF8_MASK).then_some(state)",
             "MBRTOWC_INTERNAL_STATE",
             "MBRLEN_INTERNAL_STATE",
             "noninitial UTF-8 resume with positive output capacity",

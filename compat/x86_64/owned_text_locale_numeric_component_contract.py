@@ -124,7 +124,7 @@ SOURCE_SPECIFIC_ROWS = (
         "candidate-locale-multibyte-profile",
         ("candidate-locale-multibyte-profile",),
         "candidate-mode-consistency",
-        "Only the exact returned mixed LC_ALL spelling is observed here; it does not broaden locale-name parsing or add text.wide-multibyte credit.",
+        "Only the rejection of an LC_ALL component list naming a non-profile locale is observed here; musl's component parser over profile names stays in the parity rows, and this row adds no text.wide-multibyte credit.",
     ),
 )
 

@@ -19,6 +19,9 @@
 //!   non-allocating token, C pointer-progress/error behavior, and the selected
 //!   UTF/ASCII codec.
 //! - `src/locale/iconv_close.c::iconv_close` maps to the no-state close path.
+//! - UTF-8 input decodes through the multibyte leaf's musl `mbrtowc` table,
+//!   as musl's `iconv` does, so an invalid available continuation byte
+//!   reports `EILSEQ` before an incomplete tail reports `EINVAL`.
 //!
 //! The existing AArch64 implementation in `libc/src/c_abi.rs` is the project
 //! implementation oracle for the fixed UTF/ASCII codec and public symbol
@@ -251,49 +254,14 @@ unsafe fn decode(
             if first < 0x80 {
                 return Ok((first as u32, 1));
             }
-            if first < 0xc2 || first > 0xf4 {
-                return Err(DecodeError::Invalid);
+            // Musl's iconv calls mbrtowc with a fresh state, so an invalid
+            // available continuation byte wins over an incomplete tail.
+            // SAFETY: the caller keeps `source_left` bytes readable.
+            match unsafe { super::locale_multibyte::decode_utf8_initial(source, source_left) } {
+                super::locale_multibyte::Utf8Decode::Scalar(scalar, width) => Ok((scalar, width)),
+                super::locale_multibyte::Utf8Decode::Invalid => Err(DecodeError::Invalid),
+                super::locale_multibyte::Utf8Decode::Incomplete => Err(DecodeError::Incomplete),
             }
-            let width = if first < 0xe0 {
-                2
-            } else if first < 0xf0 {
-                3
-            } else {
-                4
-            };
-            if source_left < width {
-                return Err(DecodeError::Incomplete);
-            }
-            // SAFETY: `source_left >= width` proves each continuation read.
-            let second = unsafe { read_byte(source, 1) };
-            if second & 0xc0 != 0x80 {
-                return Err(DecodeError::Invalid);
-            }
-            let mut scalar = ((first & (0x7f >> width)) as u32) << 6 | (second & 0x3f) as u32;
-            if width >= 3 {
-                // SAFETY: `source_left >= width >= 3` covers this byte.
-                let third = unsafe { read_byte(source, 2) };
-                if third & 0xc0 != 0x80 {
-                    return Err(DecodeError::Invalid);
-                }
-                scalar = (scalar << 6) | (third & 0x3f) as u32;
-            }
-            if width == 4 {
-                // SAFETY: `source_left >= width == 4` covers this byte.
-                let fourth = unsafe { read_byte(source, 3) };
-                if fourth & 0xc0 != 0x80 {
-                    return Err(DecodeError::Invalid);
-                }
-                scalar = (scalar << 6) | (fourth & 0x3f) as u32;
-            }
-            if !scalar_is_valid(scalar)
-                || (width == 2 && scalar < 0x80)
-                || (width == 3 && scalar < 0x800)
-                || (width == 4 && scalar < 0x10000)
-            {
-                return Err(DecodeError::Invalid);
-            }
-            Ok((scalar, width))
         }
         ENC_UTF16LE | ENC_UTF16BE => {
             if source_left < 2 {

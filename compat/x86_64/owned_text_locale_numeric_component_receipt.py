@@ -599,9 +599,8 @@ def validate_source_specific_branches(root: Path) -> None:
         ),
         "compat/x86_64/libc_locale_multibyte_probe.c": (
             "#ifdef CRABC_LOCALE_MULTIBYTE_FREESTANDING",
-            '"POSIX;C;C;C;C;C"', '"C;C;C;C;C;C"',
-            '"C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8"',
-            "silently broadened into a general locale-name parser.",
+            '"C.UTF-8;en_US.UTF-8;C;C;C;C"',
+            "profile rejects such a list without changing its state.",
         ),
     }
     for relative_name, fragments in required_fragments.items():

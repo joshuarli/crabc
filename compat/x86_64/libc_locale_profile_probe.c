@@ -153,6 +153,11 @@ static int check_fixed_profile(uint64_t *hash)
     }
     if ((status = check_lconv(hash, &record)) != 0) return 50 + status;
 
+    /* Musl's six-component LC_ALL parser over profile names only. */
+    if (expect_name(hash, LC_ALL, "C;C;C;C;C;C", "C")) return 56;
+    if (expect_name(hash, LC_ALL, "C.UTF-8;C", mixed)) return 57;
+    if (expect_name(hash, LC_ALL, "C;C.UTF-8;C;C;C;C", "C")) return 58;
+    if (expect_name(hash, LC_ALL, "C.UTF-8;POSIX;C;C;C;C;extra", mixed)) return 59;
     if (expect_name(hash, LC_ALL, "POSIX", "C")) return 60;
     for (index = 0; index < sizeof categories / sizeof categories[0]; index++) {
         if (expect_name(hash, categories[index], NULL, "C")) return 61;
@@ -177,8 +182,8 @@ static int check_fixed_profile(uint64_t *hash)
             return 90;
         if (setlocale(LC_ALL, "") != NULL ||
             setlocale(LC_CTYPE, "en_US.UTF-8") != NULL ||
-            setlocale(LC_ALL, "C;C;C;C;C;C") != NULL ||
-            setlocale(LC_ALL, "C;C.UTF-8;C;C;C;C") != NULL)
+            setlocale(LC_ALL, "C;en_US.UTF-8;C;C;C;C") != NULL ||
+            setlocale(LC_ALL, "C.UTF-8;;C;C;C;C") != NULL)
             return 91;
         if (expect_name(&ignored_hash, LC_ALL, NULL, mixed) ||
             expect_name(&ignored_hash, LC_CTYPE, NULL, "C.UTF-8"))

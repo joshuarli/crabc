@@ -1839,6 +1839,16 @@ static void test_iconv(void)
         { "UTF-8", "A\xf4\x90\x80\x80", 5 },
         { "UTF-8", "A\xe2\x82", 3 },
         { "UTF-8", "A\x80", 2 },
+        /* Truncated sequences whose available continuation bytes are
+         * already invalid: musl's mbrtowc decoder reports EILSEQ before it
+         * would report the incomplete tail. */
+        { "UTF-8", "A\xf4\xed", 3 },
+        { "UTF-8", "A\xe0\x80", 3 },
+        { "UTF-8", "A\xed\xa0", 3 },
+        { "UTF-8", "A\xf4\x90", 3 },
+        { "UTF-8", "A\xf0\x9f\x41", 4 },
+        { "UTF-8", "A\xe0\xe0", 3 },
+        { "UTF-8", "A\xf0\x9f\x98", 4 },
         { "ASCII", "A\x80" "B", 3 },
         { "UTF-16LE", "A\x00\x00\xd8" "B\x00", 6 },
         { "UTF-16LE", "A\x00\x00\xdc", 4 },
@@ -2286,9 +2296,9 @@ int crabc_x86_64_text_locale_differential_probe(void)
         };
         for (int cat = 0; cat <= 7; cat++) {
             for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
-                /* musl creates a UTF-8 map for any other name; the fixed
-                 * profile deliberately rejects the mixed spelling outside
-                 * LC_ALL, so keep that intentional difference out. */
+                /* Outside LC_ALL musl treats a `;` list as one arbitrary
+                 * map name, which the fixed profile rejects; keep that
+                 * intentional difference out. */
                 if (i == 3 && cat != LC_ALL)
                     continue;
                 setlocale(LC_ALL, "C");
@@ -2305,6 +2315,48 @@ int crabc_x86_64_text_locale_differential_probe(void)
                 nl();
             }
         }
+        setlocale(LC_ALL, "C");
+        /* Musl's LC_ALL parser: six `;` components, the last one reused
+         * once the name is exhausted, extra components ignored, and empty
+         * components resolved from the environment, which each pass sets
+         * explicitly. Every component here is a profile name. */
+        static const char *const composites[] = {
+            "C.UTF-8;C", "C;C.UTF-8", "POSIX;C;C;C;C;C", "C.UTF-8;POSIX;C;C;C;C",
+            "C.UTF-8;C;C;C;C;C;C", "C.UTF-8;C;C;C;C;C;junk", "C;C;C;C;C;C.UTF-8",
+            "C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8", "C.UTF-8;", "C;",
+            "C.UTF-8;;;;;", "POSIX;C.UTF-8", ";C.UTF-8", "C.UTF-8;C;C;C;C", ";",
+        };
+        const char *saved = getenv("LC_ALL");
+        char saved_copy[32] = "";
+        if (saved != NULL && strlen(saved) < sizeof saved_copy)
+            strcpy(saved_copy, saved);
+        for (size_t i = 0; i < 2 * (sizeof composites / sizeof composites[0]); i++) {
+            size_t pass = i / (sizeof composites / sizeof composites[0]);
+            if (i % (sizeof composites / sizeof composites[0]) == 0) {
+                setenv("LC_ALL", pass ? "C.UTF-8" : "C", 1);
+                put_s("composite-env LC_ALL=");
+                put_s(pass ? "C.UTF-8" : "C");
+                nl();
+            }
+            setlocale(LC_ALL, "C");
+            const char *name = composites[i % (sizeof composites / sizeof composites[0])];
+            char *r = setlocale(LC_ALL, name);
+            put_s("composite ");
+            put_cstr(name);
+            put_s(" -> ");
+            put_cstr(r);
+            for (int cat = 0; cat < LC_ALL; cat++) {
+                put_s(" ");
+                put_cstr(setlocale(cat, NULL));
+            }
+            put_s(" mb=");
+            put_u(MB_CUR_MAX);
+            nl();
+        }
+        if (saved != NULL)
+            setenv("LC_ALL", saved_copy, 1);
+        else
+            unsetenv("LC_ALL");
         setlocale(LC_ALL, "C");
     }
     /* POSIX is the same byte-oriented profile as C; the per-locale matrix

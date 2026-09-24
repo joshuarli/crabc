@@ -107,8 +107,9 @@ still has no `locale.core` completion credit. The iconv selector
 records the bounded rejection of generic `ISO-8859-1`, `UTF-16`, and
 `UCS-2LE` names. It does not alter the UTF-16LE/BE and UTF-32 conversion row
 above or claim a general legacy-encoding registry. The multibyte selector
-records only the exact mixed `LC_ALL` spelling returned by the candidate; it
-does not broaden locale-name parsing or add `text.wide-multibyte` credit.
+records only the rejection of an `LC_ALL` component list naming a non-profile
+locale; musl's component parser over profile names is in the parity rows, and
+this row adds no `text.wide-multibyte` credit.
 
 The retained ABI is Linux/x86-64 little-endian LP64: `locale_t` and `iconv_t`
 are pointer-sized opaque handles, `wchar_t` is four bytes, `mbstate_t` is eight
