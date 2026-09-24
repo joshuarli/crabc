@@ -17,9 +17,10 @@ invocations_per_backend = 1
 sample_count = 2
 sample_size = 3
 
+# Full mode is admitted only when every qualification gate before
+# performance.release is complete; the runner reads that, never this file.
 [admission]
-full_correctness_predecessor = "unavailable"
-reason = "the fixed complete correctness predecessor reader is not implemented or wired"
+full_mode_reader = "compat/perf/x86_64_evidence.py correctness_admission"
 
 [fixture]
 frozen_source = "compat/perf/native/src/main.rs"

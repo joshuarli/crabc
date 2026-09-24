@@ -197,7 +197,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   perf-c {plan|run|collect|check} ...  native supplied-product C performance adapter; use CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf
   perf-c-test  run focused native C-performance adapter and supplemental-fixture smoke tests in that image
   perf-c-memory-smoke <dynamic-product> <work-dir>  run the bounded native observer/cgroup collector smoke; never a scorecard result
-  perf-native {--prepare|--mode smoke|--validate-report REPORT} ...  pinned native Rust-facade performance companion
+  perf-native {--prepare|--mode smoke|--mode full|--validate-report REPORT} ...  pinned native Rust-facade performance companion; full waits for the ordered qualification chain
   perf-native-test  run focused native Rust-facade performance runner tests
   native-abi-inventory {collect|validate-report} ...  collect or replay the native x86 musl/owned ABI measurement inventory
   native-abi-inventory-test  run focused native ABI-inventory parser, replay, and dispatcher tests
@@ -2934,13 +2934,13 @@ prepare_native_facade_performance_arguments() {
             *) fail "unknown native facade performance argument: $1" ;;
         esac
     done
-    [ -n "$mode" ] || fail "perf-native requires --prepare, --mode smoke, or --validate-report REPORT"
+    [ -n "$mode" ] || fail "perf-native requires --prepare, --mode smoke|full, or --validate-report REPORT"
     NATIVE_FACADE_PERFORMANCE_MODE="$mode"
     if [ "$mode" = full ]; then
-        # The runner owns the unconditional correctness-predecessor refusal.
-        # Deliver it before Docker setup, input preparation, or measurement.
-        NATIVE_FACADE_PERFORMANCE_ARGUMENTS=(--mode full)
-        return
+        # The runner owns the ordered-chain admission.  Deliver its refusal,
+        # naming every open predecessor gate, before input preparation or
+        # Docker setup; the containerized runner checks it again.
+        python3 -B "$ROOT_DIR/compat/perf/native/x86_64_runner.py" --full-admission >&2 || exit 2
     fi
     [ -n "$rustybench_source" ] && [ -n "$rustix_source" ] || fail "perf-native requires --rustybench-source and --rustix-source"
     translated="$(translate_owned_posix_product "$rustybench_source")" || exit 2
@@ -2973,9 +2973,9 @@ prepare_native_facade_performance_arguments() {
             [ -z "$report" ] || fail "--prepare does not take --report"
             NATIVE_FACADE_PERFORMANCE_ARGUMENTS+=(--prepare)
         else
-            [ -n "$report" ] || fail "--mode smoke requires --report"
+            [ -n "$report" ] || fail "--mode $mode requires --report"
             translated="$(translate_owned_posix_product "$report" fresh-output)" || exit 2
-            NATIVE_FACADE_PERFORMANCE_ARGUMENTS+=(--mode smoke --report "$translated")
+            NATIVE_FACADE_PERFORMANCE_ARGUMENTS+=(--mode "$mode" --report "$translated")
         fi
     fi
 }
@@ -7230,7 +7230,7 @@ esac
 case "$command" in
     perf-native)
         case "$NATIVE_FACADE_PERFORMANCE_MODE" in
-            check|full)
+            check)
                 python3 -B "$ROOT_DIR/compat/perf/native/x86_64_runner.py" "$@"
                 ;;
             *)

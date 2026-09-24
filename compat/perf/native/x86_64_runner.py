@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build and retain bounded native x86 Rust-facade benchmark evidence.
+"""Build and retain native x86 Rust-facade benchmark evidence.
 
 This companion deliberately does not use ``compat/perf/native/run.py``.  That
 runner is frozen AArch64 infrastructure and creates its workspace beneath
-``/tmp``.  This file owns an x86-only, stock-std Rustybench smoke/check path
-whose mutable state stays below this checkout's ``.work/x86_64`` boundary.
+``/tmp``.  This file owns an x86-only, stock-std Rustybench smoke/full/check
+path whose mutable state stays below this checkout's ``.work/x86_64`` boundary.
 """
 
 from __future__ import annotations
@@ -33,6 +33,11 @@ PROFILE_SCHEMA = "crabc.perf.native-x86-rust-facade-profile/v1"
 BACKENDS = ("crabc", "rustix")
 SMOKE_GEOMETRY = (1, 2, 3)
 NORMAL_GEOMETRY = (5, 100, 1000)
+# One report shape serves both modes; the mode fixes its geometry, status, and
+# the per-invocation deadline of each timed Rustybench process.
+MODE_GEOMETRY = {"smoke": SMOKE_GEOMETRY, "full": NORMAL_GEOMETRY}
+MODE_STATUS = {"smoke": "bounded-implementation-smoke", "full": "complete-evidence"}
+MODE_REDUCED_TIMEOUT_SECONDS = {"smoke": 90, "full": 1800}
 RAW_RECORD_KEYS = {
     "name",
     "median_ns",
@@ -78,8 +83,7 @@ EXPECTED_SMOKE_GEOMETRY = {
     "sample_size": 3,
 }
 EXPECTED_ADMISSION = {
-    "full_correctness_predecessor": "unavailable",
-    "reason": "the fixed complete correctness predecessor reader is not implemented or wired",
+    "full_mode_reader": "compat/perf/x86_64_evidence.py correctness_admission",
 }
 EXPECTED_FIXTURE = {
     "frozen_source": "compat/perf/native/src/main.rs",
@@ -249,7 +253,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from scripts.rust_toolchain import pinned_toolchain
 
 
-SMOKE_BUILD_ENVIRONMENT_KEYS = {
+OFFLINE_BUILD_ENVIRONMENT_KEYS = {
     "PATH", "HOME", "LC_ALL", "LANG", "TZ", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
     "CARGO_HOME", "CARGO_TARGET_DIR", "TMPDIR", "CARGO_ENCODED_RUSTFLAGS", "CARGO_NET_OFFLINE",
 }
@@ -665,15 +669,41 @@ def validate_dependency_source_kinds(backend: str, records: Iterable[Mapping[str
             raise RunnerError(f"{backend} path dependency {name}@{version} unexpectedly has a registry source")
 
 
-def require_admitted_mode(mode: str) -> tuple[int, int, int]:
-    """Admit only the implementation smoke until a fixed reader exists."""
+def correctness_admission(root: Path) -> dict[str, Any]:
+    """Read the same ordered-chain admission as the C performance scorecard.
+
+    This supporting comparison has no separate correctness owner: full mode
+    waits for every qualification gate before ``performance.release``.
+    """
+
+    directory = str(root / "compat/perf")
+    if directory not in sys.path:
+        sys.path.insert(0, directory)
+    import x86_64_evidence
+
+    try:
+        return x86_64_evidence.correctness_admission(root)
+    except x86_64_evidence.EvidenceError as error:
+        raise RunnerError(str(error)) from error
+
+
+def require_admitted_mode(mode: str, root: Path | None = None) -> tuple[int, int, int]:
+    """Return one admitted mode's invocation/sample/iteration geometry.
+
+    The bounded smoke is always admitted and never a comparison result.  Full
+    mode is admitted only by the ordered qualification chain's reader; each
+    unmet predecessor gate is named in the refusal.
+    """
 
     if mode == "smoke":
         return SMOKE_GEOMETRY
     if mode == "full":
-        raise RunnerError(
-            "full mode is unavailable because the fixed complete correctness predecessor reader is unavailable"
-        )
+        admission = correctness_admission(root or repository_root())
+        if admission["status"] != "available":
+            raise RunnerError(
+                f"full mode is unavailable pending {admission['owner']}: " + "; ".join(admission["unmet"])
+            )
+        return NORMAL_GEOMETRY
     raise RunnerError(f"unknown native facade mode: {mode}")
 
 
@@ -1807,24 +1837,6 @@ def _run_backend(
         raise RunnerError(f"{backend} five-row correctness invocation failed")
     correctness_text = Path(correctness["stdout_path"]).read_text(encoding="utf-8", errors="replace")
     validate_correctness_stdout(correctness_text)
-    _, sample_count, sample_size = require_admitted_mode("smoke")
-    reduced = _run_retained_command(
-        invocation,
-        stage=f"reduced-{backend}",
-        argv=rustybench_invocation_argv(
-            artifact, kind="reduced", sample_count=sample_count, sample_size=sample_size,
-        ),
-        cwd=workspace,
-        environment=client_environment,
-        cpu=cpu,
-        timeout_seconds=90,
-    )
-    if reduced["returncode"] != 0:
-        raise RunnerError(f"{backend} reduced Rustybench invocation failed")
-    raw = _load_json_file(Path(reduced["stdout_path"]), f"{backend} reduced Rustybench stdout")
-    summary = validate_benchmark_report(
-        raw, row_names(profile), sample_count=sample_count, sample_size=sample_size
-    )
     build = {
         "command": build_command,
         "artifact": artifact,
@@ -1832,11 +1844,54 @@ def _run_backend(
         "metadata_command": metadata_command,
         "dependency_graph": graph,
     }
-    invocations = [
-        {"backend": backend, "kind": "correctness", "command": correctness},
-        {"backend": backend, "kind": "reduced", "command": reduced, "summary": summary},
-    ]
-    return build, invocations
+    return build, {"backend": backend, "kind": "correctness", "command": correctness}
+
+
+def invocation_roster(invocations_per_backend: int) -> list[tuple[str, str]]:
+    """Return the fixed ordered (backend, kind) roster for one mode.
+
+    Both correctness discoveries precede timing.  Timed rounds then alternate
+    backend order so neither backend always runs first on a warming host.
+    """
+
+    roster = [(backend, "correctness") for backend in BACKENDS]
+    for round_index in range(invocations_per_backend):
+        order = BACKENDS if round_index % 2 == 0 else tuple(reversed(BACKENDS))
+        roster.extend((backend, "reduced") for backend in order)
+    return roster
+
+
+def _run_reduced(
+    profile: Mapping[str, Any],
+    *,
+    invocation: Path,
+    workspace: Path,
+    artifact: Path,
+    backend: str,
+    round_index: int,
+    mode: str,
+    cpu: int,
+    client_environment: Mapping[str, str],
+) -> dict[str, Any]:
+    _, sample_count, sample_size = MODE_GEOMETRY[mode]
+    reduced = _run_retained_command(
+        invocation,
+        stage=f"reduced-{backend}-{round_index}",
+        argv=rustybench_invocation_argv(
+            artifact, kind="reduced", sample_count=sample_count, sample_size=sample_size,
+        ),
+        cwd=workspace,
+        environment=client_environment,
+        cpu=cpu,
+        timeout_seconds=MODE_REDUCED_TIMEOUT_SECONDS[mode],
+    )
+    if reduced["returncode"] != 0:
+        raise RunnerError(f"{backend} reduced Rustybench invocation failed")
+    raw = _load_json_file(Path(reduced["stdout_path"]), f"{backend} reduced Rustybench stdout")
+    summary = validate_benchmark_report(
+        raw, row_names(profile), sample_count=sample_count, sample_size=sample_size
+    )
+    return {"backend": backend, "kind": "reduced", "command": reduced, "summary": summary}
 
 
 def _serialise_tool_record(root: Path, value: Mapping[str, Any]) -> dict[str, Any]:
@@ -1976,23 +2031,27 @@ def prepare_dependencies(
     return report_path
 
 
-def run_smoke(
+def run_mode(
     root: Path,
     *,
+    mode: str,
     report_path: Path,
     work_root: Path,
     rustybench_source: Path,
     rustix_source: Path,
 ) -> dict[str, Any]:
+    """Build both backends once, then run the mode's interleaved timed roster."""
+
     profile = load_profile(root)
     _execution_environment(profile)
-    invocations_per_backend, sample_count, sample_size = require_admitted_mode("smoke")
+    invocations_per_backend, _sample_count, _sample_size = require_admitted_mode(mode, root)
+    admission = correctness_admission(root)
     work_root = _ensure_private_directory(root, work_root)
     report_path = require_private_work_path(root, report_path)
     cargo_home = _ensure_private_directory(root, work_root / "native-facade-x86-cargo-home")
     _check_static_lock_has_no_quanta(_profile_file(root, profile, "lock_template"))
     before = capture_source_state(root, profile, rustybench_source, rustix_source)
-    invocation = Path(tempfile.mkdtemp(prefix="native-facade-x86-smoke-", dir=work_root))
+    invocation = Path(tempfile.mkdtemp(prefix=f"native-facade-x86-{mode}-", dir=work_root))
     invocation = require_private_work_path(root, invocation)
     workspace, rendered = _render_workspace(root, profile, invocation, rustybench_source, rustix_source)
     allowed_affinity = tuple(sorted(os.sched_getaffinity(0)))
@@ -2005,9 +2064,9 @@ def run_smoke(
     diagnostics = _cpu_diagnostics(invocation, cpu, allowed_affinity)
     tools = _capture_tool_versions(invocation, build_environment, cpu)
     builds: dict[str, Any] = {}
-    invocation_records: list[dict[str, Any]] = []
+    correctness_records: dict[str, dict[str, Any]] = {}
     for backend in BACKENDS:
-        build, backend_invocations = _run_backend(
+        build, correctness_records[backend] = _run_backend(
             root,
             profile,
             invocation=invocation,
@@ -2021,32 +2080,40 @@ def run_smoke(
             client_environment=client_environment,
         )
         builds[backend] = build
-        invocation_records.extend(backend_invocations)
+    invocation_records: list[dict[str, Any]] = []
+    rounds = {backend: 0 for backend in BACKENDS}
+    for backend, kind in invocation_roster(invocations_per_backend):
+        if kind == "correctness":
+            invocation_records.append(correctness_records[backend])
+            continue
+        invocation_records.append(_run_reduced(
+            profile, invocation=invocation, workspace=workspace, artifact=builds[backend]["artifact"],
+            backend=backend, round_index=rounds[backend], mode=mode, cpu=cpu,
+            client_environment=client_environment,
+        ))
+        rounds[backend] += 1
     after = capture_source_state(root, profile, rustybench_source, rustix_source)
-    _require_same(after, before, "source inputs after native facade smoke")
+    _require_same(after, before, f"source inputs after native facade {mode}")
     normal = _require_mapping(profile.get("normal"), "normal profile")
-    admission = _require_mapping(profile.get("admission"), "profile admission")
+    smoke_invocations, smoke_sample_count, smoke_sample_size = SMOKE_GEOMETRY
     report: dict[str, Any] = {
         "schema": SCHEMA,
-        "status": "bounded-implementation-smoke",
-        "mode": "smoke",
+        "status": MODE_STATUS[mode],
+        "mode": mode,
         "profile": file_identity(_physical_existing(root, "repository root") / "compat/perf/native/x86_64_profile.toml"),
         "work": {
             "work_root": _work_relative(root, work_root),
             "invocation": _work_relative(root, invocation),
             "cargo_home": _work_relative(root, cargo_home),
         },
-        "admission": {
-            "full_mode": admission.get("full_correctness_predecessor"),
-            "reason": admission.get("reason"),
-        },
+        "admission": admission,
         "plan": {
             "backends": list(BACKENDS),
             "smoke": {
-                "invocations_per_backend": invocations_per_backend,
-                "sample_count": sample_count,
-                "sample_size": sample_size,
-                "iter_count": sample_count * sample_size,
+                "invocations_per_backend": smoke_invocations,
+                "sample_count": smoke_sample_count,
+                "sample_size": smoke_sample_size,
+                "iter_count": smoke_sample_count * smoke_sample_size,
             },
             "normal_contract": {
                 "invocations_per_backend": normal.get("invocations_per_backend"),
@@ -2440,6 +2507,7 @@ def _validate_invocation(
     artifact: Path,
     workspace: Path,
     cpu: int,
+    mode: str,
 ) -> None:
     required_keys = {"backend", "kind", "command"}
     if expected_kind == "reduced":
@@ -2474,7 +2542,7 @@ def _validate_invocation(
         )
         validate_correctness_stdout(text)
         return
-    _, sample_count, sample_size = require_admitted_mode("smoke")
+    _, sample_count, sample_size = MODE_GEOMETRY[mode]
     expected = rustybench_invocation_argv(
         Path(expected_program), kind="reduced", sample_count=sample_count, sample_size=sample_size,
     )
@@ -2495,7 +2563,12 @@ def validate_report(
     rustybench_source: Path,
     rustix_source: Path,
 ) -> None:
-    """Replay retained smoke evidence without Cargo, a container, or a benchmark."""
+    """Replay retained smoke or full evidence without Cargo, a container, or a benchmark.
+
+    Full-mode evidence additionally requires the ordered qualification chain to
+    admit it at replay time; a report records that reader's result and cannot
+    assert it.
+    """
 
     root = _physical_existing(root, "repository root")
     report_path = require_private_work_path(root, report_path)
@@ -2507,7 +2580,8 @@ def validate_report(
         },
         "native facade report",
     )
-    if report["schema"] != SCHEMA or report["status"] != "bounded-implementation-smoke" or report["mode"] != "smoke":
+    mode = report["mode"]
+    if report["schema"] != SCHEMA or mode not in MODE_STATUS or report["status"] != MODE_STATUS[mode]:
         raise RunnerError("native facade report status/schema/mode differs")
     profile = load_profile(root)
     profile_path = root / "compat/perf/native/x86_64_profile.toml"
@@ -2525,10 +2599,11 @@ def validate_report(
         raise RunnerError("report invocation is not a private work subtree")
     if cargo_home.is_symlink() or not cargo_home.is_dir() or not _within(cargo_home, work_root):
         raise RunnerError("report Cargo home is not a private work subtree")
-    admission = _require_exact_keys(report["admission"], {"full_mode", "reason"}, "report admission")
-    profile_admission = _require_mapping(profile.get("admission"), "profile admission")
-    if admission["full_mode"] != "unavailable" or admission["reason"] != profile_admission.get("reason"):
-        raise RunnerError("report full-mode admission differs")
+    admission = _require_exact_keys(report["admission"], {"status", "owner", "unmet"}, "report admission")
+    if admission != correctness_admission(root):
+        raise RunnerError("report admission differs from the ordered qualification chain")
+    if mode == "full" and admission["status"] != "available":
+        raise RunnerError("full-mode report is not admitted by the ordered qualification chain")
     plan = _require_exact_keys(report["plan"], {"backends", "smoke", "normal_contract"}, "report plan")
     if plan["backends"] != list(BACKENDS):
         raise RunnerError("report backend roster differs")
@@ -2552,7 +2627,7 @@ def validate_report(
     environment = _require_exact_keys(report["environment"], {"build", "client", "scrubbed_ambient_keys"}, "report environment")
     build_environment = _require_mapping(environment["build"], "report build environment")
     client_environment = _require_mapping(environment["client"], "report client environment")
-    if set(build_environment) != SMOKE_BUILD_ENVIRONMENT_KEYS or not all(
+    if set(build_environment) != OFFLINE_BUILD_ENVIRONMENT_KEYS or not all(
         isinstance(value, str) for value in build_environment.values()
     ):
         raise RunnerError("report build environment shape differs")
@@ -2618,12 +2693,9 @@ def validate_report(
             cpu=cpu,
         )
     invocations = report["invocations"]
-    if not isinstance(invocations, list) or len(invocations) != 4:
+    expected_roster = invocation_roster(MODE_GEOMETRY[mode][0])
+    if not isinstance(invocations, list) or len(invocations) != len(expected_roster):
         raise RunnerError("report invocation roster differs")
-    expected_roster = [
-        ("crabc", "correctness"), ("crabc", "reduced"),
-        ("rustix", "correctness"), ("rustix", "reduced"),
-    ]
     for value, (backend, kind) in zip(invocations, expected_roster, strict=True):
         _validate_invocation(
             root,
@@ -2634,6 +2706,7 @@ def validate_report(
             artifact=artifacts[backend],
             workspace=workspace,
             cpu=cpu,
+            mode=mode,
         )
 
 
@@ -2641,21 +2714,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--prepare", action="store_true", help="fetch the static lock into private Cargo state")
-    action.add_argument("--mode", choices=("smoke", "full"), help="run the bounded smoke; full is intentionally unavailable")
-    action.add_argument("--validate-report", type=Path, help="host-replay one retained smoke report without Cargo")
-    parser.add_argument("--report", type=Path, help="required output path for --mode smoke")
+    action.add_argument("--mode", choices=("smoke", "full"),
+                        help="run the bounded smoke, or the 5/100/1000 full comparison once the ordered chain admits it")
+    action.add_argument("--full-admission", action="store_true",
+                        help="print the ordered-chain full-mode admission; fail while any predecessor gate is incomplete")
+    action.add_argument("--validate-report", type=Path, help="host-replay one retained report without Cargo")
+    parser.add_argument("--report", type=Path, help="required output path for --mode")
     parser.add_argument("--work-root", type=Path, default=None, help="private root below .work/x86_64")
     # Source paths are required for every executable/replay action, but not
     # syntactically required here: an attempted full mode must reach its
-    # unconditional admission refusal before an incidental missing path can
-    # obscure that boundary.
+    # admission refusal before an incidental missing path can obscure it.
     parser.add_argument("--rustybench-source", type=Path, help="physical pinned Rustybench source")
     parser.add_argument("--rustix-source", type=Path, help="physical pinned Rustix source")
     parsed = parser.parse_args(argv)
-    if parsed.mode == "smoke" and parsed.report is None:
-        parser.error("--mode smoke requires --report")
-    if parsed.report is not None and parsed.mode != "smoke":
-        parser.error("--report is valid only with --mode smoke")
+    if parsed.mode is not None and parsed.report is None:
+        parser.error("--mode requires --report")
+    if parsed.report is not None and parsed.mode is None:
+        parser.error("--report is valid only with --mode")
     return parsed
 
 
@@ -2664,10 +2739,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     root = repository_root()
     work_root = arguments.work_root or root / ".work/x86_64"
     try:
+        if arguments.full_admission:
+            admission = correctness_admission(root)
+            print(json.dumps(admission, indent=2, sort_keys=True))
+            require_admitted_mode("full", root)
+            return 0
         if arguments.mode == "full":
             # Keep this before source resolution: a full request is refused by
             # admission itself, never by an incidental source/path failure.
-            require_admitted_mode("full")
+            require_admitted_mode("full", root)
         rustybench_source, rustix_source = _require_sources(arguments.rustybench_source, arguments.rustix_source)
         if arguments.prepare:
             output = prepare_dependencies(
@@ -2688,21 +2768,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(arguments.validate_report)
             return 0
         assert arguments.mode is not None
-        # The unconditional admission gate intentionally precedes image/source
-        # setup, so no full execution can be smuggled through an input path.
-        require_admitted_mode(arguments.mode)
-        if arguments.mode == "full":
-            raise AssertionError("full admission should have raised")
-        report = run_smoke(
+        report = run_mode(
             root,
+            mode=arguments.mode,
             report_path=arguments.report,
             work_root=work_root,
             rustybench_source=rustybench_source,
             rustix_source=rustix_source,
         )
         print(arguments.report)
-        if report["status"] != "bounded-implementation-smoke":
-            raise RunnerError("smoke did not retain its bounded status")
+        if report["status"] != MODE_STATUS[arguments.mode]:
+            raise RunnerError(f"{arguments.mode} did not retain its status")
         return 0
     except RunnerError as error:
         print(f"ERROR: {error}", file=sys.stderr)

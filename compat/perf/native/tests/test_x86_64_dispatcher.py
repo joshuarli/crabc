@@ -138,11 +138,28 @@ class NativeFacadeDispatcherTests(unittest.TestCase):
         self.assertEqual(args[args.index("--validate-report") + 1], str(report))
         self.assertEqual(args[args.index("--rustix-source") + 1], str(self.sources["rustix"]))
 
-    def test_full_mode_reaches_runner_before_input_or_docker_setup(self) -> None:
+    def test_refused_full_admission_stops_before_input_or_docker_setup(self) -> None:
+        runner = self.checkout / "compat/perf/native/x86_64_runner.py"
+        runner.write_text(
+            "import json, os, pathlib, sys\n"
+            "pathlib.Path(os.environ['DISPATCH_RUNNER_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+            "sys.exit(2)\n",
+            encoding="utf-8",
+        )
         result = self.invoke("--mode", "full")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 2)
         self.assertFalse(self.docker_log.exists())
-        self.assertEqual(json.loads(self.runner_log.read_text()), ["--mode", "full"])
+        self.assertEqual(json.loads(self.runner_log.read_text()), ["--full-admission"])
+
+    def test_admitted_full_mode_runs_the_smoke_container_route(self) -> None:
+        report = self.work / "full.json"
+        result = self.invoke("--mode", "full", "--report", str(report.relative_to(self.checkout)), *self.source_arguments())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(self.runner_log.read_text()), ["--full-admission"])
+        args = self.docker_run()
+        self.assertEqual(args[args.index("--network") + 1], "none")
+        self.assertEqual(args[args.index("--mode") + 1], "full")
+        self.assertEqual(args[args.index("--report") + 1], "/workspace/.work/x86_64/full.json")
 
     def test_source_symlink_escape_is_rejected_before_docker(self) -> None:
         outside = Path(self.temporary.name) / "outside"
