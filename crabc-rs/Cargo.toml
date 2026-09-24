@@ -94,6 +94,24 @@ crate-type = ["staticlib"]
 required-features = ["runtime-thread"]
 
 [[example]]
+name = "x86_64_loader_facade_probe"
+path = "examples/x86_64_loader_facade_probe.rs"
+crate-type = ["staticlib"]
+required-features = ["runtime-loader"]
+
+[[example]]
+name = "x86_64_thread_facade_probe"
+path = "examples/x86_64_thread_facade_probe.rs"
+crate-type = ["staticlib"]
+required-features = ["runtime-thread-alloc"]
+
+[[example]]
+name = "x86_64_cfile_facade_probe"
+path = "examples/x86_64_cfile_facade_probe.rs"
+crate-type = ["staticlib"]
+required-features = ["runtime-stdio"]
+
+[[example]]
 name = "fenv_direct_probe"
 path = "examples/fenv_direct_probe.rs"
 crate-type = ["staticlib"]

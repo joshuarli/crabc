@@ -1051,6 +1051,11 @@ mod sysv_message_shared_memory;
 #[cfg_attr(crabc_x86_dynamic_runtime, path = "general_dlfcn.rs")]
 #[cfg_attr(not(crabc_x86_dynamic_runtime), path = "fixed_graph_dlfcn.rs")]
 mod fixed_graph_dlfcn;
+// The private `__crabc_runtime_v1` table for crabc-rs's loader, thread, and
+// memory-stream facades composes the installed dynamic owners above.
+#[cfg(crabc_x86_dynamic_runtime)]
+#[path = "runtime_facade_v1.rs"]
+mod runtime_facade_v1;
 
 // The installed-product builders pair this cfg with the C define that
 // suppresses mimalloc's compiler callbacks, then verify both artifact halves.

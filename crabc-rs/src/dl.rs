@@ -1,11 +1,18 @@
 //! Native dynamic-loading access through crabc's private runtime table.
 //!
-//! `libldso.so` owns the process-wide loaded-object graph, loader lock, and
-//! thread-local loader diagnostics. This module therefore does not link a
+//! crabc's dynamic loader (`libldso.so` on AArch64, the installed
+//! `ld-crabc-x86_64.so.1` interpreter on x86-64) owns the process-wide
+//! loaded-object graph and loader lock. This module therefore does not link a
 //! second loader implementation and does not call public `dlopen`/`dlsym`/
 //! `dlclose`/`dlerror` entry points. It obtains the versioned private runtime
 //! table from `libc.so`; that table copies diagnostics and address metadata
 //! into caller-owned storage before returning.
+//!
+//! Close and naming follow the selected target loader. The x86-64 loader
+//! keeps pinned musl 1.2.6's contract: a successful close validates and
+//! releases the handle, but the object stays mapped and its destructors run
+//! at process exit; copied object names are the paths it recorded, not the
+//! requested spelling.
 
 use core::ffi::{c_void, CStr};
 use core::marker::PhantomData;
@@ -21,9 +28,10 @@ use crabc_core::runtime::{
 bitflags! {
     /// Typed `RTLD_*` scope and resolution flags accepted by [`Library::open`].
     ///
-    /// The current Linux/AArch64 loader records `GLOBAL` scope and accepts the
-    /// lazy/now choice. Other platform-specific dlfcn flags are intentionally not
-    /// advertised until their crabc loader semantics have native evidence.
+    /// The current Linux/AArch64 and x86-64 loaders record `GLOBAL` scope and
+    /// accept the lazy/now choice. Other platform-specific dlfcn flags are
+    /// intentionally not advertised until their crabc loader semantics have
+    /// native evidence.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct OpenFlags: i32 {

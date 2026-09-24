@@ -46,9 +46,11 @@ unsafe fn diagnostic(prefix: &[u8], name: *const u8, suffix: &[u8]) {
     unsafe { *output.add(count) = 0; ERROR_PENDING = true; }
 }
 
-struct CancellationGuard { previous: c_int, changed: bool }
+/// Musl disables deferred cancellation across one loader transaction. The
+/// private native-facade table shares this guard with the C entry points.
+pub(super) struct CancellationGuard { previous: c_int, changed: bool }
 impl CancellationGuard {
-    unsafe fn enter() -> Self {
+    pub(super) unsafe fn enter() -> Self {
         let mut previous = 0;
         let changed = unsafe { super::pthread_cancel::pthread_setcancelstate(1, &mut previous) } == 0;
         // The initial thread currently has no selected cancellation slot.
@@ -70,18 +72,32 @@ pub unsafe extern "C" fn dlopen(name: *const c_char, flags: c_int) -> *mut c_voi
     let mut error = 0;
     let handle = unsafe { __crabc_x86_64_runtime_open(name.cast(), flags, &mut error) };
     if error != 0 {
-        let reason: &[u8] = match error {
-            2 => b": No such file or directory", 12 => b": Out of memory",
-            13 => b": Permission denied", 22 => b": Invalid argument", 36 => b": Filename too long",
-            10001 => b": Invalid ELF object", 10002 => b": Relocation failed",
-            10003 => b": TLS preparation failed", 10004 => b": Library is not already loaded",
-            10005 => b": Process finalization has begun",
-            10008 => b": State is inconsistent due to multithreaded fork",
-            _ => b": Loader admission failed",
-        };
-        unsafe { diagnostic(b"Error loading shared library ", name.cast(), reason); }
+        unsafe { diagnostic(OPEN_FAILURE_PREFIX, name.cast(), open_failure_reason(error)); }
     }
     handle
+}
+
+/// Prefix of every runtime-open diagnostic; the requested name follows.
+pub(super) const OPEN_FAILURE_PREFIX: &[u8] = b"Error loading shared library ";
+/// Private runtime-symbol error code for a handle outside the registry.
+pub(super) const SYMBOL_INVALID_HANDLE: c_int = 10006;
+/// Complete diagnostic for an unknown loader handle.
+pub(super) const INVALID_HANDLE_DIAGNOSTIC: &[u8] = b"Invalid library handle";
+/// Prefix of a symbol-lookup diagnostic; the requested symbol name follows.
+pub(super) const SYMBOL_NOT_FOUND_PREFIX: &[u8] = b"Symbol not found: ";
+
+/// Suffix naming one private runtime-open error code, shared by `dlerror`
+/// and the copied native-facade diagnostic.
+pub(super) fn open_failure_reason(error: c_int) -> &'static [u8] {
+    match error {
+        2 => b": No such file or directory", 12 => b": Out of memory",
+        13 => b": Permission denied", 22 => b": Invalid argument", 36 => b": Filename too long",
+        10001 => b": Invalid ELF object", 10002 => b": Relocation failed",
+        10003 => b": TLS preparation failed", 10004 => b": Library is not already loaded",
+        10005 => b": Process finalization has begun",
+        10008 => b": State is inconsistent due to multithreaded fork",
+        _ => b": Loader admission failed",
+    }
 }
 
 // SysV AMD64 supplies the original C return address at [rsp]. A tail branch
@@ -105,8 +121,8 @@ unsafe extern "C" fn __crabc_x86_general_dlsym(handle: *mut c_void, name: *const
     let mut error = 0;
     let address = unsafe { __crabc_x86_64_runtime_symbol(handle, name.cast(), caller, &mut error) };
     if error != 0 {
-        if error == 10006 { unsafe { diagnostic(b"Invalid library handle", ptr::null(), b""); } }
-        else { unsafe { diagnostic(b"Symbol not found: ", name.cast(), b""); } }
+        if error == SYMBOL_INVALID_HANDLE { unsafe { diagnostic(INVALID_HANDLE_DIAGNOSTIC, ptr::null(), b""); } }
+        else { unsafe { diagnostic(SYMBOL_NOT_FOUND_PREFIX, name.cast(), b""); } }
     }
     address
 }
@@ -117,7 +133,7 @@ unsafe extern "C" fn __crabc_x86_general_dlsym(handle: *mut c_void, name: *const
 #[no_mangle]
 pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
     let result = unsafe { __crabc_x86_64_runtime_close(handle) };
-    if result != 0 { unsafe { diagnostic(b"Invalid library handle", ptr::null(), b""); } }
+    if result != 0 { unsafe { diagnostic(INVALID_HANDLE_DIAGNOSTIC, ptr::null(), b""); } }
     result
 }
 
@@ -150,7 +166,7 @@ pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, output: *mu
         let mut link_map = ptr::null_mut();
         let error = unsafe { __crabc_x86_64_runtime_information(handle, &mut link_map) };
         if error != 0 {
-            unsafe { diagnostic(b"Invalid library handle", ptr::null(), b""); }
+            unsafe { diagnostic(INVALID_HANDLE_DIAGNOSTIC, ptr::null(), b""); }
             return -1;
         }
         let mut number = [0u8; 12];
@@ -163,7 +179,7 @@ pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, output: *mu
     }
     let error = unsafe { __crabc_x86_64_runtime_information(handle, output.cast()) };
     if error == 0 { 0 }
-    else { unsafe { diagnostic(b"Invalid library handle", ptr::null(), b""); } -1 }
+    else { unsafe { diagnostic(INVALID_HANDLE_DIAGNOSTIC, ptr::null(), b""); } -1 }
 }
 
 /// # Safety

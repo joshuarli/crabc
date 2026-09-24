@@ -35,7 +35,11 @@ pub mod buffer;
 // timezone state, or public x86-64 support.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 mod civil_time;
-#[cfg(all(feature = "runtime-stdio", target_arch = "aarch64"))]
+// The three private RuntimeV1 consumers (`cfile`, `dl`, `runtime_thread`)
+// are target-neutral. Each opt-in feature needs a crabc process whose loaded
+// libc exports `__crabc_runtime_v1`; on x86-64 that is the installed owned
+// dynamic product.
+#[cfg(feature = "runtime-stdio")]
 pub mod cfile;
 pub mod collections;
 // The staged x86-64 facade exposes only `buffer`, `collections`, `event`
@@ -124,7 +128,6 @@ pub mod event;
 #[path = "event_x86_64.rs"]
 pub mod event;
 #[cfg(feature = "runtime-loader")]
-#[cfg(target_arch = "aarch64")]
 pub mod dl;
 pub mod fd;
 pub mod fenv;
@@ -182,7 +185,7 @@ pub mod rand;
 mod raw_dir;
 #[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod resolver;
-#[cfg(all(feature = "runtime-thread", target_arch = "aarch64"))]
+#[cfg(feature = "runtime-thread")]
 pub mod runtime_thread;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod shm;
