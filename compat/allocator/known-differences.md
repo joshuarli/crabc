@@ -133,9 +133,10 @@ program with a replaced `malloc` still receives an internal mallocng pointer
 from `aligned_alloc`, which its `free` cannot own. The owned static archives
 refuse there too, so no backend pointer reaches an application allocator.
 
-The static archive binds the malloc family weak, because its entries share
-one object where musl uses separate archive members. libc.so keeps musl's
-bindings. `./scripts/dev-x86_64.sh owned-allocator-override` is the installed
+The native-shadow static archive binds the malloc family weak, because its
+entries share one object where musl uses separate archive members. The
+C-backend static archive instead gives each entry its own member with musl's
+binding. libc.so keeps musl's bindings. `./scripts/dev-x86_64.sh owned-allocator-override` is the installed
 native-shadow evidence; `./scripts/dev-x86_64.sh owned-static-replacement`
 covers the default static product.
 

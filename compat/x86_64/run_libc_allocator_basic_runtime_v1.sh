@@ -249,18 +249,13 @@ expected_wrapper_symbols=(
 wrapper_elf_symbols="$work_dir/wrapper-symbols"
 readelf --symbols --wide "$work_dir/owners/${allocator_members[0]}" \
     >"$wrapper_elf_symbols"
-# The owned static archive binds every allocation entry weak, so an
-# application's own definitions preempt them as musl's separate members allow
-# (libc/src/allocator_mimalloc.rs); only the private witness stays strong.
-wrapper_binding() {
-    case "$1" in
-        __crabc_x86_allocator_runtime_v1) printf GLOBAL ;;
-        *) printf WEAK ;;
-    esac
-}
 for symbol in "${expected_wrapper_symbols[@]}"; do
-    assert_elf_function_binding "$wrapper_elf_symbols" "$symbol" \
-        "$(wrapper_binding "$symbol")" "allocator wrapper"
+    case "$symbol" in
+        malloc) binding=WEAK ;;
+        *) binding=GLOBAL ;;
+    esac
+    assert_elf_function_binding "$wrapper_elf_symbols" "$symbol" "$binding" \
+        "allocator wrapper"
 done
 # Codegen may place unrelated owned runtime definitions in either object. The
 # source closure and final-link audit own the complete archive boundary; these
@@ -337,8 +332,12 @@ for symbol in _start __crabc_x86_allocator_runtime_v1 \
         || fail "candidate lacks ${symbol}"
 done
 for symbol in "${expected_wrapper_symbols[@]}"; do
-    assert_elf_function_binding "$candidate_symbols" "$symbol" \
-        "$(wrapper_binding "$symbol")" "candidate"
+    case "$symbol" in
+        malloc) binding=WEAK ;;
+        *) binding=GLOBAL ;;
+    esac
+    assert_elf_function_binding "$candidate_symbols" "$symbol" "$binding" \
+        "candidate"
 done
 assert_elf_function_binding "$candidate_symbols" malloc_usable_size GLOBAL \
     "candidate observer"

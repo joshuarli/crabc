@@ -7,7 +7,7 @@ selects a general allocator policy.
 
 The fixed-C producer account remains the authority for the exact C member and
 the seven Rust-root imports. This component adds the consumer side: the static
-Rust root imports exactly `_mi_auto_process_init`, `_mi_auto_process_done`,
+Rust members import exactly `_mi_auto_process_init`, `_mi_auto_process_done`,
 `mi_free`, `mi_malloc_aligned`, `mi_realloc_aligned`, `mi_usable_size`, and
 `mi_zalloc`; the same final shared C definitions remain local. Its source
 check binds the C ABI wrappers for `malloc`, `calloc`, `realloc`,
@@ -18,11 +18,12 @@ to the selected x86 root.
 The same producer account authenticates the selected C static member. This
 reader separately records its finite inverse dependency roster: 27 `NOTYPE
 GLOBAL DEFAULT UND` imports from that one current archive member to selected
-public Rust libc providers. Each row is reconstructed from the current static
+public Rust libc providers, each defined by exactly one Rust archive member
+(the installed archive emits one member per Rust module). Each row is reconstructed from the current static
 archive and shared libc facts, including the exact `GLOBAL` or `WEAK` provider
 binding in static `.symtab` and shared `.dynsym`/`.symtab`. The static ET_EXEC
 and static-PIE startup links must each select both that C member and the static
-Rust root in their LLD map and trace sidecars. The same installed-header object
+Rust provider member in their LLD map and trace sidecars. The same installed-header object
 is also linked through the existing dynamic PIE and non-PIE roots, while the
 shared provider rows bind that selected shared product. This proves a finite
 ordinary link-availability boundary; it does not claim that every imported API
@@ -37,8 +38,8 @@ fixed v3.5.0 Rust-port oracle.
 `malloc_usable_size` are exact global definitions. The reader checks each
 Rust `extern "C"` declaration head, its no-mangle/weak state, and its selected
 backend or wrapper call; a name match alone cannot admit a different C ABI.
-It checks those same ten definition rows in the selected static Rust archive
-member and in both `.dynsym` and `.symtab` of the selected shared libc. Every
+It checks those same ten definition rows, each in the one static archive
+member that defines it, and in both `.dynsym` and `.symtab` of the selected shared libc. Every
 row must be a defined, unversioned `FUNC DEFAULT` definition with its exact
 weak/global binding.
 

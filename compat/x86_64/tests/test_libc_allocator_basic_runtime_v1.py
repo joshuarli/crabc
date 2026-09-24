@@ -90,7 +90,7 @@ class X86LibcAllocatorBasicRuntimeV1Tests(unittest.TestCase):
             ROOT / "compat" / "x86_64" / "run_libc_allocator_basic_runtime_v1.sh"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("if total == 0 {\n        return malloc(0);\n    }", wrapper)
+        self.assertIn("if total == 0 {\n            return malloc(0);\n        }", wrapper)
 
         for required in (
             "CRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE",

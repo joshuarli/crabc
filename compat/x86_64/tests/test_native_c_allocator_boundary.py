@@ -121,9 +121,9 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                     "name": "selected-c-mimalloc.o", "member_index": 1,
                     "member_occurrence": 0, "sha256": "a" * 64,
                 },
-                "static_rust_root_member": {
-                    "name": "native-c-root.rcgu.o", "member_index": 0, "member_occurrence": 0,
-                },
+                "static_rust_provider_members": [
+                    {"member": "native-c-root.rcgu.o", "member_index": 0, "member_occurrence": 0},
+                ],
             }
             for mode in BOUNDARY.STATIC_MODES:
                 receipt = output / f"static-{mode}.crabc-link.json"
@@ -299,17 +299,31 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 "visibility": "DEFAULT", "section_index": "9", "version": None,
                 "version_default": False, "size_bytes": 1,
             }
-        static = {"member": "rust.o", "member_occurrence": 0, "symbol_tables": [{"name": ".symtab", "rows": [row(name, binding) for name, binding in expected.items()]}]}
+        # The installed archive places each wrapper in its own member.
+        static = [
+            {"member": f"{name}.rcgu.o", "member_index": index, "member_occurrence": 0,
+             "symbol_tables": [{"name": ".symtab", "rows": [row(name, binding)]}]}
+            for index, (name, binding) in enumerate(expected.items())
+        ]
         shared = {"symbol_tables": [
             {"name": ".dynsym", "rows": [row(name, binding) for name, binding in expected.items()]},
             {"name": ".symtab", "rows": [row(name, binding) for name, binding in expected.items()]},
         ]}
-        facts = {"facts": {"candidate-static": [static], "candidate-shared": shared}}
-        account = {"archive_map": {"static_rust_root_member": "rust.o"}}
-        self.assertEqual(BOUNDARY._wrapper_product_bindings(facts, account, expected)["static_member"], "rust.o")
+        facts = {"facts": {"candidate-static": static, "candidate-shared": shared}}
+        bindings = BOUNDARY._wrapper_product_bindings(facts, expected)
+        self.assertEqual(bindings["static_members"]["free"],
+                         {"member": "free.rcgu.o", "member_index": 4, "member_occurrence": 0})
+        static[1]["symbol_tables"][0]["rows"].append(row("free", "GLOBAL"))
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "free is not defined by exactly one archive member"):
+            BOUNDARY._wrapper_product_bindings(facts, expected)
+        static[1]["symbol_tables"][0]["rows"].pop()
+        static[4]["symbol_tables"][0]["rows"][0]["binding"] = "WEAK"
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "static wrapper binding differs for free"):
+            BOUNDARY._wrapper_product_bindings(facts, expected)
+        static[4]["symbol_tables"][0]["rows"][0]["binding"] = "GLOBAL"
         shared["symbol_tables"][0]["rows"][1]["binding"] = "WEAK"
         with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, r"shared \.dynsym wrapper binding differs for calloc"):
-            BOUNDARY._wrapper_product_bindings(facts, account, expected)
+            BOUNDARY._wrapper_product_bindings(facts, expected)
 
     def test_source_binding_rejects_an_abi_parameter_type_drift(self) -> None:
         wrapper = (ROOT / "libc/src/allocator_mimalloc.rs").read_text(encoding="utf-8")

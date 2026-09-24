@@ -607,7 +607,7 @@ def _crate_pin(contract: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _member_records(value: object, description: str) -> dict[str, str]:
-    require(type(value) is list and len(value) == 2, f"{description} does not contain exactly two members")
+    require(type(value) is list and len(value) >= 2, f"{description} does not contain a C and a Rust member")
     result: dict[str, str] = {}
     for index, raw in enumerate(value):
         record = mapping(raw, f"{description} member {index}", {"name", "sha256"})
@@ -617,12 +617,17 @@ def _member_records(value: object, description: str) -> dict[str, str]:
     return result
 
 
-def _member_roles(records: Mapping[str, str], description: str) -> tuple[str, str]:
+def _member_roles(records: Mapping[str, str], description: str) -> tuple[str, list[str]]:
+    """Split selected members into the one C allocator object and the Rust objects.
+
+    The installed static archive has one Rust member per libc module; the
+    shared link selects one Rust object.
+    """
     c_members = [name for name in records if re.fullmatch(r"[0-9a-f]+-static\.o", name) is not None]
-    rust_members = [name for name in records if name.endswith(".rcgu.o")]
-    require(len(c_members) == 1 and len(rust_members) == 1 and set(c_members + rust_members) == set(records),
+    rust_members = sorted(name for name in records if name.endswith(".rcgu.o"))
+    require(len(c_members) == 1 and rust_members and set(c_members + rust_members) == set(records),
             f"{description} member roles differ")
-    return c_members[0], rust_members[0]
+    return c_members[0], rust_members
 
 
 def _shared_member_records(value: object, description: str) -> dict[str, str]:
@@ -637,14 +642,14 @@ def _shared_member_records(value: object, description: str) -> dict[str, str]:
 
 def _validate_static_provenance(
     provenance: object, contract: Mapping[str, Any],
-) -> tuple[str, str, str, str, dict[str, str]]:
+) -> tuple[str, str, str, list[str], dict[str, str]]:
     record = mapping(provenance, "static allocator provenance")
     require_keys(record, {"archive", "selected_members", "allocator_backend"}, "static allocator provenance")
     archive = mapping(record["archive"], "static libc archive", {"name", "sha256"})
     require(archive["name"] == "libc.a", "static allocator archive name differs")
     archive_sha256 = sha256(archive["sha256"], "static allocator archive SHA-256")
     selected = _member_records(record["selected_members"], "static allocator selected members")
-    c_member, rust_member = _member_roles(selected, "static allocator selected")
+    c_member, rust_members = _member_roles(selected, "static allocator selected")
     backend = mapping(record["allocator_backend"], "static allocator backend")
     require_keys(
         backend,
@@ -664,7 +669,7 @@ def _validate_static_provenance(
     require(backend["target_flags"] == contract["build"]["static_target_flags"], "static allocator build flags differ")
     require(backend["lifecycle_profile"] == contract["build"]["lifecycle_profile"],
             "static allocator lifecycle profile differs")
-    return archive_sha256, producer_archive_sha256, c_member, rust_member, selected
+    return archive_sha256, producer_archive_sha256, c_member, rust_members, selected
 
 
 def _validate_shared_provenance(
@@ -685,7 +690,9 @@ def _validate_shared_provenance(
     require(record["allocator_flags"] == contract["build"]["shared_allocator_flags"], "shared allocator build flags differ")
     selected = _shared_member_records(record["selected_members"], "shared allocator selected members")
     require(selected.get(c_member) == c_sha256, "shared selected member differs from static C provider")
-    _, rust_member = _member_roles(selected, "shared allocator selected")
+    _, rust_members = _member_roles(selected, "shared allocator selected")
+    require(len(rust_members) == 1, "shared allocator selected member roles differ")
+    rust_member = rust_members[0]
     visibility = mapping(
         record["shared_mimalloc_hidden_exports"],
         "shared allocator localization provenance",
@@ -742,8 +749,8 @@ def _symbol_tables(value: object, description: str, expected: set[str]) -> dict[
 
 
 def _static_members(
-    facts: Mapping[str, Any], static_members: Mapping[str, str], c_member: str, rust_member: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    facts: Mapping[str, Any], static_members: Mapping[str, str], c_member: str, rust_members: Sequence[str],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     rows = facts["facts"]["candidate-static"]
     require(type(rows) is list and len(rows) == len(static_members), "static ELF member roster differs")
     records: dict[str, dict[str, Any]] = {}
@@ -753,7 +760,7 @@ def _static_members(
         require(name not in records and member.get("member_occurrence") == 0, "static ELF member occurrence differs")
         records[name] = member
     require(set(records) == set(static_members), "static ELF member roster differs from archive map")
-    return records[c_member], records[rust_member]
+    return records[c_member], [records[name] for name in rust_members]
 
 
 def _validate_elf_facts(facts: object, static_archive_sha256: str) -> dict[str, Any]:
@@ -1071,39 +1078,54 @@ def _validate_metadata_rows(
     }
 
 
+def _rust_member_rows(rust_members: Sequence[Mapping[str, Any]]) -> list[list[dict[str, Any]]]:
+    return [_symbol_tables(member.get("symbol_tables"), "static Rust member", {".symtab"})[".symtab"]
+            for member in rust_members]
+
+
+def _rust_references(member_rows: Sequence[Sequence[Mapping[str, Any]]], name: str,
+                     description: str) -> list[dict[str, Any]]:
+    """Return one undefined reference row per Rust member that names `name`."""
+    references: list[dict[str, Any]] = []
+    for rows in member_rows:
+        matching = [dict(row) for row in rows if row.get("name") == name]
+        require(len(matching) <= 1, f"static Rust member {description} repeats {name}")
+        references.extend(matching)
+    require(references, f"no static Rust member has the {description} {name}")
+    return references
+
+
 def _validate_rust_root_imports(
     contract: Mapping[str, Any],
     members: Sequence[str],
-    rust_member: Mapping[str, Any],
+    rust_members: Sequence[Mapping[str, Any]],
     c_member: Mapping[str, Any],
     shared: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    rust_rows = _symbol_tables(rust_member.get("symbol_tables"), "static Rust root", {".symtab"})[".symtab"]
+    member_rows = _rust_member_rows(rust_members)
     c_rows = _symbol_tables(c_member.get("symbol_tables"), "static C provider", {".symtab"})[".symtab"]
     shared_rows = _symbol_tables(shared.get("symbol_tables"), "shared libc", {".dynsym", ".symtab"})[".symtab"]
     imports = contract["rust_root_imports"]["names"]
     references = contract["rust_root_data_references"]["names"]
     observed_names = {
-        row.get("name") for row in rust_rows
+        row.get("name") for rows in member_rows for row in rows
         if row.get("name") in set(members) and row.get("section_index") == "UND"
     }
     require(observed_names == set(imports) | set(references), "Rust-root import roster differs")
     joins: list[dict[str, Any]] = []
     for name in imports:
-        matching = [dict(row) for row in rust_rows if row.get("name") == name]
-        require(len(matching) == 1, f"static Rust root import repeats {name}")
-        import_row = matching[0]
-        require(
-            import_row.get("section_index") == "UND"
-            and import_row.get("type") == "NOTYPE"
-            and import_row.get("binding") == "GLOBAL"
-            and import_row.get("visibility") == "DEFAULT"
-            and import_row.get("version") is None
-            and import_row.get("version_default") is False
-            and import_row.get("size_bytes") == 0
-            and import_row.get("size") == "0",
-            f"Rust-root import metadata differs for {name}",
-        )
+        for import_row in _rust_references(member_rows, name, "import"):
+            require(
+                import_row.get("section_index") == "UND"
+                and import_row.get("type") == "NOTYPE"
+                and import_row.get("binding") == "GLOBAL"
+                and import_row.get("visibility") == "DEFAULT"
+                and import_row.get("version") is None
+                and import_row.get("version_default") is False
+                and import_row.get("size_bytes") == 0
+                and import_row.get("size") == "0",
+                f"Rust-root import metadata differs for {name}",
+            )
         provider = _symbol_metadata(
             _named_row(c_rows, name, "static C provider for Rust-root import"),
             contract["metadata"]["strong_functions"]["static"],
@@ -1130,30 +1152,28 @@ def _validate_rust_root_imports(
 
 def _validate_rust_root_data_references(
     contract: Mapping[str, Any],
-    rust_member: Mapping[str, Any],
+    rust_members: Sequence[Mapping[str, Any]],
     c_member: Mapping[str, Any],
     shared: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    """Join each Rust-root address reference to its C data-object provider."""
-    rust_rows = _symbol_tables(rust_member.get("symbol_tables"), "static Rust root", {".symtab"})[".symtab"]
+    """Join each Rust address reference to its C data-object provider."""
+    member_rows = _rust_member_rows(rust_members)
     c_rows = _symbol_tables(c_member.get("symbol_tables"), "static C provider", {".symtab"})[".symtab"]
     shared_rows = _symbol_tables(shared.get("symbol_tables"), "shared libc", {".dynsym", ".symtab"})[".symtab"]
     data = {item["name"]: item for item in contract["metadata"]["data_objects"]}
     joins: list[dict[str, Any]] = []
     for name in contract["rust_root_data_references"]["names"]:
-        matching = [dict(row) for row in rust_rows if row.get("name") == name]
-        require(len(matching) == 1, f"static Rust root data reference repeats {name}")
-        reference = matching[0]
-        require(
-            reference.get("section_index") == "UND"
-            and reference.get("type") == "NOTYPE"
-            and reference.get("binding") == "GLOBAL"
-            and reference.get("visibility") == "DEFAULT"
-            and reference.get("version") is None
-            and reference.get("version_default") is False
-            and reference.get("size_bytes") == 0,
-            f"Rust-root data reference metadata differs for {name}",
-        )
+        for reference in _rust_references(member_rows, name, "data reference"):
+            require(
+                reference.get("section_index") == "UND"
+                and reference.get("type") == "NOTYPE"
+                and reference.get("binding") == "GLOBAL"
+                and reference.get("visibility") == "DEFAULT"
+                and reference.get("version") is None
+                and reference.get("version_default") is False
+                and reference.get("size_bytes") == 0,
+                f"Rust-root data reference metadata differs for {name}",
+            )
         joins.append({
             "name": name,
             "static_rust_reference": {
@@ -1196,7 +1216,7 @@ def account_producer_metadata(
         static_archive_sha256,
         producer_archive_sha256,
         c_member_name,
-        rust_member_name,
+        rust_member_names,
         static_members,
     ) = _validate_static_provenance(
         static_provenance, contract
@@ -1208,11 +1228,11 @@ def account_producer_metadata(
     shared_rust_member, shared_members = _validate_shared_provenance(
         shared_provenance, contract, c_member_name, static_members[c_member_name], report, shared_product_manifest
     )
-    c_member, rust_member = _static_members(report, static_members, c_member_name, rust_member_name)
+    c_member, rust_members = _static_members(report, static_members, c_member_name, rust_member_names)
     shared = mapping(report["facts"]["candidate-shared"], "shared ELF facts")
     buckets = _validate_metadata_rows(contract, members, c_member, shared)
-    joins = _validate_rust_root_imports(contract, members, rust_member, c_member, shared)
-    data_references = _validate_rust_root_data_references(contract, rust_member, c_member, shared)
+    joins = _validate_rust_root_imports(contract, members, rust_members, c_member, shared)
+    data_references = _validate_rust_root_data_references(contract, rust_members, c_member, shared)
     strong_names = {record["name"] for record in buckets["strong-functions"]["members"]}
     require(all(item["name"] in strong_names for item in joins),
             "Rust-root imports do not resolve through strong C providers")
@@ -1250,7 +1270,7 @@ def account_producer_metadata(
             "raw_cargo_allocator_archive_sha256": producer_archive_sha256,
             "reconstructed_static_libc_archive_sha256": static_archive_sha256,
             "static_c_member": c_member_name,
-            "static_rust_root_member": rust_member_name,
+            "static_rust_members": rust_member_names,
             "shared_rust_root_member": shared_rust_member,
             "static_c_member_sha256": static_members[c_member_name],
             "shared_c_member_sha256": shared_members[c_member_name],

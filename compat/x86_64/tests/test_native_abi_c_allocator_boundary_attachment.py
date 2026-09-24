@@ -136,7 +136,7 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
             "archive_map": {
                 "static_c_member": "selected-c-mimalloc.o",
                 "static_c_member_sha256": "d" * 64,
-                "static_rust_root_member": "native-c-root.rcgu.o",
+                "static_rust_members": ["native-c-root.rcgu.o", "native-c-sibling.rcgu.o"],
                 "shared_rust_root_member": "native-c-shared.rcgu.o",
                 "shared_c_member_sha256": "d" * 64,
             },
@@ -163,9 +163,9 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                 "name": "selected-c-mimalloc.o", "member_index": 1,
                 "member_occurrence": 0, "sha256": "d" * 64,
             },
-            "static_rust_root_member": {
-                "name": "native-c-root.rcgu.o", "member_index": 0, "member_occurrence": 0,
-            },
+            "static_rust_provider_members": [
+                {"member": "native-c-root.rcgu.o", "member_index": 0, "member_occurrence": 0},
+            ],
             "shared_rust_root_member": "native-c-shared.rcgu.o",
             "shared_c_member_sha256": "d" * 64,
             "imports": [
@@ -173,6 +173,9 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                     "name": name, "binding": binding,
                     "static_c_import": imported(name),
                     "static_rust_provider": provider(name, binding),
+                    "static_rust_provider_member": {
+                        "member": "native-c-root.rcgu.o", "member_index": 0, "member_occurrence": 0,
+                    },
                     "shared_dynsym_provider": provider(name, binding),
                     "shared_symtab_provider": provider(name, binding),
                 }
@@ -184,7 +187,8 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
         archive = "/workspace/" + (self.static / "usr/lib/libc.a").relative_to(ROOT).as_posix()
         selected = {
             "static_c_member": f"{archive}({runtime['static_c_member']['name']})",
-            "static_rust_root_member": f"{archive}({runtime['static_rust_root_member']['name']})",
+            **{f"static_rust_provider:{item['member']}": f"{archive}({item['member']})"
+               for item in runtime['static_rust_provider_members']},
         }
         map_path = self._write(self.work / "static.map", b"map\n")
         trace_path = self._write(self.work / "static.trace", b"trace\n")
@@ -252,7 +256,12 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                 "producer_account": copy.deepcopy(self.producer_account),
                 "c_runtime_import_bindings": runtime,
                 "wrapper_product_bindings": {
-                    "static_member": "native-c-root.rcgu.o",
+                    "static_members": {
+                        name: {"member": "native-c-root.rcgu.o", "member_index": 0, "member_occurrence": 0}
+                        for name in selection.native_c_allocator_boundary.wrapper_roles(
+                            selection.native_c_allocator_boundary.load_contract()
+                        )
+                    },
                     "static": {
                         name: {}
                         for name in selection.native_c_allocator_boundary.wrapper_roles(
@@ -581,6 +590,22 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
         record = accounting["identities"][0]
         self.assertIn(selection.ORDINARY_IMPORT_REASON, record["unresolved"])
         self.assertTrue(accounting["blockers"])
+
+    def test_import_from_a_second_authenticated_rust_member_stays_covered(self) -> None:
+        """The installed archive emits one member per Rust module; each may import the backend."""
+        accounting = self.accounting()
+        sibling = copy.deepcopy(accounting["occurrences"][0])
+        sibling["index"] = len(accounting["occurrences"])
+        sibling["member_name"] = "native-c-sibling.rcgu.o"
+        sibling["member_index"] = 9
+        sibling["row"]["row_index"] = sibling["index"]
+        accounting["occurrences"].append(sibling)
+        joins = selection.attach_native_c_allocator_boundary(
+            accounting, self._adapter(self.boundary_report())
+        )
+        self.assertTrue(joins[0]["ordinary_import_covered"])
+        self.assertEqual(joins[0]["static_rust_importers"],
+                         ["native-c-root.rcgu.o", "native-c-sibling.rcgu.o"])
 
     def test_runtime_recheck_rejects_a_product_changed_after_boundary_replay(self) -> None:
         companion = self._adapter(self.boundary_report())

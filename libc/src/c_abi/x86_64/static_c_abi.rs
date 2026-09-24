@@ -1120,16 +1120,6 @@ mod allocator {
         unsafe { errno::set_errno(value) };
     }
 
-    // A local alias beside the wrapper's own weak `malloc`. The assembler
-    // resolves it to this object's definition, so it names libc's body even
-    // when the application's `malloc` preempts the public symbol. Its only
-    // users, the weak (hence never imported or inlined) `calloc` and
-    // `aligned_alloc`, share this object.
-    core::arch::global_asm!(
-        ".type __crabc_x86_c_allocator_malloc_body,@function",
-        ".set __crabc_x86_c_allocator_malloc_body, malloc",
-    );
-
     /// The final address of the public `name` symbol, read from its GOT
     /// slot, which honors ELF preemption in the static link and through the
     /// dynamic loader alike.
@@ -1180,19 +1170,6 @@ mod allocator {
     }
 
     include!("../../allocator_mimalloc.rs");
-
-    // The static archive emits one member per Rust module and extracts a
-    // member only when a loaded object names one of its symbols. The C
-    // backend's lifecycle module is otherwise reached only through its
-    // `.init_array`/`.fini_array` entries, so without this relocation an
-    // application that allocates would leave mimalloc's process attach and
-    // detach out of the image. Naming the initializer from this allocator
-    // member extracts the lifecycle member with it; the pointer is never
-    // called.
-    #[cfg(crabc_owned_mimalloc_lifecycle)]
-    #[used]
-    static LIFECYCLE_MEMBER_ANCHOR: unsafe extern "C" fn() =
-        super::allocator_mimalloc_lifecycle::initialize;
 
     /// Internal owned allocation for source clients that use __libc_malloc.
     /// This composes exactly the existing C malloc wrapper's alignment and

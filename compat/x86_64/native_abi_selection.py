@@ -4761,23 +4761,39 @@ def _c_allocator_runtime_import_row(value: object, name: str, binding: str, desc
     return row
 
 
+def _c_allocator_member(value: object, rust_members: Sequence[str], description: str) -> dict[str, Any]:
+    member = exact(value, {'member', 'member_index', 'member_occurrence'}, description)
+    require(type(member['member']) is str and member['member'] in rust_members
+            and type(member['member_index']) is int and member['member_index'] >= 0
+            and member['member_occurrence'] == 0, f'{description} differs')
+    return member
+
+
 def _c_allocator_runtime_import_account(value: object, archive_map: Mapping[str, Any],
                                         roles: Mapping[str, str]) -> dict[str, Any]:
-    """Validate the C-member import projection rebuilt by its public reader."""
+    """Validate the C-member import projection rebuilt by its public reader.
+
+    The installed static archive has one member per Rust module, so each
+    import names the one Rust member that provides it.
+    """
     account = exact(value, {
-        'static_c_member', 'static_rust_root_member', 'shared_rust_root_member',
+        'static_c_member', 'static_rust_provider_members', 'shared_rust_root_member',
         'shared_c_member_sha256', 'imports',
     }, 'native C allocator runtime-import account')
     static_c = exact(account['static_c_member'], {'name', 'member_index', 'member_occurrence', 'sha256'},
                      'native C allocator static C member')
-    static_rust = exact(account['static_rust_root_member'], {'name', 'member_index', 'member_occurrence'},
-                        'native C allocator static Rust member')
-    for item, expected_name, label in (
-        (static_c, archive_map.get('static_c_member'), 'static C'),
-        (static_rust, archive_map.get('static_rust_root_member'), 'static Rust'),
-    ):
-        require(item['name'] == expected_name and type(item['member_index']) is int and item['member_index'] >= 0
-                and item['member_occurrence'] == 0, f'native C allocator {label} member differs')
+    require(static_c['name'] == archive_map.get('static_c_member') and type(static_c['member_index']) is int
+            and static_c['member_index'] >= 0 and static_c['member_occurrence'] == 0,
+            'native C allocator static C member differs')
+    rust_members = archive_map.get('static_rust_members')
+    require(type(rust_members) is list and rust_members and all(type(name) is str and name for name in rust_members),
+            'native C allocator static Rust members differ')
+    providers = account['static_rust_provider_members']
+    require(type(providers) is list and providers, 'native C allocator static Rust providers differ')
+    providers = [_c_allocator_member(item, rust_members, 'native C allocator static Rust provider')
+                 for item in providers]
+    require([item['member'] for item in providers] == sorted({item['member'] for item in providers}),
+            'native C allocator static Rust provider roster differs')
     require(static_c['sha256'] == archive_map.get('static_c_member_sha256')
             and account['shared_rust_root_member'] == archive_map.get('shared_rust_root_member')
             and account['shared_c_member_sha256'] == archive_map.get('shared_c_member_sha256'),
@@ -4788,12 +4804,15 @@ def _c_allocator_runtime_import_account(value: object, archive_map: Mapping[str,
     validated = []
     for claim in claims:
         claim = exact(claim, {
-            'name', 'binding', 'static_c_import', 'static_rust_provider',
+            'name', 'binding', 'static_c_import', 'static_rust_provider', 'static_rust_provider_member',
             'shared_dynsym_provider', 'shared_symtab_provider',
         }, 'native C allocator runtime-import claim')
         name = claim['name']
         require(type(name) is str and name in roles and claim['binding'] == roles[name],
                 'native C allocator runtime-import role differs')
+        provider_member = _c_allocator_member(
+            claim['static_rust_provider_member'], rust_members, f'native C allocator {name} static Rust provider member')
+        require(provider_member in providers, f'native C allocator {name} static Rust provider member is unlisted')
         validated.append({
             'name': name,
             'binding': roles[name],
@@ -4803,6 +4822,7 @@ def _c_allocator_runtime_import_account(value: object, archive_map: Mapping[str,
             'static_rust_provider': _c_allocator_runtime_import_row(
                 claim['static_rust_provider'], name, roles[name], f'native C allocator {name} static Rust', import_row=False,
             ),
+            'static_rust_provider_member': provider_member,
             'shared_dynsym_provider': _c_allocator_runtime_import_row(
                 claim['shared_dynsym_provider'], name, roles[name], f'native C allocator {name} shared dynsym', import_row=False,
             ),
@@ -4812,20 +4832,25 @@ def _c_allocator_runtime_import_account(value: object, archive_map: Mapping[str,
         })
     return {
         'static_c_member': static_c,
-        'static_rust_root_member': static_rust,
+        'static_rust_provider_members': providers,
         'shared_rust_root_member': account['shared_rust_root_member'],
         'shared_c_member_sha256': account['shared_c_member_sha256'],
         'imports': validated,
     }
 
 
+def _c_allocator_expected_static_members(runtime: Mapping[str, Any], archive: str) -> dict[str, str]:
+    """Return the C member and every Rust provider member an ordinary static link selects."""
+    expected = {'static_c_member': f"{archive}({runtime['static_c_member']['name']})"}
+    expected.update({f"static_rust_provider:{item['member']}": f"{archive}({item['member']})"
+                     for item in runtime['static_rust_provider_members']})
+    return expected
+
+
 def _c_allocator_runtime_static_links(value: object, runtime: Mapping[str, Any], static_product: Path) -> dict[str, Any]:
     links = exact(value, {'static', 'static-pie'}, 'native C allocator ordinary static links')
     archive = '/workspace/' + (static_product / 'usr/lib/libc.a').relative_to(ROOT).as_posix()
-    expected = {
-        'static_c_member': f"{archive}({runtime['static_c_member']['name']})",
-        'static_rust_root_member': f"{archive}({runtime['static_rust_root_member']['name']})",
-    }
+    expected = _c_allocator_expected_static_members(runtime, archive)
     result = {}
     for mode in ('static', 'static-pie'):
         item = exact(links[mode], {'map', 'trace', 'selected_members'}, f'native C allocator {mode} ordinary link')
@@ -4934,9 +4959,11 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
     require(type(archive_map) is dict and all(type(archive_map.get(name)) is str and archive_map[name]
                                               for name in (
                                                   'static_c_member', 'static_c_member_sha256',
-                                                  'static_rust_root_member', 'shared_rust_root_member',
-                                                  'shared_c_member_sha256',
-                                              )), 'native C allocator boundary producer archive map differs')
+                                                  'shared_rust_root_member', 'shared_c_member_sha256',
+                                              ))
+            and type(archive_map.get('static_rust_members')) is list and archive_map['static_rust_members']
+            and all(type(name) is str and name for name in archive_map['static_rust_members']),
+            'native C allocator boundary producer archive map differs')
     claims = producer_account.get('rust_root_c_import_joins') if isinstance(producer_account, dict) else None
     require(type(claims) is list and [claim.get('name') for claim in claims if isinstance(claim, dict)] == import_names
             and len(claims) == len(import_names),
@@ -4951,10 +4978,13 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
         require(static_import == {
             'type': 'NOTYPE', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': 'UND',
         }, 'native C allocator boundary static Rust import metadata differs')
-    wrappers = exact(inputs['wrapper_product_bindings'], {'static_member', 'static', 'shared'},
+    wrappers = exact(inputs['wrapper_product_bindings'], {'static_members', 'static', 'shared'},
                      'native C allocator boundary wrapper product bindings')
     roles = native_c_allocator_boundary.wrapper_roles(contract)
-    require(wrappers['static_member'] == archive_map['static_rust_root_member']
+    require(type(wrappers['static_members']) is dict and set(wrappers['static_members']) == set(roles)
+            and all(_c_allocator_member(member, archive_map['static_rust_members'],
+                                        'native C allocator boundary wrapper member')
+                    for member in wrappers['static_members'].values())
             and type(wrappers['static']) is dict and set(wrappers['static']) == set(roles)
             and type(wrappers['shared']) is dict and set(wrappers['shared']) == {'.dynsym', '.symtab'}
             and all(type(rows) is dict and set(rows) == set(roles) for rows in wrappers['shared'].values()),
@@ -4989,7 +5019,7 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
         'account': {
             'imports': list(import_names),
             'claims': copy.deepcopy(claims),
-            'static_rust_root_member': archive_map['static_rust_root_member'],
+            'static_rust_members': list(archive_map['static_rust_members']),
             'c_runtime_imports': copy.deepcopy(runtime_imports),
             'c_runtime_static_links': copy.deepcopy(runtime_static_links),
         },
@@ -7480,11 +7510,12 @@ def attach_native_c_allocator_boundary(accounting: Mapping[str, Any],
     }), 'native C allocator boundary source inputs changed')
     _contract, import_names = _c_allocator_boundary_contract()
     account = exact(companion['account'], {
-        'imports', 'claims', 'static_rust_root_member', 'c_runtime_imports', 'c_runtime_static_links',
+        'imports', 'claims', 'static_rust_members', 'c_runtime_imports', 'c_runtime_static_links',
     },
                     'native C allocator boundary companion account')
     require(account['imports'] == import_names
-            and type(account['static_rust_root_member']) is str and account['static_rust_root_member']
+            and type(account['static_rust_members']) is list and account['static_rust_members']
+            and all(type(name) is str and name for name in account['static_rust_members'])
             and type(account['claims']) is list and len(account['claims']) == len(import_names)
             and [claim.get('name') for claim in account['claims'] if isinstance(claim, dict)] == import_names,
             'native C allocator boundary companion import roster differs')
@@ -7541,10 +7572,11 @@ def attach_native_c_allocator_boundary(accounting: Mapping[str, Any],
             and occurrence['row'].get('version') is None
             and occurrence['row'].get('version_default') is False
         ]
-        covered = len(imports) == 1 and all(
+        # Each Rust archive member that calls the backend imports it once.
+        covered = len(imports) >= 1 and len({occurrence.get('member_name') for occurrence in imports}) == len(imports) and all(
             occurrence.get('artifact_key') == 'candidate-static'
             and occurrence.get('table') == '.symtab'
-            and occurrence.get('member_name') == account['static_rust_root_member']
+            and occurrence.get('member_name') in account['static_rust_members']
             and occurrence.get('member_index') is not None
             and occurrence.get('member_occurrence') == 0
             and occurrence.get('accounting') == {
@@ -7562,7 +7594,7 @@ def attach_native_c_allocator_boundary(accounting: Mapping[str, Any],
             'identity': copy.deepcopy(record['identity']),
             'owner': FIXED_C_PRODUCER_OWNER,
             'artifact_key': 'candidate-static',
-            'static_rust_root_member': account['static_rust_root_member'],
+            'static_rust_importers': sorted(occurrence.get('member_name') for occurrence in imports),
             'occurrence_indices': [occurrence['index'] for occurrence in imports],
             'producer_static_metadata': static_provider,
             'producer_shared_metadata': shared_provider,
@@ -7607,30 +7639,27 @@ def attach_native_c_allocator_runtime_imports(
             'native C allocator runtime-import companion scope differs')
     _contract, roles = _c_allocator_runtime_import_contract()
     account = exact(companion['account'], {
-        'imports', 'claims', 'static_rust_root_member', 'c_runtime_imports', 'c_runtime_static_links',
+        'imports', 'claims', 'static_rust_members', 'c_runtime_imports', 'c_runtime_static_links',
     }, 'native C allocator runtime-import companion account')
     runtime_value = exact(account['c_runtime_imports'], {
-        'static_c_member', 'static_rust_root_member', 'shared_rust_root_member',
+        'static_c_member', 'static_rust_provider_members', 'shared_rust_root_member',
         'shared_c_member_sha256', 'imports',
     }, 'native C allocator runtime-import companion projection')
     runtime = _c_allocator_runtime_import_account(
         runtime_value, {
             'static_c_member': runtime_value['static_c_member'].get('name') if isinstance(runtime_value['static_c_member'], dict) else None,
             'static_c_member_sha256': runtime_value['static_c_member'].get('sha256') if isinstance(runtime_value['static_c_member'], dict) else None,
-            'static_rust_root_member': runtime_value['static_rust_root_member'].get('name') if isinstance(runtime_value['static_rust_root_member'], dict) else None,
+            'static_rust_members': account['static_rust_members'],
             'shared_rust_root_member': runtime_value['shared_rust_root_member'],
             'shared_c_member_sha256': runtime_value['shared_c_member_sha256'],
         }, roles,
     )
-    expected_members = {
-        'static_c_member': runtime['static_c_member']['name'],
-        'static_rust_root_member': runtime['static_rust_root_member']['name'],
-    }
+    expected_members = _c_allocator_expected_static_members(runtime, '')
     for mode in ('static', 'static-pie'):
         link = account['c_runtime_static_links'].get(mode) if isinstance(account['c_runtime_static_links'], dict) else None
         require(isinstance(link, dict) and isinstance(link.get('selected_members'), dict)
                 and set(link['selected_members']) == set(expected_members)
-                and all(link['selected_members'][label].endswith(f"({expected_members[label]})")
+                and all(link['selected_members'][label].endswith(expected_members[label])
                         for label in expected_members),
                 f'native C allocator {mode} ordinary member link differs')
     records, placements, occurrences = _accounting_indexes(
@@ -7658,9 +7687,9 @@ def attach_native_c_allocator_runtime_imports(
         static_providers = [
             row for row in occurrences.values()
             if row.get('role') == 'definition' and row.get('artifact_key') == 'candidate-static'
-            and row.get('table') == '.symtab' and row.get('member_name') == runtime['static_rust_root_member']['name']
-            and row.get('member_index') == runtime['static_rust_root_member']['member_index']
-            and row.get('member_occurrence') == runtime['static_rust_root_member']['member_occurrence']
+            and row.get('table') == '.symtab' and row.get('member_name') == claim['static_rust_provider_member']['member']
+            and row.get('member_index') == claim['static_rust_provider_member']['member_index']
+            and row.get('member_occurrence') == claim['static_rust_provider_member']['member_occurrence']
             and row.get('row', {}).get('name') == name
         ]
         shared_dynsym = [
@@ -7704,7 +7733,7 @@ def attach_native_c_allocator_runtime_imports(
             'owner': 'checked-header-provider-routing',
             'artifact_key': 'candidate-static',
             'static_c_member': runtime['static_c_member']['name'],
-            'static_rust_root_member': runtime['static_rust_root_member']['name'],
+            'static_rust_provider_member': claim['static_rust_provider_member']['member'],
             'occurrence_indices': [row['index'] for row in imports],
             'ordinary_import_covered': covered,
             'discharged_reason': ORDINARY_IMPORT_REASON if covered else None,

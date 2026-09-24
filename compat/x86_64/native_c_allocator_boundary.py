@@ -31,7 +31,7 @@ import owned_posix_static_products as static_products
 
 ROOT = inventory.ROOT
 CONTRACT_PATH = ROOT / "compat/x86_64/native_c_allocator_boundary.toml"
-SCHEMA = "crabc.x86_64-native-c-allocator-boundary/v2"
+SCHEMA = "crabc.x86_64-native-c-allocator-boundary/v3"
 TARGET = "x86_64-unknown-linux-musl"
 RAW = "raw"
 STATIC_MODES = ("static", "static-pie")
@@ -229,6 +229,37 @@ def wrapper_roles(contract: Mapping[str, Any]) -> dict[str, str]:
             **{name: "GLOBAL" for name in scope["global_entries"]}}
 
 
+def _static_definition(facts: Mapping[str, Any], name: str, description: str) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    """Return the one static archive member defining `name`, with its row.
+
+    The installed archive emits one member per Rust module, so each public
+    provider is located by its definition rather than in one fixed member.
+    """
+    placements = facts.get("facts")
+    require(isinstance(placements, dict) and type(placements.get("candidate-static")) is list,
+            f"ELF facts omit static {description} placements")
+    found: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
+    for member in placements["candidate-static"]:
+        if not isinstance(member, dict) or member.get("member_occurrence") != 0:
+            continue
+        try:
+            rows = producer._symbol_tables(member.get("symbol_tables"), f"static {description}", {".symtab"})[".symtab"]
+        except producer.ProducerMetadataError as error:
+            raise AllocatorBoundaryError(str(error)) from error
+        found.extend((member, row) for row in rows
+                     if row.get("name") == name and type(row.get("section_index")) is str
+                     and row["section_index"].isdigit() and int(row["section_index"]) > 0)
+    require(len(found) == 1, f"static {description} {name} is not defined by exactly one archive member")
+    member = found[0][0]
+    require(type(member.get("member")) is str and isinstance(member.get("member_index"), int)
+            and member["member_index"] >= 0, f"static {description} {name} member differs")
+    return member, found[0][1]
+
+
+def _member_identity(member: Mapping[str, Any]) -> dict[str, object]:
+    return {key: member[key] for key in ("member", "member_index", "member_occurrence")}
+
+
 def c_runtime_import_roles(contract: Mapping[str, Any]) -> dict[str, str]:
     """Return the finite C translation-unit imports and their Rust bindings."""
     scope = contract["scope"]
@@ -319,33 +350,19 @@ def _lifecycle_c_abi(lifecycle: str) -> dict[str, object]:
     return {"imports": names, "callbacks": observations}
 
 
-def _wrapper_product_bindings(facts: Mapping[str, Any], account: Mapping[str, Any],
-                              roles: Mapping[str, str]) -> dict[str, object]:
+def _wrapper_product_bindings(facts: Mapping[str, Any], roles: Mapping[str, str]) -> dict[str, object]:
     """Bind the ten public Rust wrappers to their actual static and shared definitions."""
-    archive = account.get("archive_map")
-    require(isinstance(archive, dict) and type(archive.get("static_rust_root_member")) is str,
-            "fixed-C producer account omits static Rust wrapper root")
-    root_member = archive["static_rust_root_member"]
     placements = facts.get("facts")
-    require(isinstance(placements, dict) and type(placements.get("candidate-static")) is list,
-            "ELF facts omit static wrapper placements")
-    members = [member for member in placements["candidate-static"]
-               if isinstance(member, dict) and member.get("member") == root_member
-               and member.get("member_occurrence") == 0]
-    require(len(members) == 1, "ELF facts static Rust wrapper root differs")
     try:
-        static_tables = producer._symbol_tables(members[0].get("symbol_tables"), "static public allocator wrappers", {".symtab"})
         shared_tables = producer._symbol_tables(
-            isinstance(placements.get("candidate-shared"), dict) and placements["candidate-shared"].get("symbol_tables"),
+            isinstance(placements, dict) and isinstance(placements.get("candidate-shared"), dict)
+            and placements["candidate-shared"].get("symbol_tables"),
             "shared public allocator wrappers", {".dynsym", ".symtab"},
         )
     except producer.ProducerMetadataError as error:
         raise AllocatorBoundaryError(str(error)) from error
 
-    def selected_rows(rows: Sequence[Mapping[str, Any]], name: str, binding: str, description: str) -> dict[str, object]:
-        matches = [row for row in rows if row.get("name") == name]
-        require(len(matches) == 1, f"{description} wrapper row differs for {name}")
-        row = matches[0]
+    def selected_row(row: Mapping[str, Any], name: str, binding: str, description: str) -> dict[str, object]:
         require(row.get("raw_name") == name and row.get("type") == "FUNC" and row.get("binding") == binding
                 and row.get("visibility") == "DEFAULT" and row.get("version") is None
                 and row.get("version_default") is False and type(row.get("section_index")) is str
@@ -354,12 +371,22 @@ def _wrapper_product_bindings(facts: Mapping[str, Any], account: Mapping[str, An
                 f"{description} wrapper binding differs for {name}")
         return {key: row[key] for key in ("name", "raw_name", "type", "binding", "visibility", "section_index", "size_bytes", "version", "version_default")}
 
+    def shared_row(rows: Sequence[Mapping[str, Any]], name: str, binding: str, description: str) -> dict[str, object]:
+        matches = [row for row in rows if row.get("name") == name]
+        require(len(matches) == 1, f"{description} wrapper row differs for {name}")
+        return selected_row(matches[0], name, binding, description)
+
     require(set(roles) == set(WRAPPER_C_ABI) | {"malloc_usable_size"}, "public allocator wrapper role roster drifted")
+    static_members: dict[str, object] = {}
+    static_rows: dict[str, object] = {}
+    for name, binding in roles.items():
+        member, row = _static_definition(facts, name, "public allocator wrapper")
+        static_members[name] = _member_identity(member)
+        static_rows[name] = selected_row(row, name, binding, "static")
     return {
-        "static_member": root_member,
-        "static": {name: selected_rows(static_tables[".symtab"], name, binding, "static")
-                   for name, binding in roles.items()},
-        "shared": {table: {name: selected_rows(rows, name, binding, f"shared {table}")
+        "static_members": static_members,
+        "static": static_rows,
+        "shared": {table: {name: shared_row(rows, name, binding, f"shared {table}")
                             for name, binding in roles.items()}
                    for table, rows in shared_tables.items()},
     }
@@ -409,22 +436,23 @@ def _c_runtime_import_bindings(facts: Mapping[str, Any], account: Mapping[str, A
     ``archive_map`` comes from the fixed-C producer reader, which already
     authenticates the C member bytes and source bundle.  The rows below are
     reconstructed from the supplied current ELF facts rather than accepted
-    from a receipt-provided member name, hash, or provider list.
+    from a receipt-provided member name, hash, or provider list. Each static
+    provider is the one Rust archive member that defines the import.
     """
     archive = account.get("archive_map")
     require(isinstance(archive, dict), "fixed-C producer account omits archive map")
     required = {
-        "static_c_member", "static_c_member_sha256", "static_rust_root_member",
-        "shared_rust_root_member", "shared_c_member_sha256",
+        "static_c_member", "static_c_member_sha256", "shared_rust_root_member", "shared_c_member_sha256",
     }
     require(required <= set(archive) and all(isinstance(archive[name], str) and archive[name]
                                               for name in required),
             "fixed-C producer archive map differs")
+    rust_members = archive.get("static_rust_members")
+    require(type(rust_members) is list and rust_members and all(type(name) is str and name for name in rust_members),
+            "fixed-C producer archive map omits its static Rust members")
     c_member = _static_member(facts, archive["static_c_member"], "static C runtime member")
-    rust_member = _static_member(facts, archive["static_rust_root_member"], "static Rust runtime root")
     try:
         c_rows = producer._symbol_tables(c_member.get("symbol_tables"), "static C runtime imports", {".symtab"})[".symtab"]
-        rust_rows = producer._symbol_tables(rust_member.get("symbol_tables"), "static Rust runtime providers", {".symtab"})[".symtab"]
         placements = facts.get("facts")
         shared = placements.get("candidate-shared") if isinstance(placements, dict) else None
         shared_tables = producer._symbol_tables(
@@ -435,30 +463,35 @@ def _c_runtime_import_bindings(facts: Mapping[str, Any], account: Mapping[str, A
         raise AllocatorBoundaryError(str(error)) from error
 
     def exactly_one(rows: Sequence[Mapping[str, Any]], name: str, description: str,
-                    *, import_row: bool) -> dict[str, object]:
+                    *, import_row: bool, binding: str) -> dict[str, object]:
         selected = [row for row in rows if row.get("name") == name]
         require(len(selected) == 1, f"{description} repeats or omits {name}")
-        return _runtime_import_row(selected[0], name, roles[name], description, import_row=import_row)
+        return _runtime_import_row(selected[0], name, binding, description, import_row=import_row)
 
     claims = []
+    provider_members: dict[str, dict[str, object]] = {}
     for name, binding in roles.items():
+        member, row = _static_definition(facts, name, "Rust runtime provider")
+        require(member["member"] in rust_members, f"static Rust runtime provider {name} is outside the Rust members")
+        identity_record = _member_identity(member)
+        provider_members[member["member"]] = identity_record
         claims.append({
             "name": name,
             "binding": binding,
-            "static_c_import": exactly_one(c_rows, name, "static C runtime", import_row=True),
-            "static_rust_provider": exactly_one(rust_rows, name, "static Rust runtime", import_row=False),
-            "shared_dynsym_provider": exactly_one(shared_tables[".dynsym"], name, "shared .dynsym runtime", import_row=False),
-            "shared_symtab_provider": exactly_one(shared_tables[".symtab"], name, "shared .symtab runtime", import_row=False),
+            "static_c_import": exactly_one(c_rows, name, "static C runtime", import_row=True, binding=binding),
+            "static_rust_provider": _runtime_import_row(row, name, binding, "static Rust runtime", import_row=False),
+            "static_rust_provider_member": identity_record,
+            "shared_dynsym_provider": exactly_one(shared_tables[".dynsym"], name, "shared .dynsym runtime",
+                                                  import_row=False, binding=binding),
+            "shared_symtab_provider": exactly_one(shared_tables[".symtab"], name, "shared .symtab runtime",
+                                                  import_row=False, binding=binding),
         })
     return {
         "static_c_member": {
             "name": archive["static_c_member"], "member_index": c_member["member_index"],
             "member_occurrence": c_member["member_occurrence"], "sha256": archive["static_c_member_sha256"],
         },
-        "static_rust_root_member": {
-            "name": archive["static_rust_root_member"], "member_index": rust_member["member_index"],
-            "member_occurrence": rust_member["member_occurrence"],
-        },
+        "static_rust_provider_members": [provider_members[name] for name in sorted(provider_members)],
         "shared_rust_root_member": archive["shared_rust_root_member"],
         "shared_c_member_sha256": archive["shared_c_member_sha256"],
         "imports": claims,
@@ -623,7 +656,7 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
     joins = account.get("rust_root_c_import_joins")
     require(isinstance(joins, list) and [item.get("name") for item in joins if isinstance(item, dict)] == expected,
             "fixed-C producer import joins drifted")
-    wrappers = _wrapper_product_bindings(report, account, roles)
+    wrappers = _wrapper_product_bindings(report, roles)
     runtime_imports = _c_runtime_import_bindings(report, account, runtime_roles)
     return {
         "product_source": product_source,
@@ -756,22 +789,23 @@ def _runtime_static_member_links(work: Path, output: Path, static_product: Path,
     The generic owned-product reader authenticates each retained link receipt,
     map, and trace.  This component adds only the finite semantic join needed
     here: both ordinary static modes must select the producer-authenticated C
-    member and the Rust root that provides its fixed public imports.
+    member and every Rust member that provides its fixed public imports.
     """
     c_member = exact(runtime_imports.get("static_c_member"), {
         "name", "member_index", "member_occurrence", "sha256",
     }, "C runtime static member")
-    rust_member = exact(runtime_imports.get("static_rust_root_member"), {
-        "name", "member_index", "member_occurrence",
-    }, "C runtime static Rust root")
-    require(type(c_member["name"]) is str and c_member["name"]
-            and type(rust_member["name"]) is str and rust_member["name"],
+    providers = runtime_imports.get("static_rust_provider_members")
+    require(type(providers) is list and providers, "C runtime static Rust providers differ")
+    provider_names = []
+    for provider in providers:
+        record = exact(provider, {"member", "member_index", "member_occurrence"}, "C runtime static Rust provider")
+        require(type(record["member"]) is str and record["member"], "C runtime static Rust provider name differs")
+        provider_names.append(record["member"])
+    require(type(c_member["name"]) is str and c_member["name"] and len(set(provider_names)) == len(provider_names),
             "C runtime static member names differ")
     archive = mounted_path(static_product / "usr/lib/libc.a")
-    selected = {
-        "static_c_member": f"{archive}({c_member['name']})",
-        "static_rust_root_member": f"{archive}({rust_member['name']})",
-    }
+    selected = {"static_c_member": f"{archive}({c_member['name']})"}
+    selected.update({f"static_rust_provider:{name}": f"{archive}({name})" for name in provider_names})
     result: dict[str, object] = {}
     for mode in STATIC_MODES:
         receipt = physical_file(work / f"static-{mode}.crabc-link.json", f"{mode} C runtime receipt")

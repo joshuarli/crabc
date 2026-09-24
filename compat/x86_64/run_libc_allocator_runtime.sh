@@ -140,8 +140,11 @@ fi
 mapfile -t wrapper_exports < <(
     nm -g --defined-only --format=posix \
         "$work_dir/selected-members/${allocator_members[0]}" |
-        awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' | sort -u
+        awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ && $1 != "__crabc_x86_c_allocator_malloc_body" { print $1 }' | sort -u
 )
+# `__crabc_x86_c_allocator_malloc_body` is the hidden alias of the wrapper's
+# own `malloc` that `calloc` and `aligned_alloc` use to detect a replacement;
+# it is not an exported entry.
 expected_wrapper_symbols=(
     __crabc_x86_allocator_runtime_v1
     aligned_alloc

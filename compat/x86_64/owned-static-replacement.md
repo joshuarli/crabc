@@ -62,14 +62,13 @@ the public symbols: `calloc` (with only the trio replaced) and `reallocarray`;
 `getline`/`getdelim` growth, `fopen`/`fclose`, `open_memstream`, `scandir`,
 `getaddrinfo`/`freeaddrinfo`, and `setenv`/`unsetenv`.
 
-In the owned static archive, `libc/src/allocator_mimalloc.rs` binds the whole
-allocation family weak, as the native-shadow entries are
-(`libc/src/c_abi/x86_64/allocator_native_mimalloc.rs`). Its entries share one
-member where musl uses nine, so a strong binding collided with the program's
-definitions whenever any libc member named the wrapper. Weak binding also
-keeps every libc call an ordinary preemptible reference: ThinLTO had inlined
-the strong `free` into libc callers as a direct backend release, so
-`unsetenv` never reached a replaced `free`. With `malloc` replaced, `calloc`
+In the installed static archive, each entry of `libc/src/allocator_mimalloc.rs`
+is its own member with musl's binding (weak `malloc`, strong others), as
+musl's nine objects are. The entries had shared one member, so the program's
+definitions collided with it whenever any libc member named the wrapper.
+The strong entries are also never inlined into libc callers: ThinLTO had
+inlined `free` into them as a direct backend release, so `unsetenv` never
+reached a replaced `free`. With `malloc` replaced, `calloc`
 allocates through the public `malloc` and zeroes, and `aligned_alloc`
 refuses (see `compat/allocator/known-differences.md`); the roles therefore
 exercise libc's own aligned entries only when the program replaces them.

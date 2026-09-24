@@ -69,11 +69,14 @@ The reader requires these finite producer facts:
   the reader does not subtract the `.tdata` virtual address.
 - None of the 424 identities has a shared `.dynsym` row.
 - The archive map retains the raw Cargo allocator archive identity, the
-  reconstructed `libc.a` identity, exactly one C `*-static.o` member, and one
-  static Rust root. Its seven C imports — `_mi_auto_process_done`,
-  `_mi_auto_process_init`, `mi_free`, `mi_malloc_aligned`,
-  `mi_realloc_aligned`, `mi_usable_size`, and `mi_zalloc` — resolve through
-  that static C member and through the final local shared definition. The
+  reconstructed `libc.a` identity, exactly one C `*-static.o` member, and the
+  static Rust members (`static_rust_members`; the installed archive emits one
+  per Rust module) and the one shared Rust object. The Rust members' seven C
+  imports — `_mi_auto_process_done`, `_mi_auto_process_init`, `mi_free`,
+  `mi_malloc_aligned`, `mi_realloc_aligned`, `mi_usable_size`, and
+  `mi_zalloc` — each have at least one importing member, and no member
+  imports another producer name; they resolve through that static C member
+  and through the final local shared definition. The
   shared-link provenance must select the same C-member bytes. Those generic
   Rust-to-C import obligations remain separate from the metadata/layout
   projection until their installed consumer/map proof is selected.
