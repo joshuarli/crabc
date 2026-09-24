@@ -10337,15 +10337,22 @@ fn native_reallocate_prepare_caller_persistent_owner(
 /// the caller to retain its old allocation throughout the call, including a
 /// registered deferred callback; phase C separately validates the selected
 /// source attachment generation. On return, these scalar facts reject a
-/// changed page/block/owner image before copy or release can resume.
+/// changed page/block image before copy or release can resume.
+///
+/// Only facts that stay fixed while the caller's client is live are compared.
+/// The page's `xthread_id` is not: its owner may move the page between the
+/// full and ordinary queues (the flag bits), exit and abandon it, or another
+/// thread, including this caller's replacement allocation, may reclaim it.
+/// The owner may also set the page-wide interior-pointer flag for a later
+/// aligned allocation. Pinned `mi_theap_realloc_zero_ex` frees the old block
+/// with an ordinary `mi_free` that reads the current owner at that point, so
+/// the final release re-dispatches on the renewed observation instead.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NativeReallocationSourceIdentity {
     page: core::ptr::NonNull<Page>,
     canonical_block: core::ptr::NonNull<u8>,
     block_size: usize,
     usable_size: usize,
-    xthread_id: usize,
-    has_interior_pointers: bool,
 }
 
 impl NativeReallocationSourceIdentity {
@@ -10356,8 +10363,6 @@ impl NativeReallocationSourceIdentity {
             canonical_block: allocation.canonical_block(),
             block_size: allocation.block_size(),
             usable_size: allocation.usable_size(),
-            xthread_id: allocation.xthread_id(),
-            has_interior_pointers: allocation.has_interior_pointers(),
         }
     }
 
@@ -10367,8 +10372,6 @@ impl NativeReallocationSourceIdentity {
             && self.canonical_block == allocation.canonical_block()
             && self.block_size == allocation.block_size()
             && self.usable_size == allocation.usable_size()
-            && self.xthread_id == allocation.xthread_id()
-            && self.has_interior_pointers == allocation.has_interior_pointers()
     }
 }
 
@@ -10626,7 +10629,21 @@ fn native_reallocate_pointer_first_nonlocal(
         );
     }
 
-    match native_free_pointer_first_nonlocal(source.into_live_allocation()) {
+    // Pinned realloc ends with an ordinary `mi_free`: the renewed observation
+    // decides local versus nonlocal, because the source page may have been
+    // reclaimed by this caller while the replacement was allocated.
+    let source = source.into_live_allocation();
+    let released = match current_thread_identity() {
+        Some(current) if source.is_associated_with(current) => {
+            native_free_pointer_first_local(source, current)
+        }
+        Some(_) => native_free_pointer_first_nonlocal(source),
+        None => {
+            drop(source);
+            NativePageFreeResult::Retained
+        }
+    };
+    match released {
         NativePageFreeResult::Freed => NativePageAllocationResult::Allocated(replacement),
         NativePageFreeResult::Unavailable
         | NativePageFreeResult::InvalidPointer
