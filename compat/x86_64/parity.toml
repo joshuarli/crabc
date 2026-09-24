@@ -15437,11 +15437,9 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_slice]]
 id = "stdio.fopen64-alias"
-description = "Private native x86 selected-private `stdio.fopen64-alias` capability inside still-planned `libc.text-math-locale-stdio`. Pinned musl 1.2.6 Linux LP64 `<stdio.h>` exposes `fopen64` solely when `_LARGEFILE64_SOURCE` is defined, as the preprocessing macro `#define fopen64 fopen`; it is a source-only `fopen64` alias with no distinct x86 ELF `fopen64` symbol. The dedicated project-first/pinned-musl C11/C++17 matrix retains strict, GNU, `_FILE_OFFSET_BITS=64`, and `_LARGEFILE_SOURCE` hiding, then proves the LFS-only `FILE *(*)(const char *, const char *)` macro identity, unmangled C++ `fopen` reference, and no `fopen64` relocation. The shared project-header fixture first executes through pinned musl and then a true dependency-free `-nostdlib -static --gc-sections` candidate, proving same-address `fopen`/macro pointers, missing-path `ENOENT`, and the existing bounded `\"w+\"`/`\"r\"` slot's write/seek/read/close lifecycle; archive and final-ELF checks retain the default selected-static export surface and reject every `fopen64` definition/reference. `libc/src/c_abi.rs` intentionally retains an AArch64 project forwarding entry, but this x86 capability follows its pinned-musl source/ELF contract rather than creating a target-specific wrapper. It does not complete `stdio.path-stream`, mode parsing, multiple streams, allocation/registry, general stdio, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+description = "Private native x86 selected-private `stdio.fopen64-alias` capability inside still-planned `libc.text-math-locale-stdio`. Pinned musl 1.2.6 Linux LP64 `<stdio.h>` exposes `fopen64` solely when `_LARGEFILE64_SOURCE` is defined, as the preprocessing macro `#define fopen64 fopen`; it is a source-only `fopen64` alias with no distinct x86 ELF `fopen64` symbol. The dedicated project-first/pinned-musl C11/C++17 matrix retains strict, GNU, `_FILE_OFFSET_BITS=64`, and `_LARGEFILE_SOURCE` hiding, then proves the LFS-only `FILE *(*)(const char *, const char *)` macro identity, unmangled C++ `fopen` reference, and no `fopen64` relocation. The shared project-header fixture first executes through pinned musl and then a true dependency-free `-nostdlib -static --gc-sections` candidate, proving same-address `fopen`/macro pointers, missing-path `ENOENT`, and the existing bounded `\"w+\"`/`\"r\"` slot's write/seek/read/close lifecycle; archive and final-ELF checks retain the default selected-static export surface and reject every `fopen64` definition/reference. `libc/src/c_abi.rs` intentionally retains an AArch64 project forwarding entry, but this x86 capability follows its pinned-musl source/ELF contract rather than creating a target-specific wrapper. The installed products carry the same contract: the v3 `owned-stdio` component preprocesses its macro consumer and the C11/C++17 profile matrix against the installed headers and runs the consumer with pinned musl and in static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry, proving same-address `fopen`/macro pointers, missing-path `ENOENT`, and `w+`/`r` write/seek/read/close through the installed FILE engine. It does not complete `stdio.path-stream` or other FILE capabilities, family completion, promotion, or public x86 support."
 capabilities = ["stdio.fopen64-alias"]
 source_owners = [
-  "AGENTS.md",
-  "COMPATIBILITY-PROFILE.md",
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
   "compat/ratchet/aarch64-dynamic.json",
@@ -15457,12 +15455,14 @@ source_owners = [
   "compat/x86_64/libc_fopen64_alias_probe.c",
   "compat/x86_64/libc_fopen64_alias_start.S",
   "compat/x86_64/run_libc_fopen64_alias.sh",
+  "compat/x86_64/owned_stdio_probe.c",
+  "compat/x86_64/run_owned_stdio.sh",
+  "compat/x86_64/owned_stdio_component_receipt.py",
   "compat/x86_64/static_c_abi_exports.txt",
   "compat/x86_64/tests/test_runner.py",
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "plan.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -15478,6 +15478,7 @@ x86_header_prerequisites = [
 native_evidence = [
   { state = "verified", command = "./scripts/dev-x86_64.sh fopen64-header-abi", scope = "Pinned-musl/project-first C11/C++17 ten-profile header matrix. It proves `fopen64` is hidden in strict, GNU, `_FILE_OFFSET_BITS=64`, and `_LARGEFILE_SOURCE` profiles; only `_LARGEFILE64_SOURCE` exposes the macro with the exact FILE-pointer type and unmangled C++ `fopen` reference. Object inspection rejects every `fopen64` or C++-mangled relocation. It is source/header evidence only, not a distinct ELF export, stdio runtime, pathname-stream completion, family completion, promotion, or public x86 support." },
   { state = "verified", command = "./scripts/dev-x86_64.sh libc-fopen64-alias", scope = "Pinned-musl project-header C reference plus the frozen dependency-free x86 crabc-libc archive and true `-nostdlib -static --gc-sections` candidate. It first executes the separately verified bounded pathname-stream gate, ratchets the unchanged default selected-static export surface, verifies strong `fopen` and the absence of any archive/final `fopen64` definition or reference, and proves same-address macro/fopen pointers with missing-path ENOENT plus the selected one-slot w+/r write/seek/read/close lifecycle through direct initial-exec errno TLS. It rejects unresolved symbols, interpreter/DT_NEEDED, dynamic TLS, unselected stream constructors, a distinct ELF alias, general stdio/path-stream completion, family completion, promotion, or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-stdio", scope = "The v3 installed-product component: the `fopen64` C11/C++17 header profiles and one `_LARGEFILE64_SOURCE` macro consumer preprocessed against the installed headers, linked with pinned musl and in static ET_EXEC, static PIE, and dynamic PIE/non-PIE products entered by the kernel and the direct loader, with byte-identical results. It proves the macro keeps the installed `fopen` identity and lifecycle; it establishes no other FILE capability, family aggregate, promotion, or public support." },
 ]
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT Linux/x86 source/header/ELF oracle: include/stdio.h's `_LARGEFILE64_SOURCE` `#define fopen64 fopen` and src/stdio/fopen.c's sole strong fopen definition. It explicitly supplies no x86 fopen64 ELF alias." },
@@ -15487,11 +15488,9 @@ oracle = [
 
 [[family.verified_slice]]
 id = "stdio.installed-file-engine"
-description = "Private native x86 selected-private `stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`, and `stdio.format-scan` capabilities inside still-planned `libc.text-math-locale-stdio`. One owned FILE engine in the installed static and dynamic products (`owned_static_stdio.rs` with its backend, wide, process, extension, printf, and scanf owners) serves permanent, descriptor, memory, cookie, and process streams with pinned musl 1.2.6 locking, buffering, byte/wide orientation, positioning, error, and ordinary-exit flushing. The eight-row installed-header FILE-engine receipt links each probe object with pinned musl and in static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry, requires byte-identical stdout, stderr, and status, and requires the retained objects to reference every frozen symbol of the four capabilities (110 names in `compat/crabc-rs/coverage.toml`). Its frozen-surface row retains the musl regressions for exact `feof`/`ferror` values, buffered bytes kept across a mid-stream `setvbuf`, and the newest-first open-file exit flush before the standard streams. Recorded intentional differences are confined to C-undefined or diagnosable input. The `stdio.fopen64-alias` macro remains its own slice. This does not complete family evidence, the family aggregate, promotion, or public x86 support."
+description = "Private native x86 selected-private `stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`, and `stdio.format-scan` capabilities inside still-planned `libc.text-math-locale-stdio`. One owned FILE engine in the installed static and dynamic products (`owned_static_stdio.rs` with its backend, wide, process, extension, printf, and scanf owners) serves permanent, descriptor, memory, cookie, and process streams with pinned musl 1.2.6 locking, buffering, byte/wide orientation, positioning, error, and ordinary-exit flushing. The nine-row installed-header FILE-engine receipt links each probe object with pinned musl and in static ET_EXEC, static PIE, and dynamic PIE/non-PIE kernel/direct entry, requires byte-identical stdout, stderr, and status, and requires the retained objects to reference every frozen symbol of the four capabilities (110 names in `compat/crabc-rs/coverage.toml`). Its frozen-surface row retains the musl regressions for exact `feof`/`ferror` values, buffered bytes kept across a mid-stream `setvbuf`, the newest-first open-file exit flush before the standard streams, stdin's zero `lbf` (`__flbf` and write-mode `freopen` flushing), `rewind` keeping end-of-file when it cannot seek, and `ungetc` on a fresh stream after `setvbuf` supplies a buffer. Its engine-model row drives byte and wide descriptor, pipe, memory, `fmemopen`, cookie (short, failing, and missing callbacks), file-size-limited, and standard streams through seeded sequences of valid operations and compares a per-scenario digest of every step's result, errno, position, indicators, `stdio_ext` buffer state, and backing-object state, so musl's buffering and read-ahead policy is compared as well as results. Recorded intentional differences are confined to C-undefined or diagnosable input. The `stdio.fopen64-alias` macro remains its own slice. This does not complete family evidence, the family aggregate, promotion, or public x86 support."
 capabilities = ["stdio.path-stream", "stdio.stream-io", "stdio.position-buffering", "stdio.format-scan"]
 source_owners = [
-  "AGENTS.md",
-  "COMPATIBILITY-PROFILE.md",
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -15515,6 +15514,7 @@ source_owners = [
   "compat/x86_64/owned_static_printf_float_probe.c",
   "compat/x86_64/owned_static_scanf_probe.c",
   "compat/x86_64/owned_stdio_surface_probe.c",
+  "compat/x86_64/owned_stdio_engine_model_probe.c",
   "compat/x86_64/run_owned_stdio_file_engine.sh",
   "compat/x86_64/owned_stdio_file_engine_receipt.py",
   "compat/x86_64/owned-stdio-file-engine.md",
@@ -15536,7 +15536,7 @@ x86_header_prerequisites = [
   "Names pinned musl exports without a public declaration (`__fgetwc_unlocked`, `__fputwc_unlocked`, `__getdelim`, `fpurge`, `_IO_*`, and `__isoc99_*`) are declared in probe source exactly as musl defines them.",
 ]
 native_evidence = [
-  { state = "verified", command = "./scripts/dev-x86_64.sh owned-stdio-file-engine", scope = "Eight installed-header FILE-engine rows (file backends, process streams, wide streams, wide formatting, stdio_ext extensions, printf float, scanf, and the frozen surface), each one object linked with pinned musl and with supplied static ET_EXEC, static PIE, and dynamic PIE/non-PIE products entered by the kernel and the direct loader. Raw stdout, stderr, and status must equal the oracle in all six cells. The reader seals sources, tools, products, links, and copied dynamic payloads, and parses the retained objects' undefined symbols: every frozen `stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`, and `stdio.format-scan` name must be referenced. It establishes no family aggregate, promotion, or public support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-stdio-file-engine", scope = "Nine installed-header FILE-engine rows (file backends, process streams, wide streams, wide formatting, stdio_ext extensions, printf float, scanf, the frozen surface, and the seeded engine model), each one object linked with pinned musl and with static ET_EXEC, static PIE, and dynamic PIE/non-PIE products entered by the kernel and the direct loader; without a supplied pair the command first builds the checkout's current products. Raw stdout, stderr, and status must equal the oracle in all six cells. The reader seals sources, tools, products, links, and copied dynamic payloads, and parses the retained objects' undefined symbols: every frozen `stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`, and `stdio.format-scan` name must be referenced. It establishes no family aggregate, promotion, or public support." },
   { state = "verified", command = "./scripts/dev-x86_64.sh owned-stdio", scope = "One installed-header object checks byte/wide FILE lifecycle, buffered versus descriptor offsets, saved positions, byte format/scan, reopen identity, descriptor ownership, and UTF-8 stream orientation against pinned musl in the same six supplied-product cells, plus the v3 `fopen64` macro profile. It corroborates the engine rows without separately crediting a capability." },
 ]
 oracle = [
