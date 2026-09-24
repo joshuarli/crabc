@@ -418,6 +418,33 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         qualification.validate_case(record, "installed", "cycle", self.source, self.manifest)
         self.assertNotIn("outside-directory/secret", record["artifacts"][qualification.relative(leaf)])
 
+    def test_failed_leaf_reports_its_failure_even_when_its_diagnostic_reads_like_evidence(self):
+        """A leaf's "<label> evidence: <reason>" diagnostic is not a retained root.
+
+        The fork leaf fails with "dynamic-fork evidence: <reason>". Evidence
+        discovery used to reject that line first, so the qualification
+        reported "leaf evidence escapes its source mount" instead of naming
+        the failed case and its log.
+        """
+
+        leaf = self.work / "leaf-artifacts/installed-fork"
+        leaf.chmod(0o700)
+        for suffix in (".log", ".json"):
+            (self.work / "qualification-cases/installed/fork").with_suffix(suffix).unlink()
+
+        def execute(command, **arguments):
+            arguments["stdout"].write(f"dynamic fork evidence: {leaf}\n".encode())
+            arguments["stdout"].write(b"dynamic-fork evidence: dynamic product manifest identity drifted\n")
+            return subprocess.CompletedProcess(command, 1)
+
+        with mock.patch.object(qualification.subprocess, "run", side_effect=execute), \
+             mock.patch.object(qualification, "require_live_oracle"):
+            with self.assertRaisesRegex(qualification.QualificationError, "coverage case failed: installed/fork"):
+                qualification.run_case(self.work, "installed", "fork")
+        # The leaf's real retained root is still made reviewable.
+        self.assertEqual(stat.S_IMODE(leaf.stat().st_mode), 0o755)
+        self.assertFalse((self.work / "qualification-cases/installed/fork.json").exists())
+
     def test_successful_corpus_exit_cannot_publish_a_rejected_native_report(self):
         case = "package-corpus"
         record = self.work / "qualification-cases/installed" / (case + ".json")

@@ -344,20 +344,28 @@ def preparation_evidence(work: Path, source: str) -> dict[str, str]:
     return {relative(path): digest(path), relative(log): digest(log), **oracle_files}
 
 
-def leaf_evidence_directories(log: Path, source_mount: str) -> set[Path]:
+def leaf_evidence_directories(log: Path, source_mount: str, *, failed: bool = False) -> set[Path]:
     """Find only the exact retained roots declared by a completed leaf.
 
     Paths in logs use the producer's container mount; record them relative to
     the checkout so host-side validation does not depend on /workspace.
     Symlinks and special fixture nodes are described without following them.
+    A failed leaf may also print a diagnostic such as "<label> evidence:
+    <reason>". Its failure is the result, so for it only lines naming an
+    existing root are retained and every other line is left to its log.
     """
     require(isinstance(source_mount, str) and Path(source_mount).is_absolute(), "invalid evidence source mount")
     prefix = source_mount.rstrip("/") + "/"
     directories = set()
     for name in re.findall(r"evidence: ([^\n]+)", log.read_text(errors="replace")):
-        require(name.startswith(prefix), "leaf evidence escapes its source mount")
-        path = evidence_path(ROOT / name[len(prefix):])
-        require(path.is_dir() and not path.is_symlink(), "leaf evidence directory missing")
+        try:
+            require(name.startswith(prefix), "leaf evidence escapes its source mount")
+            path = evidence_path(ROOT / name[len(prefix):])
+            require(path.is_dir() and not path.is_symlink(), "leaf evidence directory missing")
+        except QualificationError:
+            if failed:
+                continue
+            raise
         directories.add(path)
     return directories
 
@@ -500,7 +508,7 @@ def run_case(work: Path, product: str, case: str) -> None:
     if case in DNS_CASES:
         make_retained_evidence_readable(temporary)
     else:
-        for directory in leaf_evidence_directories(log, str(ROOT)):
+        for directory in leaf_evidence_directories(log, str(ROOT), failed=completed.returncode != 0):
             make_retained_evidence_readable(directory)
     require(completed.returncode == 0, f"coverage case failed: {product}/{case}; {log}")
     require_live_oracle(work, oracle)
