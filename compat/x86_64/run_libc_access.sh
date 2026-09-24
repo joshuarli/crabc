@@ -160,6 +160,9 @@ override_symbols="$work_dir/candidate-override-symbols"
 mkdir "$fixture_root"
 chmod 0755 "$fixture_root"
 touch "$fixture_root/record"
+# Set ownership explicitly: a setgid work directory would otherwise pass its
+# group to the record.
+chown 0:0 "$fixture_root/record"
 chmod 0400 "$fixture_root/record"
 ln -s missing-target "$fixture_root/dangling"
 [ "$(stat -c '%u:%g:%a' "$fixture_root/record")" = '0:0:400' ] ||

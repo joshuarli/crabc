@@ -20,7 +20,6 @@ enum {
 _Static_assert(sizeof(sigset_t) == 128 && _Alignof(sigset_t) == 8,
     "x86 public sigset_t layout");
 _Static_assert(SIGSET_WORDS == 16, "x86 public sigset_t word count");
-_Static_assert(SIGRTMIN == 35, "musl x86 application realtime minimum");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigaddset),
     int (*)(sigset_t *, int)), "POSIX sigaddset declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigdelset),
@@ -45,6 +44,9 @@ int crabc_x86_64_sigset_mutation_probe(void)
     filled_words[0] = 0;
     filled_words[1] = 0x1111111111111111UL;
     filled_words[SIGSET_WORDS - 1] = 0x2222222222222222UL;
+    /* Pinned musl spells SIGRTMIN as the __libc_current_sigrtmin() call. */
+    if (SIGRTMIN != 35)
+        return 13;
     errno = ERANGE;
     if (sigfillset(&filled) != 0 || errno != ERANGE)
         return 1;

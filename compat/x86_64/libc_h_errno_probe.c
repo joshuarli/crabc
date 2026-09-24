@@ -27,10 +27,11 @@
 extern int crabc_link_visible_h_errno __asm__("h_errno");
 
 #define CRABC_TYPE_IS(actual, expected) __builtin_types_compatible_p(actual, expected)
-typedef int *(*h_errno_location_signature)(void);
 
-_Static_assert(CRABC_TYPE_IS(__typeof__(&__h_errno_location),
-    h_errno_location_signature), "h_errno accessor declaration");
+/* Pinned musl declares the accessor __attribute__((const)), which GCC
+ * records in the function type, so compare the zero-argument call type. */
+_Static_assert(CRABC_TYPE_IS(__typeof__(__h_errno_location()), int *),
+    "h_errno accessor declaration");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&h_errno), int *),
     "h_errno accessor macro expression");
 

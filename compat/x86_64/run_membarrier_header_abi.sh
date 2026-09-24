@@ -106,18 +106,13 @@ compile_profile() {
                     -U_DEFAULT_SOURCE "$@" -nostdinc++ "${include_args[@]}" \
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                if [ "$variant" = oracle ]; then
-                    grep -Eq '[[:space:]]_Z10membarrierii$' <<<"$undefined" ||
-                        fail "pinned musl C++ header lost its documented membarrier spelling (${label})"
-                    if grep -Eq '[[:space:]]membarrier$' <<<"$undefined"; then
-                        fail "pinned musl C++ header unexpectedly gained C linkage (${label})"
-                    fi
-                else
-                    grep -Eq '[[:space:]]membarrier$' <<<"$undefined" ||
-                        fail "project C++ header does not retain C linkage for membarrier (${label})"
-                    if grep -Eq '_Z10membarrierii$' <<<"$undefined"; then
-                        fail "project C++ header retained the musl-only mangled membarrier reference (${label})"
-                    fi
+                # Pinned musl's <sys/membarrier.h> has no extern "C" block, and
+                # the x86 project header keeps that source form: C++ callers
+                # reference the mangled spelling in both trees.
+                grep -Eq '[[:space:]]_Z10membarrierii$' <<<"$undefined" ||
+                    fail "${variant} C++ header lost musl's mangled membarrier spelling (${label})"
+                if grep -Eq '[[:space:]]membarrier$' <<<"$undefined"; then
+                    fail "${variant} C++ header unexpectedly gained C linkage (${label})"
                 fi
             fi
         done
