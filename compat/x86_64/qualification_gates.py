@@ -162,6 +162,10 @@ def _validate_loader_family(path: Path) -> Mapping[str, Any]:
     return _import_compat("owned_loader_family").validate_receipt(ROOT, path)
 
 
+def _validate_abi_evidence(path: Path) -> Mapping[str, Any]:
+    return _import_compat("abi_differential_evidence").validate_receipt(ROOT, path)
+
+
 PUBLICATIONS: dict[str, Publication] = {
     publication.id: publication
     for publication in (
@@ -171,6 +175,13 @@ PUBLICATIONS: dict[str, Publication] = {
             "native-execution.json",
             "./scripts/dev-x86_64.sh owned-posix-native ... --output NEW_DIR",
             _validate_posix_native,
+        ),
+        Publication(
+            "abi-evidence",
+            "compat.abi-differential",
+            "abi-evidence.json",
+            "./scripts/dev-x86_64.sh abi-differential-evidence assemble ... --output .work/x86_64/abi-differential/NAME",
+            _validate_abi_evidence,
         ),
         Publication(
             "loader-family",
@@ -422,6 +433,33 @@ def _execute_static_c_abi_differential(evaluation: Evaluation) -> str:
     return STATIC_C_ABI_DIFFERENTIAL_MARKER.decode("utf-8")
 
 
+# The six retained ABI-differential leaves and the selection closure are one
+# published current-source evidence set; each ledger row reads its own leaf.
+ABI_EVIDENCE_ROWS = {
+    "./scripts/dev-x86_64.sh native-abi-inventory collect --static-product STATIC_PRODUCT "
+    "--dynamic-product DYNAMIC_PRODUCT --static-preparation STATIC_PREPARATION "
+    "--output .work/x86_64/native-abi-inventory/REPORT": "native_abi_inventory",
+    "./scripts/dev-x86_64.sh native-abi-elf-facts": "native_abi_elf_facts",
+    "./scripts/dev-x86_64.sh native-abi-ratchet": "native_abi_ratchet",
+    "./scripts/dev-x86_64.sh header-declaration-inventory": "header_declaration_inventory",
+    "./scripts/dev-x86_64.sh native-abi-selection": "native_abi_selection",
+    "./scripts/dev-x86_64.sh public-data-ordinary-link": "public_data_ordinary_link",
+    "./scripts/dev-x86_64.sh native-abi-selection require-closure": "native_abi_selection_closure",
+}
+
+
+def _abi_evidence_reader(leaf: str) -> Callable[[Evaluation], str]:
+    def read(evaluation: Evaluation) -> str:
+        results = evaluation.published("compat.abi-differential", "abi-evidence").get("results")
+        unmet_unless(isinstance(results, Mapping) and isinstance(results.get(leaf), Mapping),
+                     f"abi-evidence receipt has no {leaf} result")
+        result = results[leaf]
+        unmet_unless(result.get("met") is True, f"{leaf}: {result.get('detail')}")
+        return f"published abi-evidence set: {result.get('detail')}"
+
+    return read
+
+
 def _read_lua_source_build(evaluation: Evaluation) -> str:
     del evaluation
     directory = str(ROOT / "compat" / "lua")
@@ -452,6 +490,11 @@ READERS: dict[tuple[str, str], EvidenceReader] = {
             "execution",
             STATIC_C_ABI_DIFFERENTIAL_RUNNER,
             _execute_static_c_abi_differential,
+        ),
+        *(
+            EvidenceReader("compat.abi-differential", command, "publication", "abi-evidence",
+                           _abi_evidence_reader(leaf))
+            for command, leaf in ABI_EVIDENCE_ROWS.items()
         ),
         EvidenceReader(
             "compat.posix-process",

@@ -204,6 +204,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-text-math-locale-stdio-family {assemble|validate} ...  assemble or replay text/math/locale/stdio family evidence in the pinned image
   native-abi-elf-facts {collect|validate-report} ...  inspect or replay complete ELF facts supplementing a current v1 inventory
   native-abi-selection {build-report|validate-report|require-closure} ...  account native ABI selection and replay its retained evidence
+  abi-differential-evidence {assemble|validate} ...  bind or replay the current-source compat.abi-differential evidence set
   header-declaration-inventory {collect|validate-report} ...  retain or replay compiler declaration and macro occurrences
   public-data-ordinary-link {collect|validate-report} ...  prove or replay ordinary links to selected public data objects
   native-abi-ratchet {check|validate-report} ...  check or replay the reviewed native x86 public-dynamic ABI floor
@@ -7117,6 +7118,13 @@ case "$command" in
             *) fail "native-abi-selection requires build-report, validate-report, or require-closure" ;;
         esac
         ;;
+    abi-differential-evidence)
+        [ "$#" -ge 1 ] || fail "abi-differential-evidence requires assemble or validate"
+        case "$1" in
+            assemble|validate) ;;
+            *) fail "abi-differential-evidence requires assemble or validate" ;;
+        esac
+        ;;
     owned-text-math-locale-stdio-family)
         [ "$#" -ge 1 ] || fail "owned-text-math-locale-stdio-family requires assemble or validate"
         case "$1" in
@@ -7580,6 +7588,11 @@ case "$command" in
         # reader owns argument admission and source/product binding, including
         # the explicit measurement checkout for historical observations.
         python3 -B "$ROOT_DIR/compat/x86_64/native_abi_selection.py" "$@"
+        ;;
+    abi-differential-evidence)
+        # Like native-abi-selection, whose reader it replays, this binds and
+        # replays retained host facts; it compiles and executes nothing.
+        python3 -B "$ROOT_DIR/compat/x86_64/abi_differential_evidence.py" "$@"
         ;;
     owned-text-math-locale-stdio-family)
         ensure_image

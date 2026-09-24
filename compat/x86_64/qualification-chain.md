@@ -54,9 +54,33 @@ Publishing runs the leaf reader first and atomically writes
 `.work/x86_64/qualification-evidence/GATE/PUBLICATION.json` with the receipt
 path and byte hash. The gate rereads the receipt through the leaf reader on
 every evaluation, so replaced, stale-source or partial receipts fail. Current
-publications: `compat.posix-process posix-native` (`native-execution.json`
-from `owned-posix-native`) and `compat.loader-corpus loader-family`
-(`receipt.json` from `owned-loader-family`). `compat.resolver-network` reads
+publications: `compat.abi-differential abi-evidence` (`abi-evidence.json`
+from `abi-differential-evidence assemble`), `compat.posix-process
+posix-native` (`native-execution.json` from `owned-posix-native`) and
+`compat.loader-corpus loader-family` (`receipt.json` from
+`owned-loader-family`).
+
+`abi-evidence` binds one current-source set: the static preparation and
+product, the materialized dynamic product, and the native ABI inventory, ELF
+facts, ratchet, declaration inventory, selection and public-data ordinary-link
+reports, plus any selection companion receipts. Every product and report must
+come from the evaluated clean revision. Each of the gate's seven retained
+evidence rows reruns its own leaf reader against that set, and the last row
+applies `native-abi-selection require-closure`. The development path is:
+
+```sh
+./scripts/dev-x86_64.sh owned-posix-static-products .work/x86_64/abi/static
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot     # prints DYN
+P="--static-product .work/x86_64/abi/static/products/primary --dynamic-product $DYN/installed --static-preparation .work/x86_64/abi/static/preparation.json"
+./scripts/dev-x86_64.sh native-abi-inventory collect $P --output .work/x86_64/native-abi-inventory/abi
+./scripts/dev-x86_64.sh native-abi-elf-facts collect --base-inventory .work/x86_64/native-abi-inventory/abi/report.json $P --output .work/x86_64/abi/elf
+./scripts/dev-x86_64.sh native-abi-ratchet check --inventory-report .work/x86_64/native-abi-inventory/abi/report.json $P --output .work/x86_64/abi/ratchet
+./scripts/dev-x86_64.sh header-declaration-inventory collect --output .work/x86_64/header-declaration-inventory/abi --workers 8
+./scripts/dev-x86_64.sh public-data-ordinary-link collect $P --output .work/x86_64/public-data-ordinary-link/abi
+./scripts/dev-x86_64.sh native-abi-selection build-report --measurement-checkout . --elf-facts ... --output .work/x86_64/abi/selection
+./scripts/dev-x86_64.sh abi-differential-evidence assemble $P --native-abi-inventory ... --output .work/x86_64/abi-differential/NAME
+./scripts/dev-x86_64.sh qualification-manifest --publish compat.abi-differential abi-evidence .work/x86_64/abi-differential/NAME/abi-evidence.json
+``` `compat.resolver-network` reads
 the published `compat/reports/resolver-network/x86_64/latest.json` and
 `consumer.source-build` the Lua admission's fixed reports.
 
