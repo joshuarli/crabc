@@ -132,11 +132,14 @@ primitives remain in reviewed dependencies, including vectorized ones.
   symlink escapes, or shared mutable build outputs.
 - Use `.claude/skills/lanes` and `.claude/agents/crabc-lane.md` for parallel
   lane work; current user orchestration instructions still govern models.
-  Parallelize useful independent implementation in isolated worktrees; give
-  shared state one owner and integrate continuously. Do not invent work to
-  fill slots or require a scheduling board, handoff schema, or wave ceremony.
-  Run at most 16 concurrent lane agents; do not throttle builds within a lane;
-  qualifying benchmarks need an uncontended host.
+  Keep 16 lane agents occupied while `plan.md` has open work, alongside
+  continuous integration: when a lane finishes, integrate it and start its
+  successor in the same pass. Each lane gets one well-defined, difficult,
+  nontrivial deliverable with a proving command and an exclusive file
+  boundary that does not overlap another running lane; give shared state one
+  owner. No scheduling board, handoff schema, or wave ceremony. Do not
+  throttle builds within a lane; qualifying benchmarks need an uncontended
+  host.
 - Validators check structure, cross-references, and runtime receipts, not
   restated ledger prose, owner lists, or counts; tests exercise behavior,
   not source text. Do not add per-artifact validator functions or

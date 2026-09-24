@@ -12,10 +12,22 @@ Lane agents follow `.claude/agents/crabc-lane.md`.
 
 - Start from `plan.md` Progress status (parked `lane/*` branches first) and
   `./scripts/dev-x86_64.sh campaign-status`.
-- Give each lane one bounded deliverable and an exclusive set of files. Check
-  for overlap before launching; shared tooling (`scripts/dev-x86_64.sh`,
-  `compat/allocator/run.py`, shared readers) gets exactly one owner.
-- At most 16 lanes at once (`.claude/settings.json`). Don't invent lanes.
+- Keep 16 lanes running whenever `plan.md` has open work. Occupancy is the
+  coordinator's job: every time a lane reports, integrate it and launch its
+  successor (the same lane's next step or a new lane) before waiting again.
+  Keep a ranked backlog of candidate lanes so a slot never sits empty.
+- Each lane is one well-defined, difficult, nontrivial deliverable: a real
+  plan.md outcome (a capability or family obligation, a milestone condition,
+  a gate, a product property), its proving native command, and done
+  criteria. Split a large area into lanes along disjoint files, not into
+  trivial slivers; do not spend a lane on bookkeeping the coordinator can do
+  in minutes.
+- Give each lane an exclusive file boundary and check it against every
+  running lane before launch. Shared tooling (`scripts/dev-x86_64.sh`,
+  `compat/allocator/run.py`, shared readers, `parity.toml` family status)
+  has exactly one owner; lanes may append new commands or their own
+  `[[family.verified_slice]]` edits.
+- At most 16 lanes at once (`.claude/settings.json`).
 
 ## Run
 
