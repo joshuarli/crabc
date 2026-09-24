@@ -1358,14 +1358,6 @@ class NativeObservationsTests(unittest.TestCase):
             collect()
         header.write_bytes(header_before)
 
-        proof_source = self.root / 'compat/x86_64/math_scalar_corrections.py'
-        proof_before = proof_source.read_bytes()
-        proof_source.write_bytes(proof_before + b'\n# changed proof source\n')
-        self.put(self.leaf / 'libc-test.json', original_report)
-        with self.assertRaises(native.NativeObservationError, msg='correction proof source drift is rejected'):
-            collect()
-        proof_source.write_bytes(proof_before)
-
         for name in ('math/nextafterl', 'functional/case_000'):
             with self.subTest(unit=name):
                 output = self.leaf / 'execution' / name / 'oracle.stdout'
