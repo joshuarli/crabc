@@ -30,8 +30,8 @@ TARGET = "arena::owned::tests::emit_native_arena_lifecycle_trace"
 FIELD = re.compile(r"m2\.arena\.lifecycle\.([0-9]+)=(-?[0-9]+)")
 # libtest's `--nocapture` output places the first field after this delimiter.
 RUST_INLINE_PREFIX = f"test {TARGET} ... "
-# Scenario markers are `-1000 - scenario`; the final marker is scenario 16.
-FINAL_MARKER = -1016
+# Scenario markers are `-1000 - scenario`; the final marker is scenario 21.
+FINAL_MARKER = -1021
 
 
 def parse_trace(output: str, *, source: str) -> list[int]:
@@ -84,7 +84,7 @@ def run_oracle(harness: Any, *, offline: bool) -> tuple[list[str], list[int]]:
             "-I", str(source / "include"), "-I", str(source / "src"),
             *harness.CONFIGURATION_PROFILES["release"],
             # The fixture includes `static.c`, the single pinned translation unit.
-            str(FIXTURE), "-Wl,--wrap=mmap", "-Wl,--wrap=mprotect", "-pthread", "-o", str(binary),
+            str(FIXTURE), "-Wl,--wrap=mmap", "-Wl,--wrap=mprotect", "-Wl,--wrap=madvise", "-pthread", "-o", str(binary),
         ]
         build = harness.command_record(command, cwd=source, timeout_seconds=300)
         harness.require_success(build, "pinned C native x86 arena lifecycle oracle build")

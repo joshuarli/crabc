@@ -2821,13 +2821,15 @@ impl Mapping {
         let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
             return Ok(None);
         };
+        // Record before the injection point, like the C oracle's `madvise`
+        // link wrapper, so an injected failure is still an observed call.
+        #[cfg(test)]
+        fault::record_advice_range(range.address, range.length, MADV_DONTNEED);
         fault_before(FaultPoint::Decommit)?;
 
         // SAFETY: `range` is a complete-page subrange of this live mapping.
         // `MADV_DONTNEED` may discard its bytes but creates no Rust reference
         // and does not change the mapping's ownership or accessibility.
-        #[cfg(test)]
-        fault::record_advice_range(range.address, range.length, MADV_DONTNEED);
         unsafe { crabc_core::mm::madvise_raw(range.address, range.length, MADV_DONTNEED) }?;
         Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
     }

@@ -3830,6 +3830,61 @@ mod tests {
         LifecycleClaim { claim, slices }
     }
 
+    /// The C fixture's `emit_madvise_record`: every mapping-owned advisory
+    /// call (decommit and reset both record before their injection point)
+    /// and up to four advice values, padded with -1.
+    fn emit_lifecycle_advice(trace: &mut LifecycleTrace, capture: &fault::AdviceRangeCapture<'_>) {
+        let (ranges, count) = capture.ranges().expect("at most four advisory calls");
+        trace.emit(count as i64);
+        for (index, range) in ranges.iter().enumerate() {
+            trace.emit(if index < count { i64::from(range.2) } else { -1 });
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct LifecyclePurgeCounters {
+        purge_calls: i64,
+        purged: i64,
+        reset_calls: i64,
+        reset: i64,
+        arena_purges: i64,
+    }
+
+    fn lifecycle_purge_counters(owner: LifecycleOwner) -> LifecyclePurgeCounters {
+        let vm = owner.process.subprocess().vm_statistics().snapshot();
+        let arena = owner.process.subprocess().arena_statistics().snapshot();
+        LifecyclePurgeCounters {
+            purge_calls: vm.purge_calls,
+            purged: vm.purged,
+            reset_calls: vm.reset_calls,
+            reset: vm.reset,
+            arena_purges: arena.arena_purges,
+        }
+    }
+
+    fn emit_lifecycle_purge_counters_delta(trace: &mut LifecycleTrace, owner: LifecycleOwner,
+        before: LifecyclePurgeCounters) {
+        let after = lifecycle_purge_counters(owner);
+        trace.emit(after.purge_calls - before.purge_calls);
+        trace.emit(after.purged - before.purged);
+        trace.emit(after.reset_calls - before.reset_calls);
+        trace.emit(after.reset - before.reset);
+        trace.emit(after.arena_purges - before.arena_purges);
+    }
+
+    /// A lifecycle owner whose options additionally select the source
+    /// purge delay and purge-decommit policy.
+    fn lifecycle_purge_owner(purge_delay: i64, purge_decommits: bool) -> LifecycleOwner {
+        let mut options = lifecycle_options(32 * 1024, 0, false, false);
+        options.set(VmOption::PurgeDelay, purge_delay);
+        options.set(VmOption::PurgeDecommits, i64::from(purge_decommits));
+        LifecycleOwner {
+            process: process_with_options(options),
+            config: MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false),
+            backing: backing(),
+        }
+    }
+
     fn lifecycle_release(trace: &mut LifecycleTrace, owner: LifecycleOwner, item: &mut LifecycleClaim) {
         let claim = item.claim.take().expect("live lifecycle claim");
         let before = lifecycle_stats(owner);
@@ -4268,7 +4323,133 @@ mod tests {
             lifecycle_release(&mut trace, owner, &mut second_pass);
         }
 
+        // 16. A committed claim whose first-arena commit fails reserves a
+        // fresh arena, then commits in the first arena on the second search.
         trace.marker(16);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let p = owner.process;
+            let mut first = lifecycle_claim(&mut trace, owner, p, 1, false, none, -1);
+            fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+            let mut retried = lifecycle_claim(&mut trace, owner, p, 1, true, none, -1);
+            trace.emit(fault.observed() as i64);
+            fault.set(fault::Plan::disabled());
+            assert!(retried.is_some() && retried.arena() == first.arena());
+            lifecycle_release(&mut trace, owner, &mut retried);
+            lifecycle_release(&mut trace, owner, &mut first);
+        }
+
+        // 17. Immediate purge on release through decommit: failure, success,
+        // and a mixed-commitment range.
+        trace.marker(17);
+        {
+            let owner = lifecycle_purge_owner(0, true);
+            let p = owner.process;
+            let mut failing = lifecycle_claim(&mut trace, owner, p, 2, true, none, -1);
+            let mut succeeding = lifecycle_claim(&mut trace, owner, p, 2, true, none, -1);
+            let mut mixed = lifecycle_claim(&mut trace, owner, p, 2, false, none, -1);
+            for (index, item) in [&mut failing, &mut succeeding, &mut mixed].into_iter().enumerate() {
+                let before = lifecycle_purge_counters(owner);
+                fault.set(if index == 0 {
+                    fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM)
+                } else {
+                    fault::Plan::disabled()
+                });
+                let capture = fault.capture_advice_range();
+                lifecycle_release(&mut trace, owner, item);
+                emit_lifecycle_advice(&mut trace, &capture);
+                drop(capture);
+                fault.set(fault::Plan::disabled());
+                emit_lifecycle_purge_counters_delta(&mut trace, owner, before);
+                emit_lifecycle_arenas_from(&mut trace, owner, 0);
+            }
+        }
+
+        // 18. Immediate purge through reset: EAGAIN retry, a warning-only
+        // error, and a not-fully-committed range that is not reset.
+        trace.marker(18);
+        {
+            let owner = lifecycle_purge_owner(0, false);
+            let p = owner.process;
+            let mut again = lifecycle_claim(&mut trace, owner, p, 2, true, none, -1);
+            let mut failing = lifecycle_claim(&mut trace, owner, p, 2, true, none, -1);
+            let mut mixed = lifecycle_claim(&mut trace, owner, p, 2, false, none, -1);
+            let errors = [Errno::AGAIN, Errno::NOMEM, Errno::NOMEM];
+            for (index, item) in [&mut again, &mut failing, &mut mixed].into_iter().enumerate() {
+                let before = lifecycle_purge_counters(owner);
+                fault.set(if index < 2 {
+                    fault::Plan::at(fault::Point::Purge, 1, errors[index])
+                } else {
+                    fault::Plan::disabled()
+                });
+                let capture = fault.capture_advice_range();
+                lifecycle_release(&mut trace, owner, item);
+                emit_lifecycle_advice(&mut trace, &capture);
+                drop(capture);
+                fault.set(fault::Plan::disabled());
+                emit_lifecycle_purge_counters_delta(&mut trace, owner, before);
+                emit_lifecycle_arenas_from(&mut trace, owner, 0);
+            }
+        }
+
+        // 19. A delayed purge whose forced collection decommit fails consumes
+        // the schedule; a second forced collection has nothing to retry.
+        trace.marker(19);
+        {
+            let owner = lifecycle_purge_owner(10, true);
+            let p = owner.process;
+            let mut scheduled = lifecycle_claim(&mut trace, owner, p, 2, true, none, -1);
+            let arena = scheduled.arena();
+            lifecycle_release(&mut trace, owner, &mut scheduled);
+            let view = unsafe { ArenaView::from_ptr(arena.as_ptr()) }.unwrap();
+            let expire = || view.arena().purge_expire.load(Ordering::Acquire);
+            trace.emit_bool(expire() != 0);
+            for pass in 0..2 {
+                let before = lifecycle_purge_counters(owner);
+                fault.set(if pass == 0 {
+                    fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM)
+                } else {
+                    fault::Plan::disabled()
+                });
+                let capture = fault.capture_advice_range();
+                // SAFETY: the fixture group is live and its claims released.
+                assert!(unsafe { owner.backing.collect_purge(p, owner.config, true, true, 0) });
+                emit_lifecycle_advice(&mut trace, &capture);
+                drop(capture);
+                fault.set(fault::Plan::disabled());
+                emit_lifecycle_purge_counters_delta(&mut trace, owner, before);
+                trace.emit_bool(expire() == 0);
+                let purge = unsafe { view.slices_purge() }.unwrap();
+                trace.emit(purge.popcount_range(0, view.arena().slice_count).unwrap() as i64);
+                emit_lifecycle_arenas_from(&mut trace, owner, 0);
+            }
+        }
+
+        // 20. Reset EINVAL switches the process-global advice to
+        // MADV_DONTNEED for this and every later reset; it runs last.
+        trace.marker(20);
+        {
+            let owner = lifecycle_purge_owner(0, false);
+            let p = owner.process;
+            let mut first = lifecycle_claim(&mut trace, owner, p, 2, true, none, -1);
+            let mut later = lifecycle_claim(&mut trace, owner, p, 2, true, none, -1);
+            for (index, item) in [&mut first, &mut later].into_iter().enumerate() {
+                let before = lifecycle_purge_counters(owner);
+                fault.set(if index == 0 {
+                    fault::Plan::at(fault::Point::Purge, 1, Errno::INVAL)
+                } else {
+                    fault::Plan::disabled()
+                });
+                let capture = fault.capture_advice_range();
+                lifecycle_release(&mut trace, owner, item);
+                emit_lifecycle_advice(&mut trace, &capture);
+                drop(capture);
+                fault.set(fault::Plan::disabled());
+                emit_lifecycle_purge_counters_delta(&mut trace, owner, before);
+            }
+        }
+
+        trace.marker(21);
     }
 }
 

@@ -70,6 +70,38 @@ int __wrap_mprotect(void* addr, size_t length, int prot) {
   return __real_mprotect(addr, length, prot);
 }
 
+/* Every `madvise` (decommit and reset both reach it) is recorded with its
+   advice; the Nth call after arming fails with the selected errno instead of
+   reaching the kernel, so the source warning/retry/fallback branches run. */
+int __real_madvise(void* addr, size_t length, int advice);
+static size_t madvise_calls;
+static int madvise_advices[4];
+static size_t fail_madvise_ordinal;  // 0 disables the seam
+static int fail_madvise_errno;
+
+int __wrap_madvise(void* addr, size_t length, int advice) {
+  if (madvise_calls < 4) madvise_advices[madvise_calls] = advice;
+  if (++madvise_calls == fail_madvise_ordinal) {
+    errno = fail_madvise_errno;
+    return -1;
+  }
+  return __real_madvise(addr, length, advice);
+}
+
+static void arm_madvise(size_t ordinal, int error) {
+  madvise_calls = 0;
+  for (size_t i = 0; i < 4; i++) madvise_advices[i] = -1;
+  fail_madvise_ordinal = ordinal;
+  fail_madvise_errno = error;
+}
+
+/* The recorded call count and up to four advice values, padded with -1. */
+static void emit_madvise_record(void) {
+  emit((int64_t)madvise_calls);
+  for (size_t i = 0; i < 4; i++) emit(i < madvise_calls ? madvise_advices[i] : -1);
+  fail_madvise_ordinal = 0;
+}
+
 /* ------------------------------------------------------------------------ */
 /* Isolated source subprocess registries.                                    */
 
@@ -118,6 +150,34 @@ static lifecycle_stats_t stats_of(lifecycle_owner_t* owner) {
     owner->subproc.stats.arena_count.total,
   };
   return stats;
+}
+
+typedef struct purge_counters_s {
+  int64_t purge_calls;
+  int64_t purged;
+  int64_t reset_calls;
+  int64_t reset;
+  int64_t arena_purges;
+} purge_counters_t;
+
+static purge_counters_t purge_counters_of(lifecycle_owner_t* owner) {
+  purge_counters_t counters = {
+    owner->subproc.stats.purge_calls.total,
+    owner->subproc.stats.purged.total,
+    owner->subproc.stats.reset_calls.total,
+    owner->subproc.stats.reset.total,
+    owner->subproc.stats.arena_purges.total,
+  };
+  return counters;
+}
+
+static void emit_purge_counters_delta(lifecycle_owner_t* owner, purge_counters_t before) {
+  const purge_counters_t after = purge_counters_of(owner);
+  emit(after.purge_calls - before.purge_calls);
+  emit(after.purged - before.purged);
+  emit(after.reset_calls - before.reset_calls);
+  emit(after.reset - before.reset);
+  emit(after.arena_purges - before.arena_purges);
 }
 
 static void emit_stats_delta(lifecycle_owner_t* owner, lifecycle_stats_t before) {
@@ -745,6 +805,122 @@ int main(void) {
     release(owner, &second_pass);
   }
 
+  /* 16. A committed claim whose first-arena commit fails: the unchanged
+         registry count makes the source reserve a fresh arena (its metadata
+         commit succeeds), and the second search commits in the first arena.
+         Every attempted commit counts a commit call. */
   emit_marker(16);
+  {
+    configure(true, 32 * 1024, 0, false);
+    lifecycle_owner_t* const owner = fresh_owner();
+    lifecycle_claim_t first = claim(owner, 1, false, NULL, -1);
+    mprotect_calls = 0;
+    fail_mprotect_ordinal = 1;
+    lifecycle_claim_t retried = claim(owner, 1, true, NULL, -1);
+    emit((int64_t)mprotect_calls);
+    fail_mprotect_ordinal = 0;
+    require(retried.start != NULL && retried.memid.mem.arena.arena == first.memid.mem.arena.arena);
+    release(owner, &retried);
+    release(owner, &first);
+  }
+
+  /* 17. Immediate purge on release (`purge_delay == 0`) through decommit:
+         a failed MADV_DONTNEED is only a warning, a successful one keeps
+         Linux's no-recommit result, and a mixed-commitment range loses its
+         committed bits either way. */
+  emit_marker(17);
+  {
+    configure(true, 32 * 1024, 0, false);
+    mi_option_set(mi_option_purge_delay, 0);
+    lifecycle_owner_t* const owner = fresh_owner();
+    lifecycle_claim_t failing = claim(owner, 2, true, NULL, -1);
+    lifecycle_claim_t succeeding = claim(owner, 2, true, NULL, -1);
+    lifecycle_claim_t mixed = claim(owner, 2, false, NULL, -1);
+    lifecycle_claim_t* const order[3] = { &failing, &succeeding, &mixed };
+    for (size_t i = 0; i < 3; i++) {
+      const purge_counters_t before = purge_counters_of(owner);
+      arm_madvise(i == 0 ? 1 : 0, ENOMEM);
+      release(owner, order[i]);
+      emit_madvise_record();
+      emit_purge_counters_delta(owner, before);
+      emit_arenas_from(owner, 0);
+    }
+    mi_option_set(mi_option_purge_delay, -1);
+  }
+
+  /* 18. Immediate purge through reset (`purge_decommits == 0`): EAGAIN
+         retries the same advice, another error is only a warning, and a
+         range that is not fully committed is not reset at all. */
+  emit_marker(18);
+  {
+    configure(true, 32 * 1024, 0, false);
+    mi_option_set(mi_option_purge_delay, 0);
+    mi_option_set(mi_option_purge_decommits, 0);
+    lifecycle_owner_t* const owner = fresh_owner();
+    lifecycle_claim_t again = claim(owner, 2, true, NULL, -1);
+    lifecycle_claim_t failing = claim(owner, 2, true, NULL, -1);
+    lifecycle_claim_t mixed = claim(owner, 2, false, NULL, -1);
+    lifecycle_claim_t* const order[3] = { &again, &failing, &mixed };
+    const int errors[3] = { EAGAIN, ENOMEM, ENOMEM };
+    for (size_t i = 0; i < 3; i++) {
+      const purge_counters_t before = purge_counters_of(owner);
+      arm_madvise(i < 2 ? 1 : 0, errors[i]);
+      release(owner, order[i]);
+      emit_madvise_record();
+      emit_purge_counters_delta(owner, before);
+      emit_arenas_from(owner, 0);
+    }
+    mi_option_set(mi_option_purge_decommits, 1);
+    mi_option_set(mi_option_purge_delay, -1);
+  }
+
+  /* 19. A delayed purge whose forced collection decommit fails: the source
+         consumes the schedule (purge bits and expiry clear), keeps the range
+         free, and a second forced collection has nothing to retry. */
+  emit_marker(19);
+  {
+    configure(true, 32 * 1024, 0, false);
+    mi_option_set(mi_option_purge_delay, 10);
+    lifecycle_owner_t* const owner = fresh_owner();
+    lifecycle_claim_t scheduled = claim(owner, 2, true, NULL, -1);
+    mi_arena_t* const arena = scheduled.memid.mem.arena.arena;
+    release(owner, &scheduled);
+    emit(mi_atomic_loadi64_relaxed(&arena->purge_expire) != 0);
+    for (int pass = 0; pass < 2; pass++) {
+      const purge_counters_t before = purge_counters_of(owner);
+      arm_madvise(pass == 0 ? 1 : 0, ENOMEM);
+      mi_arenas_try_purge(true, true, &owner->subproc, 0);
+      emit_madvise_record();
+      emit_purge_counters_delta(owner, before);
+      emit(mi_atomic_loadi64_relaxed(&arena->purge_expire) == 0);
+      emit((int64_t)mi_bitmap_popcount(arena->slices_purge));
+      emit_arenas_from(owner, 0);
+    }
+    mi_option_set(mi_option_purge_delay, -1);
+  }
+
+  /* 20. Reset EINVAL: MADV_FREE is replaced by MADV_DONTNEED for the same
+         call and every later reset. This process-global switch runs last. */
+  emit_marker(20);
+  {
+    configure(true, 32 * 1024, 0, false);
+    mi_option_set(mi_option_purge_delay, 0);
+    mi_option_set(mi_option_purge_decommits, 0);
+    lifecycle_owner_t* const owner = fresh_owner();
+    lifecycle_claim_t first = claim(owner, 2, true, NULL, -1);
+    lifecycle_claim_t later = claim(owner, 2, true, NULL, -1);
+    lifecycle_claim_t* const order[2] = { &first, &later };
+    for (size_t i = 0; i < 2; i++) {
+      const purge_counters_t before = purge_counters_of(owner);
+      arm_madvise(i == 0 ? 1 : 0, EINVAL);
+      release(owner, order[i]);
+      emit_madvise_record();
+      emit_purge_counters_delta(owner, before);
+    }
+    mi_option_set(mi_option_purge_decommits, 1);
+    mi_option_set(mi_option_purge_delay, -1);
+  }
+
+  emit_marker(21);
   return 0;
 }
