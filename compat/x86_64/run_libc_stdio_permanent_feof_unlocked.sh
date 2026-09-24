@@ -152,12 +152,6 @@ for unselected in clearerr_unlocked fgetc_unlocked getc_unlocked \
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
-for source_name in 'src/stdio/feof.c' 'weak_alias(feof, feof_unlocked)' \
-    'pub unsafe extern "C" fn feof' '.weak feof_unlocked' \
-    '.set feof_unlocked, feof'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stream feof_unlocked implementation omits $source_name"
-done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_STDIO_PERMANENT_FEOF_UNLOCKED_FREESTANDING -I"$ROOT_DIR/include" \

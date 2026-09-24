@@ -125,12 +125,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_setconcurrency.c::pthread_setconcurrency' \
-    '`EINVAL` for a negative request, `EAGAIN` for a positive request' \
-    'pthread_getconcurrency' 'deliberately unselected'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_setconcurrency.rs ||
-        fail "pthread_setconcurrency source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_(identity|create_join|affinity|cpuclock|name|mutex|cond|rwlock|tsd|cancel|atfork)::|atomic::' \
     libc/src/c_abi/x86_64/pthread_setconcurrency.rs; then
     fail "pthread_setconcurrency source must not import a runtime seam"

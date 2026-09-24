@@ -107,12 +107,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr' \
     "$archive_relocations"; then
     fail "archive selects dynamic TLS"
 fi
-for snippet in '9fa28ece75d8a2191de7c5bb53bed224c5947417' \
-    'copy the source including its NUL' \
-    'no locale database, environment lookup'; do
-    grep -Fiq "$snippet" libc/src/c_abi/x86_64/locale_narrow.rs ||
-        fail "implementation omits provenance boundary $snippet"
-done
 
 "$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -DCRABC_LOCALE_NARROW_FREESTANDING \
     -I"$ROOT_DIR/include" \

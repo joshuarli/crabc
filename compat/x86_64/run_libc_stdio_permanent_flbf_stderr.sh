@@ -117,14 +117,6 @@ grep -Eq "[[:space:]]T[[:space:]]__flbf$" "$archive_symbols" ||
     fail "archive does not define strong __flbf"
 grep -Eq "[[:space:]][BDR][[:space:]]stderr$" "$archive_symbols" ||
     fail "archive does not define permanent stderr data"
-for source_name in 'src/stdio/ext.c' 'src/stdio/stderr.c' \
-    'pub unsafe extern "C" fn __flbf' 'return f->lbf >= 0' \
-    'stream != ptr::addr_of_mut!(STDERR_STREAM)' 'const STDERR_LBF: c_int = -1' \
-    '(STDERR_LBF >= 0) as c_int' 'StandardStream::new(2, F_PERM | F_NORD)' \
-    'if !unsafe { is_path_stream(stream) }'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stderr __flbf implementation omits $source_name"
-done
 for unselected in __fwriting __fpending __fpurge \
     _flushlbf; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

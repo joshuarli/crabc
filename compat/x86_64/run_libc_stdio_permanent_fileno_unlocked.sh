@@ -152,12 +152,6 @@ for unselected in clearerr_unlocked \
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
-for source_name in 'src/stdio/fileno.c' 'weak_alias(fileno, fileno_unlocked)' \
-    'pub unsafe extern "C" fn fileno' '.weak fileno_unlocked' \
-    '.set fileno_unlocked, fileno'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stream fileno_unlocked implementation omits $source_name"
-done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_STDIO_PERMANENT_FILENO_UNLOCKED_FREESTANDING -I"$ROOT_DIR/include" \

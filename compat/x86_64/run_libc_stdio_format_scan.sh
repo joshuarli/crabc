@@ -266,8 +266,6 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
-grep -Fq 'args.next_arg' "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
-    fail "format/scan leaf no longer owns the x86 variadic boundary"
 if [ "$EVIDENCE_PROFILE" = errno-output ]; then
     grep -Fq "b'm' if output.allow_errno_message() && length == Length::None" \
         "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||

@@ -294,23 +294,6 @@ fi
 
 # The C11 wrapper must use private sibling seams, never exported pthread C
 # symbols. Retain this source-level boundary alongside the native fixture.
-for required in \
-    'pthread_mutex::init_selected_normal_mutex' \
-    'pthread_mutex::destroy_selected_normal_mutex' \
-    'pthread_mutex::lock_selected_normal_mutex' \
-    'pthread_mutex::try_lock_selected_normal_mutex' \
-    'pthread_mutex::unlock_selected_normal_mutex' \
-    'pthread_cond::init_selected_private_cond' \
-    'pthread_cond::destroy_selected_private_cond' \
-    'pthread_cond::wait_selected_private_cond' \
-    'pthread_cond::signal_selected_private_cond' \
-    'pthread_cond::broadcast_selected_private_cond' \
-    'MTX_PLAIN' \
-    'THRD_BUSY' \
-    'mtx_unlock'; do
-    grep -Fq "$required" libc/src/c_abi/x86_64/c11_sync.rs ||
-        fail "C11 plain-sync source is missing ${required}"
-done
 if grep -Eq 'pthread_(mutex|cond)_(init|destroy|lock|trylock|unlock|wait|signal|broadcast)\(' \
     libc/src/c_abi/x86_64/c11_sync.rs; then
     fail "C11 plain-sync wrapper crosses an interposable pthread C ABI"

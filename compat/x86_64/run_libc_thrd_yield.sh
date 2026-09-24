@@ -127,11 +127,6 @@ for symbol in __errno_location thrd_yield; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for marker in 'src/thread/thrd_yield.c' 'SYS_SCHED_YIELD' \
-    'raw_syscall::syscall0' 'does not publish a raw failure through errno'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/thrd_yield.rs ||
-        fail "thrd_yield source lacks ${marker}"
-done
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS relocation"

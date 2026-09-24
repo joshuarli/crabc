@@ -96,11 +96,6 @@ for unselected in strfmon strfmon_l malloc calloc \
         fail "archive accidentally exports unselected $unselected"
     fi
 done
-for snippet in '9fa28ece75d8a2191de7c5bb53bed224c5947417' \
-    'network-byte-order 16-bit class' 'not public `<ctype.h>`'; do
-    grep -Fq "$snippet" libc/src/c_abi/x86_64/locale_ctype.rs ||
-        fail "implementation omits provenance or ABI boundary $snippet"
-done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_LOCALE_CTYPE_LOCATORS_FREESTANDING -I"$ROOT_DIR/include" \

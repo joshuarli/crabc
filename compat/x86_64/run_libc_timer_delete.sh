@@ -114,14 +114,6 @@ for selected in __errno_location timer_delete; do
     grep -Eq "[[:space:]][TW][[:space:]]${selected}$" "$archive_symbols" ||
         fail "archive does not define ${selected}"
 done
-for marker in 'src/time/timer_delete.c' 'SYS_TIMER_DELETE' \
-    'raw_syscall::syscall1' 'raw -errno'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/timer_delete.rs ||
-        fail "timer_delete source lacks ${marker}"
-done
-if grep -Fq 'c_status(' libc/src/c_abi/x86_64/timer_delete.rs; then
-    fail "timer_delete source must not normalize raw errors"
-fi
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS relocation"

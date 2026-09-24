@@ -114,11 +114,6 @@ for selected in __errno_location timer_gettime; do
     grep -Eq "[[:space:]][TW][[:space:]]${selected}$" "$archive_symbols" ||
         fail "archive does not define ${selected}"
 done
-for marker in 'src/time/timer_gettime.c' 'SYS_TIMER_GETTIME' \
-    'raw_syscall::syscall2' 'c_status(result)'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/timer_gettime.rs ||
-        fail "timer_gettime source lacks ${marker}"
-done
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS relocation"

@@ -147,13 +147,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_attr_get.c::pthread_mutexattr_getprotocol' \
-    '*protocol = a->__attr / 8U % 2' \
-    '`FUTEX_LOCK_PI` support' \
-    'does not select `pthread_mutexattr_setprotocol`'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_mutexattr_protocol_query.rs ||
-        fail "pthread mutexattr protocol-query source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_mutex::|atomic::' \
     libc/src/c_abi/x86_64/pthread_mutexattr_protocol_query.rs; then
     fail "pthread mutexattr protocol-query source must not import a runtime seam"

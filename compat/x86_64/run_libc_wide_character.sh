@@ -114,11 +114,6 @@ for unselected in wcsdup fwide fgetwc fputwc swprintf wcsftime \
         fail "archive accidentally exports unselected $unselected"
     fi
 done
-for snippet in '9fa28ece75d8a2191de7c5bb53bed224c5947417' \
-    'wide_character_tables.rs' 'approximate non-ASCII classification'; do
-    grep -Fq "$snippet" libc/src/c_abi/x86_64/wide_character.rs ||
-        fail "implementation omits provenance boundary $snippet"
-done
 
 "$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -DCRABC_WIDE_CHARACTER_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \

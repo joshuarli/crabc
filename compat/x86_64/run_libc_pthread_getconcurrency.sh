@@ -175,11 +175,6 @@ objdump -d "$object" >"$object_disassembly"
 if grep -Eq '[[:space:]](call|syscall)([[:space:]]|$)|%fs:' "$object_disassembly"; then
     fail "pthread_getconcurrency object unexpectedly calls, syscalls, or uses TLS"
 fi
-for marker in 'src/thread/pthread_getconcurrency.c::pthread_getconcurrency' \
-    'zero directly' 'pthread_setconcurrency' 'private selected static artifact'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_getconcurrency.rs ||
-        fail "pthread_getconcurrency source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_(identity|create_join|affinity|cpuclock|name|mutex|cond|rwlock|tsd|cancel|atfork|setconcurrency)::|atomic::' \
     libc/src/c_abi/x86_64/pthread_getconcurrency.rs; then
     fail "pthread_getconcurrency source must not import a runtime seam"

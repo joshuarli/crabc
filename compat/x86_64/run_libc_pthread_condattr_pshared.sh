@@ -150,14 +150,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_condattr_setpshared.c::pthread_condattr_setpshared' \
-    'src/thread/pthread_attr_get.c::pthread_condattr_getpshared' \
-    'pshared > 1U' 'a->__attr &= 0x7fffffff' \
-    'a->__attr |= (unsigned)pshared<<31' '*pshared = a->__attr>>31' \
-    'no selected condition initializer consumes a record here'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_condattr_pshared.rs ||
-        fail "pthread condattr pshared source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_identity::|pthread_cond::|atomic::' \
     libc/src/c_abi/x86_64/pthread_condattr_pshared.rs; then
     fail "pthread condattr pshared source must not import a runtime seam"

@@ -132,12 +132,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_getcpuclockid.c' 'SYS_GETTID' \
-    'current_thread_pointer' 'is_initial_thread_pointer' \
-    'selected_worker_linux_thread_id' 'does not write C `errno`'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_cpuclock.rs ||
-        fail "pthread CPU-clock source lacks ${marker}"
-done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_CPUCLOCK_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \

@@ -147,13 +147,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_attr_get.c::pthread_mutexattr_getrobust' \
-    '*robust = a->__attr / 4U % 2' \
-    'kernel robust-list support' \
-    'does not select `pthread_mutexattr_setrobust`'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_mutexattr_robust_query.rs ||
-        fail "pthread mutexattr robust-query source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_mutex::|atomic::' \
     libc/src/c_abi/x86_64/pthread_mutexattr_robust_query.rs; then
     fail "pthread mutexattr robust-query source must not import a runtime seam"

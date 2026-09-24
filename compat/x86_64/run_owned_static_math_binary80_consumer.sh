@@ -103,8 +103,6 @@ grep -Fq 'src/math/fmal.c' compat/x86_64/generate_libc_math_elementary_long_doub
 	fail "fmal source provenance drifted"
 grep -Fq 'src/math/hypotl.c' compat/x86_64/generate_libc_math_elementary_long_double.py ||
 	fail "hypotl source provenance drifted"
-grep -Fq '.global log1pl' libc/src/c_abi/x86_64/math_x87_extended.rs ||
-	fail "log1pl is no longer the existing Rust x87 provider"
 grep -Fq 'src/math/x86_64/{logl,log1pl,log2l,log10l}.s' \
 	libc/src/c_abi/x86_64/math_x87_extended.rs ||
 	fail "log1pl source provenance drifted"

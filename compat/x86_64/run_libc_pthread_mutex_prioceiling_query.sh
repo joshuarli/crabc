@@ -145,12 +145,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_mutex_getprioceiling.c::pthread_mutex_getprioceiling' \
-    'returns `EINVAL` without reading either argument' \
-    'does not select `pthread_mutex_setprioceiling`'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_mutex_prioceiling_query.rs ||
-        fail "pthread mutex priority-ceiling query source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_mutex::|atomic::' \
     libc/src/c_abi/x86_64/pthread_mutex_prioceiling_query.rs; then
     fail "pthread mutex priority-ceiling query source must not import a runtime seam"

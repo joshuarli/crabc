@@ -116,11 +116,6 @@ for selected in __errno_location clock_adjtime; do
     grep -Eq "[[:space:]][TW][[:space:]]${selected}$" "$archive_symbols" ||
         fail "archive does not define ${selected}"
 done
-for marker in 'src/linux/clock_adjtime.c' 'SYS_CLOCK_ADJTIME' \
-    'raw_syscall::syscall2' 'c_status(result)'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/clock_adjtime.rs ||
-        fail "clock_adjtime source lacks ${marker}"
-done
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS relocation"

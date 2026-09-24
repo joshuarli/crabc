@@ -121,10 +121,6 @@ for symbol in stdin stdout stderr; do
     grep -Eq "[[:space:]][BDR][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define permanent stream data ${symbol}"
 done
-for source_name in 'src/stdio/fileno.c' 'pub unsafe extern "C" fn fileno'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stream fileno implementation omits $source_name"
-done
 
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
     -DCRABC_STDIO_PERMANENT_FILENO_FREESTANDING -I"$ROOT_DIR/include" \

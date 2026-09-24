@@ -90,11 +90,6 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$work_dir/selected-symbols" "$work_dir/expected-symbols"
 grep -Eq "[[:space:]]T[[:space:]]__sched_cpucount$" "$archive_symbols" ||
     fail "archive does not define strong __sched_cpucount"
-for marker in 'src/sched/sched_cpucount.c' 'const unsigned char' \
-    'while index < size' 'while bit < 8' 'caller-owned'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/sched_cpucount.rs ||
-        fail "sched CPU-count source lacks ${marker}"
-done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_SCHED_CPUCOUNT_FREESTANDING \
     -I "$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \

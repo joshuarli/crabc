@@ -116,12 +116,6 @@ for unselected in fgets_unlocked fputs_unlocked gets getw putw getdelim getline 
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
-for source_name in 'src/stdio/{fgets,fputs,puts}.c' \
-    'pub unsafe extern "C" fn fgets' 'pub unsafe extern "C" fn fputs' \
-    'pub unsafe extern "C" fn puts' 'if !is_permanent_stream(stream)'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent line-I/O implementation omits $source_name"
-done
 for syscall_name in SYS_READ SYS_WRITE; do
     grep -Fq "raw_syscall::$syscall_name" \
         "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||

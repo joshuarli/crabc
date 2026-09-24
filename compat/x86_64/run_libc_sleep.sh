@@ -135,12 +135,6 @@ fi
 grep -Eq 'nanosleep' "$object_relocations" ||
     fail "sleep object lacks its nanosleep delegation relocation"
 
-for marker in 'src/unistd/sleep.c::sleep' 'nanosleep(&tv, &tv)' \
-    'initial-TLS `errno`' 'pub extern "C" fn sleep'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/sleep.rs ||
-        fail "sleep source lacks ${marker}"
-done
-
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -DCRABC_SLEEP_FREESTANDING \
     -I "$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \

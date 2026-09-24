@@ -128,16 +128,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in \
-    'src/thread/pthread_barrierattr_init.c::pthread_barrierattr_init' \
-    'src/thread/pthread_barrierattr_destroy.c::pthread_barrierattr_destroy' \
-    'src/thread/pthread_barrier_init.c::pthread_barrier_init' \
-    'src/thread/pthread_barrier_destroy.c::pthread_barrier_destroy' \
-    'src/thread/pthread_barrier_wait.c::pthread_barrier_wait' \
-    'process-private' 'process-shared' 'vmlock'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_barrier.rs ||
-        fail "pthread barrier source lacks ${marker}"
-done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_BARRIER_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \

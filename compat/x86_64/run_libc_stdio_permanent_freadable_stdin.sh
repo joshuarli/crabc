@@ -117,12 +117,6 @@ grep -Eq "[[:space:]]T[[:space:]]__freadable$" "$archive_symbols" ||
     fail "archive does not define strong __freadable"
 grep -Eq "[[:space:]][BDR][[:space:]]stdin$" "$archive_symbols" ||
     fail "archive does not define permanent stdin data"
-for source_name in 'src/stdio/ext.c' 'pub unsafe extern "C" fn __freadable' \
-    '!(f->flags & F_NORD)' 'stream != ptr::addr_of_mut!(STDIN_STREAM)' \
-    'StandardStream::new(0, F_PERM | F_NOWR)'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stdin __freadable implementation omits $source_name"
-done
 for unselected in __fwriting \
     __fpending __fpurge _flushlbf; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

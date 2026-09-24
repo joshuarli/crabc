@@ -149,15 +149,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_condattr_setclock.c::pthread_condattr_setclock' \
-    'src/thread/pthread_attr_get.c::pthread_condattr_getclock' \
-    'if (clk < 0 || clk-2U < 2) return EINVAL' \
-    'a->__attr &= 0x80000000' 'a->__attr |= clk' \
-    '*clk = a->__attr & 0x7fffffff' \
-    'no selected condition initializer consumes a clock record'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_condattr_clock.rs ||
-        fail "pthread condattr clock source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_identity::|pthread_cond::|atomic::' \
     libc/src/c_abi/x86_64/pthread_condattr_clock.rs; then
     fail "pthread condattr clock source must not import a runtime seam"

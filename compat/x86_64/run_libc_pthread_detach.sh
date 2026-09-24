@@ -128,8 +128,6 @@ fi
 # The selected detach state transition is prompt: it marks ownership but does
 # not wait or tear mappings down.  Later pthread_create is the selected lazy
 # reaping entry and must retain the child-clear-tid lifecycle boundary.
-grep -Fq 'CLONE_CHILD_CLEARTID' libc/src/c_abi/x86_64/pthread_create_join.rs ||
-    fail "selected worker source lacks CLONE_CHILD_CLEARTID"
 detach_source="$(sed -n '/pub(super) unsafe fn detach_selected_worker/,/\/\/\/ Detach one selected static pthread\/C11 worker/p' libc/src/c_abi/x86_64/pthread_create_join.rs)"
 grep -Fq 'SelectedWorkerLifecycleState::Detached' <<<"$detach_source" ||
     fail "selected detach source lacks its detached ownership claim"

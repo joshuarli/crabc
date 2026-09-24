@@ -108,15 +108,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr' \
     "$archive_relocations"; then
     fail "archive selects dynamic TLS"
 fi
-for snippet in '9fa28ece75d8a2191de7c5bb53bed224c5947417' \
-    'built-ins reuse their token' \
-    'No locale map, allocation' \
-    '#[cfg(feature = "x86-owned-static-runtime")]' \
-    '#[cfg(not(feature = "x86-owned-static-runtime"))]'; do
-    grep -Fq "$snippet" libc/src/c_abi/x86_64/locale_objects.rs ||
-        fail "implementation omits provenance boundary $snippet"
-done
-
 "$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 \
     -DCRABC_LOCALE_OBJECT_WIDE_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \

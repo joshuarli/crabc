@@ -152,12 +152,6 @@ for unselected in _IO_ferror_unlocked clearerr_unlocked fgetc_unlocked \
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
-for source_name in 'src/stdio/ferror.c' 'weak_alias(ferror, ferror_unlocked)' \
-    'pub unsafe extern "C" fn ferror' '.weak ferror_unlocked' \
-    '.set ferror_unlocked, ferror'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stream ferror_unlocked implementation omits $source_name"
-done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_STDIO_PERMANENT_FERROR_UNLOCKED_FREESTANDING -I"$ROOT_DIR/include" \

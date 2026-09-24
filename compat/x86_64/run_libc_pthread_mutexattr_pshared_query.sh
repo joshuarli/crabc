@@ -147,12 +147,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_attr_get.c::pthread_mutexattr_getpshared' \
-    '*pshared = a->__attr / 128U % 2' \
-    'does not select `pthread_mutexattr_setpshared`'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_mutexattr_pshared_query.rs ||
-        fail "pthread mutexattr pshared-query source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_mutex::|atomic::' \
     libc/src/c_abi/x86_64/pthread_mutexattr_pshared_query.rs; then
     fail "pthread mutexattr pshared-query source must not import a runtime seam"

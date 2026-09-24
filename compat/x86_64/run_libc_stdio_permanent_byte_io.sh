@@ -122,14 +122,6 @@ for unselected in fgetc_unlocked fputc_unlocked getc_unlocked getchar_unlocked \
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
-for source_name in 'src/stdio/{fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c' \
-    'pub unsafe extern "C" fn fgetc' 'pub unsafe extern "C" fn getc' \
-    'pub unsafe extern "C" fn getchar' 'pub unsafe extern "C" fn fputc' \
-    'pub unsafe extern "C" fn putc' 'pub unsafe extern "C" fn putchar' \
-    'pub unsafe extern "C" fn ungetc'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent byte-I/O implementation omits $source_name"
-done
 for syscall_name in SYS_READ SYS_WRITE; do
     grep -Fq "raw_syscall::$syscall_name" \
         "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||

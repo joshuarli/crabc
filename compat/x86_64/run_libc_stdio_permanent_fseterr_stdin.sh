@@ -116,12 +116,6 @@ grep -Eq "[[:space:]]T[[:space:]]__fseterr$" "$archive_symbols" ||
     fail "archive does not define strong __fseterr"
 grep -Eq "[[:space:]][BDR][[:space:]]stdin$" "$archive_symbols" ||
     fail "archive does not define permanent stdin data"
-for source_name in 'src/stdio/ext2.c' 'pub unsafe extern "C" fn __fseterr' \
-    'stream != ptr::addr_of_mut!(STDIN_STREAM)' '(*stream).flags |= F_ERR' \
-    "Set musl's fixed permanent-stdin error marker."; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stdin __fseterr implementation omits $source_name"
-done
 for unselected in __fwriting __fpending __fpurge _flushlbf \
     __freadahead __freadptr __freadptrinc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

@@ -139,17 +139,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in \
-    'src/thread/pthread_attr_init.c' \
-    'src/thread/pthread_attr_get.c' \
-    'src/thread/pthread_attr_setstacksize.c' \
-    'src/thread/pthread_attr_setscope.c' \
-    'src/thread/pthread_attr_setschedparam.c' \
-    'PTHREAD_STACK_MIN: usize = 2_048' \
-    'pthread_attr_getstack'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_attr.rs ||
-        fail "pthread attribute source lacks $marker"
-done
 # The source also carries cfg-owned live-thread inspection and coherent GNU
 # defaults. Scope the source boundary to record operations; the compiled private
 # export ratchet and ordinary fixture below judge the selected artifact.

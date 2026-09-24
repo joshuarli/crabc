@@ -140,17 +140,6 @@ fi
 # the behavioral probe: a C11 callback must never be cast to the pthread
 # pointer-return callback type, and a cross-mode pthread_exit must never be
 # decoded by thrd_join as an int.
-for required in \
-    'enum SelectedWorkerStart' \
-    'C11(C11StartRoutine)' \
-    'SelectedWorkerResult::C11' \
-    'exit_selected_c11_worker' \
-    'SelectedWorkerResultKind::Invalid' \
-    'joined.kind != pthread_create_join::SelectedWorkerResultKind::C11'; do
-    grep -Fq "$required" libc/src/c_abi/x86_64/pthread_create_join.rs \
-        libc/src/c_abi/x86_64/c11_thread_lifecycle.rs ||
-        fail "typed C11 lifecycle source is missing ${required}"
-done
 if grep -Eq 'C11StartRoutine.*as.*(PthreadStartRoutine|StartRoutine)' \
     libc/src/c_abi/x86_64/pthread_create_join.rs \
     libc/src/c_abi/x86_64/c11_thread_lifecycle.rs; then

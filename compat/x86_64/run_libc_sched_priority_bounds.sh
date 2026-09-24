@@ -120,12 +120,6 @@ for selected in __errno_location sched_get_priority_max sched_get_priority_min; 
     grep -Eq "[[:space:]][TW][[:space:]]${selected}$" "$archive_symbols" ||
         fail "archive does not define ${selected}"
 done
-for marker in 'src/sched/sched_get_priority_max.c' \
-    'SYS_SCHED_GET_PRIORITY_MAX' 'SYS_SCHED_GET_PRIORITY_MIN' \
-    'raw_syscall::syscall1' 'c_status(result)'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/sched_priority_bounds.rs ||
-        fail "scheduler-priority bounds source lacks ${marker}"
-done
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS relocation"

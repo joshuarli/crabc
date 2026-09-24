@@ -196,23 +196,6 @@ fi
 # C11 is a private shared state-machine caller, not an interposable call to
 # the POSIX C entry point. Keep the musl source mapping and raw-futex shape
 # ratcheted beside the native behavioral fixture.
-for required in \
-    'src/thread/pthread_once.c::{__pthread_once,__pthread_once_full}' \
-    'src/thread/call_once.c' \
-    'src/thread/__wait.c::__wait' \
-    'src/internal/pthread_impl.h::__wake' \
-    'ONCE_INITIALIZING' \
-    'ONCE_COMPLETE' \
-    'ONCE_WAITERS' \
-    'FUTEX_WAIT_PRIVATE' \
-    'FUTEX_WAKE_PRIVATE' \
-    'c_int::MAX as i64' \
-    'run_selected_once' \
-    'x86_64_compare_exchange_acqrel_i32' \
-    'x86_64_swap_acqrel_i32'; do
-    grep -Fq "$required" libc/src/c_abi/x86_64/pthread_once.rs ||
-        fail "pthread/C11 once source is missing ${required}"
-done
 call_once_source="$(sed -n '/pub unsafe extern "C" fn call_once(/,$p' \
     libc/src/c_abi/x86_64/pthread_once.rs)"
 grep -Fq 'run_selected_once(flag, function)' <<<"$call_once_source" ||

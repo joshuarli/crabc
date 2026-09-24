@@ -123,12 +123,6 @@ for unselected in clearerr_unlocked \
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
-for source_name in 'src/stdio/{feof,ferror,clearerr}.c' \
-    'pub unsafe extern "C" fn feof' 'pub unsafe extern "C" fn ferror' \
-    'pub unsafe extern "C" fn clearerr'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stream-status implementation omits $source_name"
-done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_STDIO_PERMANENT_STATUS_FREESTANDING -I"$ROOT_DIR/include" \

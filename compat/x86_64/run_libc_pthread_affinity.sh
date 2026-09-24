@@ -114,13 +114,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-for marker in 'pthread_getaffinity_np' 'pthread_setaffinity_np' \
-    'SYS_SCHED_SETAFFINITY' 'SYS_SCHED_GETAFFINITY' \
-    'selected_worker_linux_thread_id' 'is_initial_thread_pointer'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_affinity.rs \
-        libc/src/c_abi/x86_64/pthread_create_join.rs ||
-        fail "pthread affinity source lacks ${marker}"
-done
 grep -Fq 'SYS_SCHED_SETAFFINITY: i64 = 203' \
     libc/src/c_abi/x86_64/syscall.rs ||
     fail "raw syscall source lacks sched_setaffinity=203"

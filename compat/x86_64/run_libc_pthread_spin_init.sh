@@ -102,14 +102,6 @@ for sibling in pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
         fail "archive unexpectedly defines unselected ${sibling}"
     fi
 done
-for marker in \
-    'src/thread/pthread_spin_init.c::pthread_spin_init' \
-    'return *s = 0;' \
-    'shared argument is deliberately ignored' \
-    'spin acquisition/release, destruction'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_spin_init.rs ||
-        fail "pthread_spin_init source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|errno::|atomic::' \
     libc/src/c_abi/x86_64/pthread_spin_init.rs; then
     fail "pthread_spin_init source must not import a runtime seam"

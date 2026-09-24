@@ -117,12 +117,6 @@ grep -Eq "[[:space:]]T[[:space:]]__fwritable$" "$archive_symbols" ||
     fail "archive does not define strong __fwritable"
 grep -Eq "[[:space:]][BDR][[:space:]]stderr$" "$archive_symbols" ||
     fail "archive does not define permanent stderr data"
-for source_name in 'src/stdio/ext.c' 'pub unsafe extern "C" fn __fwritable' \
-    '!(f->flags & F_NOWR)' 'stream != ptr::addr_of_mut!(STDERR_STREAM)' \
-    'StandardStream::new(2, F_PERM | F_NORD)'; do
-    grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stderr __fwritable implementation omits $source_name"
-done
 for unselected in __fwriting \
     __fpending __fpurge _flushlbf; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

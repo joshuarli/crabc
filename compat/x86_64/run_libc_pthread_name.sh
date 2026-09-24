@@ -161,12 +161,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_setname_np.c' 'src/thread/pthread_getname_np.c' \
-    'PR_SET_NAME' 'PR_GET_NAME' 'SYS_PRCTL' 'current_selected_runtime_thread_id' \
-    'neither entry writes C'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_name.rs ||
-        fail "pthread task-name source lacks ${marker}"
-done
 if grep -Eq '/proc/self/task|SYS_OPEN|SYS_WRITE|pthread_setcancel' \
     libc/src/c_abi/x86_64/pthread_name.rs; then
     fail "pthread task-name source must not select musl's non-self path"

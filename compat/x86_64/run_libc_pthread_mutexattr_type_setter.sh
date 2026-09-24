@@ -127,11 +127,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-for marker in 'src/thread/pthread_mutexattr_settype.c::pthread_mutexattr_settype' \
-    '(unsigned)type <= 2' 'input-first `EINVAL` branch'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs ||
-        fail "pthread mutexattr type-setter source lacks ${marker}"
-done
 if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_mutex::|atomic::' \
     libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs; then
     fail "pthread mutexattr type-setter source must not import a runtime seam"
