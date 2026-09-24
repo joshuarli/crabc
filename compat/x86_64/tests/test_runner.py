@@ -7727,6 +7727,7 @@ unsafe fn join_selected_worker_inner(
         implementation = implementation_path.read_text(encoding="utf-8")
         probe = probe_path.read_text(encoding="utf-8")
         owned_runner = runner_path.read_text(encoding="utf-8")
+        owned_runner += (runner_path.parent / "owned_pthread_product_arguments.sh").read_text(encoding="utf-8")
         static_documentation = static_documentation_path.read_text(encoding="utf-8")
         dynamic_documentation = dynamic_documentation_path.read_text(encoding="utf-8")
         static_exports = {
@@ -7814,11 +7815,10 @@ unsafe fn join_selected_worker_inner(
         ):
             self.assertIn(required, probe + owned_runner)
         for required in (
-            "build_static=1",
-            "build_static=0",
+            "owned_pthread_product_arguments pthread-join-cancel \"$@\"",
             "resolve(strict=True)",
             '"$provided_dynamic_sysroot/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin -c "$probe" -o "$work/probe.o"',
-            "pthread-join-cancel product must be a checkout .work directory",
+            "product must be a checkout .work directory",
             '"$work/probe.o"',
             "run_case 128",
             "run_case 0",
