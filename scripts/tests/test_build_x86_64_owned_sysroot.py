@@ -999,9 +999,20 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             trace.write_text("\n".join(expected) + "\n", encoding="utf-8")
             driver.validate_link_trace(root, driver.STATIC_ET_EXEC, (application,), trace)
 
+            # LLD traces an archive only when it extracts a member. The
+            # Rust-only native-shadow libc.a references no compiler helper,
+            # so an ordinary application may consume none from the owned
+            # helper archive; that link is still exact and owned.
+            without_helper_member = [line for line in expected if "libcrabc-builtins.a" not in line]
+            trace.write_text("\n".join(without_helper_member) + "\n", encoding="utf-8")
+            driver.validate_link_trace(root, driver.STATIC_ET_EXEC, (application,), trace)
+
+            without_libc_member = [line for line in expected if "libc.a" not in line]
             for lines, error in (
                 (expected + ["/ambient/escape.o"], "unadmitted input"),
                 (expected[:-1], "omitted expected input"),
+                (without_libc_member, "omitted expected input"),
+                (expected + [str(library / "libcrabc-builtins.a") + "(foreign.o"], "unadmitted input"),
             ):
                 with self.subTest(lines=lines):
                     trace.write_text("\n".join(lines) + "\n", encoding="utf-8")

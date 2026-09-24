@@ -767,8 +767,14 @@ def validate_link_trace(
 
     The fixed command line is a declaration, while ``--trace`` is the linker
     observation.  A receipt is meaningful only when those agree: the three
-    direct CRT objects, both owned archives (or their selected members), and
-    the caller objects must be all and only the trace inputs.
+    direct CRT objects, selected ``libc.a`` members, and the caller objects
+    must all appear, and nothing else may appear.
+
+    LLD traces an archive only when it extracts a member.  ``libc.a`` always
+    supplies the CRT's startup entry.  The owned compiler-helper archive is
+    admitted but conditional: accepted-C mimalloc references
+    ``__popcountdi2``, whereas the Rust-only native-shadow ``libc.a``
+    references no helper, so a helper-free application extracts nothing.
     """
 
     require_regular(trace_path, "link trace")
@@ -786,8 +792,7 @@ def validate_link_trace(
     )
     archive_inputs = (library / "libc.a", library / "libcrabc-builtins.a")
     direct_texts = {str(path) for path in direct_inputs}
-    archive_texts = {str(path) for path in archive_inputs}
-    expected = direct_texts | archive_texts
+    expected = direct_texts | {str(library / "libc.a")}
     seen: set[str] = set()
     for line in trace_lines:
         if not line:
