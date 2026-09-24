@@ -36,6 +36,16 @@ class ArchitectureRatchetTests(unittest.TestCase):
         self.assertEqual(report["scope"]["current"], "shadow_subset")
         self.assertTrue(report["scope"]["static_analysis_cannot_close_final_gate"])
         self.assertEqual(report["selected_production"]["status"], "static-selection-confirmed")
+        # The active campaign's production build is native x86-64; its
+        # compiled route reaches no long PageMap lifecycle lease.
+        self.assertEqual(
+            self.manifest["phase_bc_call_graph"]["cfg_environment"]["key_values"]["target_arch"],
+            "x86_64",
+        )
+        lease = report["phase_bc_selected_production_reachability"]["ratchets"][
+            "long_pagemap_mutation_lease"
+        ]
+        self.assertEqual(lease["reachable_indicator_count"], 0, lease["matches"])
         dispatch = report["caller_identity_first_free_dispatch"]
         # The selected source intentionally changes while W01 replaces the
         # direct realloc seam. The focused fixture below owns the exact

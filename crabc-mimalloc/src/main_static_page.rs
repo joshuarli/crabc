@@ -132,6 +132,7 @@ impl<'main> MainStaticProcessPageAllocator<'main> {
     /// this function touches either static image. The map mutation lease then
     /// serializes every ordinary PageMap entry operation for the complete
     /// engine and any joined scoped remote producer lifetime.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     pub(crate) fn begin(
         attachment: &'main mut MainStaticTheapAttachment,
         pair: ProcessPageArenaLease,
@@ -317,6 +318,7 @@ pub(crate) enum MainStaticFirstArenaPageAllocatorFinishError<'main> {
     PageMap(ProcessPageMapError),
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainStaticFirstArenaPageAllocator<'main> {
     /// Opens a first-arena owner without reserving any virtual memory.
     ///
@@ -654,6 +656,7 @@ fn finish_sidecar_setup_lifecycle(
 /// native later owners activate independently from the same process binding.
 #[derive(Clone, Copy)]
 enum MainStaticRuntimeFirstArenaRoute {
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     Sidecar,
     SourceProcess(ProcessMainBackingBinding),
 }
@@ -665,6 +668,7 @@ enum MainStaticRuntimeFirstArenaRoute {
 /// absent binding cannot select the legacy mapping route.
 #[derive(Clone, Copy)]
 enum MainStaticRuntimeFirstArenaReservation {
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     Legacy {
         page_map: crate::process_page_map::ProcessPageMapLease,
     },
@@ -677,6 +681,7 @@ impl MainStaticRuntimeFirstArenaReservation {
     #[inline]
     fn page_map(self) -> crate::process_page_map::ProcessPageMapLease {
         match self {
+            #[cfg(any(test, not(target_arch = "x86_64")))]
             Self::Legacy { page_map } => page_map,
             Self::Process { backing } => backing.page_map(),
         }
@@ -1057,6 +1062,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// This legacy route intentionally retains its frozen PageMap-only state
     /// for the paused AArch64 execution path and older isolated fixtures. New
     /// native x86 runtime startup must use [`Self::begin_for_process`].
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     pub(crate) fn begin_legacy(
         session: MainStaticProcessPageSession,
         page_map: crate::process_page_map::ProcessPageMapLease,
@@ -1464,7 +1470,8 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
                     return None;
                 }
-                let (backing, pair) = match route {
+                let (backing, pair): (RuntimeFirstRegularPageBacking, Option<ProcessPageArenaLease>) = match route {
+                    #[cfg(any(test, not(target_arch = "x86_64")))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => {
                         let arena_lease = match arena_storage.ready_lease() {
                             Ok(arena) => arena,
@@ -1524,6 +1531,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // lease and cannot fail on another page's terminal release.
                 let page_map_lifecycle = match route {
                     MainStaticRuntimeFirstArenaRoute::SourceProcess(_) => Ok(None),
+                    #[cfg(any(test, not(target_arch = "x86_64")))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => page_map.begin_page_lifecycle().map(Some),
                 };
                 let page_map_lifecycle = match page_map_lifecycle {
@@ -1586,6 +1594,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 };
                 #[cfg(not(test))]
                 let page_map_ref = match (match route {
+                    #[cfg(any(test, not(target_arch = "x86_64")))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => unsafe {
                         pair.expect("the sidecar route retains its exact PageMap/arena pair")
                             .page_map_for_owned_ranges()
@@ -1702,6 +1711,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     return None;
                 }
                 let source_process = match reservation {
+                    #[cfg(any(test, not(target_arch = "x86_64")))]
                     MainStaticRuntimeFirstArenaReservation::Legacy { .. } => None,
                     MainStaticRuntimeFirstArenaReservation::Process { backing } => {
                         if !backing.is_allocation_ready() {
@@ -1716,7 +1726,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // reservation takes the fixture lifecycle boundary.
                 let page_map_lifecycle = match source_process {
                     Some(_) => Ok(None),
+                    #[cfg(any(test, not(target_arch = "x86_64")))]
                     None => page_map.begin_page_lifecycle().map(Some),
+                    // Native x86 production compiles no legacy reservation,
+                    // so no reservation can lack its process binding here.
+                    #[cfg(all(not(test), target_arch = "x86_64"))]
+                    None => Err(ProcessPageMapError::Poisoned),
                 };
                 let page_map_lifecycle = match page_map_lifecycle {
                     Ok(lifecycle) => lifecycle,
@@ -1734,7 +1749,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
-                let (backing, route, pair) = if let Some(lease) = source_process {
+                let (backing, route, pair): (
+                    RuntimeFirstRegularPageBacking,
+                    MainStaticRuntimeFirstArenaRoute,
+                    Option<ProcessPageArenaLease>,
+                ) = match source_process {
+                    Some(lease) => {
                     if !session.ensure_static_main_mapped_regular_claim_selector_for_process(lease) {
                         let _ = finish_sidecar_setup_lifecycle(page_map_lifecycle);
                         session.retain_terminal();
@@ -1754,7 +1774,9 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         MainStaticRuntimeFirstArenaRoute::SourceProcess(lease),
                         None,
                     )
-                } else {
+                    }
+                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    None => {
                     // Only the explicit-config fixture route reaches this
                     // one-arena owner. Canonical process allocation uses the
                     // source registry's own search/reserve/search transition.
@@ -1818,6 +1840,15 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         MainStaticRuntimeFirstArenaRoute::Sidecar,
                         Some(pair),
                     )
+                    }
+                    // Native x86 production compiles no legacy reservation.
+                    #[cfg(all(not(test), target_arch = "x86_64"))]
+                    None => {
+                        let _ = finish_sidecar_setup_lifecycle(page_map_lifecycle);
+                        session.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        return None;
+                    }
                 };
                 #[cfg(test)]
                 let (page_map_ref, page_map_lifecycle) = match route {
@@ -1862,6 +1893,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 };
                 #[cfg(not(test))]
                 let page_map_ref = match (match route {
+                    #[cfg(any(test, not(target_arch = "x86_64")))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => unsafe {
                         pair.expect("the sidecar route retains its exact PageMap/arena pair")
                             .page_map_for_owned_ranges()

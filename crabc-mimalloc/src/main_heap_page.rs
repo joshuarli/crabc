@@ -3084,6 +3084,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     /// resulting map mutation lease then excludes a second safe page engine
     /// from the source map's plain entry accesses until this engine and any
     /// scoped producer have become quiescent.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) fn begin(
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,
         pair: ProcessPageArenaLease,

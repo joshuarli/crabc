@@ -2149,12 +2149,14 @@ impl ProcessMainThread {
     /// witness and ticket-zero attachment. This factory exposes neither raw
     /// static storage nor arena ownership; the returned owner remains bounded
     /// to its first ordinary fresh-page miss and the global one-arena policy.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     pub(crate) fn begin_first_arena_page_allocator(
         &mut self,
     ) -> Result<MainStaticFirstArenaPageAllocator<'_>, ProcessMainFirstArenaPageAllocatorError> {
         self.begin_first_arena_page_allocator_with_storage(ProcessSharedArenaStorage::global())
     }
 
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     fn begin_first_arena_page_allocator_with_storage(
         &mut self,
         arena_storage: &'static ProcessSharedArenaStorage,

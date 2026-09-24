@@ -33,7 +33,7 @@
   "selected_production": {
     "package": "crabc-libc",
     "feature": "native-mimalloc-shadow",
-    "target": "aarch64-unknown-linux-musl",
+    "target": "x86_64-unknown-linux-musl",
     "libc_manifest": "libc/Cargo.toml",
     "c_abi_source": "libc/src/c_abi.rs",
     "native_boundary_source": "libc/src/allocator_native_mimalloc.rs",
@@ -90,7 +90,7 @@
         "test-adapter": false
       },
       "key_values": {
-        "target_arch": "aarch64",
+        "target_arch": "x86_64",
         "target_endian": "little",
         "target_os": "linux"
       }
@@ -455,7 +455,7 @@
     "phase_bc_selected_production_reachable_ceiling": {
       "caller_identity_first_native_free": 1,
       "per_call_scheduler_park_resume": 41,
-      "long_pagemap_mutation_lease": 9,
+      "long_pagemap_mutation_lease": 0,
       "ledger_owner_registry_scans": 62
     },
     "phase_bc_selected_production_reachable_floor_per_pattern": {
