@@ -146,6 +146,7 @@ int main(void) {
   const int64_t arenas_before = main_subproc->stats.arena_count.total;
   const int64_t pages_before = main_subproc->stats.pages.total;
   const int64_t threads_before = main_subproc->stats.threads.total;
+  const int64_t pages_current_before = main_subproc->stats.pages.current;
   mi_subproc_destroy(_mi_subproc_to_id(first));
   push((int64_t)member_count());
   push(member_at(0) == second && member_at(1) == main_subproc);
@@ -154,6 +155,9 @@ int main(void) {
   push(main_subproc->stats.arena_count.total - arenas_before);
   push(main_subproc->stats.pages.total > pages_before);
   push(main_subproc->stats.threads.total - threads_before);
+  /* Destroy releases the child's pages only with its arenas, after the
+     statistics merge, so its retired metadata page stays counted. */
+  push(main_subproc->stats.pages.current - pages_current_before);
 
   /* Destroying the main subprocess or a null identifier is a no-op. The Rust
      child owner cannot name either, so these are asserted but not traced. */
@@ -162,8 +166,20 @@ int main(void) {
   mi_subproc_destroy(none);
   require(member_count() == 2);
 
+  /* A child destroyed with a live metadata block: its page is released
+     with the child arenas. */
+  mi_memid_t live_memid;
+  void* const live = _mi_meta_zalloc(second, 64, &live_memid);
+  require(live != NULL);
+  const int64_t second_reserved = second->stats.reserved.current;
+  const int64_t second_pages = second->stats.pages.current;
+  push(second_pages);
+  const int64_t reserved_before_second = main_subproc->stats.reserved.current;
+  const int64_t pages_before_second = main_subproc->stats.pages.current;
   mi_subproc_destroy(_mi_subproc_to_id(second));
   push((int64_t)member_count());
+  push(main_subproc->stats.pages.current - pages_before_second);
+  push(main_subproc->stats.reserved.current - reserved_before_second == second_reserved);
 
   mi_subproc_t* const third = _mi_subproc_from_id(mi_subproc_new());
   require(third != NULL);

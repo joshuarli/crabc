@@ -2691,6 +2691,66 @@ impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> 
     pub(crate) fn finish_pages(self) -> Result<(), Self> {
         self.finish_quiescent().map(|_| ())
     }
+
+    /// Detaches every page of this child's metadata Theap for subprocess
+    /// destruction, live blocks included, without releasing any page.
+    ///
+    /// Source `mi_subproc_unsafe_destroy` never releases the child main
+    /// Heap's pages one by one: `_mi_heap_destroy_pages` returns for a main
+    /// Heap, and the pages go with `_mi_arenas_unsafe_destroy_all`, after the
+    /// statistics merge. This therefore leaves every page statistic as is.
+    /// It additionally removes each page's process PageMap range, so no
+    /// pointer lookup can reach page metadata inside an unmapped arena.
+    ///
+    /// Returns `false`, with the remaining pages still attached, for an
+    /// OS-backed page (source would leak its mapping, which no Rust owner
+    /// retains here), a page whose arena span cannot be proven, or retained
+    /// engine failure state. The caller must then retain the child.
+    ///
+    /// # Safety
+    /// The child is unreachable: its registry membership is removed and no
+    /// thread, client, or remote producer can reach any of these pages. The
+    /// caller destroys the child arenas next and never reuses this Theap's
+    /// page state.
+    pub(crate) unsafe fn detach_pages_for_subprocess_destroy(&mut self) -> bool {
+        if self.is_collection_poisoned() || self.pending_os_release.is_some() || self.page_commit_poison {
+            return false;
+        }
+        for bin in 0..BIN_COUNT {
+            loop {
+                let Some(queue) = self.session.queue_mut(bin) else { return false; };
+                let page = queue.first();
+                if page.is_null() {
+                    break;
+                }
+                let queue = queue as *mut crate::types::PageQueue;
+                let Some(ReleaseSpan::Arena { slice_start, size, .. }) = self.release_span(page) else {
+                    return false;
+                };
+                let Some(page_map_size) = NonNull::new(page)
+                    .and_then(|page| arena_page_map_size(page, slice_start, size))
+                else {
+                    return false;
+                };
+                // SAFETY: this session owns the complete queue and, by the
+                // caller's contract, the page has no other reader.
+                unsafe { page_queue_remove_metadata(&mut *queue, page) };
+                if bin != BIN_FULL && bin != BIN_HUGE {
+                    self.update_direct_cache(bin);
+                }
+                if !self.session.note_page_removed() {
+                    return false;
+                }
+                // SAFETY: the prevalidated span still maps to this detached
+                // page, and no lookup can overlap per the caller contract.
+                if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
+                    return false;
+                }
+            }
+        }
+        self.shutdown_complete = true;
+        true
+    }
 }
 
 impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> {

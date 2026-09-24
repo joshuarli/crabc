@@ -2659,14 +2659,16 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
 
     /// Source-ordered child destroy prefix: while registry admission still
     /// exists, either unlink directly when this metadata Theap has no pages
-    /// left, or create its page session, unlink the child, and force-release
-    /// the now-unreachable pages through the retained child backing. This
-    /// covers only this metadata-Theap's pages; the caller remains responsible
-    /// for every other child Heap/Theap page.
+    /// left, or create its page session, unlink the child, and detach every
+    /// metadata page, live blocks included, from its queues and the process
+    /// PageMap without releasing it. As in source, those pages are released
+    /// only with the child arenas, after the statistics merge. This covers
+    /// only this metadata-Theap's pages; the caller remains responsible for
+    /// every other child Heap/Theap page.
     ///
     /// # Safety
-    /// All child threads and users are quiescent, every client allocation
-    /// owned by this metadata Theap has been freed, and `registry` is the
+    /// All child threads and users are quiescent, no metadata block of the
+    /// child is used again, and `registry` is the
     /// exact source registry that admitted this child. Setup errors before
     /// registry mutation leave this owner registered and retryable. An
     /// ambiguous unlink or post-unlink error retains this owner with the
@@ -2710,7 +2712,10 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 return Err(ChildMetadataPageEngineError::Registry(error));
             }
             registry_unlinked = true;
-            Ok(engine.finish_pages_in_place())
+            // SAFETY: the registry edge is gone and the caller guarantees
+            // that no thread, client, or producer reaches the child; source
+            // releases these pages only with the child arenas.
+            Ok(unsafe { engine.detach_pages_for_subprocess_destroy() })
         });
         if registry_unlinked {
             self.stage = ChildMainHeapStage::RegistryUnlinked;

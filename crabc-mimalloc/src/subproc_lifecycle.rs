@@ -34,10 +34,9 @@
 //!
 //! Not yet covered: non-main Heaps in the child, nested children, routing
 //! the native runtime's allocation entries through an admitted thread's
-//! default Theap, abandoning a finishing child thread's live pages, and
-//! destroying a child whose metadata Theap still has live blocks. Source
-//! releases such blocks with the child arenas; here the child metadata pages
-//! must be free first. The source `_mi_thread_locals_thread_done` call in
+//! default Theap, and abandoning a finishing child thread's live pages. Live
+//! child metadata blocks at destruction are released with the child arenas,
+//! as in source. The source `_mi_thread_locals_thread_done` call in
 //! `mi_subproc_destroy` releases the destroying thread's dynamic thread-local
 //! table, which no child lifecycle here allocates.
 
@@ -272,8 +271,9 @@ impl core::fmt::Debug for ChildSubprocessDestroyFailure<'_, '_> {
 /// must lie outside every child arena.
 ///
 /// # Safety
-/// No thread uses the child: every child client, metadata block, and page
-/// has been freed, and no child operation or registry teardown can race
+/// No thread uses the child and no child block is used again: every child
+/// thread has finished, live child metadata blocks are released with the
+/// child arenas, and no child operation or registry teardown can race
 /// destruction. `registry` admitted the child. The caller runs on the
 /// attachment thread whose owner-local engine allocated the child main Heap.
 pub(crate) unsafe fn destroy_child<'main, 'tracking>(
@@ -764,12 +764,30 @@ mod tests {
             trace.push(after.arena_count - before.arena_count);
             trace.push(i64::from(after.pages.total > before.pages.total));
             trace.push(after.threads.total - before.threads.total);
+            trace.push(after.pages.current - before.pages.current);
 
+            // A child destroyed with a live metadata block.
+            second
+                .with_metadata_page_engine(binding, |_child, engine| {
+                    engine.allocate(64, true).expect("child metadata allocates");
+                })
+                .expect("the child metadata engine is available");
+            let second_facts = second.test_created_child_facts(parent).unwrap();
+            trace.push(second_facts.statistics.pages.current);
+            let before = main_totals(parent);
+            // SAFETY: the child has no users or threads; its live metadata
+            // block is released with the child arenas, as in source.
             unsafe {
                 destroy_child(second, registry, binding, &mut [], attachment, &mut heap_owner)
             }
             .expect("the newest child is destroyed from the list head");
+            let after = main_totals(parent);
             trace.push(registry_members(registry).len() as i64);
+            trace.push(after.pages.current - before.pages.current);
+            trace.push(i64::from(
+                after.reserved.current - before.reserved.current
+                    == second_facts.statistics.reserved.current,
+            ));
 
             let mut third = unsafe { new_child(registry, attachment, &mut heap_owner) }
                 .expect("a later child is created after destruction");
