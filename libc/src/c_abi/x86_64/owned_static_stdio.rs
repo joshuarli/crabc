@@ -866,8 +866,10 @@ pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
         let result;
         {
             let _guard = StreamGuard::acquire(stream);
+            // musl fclose.c leaves f->fd alone. A closed permanent stream
+            // keeps its descriptor number, so fileno still reports it and
+            // later output reaches whatever the program reopens there.
             result = fflush(stream) | owned_stdio_backends::close(stream);
-            (*stream).file_descriptor = -1;
         }
         if !permanent {
             unlist_locked_file(stream);
