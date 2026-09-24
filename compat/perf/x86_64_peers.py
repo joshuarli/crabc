@@ -67,6 +67,10 @@ class NetworkRow:
     endpoint: Mapping[str, Any] | None
 
 
+# Upper bound on waiting for a finished echo peer to exit by itself.
+ECHO_EXIT_GRACE_SECONDS = 5.0
+
+
 @dataclass
 class _LivePeer:
     root: Path
@@ -509,11 +513,13 @@ def _stop_process(peer: _LivePeer, timeout: float) -> tuple[dict[str, Any], list
     sent_sigterm = False
     sent_sigkill = False
     process = peer.process
-    # An echo peer exits after the final echo. Give that clean path a short
-    # grace period before converting a just-finished peer into a cancellation.
+    # An echo peer exits after the final echo. Give that clean path a grace
+    # period before converting a just-finished peer into a cancellation; on a
+    # contended host its exit may take far longer than a scheduling quantum,
+    # while only a peer whose client failed early waits out the whole grace.
     if process.poll() is None and peer.kind == "echo":
         try:
-            process.wait(timeout=min(0.25, timeout))
+            process.wait(timeout=min(ECHO_EXIT_GRACE_SECONDS, timeout))
         except subprocess.TimeoutExpired:
             pass
     if process.poll() is None:

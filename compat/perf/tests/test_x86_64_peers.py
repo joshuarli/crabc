@@ -169,6 +169,28 @@ class ReadinessDeadlineTests(unittest.TestCase):
             process.communicate(timeout=3)
 
 
+class PeerStopTests(unittest.TestCase):
+    def test_finishing_echo_peer_is_reaped_rather_than_terminated(self) -> None:
+        # A completed echo peer exits on its own right after its final echo,
+        # but a contended host may not schedule that exit within a fraction of
+        # a second. Stopping it must reap the clean exit, not SIGTERM it.
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary_text:
+            temporary = Path(temporary_text)
+            process = subprocess.Popen(
+                [sys.executable, "-B", "-c", "import time; time.sleep(1.0)"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            peer = peers._LivePeer(
+                root=ROOT, kind="echo", process=process, source={}, protocol=peers.ECHO_PROTOCOL,
+                endpoint={}, ready={}, affinity={}, events_path=temporary / "events.json",
+                stdout_path=temporary / "stdout", stderr_path=temporary / "stderr",
+            )
+            record, errors = peers._stop_process(peer, 20.0)
+            self.assertEqual(errors, [])
+            self.assertFalse(record["termination"]["sent_sigterm"])
+            self.assertEqual(record["termination"]["exit_status"], {"kind": "exit", "code": 0})
+
+
 class ResolverStagingTests(unittest.TestCase):
     def test_retained_resolver_paths_must_be_the_client_etc_paths(self) -> None:
         contents = {
