@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pthread spin locking and shared-state publication through each owned product.
+# Pthread spin, reader/writer and barrier-attribute locking, pthread_once, and
+# shared-state publication through each owned product.
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -57,4 +58,4 @@ for mode in pie non-pie; do
         cmp "$work/oracle.stdout" "$work/$mode-$entry.stdout"
     done
 done
-printf 'owned Pthread spin: PASS (same workload object, musl, requested static/dynamic entries, private worker contention, shared fork contention, acquire/release publication and errno); evidence: %s\n' "$work"
+printf 'owned Pthread spin: PASS (same workload object, musl, requested static/dynamic entries, private worker contention, shared fork contention, acquire/release publication and errno; rwlock attributes and try/timed acquisition, shared barrier/rwlock, cancelled pthread_once initializer); evidence: %s\n' "$work"

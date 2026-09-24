@@ -589,6 +589,111 @@ static int pi_case(void)
     return 0;
 }
 
+/*
+ * Mutex attribute getters report what the setters stored, and each setter
+ * rejects an out-of-range value with EINVAL without touching errno.
+ */
+static int attribute_case(void)
+{
+    pthread_mutexattr_t attributes;
+    int type = -1, robust = -1, shared = -1;
+
+    errno = E2BIG;
+    if (pthread_mutexattr_init(&attributes) ||
+        pthread_mutexattr_gettype(&attributes, &type) || type != PTHREAD_MUTEX_DEFAULT ||
+        pthread_mutexattr_getrobust(&attributes, &robust) || robust != PTHREAD_MUTEX_STALLED ||
+        pthread_mutexattr_getpshared(&attributes, &shared) || shared != PTHREAD_PROCESS_PRIVATE) return 100;
+    if (pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_ERRORCHECK) ||
+        pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_ROBUST) ||
+        pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_SHARED) ||
+        pthread_mutexattr_gettype(&attributes, &type) || type != PTHREAD_MUTEX_ERRORCHECK ||
+        pthread_mutexattr_getrobust(&attributes, &robust) || robust != PTHREAD_MUTEX_ROBUST ||
+        pthread_mutexattr_getpshared(&attributes, &shared) || shared != PTHREAD_PROCESS_SHARED) return 101;
+    if (pthread_mutexattr_settype(&attributes, 3) != EINVAL ||
+        pthread_mutexattr_setrobust(&attributes, 2) != EINVAL ||
+        pthread_mutexattr_setpshared(&attributes, 2) != EINVAL ||
+        pthread_mutexattr_gettype(&attributes, &type) || type != PTHREAD_MUTEX_ERRORCHECK ||
+        pthread_mutexattr_getrobust(&attributes, &robust) || robust != PTHREAD_MUTEX_ROBUST ||
+        pthread_mutexattr_getpshared(&attributes, &shared) || shared != PTHREAD_PROCESS_SHARED) return 102;
+    if (pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE) ||
+        pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_STALLED) ||
+        pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_PRIVATE) ||
+        pthread_mutexattr_gettype(&attributes, &type) || type != PTHREAD_MUTEX_RECURSIVE ||
+        pthread_mutexattr_getrobust(&attributes, &robust) || robust != PTHREAD_MUTEX_STALLED ||
+        pthread_mutexattr_getpshared(&attributes, &shared) || shared != PTHREAD_PROCESS_PRIVATE ||
+        pthread_mutexattr_destroy(&attributes) || errno != E2BIG) return 103;
+    puts("pthread mutex attribute type, robustness, and sharing round trips: PASS");
+    return 0;
+}
+
+/*
+ * C11 conditions over a plain C11 mutex: one waiter wakes on cnd_signal,
+ * all waiters on cnd_broadcast, and an expired cnd_timedwait reports
+ * thrd_timedout with the mutex reacquired.
+ */
+#define C11_WAITERS 3
+static mtx_t c11_condition_mutex;
+static cnd_t c11_condition;
+static int c11_generation, c11_waiting, c11_woken;
+
+static int c11_condition_waiter(void *unused)
+{
+    (void)unused;
+    if (mtx_lock(&c11_condition_mutex) != thrd_success) return 1;
+    int generation = c11_generation;
+    c11_waiting++;
+    if (cnd_broadcast(&c11_condition) != thrd_success) return 2;
+    while (c11_generation == generation)
+        if (cnd_wait(&c11_condition, &c11_condition_mutex) != thrd_success) return 3;
+    c11_waiting--;
+    c11_woken++;
+    return mtx_unlock(&c11_condition_mutex) == thrd_success ? 0 : 4;
+}
+
+static int c11_wait_for_waiters(int count)
+{
+    while (c11_waiting != count)
+        if (cnd_wait(&c11_condition, &c11_condition_mutex) != thrd_success) return 1;
+    return 0;
+}
+
+static int c11_condition_case(void)
+{
+    thrd_t waiters[C11_WAITERS];
+    int result;
+
+    errno = E2BIG;
+    if (mtx_init(&c11_condition_mutex, mtx_plain) != thrd_success ||
+        cnd_init(&c11_condition) != thrd_success) return 110;
+    /* One waiter, released by cnd_signal. */
+    if (thrd_create(&waiters[0], c11_condition_waiter, 0) != thrd_success ||
+        mtx_lock(&c11_condition_mutex) != thrd_success || c11_wait_for_waiters(1)) return 111;
+    c11_generation++;
+    if (cnd_signal(&c11_condition) != thrd_success ||
+        mtx_unlock(&c11_condition_mutex) != thrd_success ||
+        thrd_join(waiters[0], &result) != thrd_success || result || c11_woken != 1) return 112;
+    /* Several waiters, all released by one cnd_broadcast. */
+    for (int index = 0; index != C11_WAITERS; ++index)
+        if (thrd_create(&waiters[index], c11_condition_waiter, 0) != thrd_success) return 113;
+    if (mtx_lock(&c11_condition_mutex) != thrd_success || c11_wait_for_waiters(C11_WAITERS)) return 114;
+    c11_generation++;
+    if (cnd_broadcast(&c11_condition) != thrd_success ||
+        mtx_unlock(&c11_condition_mutex) != thrd_success) return 115;
+    for (int index = 0; index != C11_WAITERS; ++index)
+        if (thrd_join(waiters[index], &result) != thrd_success || result) return 116;
+    if (c11_woken != 1 + C11_WAITERS) return 117;
+    /* An expired deadline times out holding the mutex again. */
+    struct timespec expired = { .tv_sec = 0, .tv_nsec = 0 };
+    if (mtx_lock(&c11_condition_mutex) != thrd_success ||
+        cnd_timedwait(&c11_condition, &c11_condition_mutex, &expired) != thrd_timedout ||
+        mtx_trylock(&c11_condition_mutex) != thrd_busy ||
+        mtx_unlock(&c11_condition_mutex) != thrd_success || errno != E2BIG) return 118;
+    cnd_destroy(&c11_condition);
+    mtx_destroy(&c11_condition_mutex);
+    puts("C11 condition signal, broadcast, and expired timed wait: PASS");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) return 80;
@@ -599,5 +704,7 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "recursive-condition")) return recursive_condition_case();
     if (!strcmp(argv[1], "c11")) return c11_case();
     if (!strcmp(argv[1], "pi")) return pi_case();
+    if (!strcmp(argv[1], "attributes")) return attribute_case();
+    if (!strcmp(argv[1], "c11-condition")) return c11_condition_case();
     return 81;
 }

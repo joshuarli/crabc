@@ -42,6 +42,8 @@ for mode in pie non-pie; do
     for scenario in main-entry main-blocked worker-entry worker-blocked main-disabled worker-disabled main-masked worker-masked main-signaled worker-signaled; do
         timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
+        timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" /lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario" >"$work/direct-$mode-$scenario.stdout"
+        cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
-printf 'owned pthread_cond_wait cancellation: PASS (musl + requested installed entries, main/worker entry/blocked cancellation, disabled/masked states, mutex reacquisition and reuse); evidence: %s\n' "$work"
+printf 'owned pthread_cond_wait cancellation: PASS (musl + requested installed static and dynamic kernel/direct entries, main/worker entry/blocked cancellation, disabled/masked states, mutex reacquisition and reuse); evidence: %s\n' "$work"

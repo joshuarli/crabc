@@ -1,8 +1,10 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -88,7 +90,53 @@ static void failed_round(void) {
     CHECK(fork() == -1 && errno == EAGAIN);
     check_completion(0);
 }
-int main(void) {
+/*
+ * Ordinary-exit hooks: atexit and __cxa_atexit handlers run newest first,
+ * including one registered by a running handler; a fork child inherits the
+ * registry and runs it at its own exit; exit from a worker runs every handler
+ * once while main is blocked in join. The worker's stdout line precedes the
+ * handlers because musl's first stdout write is still line buffered.
+ */
+int __cxa_atexit(void (*)(void *), void *, void *);
+static char exit_tag = 'p';
+static void say(int n) {
+    char text[3] = {exit_tag, (char)('0' + n), ' '};
+    CHECK(write(1, text, sizeof text) == (ssize_t)sizeof text);
+}
+static void exit_1(void) { say(1); }
+static void exit_3(void) { say(3); }
+static void exit_4(void) { say(4); }
+static void exit_late(void) { say(9); }
+static void exit_registering(void) { say(5); CHECK(atexit(exit_late) == 0); }
+static void exit_argument(void *argument) { say((int)(intptr_t)argument); }
+static void *exiting_worker(void *unused) {
+    (void)unused;
+    CHECK(printf("buffered until exit\n") > 0);
+    exit(0);
+}
+static int exit_hooks(void) {
+    CHECK(atexit(exit_1) == 0);
+    CHECK(__cxa_atexit(exit_argument, (void *)2, 0) == 0);
+    CHECK(atexit(exit_3) == 0);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        exit_tag = 'c';
+        CHECK(atexit(exit_4) == 0);
+        exit(0);
+    }
+    wait_child(child);
+    CHECK(write(1, "| ", 2) == 2);
+    CHECK(atexit(exit_registering) == 0);
+    CHECK(__cxa_atexit(exit_argument, (void *)6, 0) == 0);
+    pthread_t worker;
+    CHECK(pthread_create(&worker, 0, exiting_worker, 0) == 0);
+    pthread_join(worker, 0);
+    CHECK(0);
+    return 1;
+}
+int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "exit-hooks")) return exit_hooks();
     ordinary_round(); /* Empty-registry prepare/completion must stay paired. */
     /* This is deliberately the application's first allocation client. */
     for (int i = 0; i < 67; i++) register_next();

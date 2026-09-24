@@ -44,6 +44,13 @@ compile_and_check_companions() {
             if [ "$product" != oracle ]; then
                 cmp "$work/oracle-$variant-$scenario.stdout" "$work/$product-$variant-$scenario.stdout"
             fi
+            # A dynamic product also runs through explicit loader entry.
+            if [ -n "$root" ]; then
+                timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" \
+                    "$root" /lib/ld-crabc-x86_64.so.1 "$executable" "$scenario" \
+                    >"$work/$product-direct-$variant-$scenario.stdout"
+                cmp "$work/oracle-$variant-$scenario.stdout" "$work/$product-direct-$variant-$scenario.stdout"
+            fi
         done
     done
 }
@@ -79,6 +86,8 @@ for mode in pie non-pie; do
     for scenario in realtime monotonic attributes pending-validation c11 robust-timeout robust-cancel robust-unrecoverable private-shared-mutex; do
         timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
+        timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" /lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario" >"$work/direct-$mode-$scenario.stdout"
+        cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
-printf 'owned timed pthread conditions: PASS (musl + requested installed entries, clocks/timeouts, C11, timed/shared cancellation, distinct-address fork handoffs and robust relock precedence); evidence: %s\n' "$work"
+printf 'owned timed pthread conditions: PASS (musl + requested installed static and dynamic kernel/direct entries, clocks/timeouts, C11, timed/shared cancellation, distinct-address fork handoffs and robust relock precedence); evidence: %s\n' "$work"

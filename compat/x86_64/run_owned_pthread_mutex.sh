@@ -6,7 +6,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_pthread_mutex_probe.c"
-readonly -a SCENARIOS=(recursive errorcheck timed robust recursive-condition c11 pi)
+readonly -a SCENARIOS=(recursive errorcheck timed robust recursive-condition c11 pi attributes c11-condition)
 
 # Aggregate dynamic gates supply an already built installed or extracted
 # product. The focused command builds and checks both static entries; the

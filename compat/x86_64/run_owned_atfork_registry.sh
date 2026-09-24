@@ -28,14 +28,14 @@ readonly work
 chmod a+rx "$work"
 printf 'atfork-registry evidence: %s\n' "$work"
 "$oracle_cc" -static -fno-pie -no-pie -std=c11 -pthread "$probe" -o "$work/oracle"
-for scenario in ordinary; do
+for scenario in ordinary exit-hooks; do
     timeout 20 "$work/oracle" "$scenario" >"$work/oracle-$scenario.stdout"
 done
 if [ -z "$provided_dynamic_sysroot" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-sysroot" >"$work/static-build.json"
     for mode in static static-pie; do
         "$work/static-sysroot/bin/crabc-cc" "-$mode" -std=c11 "$probe" -o "$work/$mode"
-        for scenario in ordinary; do
+        for scenario in ordinary exit-hooks; do
             timeout 20 "$work/$mode" "$scenario" >"$work/$mode-$scenario.stdout"
             cmp "$work/oracle-$scenario.stdout" "$work/$mode-$scenario.stdout"
         done
@@ -47,7 +47,7 @@ cp -a "$provided_dynamic_sysroot" "$work/execution-root"
 for mode in pie non-pie; do
     "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 "$probe" -o "$work/dynamic-$mode"
     cp "$work/dynamic-$mode" "$work/execution-root/consumer-$mode"
-    for scenario in ordinary; do
+    for scenario in ordinary exit-hooks; do
         timeout 20 chroot "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
         timeout 20 chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
@@ -55,4 +55,4 @@ for mode in pie non-pie; do
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
-printf 'owned atfork registry: PASS (musl + installed static/static-PIE/dynamic PIE/non-PIE kernel/direct, 67-70 ordered callbacks, child/parent/worker registration, failed-fork parent completion); evidence: %s\n' "$work"
+printf 'owned atfork registry: PASS (musl + installed static/static-PIE/dynamic PIE/non-PIE kernel/direct, 67-70 ordered callbacks, child/parent/worker registration, failed-fork parent completion; atexit/__cxa_atexit order, registration during exit, fork-inherited and worker-thread exit hooks); evidence: %s\n' "$work"

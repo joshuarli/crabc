@@ -143,6 +143,73 @@ static void thread_timer(void)
     CHECK(close(cancel_pipe[0]) == 0 && close(cancel_pipe[1]) == 0);
     puts("thread normal/exit/cancel/self-delete: identity, errno, TLS, allocation, cleanup, TSD reset");
 }
+/*
+ * SIGEV_THREAD notification-thread contract: the callback thread is detached
+ * even when the caller's attributes ask for a joinable thread, it honors the
+ * requested stack size, and it runs with application signals blocked. A
+ * periodic timer keeps notifying the same thread and reports overruns while
+ * one callback outlasts several periods; deleting the timer from another
+ * thread while its callback runs ends notification and the thread.
+ */
+static atomic_int periodic_calls, periodic_overrun, periodic_release, periodic_tid;
+static atomic_int periodic_detached, periodic_stack, periodic_masked;
+static timer_t periodic_timer;
+static pthread_t periodic_worker;
+static void periodic_notify(union sigval value)
+{
+    CHECK(value.sival_int == 57);
+    int call = atomic_fetch_add(&periodic_calls, 1);
+    if (call == 0) {
+        periodic_worker = pthread_self();
+        atomic_store(&periodic_tid, gettid());
+        pthread_attr_t attr; int detached; size_t stack;
+        CHECK(pthread_getattr_np(pthread_self(), &attr) == 0);
+        CHECK(pthread_attr_getdetachstate(&attr, &detached) == 0);
+        CHECK(pthread_attr_getstacksize(&attr, &stack) == 0);
+        CHECK(pthread_attr_destroy(&attr) == 0);
+        atomic_store(&periodic_detached, detached == PTHREAD_CREATE_DETACHED);
+        atomic_store(&periodic_stack, stack >= 393216);
+        sigset_t mask;
+        CHECK(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0);
+        atomic_store(&periodic_masked, sigismember(&mask, SIGUSR1) && sigismember(&mask, SIGINT)
+                                       && sigismember(&mask, SIGTERM));
+        /* Outlast many 1 ms periods, so the kernel coalesces expirations. */
+        struct timespec delay = {0, 50000000}; nanosleep(&delay, NULL);
+    } else {
+        CHECK(pthread_equal(periodic_worker, pthread_self()));
+        if (call == 1) atomic_store(&periodic_overrun, timer_getoverrun(periodic_timer));
+        if (call == 3) while (!atomic_load(&periodic_release)) sched_yield();
+    }
+}
+static void thread_timer_contract(void)
+{
+    pthread_attr_t attr;
+    CHECK(pthread_attr_init(&attr) == 0);
+    CHECK(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE) == 0);
+    CHECK(pthread_attr_setstacksize(&attr, 393216) == 0);
+    struct sigevent event = {.sigev_notify = SIGEV_THREAD, .sigev_value.sival_int = 57,
+                             .sigev_notify_function = periodic_notify, .sigev_notify_attributes = &attr};
+    CHECK(timer_create(CLOCK_MONOTONIC, &event, &periodic_timer) == 0);
+    CHECK(pthread_attr_destroy(&attr) == 0);
+    struct itimerspec arm = {.it_value = {0, 1000000}, .it_interval = {0, 1000000}};
+    CHECK(timer_settime(periodic_timer, 0, &arm, NULL) == 0);
+    wait_count(&periodic_calls, 4);
+    /* The fourth callback is still running: delete from this thread. */
+    errno = 45;
+    CHECK(timer_delete(periodic_timer) == 0 && errno == 45);
+    atomic_store(&periodic_release, 1);
+    pid_t tid = atomic_load(&periodic_tid);
+    for (int i = 0; i < 2000 && syscall(SYS_tgkill, getpid(), tid, 0) == 0; ++i) {
+        struct timespec delay = {0, 1000000}; nanosleep(&delay, NULL);
+    }
+    CHECK(syscall(SYS_tgkill, getpid(), tid, 0) == -1 && errno == ESRCH);
+    int calls = atomic_load(&periodic_calls);
+    struct timespec delay = {0, 20000000}; nanosleep(&delay, NULL);
+    CHECK(atomic_load(&periodic_calls) == calls);
+    printf("thread notification detached=%d stack=%d masked=%d overrun=%d stopped=%d\n",
+           atomic_load(&periodic_detached), atomic_load(&periodic_stack), atomic_load(&periodic_masked),
+           atomic_load(&periodic_overrun) > 0, calls == 4);
+}
 static void kernel_timer(void)
 {
     struct sigevent event = {.sigev_notify = SIGEV_NONE};
@@ -297,7 +364,7 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "failure")) { failure_reclamation(); return 0; }
     if (argc > 2) plugin_path = argv[2];
     creator_cancellation();
-    kernel_timer(); thread_timer();
+    kernel_timer(); thread_timer(); thread_timer_contract();
     pid_t child = fork(); CHECK(child >= 0);
     if (!child) { kernel_timer(); thread_timer(); _Exit(0); }
     int status; CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
