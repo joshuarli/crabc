@@ -43,6 +43,7 @@ class M6GateContractTests(unittest.TestCase):
         self.assertEqual(summary["runnable_evidence"], {
             "differential:arena-destroy": "compat/allocator/arena_destroy.py",
             "differential:heap-destroy": "compat/allocator/heap_destroy.py",
+            "differential:subprocess-lifecycle": "compat/allocator/subprocess_lifecycle.py",
         })
         # No public M6 interface exists yet, so every gate stays blocked.
         self.assertEqual(summary["blocked_gate_ids"], list(gate.GATE_IDS))
@@ -111,6 +112,7 @@ class M6GateContractTests(unittest.TestCase):
         self.assertEqual(destruction["status"], "blocked")
         self.assertEqual(destruction["evidence"], {
             "differential:heap-destroy": "passed", "differential:arena-destroy": "passed",
+            "differential:subprocess-lifecycle": "passed",
         })
 
     def test_a_fully_evidenced_unblocked_gate_passes_and_a_failed_run_fails(self) -> None:

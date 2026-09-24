@@ -1107,6 +1107,17 @@ impl SubprocessStatistics {
         self.statistics.merge_from_and_reset(heap_statistics);
     }
 
+    /// Merges a destroyed child subprocess's complete record into this
+    /// process-main record and resets the child record.
+    ///
+    /// This is `subproc.c:233-236`. It precedes the child's arena
+    /// destruction, so those later releases decrease only the reset child
+    /// record and the process-main record keeps the child's reservations.
+    #[inline]
+    pub(crate) fn merge_child_subprocess_and_reset(&self, child: &SubprocessStatistics) {
+        self.statistics.merge_from_and_reset(&child.statistics);
+    }
+
     /// Records `init.c`'s completed default-Theap thread attachment.
     #[inline]
     pub(crate) fn thread_attached(&self) {

@@ -51,8 +51,8 @@
       "scope": "Pinned-C/Rust reservation, managed-memory, exclusive-arena, and arena query traces."
     },
     "differential:subprocess-lifecycle": {
-      "runner": null,
-      "scope": "Pinned-C/Rust subprocess create/add-thread/visit/statistics/destroy traces."
+      "runner": "compat/allocator/subprocess_lifecycle.py",
+      "scope": "Pinned-C/Rust root-child subprocess create/visit/statistics/destroy traces: list order and sequence, child main Heap and metadata Theap membership, first child arena, Heap visitation with early stop, and the destroy-time statistics merge."
     },
     "fault:heap-lifecycle": {
       "runner": null,
@@ -319,7 +319,7 @@
         "unit:subprocess"
       ],
       "blocked_by": [
-        "The child subprocess owner is a staged crate-private typestate exercised only by focused fixtures; no composed `mi_subproc_new`/`mi_subproc_destroy`, child thread admission, or public-shaped subprocess entry exists."
+        "Crate-private `subproc::lifecycle` composes `mi_subproc_new`, `mi_subproc_visit_heaps`, and `mi_subproc_destroy` for root children of the process main subprocess only when the child has no non-main Heap, no live metadata or ordinary page, and no thread; `mi_subproc_add_current_thread`, nested children, subprocess statistics entries, and the public-shaped subprocess entry surface do not exist."
       ]
     },
     {
@@ -335,7 +335,7 @@
         "fault:heap-lifecycle"
       ],
       "blocked_by": [
-        "The runnable heap-destroy and arena-destroy differentials cover only the main-Heap Theap-list pass and quiescent arena-group retirement; public Heap, cross-thread, and failure-path differentials do not exist."
+        "The runnable heap-destroy, arena-destroy, and subprocess-lifecycle differentials cover only the main-Heap Theap-list pass, quiescent arena-group retirement, and quiescent root-child subprocess destruction; public Heap, cross-thread, and failure-path differentials do not exist."
       ]
     },
     {

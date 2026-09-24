@@ -14,16 +14,16 @@
   "native_shadow_stress_fixture_count": 1,
   "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
   "port_map_counts": {
-    "differential_verified": 44,
+    "differential_verified": 45,
     "exported": 4,
-    "implemented": 191,
-    "item_count": 188,
+    "implemented": 192,
+    "item_count": 189,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 191
+    "unit_verified": 192
   },
-  "port_map_sha256": "58df18a63b2f01532f28840890f67e712b4ea8f51375fd5b308c13c3d2303d50",
+  "port_map_sha256": "87d2cd1a6064cfbd091fd01af7367ba2c4381d766e171a1033b22f323d8285af",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_atomic_do_once-callsite-disposition-ledger": [
       "implemented",
@@ -580,6 +580,11 @@
     "item:src/subproc.c:detached-malloc-metadata-theap-checkpoint": [
       "implemented",
       "unit_verified"
+    ],
+    "item:src/subproc.c:root-child-subprocess-new-visit-destroy": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/subproc.c:same-thread-metadata-direct-demand-recursion-guard": [
       "implemented",

@@ -39,13 +39,24 @@ observed list/TLD/thread-count transition. Detached TLD backing, arena and
 PageMap release, Heap statistics and bookkeeping, and full subprocess
 destruction remain separate work.
 
+`./compat/allocator/run-x86_64.sh allocator-subprocess-lifecycle` compares
+pinned `mi_subproc_new`, `mi_subproc_visit_heaps`, and `mi_subproc_destroy`
+([`subprocess_lifecycle.c`](subprocess_lifecycle.c)) with the Rust
+`subproc::lifecycle` composition for root children of the process main
+subprocess. The address-free trace covers list order and sequence numbers, the
+child main Heap and its metadata Theap on the parent's detached TLD, the
+child's first metadata arena, Heap visitation with an early stop, and the
+destroy-time statistics merge into the main subprocess. Children with threads,
+non-main Heaps, or live pages at destruction are not covered yet. Logs live
+under `x86_64/subprocess-lifecycle` in the allocator artifacts directory.
+
 `./compat/allocator/run-x86_64.sh allocator-m6` is the fail-closed Milestone 6
 gate. [`m6-gate-v3.5.0.json`](m6-gate-v3.5.0.json) partitions every applicable
 Heap, Theap, arena, managed-memory, and subprocess item selected from
 [`api-v3.5.0.json`](api-v3.5.0.json) into gates, plus cross-cutting
 destruction/lifetime and upstream-test gates, and names each gate's evidence.
-The command executes every evidence entry that has a runner (currently the two
-destruction differentials above), writes `x86_64/m6-gate/report.json` under the
+The command executes every evidence entry that has a runner (currently the
+three destruction differentials above), writes `x86_64/m6-gate/report.json` under the
 allocator artifacts directory, and exits nonzero until every gate passes. A
 gate passes only with no reviewed blocker and all of its evidence runnable and
 passing; the contract validator rejects inventory gaps, double ownership, and

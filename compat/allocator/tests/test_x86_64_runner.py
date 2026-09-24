@@ -109,15 +109,20 @@ fi
         ])
         self.assertIn(f"{self.boundary / 'target'}:/workspace/target".encode(), args)
 
-    def test_heap_destroy_command_is_closed_and_runs_the_pinned_differential(self):
-        result = self.launch("allocator-heap-destroy")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        args = self.capture.read_bytes().split(b"\0")
-        self.assertEqual(args[-3:-1], [b"python3", b"compat/allocator/heap_destroy.py"])
+    def test_destruction_differential_commands_are_closed_and_run_their_pinned_differential(self):
+        for command, runner in (
+            ("allocator-heap-destroy", b"compat/allocator/heap_destroy.py"),
+            ("allocator-subprocess-lifecycle", b"compat/allocator/subprocess_lifecycle.py"),
+        ):
+            with self.subTest(command=command):
+                result = self.launch(command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = self.capture.read_bytes().split(b"\0")
+                self.assertEqual(args[-3:-1], [b"python3", runner])
 
-        rejected = self.launch("allocator-heap-destroy", "unexpected")
-        self.assertEqual(rejected.returncode, 2)
-        self.assertIn("allocator-heap-destroy takes no arguments", rejected.stderr)
+                rejected = self.launch(command, "unexpected")
+                self.assertEqual(rejected.returncode, 2)
+                self.assertIn(f"{command} takes no arguments", rejected.stderr)
 
     def test_m6_gate_command_is_closed_and_runs_the_fail_closed_gate(self):
         for arguments, expected in (

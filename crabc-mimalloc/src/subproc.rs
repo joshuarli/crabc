@@ -850,6 +850,12 @@ impl SubprocessIdentity {
         !self.theap_meta.load(Ordering::Acquire).is_null()
     }
 
+    /// The published detached metadata Theap address, for fixture checks.
+    #[cfg(test)]
+    pub(crate) fn test_published_metadata_theap(&self) -> *mut Theap {
+        self.theap_meta.load(Ordering::Acquire)
+    }
+
     /// Source `subproc.c:232` clears metadata identity after Heap destruction
     /// and before arena release. A child engine must be absent or terminally
     /// closed; a parent metadata engine may still own the detached storage.
@@ -2564,3 +2570,5 @@ mod tests {
 
 #[path = "subproc_registry.rs"]
 pub(crate) mod registry;
+#[path = "subproc_lifecycle.rs"]
+pub(crate) mod lifecycle;

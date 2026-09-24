@@ -1871,16 +1871,41 @@ enum ChildThreadAllocationOutcome {
     },
 }
 
+/// Source-ordered progress of one child subprocess from creation through
+/// `mi_subproc_destroy`. `Terminal` retains an owner whose next source step
+/// could not be proven safe; no transition leaves it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ChildMainHeapStage {
+pub(crate) enum ChildMainHeapStage {
     Registered,
     HeapReady,
     RegistryUnlinked,
     TheapDetached,
     MetadataTheapReleased,
     HeapListRemoved,
+    /// Source `mi_heap_free` freed the parent-allocated Heap image, and the
+    /// child record was merged into the process-main statistics.
+    HeapStorageReleased,
     ArenaBackingDestroyed,
     Terminal,
+}
+
+/// Child state that pinned C exposes after `mi_subproc_new`.
+#[cfg(test)]
+pub(crate) struct ChildCreatedFacts {
+    pub(crate) sequence: usize,
+    pub(crate) parent_is_main: bool,
+    pub(crate) heap_count: usize,
+    pub(crate) heap_total_count: usize,
+    pub(crate) heap_list_is_main_only: bool,
+    pub(crate) main_heap_sequence: usize,
+    pub(crate) main_heap_names_child: bool,
+    pub(crate) metadata_theap_is_heap_only_member: bool,
+    pub(crate) metadata_theap_on_parent_detached_tld: bool,
+    pub(crate) live_threads: usize,
+    pub(crate) total_threads: usize,
+    pub(crate) arena_count: usize,
+    pub(crate) heaps_current: i64,
+    pub(crate) statistics: crate::statistics::FinalStatisticsSnapshot,
 }
 
 /// Page-engine failure ownership remains distinct from subprocess teardown.
@@ -2013,6 +2038,81 @@ impl ChildContextOwner {
 }
 
 impl<'heap> ChildMainHeapContextOwner<'heap> {
+    /// The source lifecycle step this owner has completed.
+    #[inline]
+    pub(crate) const fn stage(&self) -> ChildMainHeapStage {
+        self.stage
+    }
+
+    /// The pinned child identity as an address only, for list-order checks.
+    #[cfg(test)]
+    pub(crate) fn test_identity_pointer(&mut self) -> Option<*mut crate::subproc::SubprocessIdentity> {
+        self.context.with_image(|child| child.identity().as_ptr())
+    }
+
+    /// Runs source `mi_subproc_visit_heaps` over this child and counts the
+    /// visitor calls.
+    #[cfg(test)]
+    pub(crate) fn test_visit_heaps(
+        &mut self,
+        mut visitor: impl FnMut(NonNull<Heap>) -> bool,
+    ) -> (bool, usize) {
+        self.context.with_image(|child| {
+            let mut count = 0;
+            let ok = child.identity().heap_list().visit_heaps(|heap| {
+                count += 1;
+                visitor(heap)
+            }).expect("the child Heap-list lock is uncontended");
+            (ok, count)
+        }).expect("a created child projects its image")
+    }
+
+    /// Source-visible child facts after `mi_subproc_new`, for the pinned-C
+    /// lifecycle differential.
+    #[cfg(test)]
+    pub(crate) fn test_created_child_facts(
+        &mut self,
+        parent: &'static MainSubprocess,
+    ) -> Option<ChildCreatedFacts> {
+        let heap = self.heap_storage.as_ref()?.pointer_for_identity();
+        let metadata_theap = self.context.metadata_theap.as_ref()
+            .and_then(MetaAllocation::dynamic_theap_pointer)?;
+        let parent_metadata_theap = NonNull::new(parent.identity().test_published_metadata_theap())?;
+        self.context.with_image(|child| {
+            let identity = child.identity();
+            let (heap_count, heap_total_count, _) = identity.heap_list().test_counts();
+            let mut members = 0;
+            let mut only_child_main = true;
+            identity.heap_list().visit_heaps(|member| {
+                members += 1;
+                only_child_main &= member == heap;
+                true
+            }).ok()?;
+            // SAFETY: the owner retains the child Heap and metadata Theap
+            // images, and the parent's detached metadata Theap is
+            // process-lifetime; no list operation runs during the read.
+            let image = unsafe {
+                heap.as_ref().test_child_main_image_facts(metadata_theap, parent_metadata_theap)
+            };
+            Some(ChildCreatedFacts {
+                sequence: identity.test_registry_sequence(),
+                parent_is_main: identity.is_registered_child_of(parent.identity()),
+                heap_count,
+                heap_total_count,
+                heap_list_is_main_only: members == 1 && only_child_main,
+                main_heap_sequence: image.heap_sequence,
+                main_heap_names_child: image.subprocess == identity.as_ptr(),
+                metadata_theap_is_heap_only_member: image.metadata_theap_is_only_member,
+                metadata_theap_on_parent_detached_tld: image.metadata_theap_on_parent_tld,
+                live_threads: identity.live_thread_count(),
+                total_threads: identity.total_thread_count(),
+                arena_count: identity.arena_backing().registry().count(),
+                heaps_current: identity.statistics().final_output_snapshot().heaps.current,
+                statistics: identity.statistics().final_output_snapshot(),
+            })
+        }).flatten()
+    }
+
     #[cfg(test)]
     pub(crate) const fn test_page_engine_state(&self) -> ChildPageEngineState {
         self.page_engine
@@ -2786,6 +2886,17 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         if !unsafe { metadata_theap.is_unlinked_dynamic_theap() } {
             return Err(ChildMainHeapReleaseError::InvalidTransition);
         }
+        // heap.c:171-172: `mi_heap_free_theaps` merges each detached Theap's
+        // statistics into its Heap before `_mi_theap_decref` frees it.
+        let merged = match (self.heap_storage.as_mut(), metadata_theap.dynamic_theap_mut()) {
+            (Some(heap), Some(theap)) => heap
+                .with_heap(|heap| heap.merge_detached_theap_statistics(theap))
+                .is_some(),
+            _ => false,
+        };
+        if !merged {
+            return Err(ChildMainHeapReleaseError::InvalidTransition);
+        }
         if let Err(error) = self.context.parent_metadata.free(metadata_theap) {
             self.stage = ChildMainHeapStage::Terminal;
             return Err(ChildMainHeapReleaseError::Metadata(error));
@@ -2835,10 +2946,13 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         }
     }
 
-    /// Completes the represented no-page source child teardown: free the
-    /// parent-owned Heap image after its list edge is gone, clear the stale
-    /// child metadata-Theap identity, then free the context allocation last.
-    /// It does not implement source page or full Heap destruction.
+    /// Completes source child destruction after the Heap list removal, in
+    /// `mi_subproc_unsafe_destroy` order: free the parent-allocated child main
+    /// Heap image (`heap.c:223-226`), clear the metadata-Theap identity
+    /// (`subproc.c:231`), merge the child statistics into the process main
+    /// subprocess (`subproc.c:233-236`), destroy the child arenas
+    /// (`subproc.c:239`), and free the child image last (`subproc.c:252`).
+    /// A returned owner resumes at the first step that did not complete.
     ///
     /// # Safety
     /// Every child client and page is gone; registry unlink, TLD-first Theap
@@ -2851,41 +2965,66 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         heap_owner: &mut crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine<'heap>,
         attachment: &mut crate::main_heap_thread::MainHeapThreadAttachment<'heap>,
     ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
+        let retained = |owner, stage, error| {
+            Err(ChildMainHeapReleaseFailure::Retained { owner, stage, error })
+        };
         if self.pending_os_release.is_some()
             || self.metadata_pages_may_exist
             || !self.page_engine.permits_teardown()
-            || !matches!(self.stage, ChildMainHeapStage::HeapListRemoved | ChildMainHeapStage::ArenaBackingDestroyed) {
-            return Err(ChildMainHeapReleaseFailure::Retained {
-                owner: self,
-                stage: ChildMainHeapReleaseStage::Validate,
-                error: ChildMainHeapReleaseError::InvalidTransition,
-            });
-        }
-        let heap_pointer = self.heap_storage.as_ref()
-            .map(crate::main_heap_page::ParentHeapAllocation::pointer_for_identity);
-        let matches = self.context.with_image(|child| {
-            let identity = child.identity();
-            identity.has_published_metadata_theap()
-                && heap_pointer.is_some_and(|heap| identity.matches_ready_main_heap(heap))
-        }).unwrap_or(false);
-        if !matches {
-            return Err(ChildMainHeapReleaseFailure::Retained {
-                owner: self,
-                stage: ChildMainHeapReleaseStage::Validate,
-                error: ChildMainHeapReleaseError::InvalidTransition,
-            });
+            || !matches!(
+                self.stage,
+                ChildMainHeapStage::HeapListRemoved
+                    | ChildMainHeapStage::HeapStorageReleased
+                    | ChildMainHeapStage::ArenaBackingDestroyed
+            )
+            || !self.context.parent_subprocess.is_process_main()
+        {
+            return retained(self, ChildMainHeapReleaseStage::Validate,
+                ChildMainHeapReleaseError::InvalidTransition);
         }
         if self.stage == ChildMainHeapStage::HeapListRemoved {
+            let heap_pointer = self.heap_storage.as_ref()
+                .map(crate::main_heap_page::ParentHeapAllocation::pointer_for_identity);
+            let matches = self.context.with_image(|child| {
+                let identity = child.identity();
+                identity.has_published_metadata_theap()
+                    && heap_pointer.is_some_and(|heap| identity.matches_ready_main_heap(heap))
+            }).unwrap_or(false);
+            if !matches {
+                return retained(self, ChildMainHeapReleaseStage::Validate,
+                    ChildMainHeapReleaseError::InvalidTransition);
+            }
+            let allocation = self.heap_storage.take().expect("validated child Heap capability");
+            match unsafe { heap_owner.release_child_heap_storage_after_teardown(attachment, allocation) } {
+                Ok(()) => {}
+                Err(crate::main_heap_page::ParentHeapAllocationReleaseFailure::Retained { allocation, error }) => {
+                    self.heap_storage = Some(allocation);
+                    return retained(self, ChildMainHeapReleaseStage::ParentHeap,
+                        ChildMainHeapReleaseError::ParentHeap(error));
+                }
+                Err(crate::main_heap_page::ParentHeapAllocationReleaseFailure::Terminal(allocation)) => {
+                    self.stage = ChildMainHeapStage::Terminal;
+                    return Err(ChildMainHeapReleaseFailure::Terminal { owner: self, allocation });
+                }
+            }
+            let parent = self.context.parent_subprocess;
+            // SAFETY: the Heap and its only Theap are gone, so no source
+            // observer can classify a metadata page through this child.
+            self.context.with_image(|child| unsafe {
+                let identity = child.identity();
+                identity.clear_metadata_identity_terminal();
+                parent.statistics().merge_child_subprocess_and_reset(identity.statistics());
+            });
+            self.stage = ChildMainHeapStage::HeapStorageReleased;
+        }
+        if self.stage == ChildMainHeapStage::HeapStorageReleased {
             let destroyed = self.context.with_image(|child| unsafe {
                 child.identity().arena_backing().destroy_all(tracking)
             }).unwrap_or(Err(crate::arena::ArenaDestroyError::InvalidOwnership));
             match destroyed {
                 Err(error) => {
-                    return Err(ChildMainHeapReleaseFailure::Retained {
-                        owner: self,
-                        stage: ChildMainHeapReleaseStage::ArenaBacking,
-                        error: ChildMainHeapReleaseError::ArenaDestroy(error),
-                    });
+                    return retained(self, ChildMainHeapReleaseStage::ArenaBacking,
+                        ChildMainHeapReleaseError::ArenaDestroy(error));
                 }
                 Ok(destroyed) if !destroyed.is_released() => {
                     return Err(ChildMainHeapReleaseFailure::ArenaBacking { owner: self, destroyed });
@@ -2896,32 +3035,10 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 }
             }
         }
-        let allocation = self.heap_storage.take().expect("validated child Heap capability");
-        match unsafe { heap_owner.release_child_heap_storage_after_teardown(attachment, allocation) } {
-            Ok(()) => {}
-            Err(crate::main_heap_page::ParentHeapAllocationReleaseFailure::Retained { allocation, error }) => {
-                self.heap_storage = Some(allocation);
-                return Err(ChildMainHeapReleaseFailure::Retained {
-                    owner: self,
-                    stage: ChildMainHeapReleaseStage::ParentHeap,
-                    error: ChildMainHeapReleaseError::ParentHeap(error),
-                });
-            }
-            Err(crate::main_heap_page::ParentHeapAllocationReleaseFailure::Terminal(allocation)) => {
-                self.stage = ChildMainHeapStage::Terminal;
-                return Err(ChildMainHeapReleaseFailure::Terminal { owner: self, allocation });
-            }
-        }
-        self.context.with_image(|child| unsafe {
-            child.identity().clear_metadata_identity_terminal();
-        });
         if let Err(error) = self.context.parent_metadata.free(&mut self.context.context) {
             self.stage = ChildMainHeapStage::Terminal;
-            return Err(ChildMainHeapReleaseFailure::Retained {
-                owner: self,
-                stage: ChildMainHeapReleaseStage::Context,
-                error: ChildMainHeapReleaseError::Metadata(error),
-            });
+            return retained(self, ChildMainHeapReleaseStage::Context,
+                ChildMainHeapReleaseError::Metadata(error));
         }
         Ok(())
     }

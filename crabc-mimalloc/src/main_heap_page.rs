@@ -8156,7 +8156,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::compiler_tls::fast_slot_peek;
     use crate::config::{
@@ -8242,7 +8242,7 @@ mod tests {
         (page_map, arena)
     }
 
-    fn with_owner_local_fixture(
+    pub(crate) fn with_owner_local_fixture(
         finish_main: bool,
         operation: impl for<'main> FnOnce(
             &mut MainHeapThreadAttachment<'main>,

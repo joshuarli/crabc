@@ -166,11 +166,78 @@ impl SubprocessHeapList {
         unsafe { self.free_linked_main_heap(heap, subprocess) }
     }
 
+    /// Source `mi_subproc_visit_heaps` (subproc.c:303-313): calls `visitor`
+    /// for each list member in list order while the Heap-list lock is held,
+    /// stopping at the first `false`. It returns whether every visited call
+    /// returned `true`, so an empty list returns `true`.
+    ///
+    /// The visitor receives only a Heap identity. It must not take this
+    /// list's lock or link or unlink a Heap of this subprocess; source has
+    /// the same non-reentrant lock requirement.
+    pub(crate) fn visit_heaps(
+        &self,
+        mut visitor: impl FnMut(core::ptr::NonNull<Heap>) -> bool,
+    ) -> Result<bool, SourceHeapRegistryError> {
+        let guard = self.lock.lock().map_err(SourceHeapRegistryError::ListLockAcquire)?;
+        let mut ok = true;
+        // SAFETY: the held list lock excludes every link/unlink, and each
+        // linked member stays pinned until its own locked removal.
+        let mut current = unsafe { *self.head.get() };
+        while ok {
+            let Some(heap) = core::ptr::NonNull::new(current) else { break; };
+            // Source reads `heap->next` after the visitor returns; the lock
+            // keeps it stable either way. Read it first so no projection of
+            // the visited Heap overlaps the visitor call.
+            current = unsafe { (*heap.as_ptr()).next };
+            ok = visitor(heap);
+        }
+        guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+        Ok(ok)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_counts(&self) -> (usize, usize, bool) {
         let guard = self.lock.lock().expect("source Heap audit lock");
         let counts = (self.live.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed), unsafe { (*self.head.get()).is_null() });
         guard.unlock().expect("source Heap audit unlock");
         counts
+    }
+}
+
+/// Child main-Heap image facts that pinned C exposes after `mi_subproc_new`.
+#[cfg(test)]
+pub(crate) struct ChildMainHeapImageFacts {
+    pub(crate) heap_sequence: usize,
+    pub(crate) subprocess: *mut SubprocessIdentity,
+    pub(crate) metadata_theap_is_only_member: bool,
+    pub(crate) metadata_theap_on_parent_tld: bool,
+}
+
+#[cfg(test)]
+impl Heap {
+    /// # Safety
+    /// This Heap, `metadata_theap`, and `parent_metadata_theap` are live and
+    /// no Heap/Theap list operation runs during the read.
+    pub(crate) unsafe fn test_child_main_image_facts(
+        &self,
+        metadata_theap: core::ptr::NonNull<super::Theap>,
+        parent_metadata_theap: core::ptr::NonNull<super::Theap>,
+    ) -> ChildMainHeapImageFacts {
+        let theap = metadata_theap.as_ptr();
+        let parent = parent_metadata_theap.as_ptr();
+        // SAFETY: forwarded liveness and list-quiescence obligations.
+        unsafe {
+            ChildMainHeapImageFacts {
+                heap_sequence: self.heap_seq,
+                subprocess: self.subprocess,
+                metadata_theap_is_only_member: self.theaps == theap
+                    && (*(*theap).hnext.get()).is_null()
+                    && (*(*theap).hprev.get()).is_null()
+                    && core::ptr::eq((*theap).heap.load(Ordering::Acquire), self),
+                metadata_theap_on_parent_tld: (*theap).is_detached
+                    && !(*theap).tld.is_null()
+                    && (*theap).tld == (*parent).tld,
+            }
+        }
     }
 }

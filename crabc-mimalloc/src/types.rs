@@ -5641,16 +5641,27 @@ impl Theap {
     pub(crate) unsafe fn initialize_child_metadata(
         &mut self, heap: &mut Heap, parent_detached_tld: &mut ThreadLocalData,
     ) -> Result<(), TheapMainStaticInitError> {
-        if self.memid.kind() != MemoryKind::Malloc
-            || !parent_detached_tld.is_subprocess_attached_no_theap()
-        {
+        if self.memid.kind() != MemoryKind::Malloc || parent_detached_tld.subprocess.is_null() {
             return Err(TheapMainStaticInitError::InvalidInput);
         }
-        self.initialize_for_owner(heap, parent_detached_tld, TheapOwner::Detached)
+        // Every child's metadata Theap joins the same parent detached TLD
+        // (`subproc.c:190`), so earlier live children's metadata Theaps may
+        // already be list members; `_mi_theap_init` pushes at the head.
+        self.initialize_for_owner_on_list(heap, parent_detached_tld, TheapOwner::Detached, true)
     }
 
     fn initialize_for_owner(
         &mut self, heap: &mut Heap, tld: &mut ThreadLocalData, owner: TheapOwner,
+    ) -> Result<(), TheapMainStaticInitError> {
+        self.initialize_for_owner_on_list(heap, tld, owner, false)
+    }
+
+    /// `_mi_theap_init` for one owner. `existing_members` admits a TLD list
+    /// that already holds other Theaps; the bounded single-Theap owners pass
+    /// `false` and keep requiring an empty list.
+    fn initialize_for_owner_on_list(
+        &mut self, heap: &mut Heap, tld: &mut ThreadLocalData, owner: TheapOwner,
+        existing_members: bool,
     ) -> Result<(), TheapMainStaticInitError> {
         let subprocess_relation_is_valid = if heap.subprocess.is_null()
             || tld.subprocess.is_null()
@@ -5667,7 +5678,7 @@ impl Theap {
             false
         };
         if self.is_initialized()
-            || !tld.is_subprocess_attached_no_theap()
+            || (!existing_members && !tld.is_subprocess_attached_no_theap())
             || !tld.matches_owner(owner)
             || !subprocess_relation_is_valid
         {

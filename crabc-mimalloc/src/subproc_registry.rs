@@ -267,6 +267,34 @@ impl SourceSubprocessRegistry {
 }
 
 #[cfg(test)]
+impl SourceSubprocessRegistry {
+    /// The current source list in order, as identity addresses only.
+    pub(crate) fn test_members(&self) -> std::vec::Vec<*mut SubprocessIdentity> {
+        let guard = self.lock.lock().expect("source subprocess list audit lock");
+        let mut members = std::vec::Vec::new();
+        // SAFETY: the held list lock excludes link/unlink; linked members
+        // remain allocated until after their locked removal.
+        let mut current = unsafe { *self.head.get() };
+        while !current.is_null() {
+            members.push(current);
+            current = unsafe { *(*current).source_membership.next.get() };
+        }
+        guard.unlock().expect("source subprocess list audit unlock");
+        members
+    }
+}
+
+#[cfg(test)]
+impl SubprocessIdentity {
+    /// Source `subproc_seq` assigned by `mi_subproc_init`.
+    pub(crate) fn test_registry_sequence(&self) -> usize {
+        // SAFETY: initialization writes the scalar before Release-publishing
+        // membership and terminal unlink never rewrites it.
+        unsafe { *self.source_membership.sequence.get() }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
