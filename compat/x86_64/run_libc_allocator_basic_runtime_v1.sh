@@ -87,8 +87,8 @@ assert_crabc_backend_support_owner() {
             ;;
         __stack_chk_fail)
             awk -v archive="${archive_path}(" '
-                $NF == "__stack_chk_fail" && index(previous, archive) { found = 1 }
-                { previous = $0 }
+                /:\(/ { section = $0 }
+                $NF == "__stack_chk_fail" && index(section, archive) { found = 1 }
                 END { exit(found ? 0 : 1) }
             ' "$map_path" \
                 || fail "candidate does not link __stack_chk_fail from crabc archive"

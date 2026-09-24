@@ -253,12 +253,12 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|DTPMOD(64)?|DTPOFF(32|64)?|GOTTPOFF' \
 fi
 grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_headers" \
     || fail "candidate lacks the allocator and errno static TLS image"
-# Rust's static support closure may retain musl's resolver helper as code, but
-# this candidate has no dynamic TLS relocation and establishes no resolver
-# behavior. Keep the support owner explicit rather than mistaking it for the
-# selected crabc allocator or a dynamic runtime claim.
-grep -Fq 'libc.a(__tls_get_addr.lo)' "$link_map" \
-    || fail "candidate did not attribute __tls_get_addr support to pinned musl"
+# The static closure uses initial-exec TLS only. If a support member still
+# carries musl's resolver helper as code, it must come from pinned musl's own
+# member rather than from the selected crabc allocator or a dynamic runtime.
+if grep -F '__tls_get_addr' "$link_map" | grep -Fv 'libc.a(__tls_get_addr.lo)' >/dev/null; then
+    fail "candidate selected __tls_get_addr from outside pinned musl"
+fi
 if grep -Eqi 'glibc|ld-linux|libc\.so\.6' "$candidate_headers" "$candidate_dynamic" "$link_map"; then
     fail "candidate selected glibc"
 fi

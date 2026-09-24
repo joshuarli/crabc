@@ -34,7 +34,6 @@ readonly -a MUSL_BACKEND_MEMBERS=(
     libc.lo
     prctl.lo
     realpath.lo
-    strchrnul.lo
     strdup.lo
     syscall.lo
     syscall_ret.lo
