@@ -14,8 +14,10 @@ session assigns it, integrates your commits into `main`, and owns `plan.md`.
   the worktree path from your brief; your branch is checked out there.
 - Build and test through `./scripts/dev-x86_64.sh` (runtime) or
   `./compat/allocator/run-x86_64.sh` (allocator). Keep scratch in your
-  worktree's `.work/`. A fresh worktree needs
-  `scripts/lanes/rust-check.sh cargo fetch --locked` before offline builds.
+  worktree's `.work/`. Run `scripts/lanes/prepare-worktree.sh` once in a
+  fresh worktree before offline builds.
+- Before each handoff run `scripts/lanes/rust-check.sh` with no arguments:
+  it builds the non-test libc profiles that unit tests alone do not.
 - Do not throttle builds; retry one killed by memory pressure. Do not record
   qualifying performance numbers.
 - Reproduce bugs with a failing regression first, then fix the root cause.

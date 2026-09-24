@@ -60,8 +60,7 @@ are not transferable passes for a different revision.
 - **Housekeeping:** superseded branches are archived under
   `refs/archive/branches/`, old stashes under `refs/archive/stash/`, and
   pre-campaign evidence receipts in `.work/archive/*-receipts.tar.gz`. A fresh
-  worktree needs `scripts/lanes/rust-check.sh cargo fetch --locked` before
-  offline builds.
+  worktree needs `scripts/lanes/prepare-worktree.sh` before offline builds.
 
 ## Parallel lanes
 
