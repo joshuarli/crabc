@@ -68,6 +68,10 @@ fi
 comm -23 "$work_dir/feature-names" "$work_dir/default-names" >"$work_dir/feature-delta"
 comm -13 "$work_dir/feature-names" "$work_dir/default-names" >"$work_dir/feature-removals"
 cat >"$work_dir/expected-delta" <<'EOF'
+__isoc99_fscanf
+__isoc99_scanf
+__isoc99_vfscanf
+__isoc99_vscanf
 fprintf
 fscanf
 printf
@@ -78,12 +82,27 @@ vprintf
 vscanf
 EOF
 if ! cmp -s "$work_dir/feature-delta" "$work_dir/expected-delta" || [ -s "$work_dir/feature-removals" ]; then
-    echo "opt-in archive symbol delta is not exactly the eight permanent formatted-I/O entries" >&2
+    echo "opt-in archive symbol delta is not exactly the eight permanent formatted-I/O entries and their four __isoc99_ aliases" >&2
     diff -u "$work_dir/expected-delta" "$work_dir/feature-delta" >&2 || true
     exit 1
 fi
 for symbol in printf vprintf fprintf vfprintf scanf vscanf fscanf vfscanf; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols"
+done
+# Musl's weak_alias(scanf, __isoc99_scanf) and its siblings: each alias is a
+# weak definition in its target's member at the target's address.
+for symbol in scanf vscanf fscanf vfscanf; do
+    awk -v target="$symbol" -v alias="__isoc99_$symbol" '
+        { split($0, parts, ":"); place = parts[2] ":" $(NF - 2) }
+        $NF == target && $(NF - 1) ~ /^[TW]$/ { target_at[place] = 1 }
+        $NF == alias && $(NF - 1) == "W" { alias_at[place] = 1; aliases++ }
+        END {
+            if (aliases != 1) exit 1
+            for (place in alias_at) if (!(place in target_at)) exit 1
+        }' "$archive_symbols" || {
+        echo "__isoc99_$symbol is not a weak same-address alias of $symbol" >&2
+        exit 1
+    }
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
