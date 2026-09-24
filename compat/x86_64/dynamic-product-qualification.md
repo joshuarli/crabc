@@ -184,3 +184,20 @@ retention step before publishing their reports and validate exact retained
 permissions. The wordexp version-5 receipt does so while preserving its
 separate private-directory assertions during execution; repeating the outer
 retention step leaves its sealed evidence unchanged.
+
+## Combined four-mode sysroot
+
+`scripts/build_x86_64_owned_combined_sysroot.py` composes this product with
+the owned static product into one tree; its docstring owns the composition
+rules. The installed dynamic driver accepts that tree only through
+`validate_combined` in `crabc_cc_owned_dynamic.py`: the combined manifest must
+match the whole tree exactly, its only aliases are this product's, and every
+file named by the embedded `share/crabc/dynamic/manifest.json` must be
+installed unchanged, with each driver-required runtime input at its own path.
+Links from a combined tree otherwise follow the same inspection and receipt
+contract; the receipt's `manifest_sha256` names the combined manifest.
+`./scripts/dev-x86_64.sh owned-combined-sysroot` builds two clean combined
+trees, compares them byte-for-byte, requires identical packages and compares a
+fresh extraction. It fails closed until both products install one shared
+`usr/lib/crt1.o`, the static driver accepts a combined tree, and both product
+suites run from all three combined trees.

@@ -19,6 +19,7 @@ import tarfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import build_x86_64_owned_dynamic_sysroot as producer
+import build_x86_64_owned_combined_sysroot as combined
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PINNED_TOOLCHAIN = tomllib.loads((REPOSITORY_ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
@@ -335,6 +336,95 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                 for path in (output, Path(str(output) + ".crabc-link.json"),
                              *driver.elf_inspection.sidecar_paths(output)):
                     self.assertFalse(path.exists(), path)
+
+    def _combined_native_fixture(self) -> Path:
+        """Compose the native dynamic fixture with a small static product."""
+
+        dynamic = self._installed_native_driver_fixture()
+        static = Path(self.temporary.name) / "static-product"
+        for relative, payload in (("bin/crabc-cc", b"static driver"), ("usr/lib/libc.a", b"static libc"),
+                                  ("usr/lib/rcrt1.o", b"static-pie entry"),
+                                  ("usr/lib/crt1.o", (dynamic / "usr/lib/crt1.o").read_bytes()),
+                                  ("usr/lib/crti.o", (dynamic / "usr/lib/crti.o").read_bytes())):
+            path = static / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+        (static / "share/crabc").mkdir(parents=True)
+        (static / "share/crabc/manifest.json").write_text(json.dumps({
+            "format": combined.PRODUCT_FORMATS["static"], "target": combined.TARGET,
+            "toolchain": PINNED_TOOLCHAIN,
+        }))
+        output = Path(self.temporary.name) / "combined"
+        combined.compose({"static": static, "dynamic": dynamic}, output)
+        return output
+
+    def test_combined_sysroot_links_every_dynamic_mode_through_the_embedded_product(self):
+        """The composed tree's dynamic driver links and inspects all three dynamic modes."""
+
+        root = self._combined_native_fixture()
+        self.assertEqual(driver.validate_installation(root)["format"], combined.FORMAT)
+        work = Path(self.temporary.name) / "combined-work"
+        work.mkdir()
+        leaf_source, main_source = work / "leaf.c", work / "main.c"
+        leaf_source.write_text("int leaf(void) { return 7; }\n")
+        main_source.write_text("extern int leaf(void); int main(void) { return leaf(); }\n")
+        leaf = work / "libleaf.so"
+        for mode, output, inputs in (("--dynamic-shared-object", leaf, []),
+                                     ("--dynamic-pie", work / "pie", ["--application-dso", str(leaf)]),
+                                     ("--dynamic-non-pie", work / "non-pie", ["--application-dso", str(leaf)])):
+            with self.subTest(mode=mode):
+                source = leaf_source if output == leaf else main_source
+                completed = subprocess.run([sys.executable, str(root / "bin/crabc-cc-dynamic"), mode, *inputs,
+                                            str(source), "-o", str(output)],
+                                           capture_output=True, text=True, check=False)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                receipt = json.loads(Path(str(output) + ".crabc-link.json").read_text())
+                self.assertEqual(receipt["manifest_sha256"],
+                                 hashlib.sha256((root / driver.MANIFEST).read_bytes()).hexdigest())
+                inspection_path, _ = driver.elf_inspection.sidecar_paths(output)
+                driver.elf_inspection.validate_record(json.loads(inspection_path.read_text()), output,
+                                                      output_format=driver.FORMAT,
+                                                      fail=self._receipt_value_failure)
+
+    def test_combined_sysroot_rejects_drift_from_its_roster_or_embedded_product(self):
+        root = self._combined_native_fixture()
+        manifest_path = root / driver.MANIFEST
+        original = manifest_path.read_text()
+
+        def forge(edit) -> None:
+            record = json.loads(original)
+            edit(record)
+            manifest_path.write_text(json.dumps(record))
+
+        def substitute_libc(record) -> None:
+            # A self-consistent combined roster that replaces the dynamic
+            # product's libc.so with other bytes.
+            (root / "usr/lib/libc.so").write_bytes(b"foreign libc")
+            record["files"]["usr/lib/libc.so"] = hashlib.sha256(b"foreign libc").hexdigest()
+
+        def move_libc(record) -> None:
+            record["products"]["dynamic"]["placements"]["usr/lib/libc.so"] = "usr/lib/libc.a"
+
+        cases = (
+            ("roster", lambda record: (root / "usr/lib/libforeign.so").write_bytes(b"foreign")),
+            ("combined sysroot contract", lambda record: record.update(symlinks={})),
+            ("does not embed", lambda record: record["products"]["dynamic"].update(format="other")),
+            ("moved dynamic runtime input", move_libc),
+            ("unchanged: usr/lib/libc.so", substitute_libc),
+        )
+        libc = (root / "usr/lib/libc.so").read_bytes()
+        for diagnostic, edit in cases:
+            with self.subTest(diagnostic=diagnostic):
+                forge(edit)
+                with self.assertRaisesRegex(driver.shared.DriverError, diagnostic):
+                    driver.validate_installation(root)
+                with patch.object(driver, "run") as run, self.assertRaises(driver.shared.DriverError):
+                    driver.execute(root, ["--dynamic-pie", "--print-link-plan"])
+                run.assert_not_called()
+                manifest_path.write_text(original)
+                (root / "usr/lib/libforeign.so").unlink(missing_ok=True)
+                (root / "usr/lib/libc.so").write_bytes(libc)
+                driver.validate_installation(root)
 
     def test_transitive_closure_preserves_exact_lazy_dso_runtime_import_exceptions(self):
         """A receipt-declared lazy import is allowed; an accidental one is not."""

@@ -39,6 +39,11 @@ RECEIPT_V1_FIELDS = receipt_contract.V1_FIELDS
 RECEIPT_V2_FIELDS = receipt_contract.V2_FIELDS
 RECEIPT_V3_FIELDS = receipt_contract.V3_FIELDS
 RETAIN_LINK_EVIDENCE_ENV = "CRABC_X86_64_RETAIN_LINK_EVIDENCE"
+MANIFEST = "share/crabc/manifest.json"
+# A combined four-mode sysroot (scripts/build_x86_64_owned_combined_sysroot.py)
+# owns MANIFEST and keeps this product's own manifest at a fixed placement.
+COMBINED_FORMAT = "crabc-x86-64-owned-sysroot-v1"
+COMBINED_PRODUCT_MANIFEST = "share/crabc/dynamic/manifest.json"
 
 
 def application_dso_basename(path: Path) -> str:
@@ -202,6 +207,74 @@ def validate(root: Path) -> dict:
         if shared.sha256_file(root / relative) != digest:
             raise shared.DriverError(f"installed payload hash mismatch: {relative}")
     return record
+
+
+def validate_combined(root: Path) -> dict:
+    """Validate a combined four-mode sysroot that embeds this dynamic product.
+
+    ``scripts/build_x86_64_owned_combined_sysroot.py`` composes the static and
+    dynamic products into one tree, moves each product manifest below
+    ``share/crabc/<product>/`` and writes the combined manifest in its place.
+    This driver runs there only when the whole tree equals that manifest's exact
+    roster and hashes, its only aliases are this product's, and every file the
+    embedded dynamic product manifest names is installed unchanged. No dynamic
+    payload path may move or be replaced by the other product's bytes.
+    """
+    record = json.loads((root / MANIFEST).read_text())
+    files, links = record.get("files"), record.get("symlinks")
+    products = record.get("products")
+    if (type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("target") != shared.TARGET
+            or not isinstance(files, dict) or links != ALIASES or not isinstance(products, dict)
+            or not isinstance(products.get("dynamic"), dict)):
+        raise shared.DriverError("wrong installed combined sysroot contract")
+    product = products["dynamic"]
+    placements = product.get("placements")
+    if (product.get("format") != FORMAT or product.get("manifest") != COMBINED_PRODUCT_MANIFEST
+            or COMBINED_PRODUCT_MANIFEST not in files or not isinstance(placements, dict)):
+        raise shared.DriverError("combined sysroot does not embed this dynamic product")
+    observed, aliases = set(), {}
+    for path in root.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            aliases[relative] = os.readlink(path)
+        elif path.is_file():
+            if relative != MANIFEST:
+                observed.add(relative)
+        elif not path.is_dir():
+            raise shared.DriverError(f"nonregular installed payload: {relative}")
+    if observed != files.keys() or aliases != ALIASES:
+        raise shared.DriverError("installed payload differs from exact combined manifest roster")
+    for relative, digest in files.items():
+        if Path(relative).is_absolute() or ".." in Path(relative).parts or not re.fullmatch("[0-9a-f]{64}", str(digest)):
+            raise shared.DriverError("unsafe combined manifest payload entry")
+        if shared.sha256_file(root / relative) != digest:
+            raise shared.DriverError(f"installed payload hash mismatch: {relative}")
+    try:
+        embedded = json.loads((root / COMBINED_PRODUCT_MANIFEST).read_text())
+    except (ValueError, OSError) as error:
+        raise shared.DriverError(f"invalid embedded dynamic manifest: {error}") from error
+    embedded_files = embedded.get("files") if isinstance(embedded, dict) else None
+    if (not isinstance(embedded_files, dict) or embedded.get("format") != FORMAT
+            or embedded.get("symlinks") != ALIASES or not REQUIRED <= embedded_files.keys()):
+        raise shared.DriverError("wrong embedded dynamic product contract")
+    for relative, digest in embedded_files.items():
+        placed = placements.get(relative)
+        if relative in REQUIRED and placed != relative:
+            raise shared.DriverError(f"combined sysroot moved dynamic runtime input: {relative}")
+        if not isinstance(placed, str) or files.get(placed) != digest:
+            raise shared.DriverError(f"combined sysroot does not install dynamic payload unchanged: {relative}")
+    return record
+
+
+def validate_installation(root: Path) -> dict:
+    """Admit this driver's own product tree or a combined tree embedding it."""
+    manifest = root / MANIFEST
+    shared.require_regular(manifest, "dynamic manifest")
+    try:
+        identity = json.loads(manifest.read_text()).get("format")
+    except (ValueError, OSError, AttributeError) as error:
+        raise shared.DriverError(f"invalid dynamic manifest: {error}") from error
+    return validate_combined(root) if identity == COMBINED_FORMAT else validate(root)
 
 
 def run(command: list[str], temporary: Path) -> str:
@@ -524,7 +597,7 @@ def application_quote_include_dir(root: Path, path: Path) -> Path:
 
 
 def execute(root: Path, arguments: list[str]) -> None:
-    validate(root)
+    validate_installation(root)
     retain_evidence = retain_link_evidence()
     mode = None
     binding = None
