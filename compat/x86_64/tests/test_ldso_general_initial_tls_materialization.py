@@ -62,7 +62,7 @@ class GeneralInitialTlsMaterializationTests(unittest.TestCase):
             "attach_initial_tls",
             "map_provenance",
             "graph: InitialGraphState",
-            "objects: [Object; MAX_OBJECTS]",
+            "objects: ObjectTable",
         ):
             with self.subTest(common_required=required):
                 self.assertIn(required, common_state)
