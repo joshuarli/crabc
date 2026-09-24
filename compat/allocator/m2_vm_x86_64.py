@@ -108,9 +108,9 @@ CHECKS = (
         "process_arena::tests::process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure",
     ),
     (
-        "process-policy-first-arena-retained-cleanup-statistics",
+        "process-policy-first-arena-trim-leak",
         "rust-unit",
-        "process_arena::tests::process_default_os_arena_retained_cleanup_restores_adjusted_statistics_without_a_retry",
+        "process_arena::tests::process_default_os_arena_publishes_after_a_leaked_aligned_trim",
     ),
     (
         "selected-subprocess-statistics-aggregation",
@@ -123,19 +123,9 @@ CHECKS = (
         "main_static_page::tests::process_bound_runtime_first_arena_uses_its_live_policy_and_random_image",
     ),
     (
-        "aligned-map-direct-cleanup-owner",
+        "aligned-map-trim-failure-leak",
         "rust-unit",
-        "os::tests::aligned_mapping_retains_the_direct_candidate_when_its_cleanup_fails",
-    ),
-    (
-        "aligned-map-prefix-cleanup-owner",
-        "rust-unit",
-        "os::tests::aligned_mapping_retains_the_untrimmed_overmap_when_prefix_release_fails",
-    ),
-    (
-        "aligned-map-suffix-cleanup-owner",
-        "rust-unit",
-        "os::tests::aligned_mapping_retains_only_the_live_suffix_when_suffix_release_fails",
+        "os::tests::aligned_mapping_leaks_each_failed_trim_and_returns_the_aligned_middle",
     ),
     (
         "aligned-map-complete-trim-sequence",
@@ -148,24 +138,24 @@ CHECKS = (
         "os::tests::reset_retries_the_initial_advice_after_a_concurrent_global_fallback",
     ),
     (
-        "aligned-map-os-page-claim-owner",
+        "aligned-map-os-page-claim-trim-leak",
         "rust-unit",
-        "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner",
+        "os_page::tests::aligned_map_prefix_cleanup_failure_leaks_and_returns_the_claim",
     ),
     (
-        "aligned-map-process-os-page-suffix-terminal-owner",
+        "aligned-map-process-os-page-trim-leak",
         "rust-unit",
-        "os_page::tests::paired_alignment_suffix_trim_failure_is_terminal_without_double_accounting",
+        "os_page::tests::paired_alignment_trim_failure_leaks_and_returns_a_complete_claim",
     ),
     (
-        "aligned-map-metadata-owner",
+        "aligned-map-metadata-trim-leak",
         "rust-unit",
-        "meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_before_private_backing_publication",
+        "meta::tests::aligned_map_prefix_cleanup_failure_leaks_and_metadata_backing_forms",
     ),
     (
-        "aligned-map-process-arena-owner",
+        "aligned-map-process-arena-trim-leak",
         "rust-unit",
-        "process_arena::tests::explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup",
+        "process_arena::tests::explicit_os_reservation_publishes_after_a_leaked_aligned_map_trim",
     ),
     (
         "normal-os-offset-full-provenance-and-release-retry",
@@ -193,9 +183,9 @@ CHECKS = (
         "os::tests::normal_offset_os_allocation_delegates_zero_and_rejects_invalid_geometry",
     ),
     (
-        "normal-os-aligned-failure-owner",
+        "normal-os-aligned-trim-leak",
         "rust-unit",
-        "os::tests::normal_os_allocation_preserves_a_failed_aligned_map_owner",
+        "os::tests::normal_os_allocation_succeeds_after_a_failed_aligned_trim",
     ),
     (
         "normal-os-source-reservation-caller",
@@ -409,35 +399,22 @@ ALIGNED_HINT_PROFILE_TRACE_KEYS = tuple(
 # fails. The Rust trace proves the stronger retained-owner result. They must
 # remain separate so a row that happens to have the same counter delta cannot
 # be mistaken for ownership equality.
-ALIGNED_OVERMAP_C_TRACE_KEYS = (
-    "m2.vm.aligned_overmap.c.normal_direct_aligned_source_owner_and_stats",
-    "m2.vm.aligned_overmap.c.direct_map_failure_fallback_source_owner_and_stats",
-    "m2.vm.aligned_overmap.c.prefix_zero_suffix_only_source_geometry_and_stats",
-    "m2.vm.aligned_overmap.c.complete_direct_prefix_suffix_cleanup_source_owner_and_stats",
-    "m2.vm.aligned_overmap.c.direct_cleanup_failure_reserved_source_continues_escaped_live_stats",
-    "m2.vm.aligned_overmap.c.direct_cleanup_failure_committed_source_continues_escaped_live_stats",
-    "m2.vm.aligned_overmap.c.prefix_cleanup_failure_reserved_source_continues_escaped_live_stats",
-    "m2.vm.aligned_overmap.c.prefix_cleanup_failure_committed_source_continues_escaped_live_stats",
-    "m2.vm.aligned_overmap.c.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats",
-    "m2.vm.aligned_overmap.c.suffix_cleanup_failure_committed_source_continues_escaped_live_stats",
+ALIGNED_OVERMAP_TRACE_KEYS = (
+    "m2.vm.aligned_overmap.normal_direct_aligned_owner_and_stats",
+    "m2.vm.aligned_overmap.direct_map_failure_fallback_owner_and_stats",
+    "m2.vm.aligned_overmap.prefix_zero_suffix_only_geometry_and_stats",
+    "m2.vm.aligned_overmap.complete_direct_prefix_suffix_cleanup_owner_and_stats",
+    "m2.vm.aligned_overmap.direct_cleanup_failure_reserved_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.direct_cleanup_failure_committed_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.prefix_cleanup_failure_reserved_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.prefix_cleanup_failure_committed_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.suffix_cleanup_failure_reserved_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.suffix_cleanup_failure_committed_continues_escaped_live_stats",
 )
-ALIGNED_OVERMAP_RUST_TRACE_KEYS = (
-    "m2.vm.aligned_overmap.rust.normal_direct_aligned_owner_and_stats",
-    "m2.vm.aligned_overmap.rust.direct_map_failure_fallback_prefix_zero_suffix_only",
-    "m2.vm.aligned_overmap.rust.complete_direct_prefix_suffix_cleanup_owner_and_stats",
-    "m2.vm.aligned_overmap.rust.direct_cleanup_failure_reserved_retains_owner_once",
-    "m2.vm.aligned_overmap.rust.direct_cleanup_failure_committed_retains_owner_once",
-    "m2.vm.aligned_overmap.rust.prefix_cleanup_failure_reserved_retains_full_overmap_once",
-    "m2.vm.aligned_overmap.rust.prefix_cleanup_failure_committed_retains_full_overmap_once",
-    "m2.vm.aligned_overmap.rust.suffix_cleanup_failure_reserved_retains_suffix_once",
-    "m2.vm.aligned_overmap.rust.suffix_cleanup_failure_committed_retains_suffix_once",
-)
-ALIGNED_OVERMAP_DIFFERENCE_ID = "CRABC-MI-ALIGNED-OVERMAP-CLEANUP-OWNER"
+
 ALIGNED_OVERMAP_COMPARISON = {
-    "c_observation_count": len(ALIGNED_OVERMAP_C_TRACE_KEYS),
-    "difference_id": ALIGNED_OVERMAP_DIFFERENCE_ID,
-    "rust_observation_count": len(ALIGNED_OVERMAP_RUST_TRACE_KEYS),
-    "status": "expected-divergence-verified",
+    "compared_value_count": len(ALIGNED_OVERMAP_TRACE_KEYS),
+    "status": "matched",
 }
 
 BRANCH_IDS = (
@@ -879,12 +856,10 @@ def parse_aligned_hint_profile_trace(
 def parse_aligned_overmap_trace(
     output: str, *, source: str, expected_keys: Sequence[str],
 ) -> dict[str, int]:
-    """Parse one side of the finite aligned-overmap cleanup boundary.
+    """Parse one side of the finite aligned-overmap cleanup matrix.
 
-    The C and Rust schemas intentionally differ: C records source continuation
-    and leaked physical ranges after a failed best-effort cleanup, while Rust
-    records the exact retained owner. Both are required to be all-true local
-    relations; this parser must not make them look like one equality record.
+    C and Rust emit the same keys. Each value is one side's all-relations
+    verdict for that row, so every value must be 1 and both records equal.
     """
 
     if (
@@ -1064,23 +1039,18 @@ def _compare_aligned_hint_profile_trace(
 def _compare_aligned_overmap_cleanup_boundary(
     c_trace: Mapping[str, int], rust_trace: Mapping[str, int], harness: Any
 ) -> dict[str, Any]:
-    """Validate the named C/Rust ownership divergence without flattening it.
+    """Require the pinned C and Rust aligned-overmap matrices to be equal.
 
-    C's `mi_os_prim_free` adjusts counters and continues even when its imported
-    `munmap` fails. Rust must return an `AlignedMappingFailure` that retains
-    the exact live range, so the trace key sets are intentionally disjoint.
+    Both sides run `mi_os_prim_alloc_aligned`'s source rule: a failed direct,
+    prefix, or suffix `mi_os_prim_free` warns, still applies its statistics,
+    leaks the range, and the aligned middle is returned.
     """
 
-    if set(c_trace) != set(ALIGNED_OVERMAP_C_TRACE_KEYS) or any(
-        value != 1 for value in c_trace.values()
-    ):
-        raise harness.HarnessError("pinned C aligned-overmap cleanup record changed")
-    if set(rust_trace) != set(ALIGNED_OVERMAP_RUST_TRACE_KEYS) or any(
-        value != 1 for value in rust_trace.values()
-    ):
-        raise harness.HarnessError("Rust aligned-overmap retained-owner record changed")
-    if set(c_trace).intersection(rust_trace):
-        raise harness.HarnessError("aligned-overmap C/Rust boundary lost its distinct ownership schemas")
+    if c_trace != rust_trace:
+        mismatches = sorted(key for key in c_trace if c_trace.get(key) != rust_trace.get(key))
+        raise harness.HarnessError(
+            "native x86 aligned-overmap matrix differs from pinned C: " + ", ".join(mismatches)
+        )
     return dict(ALIGNED_OVERMAP_COMPARISON)
 
 
@@ -1233,7 +1203,7 @@ def run_evidence(
         c_aligned_overmap_trace = parse_aligned_overmap_trace(
             str(c_run["stdout"]),
             source="pinned C",
-            expected_keys=ALIGNED_OVERMAP_C_TRACE_KEYS,
+            expected_keys=ALIGNED_OVERMAP_TRACE_KEYS,
         )
         profile_commands: list[dict[str, Any]] = []
         c_profile_trace: dict[str, int] = {}
@@ -1345,7 +1315,7 @@ def run_evidence(
     rust_aligned_overmap_trace = parse_aligned_overmap_trace(
         aligned_overmap_rust_output,
         source="Rust",
-        expected_keys=ALIGNED_OVERMAP_RUST_TRACE_KEYS,
+        expected_keys=ALIGNED_OVERMAP_TRACE_KEYS,
     )
     aligned_overmap_comparison = _compare_aligned_overmap_cleanup_boundary(
         c_aligned_overmap_trace, rust_aligned_overmap_trace, harness

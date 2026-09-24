@@ -13,8 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from m2_vm_x86_64 import (
-    ALIGNED_OVERMAP_C_TRACE_KEYS,
-    ALIGNED_OVERMAP_RUST_TRACE_KEYS,
+    ALIGNED_OVERMAP_TRACE_KEYS,
     ALIGNED_OVERMAP_TRACE_BEGIN,
     ALIGNED_OVERMAP_TRACE_END,
     ARENA_OWNED_EVENT_FIELD_COUNT,
@@ -64,24 +63,22 @@ EXPECTED_CHECK_IDS = (
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
-    "process-policy-first-arena-retained-cleanup-statistics",
+    "process-policy-first-arena-trim-leak",
     "selected-subprocess-statistics-aggregation",
     "process-policy-ticket-zero-live-random",
-    "aligned-map-direct-cleanup-owner",
-    "aligned-map-prefix-cleanup-owner",
-    "aligned-map-suffix-cleanup-owner",
+    "aligned-map-trim-failure-leak",
     "aligned-map-complete-trim-sequence",
     "reset-advice-retry-snapshot",
-    "aligned-map-os-page-claim-owner",
-    "aligned-map-process-os-page-suffix-terminal-owner",
-    "aligned-map-metadata-owner",
-    "aligned-map-process-arena-owner",
+    "aligned-map-os-page-claim-trim-leak",
+    "aligned-map-process-os-page-trim-leak",
+    "aligned-map-metadata-trim-leak",
+    "aligned-map-process-arena-trim-leak",
     "normal-os-offset-full-provenance-and-release-retry",
     "process-offset-prefix-decommit-advisory-owner",
     "normal-no-callback-purge-policy-range-matrix",
     "normal-os-good-size-and-base-provenance",
     "normal-os-offset-zero-delegation-and-geometry",
-    "normal-os-aligned-failure-owner",
+    "normal-os-aligned-trim-leak",
     "normal-os-source-reservation-caller",
     "linux-os-reuse-contained-range-noop",
     "fixed-no-option-numa-cache-and-current-node-normalization",
@@ -170,39 +167,20 @@ class NativeM2VmTraceTests(unittest.TestCase):
             with self.subTest(malformed=output), self.assertRaises(ValueError):
                 parse_trace(output, source="test")
 
-    def test_aligned_overmap_sides_remain_separate_and_fail_closed(self) -> None:
-        c_trace = valid_aligned_overmap_trace(ALIGNED_OVERMAP_C_TRACE_KEYS)
-        rust_trace = valid_aligned_overmap_trace(ALIGNED_OVERMAP_RUST_TRACE_KEYS)
+    def test_aligned_overmap_record_parses_and_fails_closed(self) -> None:
+        trace = valid_aligned_overmap_trace(ALIGNED_OVERMAP_TRACE_KEYS)
         self.assertEqual(
-            parse_aligned_overmap_trace(
-                c_trace, source="C", expected_keys=ALIGNED_OVERMAP_C_TRACE_KEYS
-            ),
-            {key: 1 for key in ALIGNED_OVERMAP_C_TRACE_KEYS},
-        )
-        self.assertEqual(
-            parse_aligned_overmap_trace(
-                rust_trace, source="Rust", expected_keys=ALIGNED_OVERMAP_RUST_TRACE_KEYS
-            ),
-            {key: 1 for key in ALIGNED_OVERMAP_RUST_TRACE_KEYS},
+            parse_aligned_overmap_trace(trace, source="C", expected_keys=ALIGNED_OVERMAP_TRACE_KEYS),
+            {key: 1 for key in ALIGNED_OVERMAP_TRACE_KEYS},
         )
         for malformed in (
-            c_trace.replace(
-                f"{ALIGNED_OVERMAP_C_TRACE_KEYS[0]}=1\n", "", 1
-            ),
-            c_trace.replace(
-                f"{ALIGNED_OVERMAP_C_TRACE_KEYS[0]}=1",
-                f"{ALIGNED_OVERMAP_C_TRACE_KEYS[0]}=0",
-                1,
-            ),
-            c_trace.replace(
-                f"{ALIGNED_OVERMAP_C_TRACE_KEYS[0]}=1",
-                f"{ALIGNED_OVERMAP_RUST_TRACE_KEYS[0]}=1",
-                1,
-            ),
+            trace.replace(f"{ALIGNED_OVERMAP_TRACE_KEYS[0]}=1\n", "", 1),
+            trace.replace(f"{ALIGNED_OVERMAP_TRACE_KEYS[0]}=1", f"{ALIGNED_OVERMAP_TRACE_KEYS[0]}=0", 1),
+            trace.replace(f"{ALIGNED_OVERMAP_TRACE_KEYS[0]}=1", "m2.vm.aligned_overmap.unknown=1", 1),
         ):
             with self.subTest(malformed=malformed), self.assertRaises(ValueError):
                 parse_aligned_overmap_trace(
-                    malformed, source="C", expected_keys=ALIGNED_OVERMAP_C_TRACE_KEYS
+                    malformed, source="C", expected_keys=ALIGNED_OVERMAP_TRACE_KEYS
                 )
 
     def test_missing_duplicate_unknown_and_unmet_relations_fail_closed(self) -> None:

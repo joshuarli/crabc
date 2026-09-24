@@ -5507,21 +5507,9 @@ impl<'owner> MetadataEngine<'owner> {
             MapAccess::Committed,
         ) {
             Ok(mapping) => mapping,
-            Err(failure) => match failure.into_mapping() {
-                None => return self.cleanup_page_map_after_failed_init(),
-                Some(mapping) => {
-                    // The aligned-map cleanup failed after this metadata
-                    // owner had already formed its private PageMap. Both
-                    // final slots are now the exact terminal owners; never
-                    // destroy the PageMap and then forget the live arena map.
-                    // SAFETY: `entry` owns initialization, BOUND exposes no
-                    // backing reader, and this mapping slot is still
-                    // uninitialized.
-                    unsafe { (*this.mapping.get()).write(mapping) };
-                    this.status.store(FAILED, Ordering::Release);
-                    return Err(MetaError::InitializationRetained);
-                }
-            },
+            // Aligned trim failures leak (source `mi_os_prim_free`), so a
+            // failed map owns nothing.
+            Err(_) => return self.cleanup_page_map_after_failed_init(),
         };
         // SAFETY: same BOUND/lock proof as the page-map slot above.
         unsafe { (*this.mapping.get()).write(mapping) };
@@ -7364,9 +7352,12 @@ mod tests {
         ));
     }
 
+    /// The metadata backing receiver of source `mi_os_prim_alloc_aligned`:
+    /// a failed prefix release of its aligned arena map is leaked and the
+    /// metadata backing still forms, so the allocation succeeds.
     #[cfg(not(miri))]
     #[test]
-    fn aligned_map_prefix_cleanup_failure_retains_metadata_before_private_backing_publication() {
+    fn aligned_map_prefix_cleanup_failure_leaks_and_metadata_backing_forms() {
         let allocator = cold_static_allocator();
         let mut selected_config = config();
         selected_config.test_force_full_aligned_map_trim();
@@ -7381,23 +7372,12 @@ mod tests {
             2,
             Errno::NOMEM,
         ));
-
-        assert!(matches!(
-            allocator.zalloc(selected_config, 8),
-            Err(MetaError::InitializationRetained)
-        ));
-        assert_eq!(allocator.status.load(Ordering::Acquire), FAILED);
-
-        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
-        assert!(matches!(
-            allocator.zalloc(selected_config, 8),
-            Err(MetaError::InitializationRetained)
-        ));
-        assert_eq!(
-            fault.observed(),
-            0,
-            "the terminal metadata owner never opens a retry that could overlap its retained map"
-        );
+        let mut block = allocator
+            .zalloc(selected_config, 8)
+            .expect("a failed aligned-map trim does not fail metadata backing");
+        assert!(fault.observed() >= 2, "the selected trim release ran");
+        fault.set(fault::Plan::disabled());
+        allocator.free(&mut block).expect("the metadata block frees");
     }
 
     #[test]

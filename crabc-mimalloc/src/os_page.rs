@@ -363,14 +363,12 @@ pub(crate) struct OsAlignedPageClaim {
 }
 
 /// A paired failed full release was already accounted and may be retried
-/// raw. A failed aligned-map trim may instead have accounted only a prefix
-/// or suffix: retain it terminally rather than invent a second full-range
-/// accounting transition from an incomplete normal-allocation memory ID.
+/// raw. An aligned-map trim failure never reaches this owner: the source
+/// forgets and leaks the untrimmed range and returns the aligned middle.
 #[derive(Clone, Copy)]
 enum OsPageReleaseState {
     Unaccounted,
     Accounted,
-    RetainedAlignmentFailure(Errno),
     /// Metadata or PageMap rollback refused its ownership precondition.
     /// The mapping must remain live; raw unmap retry is not safe.
     RetainedPublicationFailure,
@@ -541,7 +539,7 @@ impl OsAlignedPageClaim {
                             initially_committed: false,
                             release_commit_size: 0,
                             ready: false,
-                            release_state: OsPageReleaseState::RetainedAlignmentFailure(error),
+                            release_state: OsPageReleaseState::Unaccounted,
                         })),
                 };
             }
@@ -620,7 +618,7 @@ impl OsAlignedPageClaim {
                             mapping, layout, process: None,
                             process_identity: Some(NonNull::from(process.subprocess())),
                             initially_committed: false, release_commit_size: 0, ready: false,
-                            release_state: OsPageReleaseState::RetainedAlignmentFailure(error),
+                            release_state: OsPageReleaseState::Unaccounted,
                         },
                     )),
                 };
@@ -689,7 +687,7 @@ impl OsAlignedPageClaim {
                         Self { mapping, layout, process: None,
                             process_identity: Some(NonNull::from(process.subprocess())),
                             initially_committed: false, release_commit_size: 0, ready: false,
-                            release_state: OsPageReleaseState::RetainedAlignmentFailure(error) },
+                            release_state: OsPageReleaseState::Unaccounted },
                     )),
                 };
             }
@@ -771,7 +769,7 @@ impl OsAlignedPageClaim {
                             initially_committed: false,
                             release_commit_size: 0,
                             ready: false,
-                            release_state: OsPageReleaseState::RetainedAlignmentFailure(error),
+                            release_state: OsPageReleaseState::Unaccounted,
                         })),
                 };
             }
@@ -847,13 +845,9 @@ impl OsAlignedPageClaim {
                     OsAlignedPageFailureStage::Map,
                     failure.error(),
                 );
-                return match failure.into_mapping() {
-                    None => Err(OsAlignedPageAllocationFailure::released(error)),
-                    Some(mapping) => Err(OsAlignedPageAllocationFailure::with_claim(
-                        error,
-                        Self::legacy(mapping, layout, false),
-                    )),
-                };
+                // Aligned trim failures leak (source `mi_os_prim_free`),
+                // so a failed map owns nothing.
+                return Err(OsAlignedPageAllocationFailure::released(error));
             }
         };
 
@@ -1075,7 +1069,6 @@ impl OsAlignedPageClaim {
             });
         }
         let result = match (self.process, self.release_state) {
-            (_, OsPageReleaseState::RetainedAlignmentFailure(error)) => Err(error),
             (Some(process), OsPageReleaseState::Unaccounted) => {
                 self.release_state = OsPageReleaseState::Accounted;
                 self.mapping.unmap_for_process(process, self.release_commit_size, false)
@@ -1121,7 +1114,6 @@ impl OsAlignedPageClaim {
             });
         }
         let result = match self.release_state {
-            OsPageReleaseState::RetainedAlignmentFailure(error) => Err(error),
             OsPageReleaseState::Unaccounted => {
                 // Pinned `_mi_os_prim_free` applies statistics even when the
                 // syscall fails. Latch before the call so retry is raw-only.
@@ -1728,96 +1720,47 @@ mod tests {
         assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
     }
 
+    /// Source `mi_os_prim_alloc_aligned` in the fresh OS page caller: a
+    /// failed direct, prefix, or suffix release is counted, leaked, and the
+    /// claim still succeeds with its aligned mapping; its later release
+    /// accounts only the returned mapping.
     #[cfg(not(miri))]
     #[test]
-    fn paired_alignment_trim_failure_is_retained_without_inventing_full_release_accounting() {
-        // Reject the direct map so the overmap must trim at least one end,
-        // independent of randomized native mmap placement.
-        let fault = fault::install(fault::Plan::at_pair(fault::Point::Map, 1,
-            fault::Point::Unmap, 1, Errno::NOMEM));
-        let process = process(false);
-        let config = config(4 * KIB);
-        let failure = OsAlignedPageClaim::allocate_for_process(process, config, 4096,
-            1, crate::arena::ArenaId::none()).err().expect("source aligned trim failure");
-        let OsAlignedPageOwner::Claim(claim) = failure.into_owner().expect("retained trim owner") else { panic!("private claim") };
-        assert!(claim.memory_id().is_err());
-        let after = process.subprocess().vm_statistics().snapshot();
-        fault.set(fault::Plan::disabled());
-        let retained = claim.release().err().expect("partial trim accounting is not a complete free token");
-        assert_eq!(process.subprocess().vm_statistics().snapshot(), after);
-        // Only this isolated test dismantles its terminal fixture. Production
-        // retains the exact owner until aligned trim recovery is represented;
-        // it must not synthesize a whole-map accounting correction.
-        let OsAlignedPageOwner::Claim(mut claim) = retained.into_owner() else { panic!("private claim") };
-        assert!(claim.mapping.unmap().is_ok());
-    }
-
-    #[cfg(not(miri))]
-    #[test]
-    fn paired_alignment_suffix_trim_failure_is_terminal_without_double_accounting() {
-        // The private test geometry makes the three source cleanup edges
-        // deterministic: direct candidate, overmap prefix, then overmap
-        // suffix. This specifically reaches the process-bound suffix edge
-        // which the earlier paired receiver witness did not isolate.
-        let fault = fault::install(fault::Plan::at(
-            fault::Point::Unmap,
-            3,
-            Errno::NOMEM,
-        ));
+    fn paired_alignment_trim_failure_leaks_and_returns_a_complete_claim() {
         let process = process(false);
         let mut memory_config = config(4 * KIB);
         memory_config.test_force_full_aligned_map_trim();
-        let before = process.subprocess().vm_statistics().snapshot();
-        let failure = OsAlignedPageClaim::allocate_for_process(
-            process,
-            memory_config,
-            4096,
-            1,
-            crate::arena::ArenaId::none(),
-        )
-        .err()
-        .expect("the forced suffix cleanup failure retains the unpublished claim");
-        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::Map);
-        assert_eq!(failure.error().operation(), Errno::NOMEM);
-        let OsAlignedPageOwner::Claim(claim) = failure
-            .into_owner()
-            .expect("the failed process aligned map transfers its sole claim owner")
-        else {
-            panic!("an unpublished aligned-map failure cannot be a published owner")
-        };
-        assert_eq!(fault.observed(), 3, "the suffix is the third source cleanup edge");
-        let mapping_length = claim.layout().mapping_length();
-        assert_eq!(claim.mapping.base().unwrap().addr() % PAGE_META_ALIGNMENT, 0);
-        assert!(claim.mapping.length().unwrap() > mapping_length);
-        let after_map_failure = process.subprocess().vm_statistics().snapshot();
-        assert_eq!(after_map_failure.mmap_calls - before.mmap_calls, 2);
-        assert_eq!(
-            after_map_failure.reserved_total - before.reserved_total,
-            mapping_length as i64,
-            "source adjustment accounting reaches the aligned middle even while the suffix stays live"
-        );
-        assert_eq!(after_map_failure.reserved_current - before.reserved_current, mapping_length as i64);
-        assert_eq!(after_map_failure.committed_total, before.committed_total);
-        assert_eq!(after_map_failure.committed_current, before.committed_current);
-
-        // `RetainedAlignmentFailure` is terminal: calling the receiver's
-        // release path must return the stored map error before another raw
-        // unmap or another source accounting event. Keep the one-shot plan
-        // active so a hidden retry would change the observed ordinal.
-        let terminal = claim.release().err().expect("the retained trim claim is not a full-release token");
-        assert_eq!(terminal.error().stage(), OsAlignedPageFailureStage::Release);
-        assert_eq!(terminal.error().operation(), Errno::NOMEM);
-        assert_eq!(fault.observed(), 3, "terminal release must not retry the suffix unmap");
-        assert_eq!(process.subprocess().vm_statistics().snapshot(), after_map_failure);
-
-        // Only the isolated test tears down the terminal owner. This raw edge
-        // deliberately does not replay partial-overmap source accounting.
-        fault.set(fault::Plan::disabled());
-        let OsAlignedPageOwner::Claim(mut claim) = terminal.into_owner() else {
-            panic!("the terminal unpublished receiver must retain the same claim")
-        };
-        claim.mapping.unmap().expect("the retained suffix owner can be dismantled once");
-        assert_eq!(process.subprocess().vm_statistics().snapshot(), after_map_failure);
+        for ordinal in 1..=3 {
+            let fault = fault::install(fault::Plan::at(fault::Point::Unmap, ordinal, Errno::NOMEM));
+            let before = process.subprocess().vm_statistics().snapshot();
+            let capture = fault.capture_unmap_ranges();
+            let claim = OsAlignedPageClaim::allocate_for_process(
+                process, memory_config, 4096, 1, crate::arena::ArenaId::none(),
+            )
+            .unwrap_or_else(|_| panic!("a failed trim release does not fail the claim"));
+            let (ranges, count) = capture.all().expect("bounded releases");
+            drop(capture);
+            assert_eq!(count, 3, "every source release edge still runs");
+            let mapping_length = claim.layout().mapping_length();
+            assert_eq!(claim.mapping.base().unwrap().addr() % PAGE_META_ALIGNMENT, 0);
+            assert_eq!(claim.mapping.length(), Ok(mapping_length));
+            let after = process.subprocess().vm_statistics().snapshot();
+            assert_eq!(after.mmap_calls - before.mmap_calls, 2);
+            assert_eq!(after.reserved_current - before.reserved_current, mapping_length as i64,
+                "the failed release still applied its adjustment");
+            let (leaked, leaked_length) = ranges[ordinal - 1];
+            let mut residency = 0u8;
+            // SAFETY: `mincore` only inspects this page-aligned range.
+            assert!(unsafe { crabc_core::mm::mincore_raw(leaked as *mut u8, 4 * KIB, &mut residency) }.is_ok(),
+                "the failed range leaks live");
+            fault.set(fault::Plan::disabled());
+            assert!(claim.release().is_ok());
+            let released = process.subprocess().vm_statistics().snapshot();
+            assert_eq!(released.reserved_current, before.reserved_current);
+            // SAFETY: the leaked range is represented by no owner.
+            unsafe { crabc_core::mm::munmap_raw(leaked as *mut u8, leaked_length) }
+                .expect("fixture teardown of the leaked range");
+        }
     }
 
     /// The same seven legal source transitions as the direct-included C
@@ -2134,40 +2077,28 @@ mod tests {
         }
     }
 
+    /// The explicit-config OS-aligned claim receives the same source rule:
+    /// a failed prefix release leaks the prefix and the claim succeeds.
     #[cfg(not(miri))]
     #[test]
-    fn aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner() {
-        let fault = fault::install(fault::Plan::at(
-            fault::Point::Unmap,
-            2,
-            Errno::NOMEM,
-        ));
+    fn aligned_map_prefix_cleanup_failure_leaks_and_returns_the_claim() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 2, Errno::NOMEM));
         let mut config = config(4 * KIB);
         config.test_force_full_aligned_map_trim();
-
-        let failure = match OsAlignedPageClaim::allocate(config, 4 * KIB, 128 * KIB) {
-            Ok(claim) => {
-                let _ = claim.release();
-                panic!("the forced aligned-map prefix release must fail")
-            }
-            Err(failure) => failure,
-        };
-        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::Map);
-        assert_eq!(failure.error().operation(), Errno::NOMEM);
-        assert_eq!(failure.error().cleanup(), None);
-        let owner = failure
-            .into_owner()
-            .expect("a failed alignment trim retains the unpublished OS claim");
-
+        let capture = fault.capture_unmap_ranges();
+        let claim = OsAlignedPageClaim::allocate(config, 4 * KIB, 128 * KIB)
+            .unwrap_or_else(|_| panic!("a failed prefix release does not fail the claim"));
+        let (ranges, count) = capture.all().expect("bounded releases");
+        drop(capture);
+        assert_eq!(count, 3);
+        let (leaked, leaked_length) = ranges[1];
+        assert_eq!(leaked + leaked_length, claim.mapping.base().unwrap().addr(),
+            "the leaked prefix ends at the aligned claim");
         fault.set(fault::Plan::disabled());
-        match owner {
-            OsAlignedPageOwner::Claim(claim) => {
-                assert!(matches!(claim.release(), Ok(())), "the exact retained overmap retries")
-            }
-            OsAlignedPageOwner::Published(_) => {
-                panic!("an unpublished alignment failure cannot publish an OS page")
-            }
-        }
+        assert!(matches!(claim.release(), Ok(())));
+        // SAFETY: the leaked prefix is represented by no owner.
+        unsafe { crabc_core::mm::munmap_raw(leaked as *mut u8, leaked_length) }
+            .expect("fixture teardown of the leaked prefix");
     }
 
     #[test]

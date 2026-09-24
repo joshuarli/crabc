@@ -4893,25 +4893,25 @@ int main(void) {
       large_only_failure_record.terminal_failures_leave_statistics_and_owners_unpublished);
   puts("CRABC_MI_M2_VM_TRACE_END");
   puts("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN");
-  U("m2.vm.aligned_overmap.c.normal_direct_aligned_source_owner_and_stats",
+  U("m2.vm.aligned_overmap.normal_direct_aligned_owner_and_stats",
       aligned_overmap_record.normal_direct_aligned);
-  U("m2.vm.aligned_overmap.c.direct_map_failure_fallback_source_owner_and_stats",
+  U("m2.vm.aligned_overmap.direct_map_failure_fallback_owner_and_stats",
       aligned_overmap_record.direct_map_failure_fallback);
-  U("m2.vm.aligned_overmap.c.prefix_zero_suffix_only_source_geometry_and_stats",
+  U("m2.vm.aligned_overmap.prefix_zero_suffix_only_geometry_and_stats",
       aligned_overmap_record.prefix_zero_suffix_only);
-  U("m2.vm.aligned_overmap.c.complete_direct_prefix_suffix_cleanup_source_owner_and_stats",
+  U("m2.vm.aligned_overmap.complete_direct_prefix_suffix_cleanup_owner_and_stats",
       aligned_overmap_record.complete_direct_prefix_suffix_cleanup);
-  U("m2.vm.aligned_overmap.c.direct_cleanup_failure_reserved_source_continues_escaped_live_stats",
+  U("m2.vm.aligned_overmap.direct_cleanup_failure_reserved_continues_escaped_live_stats",
       aligned_overmap_record.direct_cleanup_failure_reserved_source_continues_escaped_live_stats);
-  U("m2.vm.aligned_overmap.c.direct_cleanup_failure_committed_source_continues_escaped_live_stats",
+  U("m2.vm.aligned_overmap.direct_cleanup_failure_committed_continues_escaped_live_stats",
       aligned_overmap_record.direct_cleanup_failure_committed_source_continues_escaped_live_stats);
-  U("m2.vm.aligned_overmap.c.prefix_cleanup_failure_reserved_source_continues_escaped_live_stats",
+  U("m2.vm.aligned_overmap.prefix_cleanup_failure_reserved_continues_escaped_live_stats",
       aligned_overmap_record.prefix_cleanup_failure_reserved_source_continues_escaped_live_stats);
-  U("m2.vm.aligned_overmap.c.prefix_cleanup_failure_committed_source_continues_escaped_live_stats",
+  U("m2.vm.aligned_overmap.prefix_cleanup_failure_committed_continues_escaped_live_stats",
       aligned_overmap_record.prefix_cleanup_failure_committed_source_continues_escaped_live_stats);
-  U("m2.vm.aligned_overmap.c.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats",
+  U("m2.vm.aligned_overmap.suffix_cleanup_failure_reserved_continues_escaped_live_stats",
       aligned_overmap_record.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats);
-  U("m2.vm.aligned_overmap.c.suffix_cleanup_failure_committed_source_continues_escaped_live_stats",
+  U("m2.vm.aligned_overmap.suffix_cleanup_failure_committed_continues_escaped_live_stats",
       aligned_overmap_record.suffix_cleanup_failure_committed_source_continues_escaped_live_stats);
   puts("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END");
   return 0;

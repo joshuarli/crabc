@@ -22,24 +22,22 @@ EXPECTED_VM_CHECK_IDS = (
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
-    "process-policy-first-arena-retained-cleanup-statistics",
+    "process-policy-first-arena-trim-leak",
     "selected-subprocess-statistics-aggregation",
     "process-policy-ticket-zero-live-random",
-    "aligned-map-direct-cleanup-owner",
-    "aligned-map-prefix-cleanup-owner",
-    "aligned-map-suffix-cleanup-owner",
+    "aligned-map-trim-failure-leak",
     "aligned-map-complete-trim-sequence",
     "reset-advice-retry-snapshot",
-    "aligned-map-os-page-claim-owner",
-    "aligned-map-process-os-page-suffix-terminal-owner",
-    "aligned-map-metadata-owner",
-    "aligned-map-process-arena-owner",
+    "aligned-map-os-page-claim-trim-leak",
+    "aligned-map-process-os-page-trim-leak",
+    "aligned-map-metadata-trim-leak",
+    "aligned-map-process-arena-trim-leak",
     "normal-os-offset-full-provenance-and-release-retry",
     "process-offset-prefix-decommit-advisory-owner",
     "normal-no-callback-purge-policy-range-matrix",
     "normal-os-good-size-and-base-provenance",
     "normal-os-offset-zero-delegation-and-geometry",
-    "normal-os-aligned-failure-owner",
+    "normal-os-aligned-trim-leak",
     "normal-os-source-reservation-caller",
     "linux-os-reuse-contained-range-noop",
     "fixed-no-option-numa-cache-and-current-node-normalization",
@@ -538,7 +536,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
         self.assertEqual(tuple(check["id"] for check in vm["checks"]), EXPECTED_VM_CHECK_IDS)
-        self.assertEqual(len(vm["checks"]), 34)
+        self.assertEqual(len(vm["checks"]), 32)
         self.assertEqual(len(vm["bounded_source_definitions"]), 20)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]

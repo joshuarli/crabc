@@ -676,6 +676,42 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// `"unable to free OS memory (error: %d (0x%x), size: 0x%zx bytes,
+    /// address: %p)\n"` from `mi_os_prim_free` (`src/os.c:244-246`).
+    pub(crate) fn os_free_failure(errno: Errno, size: usize, address: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length, b"unable to free OS memory (error: ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b"), size: 0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" bytes, address: ");
+        append_source_pointer(&mut bytes, &mut length, address);
+        append_mbind_bytes(&mut bytes, &mut length, b")\n");
+        Self { bytes, length }
+    }
+
+    /// `"unable to allocate aligned OS memory directly, fall back to
+    /// over-allocation (size: 0x%zx bytes, address: %p, alignment: 0x%zx,
+    /// commit: %d)\n"` from `mi_os_prim_alloc_aligned` (`src/os.c:376-378`).
+    pub(crate) fn aligned_direct_fallback(size: usize, address: usize, alignment: usize, commit: bool) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length,
+            b"unable to allocate aligned OS memory directly, fall back to over-allocation (size: 0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" bytes, address: ");
+        append_source_pointer(&mut bytes, &mut length, address);
+        append_mbind_bytes(&mut bytes, &mut length, b", alignment: 0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, alignment as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b", commit: ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, u64::from(commit));
+        append_mbind_bytes(&mut bytes, &mut length, b")\n");
+        Self { bytes, length }
+    }
+
     pub(crate) fn huge_noncontiguous(page: usize, address: usize) -> Self {
         let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
         let mut length = 0;
@@ -2747,6 +2783,19 @@ mod tests {
                 assert!(body.length <= 990);
             }
         }
+    }
+
+    /// `mi_os_prim_free` and `mi_os_prim_alloc_aligned` warning bodies with
+    /// the source `%d`, minimum-two uppercase `%x`/`%zx`, and `%p` spellings.
+    #[test]
+    fn aligned_map_warning_bodies_follow_the_source_format() {
+        let free = SourceFormattedMessage::os_free_failure(
+            Errno::from_raw(12).unwrap(), 0x10000, 0x7F12_3456_0000);
+        assert_eq!(free.as_c_str().to_bytes(),
+            b"unable to free OS memory (error: 12 (0x0C), size: 0x10000 bytes, address: 0x7F1234560000)\n");
+        let fallback = SourceFormattedMessage::aligned_direct_fallback(0x2000, 0, 0x4000, true);
+        assert_eq!(fallback.as_c_str().to_bytes(),
+            b"unable to allocate aligned OS memory directly, fall back to over-allocation (size: 0x2000 bytes, address: 0x00000000, alignment: 0x4000, commit: 1)\n");
     }
 
     #[test]

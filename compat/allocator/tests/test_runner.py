@@ -2303,7 +2303,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            67,
+            65,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2313,30 +2313,9 @@ class ContractTests(unittest.TestCase):
             [
                 {
                     "expected_passed_test_count": 1,
-                    "id": "aligned-map-direct-cleanup-owner",
+                    "id": "aligned-map-trim-failure-leak",
                     "kind": "rust-unit",
-                    "target": (
-                        "os::tests::aligned_mapping_retains_the_direct_candidate_when_its_"
-                        "cleanup_fails"
-                    ),
-                },
-                {
-                    "expected_passed_test_count": 1,
-                    "id": "aligned-map-prefix-cleanup-owner",
-                    "kind": "rust-unit",
-                    "target": (
-                        "os::tests::aligned_mapping_retains_the_untrimmed_overmap_when_prefix_"
-                        "release_fails"
-                    ),
-                },
-                {
-                    "expected_passed_test_count": 1,
-                    "id": "aligned-map-suffix-cleanup-owner",
-                    "kind": "rust-unit",
-                    "target": (
-                        "os::tests::aligned_mapping_retains_only_the_live_suffix_when_suffix_"
-                        "release_fails"
-                    ),
+                    "target": "os::tests::aligned_mapping_leaks_each_failed_trim_and_returns_the_aligned_middle",
                 },
                 {
                     "expected_passed_test_count": 1,
@@ -2358,30 +2337,21 @@ class ContractTests(unittest.TestCase):
                 },
                 {
                     "expected_passed_test_count": 1,
-                    "id": "aligned-map-os-page-claim-owner",
+                    "id": "aligned-map-os-page-claim-trim-leak",
                     "kind": "rust-unit",
-                    "target": (
-                        "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_"
-                        "claim_owner"
-                    ),
+                    "target": "os_page::tests::aligned_map_prefix_cleanup_failure_leaks_and_returns_the_claim",
                 },
                 {
                     "expected_passed_test_count": 1,
-                    "id": "aligned-map-metadata-owner",
+                    "id": "aligned-map-metadata-trim-leak",
                     "kind": "rust-unit",
-                    "target": (
-                        "meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_"
-                        "before_private_backing_publication"
-                    ),
+                    "target": "meta::tests::aligned_map_prefix_cleanup_failure_leaks_and_metadata_backing_forms",
                 },
                 {
                     "expected_passed_test_count": 1,
-                    "id": "aligned-map-process-arena-owner",
+                    "id": "aligned-map-process-arena-trim-leak",
                     "kind": "rust-unit",
-                    "target": (
-                        "process_arena::tests::explicit_os_reservation_retains_an_aligned_map_"
-                        "cleanup_failure_before_setup"
-                    ),
+                    "target": "process_arena::tests::explicit_os_reservation_publishes_after_a_leaked_aligned_map_trim",
                 },
                 {
                     "expected_passed_test_count": 1,
@@ -2409,9 +2379,9 @@ class ContractTests(unittest.TestCase):
                 },
                 {
                     "expected_passed_test_count": 1,
-                    "id": "normal-os-aligned-failure-owner",
+                    "id": "normal-os-aligned-trim-leak",
                     "kind": "rust-unit",
-                    "target": "os::tests::normal_os_allocation_preserves_a_failed_aligned_map_owner",
+                    "target": "os::tests::normal_os_allocation_succeeds_after_a_failed_aligned_trim",
                 },
                 {
                     "expected_passed_test_count": 1,

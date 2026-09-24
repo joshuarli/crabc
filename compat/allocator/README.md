@@ -3081,14 +3081,12 @@ C/Rust boundary for pinned `src/os.c:240-430` and
 `src/prim/unix/prim.c:318-365`. Its direct-include C fixture runs a normal
 aligned direct map, direct-map failure fallback, normal prefix-zero/suffix-only
 geometry, successful direct/prefix/suffix cleanup, and every cleanup failure
-for Reserved and Committed requests. The C result records its actual void-free
-continuation, statistics, and an escaped physical map where a cleanup fails.
-The Rust witness records the deliberately distinct `AlignedMappingFailure`
-owner and one process-bound `OsAlignedPageClaim` suffix receiver that returns
-its terminal error without retrying or double-accounting.
-`CRABC-MI-ALIGNED-OVERMAP-CLEANUP-OWNER` names this accepted safety boundary:
-the two traces are intentionally separate, not an equality differential. The
-VM component remains partial because other receivers, callbacks, retry paths,
+for Reserved and Committed requests. Both sides follow
+the source `mi_os_prim_free` rule: a failed direct, prefix, or suffix release
+is warned, still counted, and leaked live, and the aligned middle is returned.
+`os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace` emits the
+same ten row verdicts as the C fixture, and the receipt requires equality.
+The VM component remains partial because other receivers, callbacks, retry paths,
 source runtime options, huge-page success, and NUMA policy are unqualified.
 
 ### Native huge-registry ownership prerequisite

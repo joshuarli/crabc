@@ -889,59 +889,6 @@ are compared.
   safety strengthenings over C's void/best-effort release boundary, not
   source-equivalent retry claims.
 
-### `CRABC-MI-ALIGNED-OVERMAP-CLEANUP-OWNER` — accepted private VM-substrate safety boundary
-
-- **Upstream/Rust:** pinned `src/prim/unix/prim.c` aligned anonymous-map
-  path and `src/os.c` callers, represented by
-  `os::Mapping::map_aligned_for_allocator`, `AlignedMappingFailure`, and the
-  typed owners in `os_page`, `meta`, `process_arena`, and the test adapter's
-  unpublished `TestContextInitFailure` boundary.
-- **Category:** Linux private M2 VM-substrate failure evidence. The active
-  native witness is x86-64; AArch64 qualification remains paused. It has no
-  public C ABI effect and is not a C/Rust allocation differential.
-- **Difference:** the pinned C path treats its direct-candidate release and
-  prefix/suffix partial frees as void, best-effort cleanup. Rust's non-RAII
-  `Mapping` cannot be allowed to disappear on a failed cleanup edge:
-  `AlignedMappingFailure` transfers the exact live direct mapping, untrimmed
-  overmap, or prefix-trimmed aligned suffix. Every receiving path either
-  explicitly retries release or makes its final owner terminal; `Mapping` has
-  no implicit `Drop` unmap. This is a deliberate Rust ownership-safety
-  strengthening, not a claim that C supplies retry semantics.
-- **Evidence:** The native x86 M2 fixture
-  `compat/allocator/m2_vm_x86_64.c` directly includes the pinned C path and
-  drives one normal aligned direct map, direct-map failure fallback,
-  prefix-zero/suffix-only normal geometry, successful direct/prefix/suffix
-  cleanup, and every direct/prefix/suffix cleanup failure for Reserved and
-  Committed requests. On failure it proves C's continuation and escaped live
-  physical range with `mincore`, then records C's actual current/total
-  reserved/committed and `mmap` counter effects before and after the returned
-  `MemoryId` release. Its separate Rust trace
-  `os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace` proves
-  `AlignedMappingFailure` retains the exact live owner without replaying
-  statistics. The M2 manifest also selects
-  `os_page::tests::paired_alignment_suffix_trim_failure_is_terminal_without_double_accounting`,
-  which reaches `Unmap #3` in a process-bound claim and proves terminal
-  release neither retries nor double-accounts. The original direct, prefix,
-  suffix, complete-trim, metadata, and process-arena witness references are
-  preserved under the paused AArch64 label below. The C and Rust schemas are
-  deliberately separate; the receipt records
-  `expected-divergence-verified`, never equal counter or owner values.
-- **Paused AArch64 witness references:** The earlier AArch64 test references
-  remain historical provenance only:
-  `os::tests::{aligned_mapping_retains_the_direct_candidate_when_its_cleanup_fails,aligned_mapping_retains_the_untrimmed_overmap_when_prefix_release_fails,aligned_mapping_retains_only_the_live_suffix_when_suffix_release_fails,forced_aligned_mapping_exercises_all_three_release_edges_before_returning_the_exact_range}`;
-  `os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner`;
-  `meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_before_private_backing_publication`;
-  `process_arena::tests::explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup`; and
-  `test_context::tests::initialization_failure_retains_then_retries_the_aligned_map_and_page_map_owners`.
-  They preserve the original bounded owner and test-adapter rationale, but do
-  not qualify the active native x86-64 M2 boundary or advance paused AArch64
-  status.
-- **Decision/removal:** accepted for the selected cleanup-owner slice. It
-  does not close VM primitives, aligned allocation policy, the complete OS
-  allocation lifecycle, or the M2 fault matrix. Revisit only with a source
-  mapping, a typed owner for every new cleanup branch, and native failure
-  evidence.
-
 ### `CRABC-MI-NORMAL-OFFSET-OS-ALLOCATION-OWNER` — accepted private VM-substrate safety boundary
 
 - **Upstream/Rust:** pinned `src/os.c:240-294,344-430,438-467,502-527` plus

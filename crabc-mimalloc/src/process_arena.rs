@@ -2717,8 +2717,12 @@ mod tests {
         );
     }
 
+    /// The policy first-arena caller of source `mi_os_prim_alloc_aligned`:
+    /// a failed direct-candidate release is counted and leaked, and the
+    /// arena is still reserved and published with the aligned mapping's
+    /// statistics only.
     #[test]
-    fn process_default_os_arena_retained_cleanup_restores_adjusted_statistics_without_a_retry() {
+    fn process_default_os_arena_publishes_after_a_leaked_aligned_trim() {
         let mut config = MemoryConfig::from_observations(
             PageSize::new(4096).expect("the native page size is valid"),
             1024 * 1024,
@@ -2743,44 +2747,19 @@ mod tests {
             1,
             Errno::NOMEM,
         ));
-
         let reservation = storage.reserve_default_os_arena_for_process(
             binding,
             ARENA_SLICE_SIZE,
             &mut random,
         );
-        match reservation {
-            Err(ProcessSharedArenaReserveFailure::Retained { error }) => assert!(matches!(
-                error,
-                ProcessSharedArenaReserveError::Mapping(Errno::NOMEM),
-            ), "unexpected retained reservation error: {error:?}"),
-            Err(ProcessSharedArenaReserveFailure::Rejected { error }) => {
-                panic!("the failed cleanup must retain its map: {error:?}")
-            }
-            Ok(_) => panic!("the injected unmap failure must not publish an arena"),
-        }
-        assert_eq!(storage.test_state(), RETAINED);
-        assert_eq!(storage.registry.count(), 0);
-        let retained = statistics.snapshot();
-        assert_eq!(retained.reserved_current, before.reserved_current);
-        assert_eq!(retained.committed_current, before.committed_current);
-
         fault.set(fault::Plan::disabled());
-        assert!(matches!(
-            storage.reserve_default_os_arena_for_process(
-                binding,
-                ARENA_SLICE_SIZE,
-                &mut random,
-            ),
-            Err(ProcessSharedArenaReserveFailure::Retained {
-                error: ProcessSharedArenaReserveError::Retained,
-            })
-        ));
-        assert_eq!(
-            statistics.snapshot(),
-            retained,
-            "a retained cleanup owner cannot reapply source accounting through a hidden fallback"
-        );
+        assert!(reservation.is_ok(), "a failed trim release does not fail the reservation");
+        assert_eq!(storage.registry.count(), 1);
+        // SAFETY: the published sidecar is only read here.
+        let length = unsafe { storage.mapping_for_commit() }.length().unwrap();
+        let after = statistics.snapshot();
+        assert_eq!(after.reserved_current - before.reserved_current, length as i64,
+            "the leaked candidate's reservation was still subtracted");
     }
 
     #[test]
@@ -3016,9 +2995,12 @@ mod tests {
         assert_eq!(fault.observed(), 0, "the retained reservation never loses its mapping to a retry");
     }
 
+    /// The explicit OS arena reservation receives source
+    /// `mi_os_prim_alloc_aligned`: a failed prefix release is leaked and the
+    /// arena is still reserved and published over the aligned mapping.
     #[cfg(not(miri))]
     #[test]
-    fn explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup() {
+    fn explicit_os_reservation_publishes_after_a_leaked_aligned_map_trim() {
         let mut config = memory_config();
         config.test_force_full_aligned_map_trim();
         let subprocess = MainSubprocess::test_static_owner();
@@ -3029,28 +3011,14 @@ mod tests {
             2,
             Errno::NOMEM,
         ));
-
-        assert!(matches!(
-            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved),
-            Err(ProcessSharedArenaReserveFailure::Retained {
-                error: ProcessSharedArenaReserveError::Mapping(Errno::NOMEM),
-            })
-        ));
-        assert_eq!(storage.test_state(), RETAINED);
-        assert_eq!(storage.registry.count(), 0);
-
-        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
-        assert!(matches!(
-            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved),
-            Err(ProcessSharedArenaReserveFailure::Retained {
-                error: ProcessSharedArenaReserveError::Retained,
-            })
-        ));
-        assert_eq!(
-            fault.observed(),
-            0,
-            "the retained aligned-map owner prevents an overlapping reservation retry"
-        );
+        let lease = match storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved) {
+            Ok(lease) => lease,
+            Err(_) => panic!("a failed aligned-map trim does not fail the reservation"),
+        };
+        fault.set(fault::Plan::disabled());
+        assert_eq!(storage.registry.count(), 1);
+        let arena = lease.arena().expect("the reserved OS arena is published");
+        assert_eq!(arena.arena().memid.kind(), crate::types::MemoryKind::Os);
     }
 
     fn take_returned_mapping(

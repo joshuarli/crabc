@@ -51,8 +51,8 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use crabc_core::{Errno, Result};
 
 #[cfg(target_arch = "x86_64")]
-use crate::diagnostic_output::{HugePageWarningRoute, SourceFormattedMessage};
-use crate::diagnostic_output::OutputOwner;
+use crate::diagnostic_output::HugePageWarningRoute;
+use crate::diagnostic_output::{OutputOwner, SourceFormattedMessage};
 use crate::config::{
     ARENA_SLICE_SIZE, SourceOption, VmOption, VmOptionEnvironmentReader, VmOptionState, VmOptions,
 };
@@ -1123,6 +1123,20 @@ impl VmPolicy {
         self.option_value_after_unresolved_observation(option)
     }
 
+    /// Delivers one source `_mi_warning_message` body through the process
+    /// output route. An image policy (fixtures, the paused AArch64 process)
+    /// has no route and drops it, as a source build with warnings disabled
+    /// would.
+    #[inline]
+    fn source_warning(&self, message: SourceFormattedMessage) {
+        if let Some(output) = self.process_options {
+            // SAFETY: `from_process_options` accepted this owner's delivery
+            // obligations for every source read point on this policy,
+            // including warnings a `mi_option_get` itself can deliver.
+            unsafe { output.warning_from_source_options(message) };
+        }
+    }
+
     /// Reads a descriptor outside the [`VmOption`] image at its source read
     /// point. The process policy reads the live table; an image policy has
     /// no slot for it and returns the pinned release default, which is the
@@ -1899,43 +1913,25 @@ pub(crate) unsafe fn decommit_arena_range(
     Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
 }
 
-/// One failed aligned-map attempt together with any still-live private mapping.
+/// One failed aligned-map attempt.
 ///
 /// Pinned `mi_os_prim_alloc_aligned` treats its internal partial frees as
-/// best-effort. Rust cannot let the corresponding non-RAII owner fall out of
-/// scope: when a direct-candidate release or an overmap trim fails, this error
-/// transfers the exact remaining contiguous mapping to its caller. A failure
-/// before a mapping exists carries `None`.
-#[must_use = "a retained aligned-map mapping must move into an explicit owner"]
+/// best-effort `mi_os_prim_free` calls: a failed release is warned, counted
+/// and forgotten, never returned. An aligned map therefore fails only before
+/// its overmap exists, and no mapping survives a failure.
 pub(crate) struct AlignedMappingFailure {
     error: Errno,
-    mapping: Option<Mapping>,
 }
 
 impl AlignedMappingFailure {
     #[inline]
-    fn without_mapping(error: Errno) -> Self {
-        Self {
-            error,
-            mapping: None,
-        }
+    fn new(error: Errno) -> Self {
+        Self { error }
     }
 
-    #[inline]
-    fn with_mapping(error: Errno, mapping: Mapping) -> Self {
-        Self {
-            error,
-            mapping: Some(mapping),
-        }
-    }
-
-    /// Returns the operation error without consuming a retained mapping.
+    /// Returns the operation error.
     #[inline]
     pub(crate) const fn error(&self) -> Errno { self.error }
-
-    /// Transfers the exact live mapping, when cleanup failed after one existed.
-    #[inline]
-    pub(crate) fn into_mapping(self) -> Option<Mapping> { self.mapping }
 }
 
 impl fmt::Debug for AlignedMappingFailure {
@@ -1943,7 +1939,6 @@ impl fmt::Debug for AlignedMappingFailure {
         formatter
             .debug_struct("AlignedMappingFailure")
             .field("error", &self.error)
-            .field("retains_mapping", &self.mapping.is_some())
             .finish()
     }
 }
@@ -2111,10 +2106,17 @@ impl Mapping {
     /// single process pair.
     ///
     /// On this 64-bit source profile the direct candidate is always tried.
-    /// An unaligned successful candidate is explicitly released with
-    /// adjustment accounting before the overmap attempt. A direct primitive
-    /// failure does *not* skip that overmap attempt: upstream has the same
-    /// fallback after either an unaligned pointer or a null pointer.
+    /// An unaligned or failed direct candidate emits the source fallback
+    /// warning; an unaligned one is released with adjustment accounting
+    /// before the overmap attempt. A direct primitive failure does *not* skip
+    /// that overmap attempt: upstream has the same fallback after either an
+    /// unaligned pointer or a null pointer.
+    ///
+    /// Every internal release is source `mi_os_prim_free`: a failed `munmap`
+    /// warns, still applies its statistics decrement, and forgets the range.
+    /// The failed direct candidate or trimmed prefix/suffix is therefore
+    /// leaked exactly as pinned C leaks it, and the aligned middle is still
+    /// returned as a success. Only a failed overmap has no result.
     fn map_aligned_for_process(
         process: VmProcess<'_>,
         config: MemoryConfig,
@@ -2126,20 +2128,20 @@ impl Mapping {
     ) -> core::result::Result<Self, AlignedMappingFailure> {
         let page_size = config.page_size().bytes();
         if alignment < page_size || !alignment.is_power_of_two() {
-            return Err(AlignedMappingFailure::without_mapping(Errno::INVAL));
+            return Err(AlignedMappingFailure::new(Errno::INVAL));
         }
         // Native maps naturally exercise either one of the source's direct
         // or overmap paths, depending on the kernel-selected address. Keep a
-        // private deterministic test switch so a process-bound reservation
-        // can prove the retained-owner path after a failed direct cleanup.
-        // It only changes the test fixture's chosen address geometry; the
-        // production process path still follows the source kernel result.
+        // private deterministic test switch so every trim edge has a native
+        // test. It only changes the test fixture's chosen address geometry;
+        // the production process path still follows the source kernel result.
         #[cfg(test)]
         let force_full_trim_for_test = config.force_full_aligned_map_trim;
         #[cfg(not(test))]
         let force_full_trim_for_test = false;
+        let committed = matches!(access, MapAccess::Committed);
 
-        match Self::map_for_process(
+        let direct = Self::map_for_process(
             process,
             config,
             length,
@@ -2147,39 +2149,32 @@ impl Mapping {
             access,
             allow_large,
             default_random.as_deref_mut(),
-        ) {
-            Ok(mut direct) => {
-                let base = match direct.base() {
-                    Ok(base) => base,
-                    Err(error) => return Err(AlignedMappingFailure::with_mapping(error, direct)),
-                };
-                if !force_full_trim_for_test && base.addr() % alignment == 0 {
-                    return Ok(direct);
-                }
-                if let Err(error) = direct.unmap_for_process(
-                    process,
-                    if matches!(access, MapAccess::Committed) { length } else { 0 },
-                    true,
-                ) {
-                    return Err(AlignedMappingFailure::with_mapping(error, direct));
-                }
+        );
+        let direct_address = match &direct {
+            Ok(direct) => direct.address.addr(),
+            Err(_) => 0,
+        };
+        if direct.is_ok() && !force_full_trim_for_test && direct_address % alignment == 0 {
+            return direct.map_err(AlignedMappingFailure::new);
+        }
+        process.policy.source_warning(SourceFormattedMessage::aligned_direct_fallback(
+            length, direct_address, alignment, committed));
+        if let Ok(mut direct) = direct {
+            // A failed release leaves `direct` mapped; dropping this
+            // non-RAII owner leaks it, as the source does.
+            if let Err(error) = direct.unmap_for_process(process, if committed { length } else { 0 }, true) {
+                process.policy.source_warning(SourceFormattedMessage::os_free_failure(
+                    error, length, direct_address));
             }
-            // The source deliberately continues into its overmap branch.
-            Err(_) => {}
         }
 
         let alignment_headroom = if force_full_trim_for_test {
-            match alignment.checked_mul(2) {
-                Some(headroom) => headroom,
-                None => return Err(AlignedMappingFailure::without_mapping(Errno::NOMEM)),
-            }
+            alignment.checked_mul(2).ok_or(AlignedMappingFailure::new(Errno::NOMEM))?
         } else {
             alignment
         };
-        let over_length = match length.checked_add(alignment_headroom) {
-            Some(length) => length,
-            None => return Err(AlignedMappingFailure::without_mapping(Errno::NOMEM)),
-        };
+        let over_length = length.checked_add(alignment_headroom)
+            .ok_or(AlignedMappingFailure::new(Errno::NOMEM))?;
         let mut over = Self::map_for_process(
             process,
             config,
@@ -2189,51 +2184,22 @@ impl Mapping {
             allow_large,
             default_random.as_deref_mut(),
         )
-        .map_err(AlignedMappingFailure::without_mapping)?;
-        let base = match over.base() {
-            Ok(base) => base,
-            Err(error) => return Err(AlignedMappingFailure::with_mapping(error, over)),
-        };
-        let aligned_address = if force_full_trim_for_test && base.addr() % alignment == 0 {
-            match base.addr().checked_add(alignment) {
-                Some(address) => address,
-                None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
-            }
+        .map_err(AlignedMappingFailure::new)?;
+        let base = over.address.addr();
+        // A fresh mapping cannot end above the address space, so these
+        // offsets cannot overflow; the source relies on the same geometry.
+        let aligned_address = if force_full_trim_for_test && base % alignment == 0 {
+            base + alignment
         } else {
-            match invariants::align_up(base.addr(), alignment) {
-                Some(address) => address,
-                None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
-            }
+            (base + alignment - 1) & !(alignment - 1)
         };
-        let prefix = match aligned_address.checked_sub(base.addr()) {
-            Some(size) => size,
-            None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
-        };
-        let suffix = match over_length
-            .checked_sub(prefix)
-            .and_then(|remaining| remaining.checked_sub(length))
-        {
-            Some(size) => size,
-            None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
-        };
-
+        let prefix = aligned_address - base;
+        let suffix = over_length - prefix - length;
         if prefix != 0 {
-            if let Err(error) = over.unmap_prefix_for_process(
-                process,
-                prefix,
-                matches!(access, MapAccess::Committed),
-            ) {
-                return Err(AlignedMappingFailure::with_mapping(error, over));
-            }
+            over.trim_for_process(process, prefix, committed, true);
         }
         if suffix != 0 {
-            if let Err(error) = over.unmap_suffix_for_process(
-                process,
-                suffix,
-                matches!(access, MapAccess::Committed),
-            ) {
-                return Err(AlignedMappingFailure::with_mapping(error, over));
-            }
+            over.trim_for_process(process, suffix, committed, false);
         }
         debug_assert_eq!(over.address.addr(), aligned_address);
         debug_assert_eq!(over.length, length);
@@ -2554,74 +2520,41 @@ impl Mapping {
     ) -> core::result::Result<Self, AlignedMappingFailure> {
         let page_size = config.page_size().bytes();
         if alignment < page_size || !alignment.is_power_of_two() {
-            return Err(AlignedMappingFailure::without_mapping(Errno::INVAL));
+            return Err(AlignedMappingFailure::new(Errno::INVAL));
         }
         let mut direct = Self::map_for_allocator(config, length, access)
-            .map_err(AlignedMappingFailure::without_mapping)?;
-        let direct_base = match direct.base() {
-            Ok(base) => base,
-            Err(error) => return Err(AlignedMappingFailure::with_mapping(error, direct)),
-        };
-        if !force_full_trim_for_test && direct_base.addr() % alignment == 0 {
+            .map_err(AlignedMappingFailure::new)?;
+        if !force_full_trim_for_test && direct.address.addr() % alignment == 0 {
             return Ok(direct);
         }
-        if let Err(error) = direct.unmap() {
-            return Err(AlignedMappingFailure::with_mapping(error, direct));
-        }
+        // Source `mi_os_prim_free`: a failed release forgets (leaks) the
+        // direct candidate and the allocation continues.
+        let _ = direct.unmap();
 
         let alignment_headroom = if force_full_trim_for_test {
-            match alignment.checked_mul(2) {
-                Some(headroom) => headroom,
-                None => return Err(AlignedMappingFailure::without_mapping(Errno::NOMEM)),
-            }
+            alignment.checked_mul(2).ok_or(AlignedMappingFailure::new(Errno::NOMEM))?
         } else {
             alignment
         };
-        let over_length = match length.checked_add(alignment_headroom) {
-            Some(over_length) => over_length,
-            None => return Err(AlignedMappingFailure::without_mapping(Errno::NOMEM)),
-        };
+        let over_length = length.checked_add(alignment_headroom)
+            .ok_or(AlignedMappingFailure::new(Errno::NOMEM))?;
         let mut over = Self::map_for_allocator(config, over_length, access)
-            .map_err(AlignedMappingFailure::without_mapping)?;
-        let base = match over.base() {
-            Ok(base) => base,
-            Err(error) => return Err(AlignedMappingFailure::with_mapping(error, over)),
-        };
-        let aligned_address = if force_full_trim_for_test && base.addr() % alignment == 0 {
-            match base.addr().checked_add(alignment) {
-                Some(address) => address,
-                None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
-            }
+            .map_err(AlignedMappingFailure::new)?;
+        let base = over.address.addr();
+        let aligned_address = if force_full_trim_for_test && base % alignment == 0 {
+            base + alignment
         } else {
-            match invariants::align_up(base.addr(), alignment) {
-                Some(address) => address,
-                None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
-            }
+            (base + alignment - 1) & !(alignment - 1)
         };
-        let prefix = match aligned_address.checked_sub(base.addr()) {
-            Some(prefix) => prefix,
-            None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
-        };
-        let suffix = match over_length
-            .checked_sub(prefix)
-            .and_then(|remaining| remaining.checked_sub(length))
-        {
-            Some(suffix) => suffix,
-            None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
-        };
-        let aligned = base.wrapping_add(prefix);
-
+        let prefix = aligned_address - base;
+        let suffix = over_length - prefix - length;
         if prefix != 0 {
-            if let Err(error) = over.unmap_prefix(prefix) {
-                return Err(AlignedMappingFailure::with_mapping(error, over));
-            }
+            let _ = over.trim_prefix(prefix);
         }
         if suffix != 0 {
-            if let Err(error) = over.unmap_suffix(suffix) {
-                return Err(AlignedMappingFailure::with_mapping(error, over));
-            }
+            let _ = over.trim_suffix(suffix);
         }
-        debug_assert_eq!(over.address, aligned);
+        debug_assert_eq!(over.address.addr(), aligned_address);
         debug_assert_eq!(over.length, length);
         Ok(over)
     }
@@ -3015,6 +2948,8 @@ impl Mapping {
     #[inline]
     pub(crate) fn unmap(&mut self) -> Result<()> {
         self.active()?;
+        #[cfg(any(test, feature = "native-runtime-test-fault"))]
+        fault::record_unmap_range(self.address, self.length);
         fault_before(FaultPoint::Unmap)?;
         // SAFETY: `self.address..self.address + self.length` is precisely the
         // mapping created by `map_anonymous`, and no method exposes references
@@ -3071,86 +3006,60 @@ impl Mapping {
         result
     }
 
-    /// Releases a nonempty page-aligned prefix while retaining the exact
-    /// contiguous suffix on both syscall success and failure.
-    #[inline]
-    fn unmap_prefix(&mut self, prefix: usize) -> Result<()> {
-        self.validate_partial_unmap(prefix)?;
-        fault_before(FaultPoint::Unmap)?;
-        // SAFETY: `prefix` is a nonempty, page-aligned strict prefix of this
-        // live mapping. The state update below occurs only after Linux has
-        // released exactly that prefix, leaving the represented suffix live.
-        unsafe { crabc_core::mm::munmap_raw(self.address, prefix) }?;
+    /// Source `mi_os_prim_free` of a nonempty page-aligned strict prefix of
+    /// an aligned overmap. The owner forgets the prefix whether or not
+    /// `munmap` succeeds; a failed range is leaked exactly as pinned C leaks
+    /// it. The returned error is only for the caller's source warning.
+    fn trim_prefix(&mut self, prefix: usize) -> Result<()> {
+        debug_assert!(self.validate_partial_unmap(prefix).is_ok());
+        let address = self.address;
+        // Forget first: no path may keep the prefix after this call.
         self.address = self.address.wrapping_add(prefix);
         self.length -= prefix;
-        Ok(())
-    }
-
-    /// Releases an aligned-map prefix with the source adjustment statistics.
-    /// Failed cleanup retains this exact complete mapping owner unchanged.
-    fn unmap_prefix_for_process(
-        &mut self,
-        process: VmProcess<'_>,
-        prefix: usize,
-        committed: bool,
-    ) -> Result<()> {
-        self.validate_partial_unmap(prefix)?;
-        let result = match fault_before(FaultPoint::Unmap) {
-            Ok(()) => unsafe { crabc_core::mm::munmap_raw(self.address, prefix) },
-            Err(error) => Err(error),
-        };
-        let stats = process.subprocess.vm_statistics();
-        if committed {
-            stats.committed_adjust_decrease(prefix);
-        }
-        stats.reserved_adjust_decrease(prefix);
-        if result.is_ok() {
-            self.address = self.address.wrapping_add(prefix);
-            self.length -= prefix;
-        }
-        result
-    }
-
-    /// Releases a nonempty page-aligned suffix while retaining the exact
-    /// contiguous prefix on both syscall success and failure.
-    #[inline]
-    fn unmap_suffix(&mut self, suffix: usize) -> Result<()> {
-        self.validate_partial_unmap(suffix)?;
-        let retained_length = self.length - suffix;
-        let suffix_address = self.address.wrapping_add(retained_length);
+        #[cfg(any(test, feature = "native-runtime-test-fault"))]
+        fault::record_unmap_range(address, prefix);
         fault_before(FaultPoint::Unmap)?;
-        // SAFETY: `suffix` is a nonempty, page-aligned strict suffix of this
-        // live mapping. The state update below occurs only after Linux has
-        // released exactly that suffix, leaving the represented prefix live.
-        unsafe { crabc_core::mm::munmap_raw(suffix_address, suffix) }?;
-        self.length = retained_length;
-        Ok(())
+        // SAFETY: `prefix` was a nonempty, page-aligned strict prefix of this
+        // live mapping and the owner no longer represents it.
+        unsafe { crabc_core::mm::munmap_raw(address, prefix) }
     }
 
-    /// Releases an aligned-map suffix with the source adjustment statistics.
-    /// The owner remains the exact retained prefix if this syscall fails.
-    fn unmap_suffix_for_process(
+    /// Source `mi_os_prim_free` of a nonempty page-aligned strict suffix of
+    /// an aligned overmap, with the same forget-and-leak rule as
+    /// [`Self::trim_prefix`].
+    fn trim_suffix(&mut self, suffix: usize) -> Result<()> {
+        debug_assert!(self.validate_partial_unmap(suffix).is_ok());
+        self.length -= suffix;
+        let address = self.address.wrapping_add(self.length);
+        #[cfg(any(test, feature = "native-runtime-test-fault"))]
+        fault::record_unmap_range(address, suffix);
+        fault_before(FaultPoint::Unmap)?;
+        // SAFETY: `suffix` was a nonempty, page-aligned strict suffix of this
+        // live mapping and the owner no longer represents it.
+        unsafe { crabc_core::mm::munmap_raw(address, suffix) }
+    }
+
+    /// [`Self::trim_prefix`] or [`Self::trim_suffix`] for a process pair:
+    /// the source adjustment statistics apply whether or not `munmap`
+    /// succeeds, and a failure is warned through the process output route.
+    fn trim_for_process(
         &mut self,
         process: VmProcess<'_>,
-        suffix: usize,
+        length: usize,
         committed: bool,
-    ) -> Result<()> {
-        self.validate_partial_unmap(suffix)?;
-        let retained_length = self.length - suffix;
-        let suffix_address = self.address.wrapping_add(retained_length);
-        let result = match fault_before(FaultPoint::Unmap) {
-            Ok(()) => unsafe { crabc_core::mm::munmap_raw(suffix_address, suffix) },
-            Err(error) => Err(error),
-        };
+        prefix: bool,
+    ) {
+        let address = if prefix { self.address } else { self.address.wrapping_add(self.length - length) };
+        let result = if prefix { self.trim_prefix(length) } else { self.trim_suffix(length) };
+        if let Err(error) = result {
+            process.policy.source_warning(SourceFormattedMessage::os_free_failure(
+                error, length, address.addr()));
+        }
         let stats = process.subprocess.vm_statistics();
         if committed {
-            stats.committed_adjust_decrease(suffix);
+            stats.committed_adjust_decrease(length);
         }
-        stats.reserved_adjust_decrease(suffix);
-        if result.is_ok() {
-            self.length = retained_length;
-        }
-        result
+        stats.reserved_adjust_decrease(length);
     }
 
     #[inline]
@@ -4134,11 +4043,7 @@ impl NormalOsAllocationFailure {
 
     #[inline]
     fn from_aligned_failure(failure: AlignedMappingFailure) -> Self {
-        let error = failure.error();
-        match failure.into_mapping() {
-            Some(mapping) => Self::with_mapping(error, mapping),
-            None => Self::without_mapping(error),
-        }
+        Self::without_mapping(failure.error())
     }
 
     /// Returns the Rust diagnostic for this failed allocation without
@@ -4146,7 +4051,9 @@ impl NormalOsAllocationFailure {
     #[inline]
     pub(crate) const fn error(&self) -> Errno { self.error }
 
-    /// Transfers a still-live map when aligned cleanup failed after mapping.
+    /// Transfers a still-live map when a post-map allocation invariant check
+    /// rejected it. Aligned trim failures never retain a map (they leak, as
+    /// the source does).
     #[inline]
     pub(crate) fn into_mapping(self) -> Option<Mapping> { self.mapping }
 }
@@ -5098,20 +5005,19 @@ pub(crate) mod fault {
     static FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
     static SECOND_FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
     static THIRD_FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
-    // The M2 native release-failure differential captures only the two
-    // selected `_mi_os_free_ex` primitive arguments. This is separate from
-    // `OBSERVED`: a count alone cannot prove that an interior client pointer
-    // did not leak into `munmap` instead of the retained full MemoryId.
+    // The M2 native release-failure differential captures the selected
+    // `_mi_os_free_ex` primitive arguments, and the aligned-overmap
+    // differential its direct/prefix/suffix `mi_os_prim_free` arguments.
+    // This is separate from `OBSERVED`: a count alone cannot prove that an
+    // interior client pointer did not leak into `munmap` instead of the
+    // retained full MemoryId, nor name a leaked trim range.
+    const UNMAP_RANGE_CAPTURE_CAPACITY: usize = 4;
     static UNMAP_RANGE_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
     static UNMAP_RANGE_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
-    static UNMAP_RANGE_CAPTURE_ADDRESSES: [AtomicUsize; 2] = [
-        AtomicUsize::new(0),
-        AtomicUsize::new(0),
-    ];
-    static UNMAP_RANGE_CAPTURE_LENGTHS: [AtomicUsize; 2] = [
-        AtomicUsize::new(0),
-        AtomicUsize::new(0),
-    ];
+    static UNMAP_RANGE_CAPTURE_ADDRESSES: [AtomicUsize; UNMAP_RANGE_CAPTURE_CAPACITY] =
+        [const { AtomicUsize::new(0) }; UNMAP_RANGE_CAPTURE_CAPACITY];
+    static UNMAP_RANGE_CAPTURE_LENGTHS: [AtomicUsize; UNMAP_RANGE_CAPTURE_CAPACITY] =
+        [const { AtomicUsize::new(0) }; UNMAP_RANGE_CAPTURE_CAPACITY];
     // The normal no-callback purge matrix needs the source-normalized raw
     // advisory range, not just its call count. It captures one selected
     // mapping-owned advice sequence at a time, so an unnormalized whole span
@@ -5648,6 +5554,18 @@ pub(crate) mod fault {
     }
 
     impl UnmapRangeCapture<'_> {
+        /// Returns every captured `(address, length)` in call order, or
+        /// `None` if more calls ran than the bounded capture holds.
+        pub(crate) fn all(
+            &self,
+        ) -> Option<([(usize, usize); UNMAP_RANGE_CAPTURE_CAPACITY], usize)> {
+            let count = UNMAP_RANGE_CAPTURE_COUNT.load(Ordering::Acquire);
+            (count <= UNMAP_RANGE_CAPTURE_CAPACITY).then(|| (core::array::from_fn(|index| (
+                UNMAP_RANGE_CAPTURE_ADDRESSES[index].load(Ordering::Acquire),
+                UNMAP_RANGE_CAPTURE_LENGTHS[index].load(Ordering::Acquire),
+            )), count))
+        }
+
         /// Returns both exact syscall argument pairs only when the selected
         /// trace observed exactly two process-owned unmap operations.
         pub(crate) fn ranges(&self) -> Option<[(usize, usize); 2]> {
@@ -5908,7 +5826,7 @@ pub(crate) mod fault {
             return;
         }
         let index = UNMAP_RANGE_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
-        if index < 2 {
+        if index < UNMAP_RANGE_CAPTURE_CAPACITY {
             UNMAP_RANGE_CAPTURE_ADDRESSES[index].store(address.addr(), Ordering::Release);
             UNMAP_RANGE_CAPTURE_LENGTHS[index].store(length, Ordering::Release);
         }
@@ -10024,168 +9942,65 @@ mod tests {
         assert_eq!(fault.observed(), 0, "overflow must not reach mmap");
     }
 
+    /// Source `mi_os_prim_alloc_aligned` on the explicit-config path: a
+    /// failed direct, prefix, or suffix release is forgotten, its range stays
+    /// mapped (leaked), and the aligned middle is still returned.
     #[test]
-    fn normal_os_allocation_preserves_a_failed_aligned_map_owner() {
-        let fault = fault::install(fault::Plan::at(
-            fault::Point::Unmap,
-            1,
-            Errno::NOMEM,
-        ));
+    fn aligned_mapping_leaks_each_failed_trim_and_returns_the_aligned_middle() {
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let length = page.checked_mul(2).expect("the selected test length fits");
+        let alignment = page.checked_mul(2).expect("the selected test alignment fits");
+        for ordinal in 1..=3 {
+            let fault = fault::install(fault::Plan::at(fault::Point::Unmap, ordinal, Errno::NOMEM));
+            let capture = fault.capture_unmap_ranges();
+            let mut mapping = Mapping::map_aligned_for_allocator_force_full_trim_for_test(
+                config, length, alignment, MapAccess::Reserved,
+            )
+            .expect("a failed trim release does not fail the aligned allocation");
+            let (ranges, count) = capture.all().expect("three bounded releases");
+            drop(capture);
+            assert_eq!(count, 3, "every direct, prefix, and suffix release still runs");
+            assert_eq!(fault.observed(), 3);
+            let base = mapping.base().unwrap().addr();
+            assert_eq!(base % alignment, 0);
+            assert_eq!(mapping.length(), Ok(length));
+            let (leaked, leaked_length) = ranges[ordinal - 1];
+            assert!(m2_aligned_overmap_page_is_live(leaked, page), "the failed range leaks live");
+            fault.set(fault::Plan::disabled());
+            mapping.unmap().expect("the aligned middle releases");
+            // SAFETY: the leaked range is represented by no owner.
+            unsafe { crabc_core::mm::munmap_raw(leaked as *mut u8, leaked_length) }
+                .expect("fixture teardown of the leaked range");
+        }
+    }
+
+    /// The normal OS allocation receiver of the same rule: a failed direct
+    /// candidate release still yields a complete aligned allocation.
+    #[test]
+    fn normal_os_allocation_succeeds_after_a_failed_aligned_trim() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
         let config = MemoryConfig::detect(current_startup());
         let page = config.page_size().bytes();
         let size = page.checked_mul(2).expect("the selected allocation size fits");
-        let alignment = page
-            .checked_mul(2)
-            .expect("the selected allocation alignment fits");
-
-        let failure = match NormalOsAllocation::allocate_aligned_force_full_trim_for_test(
-            config,
-            size,
-            alignment,
-            MapAccess::Reserved,
-        ) {
-            Ok(allocation) => {
-                let _ = allocation.release();
-                panic!("a failed direct-candidate cleanup must retain its mapping")
-            }
-            Err(failure) => failure,
-        };
-        assert_eq!(failure.error(), Errno::NOMEM);
-        let mut mapping = failure
-            .into_mapping()
-            .expect("the owner boundary must retain the failed aligned-map candidate");
-        assert_eq!(mapping.length(), Ok(config.good_alloc_size(size)));
-
+        let alignment = page.checked_mul(2).expect("the selected allocation alignment fits");
+        let capture = fault.capture_unmap_ranges();
+        let allocation = NormalOsAllocation::allocate_aligned_force_full_trim_for_test(
+            config, size, alignment, MapAccess::Reserved,
+        )
+        .expect("a failed direct-candidate release does not fail the allocation");
+        let (ranges, count) = capture.all().expect("bounded releases");
+        drop(capture);
+        assert_eq!(count, 3);
+        assert_eq!(allocation.base().unwrap().addr() % alignment, 0);
+        assert_eq!(allocation.full_size(), Ok(config.good_alloc_size(size)));
         fault.set(fault::Plan::disabled());
-        mapping
-            .unmap()
-            .expect("the retained aligned-map candidate releases after retry");
-    }
-
-    #[test]
-    fn aligned_mapping_retains_the_direct_candidate_when_its_cleanup_fails() {
-        let fault = fault::install(fault::Plan::at(
-            fault::Point::Unmap,
-            1,
-            Errno::NOMEM,
-        ));
-        let config = MemoryConfig::detect(current_startup());
-        let page = config.page_size().bytes();
-        let length = page.checked_mul(2).expect("the selected test length fits");
-        let alignment = page.checked_mul(2).expect("the selected test alignment fits");
-
-        let failure = match Mapping::map_aligned_for_allocator_force_full_trim_for_test(
-            config,
-            length,
-            alignment,
-            MapAccess::Reserved,
-        ) {
-            Ok(mut mapping) => {
-                let _ = mapping.unmap();
-                panic!("the first forced aligned-map cleanup must fail")
-            }
-            Err(failure) => failure,
-        };
-        assert_eq!(failure.error(), Errno::NOMEM);
-        assert_eq!(fault.observed(), 1, "the failed direct cleanup stops before overmapping");
-        let mut retained = failure
-            .into_mapping()
-            .expect("the failed direct cleanup retains its exact mapping");
-        assert_eq!(retained.length(), Ok(length));
-
-        fault.set(fault::Plan::disabled());
-        retained
-            .unmap()
-            .expect("the retained direct candidate releases exactly once after retry");
-    }
-
-    #[test]
-    fn aligned_mapping_retains_the_untrimmed_overmap_when_prefix_release_fails() {
-        let fault = fault::install(fault::Plan::at(
-            fault::Point::Unmap,
-            2,
-            Errno::NOMEM,
-        ));
-        let config = MemoryConfig::detect(current_startup());
-        let page = config.page_size().bytes();
-        let length = page.checked_mul(2).expect("the selected test length fits");
-        let alignment = page.checked_mul(2).expect("the selected test alignment fits");
-        let forced_over_length = length
-            .checked_add(alignment.checked_mul(2).expect("the test headroom fits"))
-            .expect("the forced overmap length fits");
-
-        let failure = match Mapping::map_aligned_for_allocator_force_full_trim_for_test(
-            config,
-            length,
-            alignment,
-            MapAccess::Reserved,
-        ) {
-            Ok(mut mapping) => {
-                let _ = mapping.unmap();
-                panic!("the forced prefix cleanup must fail")
-            }
-            Err(failure) => failure,
-        };
-        assert_eq!(failure.error(), Errno::NOMEM);
-        assert_eq!(fault.observed(), 2, "the prefix is the second release edge");
-        let mut retained = failure
-            .into_mapping()
-            .expect("the failed prefix release retains the untouched overmap");
-        assert_eq!(
-            retained.length(),
-            Ok(forced_over_length),
-            "no successful partial release may be claimed after a failed prefix"
-        );
-
-        fault.set(fault::Plan::disabled());
-        retained
-            .unmap()
-            .expect("the untrimmed retained overmap releases exactly once after retry");
-    }
-
-    #[test]
-    fn aligned_mapping_retains_only_the_live_suffix_when_suffix_release_fails() {
-        let fault = fault::install(fault::Plan::at(
-            fault::Point::Unmap,
-            3,
-            Errno::NOMEM,
-        ));
-        let config = MemoryConfig::detect(current_startup());
-        let page = config.page_size().bytes();
-        let length = page.checked_mul(2).expect("the selected test length fits");
-        let alignment = page.checked_mul(2).expect("the selected test alignment fits");
-
-        let failure = match Mapping::map_aligned_for_allocator_force_full_trim_for_test(
-            config,
-            length,
-            alignment,
-            MapAccess::Reserved,
-        ) {
-            Ok(mut mapping) => {
-                let _ = mapping.unmap();
-                panic!("the forced suffix cleanup must fail")
-            }
-            Err(failure) => failure,
-        };
-        assert_eq!(failure.error(), Errno::NOMEM);
-        assert_eq!(fault.observed(), 3, "the suffix is the third release edge");
-        let mut retained = failure
-            .into_mapping()
-            .expect("the failed suffix release retains its exact remaining range");
-        assert_eq!(
-            retained.base().expect("the retained suffix range remains live").addr() % alignment,
-            0,
-            "the prefix was released before the suffix failure"
-        );
-        assert!(
-            retained.length().expect("the retained suffix range remains live") > length,
-            "the retained owner includes the live suffix rather than claiming it was released"
-        );
-
-        fault.set(fault::Plan::disabled());
-        retained
-            .unmap()
-            .expect("the aligned-plus-suffix retained range releases exactly once after retry");
+        allocation.release().ok().expect("the aligned allocation releases");
+        let (leaked, leaked_length) = ranges[0];
+        assert!(m2_aligned_overmap_page_is_live(leaked, page));
+        // SAFETY: the leaked direct candidate is represented by no owner.
+        unsafe { crabc_core::mm::munmap_raw(leaked as *mut u8, leaked_length) }
+            .expect("fixture teardown of the leaked candidate");
     }
 
     #[test]
@@ -10240,245 +10055,135 @@ mod tests {
         (config, VmProcess::new(policy, subprocess), length, alignment)
     }
 
-    fn m2_aligned_overmap_counter_delta_is(
-        before: crate::statistics::VmStatisticsSnapshot,
-        after: crate::statistics::VmStatisticsSnapshot,
-        maps: i64,
-        reserved: i64,
-        committed: i64,
-    ) {
-        assert_eq!(after.mmap_calls - before.mmap_calls, maps);
-        assert_eq!(after.reserved_total - before.reserved_total, reserved);
-        assert_eq!(after.reserved_current - before.reserved_current, reserved);
-        assert_eq!(after.committed_total - before.committed_total, committed);
-        assert_eq!(after.committed_current - before.committed_current, committed);
+    /// One row of the pinned `mi_os_prim_alloc_aligned` matrix that
+    /// `compat/allocator/m2_vm_x86_64.c` runs through `_mi_os_alloc_aligned`.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum AlignedOvermapCase {
+        DirectAligned,
+        DirectMapFailureFallback,
+        PrefixZeroSuffixOnly,
+        CompleteCleanup,
+        DirectCleanupFailure,
+        PrefixCleanupFailure,
+        SuffixCleanupFailure,
     }
 
-    fn m2_aligned_overmap_direct_aligned_process_witness() {
-        let fault = fault::install(fault::Plan::disabled());
-        let (mut config, process, length, _alignment) = m2_aligned_overmap_process_fixture();
-        // A Linux mmap is page aligned, so the source direct candidate is
-        // already aligned at this one-page request alignment. Do not use the
-        // full-trim seam for this normal direct-success row.
-        config.force_full_aligned_map_trim = false;
-        let before = process.subprocess().vm_statistics().snapshot();
-        let mut mapping = Mapping::map_aligned_for_process(
-            process,
-            config,
-            length,
-            config.page_size().bytes(),
-            MapAccess::Reserved,
-            false,
-            None,
-        )
-        .expect("the direct page-aligned process mapping succeeds");
-        let after = process.subprocess().vm_statistics().snapshot();
-        m2_aligned_overmap_counter_delta_is(before, after, 1, length as i64, 0);
-        assert_eq!(mapping.base().unwrap().addr() % config.page_size().bytes(), 0);
-        assert_eq!(mapping.length(), Ok(length));
-        mapping
-            .unmap_for_process(process, 0, false)
-            .expect("the direct process owner releases once");
-        assert_eq!(fault.observed(), 0);
+    fn m2_aligned_overmap_page_is_live(address: usize, page: usize) -> bool {
+        let mut residency = 0u8;
+        // SAFETY: `mincore` only reads the page table for this page-aligned
+        // range and writes one residency byte.
+        unsafe { crabc_core::mm::mincore_raw(address as *mut u8, page, &mut residency) }.is_ok()
     }
 
-    fn m2_aligned_overmap_direct_map_failure_prefix_zero_witness() {
-        let fault = fault::install(fault::Plan::at(
-            fault::Point::Map,
-            1,
-            Errno::NOMEM,
-        ));
-        let (mut config, process, length, _alignment) = m2_aligned_overmap_process_fixture();
-        // This is the normal source geometry, not the forced three-cleanup
-        // geometry: a one-page alignment makes the successful overmap's
-        // prefix zero and leaves only its suffix to trim.
-        config.force_full_aligned_map_trim = false;
+    /// Returns whether every source relation of one aligned-overmap row
+    /// holds, exactly as the C oracle's `run_aligned_overmap_case`: the
+    /// aligned middle is returned, the selected direct/prefix/suffix
+    /// releases ran, allocation and release statistics match, and a failed
+    /// release leaks its range live (the fixture tears it down raw).
+    fn m2_aligned_overmap_case(case: AlignedOvermapCase, access: MapAccess) -> bool {
+        use AlignedOvermapCase::*;
+        let (mut config, process, length, forced_alignment) = m2_aligned_overmap_process_fixture();
         let page = config.page_size().bytes();
-        let before = process.subprocess().vm_statistics().snapshot();
-        let mut mapping = Mapping::map_aligned_for_process(
-            process,
-            config,
-            length,
-            page,
-            MapAccess::Reserved,
-            false,
-            None,
-        )
-        .expect("a failed direct primitive falls through to the source overmap");
-        let after = process.subprocess().vm_statistics().snapshot();
-        m2_aligned_overmap_counter_delta_is(before, after, 2, length as i64, 0);
-        assert_eq!(fault.observed(), 2, "one failed and one successful map edge run");
-        assert_eq!(mapping.base().unwrap().addr() % page, 0);
-        assert_eq!(mapping.length(), Ok(length));
-        fault.set(fault::Plan::disabled());
-        mapping
-            .unmap_for_process(process, 0, false)
-            .expect("the suffix-only aligned result retains one exact process owner");
-    }
-
-    fn m2_aligned_overmap_complete_cleanup_process_witness() {
-        let fault = fault::install(fault::Plan::at(
-            fault::Point::Unmap,
-            99,
-            Errno::NOMEM,
-        ));
-        let (config, process, length, alignment) = m2_aligned_overmap_process_fixture();
-        let before = process.subprocess().vm_statistics().snapshot();
-        let mut mapping = Mapping::map_aligned_for_process(
-            process,
-            config,
-            length,
-            alignment,
-            MapAccess::Reserved,
-            false,
-            None,
-        )
-        .expect("the forced direct, prefix, and suffix cleanup sequence succeeds");
-        let after = process.subprocess().vm_statistics().snapshot();
-        m2_aligned_overmap_counter_delta_is(before, after, 2, length as i64, 0);
-        assert_eq!(fault.observed(), 3, "direct, prefix, and suffix frees all ran");
-        assert_eq!(mapping.base().unwrap().addr() % alignment, 0);
-        assert_eq!(mapping.length(), Ok(length));
-        fault.set(fault::Plan::disabled());
-        mapping
-            .unmap_for_process(process, 0, false)
-            .expect("the fully trimmed process owner releases once");
-    }
-
-    fn m2_aligned_overmap_cleanup_failure_process_witness(
-        access: MapAccess,
-        cleanup_ordinal: usize,
-    ) {
-        let fault = fault::install(fault::Plan::at(
-            fault::Point::Unmap,
-            cleanup_ordinal,
-            Errno::NOMEM,
-        ));
-        let (config, process, length, alignment) = m2_aligned_overmap_process_fixture();
-        let over_length = length
-            .checked_add(alignment.checked_mul(2).expect("the test headroom fits"))
-            .expect("the forced overmap length fits");
-        let before = process.subprocess().vm_statistics().snapshot();
-        let failure = match Mapping::map_aligned_for_process(
-            process,
-            config,
-            length,
-            alignment,
-            access,
-            false,
-            None,
-        ) {
-            Ok(mut mapping) => {
-                let _ = mapping.unmap();
-                panic!("the selected cleanup edge must transfer its live owner")
-            }
-            Err(failure) => failure,
-        };
-        assert_eq!(failure.error(), Errno::NOMEM);
-        assert_eq!(fault.observed(), cleanup_ordinal);
-        let mut retained = failure
-            .into_mapping()
-            .expect("a failed aligned cleanup retains its exact mapping");
-        let after = process.subprocess().vm_statistics().snapshot();
-        let committed_delta = |bytes: usize| {
-            if matches!(access, MapAccess::Committed) {
-                bytes as i64
-            } else {
-                0
-            }
-        };
-
-        match cleanup_ordinal {
-            // Rust stops at the failed direct cleanup and retains that direct
-            // map. Pinned C instead keeps going into an overmap, which is the
-            // deliberate owner-boundary difference recorded by the native
-            // companion trace.
-            1 => {
-                m2_aligned_overmap_counter_delta_is(before, after, 1, 0, committed_delta(0));
-                assert_eq!(retained.length(), Ok(length));
-            }
-            // The failed prefix is still part of source adjustment accounting,
-            // but Rust preserves the complete overmap and does not attempt the
-            // later suffix release after this error.
-            2 => {
-                let base = retained.base().expect("the retained overmap remains live").addr();
-                let aligned = if base % alignment == 0 {
-                    base.checked_add(alignment).expect("the forced aligned boundary fits")
-                } else {
-                    invariants::align_up(base, alignment).expect("the aligned boundary fits")
-                };
-                let prefix = aligned - base;
-                assert!(prefix != 0 && prefix < over_length);
-                m2_aligned_overmap_counter_delta_is(
-                    before,
-                    after,
-                    2,
-                    (over_length - prefix) as i64,
-                    committed_delta(over_length - prefix),
-                );
-                assert_eq!(retained.length(), Ok(over_length));
-            }
-            // The successful prefix changes the Rust owner before the suffix
-            // failure. Its accounting has already reached the aligned middle,
-            // while the returned owner still includes the live suffix.
-            3 => {
-                m2_aligned_overmap_counter_delta_is(
-                    before,
-                    after,
-                    2,
-                    length as i64,
-                    committed_delta(length),
-                );
-                assert_eq!(retained.base().unwrap().addr() % alignment, 0);
-                assert!(retained.length().unwrap() > length);
-            }
-            _ => panic!("the finite aligned-overmap matrix has three cleanup edges"),
+        let normal_geometry = matches!(case, DirectAligned | PrefixZeroSuffixOnly);
+        if normal_geometry {
+            config.force_full_aligned_map_trim = false;
         }
-
-        // The error carries a terminal, already-adjusted owner. A test-only
-        // raw teardown must not replay a full source counter transition; this
-        // confirms the retained mapping can be released without double
-        // accounting while production leaves recovery to its named owner.
+        let alignment = if normal_geometry { page } else { forced_alignment };
+        let direct_failure = matches!(case, DirectMapFailureFallback | PrefixZeroSuffixOnly);
+        let cleanup_failure = match case {
+            DirectCleanupFailure => 1,
+            PrefixCleanupFailure => 2,
+            SuffixCleanupFailure => 3,
+            _ => 0,
+        };
+        let expected_releases = match case {
+            DirectAligned => 0,
+            PrefixZeroSuffixOnly => 1,
+            DirectMapFailureFallback => 2,
+            _ => 3,
+        };
+        let fault = fault::install(if direct_failure {
+            fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM)
+        } else if cleanup_failure != 0 {
+            fault::Plan::at(fault::Point::Unmap, cleanup_failure, Errno::NOMEM)
+        } else {
+            fault::Plan::disabled()
+        });
+        let commit = matches!(access, MapAccess::Committed);
+        let committed = if commit { length as i64 } else { 0 };
+        let before = process.subprocess().vm_statistics().snapshot();
+        let capture = fault.capture_unmap_ranges();
+        let result = Mapping::map_aligned_for_process(
+            process, config, length, alignment, access, false, None,
+        );
+        let releases = capture.all();
+        drop(capture);
         fault.set(fault::Plan::disabled());
-        retained
-            .unmap()
-            .expect("the retained aligned-map owner releases through one raw edge");
-        assert_eq!(process.subprocess().vm_statistics().snapshot(), after);
+        let Ok(mut mapping) = result else { return false; };
+        let Some((releases, release_count)) = releases else { return false; };
+        let Ok(base) = mapping.base().map(|base| base.addr()) else { return false; };
+        let after = process.subprocess().vm_statistics().snapshot();
+        let maps = if case == DirectAligned { 1 } else { 2 };
+        // The first recorded release is the direct candidate (unless it
+        // failed to map); the trims name the ranges just around the result.
+        let trims = &releases[usize::from(!direct_failure && case != DirectAligned)..release_count];
+        let mut complete = base % alignment == 0
+            && mapping.length() == Ok(length)
+            && mapping.initially_committed() == commit
+            && release_count == expected_releases
+            && (direct_failure || case == DirectAligned || releases[0].1 == length)
+            && trims.iter().all(|&(address, size)| address + size == base || address == base + length)
+            && after.mmap_calls - before.mmap_calls == maps
+            && after.reserved_total - before.reserved_total == length as i64
+            && after.reserved_current - before.reserved_current == length as i64
+            && after.committed_total - before.committed_total == committed
+            && after.committed_current - before.committed_current == committed;
+        let escaped = (cleanup_failure != 0).then(|| releases[cleanup_failure - 1]);
+        if let Some((address, size)) = escaped {
+            complete = complete && size != 0 && m2_aligned_overmap_page_is_live(address, page);
+        }
+        complete = complete
+            && mapping.unmap_for_process(process, committed as usize, false).is_ok();
+        let released = process.subprocess().vm_statistics().snapshot();
+        complete = complete
+            && released.mmap_calls - before.mmap_calls == maps
+            && released.reserved_total - before.reserved_total == length as i64
+            && released.reserved_current == before.reserved_current
+            && released.committed_total - before.committed_total == committed
+            && released.committed_current == before.committed_current;
+        if let Some((address, size)) = escaped {
+            // The source frees only the returned middle; the leaked range
+            // stays mapped. This raw teardown is the fixture's, not a retry.
+            // SAFETY: the leaked range is no longer represented by any owner.
+            complete = complete && m2_aligned_overmap_page_is_live(address, page)
+                && unsafe { crabc_core::mm::munmap_raw(address as *mut u8, size) }.is_ok();
+        }
+        complete
     }
 
+    /// Rust half of the pinned C/Rust aligned-overmap matrix. Both sides
+    /// emit the same keys; a failed direct, prefix, or suffix release is
+    /// source `mi_os_prim_free` on both: counted, leaked, and continued.
     #[cfg(not(miri))]
     #[test]
     fn emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace() {
-        // This finite matrix intentionally does not compare C and Rust values
-        // as equal. `src/os.c:382,418-423` continues after a void cleanup
-        // failure; Rust returns `AlignedMappingFailure` with the exact live
-        // owner. The native producer validates both side-specific traces and
-        // records that accepted safety strengthening explicitly.
-        m2_aligned_overmap_direct_aligned_process_witness();
-        m2_aligned_overmap_direct_map_failure_prefix_zero_witness();
-        m2_aligned_overmap_complete_cleanup_process_witness();
-        for access in [MapAccess::Reserved, MapAccess::Committed] {
-            for cleanup_ordinal in 1..=3 {
-                m2_aligned_overmap_cleanup_failure_process_witness(access, cleanup_ordinal);
-            }
-        }
-
-        macro_rules! emit {
-            ($name:literal) => {
-                std::println!("{}=1", $name);
-            };
-        }
-
+        use AlignedOvermapCase::*;
+        let rows = [
+            ("m2.vm.aligned_overmap.normal_direct_aligned_owner_and_stats", DirectAligned, MapAccess::Reserved),
+            ("m2.vm.aligned_overmap.direct_map_failure_fallback_owner_and_stats", DirectMapFailureFallback, MapAccess::Reserved),
+            ("m2.vm.aligned_overmap.prefix_zero_suffix_only_geometry_and_stats", PrefixZeroSuffixOnly, MapAccess::Reserved),
+            ("m2.vm.aligned_overmap.complete_direct_prefix_suffix_cleanup_owner_and_stats", CompleteCleanup, MapAccess::Reserved),
+            ("m2.vm.aligned_overmap.direct_cleanup_failure_reserved_continues_escaped_live_stats", DirectCleanupFailure, MapAccess::Reserved),
+            ("m2.vm.aligned_overmap.direct_cleanup_failure_committed_continues_escaped_live_stats", DirectCleanupFailure, MapAccess::Committed),
+            ("m2.vm.aligned_overmap.prefix_cleanup_failure_reserved_continues_escaped_live_stats", PrefixCleanupFailure, MapAccess::Reserved),
+            ("m2.vm.aligned_overmap.prefix_cleanup_failure_committed_continues_escaped_live_stats", PrefixCleanupFailure, MapAccess::Committed),
+            ("m2.vm.aligned_overmap.suffix_cleanup_failure_reserved_continues_escaped_live_stats", SuffixCleanupFailure, MapAccess::Reserved),
+            ("m2.vm.aligned_overmap.suffix_cleanup_failure_committed_continues_escaped_live_stats", SuffixCleanupFailure, MapAccess::Committed),
+        ];
         std::println!("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN");
-        emit!("m2.vm.aligned_overmap.rust.normal_direct_aligned_owner_and_stats");
-        emit!("m2.vm.aligned_overmap.rust.direct_map_failure_fallback_prefix_zero_suffix_only");
-        emit!("m2.vm.aligned_overmap.rust.complete_direct_prefix_suffix_cleanup_owner_and_stats");
-        emit!("m2.vm.aligned_overmap.rust.direct_cleanup_failure_reserved_retains_owner_once");
-        emit!("m2.vm.aligned_overmap.rust.direct_cleanup_failure_committed_retains_owner_once");
-        emit!("m2.vm.aligned_overmap.rust.prefix_cleanup_failure_reserved_retains_full_overmap_once");
-        emit!("m2.vm.aligned_overmap.rust.prefix_cleanup_failure_committed_retains_full_overmap_once");
-        emit!("m2.vm.aligned_overmap.rust.suffix_cleanup_failure_reserved_retains_suffix_once");
-        emit!("m2.vm.aligned_overmap.rust.suffix_cleanup_failure_committed_retains_suffix_once");
+        for (key, case, access) in rows {
+            std::println!("{key}={}", u8::from(m2_aligned_overmap_case(case, access)));
+        }
         std::println!("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END");
     }
 

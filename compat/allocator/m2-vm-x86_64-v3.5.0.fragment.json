@@ -241,12 +241,10 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
-          "aligned-map-direct-cleanup-owner",
-          "aligned-map-prefix-cleanup-owner",
-          "aligned-map-suffix-cleanup-owner",
+          "aligned-map-trim-failure-leak",
           "aligned-map-complete-trim-sequence",
           "aligned-overmap-cleanup-c-rust-boundary-matrix",
-          "aligned-map-process-os-page-suffix-terminal-owner"
+          "aligned-map-process-os-page-trim-leak"
         ]
       },
       {
@@ -268,7 +266,7 @@
           "process-offset-prefix-decommit-advisory-owner",
           "normal-os-good-size-and-base-provenance",
           "normal-os-offset-zero-delegation-and-geometry",
-          "normal-os-aligned-failure-owner",
+          "normal-os-aligned-trim-leak",
           "aligned-overmap-cleanup-c-rust-boundary-matrix"
         ]
       },
@@ -353,7 +351,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "process-policy-first-arena-clean-primary-fallback",
-          "process-policy-first-arena-retained-cleanup-statistics",
+          "process-policy-first-arena-trim-leak",
           "process-policy-ticket-zero-live-random"
         ]
       },
@@ -373,7 +371,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "process-policy-first-arena-clean-primary-fallback",
-          "process-policy-first-arena-retained-cleanup-statistics",
+          "process-policy-first-arena-trim-leak",
           "process-policy-ticket-zero-live-random"
         ]
       },
@@ -543,18 +541,16 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
-          "aligned-map-direct-cleanup-owner",
-          "aligned-map-prefix-cleanup-owner",
-          "aligned-map-suffix-cleanup-owner",
+          "aligned-map-trim-failure-leak",
           "aligned-map-complete-trim-sequence",
           "aligned-overmap-cleanup-c-rust-boundary-matrix",
-          "aligned-map-os-page-claim-owner",
-          "aligned-map-process-os-page-suffix-terminal-owner",
-          "aligned-map-metadata-owner",
-          "aligned-map-process-arena-owner"
+          "aligned-map-os-page-claim-trim-leak",
+          "aligned-map-process-os-page-trim-leak",
+          "aligned-map-metadata-trim-leak",
+          "aligned-map-process-arena-trim-leak"
         ],
         "missing_conditions": [
-          "The finite aligned-overmap boundary covers only its named direct/overmap cleanup paths and one process-bound suffix receiver. Every other receiving allocator caller, callback/counter/error/retry route, source large-page/option path, and runtime policy remains unqualified."
+          "The finite aligned-overmap equality differential covers only its named direct/overmap cleanup paths; its Rust receivers follow the same leak-and-continue rule under unit tests. A pinned-C differential of every receiving allocator caller, the callback/counter/error route, source large-page/option paths, and runtime policy remain unqualified."
         ]
       },
       {
@@ -575,7 +571,7 @@
           "process-offset-prefix-decommit-advisory-owner",
           "normal-os-good-size-and-base-provenance",
           "normal-os-offset-zero-delegation-and-geometry",
-          "normal-os-aligned-failure-owner",
+          "normal-os-aligned-trim-leak",
           "normal-os-source-reservation-caller",
           "aligned-overmap-cleanup-c-rust-boundary-matrix"
         ],
@@ -711,7 +707,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "process-policy-first-arena-clean-primary-fallback",
-          "process-policy-first-arena-retained-cleanup-statistics",
+          "process-policy-first-arena-trim-leak",
           "process-policy-ticket-zero-live-random"
         ],
         "missing_conditions": [
@@ -898,9 +894,9 @@
         "expected_passed_test_count": 1
       },
       {
-        "id": "process-policy-first-arena-retained-cleanup-statistics",
+        "id": "process-policy-first-arena-trim-leak",
         "kind": "rust-unit",
-        "target": "process_arena::tests::process_default_os_arena_retained_cleanup_restores_adjusted_statistics_without_a_retry",
+        "target": "process_arena::tests::process_default_os_arena_publishes_after_a_leaked_aligned_trim",
         "expected_passed_test_count": 1
       },
       {
@@ -916,21 +912,9 @@
         "expected_passed_test_count": 1
       },
       {
-        "id": "aligned-map-direct-cleanup-owner",
+        "id": "aligned-map-trim-failure-leak",
         "kind": "rust-unit",
-        "target": "os::tests::aligned_mapping_retains_the_direct_candidate_when_its_cleanup_fails",
-        "expected_passed_test_count": 1
-      },
-      {
-        "id": "aligned-map-prefix-cleanup-owner",
-        "kind": "rust-unit",
-        "target": "os::tests::aligned_mapping_retains_the_untrimmed_overmap_when_prefix_release_fails",
-        "expected_passed_test_count": 1
-      },
-      {
-        "id": "aligned-map-suffix-cleanup-owner",
-        "kind": "rust-unit",
-        "target": "os::tests::aligned_mapping_retains_only_the_live_suffix_when_suffix_release_fails",
+        "target": "os::tests::aligned_mapping_leaks_each_failed_trim_and_returns_the_aligned_middle",
         "expected_passed_test_count": 1
       },
       {
@@ -946,27 +930,27 @@
         "expected_passed_test_count": 1
       },
       {
-        "id": "aligned-map-os-page-claim-owner",
+        "id": "aligned-map-os-page-claim-trim-leak",
         "kind": "rust-unit",
-        "target": "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner",
+        "target": "os_page::tests::aligned_map_prefix_cleanup_failure_leaks_and_returns_the_claim",
         "expected_passed_test_count": 1
       },
       {
-        "id": "aligned-map-process-os-page-suffix-terminal-owner",
+        "id": "aligned-map-process-os-page-trim-leak",
         "kind": "rust-unit",
-        "target": "os_page::tests::paired_alignment_suffix_trim_failure_is_terminal_without_double_accounting",
+        "target": "os_page::tests::paired_alignment_trim_failure_leaks_and_returns_a_complete_claim",
         "expected_passed_test_count": 1
       },
       {
-        "id": "aligned-map-metadata-owner",
+        "id": "aligned-map-metadata-trim-leak",
         "kind": "rust-unit",
-        "target": "meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_before_private_backing_publication",
+        "target": "meta::tests::aligned_map_prefix_cleanup_failure_leaks_and_metadata_backing_forms",
         "expected_passed_test_count": 1
       },
       {
-        "id": "aligned-map-process-arena-owner",
+        "id": "aligned-map-process-arena-trim-leak",
         "kind": "rust-unit",
-        "target": "process_arena::tests::explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup",
+        "target": "process_arena::tests::explicit_os_reservation_publishes_after_a_leaked_aligned_map_trim",
         "expected_passed_test_count": 1
       },
       {
@@ -1000,9 +984,9 @@
         "expected_passed_test_count": 1
       },
       {
-        "id": "normal-os-aligned-failure-owner",
+        "id": "normal-os-aligned-trim-leak",
         "kind": "rust-unit",
-        "target": "os::tests::normal_os_allocation_preserves_a_failed_aligned_map_owner",
+        "target": "os::tests::normal_os_allocation_succeeds_after_a_failed_aligned_trim",
         "expected_passed_test_count": 1
       },
       {
@@ -1038,7 +1022,7 @@
     ],
     "remaining_conditions": [
       "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, unmap, and reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, one child-isolated 128-MiB first-arena large-page fallback, and the arena-reservation lifecycle differential's process-owned arena callers (a failed claim commit that reserves a fresh arena and recommits in the first, immediate-purge decommit failure/success/mixed commitment, reset EAGAIN retry/warning-only error/not-fully-committed skip/EINVAL fallback, and a failed delayed-purge decommit that consumes its schedule without retry), the fresh OS page caller (`mi_arenas_page_alloc_fresh_area` success, metadata/page-area commit failure with a succeeding or failing `_mi_os_free` cleanup, and a failed release, each accounted once with a raw-only Rust retry), and the arena-destruction differential's failed parent and huge-kind releases in `_mi_arenas_unsafe_destroy_all`, including pinned-C failure ownership and retry evidence for every source branch. Protect/unprotect have no caller in the selected release profile (only MI_SECURE>=5 guard pages and MI_GUARDED blocks call them); those callers belong to the M7 secure and guarded profiles.",
-      "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, and one process-bound suffix terminal receiver: every other receiving allocator caller, callback/counter/error/retry path, and native cleanup differential remains required.",
+      "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, and direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, now an equality C/Rust differential of the source `mi_os_prim_free` leak-and-continue rule (fault plan: both sides force a direct candidate, prefix, and suffix release, C through MAP_FIXED_NOREPLACE targets and Rust through its full-trim test geometry, and fail the chosen release ordinal 1, 2, or 3), plus the leak-and-continue Rust receivers (normal OS allocation, legacy and process OS-page claims, metadata backing, explicit and policy-first arena reservation): a pinned-C differential of each receiving caller under a trim failure and the callback/counter paths remain required.",
       "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
       "Complete the unconditional subprocess statistics-event owner beyond its private selected VM fields (`reserved`, `committed`, `reset`, `purged`, `mmap_calls`, `commit_calls`, `reset_calls`, and `purge_calls`), `arena_count` fresh-high-water and `arena_purges` eligible-expiry counters, and their filtered source-order aggregation. Non-main subprocess creation/destruction, merge/reset at its source teardown call site, the full `mi_stats_t` layout/header, heap/Theap aggregation and reset, public statistics, formatting/callback APIs, other source fields, and the allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers remain incomplete."
