@@ -8,29 +8,14 @@ readonly musl_libc=/opt/musl-1.2.6/lib/libc.a
 readonly probe="$ROOT/compat/x86_64/owned_pthread_join_cancel_probe.c"
 readonly -a scenarios=(try-status timed-status timed-exited-invalid entry blocked disabled masked cleanup-rejoin timed-entry timed-blocked timed-disabled timed-masked try-pending-busy try-pending-exited)
 # Aggregate dynamic gates supply an already built installed or extracted
-# product. The focused command also builds and checks both static entries.
-[ "$#" -eq 0 ] || [ "$#" -eq 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
-build_static=1
-provided_dynamic_sysroot="${1:-}"
-if [ -n "$provided_dynamic_sysroot" ]; then
-    build_static=0
-    provided_dynamic_sysroot="$(python3 -B -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' "$provided_dynamic_sysroot")"
-fi
-python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic_sysroot" <<'PY'
-from pathlib import Path
-import sys
-root, temporary = map(Path, sys.argv[1:3])
-if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / '.work'):
-    raise SystemExit('pthread-join-cancel TMPDIR must be a physical checkout .work directory')
-if sys.argv[3]:
-    product = Path(sys.argv[3])
-    if not product.is_dir() or not product.is_relative_to(root / '.work'):
-        raise SystemExit('pthread-join-cancel product must be a checkout .work directory')
-PY
+# product. The focused command builds and checks both static entries; the
+# pthread family supplies its sealed static product with --static-sysroot.
+. "$ROOT/compat/x86_64/owned_pthread_product_arguments.sh"
+owned_pthread_product_arguments pthread-join-cancel "$@"
 work="$(mktemp -d "$TMPDIR/owned-pthread-join-cancel.XXXXXX")"
 readonly work
 printf 'pthread-join-cancel evidence: %s\n' "$work"
-if [ "$build_static" -eq 1 ]; then
+if [ -z "$provided_dynamic_sysroot" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     provided_dynamic_sysroot="$work/dynamic-sysroot"
 fi
@@ -90,11 +75,15 @@ assert_join_mode_aliases "$musl_libc" LOCAL DEFAULT musl-join
 for scenario in "${scenarios[@]}"; do
     run_case 128 "" "$work/oracle-$scenario.stdout" "$work/oracle" "$scenario"
 done
-if [ "$build_static" -eq 1 ]; then
-    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-sysroot" >"$work/static-build.json"
-    assert_join_mode_aliases "$work/static-sysroot/usr/lib/libc.a" STRONG HIDDEN static-archive-join
+if [ "$check_static" -eq 1 ]; then
+    static_sysroot="$provided_static_sysroot"
+    if [ -z "$static_sysroot" ]; then
+        static_sysroot="$work/static-sysroot"
+        python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$static_sysroot" >"$work/static-build.json"
+    fi
+    assert_join_mode_aliases "$static_sysroot/usr/lib/libc.a" STRONG HIDDEN static-archive-join
     for mode in static static-pie; do
-        "$work/static-sysroot/bin/crabc-cc" "-$mode" -std=c11 "$work/probe.o" -o "$work/$mode"
+        "$static_sysroot/bin/crabc-cc" "-$mode" -std=c11 "$work/probe.o" -o "$work/$mode"
         assert_join_mode_aliases "$work/$mode" STRONG HIDDEN "$mode-join"
         for scenario in "${scenarios[@]}"; do
             run_case 0 "" "$work/$mode-$scenario.stdout" "$work/$mode" "$scenario"

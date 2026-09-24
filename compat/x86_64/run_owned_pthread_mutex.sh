@@ -8,14 +8,11 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_pthread_mutex_probe.c"
 readonly -a SCENARIOS=(recursive errorcheck timed robust recursive-condition c11 pi)
 
-[ "$#" -eq 0 ] || [ "$#" -eq 1 ] || {
-    printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
-    exit 2
-}
-provided_dynamic_sysroot="${1:-}"
-if [ -n "$provided_dynamic_sysroot" ]; then
-    provided_dynamic_sysroot="$(realpath -e "$provided_dynamic_sysroot")"
-fi
+# Aggregate dynamic gates supply an already built installed or extracted
+# product. The focused command builds and checks both static entries; the
+# pthread family supplies its sealed static product with --static-sysroot.
+. "$ROOT/compat/x86_64/owned_pthread_product_arguments.sh"
+owned_pthread_product_arguments pthread-mutex "$@"
 
 fail() {
     printf 'ERROR: x86 owned pthread mutex: %s\n' "$*" >&2
@@ -66,7 +63,7 @@ done
 
 check_static_mode() {
     local mode="$1" label="$2"
-    "$work/static-sysroot/bin/crabc-cc" "$mode" -std=c11 -DCRABC_OWNED_WITNESS \
+    "$static_sysroot/bin/crabc-cc" "$mode" -std=c11 -DCRABC_OWNED_WITNESS \
         "$PROBE" -o "$work/$label"
     local scenario
     for scenario in "${SCENARIOS[@]}"; do
@@ -77,11 +74,17 @@ check_static_mode() {
     done
 }
 
-if [ -z "$provided_dynamic_sysroot" ]; then
-    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-sysroot" \
-        >"$work/static-build.json"
+if [ "$check_static" -eq 1 ]; then
+    static_sysroot="$provided_static_sysroot"
+    if [ -z "$static_sysroot" ]; then
+        static_sysroot="$work/static-sysroot"
+        python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$static_sysroot" \
+            >"$work/static-build.json"
+    fi
     check_static_mode -static static
     check_static_mode -static-pie static-pie
+fi
+if [ -z "$provided_dynamic_sysroot" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic-sysroot" \
         >"$work/dynamic-build.json"
     provided_dynamic_sysroot="$work/dynamic-sysroot"
