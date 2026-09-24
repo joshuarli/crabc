@@ -558,5 +558,121 @@ class OwnedRustLinkContract(unittest.TestCase):
             )
 
 
+class CargoConsumerLinkContract(unittest.TestCase):
+    """The consumer gate's unfused Cargo graph selects the provider by request."""
+
+    def setUp(self):
+        WORK.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=WORK)
+        root = Path(self.temporary.name)
+        self.cargo = root / "cargo-target"
+        self.stock = root / "stock"
+        self.stock.mkdir()
+        units = self.cargo / linker.TARGET / "release/build"
+        self.application = units / "fixture/0123456789abcdef/out"
+        self.application.mkdir(parents=True)
+        (self.application / "fixture.rcgu.o").write_bytes(b"\x7fELF\x02\x01" + bytes(12) + b"\x3e\x00")
+        (self.application / "raw-dylibs").mkdir()
+        self.rlibs = {}
+        for crate in ("std", "unwind", "core", "compiler_builtins"):
+            path = units / crate / "fedcba9876543210/out" / f"lib{crate}-fedcba9876543210.rlib"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b"archive")
+            self.rlibs[crate] = path
+        (self.stock / "libcore-0123456789abcdef.rlib").write_bytes(b"archive")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def arguments(self, *, mode="-pie", unwind="-lgcc_s", extra=()):
+        return [
+            "-m64", str(self.application / "fixture.rcgu.o"), "-Wl,--as-needed", "-Wl,-Bstatic",
+            *(str(self.rlibs[crate]) for crate in ("std", "unwind", "core", "compiler_builtins")),
+            "-Wl,-Bdynamic", unwind, "-lc", "-L", str(self.application / "raw-dylibs"),
+            "-Wl,--eh-frame-hdr", "-Wl,-z,noexecstack", "-L", str(self.stock),
+            "-o", str(self.application / "fixture"), "-Wl,--gc-sections", mode,
+            "-Wl,-z,relro,-z,now", "-Wl,-O1", "-Wl,--strip-debug", "-nodefaultlibs", *extra,
+        ]
+
+    def parse(self, arguments, origin="build-std"):
+        return linker.parse_cargo_arguments(arguments, self.cargo, self.stock, origin)
+
+    def test_unwind_request_is_recorded_and_rust_unwind_bindings_stay_in_the_graph(self):
+        for request in ("-lgcc_s", "-lunwind"):
+            parsed = self.parse(self.arguments(unwind=request))
+            self.assertEqual(parsed["unwind_requests"], [request])
+            self.assertIn(self.rlibs["unwind"], parsed["archives"])
+            self.assertEqual(parsed["compiler_builtins"], self.rlibs["compiler_builtins"])
+            self.assertNotIn(self.rlibs["compiler_builtins"], parsed["archives"])
+
+    def test_build_std_graph_cannot_take_a_stock_standard_crate(self):
+        stock_core = str(self.stock / "libcore-0123456789abcdef.rlib")
+        with self.assertRaisesRegex(linker.LinkError, "outside the declared Rust roots"):
+            self.parse([*self.arguments(), stock_core])
+        parsed = self.parse([*self.arguments(), stock_core], origin="stock")
+        self.assertIn(self.stock / "libcore-0123456789abcdef.rlib", parsed["archives"])
+
+    def test_linker_plugin_options_are_the_finite_rustc_spelling(self):
+        parsed = self.parse(self.arguments(mode="-static-pie", unwind="-lunwind",
+                                           extra=("-Wl,-plugin-opt=O3,-plugin-opt=mcpu=x86-64",)))
+        self.assertEqual(parsed["rust_mode"], "static-pie")
+        self.assertEqual(parsed["plugin_options"], ["-plugin-opt=O3", "-plugin-opt=mcpu=x86-64"])
+        with self.assertRaisesRegex(linker.LinkError, "linker-plugin option"):
+            self.parse(self.arguments(extra=("-Wl,-plugin-opt=O3,-plugin-opt=-load=/tmp/pass.so",)))
+
+    def test_foreign_inputs_and_request_spellings_are_rejected(self):
+        ambient = Path(self.temporary.name) / "libgcc_eh.a"
+        ambient.write_bytes(b"archive")
+        for extra, message in (
+            ((str(ambient),), "unrecognized|foreign"),
+            (("-l:libunwind.a",), "foreign|unrecognized"),
+            (("-Wl,--whole-archive",), "unrecognized"),
+            (("@/tmp/response",), "response file"),
+        ):
+            with self.subTest(extra=extra), self.assertRaisesRegex(linker.LinkError, message):
+                self.parse(self.arguments(extra=extra))
+
+    def test_static_pie_command_orders_the_provider_as_an_ordinary_archive(self):
+        root = Path(self.temporary.name) / "owned"
+        library = root / "usr/lib"
+        provider = Path(self.temporary.name) / "libcrabc-unwind.a"
+        parsed = self.parse(self.arguments(mode="-static-pie", unwind="-lunwind"))
+        command = linker.link_command(
+            linker=Path("/pinned/ld.lld"), root=root, mode="static", provider=provider,
+            objects=parsed["objects"], archives=parsed["archives"], output=parsed["output"],
+            export_dynamic=False, rust_mode="static-pie", plugin_options=("--plugin-opt=O3",),
+        )
+        self.assertEqual(command[1:4], ["-static", "-pie", "--no-dynamic-linker"])
+        self.assertNotIn("--whole-archive", command)
+        self.assertIn("--plugin-opt=O3", command)
+        order = [command.index(str(path)) for path in (
+            library / "rcrt1.o", self.rlibs["unwind"], provider, library / "libc.a",
+            library / "libcrabc-builtins.a", library / "crtn.o",
+        )]
+        self.assertEqual(order, sorted(order))
+        with self.assertRaisesRegex(linker.LinkError, "owned static product"):
+            linker.link_command(
+                linker=Path("/pinned/ld.lld"), root=root, mode="dynamic", provider=provider,
+                objects=parsed["objects"], archives=parsed["archives"], output=parsed["output"],
+                export_dynamic=False, rust_mode="static-pie",
+            )
+
+    def test_only_declared_application_dsos_satisfy_a_library_request(self):
+        dso = Path(self.temporary.name) / "libcrabc_unwind_frame_initial.so"
+        dso.write_bytes(b"dso")
+        arguments = self.arguments(extra=("-lcrabc_unwind_frame_initial",))
+        parsed = linker.parse_cargo_arguments(arguments, self.cargo, self.stock, "stock", (dso,))
+        self.assertEqual(parsed["application_dsos"], [dso])
+        with self.assertRaisesRegex(linker.LinkError, "unrecognized"):
+            self.parse(arguments)
+
+    def test_audited_rust_unwind_bindings_are_not_mistaken_for_a_native_unwinder(self):
+        provider = Path(self.temporary.name) / "libcrabc-unwind.a"
+        trace = f"{self.rlibs['unwind']}(unwind.rcgu.o)\n{provider}(crabc-unwind.o)\n"
+        linker.validate_trace(trace, {self.rlibs["unwind"], provider}, frozenset({self.rlibs["unwind"]}))
+        with self.assertRaisesRegex(linker.LinkError, "ambient"):
+            linker.validate_trace(trace, {self.rlibs["unwind"], provider})
+
+
 if __name__ == "__main__":
     unittest.main()

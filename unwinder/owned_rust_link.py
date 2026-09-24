@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Link one owned Rust executable while isolating Cargo host build scripts.
 
-``owned_cleanup.py`` is the sole caller.  Rust invokes this program as its
-linker, but it cannot select a linker search path or a native fallback: this
-file replaces Rust's target ``libunwind``/compiler-builtins inputs and native
-``-l`` requests with the explicitly supplied provider and product files.
+``owned_cleanup.py`` and ``compat/x86_64/consumer_rust_std_lto.py`` are the
+callers.  Rust invokes this program as its linker, but it cannot select a
+linker search path or a native fallback: this file replaces Rust's target
+``libunwind``/compiler-builtins inputs and native ``-l`` requests with the
+explicitly supplied provider and product files.  The consumer gate declares
+``CRABC_OWNED_RUST_CARGO_TARGET`` and takes the separate ``link_cargo`` path
+for an ordinary unfused (or linker-plugin LTO) Cargo graph.
 
 Cargo's host and requested target triples are both x86_64-musl in the native
 image. Cargo therefore applies the target linker override to build-script
@@ -52,6 +55,16 @@ BUILD_OUTPUT_HASH = re.compile(r"[0-9a-f]{16}\Z")
 BUILD_SCRIPT_PACKAGE = re.compile(r"[A-Za-z0-9_]+\Z")
 SOURCE_LTO_UNWIND_ABI_ENV = "CRABC_OWNED_RUST_SOURCE_LTO_UNWIND_ABI"
 HOST_BUILD_SOURCES_ENV = "CRABC_OWNED_RUST_HOST_BUILD_SOURCES"
+# The consumer gate's Cargo origin: a fresh target root and the declared
+# standard-library origin select ``link_cargo`` instead of the cleanup paths.
+CARGO_TARGET_ENV = "CRABC_OWNED_RUST_CARGO_TARGET"
+CARGO_STD_ENV = "CRABC_OWNED_RUST_CARGO_STD"
+# Declared caller-owned DSOs (os.pathsep-separated physical ``lib*.so`` files)
+# that a Cargo consumer's ``-l<name>`` request may name as DT_NEEDED.
+CARGO_APPLICATION_DSOS_ENV = "CRABC_OWNED_RUST_APPLICATION_DSOS"
+CARGO_UNWIND_REQUESTS = frozenset({"-lunwind", "-lgcc_s", "-lgcc", "-lgcc_eh"})
+CARGO_PLUGIN_OPTION = re.compile(r"-plugin-opt=(?:O[0-3]|mcpu=[A-Za-z0-9_.-]+)\Z")
+BITCODE_MAGIC = b"BC\xc0\xde"
 
 
 class LinkError(RuntimeError):
@@ -723,11 +736,11 @@ def _read_product(root: Path, mode: str) -> tuple[Path, dict[str, str]]:
         raise LinkError(f"invalid owned {mode} product: {error}") from error
 
 
-def _product_inputs(root: Path, mode: str) -> list[Path]:
+def _product_inputs(root: Path, mode: str, *, static_pie: bool = False) -> list[Path]:
     library = root / "usr/lib"
     if mode == "static":
         return [
-            library / "crt1.o", library / "crti.o", library / "libc.a",
+            library / ("rcrt1.o" if static_pie else "crt1.o"), library / "crti.o", library / "libc.a",
             library / "libcrabc-builtins.a", library / "crtn.o",
         ]
     return [
@@ -739,12 +752,26 @@ def _product_inputs(root: Path, mode: str) -> list[Path]:
 def link_command(
     *, linker: Path, root: Path, mode: str, provider: Path | None, objects: list[Path], archives: list[Path], output: Path,
     export_dynamic: bool, rust_mode: str = "executable", version_script: Path | None = None,
-    no_undefined_version: bool = False,
+    no_undefined_version: bool = False, plugin_options: tuple[str, ...] = (),
 ) -> list[str]:
     """Return the entire native command; there are no library-search holes."""
 
-    runtime = _product_inputs(root, mode)
+    runtime = _product_inputs(root, mode, static_pie=rust_mode == "static-pie")
     rust_inputs = [*map(str, archives), *( [str(provider)] if provider is not None else [] )]
+    plugin = list(plugin_options)
+    if rust_mode == "static-pie":
+        if mode != "static":
+            raise LinkError("a Rust static PIE requires the owned static product")
+        return [
+            str(linker), "-static", "-pie", "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr",
+            "--gc-sections", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now", "-e", "_start",
+            *plugin, "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]),
+            *map(str, objects), *rust_inputs, str(runtime[2]), str(runtime[3]), str(runtime[4]),
+        ]
+    if plugin and mode == "static":
+        raise LinkError("linker-plugin options require an owned static PIE or dynamic PIE")
+    if plugin and rust_mode not in {"pie", "static-pie"}:
+        raise LinkError("linker-plugin options are admitted only for Cargo executable links")
     if rust_mode == "shared":
         if mode != "dynamic":
             raise LinkError("a Rust shared object requires the owned dynamic product")
@@ -770,7 +797,7 @@ def link_command(
     return [
         str(linker), "-pie", "--hash-style=sysv", "--eh-frame-hdr", "--gc-sections", "--no-undefined",
         "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
-        "--dynamic-linker", INTERPRETER, *( ["--export-dynamic"] if export_dynamic else [] ),
+        "--dynamic-linker", INTERPRETER, *( ["--export-dynamic"] if export_dynamic else [] ), *plugin,
         "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]), str(runtime[2]),
         *map(str, objects), *rust_inputs, str(runtime[3]), str(runtime[4]), str(runtime[5]),
     ]
@@ -780,19 +807,27 @@ def _trace_input(line: str) -> str:
     return line.split("(", 1)[0]
 
 
-def validate_trace(trace: str, admitted: set[Path]) -> None:
+def validate_trace(trace: str, admitted: set[Path], audited_rust_archives: frozenset[Path] = frozenset()) -> None:
+    """Require every resolved input to be declared and none to be ambient.
+
+    ``audited_rust_archives`` are Rust rlibs whose members were checked to be
+    Rust objects only; Rust's own ``unwind`` bindings crate is named
+    ``libunwind-*.rlib`` without being a native unwinder.
+    """
+
     paths = {str(path) for path in admitted}
+    audited = {str(path) for path in audited_rust_archives}
     for line in trace.splitlines():
         if not line:
             continue
         input_path = _trace_input(line)
         if input_path not in paths:
             raise LinkError(f"link trace names an unowned input: {line}")
-        if is_foreign_native_runtime(input_path):
+        if input_path not in audited and is_foreign_native_runtime(input_path):
             raise LinkError(f"link trace admits ambient native runtime: {line}")
 
 
-def _elf_facts(output: Path, mode: str, rust_mode: str) -> tuple[str, str]:
+def _elf_facts(output: Path, mode: str, rust_mode: str, application_needed: tuple[str, ...] = ()) -> tuple[str, str]:
     dynamic = run(["readelf", "-dW", output])
     segments = run(["readelf", "-lW", output])
     if "GNU_EH_FRAME" not in segments or "GNU_RELRO" not in segments:
@@ -807,7 +842,7 @@ def _elf_facts(output: Path, mode: str, rust_mode: str) -> tuple[str, str]:
             raise LinkError("static owned Rust executable admits an interpreter or DSO")
     else:
         needed = re.findall(r"\(NEEDED\).*\[([^]]+)\]", dynamic)
-        if INTERPRETER not in segments or needed != ["libc.so"] or "TEXTREL" in dynamic:
+        if INTERPRETER not in segments or needed != [*application_needed, "libc.so"] or "TEXTREL" in dynamic:
             raise LinkError("dynamic owned Rust executable has unapproved runtime dependencies")
     return dynamic, segments
 
@@ -819,10 +854,233 @@ def _record_input(path: Path, *, members: list[str] | None = None) -> dict[str, 
     return record
 
 
+def _cargo_rust_root(path: Path, cargo_release: Path) -> bool:
+    """Cargo writes Rust units below ``release/build`` or ``release/deps``."""
+
+    return path.is_relative_to(cargo_release / "build") or path.is_relative_to(cargo_release / "deps")
+
+
+def parse_cargo_arguments(
+    arguments: list[str], cargo_target: Path, stock_root: Path, std_origin: str,
+    application_dsos: tuple[Path, ...] = (),
+) -> dict[str, object]:
+    """Parse one Cargo final link of the consumer gate's ordinary rlib graph.
+
+    Unlike the source-built cleanup fixture, these consumers keep Cargo's
+    unfused rlib graph (or one linker-plugin bitcode object) and Rust's own
+    ``unwind`` crate. Only that crate's native request (``-lunwind`` for
+    ``crt-static``, ``-lgcc_s`` otherwise) names the unwinder, so it selects
+    the one explicit provider archive and the linker extracts its members
+    exactly as it would from an installed ``libunwind.a``. ``std_origin`` is
+    ``build-std`` (every Rust archive is a fresh Cargo unit) or ``stock``
+    (the pinned target libdir additionally supplies the standard crates).
+    """
+
+    if std_origin not in {"build-std", "stock"}:
+        raise LinkError(f"unsupported Cargo standard-library origin: {std_origin}")
+    cargo_release = cargo_target / TARGET / "release"
+    archive_roots = [cargo_release / "build", cargo_release / "deps"]
+    if std_origin == "stock":
+        archive_roots.append(stock_root)
+    objects: list[Path] = []
+    archives: list[Path] = []
+    search_paths: list[Path] = []
+    native_requests: list[str] = []
+    plugin_options: list[str] = []
+    declared_dsos = {f"-l{path.name.removeprefix('lib').removesuffix('.so')}": path for path in application_dsos}
+    dsos: list[Path] = []
+    compiler_builtins: Path | None = None
+    output: Path | None = None
+    rust_mode: str | None = None
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        index += 1
+        _reject_linker_escape(argument)
+        if argument in {"-o", "-L"}:
+            if index == len(arguments):
+                raise LinkError(f"missing value for {argument}")
+            value = arguments[index]
+            index += 1
+            if argument == "-o":
+                if output is not None:
+                    raise LinkError("duplicate output")
+                output = confined_output(value, cargo_release / "build")
+            else:
+                search_paths.append(confined(value, [cargo_release, stock_root], "Rust search path", directory=True))
+        elif argument in {"-pie", "-static-pie"}:
+            if rust_mode is not None:
+                raise LinkError("duplicate or conflicting Rust executable mode")
+            rust_mode = argument.removeprefix("-")
+        elif argument.startswith("-Wl,-plugin-opt="):
+            for option in argument.split(",")[1:]:
+                if CARGO_PLUGIN_OPTION.fullmatch(option) is None or option in plugin_options:
+                    raise LinkError(f"unadmitted linker-plugin option: {option}")
+                plugin_options.append(option)
+        elif argument in NATIVE_REQUESTS or argument == "-lgcc_eh":
+            native_requests.append(argument)
+        elif argument in declared_dsos:
+            if declared_dsos[argument] in dsos:
+                raise LinkError(f"duplicate application DSO request: {argument}")
+            dsos.append(declared_dsos[argument])
+        elif argument in CANONICAL_FLAGS:
+            pass
+        elif argument.endswith(".rlib"):
+            # A build-std graph admits no stock target archive at all.
+            archive = confined(argument, archive_roots, "Cargo Rust archive")
+            if COMPILER_BUILTINS_ARCHIVE.fullmatch(archive.name):
+                if compiler_builtins is not None:
+                    raise LinkError("duplicate Rust compiler-builtins archive")
+                compiler_builtins = archive
+            else:
+                archives.append(archive)
+        elif argument.endswith(".o"):
+            path = confined(argument, [cargo_release / "build"], "Cargo Rust object")
+            if not _cargo_rust_root(path, cargo_release):
+                raise LinkError(f"Cargo Rust object is outside its unit roots: {path}")
+            objects.append(path)
+        else:
+            raise LinkError(f"unrecognized Rust link argument: {argument}")
+    if output is None or rust_mode is None or not objects:
+        raise LinkError("expected output, Rust executable mode, and Rust objects")
+    if "-lc" not in native_requests:
+        raise LinkError("missing Rust libc request")
+    all_inputs = [*objects, *archives]
+    if output in all_inputs or len(all_inputs) != len(set(all_inputs)):
+        raise LinkError("output aliases or Rust repeats an application input")
+    unwind_requests = [request for request in native_requests if request in CARGO_UNWIND_REQUESTS]
+    return {
+        "objects": objects,
+        "archives": archives,
+        "search_paths": search_paths,
+        "native_requests": native_requests,
+        "unwind_requests": unwind_requests,
+        "plugin_options": plugin_options,
+        "compiler_builtins": compiler_builtins,
+        "application_dsos": dsos,
+        "output": output,
+        "rust_mode": rust_mode,
+    }
+
+
+def _cargo_input_kind(path: Path) -> str:
+    header = path.read_bytes()[:20]
+    if header[:4] == BITCODE_MAGIC:
+        return "llvm-bitcode"
+    if header[:4] == b"\x7fELF" and header[18:20] == b"\x3e\x00":
+        return "elf-x86_64"
+    raise LinkError(f"Cargo Rust object is neither x86-64 ELF nor LLVM bitcode: {path}")
+
+
+def link_cargo(arguments: list[str]) -> None:
+    """Link one Cargo consumer executable through an owned product.
+
+    The runner declares the product, provider archive, fresh Cargo target and
+    standard-library origin. The receipt names every resolved input, the
+    provider members LLD actually extracted, and the final ELF facts.
+    """
+
+    required = (
+        "CRABC_OWNED_RUST_LINK_MODE", "CRABC_OWNED_RUST_PRODUCT", "CRABC_OWNED_RUST_STOCK_LIBDIR",
+        "CRABC_OWNED_RUST_PROVIDER", "CRABC_OWNED_RUST_CHANNEL", CARGO_STD_ENV,
+    )
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise LinkError(f"missing owned Rust Cargo linker environment: {missing[0]}")
+    mode = os.environ["CRABC_OWNED_RUST_LINK_MODE"]
+    if mode not in {"static", "dynamic"}:
+        raise LinkError(f"unsupported owned Rust link mode: {mode}")
+    root = physical_directory(Path(os.environ["CRABC_OWNED_RUST_PRODUCT"]), "owned product root")
+    cargo_target = physical_directory(Path(os.environ[CARGO_TARGET_ENV]), "Cargo consumer target root")
+    stock_root = physical_directory(Path(os.environ["CRABC_OWNED_RUST_STOCK_LIBDIR"]), "stock Rust target library root")
+    provider = physical_regular(Path(os.environ["CRABC_OWNED_RUST_PROVIDER"]), "selected unwind provider")
+    std_origin = os.environ[CARGO_STD_ENV]
+    application_dsos = tuple(
+        physical_regular(Path(value), "declared application DSO")
+        for value in os.environ.get(CARGO_APPLICATION_DSOS_ENV, "").split(os.pathsep) if value
+    )
+    if any(not path.name.startswith("lib") or not path.name.endswith(".so") for path in application_dsos):
+        raise LinkError("declared application DSOs must be named lib*.so")
+    parsed = parse_cargo_arguments(arguments, cargo_target, stock_root, std_origin, application_dsos)
+    rust_mode = parsed["rust_mode"]
+    if (mode, rust_mode) not in {("static", "static-pie"), ("dynamic", "pie")}:
+        raise LinkError(f"Rust {rust_mode} request does not match the owned {mode} product")
+    output = parsed["output"]
+    assert isinstance(output, Path)
+    receipt = Path(str(output) + ".crabc-owned-rust-link.json")
+    for path in (output, receipt):
+        if path.exists() or path.is_symlink():
+            raise LinkError(f"owned Rust Cargo output must be fresh: {path}")
+    manifest, manifest_files = _read_product(root, mode)
+    rust_sysroot = Path(run(["rustup", "run", os.environ["CRABC_OWNED_RUST_CHANNEL"], "rustc", "--print", "sysroot"]).strip())
+    linker = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/gcc-ld/ld.lld", "pinned Rust LLD")
+    ar = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/llvm-ar", "pinned Rust llvm-ar")
+    objects, archives, dsos = parsed["objects"], parsed["archives"], parsed["application_dsos"]
+    assert isinstance(objects, list) and isinstance(archives, list) and isinstance(dsos, list)
+    if dsos and mode != "dynamic":
+        raise LinkError("application DSOs require the owned dynamic product")
+    plugin_options = tuple(f"-{option}" if option.startswith("-plugin") else option
+                           for option in parsed["plugin_options"])  # type: ignore[union-attr]
+    kinds = [_cargo_input_kind(path) for path in objects]
+    if "llvm-bitcode" in kinds and not plugin_options:
+        raise LinkError("LLVM bitcode Rust input requires rustc's linker-plugin options")
+    input_records = [{**_record_input(path), "kind": kind} for path, kind in zip(objects, kinds)]
+    input_records.extend(_record_input(archive, members=audit_rust_archive(archive, ar)) for archive in archives)
+    selected_provider = provider if parsed["unwind_requests"] else None
+    command = link_command(
+        linker=linker, root=root, mode=mode, provider=selected_provider, objects=objects,
+        archives=[*archives, *dsos], output=output, export_dynamic=False, rust_mode=str(rust_mode),
+        plugin_options=plugin_options,
+    )
+    trace = run(command)
+    runtime = _product_inputs(root, mode, static_pie=rust_mode == "static-pie")
+    validate_trace(trace, {*objects, *archives, *dsos, *runtime, *([selected_provider] if selected_provider else [])},
+                   frozenset(archives))
+    provider_members = sorted({
+        line[len(str(provider)) + 1:-1] for line in trace.splitlines()
+        if line.startswith(f"{provider}(") and line.endswith(")")
+    })
+    if selected_provider is not None and not provider_members:
+        raise LinkError("unwind request did not extract any member of the selected provider archive")
+    dynamic, segments = _elf_facts(output, mode, str(rust_mode), tuple(path.name for path in dsos))
+    record: dict[str, object] = {
+        "schema": 1,
+        "format": "crabc-owned-rust-cargo-link/v1",
+        "target": TARGET,
+        "mode": mode,
+        "rust_requested_mode": rust_mode,
+        "std_origin": std_origin,
+        "product": {"root": str(root), "manifest": _record_input(manifest), "files": manifest_files},
+        "native_requests": parsed["native_requests"],
+        "unwind_requests": parsed["unwind_requests"],
+        "provider_archive": _record_input(provider) if selected_provider is not None else None,
+        "provider_members_extracted": provider_members,
+        "application_dsos": [_record_input(path) for path in dsos],
+        "omitted_compiler_builtins": (
+            _record_input(parsed["compiler_builtins"]) if parsed["compiler_builtins"] is not None else None  # type: ignore[arg-type]
+        ),
+        "linker_plugin_options": list(plugin_options),
+        "unused_search_paths": [str(path) for path in parsed["search_paths"]],  # type: ignore[union-attr]
+        "application_inputs": input_records,
+        "resolved_linker": _record_input(linker),
+        "command": command,
+        "resolved_input_trace": trace,
+        "dynamic": dynamic,
+        "segments": segments,
+        "output": _record_input(output),
+    }
+    with receipt.open("x", encoding="utf-8") as stream:
+        json.dump(record, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+
+
 def link(arguments: list[str]) -> None:
     """Entry point used by rustc after the runner declares every input root."""
 
-    required = ("CRABC_OWNED_RUST_LINK_MODE", "CRABC_OWNED_RUST_PRODUCT", "CRABC_OWNED_RUST_APPLICATION_ROOT")
+    if os.environ.get(CARGO_TARGET_ENV):
+        link_cargo(arguments)
+        return
+    required =("CRABC_OWNED_RUST_LINK_MODE", "CRABC_OWNED_RUST_PRODUCT", "CRABC_OWNED_RUST_APPLICATION_ROOT")
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
         raise LinkError(f"missing owned Rust linker environment: {missing[0]}")

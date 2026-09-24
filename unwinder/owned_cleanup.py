@@ -422,45 +422,65 @@ def prepare_offline_cargo_sources(
 ) -> dict[str, Any]:
     """Compose Rust's full vendor with the checked provider-only source closure."""
 
-    standard, standard_expected = rust_source_vendor(rust_source)
     provider, provider_expected = provider_vendor(provider_vendor_root)
+    sources = compose_offline_cargo_sources(
+        application, rust_source, [(provider, provider_expected, "provider")], cargo_home,
+    )
+    sources["provider_vendor"] = provider
+    return sources
+
+
+def compose_offline_cargo_sources(
+    application: Path, rust_source: Path,
+    extras: list[tuple[dict[str, Any], dict[str, tuple[str, str, str]], str]], cargo_home: Path,
+) -> dict[str, Any]:
+    """Compose Rust's full build-std vendor with further authenticated vendors.
+
+    Each extra is an already authenticated ``cargo_vendor_tree`` record, its
+    locked closure, and a label. A package present in more than one source
+    must have the same lock checksum and files; a ``.gitignore`` that only
+    one side's Cargo transport shape carries is the sole admitted difference.
+    """
+
+    standard, standard_expected = rust_source_vendor(rust_source)
     combined_expected = dict(standard_expected)
-    standard_by_name = {f"{package['name']}-{package['version']}": package for package in standard["packages"]}
-    provider_by_name = {f"{package['name']}-{package['version']}": package for package in provider["packages"]}
-    for directory_name, expected in provider_expected.items():
-        existing = combined_expected.get(directory_name)
-        if existing is not None:
-            require(existing == expected, "Rust and provider vendor source pins conflict")
-            standard_package = standard_by_name[directory_name]
-            provider_package = provider_by_name[directory_name]
-            standard_files = {record["path"]: record["sha256"] for record in standard_package["files"]}
-            provider_files = {record["path"]: record["sha256"] for record in provider_package["files"]}
-            registry_marker_sha256 = hashlib.sha256(CARGO_REGISTRY_UNWINDING_MARKERS[".gitignore"]).hexdigest()
-            same_files_without_gitignore = (
-                {path: value for path, value in standard_files.items() if path != ".gitignore"}
-                == {path: value for path, value in provider_files.items() if path != ".gitignore"}
-            )
-            gitignore_is_transport_only = (
-                standard_files.get(".gitignore") != provider_files.get(".gitignore")
-                and all(value in (None, registry_marker_sha256) for value in (
-                    standard_files.get(".gitignore"), provider_files.get(".gitignore"),
-                ))
-                and same_files_without_gitignore
-            )
-            require(
-                standard_package["package_checksum"] == provider_package["package_checksum"]
-                and (standard_files == provider_files or gitignore_is_transport_only),
-                "Rust and provider vendor source contents differ",
-            )
-        else:
-            combined_expected[directory_name] = expected
+    by_name = {f"{package['name']}-{package['version']}": package for package in standard["packages"]}
+    registry_marker_sha256 = hashlib.sha256(CARGO_REGISTRY_UNWINDING_MARKERS[".gitignore"]).hexdigest()
+    added: list[tuple[str, dict[str, Any]]] = []
+    for record, expected_closure, label in extras:
+        extra_by_name = {f"{package['name']}-{package['version']}": package for package in record["packages"]}
+        for directory_name, expected in expected_closure.items():
+            existing = combined_expected.get(directory_name)
+            if existing is not None:
+                require(existing == expected, f"Rust and {label} vendor source pins conflict")
+                prior_files = {entry["path"]: entry["sha256"] for entry in by_name[directory_name]["files"]}
+                extra_files = {entry["path"]: entry["sha256"] for entry in extra_by_name[directory_name]["files"]}
+                same_files_without_gitignore = (
+                    {path: value for path, value in prior_files.items() if path != ".gitignore"}
+                    == {path: value for path, value in extra_files.items() if path != ".gitignore"}
+                )
+                gitignore_is_transport_only = (
+                    prior_files.get(".gitignore") != extra_files.get(".gitignore")
+                    and all(value in (None, registry_marker_sha256) for value in (
+                        prior_files.get(".gitignore"), extra_files.get(".gitignore"),
+                    ))
+                    and same_files_without_gitignore
+                )
+                require(
+                    by_name[directory_name]["package_checksum"] == extra_by_name[directory_name]["package_checksum"]
+                    and (prior_files == extra_files or gitignore_is_transport_only),
+                    f"Rust and {label} vendor source contents differ",
+                )
+            else:
+                combined_expected[directory_name] = expected
+                by_name[directory_name] = extra_by_name[directory_name]
+                added.append((directory_name, extra_by_name[directory_name]))
     composite_root = application / "cargo-vendor"
     require(not composite_root.exists() and not composite_root.is_symlink(),
             "private offline Cargo vendor must be fresh")
     shutil.copytree(Path(standard["root"]), composite_root, copy_function=shutil.copy2)
-    for directory_name in sorted(set(provider_expected) - set(standard_expected)):
-        shutil.copytree(Path(provider_by_name[directory_name]["directory"]), composite_root / directory_name,
-                        copy_function=shutil.copy2)
+    for directory_name, package in sorted(added, key=lambda item: item[0]):
+        shutil.copytree(Path(package["directory"]), composite_root / directory_name, copy_function=shutil.copy2)
     composite = cargo_vendor_tree(composite_root, combined_expected, "private composite Cargo vendor")
     config = cargo_home / "config.toml"
     require(not config.exists() and not config.is_symlink(), "private Cargo source config must be fresh")
@@ -473,7 +493,6 @@ def prepare_offline_cargo_sources(
     config = physical(config, "private Cargo source config")
     return {
         "rust_source_vendor": standard,
-        "provider_vendor": provider,
         "composite_vendor": composite,
         "composite_vendor_custom_build_inputs": cargo_vendor_custom_build_inputs(composite),
         "cargo_config": record_file(config, "private Cargo source config"),
