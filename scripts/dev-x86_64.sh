@@ -568,6 +568,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-resolver-cancellation [DYNAMIC_SYSROOT]  compare installed DNS cancellation and descriptor cleanup
   owned-protocol-database --installed-static-sysroot STATIC --installed-dynamic-sysroot DYNAMIC --reproduction-static-sysroot STATIC --reproduction-dynamic-sysroot DYNAMIC --extracted-static-sysroot STATIC --extracted-dynamic-sysroot DYNAMIC  retain a non-promoting fixed protocol-table receipt from three supplied product pairs
   owned-resolver-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  run every libc.resolver component against one current product cohort and retain its non-promoting family assessment
+  owned-c-abi-compat-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  run every libc.c-abi-compat component against one current product cohort and retain its non-promoting family assessment
   owned-dynamic-io-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify shared-runtime cancellation through kernel and direct entry
 
   owned-crypt-runtime [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  prove bounded SHA-crypt through installed owned products
@@ -3389,6 +3390,40 @@ prepare_owned_posix_family_arguments() {
     POSIX_FAMILY_ARGUMENTS=(--static-preparation "$static_receipt" --dynamic-qualification "$dynamic_receipt" --output "$output")
 }
 
+prepare_owned_c_abi_compat_family_arguments() {
+    local static_receipt='' dynamic_receipt='' output=''
+    local expected='usage: ./scripts/dev-x86_64.sh owned-c-abi-compat-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR'
+    while [ "$#" -gt 0 ]; do
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
+        case "$1" in
+            --static-preparation)
+                [ -z "$static_receipt" ] || fail "$expected"
+                static_receipt="$2"
+                ;;
+            --dynamic-qualification)
+                [ -z "$dynamic_receipt" ] || fail "$expected"
+                dynamic_receipt="$2"
+                ;;
+            --output)
+                [ -z "$output" ] || fail "$expected"
+                output="$2"
+                ;;
+            *) fail "$expected" ;;
+        esac
+        shift 2
+    done
+    [ -n "$static_receipt" ] && [ -n "$dynamic_receipt" ] && [ -n "$output" ] || fail "$expected"
+    static_receipt="$(translate_owned_posix_product "$static_receipt" receipt-file)" || exit 2
+    dynamic_receipt="$(translate_owned_posix_product "$dynamic_receipt" receipt-file)" || exit 2
+    output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
+    # Every component runner requires its scratch below the work mount.
+    case "$output" in
+        /workspace/.work/x86_64/*) ;;
+        *) fail "c-abi-compat family output must be below this checkout's .work/x86_64" ;;
+    esac
+    C_ABI_COMPAT_FAMILY_ARGUMENTS=(--static-preparation "$static_receipt" --dynamic-qualification "$dynamic_receipt" --output "$output")
+}
+
 prepare_owned_posix_native_arguments() {
     local family_receipt='' crypt_receipt='' atomic_receipt='' wordexp_receipt='' wordexp_inputs='' output=''
     local expected='usage: ./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR'
@@ -4013,8 +4048,10 @@ run_in_dynamic_loader_mount_container() {
         family_namespace_authority+=(--security-opt=seccomp=unconfined)
     fi
     # Native OS-test owns a disposable devpts fixture. All five native
-    # components use local inputs and run without an external network.
-    if [ "$command" = owned-posix-native ]; then
+    # components use local inputs and run without an external network. The
+    # c-abi-compat family replays the same libc-test aggregate among its
+    # local-input components.
+    if [ "$command" = owned-posix-native ] || [ "$command" = owned-c-abi-compat-family ]; then
         family_namespace_authority+=(--security-opt=seccomp=unconfined --network=none)
     fi
     prepare_work_dir
@@ -7264,6 +7301,7 @@ case "$command" in
     owned-error-reporting|owned-static-replacement|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation|owned-protocol-database|owned-resolver-family) ;;
+    owned-c-abi-compat-family) ;;
     owned-package-corpus|owned-package-corpus-input|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family) ;;
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-static-dl-iterate-phdr|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
@@ -7458,6 +7496,10 @@ case "$command" in
     owned-posix-family)
         prepare_owned_posix_family_arguments "$@"
         set -- "${POSIX_FAMILY_ARGUMENTS[@]}"
+        ;;
+    owned-c-abi-compat-family)
+        prepare_owned_c_abi_compat_family_arguments "$@"
+        set -- "${C_ABI_COMPAT_FAMILY_ARGUMENTS[@]}"
         ;;
     owned-posix-native)
         prepare_owned_posix_native_arguments "$@"
@@ -9793,6 +9835,10 @@ PY
     owned-posix-native)
         ensure_image
         run_in_dynamic_loader_mount_container python3 -B /workspace/compat/x86_64/owned_posix_native_execution.py run "$@"
+        ;;
+    owned-c-abi-compat-family)
+        ensure_image
+        run_in_dynamic_loader_mount_container python3 -B /workspace/compat/x86_64/owned_c_abi_compat_family.py run "$@"
         ;;
     owned-pthread-family)
         ensure_image

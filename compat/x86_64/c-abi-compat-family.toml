@@ -1,0 +1,175 @@
+# Fixed native-x86 `libc.c-abi-compat` family roster.
+#
+# Each component is an existing installed-product runner executed against the
+# primary static/dynamic pair of one current product cohort. The family's
+# capabilities are the ones `parity.toml` maps to `libc.c-abi-compat`; every
+# `owned-*` command cited by one of its `[[family.verified_slice]]` rows must
+# be a component here crediting that slice's capabilities. The source-only
+# `libc-*` and `*-header-abi` leaves those slices also cite cannot satisfy an
+# installed-product family and are deliberately absent. This roster cannot
+# complete or promote the family by itself.
+schema = "crabc.x86_64-owned-c-abi-compat-family-roster/v1"
+family = "libc.c-abi-compat"
+
+[[component]]
+id = "c-abi-compat"
+command = "owned-c-abi-compat"
+runner = "compat/x86_64/run_owned_c_abi_compat.sh"
+products = "static-and-dynamic"
+reader = "runner"
+capabilities = [
+  "catalog.gettext",
+  "error.reporting-termination",
+  "legacy.misc",
+  "numeric.qsort-helper",
+  "search.hash-table",
+  "search.tree-intrusive",
+]
+
+# The retained crypt profile companion is replayed by its own reader.
+[[component]]
+id = "crypt-runtime"
+command = "owned-crypt-runtime"
+runner = "compat/x86_64/run_owned_crypt_runtime.sh"
+products = "static-and-dynamic"
+reader = "crypt-profile"
+capabilities = ["crypto.crypt", "crypto.crypt-helpers"]
+
+# With a supplied product this runner exercises only the dynamic modes; the
+# static replacement arm builds its own private product and so cannot bind to
+# the cohort. Static reporting/termination is exercised by `c-abi-compat`.
+[[component]]
+id = "error-reporting"
+command = "owned-error-reporting"
+runner = "compat/x86_64/run_owned_error_reporting.sh"
+products = "dynamic"
+reader = "runner"
+capabilities = ["error.reporting-termination"]
+
+[[component]]
+id = "fmtmsg"
+command = "owned-fmtmsg"
+runner = "compat/x86_64/run_owned_fmtmsg.sh"
+products = "static-and-dynamic"
+reader = "runner"
+capabilities = ["legacy.misc"]
+
+[[component]]
+id = "process-globals"
+command = "owned-process-globals"
+runner = "compat/x86_64/run_owned_process_globals.sh"
+products = "static-and-dynamic"
+reader = "runner"
+capabilities = ["process.globals"]
+
+# The three allocator runners require the fixed Rust mimalloc port
+# (`native-shadow`) in both products and reject any other selected backend.
+[[component]]
+id = "native-allocator-policy"
+command = "owned-native-allocator-policy"
+runner = "compat/x86_64/run_owned_native_allocator_policy.sh"
+products = "static-and-dynamic"
+reader = "runner"
+capabilities = ["memory.allocator-basic", "memory.allocator-observability"]
+
+[[component]]
+id = "allocator-override"
+command = "owned-allocator-override"
+runner = "compat/x86_64/run_owned_allocator_override.sh"
+products = "static-and-dynamic"
+reader = "runner"
+capabilities = ["memory.allocator-basic"]
+
+[[component]]
+id = "native-allocator-dso"
+command = "owned-native-allocator-dso"
+runner = "compat/x86_64/run_owned_native_allocator_dso.sh"
+products = "dynamic"
+reader = "runner"
+capabilities = ["memory.allocator-basic"]
+
+# The frozen musl differential sources replayed on the installed dynamic
+# product: `allocator` exercises the malloc family and every case compares
+# musl's explicit errno marker.
+[[component]]
+id = "differential"
+runner = "compat/x86_64/run_owned_differential.sh"
+products = "dynamic"
+reader = "differential"
+capabilities = ["memory.allocator-basic", "error.reporting-termination"]
+
+# The complete pinned libc-test source aggregate runs on the installed dynamic
+# product. The family accounts only the `[[libc_test_unit]]` rows below, and
+# the component credits exactly their capabilities; other families own the
+# remaining units and their profile dispositions.
+[[component]]
+id = "libc-test"
+runner = "compat/x86_64/run_owned_libc_test.sh"
+products = "dynamic"
+reader = "libc-test"
+
+[[libc_test_unit]]
+id = "api/search"
+capabilities = ["search.hash-table", "search.tree-intrusive"]
+
+[[libc_test_unit]]
+id = "functional/search_hsearch"
+capabilities = ["search.hash-table"]
+
+[[libc_test_unit]]
+id = "functional/search_insque"
+capabilities = ["search.tree-intrusive"]
+
+[[libc_test_unit]]
+id = "functional/search_tsearch"
+capabilities = ["search.tree-intrusive"]
+
+# musl 1.2.6 `qsort` is a wrapper over `__qsort_r`.
+[[libc_test_unit]]
+id = "functional/qsort"
+capabilities = ["numeric.qsort-helper"]
+
+[[libc_test_unit]]
+id = "api/nl_types"
+capabilities = ["catalog.gettext"]
+
+[[libc_test_unit]]
+id = "api/fmtmsg"
+capabilities = ["legacy.misc"]
+
+[[libc_test_unit]]
+id = "api/errno"
+capabilities = ["error.reporting-termination"]
+
+[[libc_test_unit]]
+id = "api/assert"
+capabilities = ["error.reporting-termination"]
+
+[[libc_test_unit]]
+id = "functional/env"
+capabilities = ["process.globals"]
+
+[[libc_test_unit]]
+id = "regression/putenv-doublefree"
+capabilities = ["process.globals"]
+
+[[libc_test_unit]]
+id = "regression/malloc-0"
+capabilities = ["memory.allocator-basic"]
+
+[[libc_test_unit]]
+id = "regression/malloc-oom"
+capabilities = ["memory.allocator-basic"]
+
+[[libc_test_unit]]
+id = "regression/malloc-brk-fail"
+capabilities = ["memory.allocator-basic"]
+
+# The upstream unit combines the supported SHA-crypt profile with
+# deliberately unsupported MD5-crypt and bcrypt. It is qualified only by the
+# fixed crypt disposition against the same run's crypt profile companion.
+[[libc_test_unit]]
+id = "functional/crypt"
+capabilities = ["crypto.crypt", "crypto.crypt-helpers"]
+disposition = "crypt-profile"
+companion = "crypt-runtime"

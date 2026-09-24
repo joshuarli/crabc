@@ -8707,6 +8707,79 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(view["status"], "planned")
         self.assertEqual(admitted["status"], "foundation-verified")
 
+    def _admitted_c_abi_compat(self, data: dict) -> tuple[dict, dict]:
+        family = self.family(data, "libc.c-abi-compat")
+        posix = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        posix["status"] = "foundation-verified"
+        for entry in family["native_evidence"]:
+            entry["state"] = "verified"
+        row = next(entry for entry in family["native_evidence"]
+                   if entry["command"] == ledger.C_ABI_COMPAT_FAMILY_COMMAND)
+        row["receipt"] = ".work/x86_64/resolver-family/assessment.json"
+        return family, posix
+
+    def test_c_abi_compat_family_admission_requires_the_posix_cohort_assessment(self) -> None:
+        family, posix = self._admitted_c_abi_compat(self.data())
+        c_abi_family = importlib.import_module("owned_c_abi_compat_family")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            posix_admission, facts = self._resolver_admission_fixture(root)
+            with mock.patch.object(ledger, "ROOT", root), mock.patch.object(
+                c_abi_family, "admission_facts", return_value=facts,
+            ) as admission_facts:
+                admitted = ledger.require_c_abi_compat_family_admission(family, posix, posix_admission)
+            self.assertIs(admitted, facts)
+            admission_facts.assert_called_once_with(root, Path(".work/x86_64/resolver-family/assessment.json"))
+
+    def test_c_abi_compat_family_admission_rejects_other_cohort_or_incomplete_evidence(self) -> None:
+        family, posix = self._admitted_c_abi_compat(self.data())
+        c_abi_family = importlib.import_module("owned_c_abi_compat_family")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            posix_admission, facts = self._resolver_admission_fixture(root)
+            with mock.patch.object(ledger, "ROOT", root):
+                with mock.patch.object(c_abi_family, "admission_facts", return_value=facts):
+                    for mutate in (
+                        lambda value: value["native_evidence"][0].update(state="required"),
+                        lambda value: value["native_evidence"][0].update(receipt=".work/missing.json"),
+                        lambda value: value["native_evidence"][0].update(command="Define gates"),
+                    ):
+                        candidate = copy.deepcopy(family)
+                        mutate(candidate)
+                        with self.subTest(evidence=candidate["native_evidence"]):
+                            with self.assertRaises(ledger.LedgerError):
+                                ledger.require_c_abi_compat_family_admission(candidate, posix, posix_admission)
+                    with self.assertRaises(ledger.LedgerError):
+                        ledger.require_c_abi_compat_family_admission(family, posix, None)
+                for name in ("static_preparation", "dynamic_qualification", "source"):
+                    changed = copy.deepcopy(facts)
+                    if name == "source":
+                        changed["source"]["revision"] = "other"
+                    else:
+                        changed[name]["sha256"] = "3" * 64
+                    with self.subTest(changed=name), mock.patch.object(
+                        c_abi_family, "admission_facts", return_value=changed,
+                    ):
+                        with self.assertRaises(ledger.LedgerError):
+                            ledger.require_c_abi_compat_family_admission(family, posix, posix_admission)
+                with mock.patch.object(
+                    c_abi_family, "admission_facts",
+                    side_effect=c_abi_family.CAbiCompatFamilyError("assessment is not bound to current source"),
+                ):
+                    with self.assertRaises(ledger.LedgerError):
+                        ledger.require_c_abi_compat_family_admission(family, posix, posix_admission)
+
+    def test_planned_c_abi_compat_family_cannot_attach_an_assessment(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        posix = self.family(data, "libc.posix-runtime")
+        self.assertIsNone(ledger.require_c_abi_compat_family_admission(family, posix, None))
+        attached = copy.deepcopy(family)
+        attached["native_evidence"][0]["receipt"] = ".work/x86_64/c-abi-compat-family/assessment.json"
+        with self.assertRaises(ledger.LedgerError):
+            ledger.require_c_abi_compat_family_admission(attached, posix, None)
+
 
     def test_musl_oracle_is_a_native_precondition_not_public_support(self) -> None:
         data = self.data()

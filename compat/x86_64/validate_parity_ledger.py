@@ -6892,10 +6892,22 @@ def require_resolver_family_admission(
         admission = resolver_family.admission_facts(ROOT, physical)
     except (RuntimeError, OSError, ValueError, TypeError) as error:
         raise LedgerError(f"resolver family assessment rejected: {error}") from error
+    require_posix_cohort_admission("resolver family", admission, posix_admission)
+    return admission
 
+
+def require_posix_cohort_admission(
+    label: str, admission: Mapping[str, Any], posix_admission: Mapping[str, Any]
+) -> None:
+    """Require a family assessment to use the admitted POSIX matrix's cohort.
+
+    The family's retained source and static-preparation/dynamic-qualification
+    receipts must be exactly the ones the admitted `libc.posix-runtime` matrix
+    consumed.
+    """
     inputs = posix_admission.get("inputs")
     require(isinstance(inputs, Mapping) and inputs.get("source") == admission.get("source"),
-            "resolver family and POSIX admission must share current source")
+            f"{label} and POSIX admission must share current source")
     matrix_identity = inputs.get("family_execution")
     require(isinstance(matrix_identity, Mapping) and isinstance(matrix_identity.get("path"), str),
             "POSIX admission family matrix identity differs")
@@ -6904,18 +6916,17 @@ def require_resolver_family_admission(
         matrix_bytes = matrix_path.read_bytes()
         matrix = json.loads(matrix_bytes)
     except (OSError, ValueError) as error:
-        raise LedgerError(f"POSIX family matrix is unreadable for resolver admission: {error}") from error
+        raise LedgerError(f"POSIX family matrix is unreadable for {label} admission: {error}") from error
     require(hashlib.sha256(matrix_bytes).hexdigest() == matrix_identity.get("sha256"),
             "POSIX family matrix changed after admission")
     matrix_inputs = matrix.get("inputs") if isinstance(matrix, Mapping) else None
     require(isinstance(matrix_inputs, Mapping), "POSIX family matrix inputs differ")
     for name in ("static_preparation", "dynamic_qualification"):
-        resolver_record, posix_record = admission.get(name), matrix_inputs.get(name)
-        require(isinstance(resolver_record, Mapping) and isinstance(posix_record, Mapping)
-                and resolver_record.get("path") == posix_record.get("path")
-                and resolver_record.get("sha256") == posix_record.get("sha256"),
-                f"resolver family and POSIX matrix must share the {name} receipt")
-    return admission
+        family_record, posix_record = admission.get(name), matrix_inputs.get(name)
+        require(isinstance(family_record, Mapping) and isinstance(posix_record, Mapping)
+                and family_record.get("path") == posix_record.get("path")
+                and family_record.get("sha256") == posix_record.get("sha256"),
+                f"{label} and POSIX matrix must share the {name} receipt")
 
 
 def resolver_private_artifact_view(
@@ -6931,6 +6942,61 @@ def resolver_private_artifact_view(
     view = dict(family)
     view["status"] = "planned"
     return view
+
+
+C_ABI_COMPAT_FAMILY_COMMAND = (
+    "./scripts/dev-x86_64.sh owned-c-abi-compat-family --static-preparation FILE "
+    "--dynamic-qualification FILE --output NEW_DIR"
+)
+
+
+def require_c_abi_compat_family_admission(
+    family: Mapping[str, Any],
+    posix_family: Mapping[str, Any],
+    posix_admission: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Admit libc.c-abi-compat only from a complete assessment on the POSIX cohort.
+
+    The family command's retained assessment runs every component against one
+    current product cohort; the admitted POSIX matrix must have used exactly
+    the same static-preparation and dynamic-qualification receipts.
+    """
+    require(family.get("id") == "libc.c-abi-compat", "wrong family for c-abi-compat admission")
+    status = family.get("status")
+    require(status in ALLOWED_STATUSES, "c-abi-compat admission family status is invalid")
+    evidence, _ = evidence_records(
+        family.get("native_evidence"), "family[libc.c-abi-compat].native_evidence",
+        unique_commands=True,
+    )
+    rows = [entry for entry in evidence if entry["command"] == C_ABI_COMPAT_FAMILY_COMMAND]
+    require(len(rows) == 1, "libc.c-abi-compat must name its family execution command")
+    row = rows[0]
+    if status == "planned":
+        require("receipt" not in row, "planned libc.c-abi-compat must not attach a family assessment")
+        return None
+
+    require(posix_family.get("status") == "foundation-verified" and posix_admission is not None,
+            "c-abi-compat foundation requires admitted libc.posix-runtime")
+    require(all(entry.get("state") == "verified" for entry in evidence),
+            "foundation-verified libc.c-abi-compat requires every native evidence gate")
+    receipt_value = row.get("receipt")
+    require(isinstance(receipt_value, str) and receipt_value,
+            "foundation-verified libc.c-abi-compat needs its family assessment")
+    receipt_path = Path(receipt_value)
+    require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
+            "c-abi-compat family assessment must be checkout-relative")
+    physical = ROOT / receipt_path
+    require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
+            and physical.is_relative_to(ROOT / ".work"),
+            "c-abi-compat family assessment must be a physical checkout .work file")
+    try:
+        import owned_c_abi_compat_family as c_abi_family
+
+        admission = c_abi_family.admission_facts(ROOT, receipt_path)
+    except (RuntimeError, OSError, ValueError, TypeError) as error:
+        raise LedgerError(f"c-abi-compat family assessment rejected: {error}") from error
+    require_posix_cohort_admission("c-abi-compat family", admission, posix_admission)
+    return admission
 
 
 def require_ctype_header_evidence(family: Mapping[str, Any]) -> None:
@@ -9626,6 +9692,9 @@ def _validate_ledger(
         resolver_family, posix_runtime, posix_runtime_admission
     )
     resolver_leaf = resolver_private_artifact_view(resolver_family, resolver_admission)
+    require_c_abi_compat_family_admission(
+        by_id["libc.c-abi-compat"], posix_runtime, posix_runtime_admission
+    )
     require_stdio_installed_file_engine_slice(by_id["libc.text-math-locale-stdio"])
     require_math_log2_artifact(by_id["libc.text-math-locale-stdio"])
     require_uchar_stateful_artifact(by_id["libc.text-math-locale-stdio"])

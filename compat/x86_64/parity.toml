@@ -18295,10 +18295,10 @@ depends_on = ["oracle.musl-toolchain", "libc.posix-runtime", "libc.pthread-tls",
 category = "c-abi"
 description = "Selected C ABI compatibility closure, including libc-test and differential accounting rather than a raw export count."
 aarch64_gates = ["libc-test", "differential", "compat"]
-source_owners = ["libc/src/lib.rs", "libc/src/c_abi.rs", "libc-test-harness", "compat/differential"]
+source_owners = ["libc/src/lib.rs", "libc/src/c_abi.rs", "libc-test-harness", "compat/differential", "compat/x86_64/c-abi-compat-family.toml", "compat/x86_64/owned_c_abi_compat_family.py", "compat/x86_64/owned_c_abi_compat_family_cohort.py"]
 x86_abi_prerequisites = ["x86 ELF symbol/linkage rules", "all selected C object and TLS layouts", "static and dynamic link behavior"]
 x86_header_prerequisites = ["Installed selected header surface must match the selected ABI ledger, not an accidental host sysroot."]
-native_evidence = [{ state = "required", command = "Define native x86 libc-test and musl differential artifact gates", scope = "Require a selected crabc-libc binary; source-only leaves cannot satisfy this family." }]
+native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh owned-c-abi-compat-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR", scope = "One current static-preparation/dynamic-qualification cohort's primary installed pair runs every c-abi-compat-family.toml component: each installed-product runner the family's verified slices cite, the frozen musl differential sources, and the pinned libc-test aggregate with this family's unit accounting. The retained assessment replays each component reader, binds every retained product root to that cohort, and names each failed component as a gap; source-only leaves cannot satisfy this family. It admits family evidence only: promotion and public x86 support remain separate." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "C/POSIX compatibility oracle." }]
 capabilities = [
   "process.globals",
