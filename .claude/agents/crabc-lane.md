@@ -26,8 +26,10 @@ session assigns it, integrates your commits into `main`, and owns `plan.md`.
 - Validators check structure and receipts; do not add per-artifact validator
   functions, restated ledger prose, count pins, or source-literal tests. Prove
   behavior by running it.
-- Never use `git stash`, push, or write refs other than your own branch. Do
-  not edit `plan.md` or `AGENTS.md`.
+- Never use `git stash`, push, or write refs other than your own branch.
+  Commit or discard every change before rebasing: this repository sets
+  `rebase.autostash`, which would use the stash stack shared by all
+  worktrees. Do not edit `plan.md` or `AGENTS.md`.
 
 ## Hand off
 
