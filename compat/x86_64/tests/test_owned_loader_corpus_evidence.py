@@ -47,6 +47,10 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         product_contract = evidence._product_reader()
         for relative in product_contract.DYNAMIC_REQUIRED:
             self._put(relative, ("sealed " + relative + "\n").encode(), executable=relative == "bin/crabc-cc-dynamic")
+        # Installed link inputs carry the product reader's source-bound mode
+        # policy (for example an executable libc.so), not the writer's umask.
+        for relative, mode in product_contract.DYNAMIC_LINK_INPUT_MODES.items():
+            (self.product / relative).chmod(mode)
         (self.product / "usr/include").mkdir(parents=True)
         alias = self.product / "lib/ld-musl-x86_64.so.1"
         alias.symlink_to("ld-crabc-x86_64.so.1")
