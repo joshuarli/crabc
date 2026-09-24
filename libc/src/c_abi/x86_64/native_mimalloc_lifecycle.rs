@@ -702,6 +702,58 @@ pub extern "C" fn __crabc_x86_owned_allocator_lifecycle_test_phase() -> c_int {
     c_int::from(ALLOCATOR_LIFECYCLE_PHASE.load(Ordering::Acquire))
 }
 
+/// Scalar process-wide allocator state for installed native soak fixtures.
+///
+/// Each field copies one `NativeRuntimeLifecycleAudit` count: registered
+/// PageMap slices and published submaps, registered arenas, live source
+/// threads (TLDs), live and high-water metadata capabilities, later-thread
+/// Theaps on the shared main Heap, and main-Heap abandoned pages. No address
+/// or capability crosses this ABI. The snapshot is meaningful only while no
+/// other thread is inside the allocator.
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+#[repr(C)]
+pub struct ProcessAllocatorTestAudit {
+    pub page_map_registered_entries: usize,
+    pub page_map_published_submaps: usize,
+    pub arena_registry_count: usize,
+    pub live_thread_count: usize,
+    pub metadata_live_capabilities: usize,
+    pub metadata_high_water_capabilities: usize,
+    pub shared_later_theaps: usize,
+    pub main_heap_abandoned_pages: usize,
+}
+
+/// Copies [`ProcessAllocatorTestAudit`]; returns -1 when the runtime has no
+/// auditable active image.
+///
+/// # Safety
+/// `output` names writable `ProcessAllocatorTestAudit` storage. The call
+/// enters one ordinary allocator operation and allocates nothing.
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_owned_allocator_process_test_audit(
+    output: *mut ProcessAllocatorTestAudit,
+) -> c_int {
+    let Some(output) = core::ptr::NonNull::new(output) else { return -1; };
+    let Some(audit) = crabc_mimalloc::__crabc_runtime::native_runtime_lifecycle_test_audit() else {
+        return -1;
+    };
+    // SAFETY: the caller supplies writable storage for this scalar copy.
+    unsafe {
+        output.as_ptr().write(ProcessAllocatorTestAudit {
+            page_map_registered_entries: audit.page_map_registered_entry_count,
+            page_map_published_submaps: audit.page_map_published_submap_count,
+            arena_registry_count: audit.arena_registry_count,
+            live_thread_count: audit.live_thread_count,
+            metadata_live_capabilities: audit.metadata_live_capability_count,
+            metadata_high_water_capabilities: audit.metadata_high_water_capability_count,
+            shared_later_theaps: audit.shared_later_theap_count,
+            main_heap_abandoned_pages: audit.main_heap_abandoned_page_count,
+        });
+    }
+    0
+}
+
 /// Scalar worker-owner state for installed native lifecycle fixtures.
 ///
 /// `owner_installed` is one while the calling worker's persistent native

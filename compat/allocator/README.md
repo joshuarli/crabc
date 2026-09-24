@@ -1943,10 +1943,13 @@ The same worker contract is checked through installed products:
 ```
 
 It builds (or accepts) native-shadow static and dynamic sysroots with
-`--allocator-lifecycle-test-audit`. That flag adds only the scalar
-`__crabc_x86_owned_allocator_worker_owner_test_audit`: the calling worker's
-owner and page-engine state, attached worker owners, and reclaimed worker
-descriptors. `compat/x86_64/owned_native_worker_lifecycle_probe.c` runs in
+`--allocator-lifecycle-test-audit`. That flag adds only scalar audits:
+`__crabc_x86_owned_allocator_worker_owner_test_audit` reports the calling
+worker's owner and page-engine state, attached worker owners, and reclaimed
+worker descriptors; `__crabc_x86_owned_allocator_process_test_audit` reports
+the process-wide PageMap, arena, TLD, metadata, later-Theap and abandoned-page
+counts that `./scripts/dev-x86_64.sh owned-native-allocator-stress` checks at
+each drained soak checkpoint. `compat/x86_64/owned_native_worker_lifecycle_probe.c` runs in
 static, static-PIE and dynamic PIE/non-PIE (kernel and direct loader) modes
 and must reproduce the pinned-musl transcript. The audited checks are:
 

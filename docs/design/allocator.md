@@ -182,6 +182,20 @@ took only the raw copy hangs in the repeated case, since its child inherits
 allocator locks held by vanished threads. Neither path enables automatic
 physical process destruction.
 
+`./scripts/dev-x86_64.sh owned-native-allocator-stress` runs the unmodified
+pinned `test/test-stress.c` (bound to `calloc`/`realloc`/`free` only through
+its `USE_STD_MALLOC` symbol) at 1, 2, 4 and 8 workers over several
+scale/iteration settings, source large-object mode, and the source default of
+32 workers, smallest first, through musl, the pinned-C backend, and audited
+native-shadow static-PIE and dynamic PIE products; every transcript must equal
+musl's. It then runs `compat/x86_64/owned_native_allocator_soak_probe.c`, a
+seeded, watchdog-bound churn of independent owners, multi-producer remote free,
+random transfer, exit-before-free, cleanup/TSD, `pthread_exit` and
+cancellation, and requires every drained checkpoint to hold no worker
+TLD/Theap/metadata/abandoned page and the PageMap/arena/metadata/RSS counts to
+plateau. Its evidence directory retains each transcript and
+`soak-summary.json`.
+
 Worker attachment has a separate Rust borrow boundary in
 `runtime_lifecycle.rs::attach_current_thread`: a compiler-TLS entry claim
 refuses recursive attachment before borrowing the lifecycle slot or claiming

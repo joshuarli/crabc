@@ -596,6 +596,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-underscore-fork [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed _Fork against musl
   owned-native-allocator-fork [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed native-shadow fork/atfork allocation against musl
   owned-native-worker-lifecycle [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed audited native-shadow worker owner lifecycle against musl
+  owned-native-allocator-stress [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  run pinned test-stress.c and the seeded audited soak through installed native-shadow products
   owned-aio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed POSIX AIO against pinned musl
   owned-process-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed residual POSIX process control
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
@@ -3883,12 +3884,22 @@ run_in_chroot_cap_container() {
     case "$command" in
         owned-package-corpus|owned-loader-synthetic|owned-protocol-database) execution_network+=(--network none) ;;
     esac
+    # The native allocator stress runner documents its development knobs.
+    local -a execution_environment=()
+    if [ "$command" = owned-native-allocator-stress ]; then
+        local knob
+        for knob in STRESS_CASES STRESS_TIMEOUT SOAK_SEEDS SOAK_ROUNDS SOAK_WORKERS SOAK_INTERVAL SOAK_WATCHDOG SKIP; do
+            knob="CRABC_NATIVE_ALLOCATOR_$knob"
+            [ -z "${!knob+x}" ] || execution_environment+=(--env "$knob=${!knob}")
+        done
+    fi
     prepare_work_dir
     docker run --rm --init \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         "${execution_network[@]}" \
+        "${execution_environment[@]}" \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
@@ -7230,7 +7241,7 @@ case "$command" in
     native-thread-signal-abi) ;;
     owned-system-cancellation) ;;
     owned-rand) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-calendar-component|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-native-allocator-stress|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-calendar-component|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-strfmon) ;;
     owned-process-globals) ;;
     owned-pthread-spin) ;;
@@ -7484,7 +7495,7 @@ case "$command" in
             set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         fi
         ;;
-    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy|owned-regex)
+    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-native-allocator-stress|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy|owned-regex)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
@@ -9582,6 +9593,10 @@ case "$command" in
     owned-native-worker-lifecycle)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_native_worker_lifecycle.sh "$@"
+        ;;
+    owned-native-allocator-stress)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_native_allocator_stress.sh "$@"
         ;;
     owned-aio)
         ensure_image
