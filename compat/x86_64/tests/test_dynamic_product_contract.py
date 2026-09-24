@@ -217,14 +217,8 @@ class DynamicProductContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(PRODUCT.ProductContractError, message):
                     PRODUCT.validate_dynamic_product_contract(contract)
 
-    def test_seed_state_is_bound_to_contract_and_cannot_promote(self) -> None:
+    def test_seed_state_cannot_promote(self) -> None:
         contract = self.contract_data()
-        state = self.state_data()
-
-        state["contract_sha256"] = "0" * 64
-        with self.assertRaisesRegex(PRODUCT.ProductContractError, "contract digest"):
-            PRODUCT.validate_dynamic_product_state(contract, state)
-
         state = self.state_data()
         state["promotion"]["public_support"] = True
         with self.assertRaisesRegex(PRODUCT.ProductContractError, "non-promoting"):

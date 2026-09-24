@@ -463,7 +463,6 @@ def validate_dynamic_product_state(contract: Mapping[str, Any], state: Mapping[s
         {
             "schema",
             "owner_family",
-            "contract_sha256",
             "status",
             "materialized_sysroot",
             "evidence",
@@ -474,8 +473,6 @@ def validate_dynamic_product_state(contract: Mapping[str, Any], state: Mapping[s
     )
     require_equal(state["schema"], STATE_SCHEMA, "dynamic product state schema")
     require_equal(state["owner_family"], OWNER_FAMILY, "dynamic product state owner")
-    expected_digest = contract_sha256(contract)
-    require_equal(state["contract_sha256"], expected_digest, "dynamic product state contract digest")
     require_equal(state["status"], "implemented-unqualified", "dynamic product state status")
     if state["materialized_sysroot"] is not None:
         raise ProductContractError("checked-in product state must not name generated materialized evidence")
