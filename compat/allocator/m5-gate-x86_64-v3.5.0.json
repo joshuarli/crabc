@@ -1,0 +1,247 @@
+{
+  "schema": "crabc-mimalloc-x86_64-m5-gate",
+  "format": 1,
+  "upstream": {
+    "version": "3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801"
+  },
+  "evidence": {
+    "native:pointer-dispatch": {
+      "native_tests": [
+        "native_aligned_reallocate",
+        "native_concurrent_nonlocal_reallocate",
+        "native_huge_singleton_local_free",
+        "native_owner_first_allocation_dispatch",
+        "native_owner_local_reallocate",
+        "native_pointer_current_owner_reallocate",
+        "native_pointer_first_current_owner_reallocate",
+        "native_pointer_first_free",
+        "native_pointer_first_initial_foreign_free",
+        "native_pointer_first_initial_local_free",
+        "native_pointer_first_nonlocal_reallocate",
+        "native_pointer_first_usable_size"
+      ],
+      "scope": "free, usable-size, and realloc derive page, canonical block, and local/remote/abandoned behavior from PageMap state on the initial and later owners, including aligned, huge, current-owner in-place, nonlocal replacement, and concurrent nonlocal realloc."
+    },
+    "native:remote-publication": {
+      "native_tests": [
+        "native_live_remote_free",
+        "native_live_remote_owner_registry_reuse",
+        "native_page_local_live_remote_protocol",
+        "native_post_exit_claimed_remote_producers",
+        "native_terminal_completion_live_remote_free",
+        "native_two_live_remote_owners"
+      ],
+      "scope": "Foreign frees publish through the page-local xthread_free protocol to one or two live owners, across repeated epochs, and against a claimed post-exit page, without borrowing an owner's TLD, Theap, or engine."
+    },
+    "native:generic-exit": {
+      "native_tests": [
+        "native_attachment_only_process_done",
+        "native_concurrent_mixed_post_exit_completions",
+        "native_initial_all_free_local_fork",
+        "native_initial_out_of_order_post_exit_free",
+        "native_initial_persistent_live_transfer",
+        "native_initial_persistent_quiescent_fork",
+        "native_initial_post_exit_free",
+        "native_multiple_post_exit_completions",
+        "native_owner_exit_collection_race",
+        "native_post_exit_lifecycle",
+        "native_post_exit_terminal_proof_fork_gate",
+        "native_post_exit_with_local_session",
+        "native_sole_post_exit_lifecycle",
+        "native_source_published_live_owner_exit",
+        "native_source_selected_medium_owner_exit",
+        "native_three_post_exit_lifecycle",
+        "native_two_post_exit_lifecycle"
+      ],
+      "scope": "One generic owner-exit traversal abandons or releases every page shape, races live publishers, and leaves post-exit clients freeable in any order by independent owners, including across fork gates."
+    },
+    "native:abandon-reclaim-release": {
+      "native_tests": [
+        "native_aggregate_post_exit_reclaim",
+        "native_concurrent_post_exit_os_singletons",
+        "native_concurrent_post_exit_page_release",
+        "native_ordinary_mapped_regular_reclaim",
+        "native_pointer_first_post_exit_os_release",
+        "native_post_exit_failed_os_release",
+        "native_post_exit_huge_arena_singleton_release",
+        "native_post_exit_split_releaser_lifecycle",
+        "native_post_exit_terminal_owner_retention",
+        "native_reclaim_on_free"
+      ],
+      "scope": "Abandoned pages are reclaimed on allocation and on free, released through PageMap/arena/OS terminal tails by split and concurrent releasers, and a failed OS release retains one terminal owner without retaining any worker."
+    },
+    "native:state-auditing": {
+      "native_tests": [
+        "native_initial_local_page_engine_persistence",
+        "native_pointer_first_nonlocal_reallocate_state_auditor",
+        "native_post_exit_claim_page_map_lifetime",
+        "native_runtime_first_arena_policy",
+        "native_runtime_startup_regular_arena"
+      ],
+      "scope": "Scalar audits return PageMap entries (excluding retained metadata pages), arena registrations, abandoned counts, and live thread and Theap counts to baseline, and keep the PageMap live for late same-page producers."
+    },
+    "native:deterministic-churn": {
+      "native_tests": [
+        "native_owner_local_persistent_cycles",
+        "native_parallel_local_workers",
+        "native_parked_compatibility_local_cycles",
+        "native_persistent_worker_fastpath"
+      ],
+      "scope": "Deterministic persistent-owner allocate/free/realloc cycles at 1, 2, 4, and 8 workers with collect-abandon and reclaim teardowns, owner-local operation counts, and a metadata registration plateau."
+    },
+    "differential:reclaim-on-free": {
+      "command": [
+        "python3",
+        "compat/allocator/reclaim_on_free.py"
+      ],
+      "scope": "Pinned C and Rust agree on mi_abandoned_page_try_reclaim for an own full page, a foreign page with an empty and a nonempty bin queue, and a large page."
+    },
+    "lifecycle:bounded-laboratory": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_lifecycle_evidence.py",
+        "--report",
+        "{scratch}/lifecycle.json"
+      ],
+      "scope": "The bounded x86 lifecycle lane: focused lifecycle and concurrency unit tests, the remote-free Loom models, and the runtime first-arena integration witness."
+    },
+    "ratchet:architecture": {
+      "command": [
+        "python3",
+        "compat/allocator/architecture_ratchet.py",
+        "--check",
+        "--report",
+        "{scratch}/architecture-ratchet.json"
+      ],
+      "scope": "The x86 build's selected production source has no structural prohibition or ratchet regression: no compiled forbidden scaffolding, no caller-identity-first free, PageMap-first realloc, and no lease-acquiring call site reachable from allocation, free, realloc, or usable-size."
+    },
+    "codegen:hot-path-audit": {
+      "command": [
+        "python3",
+        "compat/allocator/codegen_audit_x86_64.py",
+        "--offline",
+        "--label",
+        "m5-gate"
+      ],
+      "scope": "Executed steady-state hot paths and static reachability of the Rust engine against pinned C: instruction counts, helper calls, atomics, divisions, and any syscall, panic, or formatting code on the traced paths."
+    },
+    "runtime:libc-shadow-pthread-teardown": {
+      "command": null,
+      "scope": "`./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown`: selected libc native-mimalloc-shadow worker attach and teardown through the owned runtime."
+    },
+    "runtime:owned-native-allocator-stress": {
+      "command": null,
+      "scope": "`./scripts/dev-x86_64.sh owned-native-allocator-stress`: unmodified pinned test-stress.c at 1-8 workers and the seeded, watchdog-bound audited soak through static-PIE and dynamic native-shadow products, compared with musl and pinned C."
+    },
+    "perf:engine-early-proof": {
+      "command": null,
+      "scope": "`./compat/allocator/run-x86_64.sh allocator-perf-engine`: native versus pinned-C local, four-thread, and cross-thread engine throughput on an uncontended host."
+    }
+  },
+  "gates": [
+    {
+      "id": "m5.pointer-dispatch",
+      "required": true,
+      "acceptance": "free, usable-size, and realloc dispatch from pointer-derived PageMap and page state before any caller-identity decision, and realloc follows mi_theap_realloc_zero_ex.",
+      "evidence": [
+        "native:pointer-dispatch",
+        "ratchet:architecture"
+      ],
+      "blocked_by": []
+    },
+    {
+      "id": "m5.remote-publication",
+      "required": true,
+      "acceptance": "Remote frees publish through the pinned page-local protocol to live owners without owner borrows, and PageMap and metadata stay valid through every legal publication.",
+      "evidence": [
+        "native:remote-publication",
+        "lifecycle:bounded-laboratory"
+      ],
+      "blocked_by": []
+    },
+    {
+      "id": "m5.generic-exit",
+      "required": true,
+      "acceptance": "One source owner-exit traversal handles every page shape and late publication, and surviving pages are freeable by any thread after the owner's TLD/Theap is released.",
+      "evidence": [
+        "native:generic-exit"
+      ],
+      "blocked_by": []
+    },
+    {
+      "id": "m5.abandon-reclaim-release",
+      "required": true,
+      "acceptance": "Abandoned pages are reclaimed on allocation and on free as pinned mimalloc decides, released only after source state proves no client or producer remains, and a failed release retains exactly one terminal owner.",
+      "evidence": [
+        "native:abandon-reclaim-release",
+        "differential:reclaim-on-free"
+      ],
+      "blocked_by": []
+    },
+    {
+      "id": "m5.no-forbidden-scaffolding",
+      "required": true,
+      "acceptance": "The x86 production build compiles no forbidden scaffolding and reaches no structural PageMap lease, scheduler, or registry scan from an ordinary allocator entry.",
+      "evidence": [
+        "ratchet:architecture"
+      ],
+      "blocked_by": []
+    },
+    {
+      "id": "m5.libc-shadow",
+      "required": true,
+      "acceptance": "The selected libc native-mimalloc-shadow product passes its ABI and pthread lifecycle suite.",
+      "evidence": [
+        "runtime:libc-shadow-pthread-teardown"
+      ],
+      "blocked_by": [
+        "The selected-libc shadow evidence runs only under the runtime launcher against installed sysroots, and it publishes no revision-bound receipt this gate can verify."
+      ]
+    },
+    {
+      "id": "m5.state-auditing",
+      "required": true,
+      "acceptance": "Quiescent scalar audits return PageMap, arena, abandonment, thread, and Theap state to baseline after every exercised lifecycle.",
+      "evidence": [
+        "native:state-auditing"
+      ],
+      "blocked_by": []
+    },
+    {
+      "id": "m5.churn-soak",
+      "required": true,
+      "acceptance": "Deterministic churn and a seeded soak complete with bounded metadata and exact final state.",
+      "evidence": [
+        "native:deterministic-churn",
+        "runtime:owned-native-allocator-stress"
+      ],
+      "blocked_by": [
+        "The seeded soak runs only under the runtime launcher and publishes no revision-bound receipt this gate can verify."
+      ]
+    },
+    {
+      "id": "m5.upstream-stress",
+      "required": true,
+      "acceptance": "Unmodified pinned test-stress.c passes across its worker, scale, and large-object matrix through the native products.",
+      "evidence": [
+        "runtime:owned-native-allocator-stress"
+      ],
+      "blocked_by": [
+        "The upstream pthread stress runs only under the runtime launcher and publishes no revision-bound receipt this gate can verify."
+      ]
+    },
+    {
+      "id": "m5.codegen-performance",
+      "required": true,
+      "acceptance": "Active-target codegen of the hot paths is audited against pinned C and early engine throughput meets the plan's local-path structural gate.",
+      "evidence": [
+        "codegen:hot-path-audit",
+        "perf:engine-early-proof"
+      ],
+      "blocked_by": [
+        "Early performance proof needs the local-path structural gate of 0.25x pinned C; the engine measures about 0.04x (lane alloc-perf), and qualifying measurements need an uncontended host."
+      ]
+    }
+  ]
+}

@@ -33,6 +33,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m2
   allocator-m3 [--differential-only|--miri-only]
   allocator-m4 [--check|--gate ID|--reader-tests]
+  allocator-m5 [--check|--gate ID|--reader-tests]
   allocator-m7 [--check|--gate ID|--reader-tests]
   allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--os-publication-receiver|--metadata-publication-receiver|--compile-only|--canonical-m2-vm-c-compile-regression|--retry-helper-regression|--timeout-clock-helper-regression|--placement-warning-helper-regression|--mbind-boundary-regression|--huge-branch-diagnosis|--reader-tests]
   allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
@@ -367,7 +368,7 @@ case "$command" in
         usage
         exit 0
         ;;
-    allocator-dynamic-full-direct-small-unmapped-reabandon|image|allocator|allocator-m1|allocator-m2|allocator-m3|allocator-m4|allocator-m7|allocator-tls|allocator-lifecycle|allocator-startup-regular-arena|allocator-initialization-tld|allocator-fault|allocator-fault-seam-inventory|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-live-owner-full-medium-remote-release|allocator-live-owner-full-medium-one-remote-unfull-reuse|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-regular-mapped-reclaim|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-direct-small-unmapped-reabandon|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-unmapped-reabandon|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-medium-unmapped-reabandon|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-unmapped-reabandon|allocator-dynamic-full-large-homogeneous-aggregate|allocator-dynamic-full-medium-homogeneous-aggregate|allocator-dynamic-full-singleton-homogeneous-aggregate|allocator-dynamic-full-non-direct-small-homogeneous-aggregate|allocator-later-thread-exit-full-direct-small-pages|allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate|allocator-automatic-pthread-destructor|allocator-cancellation-pthread-destructor|allocator-process-done-pthread-key|allocator-automatic-arena-reservation|allocator-dynamic-os-aligned-singleton|allocator-dynamic-arena-singleton-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-deferred-free-callback|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-perf-engine|allocator-codegen-audit|allocator-huge-registry|allocator-huge-reservation|allocator-huge-numa-qualification|allocator-arena-destroy|allocator-m2-arena-lifecycle|allocator-m2-metadata-ownership|allocator-heap-destroy|allocator-reclaim-on-free|allocator-subprocess-lifecycle|allocator-heap-lifecycle|allocator-m6|allocator-unit|allocator-native-integration|allocator-core-unit)
+    allocator-dynamic-full-direct-small-unmapped-reabandon|image|allocator|allocator-m1|allocator-m2|allocator-m3|allocator-m5|allocator-m4|allocator-m7|allocator-tls|allocator-lifecycle|allocator-startup-regular-arena|allocator-initialization-tld|allocator-fault|allocator-fault-seam-inventory|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-live-owner-full-medium-remote-release|allocator-live-owner-full-medium-one-remote-unfull-reuse|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-regular-mapped-reclaim|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-direct-small-unmapped-reabandon|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-unmapped-reabandon|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-medium-unmapped-reabandon|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-unmapped-reabandon|allocator-dynamic-full-large-homogeneous-aggregate|allocator-dynamic-full-medium-homogeneous-aggregate|allocator-dynamic-full-singleton-homogeneous-aggregate|allocator-dynamic-full-non-direct-small-homogeneous-aggregate|allocator-later-thread-exit-full-direct-small-pages|allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate|allocator-automatic-pthread-destructor|allocator-cancellation-pthread-destructor|allocator-process-done-pthread-key|allocator-automatic-arena-reservation|allocator-dynamic-os-aligned-singleton|allocator-dynamic-arena-singleton-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-deferred-free-callback|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-perf-engine|allocator-codegen-audit|allocator-huge-registry|allocator-huge-reservation|allocator-huge-numa-qualification|allocator-arena-destroy|allocator-m2-arena-lifecycle|allocator-m2-metadata-ownership|allocator-heap-destroy|allocator-reclaim-on-free|allocator-subprocess-lifecycle|allocator-heap-lifecycle|allocator-m6|allocator-unit|allocator-native-integration|allocator-core-unit)
         ;;
     allocator-init-recursion)
         ;;
@@ -415,6 +416,22 @@ case "$command" in
         fi
         ensure_image
         run_in_container "${m4_command[@]}"
+        ;;
+    allocator-m5)
+        # The gate exits nonzero until every required M5 gate passes.
+        if [ "$#" -eq 0 ]; then
+            m5_command=(python3 compat/allocator/x86_64_m5_gate.py)
+        elif [ "$#" -eq 1 ] && [ "$1" = --check ]; then
+            m5_command=(python3 compat/allocator/x86_64_m5_gate.py --check)
+        elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
+            m5_command=(python3 compat/allocator/tests/test_x86_64_m5_gate.py)
+        elif [ "$#" -eq 2 ] && [ "$1" = --gate ]; then
+            m5_command=(python3 compat/allocator/x86_64_m5_gate.py --gate "$2")
+        else
+            fail "allocator-m5 accepts only --check, --gate ID, or --reader-tests"
+        fi
+        ensure_image
+        run_in_container "${m5_command[@]}"
         ;;
     allocator-m7)
         # The gate exits nonzero until every required M7 gate passes.

@@ -93,6 +93,17 @@ thread finishes. `mi_heap_delete` of a Heap with pages is not covered yet.
 Logs live under `x86_64/heap-lifecycle` in the allocator artifacts
 directory.
 
+`./compat/allocator/run-x86_64.sh allocator-m5` is the fail-closed Milestone 5
+gate. [`m5-gate-x86_64-v3.5.0.json`](m5-gate-x86_64-v3.5.0.json) gives each M5
+condition of `plan.md` one gate and names its evidence: groups of
+`crabc-mimalloc/tests/native_*` targets (every target belongs to exactly one
+group), allocator-container runners, and runtime-launcher suites the gate
+cannot execute, which therefore keep their gates blocked. It writes
+`x86_64/m5-gate/report.json` under the allocator artifacts directory and exits
+nonzero until every gate passes. `--gate ID` runs one gate's evidence,
+`--check` validates the contract alone, and `--reader-tests` runs its checker
+tests. The frozen AArch64 `m5-gate-v3.5.0.json` remains `run.py`'s contract.
+
 `./compat/allocator/run-x86_64.sh allocator-m6` is the fail-closed Milestone 6
 gate. [`m6-gate-v3.5.0.json`](m6-gate-v3.5.0.json) partitions every applicable
 Heap, Theap, arena, managed-memory, and subprocess item selected from
