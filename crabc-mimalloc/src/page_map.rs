@@ -328,8 +328,20 @@ impl PageMap {
         // whose direct-map branch therefore already satisfies the request.
         // Keep the exact direct primitive here: no overmap cleanup owner can
         // arise from a statically page-aligned PageMap extent.
-        let mapping = Mapping::map_for_allocator(config, extra_reserve_size, access)
-            .map_err(PageMapInitializationError::failed)?;
+        let mapping = match Mapping::map_for_allocator(config, extra_reserve_size, access) {
+            Ok(mapping) => mapping,
+            Err(error) => {
+                // `src/page-map.c:302-305`. Process startup holds no
+                // allocator projection a callback could reenter, and no
+                // output or error callback can be registered before it.
+                let _ = crate::process_init::process_error_message(
+                    crate::diagnostic_output::SourceErrorReport::PageMapReservation {
+                        kib: extra_reserve_size / 1024,
+                    },
+                );
+                return Err(PageMapInitializationError::failed(error));
+            }
+        };
         let base = match mapping.base() {
             Ok(base) => base,
             Err(error) => {

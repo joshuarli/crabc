@@ -634,6 +634,9 @@ ADAPTER_TRACE_END = "CRABC_MI_M7_ADAPTER_TRACE_END"
 THREAD_INIT_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_thread_init_driver.c"
 THREAD_INIT_TRACE_BEGIN = "CRABC_MI_M7_THREAD_INIT_TRACE_BEGIN"
 THREAD_INIT_TRACE_END = "CRABC_MI_M7_THREAD_INIT_TRACE_END"
+PAGE_MAP_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_page_map_driver.c"
+PAGE_MAP_TRACE_BEGIN = "CRABC_MI_M7_PAGE_MAP_TRACE_BEGIN"
+PAGE_MAP_TRACE_END = "CRABC_MI_M7_PAGE_MAP_TRACE_END"
 
 
 def run_adapter_differential(
@@ -750,6 +753,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust option-effects differential")
     mode.add_argument("--thread-init-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter thread-initialization failure differential")
+    mode.add_argument("--page-map-differential", action="store_true",
+        help="run the shared-driver pinned-C/native-adapter startup page-map failure differential")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -768,6 +773,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             end=THREAD_INIT_TRACE_END, report_name="thread-init.json",
         )
         print(f"M7 thread-initialization differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.page_map_differential:
+        report = run_adapter_differential(
+            arguments.offline, driver=PAGE_MAP_DRIVER, begin=PAGE_MAP_TRACE_BEGIN,
+            end=PAGE_MAP_TRACE_END, report_name="page-map.json",
+        )
+        print(f"M7 startup page-map differential passed: {report['compared_key_count']} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

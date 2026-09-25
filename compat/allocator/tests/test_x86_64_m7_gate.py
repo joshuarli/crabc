@@ -50,6 +50,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:option-profiles",
             "differential:options-environment",
             "differential:reclaim-options",
+            "differential:startup-page-map-failure",
             "differential:thread-init-failure",
         ])
         # Every M7 gate but the options/environment gate names an open condition.

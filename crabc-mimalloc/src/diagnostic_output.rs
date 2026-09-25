@@ -980,6 +980,9 @@ pub(crate) enum SourceErrorReport {
     ThreadLocalDataAllocation,
     /// `_mi_theap_alloc`, `src/theap.c:327-329` (ENOMEM).
     TheapAllocation,
+    /// `mi_page_map_init_once`, `src/page-map.c:302-305` (ENOMEM): the page
+    /// map's reservation, in KiB, could not be mapped.
+    PageMapReservation { kib: usize },
 }
 
 impl SourceErrorReport {
@@ -989,7 +992,10 @@ impl SourceErrorReport {
             Self::AllocationTooLarge { .. }
             | Self::AlignedLargeAlignmentOffset { .. }
             | Self::ReservationTooLarge { .. } => Errno::OVERFLOW,
-            Self::OutOfMemory { .. } | Self::ThreadLocalDataAllocation | Self::TheapAllocation => Errno::NOMEM,
+            Self::OutOfMemory { .. }
+            | Self::ThreadLocalDataAllocation
+            | Self::TheapAllocation
+            | Self::PageMapReservation { .. } => Errno::NOMEM,
             Self::AlignedTooLarge { .. } | Self::BadAlignment { .. } => Errno::INVAL,
         }
     }
@@ -1034,6 +1040,11 @@ impl SourceErrorReport {
             }
             Self::TheapAllocation => {
                 message.append(b"unable to allocate theap meta-data\n");
+            }
+            Self::PageMapReservation { kib } => {
+                message.append(b"unable to reserve virtual memory for the page map (");
+                decimal(&mut message, kib);
+                message.append(b" KiB)\n");
             }
             Self::ReservationTooLarge { size } => {
                 message.append(b"memory reservation request is too large (size ");

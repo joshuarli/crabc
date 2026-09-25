@@ -162,6 +162,13 @@ const PROCESS_INITIALIZING: u8 = 1;
 const PROCESS_ACTIVE: u8 = 2;
 const PROCESS_RETAINED: u8 = 3;
 const PROCESS_ALLOCATABLE: u8 = 4;
+/// Pinned `mi_process_init_once` ignores a failed `_mi_page_map_init`
+/// (`src/init.c:549`, reported at `src/page-map.c:302-305`) and completes;
+/// the process lives on without a page map, so every allocation fails with
+/// ENOMEM. This state is that process: startup succeeded, there is no owner,
+/// and no allocation, attachment, or page operation can reach an engine.
+#[cfg(target_arch = "x86_64")]
+const PROCESS_PAGE_MAP_UNAVAILABLE: u8 = 5;
 /// Private selected-native process-finalizer state. This does not replace the
 /// source process owner state: it records only that libc has mapped pinned
 /// `mi_process_done_once`'s automatic-thread-done-key deletion into its
@@ -3552,6 +3559,15 @@ impl RuntimeProcessStorage {
         self.state.load(Ordering::Acquire) == PROCESS_ACTIVE
     }
 
+    /// Whether startup completed without a page map.
+    #[inline]
+    fn page_map_unavailable(&self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        return self.state.load(Ordering::Acquire) == PROCESS_PAGE_MAP_UNAVAILABLE;
+        #[cfg(not(target_arch = "x86_64"))]
+        false
+    }
+
     #[inline]
     fn logical_process_done_is_complete(&self) -> bool {
         self.logical_process_done.load(Ordering::Acquire) == PROCESS_DONE_COMPLETE
@@ -4528,6 +4544,17 @@ impl RuntimeProcessStorage {
                     Ok(_)
                 ),
                 PROCESS_ALLOCATABLE => self.is_on_initial_allocation_thread(),
+                PROCESS_PAGE_MAP_UNAVAILABLE => {
+                    if entry == ProcessStartEntry::RuntimeStartup {
+                        // SAFETY: the embedding runtime's startup call runs
+                        // on the initial thread before other threads can emit
+                        // allocator diagnostics; no projection exists.
+                        unsafe {
+                            ProcessMainInitializationStorage::global().complete_runtime_startup_without_page_map()
+                        };
+                    }
+                    true
+                }
                 _ => false,
             };
         };
@@ -4561,9 +4588,27 @@ impl RuntimeProcessStorage {
                     entry,
                 )
         };
-        let Ok((owner, startup)) = owner else {
-            self.retain();
-            return false;
+        let (owner, startup) = match owner {
+            Ok(prepared) => prepared,
+            Err(ProcessMainInitError::PageMap(ProcessPageMapError::Initialization(_))) => {
+                // The page-map mapping failed and was reported at its source
+                // site; C's `mi_process_init_once` continues. Its loader tail
+                // flushes that report when this is the runtime's startup.
+                if entry == ProcessStartEntry::RuntimeStartup {
+                    // SAFETY: the startup call runs on the initial thread
+                    // before other threads exist; no projection is live.
+                    unsafe {
+                        ProcessMainInitializationStorage::global().complete_runtime_startup_without_page_map()
+                    };
+                }
+                self.state.store(PROCESS_PAGE_MAP_UNAVAILABLE, Ordering::Release);
+                let _ = completion.complete();
+                return true;
+            }
+            Err(_) => {
+                self.retain();
+                return false;
+            }
         };
         if !self.publish_prepared_owner(owner) { return false; }
         // No owner/Theap projection survives publication. Reservation and
@@ -9955,7 +10000,9 @@ pub fn initialize_process(page_size_bytes: usize) -> bool {
 pub fn process_is_active() -> bool {
     #[cfg(target_arch = "x86_64")]
     if admission::native_source_entry_is_terminal() { return false; }
-    RUNTIME_PROCESS.is_active()
+    // A process without a page map still runs each new thread through its
+    // (deferred) attachment, whose allocations then fail as C's do.
+    RUNTIME_PROCESS.is_active() || RUNTIME_PROCESS.page_map_unavailable()
 }
 
 /// Applies the selected default-release logical process finalizer after libc
@@ -9993,6 +10040,16 @@ pub fn finish_selected_default_release_process_after_user_atexit() -> SelectedPr
     };
     if !current_owner_is_safe {
         return SelectedProcessDoneResult::Retained;
+    }
+    if RUNTIME_PROCESS.page_map_unavailable() {
+        // `mi_process_done_once` finds no page, arena, or Theap state to
+        // release; only its one-way logical boundary remains.
+        return match RUNTIME_PROCESS.logical_process_done.compare_exchange(
+            PROCESS_DONE_OPEN, PROCESS_DONE_COMPLETE, Ordering::AcqRel, Ordering::Acquire,
+        ) {
+            Ok(_) => SelectedProcessDoneResult::Completed,
+            Err(_) => SelectedProcessDoneResult::AlreadyCompleted,
+        };
     }
     RUNTIME_PROCESS.finish_selected_default_release_process_after_user_atexit()
 }
@@ -10503,6 +10560,10 @@ unsafe fn native_initial_thread_usable_size(block: core::ptr::NonNull<u8>) -> Op
 /// C backend never calls this boundary.
 #[doc(hidden)]
 pub fn prepare_native_later_thread_arena() -> bool {
+    // No arena can exist without a page map; there is nothing to prepare.
+    if RUNTIME_PROCESS.page_map_unavailable() {
+        return true;
+    }
     #[cfg(target_arch = "x86_64")]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return false;
@@ -10746,6 +10807,11 @@ fn native_allocate_shaped_slow(
             let _ = crate::process_init::process_error_message(report);
             return NativePageAllocationResult::AllocationFailed;
         }
+    }
+    // No owner, and so no local fast Theap, exists without a page map.
+    #[cfg(target_arch = "x86_64")]
+    if RUNTIME_PROCESS.page_map_unavailable() {
+        return allocate_without_page_map(request, shape);
     }
     // A thread admitted to a child subprocess allocates from its own child
     // Theap, as source `mi_malloc` does through that thread's default Theap.
@@ -17080,6 +17146,14 @@ fn attach_current_thread_after_entry(
         ThreadLifecycleState::Fresh => {}
     }
 
+    // Without a page map the metadata page for this thread's TLD cannot be
+    // registered: pinned `mi_tld_create` fails (`src/init.c:267-269`).
+    #[cfg(target_arch = "x86_64")]
+    if RUNTIME_PROCESS.page_map_unavailable() {
+        return Some(defer_current_thread_attachment(
+            thread_local_data_allocation_reports(), report_deferred,
+        ));
+    }
     if !RUNTIME_PROCESS.is_active() {
         return Some(ThreadAttachResult::Inactive);
     }
@@ -17250,6 +17324,65 @@ fn deferred_attach_reports(error: MainHeapThreadAttachmentError) -> Option<[Sour
             Report::TheapAllocation,
         ]),
         _ => None,
+    }
+}
+
+/// The reports of a failed TLD metadata allocation (`src/init.c:267-269`).
+#[cfg(target_arch = "x86_64")]
+fn thread_local_data_allocation_reports() -> [SourceErrorReport; 2] {
+    [
+        SourceErrorReport::OutOfMemory { size: crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE },
+        SourceErrorReport::ThreadLocalDataAllocation,
+    ]
+}
+
+/// One allocation in a process without a page map.
+///
+/// An uninitialized thread retries its `_mi_thread_init`, which fails and
+/// reports again. On an initialized thread (the initial one) pinned
+/// `_mi_malloc_generic` finds a fresh page whose page-map registration
+/// fails, retries after its forced collection, and reports out-of-memory
+/// for its generic request (`src/page.c:1061-1064`); a request beyond
+/// `MI_MAX_ALLOC_SIZE` is first refused by each `mi_find_page`
+/// (`src/page.c:951-954`). The page-map commit warnings of those attempts
+/// have no receiver here (`known-differences.md`,
+/// CRABC-MI-STARTUP-PAGE-MAP-FAILURE).
+#[cfg(target_arch = "x86_64")]
+fn allocate_without_page_map(request: usize, shape: NativeAllocationShape) -> NativePageAllocationResult {
+    if current_thread_attach_is_deferred() {
+        let _ = retry_deferred_attachment();
+        return NativePageAllocationResult::AllocationFailed;
+    }
+    let size = source_generic_request(request, shape);
+    if size > crate::config::MAX_ALLOC_SIZE {
+        for _ in 0..2 {
+            let _ = crate::process_init::process_error_message(SourceErrorReport::AllocationTooLarge { size });
+        }
+    }
+    let _ = crate::process_init::process_error_message(SourceErrorReport::OutOfMemory { size });
+    NativePageAllocationResult::AllocationFailed
+}
+
+/// The size pinned `_mi_malloc_generic` receives for one validated request:
+/// the request itself, or the aligned entry's over-allocation or OS-aligned
+/// singleton size (`src/alloc-aligned.c:68-188`).
+#[cfg(target_arch = "x86_64")]
+fn source_generic_request(request: usize, shape: NativeAllocationShape) -> usize {
+    use crate::aligned::{allocation_plan, AlignedAllocationPlan};
+    use crate::config::{MAX_ALIGN_SIZE, PAGE_MAX_OVERALLOC_ALIGN};
+    let NativeAllocationShape::Aligned { alignment, offset } = shape else { return request; };
+    let page_size = ProcessStartupFactsCell::global().published()
+        .map_or(4096, |facts| facts.page_size().bytes());
+    match allocation_plan(request, alignment, offset, page_size) {
+        Some(AlignedAllocationPlan::Natural) => request,
+        Some(AlignedAllocationPlan::Overallocate { request })
+        | Some(AlignedAllocationPlan::HugeSingleton { request, .. }) => request,
+        // The same refused generic requests `begin_deferred_free_aligned_allocation`
+        // forms after `aligned_precheck` passed.
+        None if alignment > PAGE_MAX_OVERALLOC_ALIGN => {
+            if request <= SMALL_SIZE_MAX { SMALL_SIZE_MAX + 1 } else { request }
+        }
+        None => request.max(MAX_ALIGN_SIZE).saturating_add(alignment - 1),
     }
 }
 
@@ -19005,28 +19138,35 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn page_map_failure_at_first_allocation_start_is_retained_without_restart() {
+    fn page_map_failure_at_first_allocation_start_continues_without_page_map() {
         crate::test_process::run_in_fresh_process(
-            "runtime_lifecycle::tests::page_map_failure_at_first_allocation_start_is_retained_without_restart",
+            "runtime_lifecycle::tests::page_map_failure_at_first_allocation_start_continues_without_page_map",
             || {
                 assert!(publish_native_process_startup_facts(host_startup_facts()));
                 // The first raw mapping in the once body reserves the PageMap.
                 let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+                // Pinned `mi_process_init_once` ignores the failed page map
+                // (`src/init.c:549`) and the allocation fails as C's does.
                 assert!(matches!(native_allocate_aligned(48, 16, false),
-                    NativePageAllocationResult::Unavailable));
+                    NativePageAllocationResult::AllocationFailed));
                 assert_eq!(fault.observed(), 1);
-                assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_RETAINED,
-                    "a post-claim PageMap failure is terminal for this process");
+                assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_PAGE_MAP_UNAVAILABLE);
                 // Observe every later primitive without failing any.
                 fault.set(fault::Plan::any_nth(usize::MAX, Errno::NOMEM));
 
-                // Neither a later allocation nor the runtime startup call can
-                // reopen the retained once body.
+                // The once body never reruns: later allocations still fail,
+                // and the runtime startup call completes the loader tail.
                 assert!(matches!(native_allocate_aligned(48, 16, false),
-                    NativePageAllocationResult::Unavailable));
-                assert!(!initialize_process());
-                assert!(!process_is_active());
+                    NativePageAllocationResult::AllocationFailed));
+                assert!(matches!(native_allocate(64, false), NativePageAllocationResult::AllocationFailed));
+                assert!(initialize_process());
+                assert!(prepare_native_later_thread_arena());
+                assert!(process_is_active());
                 assert_eq!(fault.observed(), 0, "no retried source startup reached a primitive");
+                assert_eq!(
+                    finish_selected_default_release_process_after_user_atexit(),
+                    SelectedProcessDoneResult::Completed,
+                );
             },
         );
     }

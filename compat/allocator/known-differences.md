@@ -3080,6 +3080,43 @@ records these sites as not applicable for this reason. The difference would
 be removed only if the project decided to reproduce C's invalid-use
 continuation, which AGENTS.md's safety rules do not ask for.
 
+### `CRABC-MI-STARTUP-PAGE-MAP-FAILURE` — accepted diagnostics difference
+
+Status: accepted. Area: diagnostics after a valid-program startup failure.
+
+Pinned `mi_page_map_init_once` (`src/page-map.c:302-305`) reports
+"unable to reserve virtual memory for the page map" when its reservation
+cannot be mapped, and `mi_process_init_once` ignores the result
+(`src/init.c:549`). The process starts and every later allocation fails with
+ENOMEM. The Rust runtime ports that outcome
+(`runtime_lifecycle::PROCESS_PAGE_MAP_UNAVAILABLE`): the report is emitted
+at the same mapping failure in `PageMap::initialize`, the loader tail flushes
+it, startup succeeds, the initial thread reports `unable to allocate memory`
+for each request's generic size, and each worker's deferred attachment
+reports C's thread-local-data failure on every allocation.
+
+The retained state has no page map, no arena, and no page engine, so Rust
+does not repeat C's attempts to allocate a fresh page that cannot be
+registered. It therefore emits none of C's warnings. At startup pinned C
+warns three times (two failed OS allocations and the fall-back to
+over-allocation of `_mi_os_alloc_aligned`), where the Rust page map maps
+its page-aligned reservation directly and warns nothing. Then, for each
+allocation, C warns once for each failed page-map commit
+(`unable to commit the allocation page-map on-demand`) in each fresh-page
+attempt. A small request makes three such attempts (the counted queue
+search, `mi_find_page` in `mi_malloc_generic_fallback`, and the forced
+retry), the same sequence whose six-versus-four fresh-page count difference
+f135998ba closed under a sustained metadata-publication failure. The
+reproducer `python3 compat/allocator/x86_64_m7_gate.py --offline
+--page-map-differential` measures 33 warnings in C and none in Rust over
+16 allocations; its compared trace (error reports, results, and errno)
+is identical.
+
+Warnings are advisory: they carry no errno, reach no error handler, and are
+capped by `max_warnings`. The difference would be removed only by keeping an
+empty page map in which allocation can be attempted and fail, which would
+make an arena and page engine run without a page map.
+
 ## Entry requirements
 
 Each entry must state:

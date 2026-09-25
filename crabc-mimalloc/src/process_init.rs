@@ -1040,6 +1040,37 @@ impl ProcessMainInitializationStorage {
         Ok(true)
     }
 
+    /// `_mi_auto_process_init`'s loader tail for a process whose startup
+    /// failed only at its page map (`src/page-map.c:302-305`; `src/init.c:549`
+    /// ignores the result and the process continues without a page map).
+    ///
+    /// Clears `os_preloading` and runs `_mi_options_post_init`, flushing the
+    /// delayed output that holds the page-map error, exactly once across
+    /// both startup entries. The weak-random reseed has no receiver: no
+    /// Theap was attached, and the process can never allocate.
+    ///
+    /// # Safety
+    ///
+    /// The caller is the initial source thread and owns
+    /// `_mi_options_post_init`'s serialization against every other diagnostic
+    /// dispatch, as for [`Self::complete_runtime_startup_after_first_allocation`].
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn complete_runtime_startup_without_page_map(&'static self) {
+        if self.runtime_startup_tail.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if let Some(policy) = NonNull::new(self.vm_policy_ptr.load(Ordering::Acquire)) {
+            // SAFETY: `retain_vm_process` bound this permanent inline policy
+            // image before the page map was attempted; its preloading scalar
+            // is atomic and never moved.
+            unsafe { policy.as_ref() }.finish_preloading();
+        }
+        if let Some(output) = self.published_source_options() {
+            // SAFETY: forwarded; `runtime_startup_tail` was claimed above.
+            unsafe { output.post_init() };
+        }
+    }
+
     #[inline]
     fn config(&self) -> MemoryConfig {
         // SAFETY: callers first observed allocation-ready with Acquire, whose Release
