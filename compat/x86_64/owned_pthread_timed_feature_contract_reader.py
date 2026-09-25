@@ -1333,6 +1333,28 @@ def evaluate_final_extraction(work: Path) -> dict[str, object]:
     }
 
 
+NATIVE_SHADOW_FEATURE = "x86-owned-static-native-shadow"
+
+
+def _builder_feature_selection() -> dict[str, str]:
+    """Map the accepted-C and native-shadow backends through the builder's own selection."""
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    try:
+        import build_x86_64_owned_sysroot as builder
+    finally:
+        sys.path.remove(str(ROOT / "scripts"))
+    default = builder.backend_selection(builder.DEFAULT_ALLOCATOR_BACKEND, False)
+    require(builder.DEFAULT_ALLOCATOR_BACKEND in builder.ALLOCATOR_BACKENDS
+            and default in ("accepted-c", "native-shadow"),
+            "timed feature builder default allocator selection differs")
+    return {
+        backend: FEATURE if builder.backend_selection(backend, False) in builder.C_ALLOCATOR_BACKENDS
+        else NATIVE_SHADOW_FEATURE
+        for backend in ("accepted-c", "native-shadow")
+    }
+
+
 def evaluate_feature_source(root: Path) -> dict[str, object]:
     """Authenticate only source feature configuration and its exact four aliases."""
 
@@ -1347,10 +1369,11 @@ def evaluate_feature_source(root: Path) -> dict[str, object]:
     cargo = (root / "libc/Cargo.toml").read_text(encoding="utf-8")
     require(re.search(r"^x86-owned-static-runtime\s*=\s*\[", cargo, re.MULTILINE) is not None,
             "timed feature Cargo route differs")
-    # The product manifest's dependency graph records the feature a build
-    # selected; this source-only account claims no build invocation
-    # (product_build_invocation_proven below), so it does not read the
-    # builder's text.
+    # Ask the builder which compile-time selection each recorded allocator
+    # backend takes, and that its one default is one of them. The product
+    # manifest's dependency graph separately records the feature a build
+    # selected; this source-only account claims no build invocation.
+    builder_feature_selection = _builder_feature_selection()
     module_root = (root / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
     for leaf in ("pthread_create_join.rs", "pthread_mutex.rs", "pthread_cond.rs"):
         require(f'#[path = "{leaf}"]' in module_root,
@@ -1372,10 +1395,7 @@ def evaluate_feature_source(root: Path) -> dict[str, object]:
     return {
         "feature": FEATURE,
         "aliases": [{"public": public, "provider": provider} for public, provider in ALIASES],
-        "builder_feature_selection": {
-            "accepted-c": FEATURE,
-            "native-shadow": "x86-owned-static-native-shadow",
-        },
+        "builder_feature_selection": builder_feature_selection,
         "product_build_invocation_proven": False,
         "scope": "source feature mapping only; supplied product bytes and final-link rows are separately sealed",
     }
