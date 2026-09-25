@@ -7,7 +7,7 @@
  *
  *   integrated-startup-launcher batches=B launches=L root=DIR|- PROGRAM ARG...
  *
- * Each batch vforks and execs PROGRAM L times in sequence (chrooted into
+ * Each batch forks and execs PROGRAM L times in sequence (chrooted into
  * DIR unless DIR is `-`), waits for each, and prints one record in the
  * engine fixture's grammar, then `ok`:
  *
@@ -66,9 +66,8 @@ int main(int argc, char **argv)
     for (index = 0; index < launches; index++) {
       struct rusage usage;
       int status = 0;
-      const pid_t child = vfork();
+      const pid_t child = fork();
       if (child == 0) {
-        /* Only system calls before exec: the vfork parent is suspended. */
         if (dup2(null_fd, 1) < 0 || dup2(null_fd, 2) < 0) _exit(126);
         if (strcmp(root, "-") != 0 && (chroot(root) != 0 || chdir("/") != 0)) _exit(125);
         execv(argv[4], argv + 4);

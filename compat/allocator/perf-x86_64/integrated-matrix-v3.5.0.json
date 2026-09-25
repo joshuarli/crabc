@@ -14,7 +14,7 @@
   "engine_rows": ["alloc_free_64", "realloc_inplace_1024", "local_scaling_4", "remote_free_1", "churn_8k", "thread_churn_4"],
   "startup_row": {
     "name": "startup_first_alloc",
-    "measures": "process start through the product's startup, one malloc/free and exit, launched by vfork+exec",
+    "measures": "process start through the product's startup, one malloc/free and exit, launched by fork+exec from a small static launcher",
     "program_arguments": ["alloc_free", "size=64", "iterations=1", "batches=1"],
     "launches_per_batch": 20,
     "batches": 16
