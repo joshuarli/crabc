@@ -10426,6 +10426,62 @@ pub fn native_allocate_aligned_at(
     native_allocate_shaped(request, NativeAllocationShape::Aligned { alignment, offset }, zero)
 }
 
+/// Pinned `mi_stats_get` (`src/stats.c:640-653`) for a thread of the process
+/// main subprocess: validate the caller's `mi_stats_t` header and copy the
+/// subprocess statistics into it, then add each Heap of its list, after
+/// `mi_heap_get_stats` has merged the calling thread's own Theap into its
+/// Heap. Returns `false`, copying nothing, for a bad header or an inactive
+/// process.
+///
+/// The calling thread's Theap is its default Theap on the main Heap; the
+/// per-Heap Theaps of a non-main Heap (child subprocesses) are not merged
+/// here, and a child-subprocess thread reports the main subprocess.
+///
+/// # Safety
+/// `stats` is valid for reads and writes of the source `mi_stats_t` image
+/// and not otherwise accessed during the call.
+#[doc(hidden)]
+pub unsafe fn native_stats_get(stats: *mut u8) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return false;
+    };
+    if stats.is_null() || !RUNTIME_PROCESS.is_active() {
+        return false;
+    }
+    // SAFETY: PROCESS_ACTIVE follows the permanent owner publication.
+    let Some(owner) = (unsafe { RUNTIME_PROCESS.active_owner() }) else { return false; };
+    let Ok(subprocess) = owner.ready().and_then(|ready| ready.subprocess()) else { return false; };
+    let identity = subprocess.identity();
+    // SAFETY: forwarded caller image contract.
+    if !unsafe { identity.statistics().copy_into_source_image(stats) } {
+        return false;
+    }
+    merge_current_thread_theap_statistics();
+    let _ = identity.heap_list().visit_heaps(|heap| {
+        // SAFETY: a visited member is live under the list lock; the caller
+        // image was validated by the copy above.
+        unsafe { crate::types::Heap::add_statistics_into_source_image(heap, stats) };
+        true
+    });
+    true
+}
+
+/// `mi_stats_merge_theap_to_heap` for the calling thread's default Theap,
+/// through its owner's short projection. A thread without a native owner has
+/// no Theap to merge.
+fn merge_current_thread_theap_statistics() {
+    if current_thread_has_active_native_initial_persistent_owner() {
+        let _ = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+            owner.allocator.merge_theap_statistics_current_initial_thread_local()
+        });
+    } else if current_thread_has_native_persistent_owner() {
+        let _ = with_current_thread_native_persistent_owner(|owner| {
+            owner.with_local_allocator(|allocator| allocator.merge_theap_statistics_into_heap())
+        });
+    }
+}
+
 /// Runs pinned `mi_collect(force)` on the calling thread's default Theap:
 /// `_mi_deferred_free(theap, force)` with the page engine released, then the
 /// normal or forced `mi_theap_collect_ex` collection and statistics merge.

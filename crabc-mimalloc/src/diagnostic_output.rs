@@ -2062,6 +2062,12 @@ impl OutputOwner {
         self.error_argument.store(argument, Ordering::Release);
     }
 
+    /// Whether a `mi_register_error` handler is registered.
+    #[inline]
+    pub(crate) fn has_error_handler(&self) -> bool {
+        !self.error_handler.load(Ordering::Acquire).is_null()
+    }
+
     /// `_mi_error_message(err, ...)` (`src/options.c:596-608`) after source
     /// formatting: show the message through the descriptor gate, then call
     /// the registered handler or report the default errno policy.

@@ -44,13 +44,17 @@
       "disposition": "crabc libc's public surface stays musl's and exports no mi_* symbol; every M7 external function is reachable only through the prefixed test adapter, which the gate evaluates.",
       "crabc_libc_exported": false,
       "external_function_surface": "test-c-api-adapter-only",
-      "adapter": "compat/allocator/test-adapter"
+      "adapter": "compat/allocator/native-mi-adapter"
     }
   },
   "evidence": {
     "differential:options-environment": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--options-differential"],
       "scope": "Separate pinned-C and Rust processes install the same environment images and compare every descriptor's name, legacy spelling, KiB unit, value, init state, and mi_option_get_size; the TID-normalized deprecated/invalid warning fragments in table order; the boolean-versus-mi_option_set store path (guarded coupling); the clamp, size, set_default, enable/disable, and out-of-range results; the complete mi_options_print_out output; the _mi_error_message gate (verbose bypass, show_errors, max_errors cap, error prefix), handler argument and code, and default errno result; and the thread-prefix formatting."
+    },
+    "differential:adapter": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--adapter-differential"],
+      "scope": "One unmodified C driver, linked once against the pinned C sources and once against the native `mi_*` adapter, runs the M7 option accessors and mutators (including invalid `mi_option_t` values and the guarded coupling), `mi_options_print_out`/`mi_options_print` through a registered output, `mi_register_error` with a handled and a default report (codes, argument, errno, and TID-normalized messages), `mi_register_deferred_free` through `mi_collect`, `mi_version`, and `mi_stats_get` (header validation, page counts around allocation, free, and collection, and a thread that has not initialized) and must print identical traces."
     },
     "differential:deferred-free-callback": {
       "command": ["python3", "compat/allocator/x86_64_deferred_free_callback_evidence.py", "--offline"],
@@ -184,11 +188,10 @@
       "compile_time_modes": [],
       "acceptance": "The complete `mi_options[]` table of src/options.c:112-177 (47 descriptors, release defaults, legacy spellings, KiB units) is one process image beside the output owner; `_mi_options_init` initializes it in table order after the verbose `process init` line, with each deprecated-spelling and invalid-value warning in source order and the warning cap applied after the loop; the environment grammar, boolean direct stores versus `mi_option_set` (guarded min/max coupling), UNINIT retry on an unavailable environment, the accessor and mutator semantics, and `mi_options_print_out` equal the pinned C behavior; raw `mi_option_t` values map to descriptors with the source out-of-range results.",
       "evidence": [
-        "differential:options-environment"
+        "differential:options-environment",
+        "differential:adapter"
       ],
-      "blocked_by": [
-        "The accessors exist only as crate-private `OutputOwner` operations; no prefixed test-adapter function maps raw `mi_option_t` values and the process owner to them."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m7.option-effects",
@@ -223,13 +226,13 @@
         "differential:deferred-free-callback",
         "differential:diagnostic-output-owner",
         "differential:options-environment",
-        "differential:error-reporting-sites"
+        "differential:error-reporting-sites",
+        "differential:adapter"
       ],
       "blocked_by": [
-        "Under the selected release flags (`-DMI_DEBUG=0 -DMI_SECURE=0 -DMI_GUARDED=0 -DMI_STAT=0`), the pinned preprocessor keeps 19 of the 37 `_mi_error_message` sites outside src/options.c; the other 18 (os.c:195, heap.c:51, arena.c:290,1047, alloc-posix.c:73, free.c:177,188,207,318,323,570,582,724,727, alloc.c:701,918, alloc-aligned.c:38, page-map.c:68) are compiled out and belong to the debug, secure, and guarded profiles. The error-site differential covers page.c:953,1063, alloc-aligned.c:83,165,192, and arena.c:1892 (the startup `reserve_os_memory` reservation). Of the rest, alloc.c:745 (`mi_try_new_handler`) is reachable only through `mi_new*`, which the adapter-only ABI boundary does not expose; arena.c:1457,1463,1476, heap.c:79,138, init.c:268, libc.c:148, page.c:166,171, page-map.c:304, theap.c:328, and threadlocal.c:138 are unported. libc keeps musl's errno for native allocation failures by the ABI decision, so `SourceErrorDisposition` is observable only through the test adapter, which has no `mi_register_error` mapping yet.",
+        "Under the selected release flags (`-DMI_DEBUG=0 -DMI_SECURE=0 -DMI_GUARDED=0 -DMI_STAT=0`), the pinned preprocessor keeps 19 of the 37 `_mi_error_message` sites outside src/options.c; the other 18 (os.c:195, heap.c:51, arena.c:290,1047, alloc-posix.c:73, free.c:177,188,207,318,323,570,582,724,727, alloc.c:701,918, alloc-aligned.c:38, page-map.c:68) are compiled out and belong to the debug, secure, and guarded profiles. The error-site differential covers page.c:953,1063, alloc-aligned.c:83,165,192, and arena.c:1892 (the startup `reserve_os_memory` reservation). Of the rest, alloc.c:745 (`mi_try_new_handler`), reached through the adapter's `mi_new` family, and arena.c:1457,1463,1476, heap.c:79,138, init.c:268, libc.c:148, page.c:166,171, page-map.c:304, theap.c:328, and threadlocal.c:138 are unported. libc keeps musl's errno for native allocation failures by the ABI decision, so the error handler and default errno are observable only through the native adapter.",
 
-        "The `MI_XMALLOC` abort-on-allocation-failure profile is absent.",
-        "`mi_register_output` and `mi_register_deferred_free` have no prefixed test-adapter mapping, and deferred-free has no `mi_collect` invocation evidence."
+        "The `MI_XMALLOC` abort-on-allocation-failure profile is absent."
       ]
     },
     {
@@ -254,10 +257,11 @@
       "compile_time_modes": [],
       "acceptance": "The public `mi_stats_t` image and process-wide accessors of include/mimalloc-stats.h and src/stats.c (get, JSON, print, reset, bin sizes, `mi_process_info`) and every producer of the selected statistics level equal the pinned C values and output.",
       "evidence": [
-        "differential:statistics"
+        "differential:statistics",
+        "differential:adapter"
       ],
       "blocked_by": [
-        "No prefixed test-adapter statistics accessor, JSON renderer, print route, reset, or `mi_process_info` mapping exists; only the final-output scalar image is rendered.",
+        "The native adapter maps only `mi_stats_get`; `mi_stats_get_json`, `mi_stats_as_json`, `mi_stats_print`, `mi_stats_print_out`, `mi_thread_stats_print_out`, `mi_stats_reset`, `mi_stats_get_bin_size`, and the `mi_process_info` family are absent, and `mi_stats_get` merges only the calling thread's default Theap on the process main subprocess.",
         "Statistics producers gated on `MI_STAT > 0` are absent."
       ]
     },

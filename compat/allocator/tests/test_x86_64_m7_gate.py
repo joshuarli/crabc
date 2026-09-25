@@ -42,6 +42,7 @@ class M7GateContractTests(unittest.TestCase):
         summary = self.validate()
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
         self.assertEqual(sorted(summary["runnable_evidence"]), [
+            "differential:adapter",
             "differential:deferred-free-callback",
             "differential:diagnostic-output-owner",
             "differential:error-reporting-sites",
@@ -50,8 +51,11 @@ class M7GateContractTests(unittest.TestCase):
             "differential:options-environment",
             "differential:reclaim-options",
         ])
-        # Every M7 gate still names an open condition.
-        self.assertEqual(summary["blocked_gate_ids"], list(gate.GATE_IDS))
+        # Every M7 gate but the options/environment gate names an open condition.
+        self.assertEqual(
+            summary["blocked_gate_ids"],
+            [gate_id for gate_id in gate.GATE_IDS if gate_id != "m7.options-environment"],
+        )
         owned = {name for entry in self.contract["gates"] for name in entry["items"]}
         for name in ("mi_option_get", "mi_option_reset_delay", "mi_options_print_out", "mi_version",
                      "mi_register_error", "mi_stats_print_out", "mi_debug_show_arenas"):
@@ -156,10 +160,11 @@ class M7GateContractTests(unittest.TestCase):
         passed = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
         report = gate.gate_report(self.contract, summary, passed)
         self.assertEqual(report["overall_status"], "unmet")
-        self.assertEqual(report["unmet_required"], list(gate.GATE_IDS))
-        options = self.gate_record(report, "m7.options-environment")
-        self.assertEqual(options["status"], "blocked")
-        self.assertEqual(options["evidence"], {"differential:options-environment": "passed"})
+        self.assertEqual(report["unmet_required"], summary["blocked_gate_ids"])
+        callbacks = self.gate_record(report, "m7.callbacks")
+        self.assertEqual(callbacks["status"], "blocked")
+        self.assertTrue(all(status == "passed" for status in callbacks["evidence"].values()))
+        self.assertEqual(self.gate_record(report, "m7.options-environment")["status"], "passed")
 
     def test_a_fully_evidenced_unblocked_gate_passes_and_a_failed_run_fails(self) -> None:
         contract = copy.deepcopy(self.contract)

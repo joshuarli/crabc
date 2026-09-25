@@ -97,6 +97,9 @@ mod size_class;
 #[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
 pub mod source_api;
+#[cfg(target_arch = "x86_64")]
+#[doc(hidden)]
+pub mod source_options_api;
 mod single_thread;
 mod statistics;
 mod subproc;
@@ -152,6 +155,8 @@ pub mod __crabc_runtime {
     pub use crate::diagnostic_output::RuntimeStderrOutput;
     #[cfg(target_arch = "x86_64")]
     pub use crate::source_api;
+    #[cfg(target_arch = "x86_64")]
+    pub use crate::source_options_api;
     #[cfg(target_arch = "x86_64")]
     pub use crate::runtime_lifecycle::{
         NativeProcessStartupFacts, publish_native_process_startup_facts,

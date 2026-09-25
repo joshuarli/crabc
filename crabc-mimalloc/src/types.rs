@@ -194,6 +194,30 @@ pub(crate) struct Heap {
 }
 
 impl Heap {
+    /// `mi_stats_add(stats, &heap->stats)` of `mi_heap_aggregate_visitor`.
+    ///
+    /// # Safety
+    /// `heap` is a live Heap (for example a visited list member), and
+    /// `destination` satisfies [`HeapTheapStatistics::add_into_source_image`].
+    pub(crate) unsafe fn add_statistics_into_source_image(heap: NonNull<Self>, destination: *mut u8) {
+        // SAFETY: only the atomic statistics member is projected; other
+        // threads touch it only through the same relaxed atomics.
+        let statistics = unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).statistics) };
+        // SAFETY: forwarded.
+        unsafe { statistics.add_into_source_image(destination) };
+    }
+
+    /// `mi_heap_stat_decrease` of `page_bins[bin]` and `pages` for a page
+    /// leaving this Heap without a Theap (`_mi_arenas_page_free(page, NULL)`,
+    /// `src/arena.c:1294-1296`).
+    ///
+    /// # Safety
+    /// `heap` is a live Heap.
+    pub(crate) unsafe fn record_page_released_at(heap: NonNull<Self>, statistics_bin: usize) -> bool {
+        // SAFETY: only the atomic statistics member is projected.
+        unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).statistics) }.page_released(statistics_bin)
+    }
+
     /// `heap->exclusive_arena` as the requested arena of a suitability test.
     /// `None` would be a sub-arena, which a Heap never names.
     #[inline]

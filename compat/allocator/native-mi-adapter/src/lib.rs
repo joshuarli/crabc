@@ -810,3 +810,116 @@ pub unsafe extern "C" fn mi_wdupenv_s(buf: *mut *mut WideChar, size: *mut usize,
     }
     code
 }
+
+// ---------------------------------------------------------------------------
+// M7: options, callbacks, and statistics (`m7-gate-x86_64-v3.5.0.json`)
+//
+// Each entry is the same-named `crabc_mimalloc::source_options_api`
+// function; this section is append-only beside the M4 and M6 entries.
+// ---------------------------------------------------------------------------
+
+use crabc_mimalloc::__crabc_runtime::source_options_api as options;
+
+/// `mi_option_t` is a C enum, passed as `int`.
+type OptionValue = c_int;
+type OutputFunction = options::OutputFunction;
+type ErrorFunction = options::ErrorFunction;
+type DeferredFreeFunction = options::DeferredFreeFunction;
+
+#[no_mangle]
+pub extern "C" fn mi_version() -> c_int {
+    options::version()
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_get(option: OptionValue) -> c_long {
+    options::option_get(option)
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_get_clamp(option: OptionValue, min: c_long, max: c_long) -> c_long {
+    options::option_get_clamp(option, min, max)
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_get_size(option: OptionValue) -> usize {
+    options::option_get_size(option)
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_is_enabled(option: OptionValue) -> bool {
+    options::option_is_enabled(option)
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_set(option: OptionValue, value: c_long) {
+    options::option_set(option, value)
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_set_default(option: OptionValue, value: c_long) {
+    options::option_set_default(option, value)
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_set_enabled(option: OptionValue, enable: bool) {
+    options::option_set_enabled(option, enable)
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_set_enabled_default(option: OptionValue, enable: bool) {
+    options::option_set_enabled_default(option, enable)
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_enable(option: OptionValue) {
+    options::option_set_enabled(option, true)
+}
+
+#[no_mangle]
+pub extern "C" fn mi_option_disable(option: OptionValue) {
+    options::option_set_enabled(option, false)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_options_print_out(output: Option<OutputFunction>, argument: *mut c_void) {
+    // SAFETY: the C caller's output callback contract.
+    unsafe { options::options_print_out(output, argument) }
+}
+
+#[no_mangle]
+pub extern "C" fn mi_options_print() {
+    // SAFETY: the default route has no caller callback.
+    unsafe { options::options_print_out(None, null_mut()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_register_output(output: Option<OutputFunction>, argument: *mut c_void) {
+    // SAFETY: the C caller's `mi_register_output` contract.
+    unsafe { options::register_output(output, argument) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_register_error(handler: Option<ErrorFunction>, argument: *mut c_void) {
+    // SAFETY: the C caller's `mi_register_error` contract.
+    unsafe { options::register_error(handler, argument) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_register_deferred_free(callback: Option<DeferredFreeFunction>, argument: *mut c_void) {
+    // SAFETY: the C caller's `mi_register_deferred_free` contract.
+    unsafe { options::register_deferred_free(callback, argument) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_stats_get(stats: *mut c_void) -> bool {
+    // Pinned `mi_stats_get` does not initialize the calling thread. crabc
+    // libc registers every pthread's allocator descriptor before user code
+    // without attaching it; do only that, as the runtime's operation
+    // admission requires.
+    // SAFETY: this musl thread's allocator TLS stays mapped for its life;
+    // registration is idempotent.
+    let _ = unsafe { register_current_native_allocator_worker_descriptor(current_native_allocator_thread_descriptor()) };
+    // SAFETY: the C caller passes null or a `mi_stats_t`.
+    unsafe { options::stats_get(stats) }
+}

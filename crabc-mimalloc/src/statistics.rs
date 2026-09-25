@@ -702,7 +702,62 @@ impl HeapTheapStatistics {
         if core::ptr::eq(self, source) {
             return;
         }
+        self.add_from(source);
+        source.reset_after_merge();
+    }
 
+    /// `mi_stats_copy` (`src/stats.c:613-618`) into a caller's `mi_stats_t`:
+    /// `false`, copying nothing, unless its header names this layout and
+    /// version. Every field is copied with the relaxed loads of this image;
+    /// like the source `memcpy`, a concurrent producer may be seen in part.
+    ///
+    /// # Safety
+    /// `destination` is valid for reads and writes of `size_of::<Self>()`
+    /// bytes, suitably aligned, and not otherwise accessed during the call.
+    pub(crate) unsafe fn copy_into_source_image(&self, destination: *mut u8) -> bool {
+        const WORD: usize = core::mem::size_of::<i64>();
+        const _: () = assert!(core::mem::size_of::<HeapTheapStatistics>() % WORD == 0);
+        // SAFETY: the caller supplies a readable header.
+        let (size, version) = unsafe {
+            (destination.cast::<usize>().read(), destination.cast::<usize>().add(1).read())
+        };
+        if size != core::mem::size_of::<Self>() || version != STAT_VERSION {
+            return false;
+        }
+        let source = core::ptr::from_ref(self).cast::<u8>();
+        let mut offset = 2 * core::mem::size_of::<usize>();
+        while offset < core::mem::size_of::<Self>() {
+            // SAFETY: every field after the two-word header is an `i64`
+            // atomic of this `repr(C)` image (the layout records pin it), so
+            // each word is an `AtomicI64` on both sides.
+            unsafe {
+                let value = (*source.add(offset).cast::<AtomicI64Value>()).load(core::sync::atomic::Ordering::Relaxed);
+                destination.add(offset).cast::<i64>().write(value);
+            }
+            offset += WORD;
+        }
+        true
+    }
+
+    /// `mi_stats_add` (`src/stats.c:124-142`) into a caller's `mi_stats_t`
+    /// that [`Self::copy_into_source_image`] validated.
+    ///
+    /// # Safety
+    /// As [`Self::copy_into_source_image`], after a successful copy.
+    pub(crate) unsafe fn add_into_source_image(&self, destination: *mut u8) {
+        // SAFETY: a validated caller image has exactly this layout; the
+        // caller excludes other access, and its fields are plain words that
+        // the relaxed atomics of `add_from` may treat as atomics.
+        let destination = unsafe { &*destination.cast::<Self>() };
+        destination.add_from(self);
+    }
+
+    /// `mi_stats_add` without the reset: counts and counters in
+    /// declaration order, then the binned tails.
+    fn add_from(&self, source: &Self) {
+        if core::ptr::eq(self, source) {
+            return;
+        }
         self.pages.add_from(&source.pages);
         self.reserved.add_from(&source.reserved);
         self.committed.add_from(&source.committed);
@@ -759,8 +814,6 @@ impl HeapTheapStatistics {
         for index in 0..self.chunk_bins.len() {
             self.chunk_bins[index].add_from(&source.chunk_bins[index]);
         }
-
-        source.reset_after_merge();
     }
 
     #[inline]
@@ -1115,6 +1168,16 @@ impl SubprocessStatistics {
     #[inline]
     pub(crate) fn final_output_snapshot(&self) -> FinalStatisticsSnapshot {
         self.statistics.final_output_snapshot()
+    }
+
+    /// See [`HeapTheapStatistics::copy_into_source_image`].
+    ///
+    /// # Safety
+    /// As there.
+    #[inline]
+    pub(crate) unsafe fn copy_into_source_image(&self, destination: *mut u8) -> bool {
+        // SAFETY: forwarded.
+        unsafe { self.statistics.copy_into_source_image(destination) }
     }
 
     /// Merges a source Heap record into this owning subprocess and resets it.

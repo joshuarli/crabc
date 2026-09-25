@@ -72,8 +72,14 @@ pub enum SourceErrno {
 }
 
 impl SourceErrno {
-    /// `_mi_error_message(err, ...)`'s default-handler effect for `err`.
-    const fn error_message(error: Errno) -> Self {
+    /// `_mi_error_message(err, ...)`'s errno effect for `err`: with a
+    /// registered `mi_register_error` handler the handler, not
+    /// `mi_error_default`, receives the code and errno is unchanged.
+    fn error_message(error: Errno) -> Self {
+        #[cfg(target_arch = "x86_64")]
+        if crate::process_init::process_output_owner().is_some_and(|owner| owner.has_error_handler()) {
+            return Self::Unchanged;
+        }
         Self::DefaultIfZero(if error.raw() == Errno::INVAL.raw() { Errno::INVAL } else { Errno::NOMEM })
     }
 
@@ -528,19 +534,22 @@ fn aligned_failure_errno(size: usize, alignment: usize, offset: usize) -> Source
 
 /// `mi_theap_malloc_zero_aligned_at`.
 fn malloc_zero_aligned_at(size: usize, alignment: usize, offset: usize, zero: bool) -> Sourced<Block> {
-    if !size_class::alignment_is_valid(alignment) {
-        return Sourced::with(None, SourceErrno::error_message(Errno::INVAL));
-    }
-    if size > MAX_ALLOC_SIZE {
-        return Sourced::with(None, SourceErrno::error_message(Errno::INVAL));
-    }
-    if alignment > PAGE_MAX_OVERALLOC_ALIGN && offset != 0 {
-        // `alloc-aligned.c:80-85` refuses before any allocation.
-        return Sourced::with(None, SourceErrno::error_message(Errno::OVERFLOW));
-    }
+    // The native aligned entry reports these pre-allocation refusals through
+    // `_mi_error_message` (`alloc-aligned.c:81-84,163-166,191-193`) and then
+    // fails; the errno effect follows each report.
+    let refusal = if !size_class::alignment_is_valid(alignment) || size > MAX_ALLOC_SIZE {
+        Some(Errno::INVAL)
+    } else if alignment > PAGE_MAX_OVERALLOC_ALIGN && offset != 0 {
+        Some(Errno::OVERFLOW)
+    } else {
+        None
+    };
     match native_block(native_allocate_aligned_at(size, alignment, offset, zero)) {
         Some(block) => Sourced::quiet(Some(block)),
-        None => Sourced::with(None, aligned_failure_errno(size, alignment, offset)),
+        None => Sourced::with(None, match refusal {
+            Some(error) => SourceErrno::error_message(error),
+            None => aligned_failure_errno(size, alignment, offset),
+        }),
     }
 }
 

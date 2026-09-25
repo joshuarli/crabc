@@ -2888,6 +2888,12 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
 }
 
 impl MainHeapThreadOwnerLocalAllocator<'_> {
+    /// See [`crate::single_thread::PageAllocatorEngine::merge_theap_statistics_into_heap`].
+    #[inline]
+    pub(crate) fn merge_theap_statistics_into_heap(&mut self) -> bool {
+        self.engine.merge_theap_statistics_into_heap()
+    }
+
     #[inline]
     pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
         self.engine.allocate(request, zero)

@@ -2130,7 +2130,17 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => &mut active.engine,
             MainStaticRuntimeFirstArenaPageAllocatorState::Retained
             | MainStaticRuntimeFirstArenaPageAllocatorState::Transition => return None,
-            _ => return Some(MainStaticDeferredFreeAllocationPhase::Complete(None)),
+            _ => {
+                // `mi_theap_collect_ex` still calls `_mi_deferred_free` and
+                // merges the Theap statistics when there are no pages.
+                use crate::bootstrap::TheapPageSession;
+                let session = self.engine_less_session()?;
+                return Some(MainStaticDeferredFreeAllocationPhase::Collect {
+                    source: session.deferred_free_source()?,
+                    collection: if force { GenericAllocationCollection::Force } else { GenericAllocationCollection::Full },
+                    continuation: DeferredFreeAllocationContinuation::Collection,
+                });
+            }
         };
         match engine.begin_deferred_free_collection(force) {
             DeferredFreeAllocationPhase::Complete(block) => {
@@ -2189,7 +2199,8 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         collection: GenericAllocationCollection,
         continuation: DeferredFreeAllocationContinuation,
     ) -> Option<MainStaticDeferredFreeAllocationPhase> {
-        if continuation.source_find_page_refusal().is_some()
+        if (continuation.source_find_page_refusal().is_some()
+            || continuation == DeferredFreeAllocationContinuation::Collection)
             && !matches!(&self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Active(_))
         {
             return self.resume_engine_less_generic_refusal(source, collection, continuation);
@@ -2220,6 +2231,19 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 }
             }
         })
+    }
+
+    /// `mi_stats_merge_theap_to_heap` for the initial owner's Theap, with or
+    /// without a page engine.
+    pub(crate) fn merge_theap_statistics_current_initial_thread_local(&mut self) -> bool {
+        use crate::bootstrap::TheapPageSession;
+        if let MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) = &self.state {
+            return active.engine.merge_theap_statistics_into_heap();
+        }
+        match self.engine_less_session() {
+            Some(session) => session.theap().merge_statistics_into_owning_heap_after_collection(),
+            None => false,
+        }
     }
 
     /// The permanent session of an owner that has not materialized (or has
@@ -2261,7 +2285,8 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         })
     }
 
-    /// Phase C of [`Self::begin_engine_less_generic_refusal`]: after an
+    /// Phase C of [`Self::begin_engine_less_generic_refusal`] and of an
+    /// engine-less `mi_theap_collect`: after an
     /// administration collection the refusal forces a collection; after the
     /// forced one the allocation completes without a block.
     fn resume_engine_less_generic_refusal(
@@ -2282,6 +2307,9 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             && !session.theap().merge_statistics_into_owning_heap_after_collection()
         {
             return None;
+        }
+        if continuation == DeferredFreeAllocationContinuation::Collection {
+            return Some(MainStaticDeferredFreeAllocationPhase::Complete(None));
         }
         Some(match collection {
             GenericAllocationCollection::Force => MainStaticDeferredFreeAllocationPhase::Complete(None),

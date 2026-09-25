@@ -1497,6 +1497,14 @@ pub fn native_runtime_take_source_error_test_audit() -> Option<NativeSourceError
     (errno != 0).then_some(NativeSourceErrorAudit { code: code as i32, default_errno: errno as i32 })
 }
 
+/// The process diagnostic output owner and its option table, once x86
+/// startup has published them.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub(crate) fn process_output_owner() -> Option<&'static OutputOwner> {
+    ProcessMainInitializationStorage::global().published_source_options()
+}
+
 /// `_mi_option_get_fast(option)` counterpart of [`process_source_option`].
 #[inline]
 pub(crate) fn process_source_option_fast(option: crate::config::SourceOption) -> i64 {

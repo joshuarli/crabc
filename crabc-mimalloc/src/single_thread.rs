@@ -266,6 +266,18 @@ fn page_statistics_bin(page: &Page) -> Option<usize> {
     }
 }
 
+/// `_mi_arenas_page_free(page, NULL)`'s statistics: a page freed from its
+/// abandoned state leaves `mi_page_heap(page)`'s `pages` and page-bin counts
+/// before its primitive release (`src/arena.c:1294-1296`, via
+/// `src/free.c:377`).
+fn record_claimed_page_released(page: &Page) -> bool {
+    let (Some(heap), Some(bin)) = (NonNull::new(page.heap()), page_statistics_bin(page)) else {
+        return false;
+    };
+    // SAFETY: an owned page's Heap outlives it.
+    unsafe { crate::types::Heap::record_page_released_at(heap, bin) }
+}
+
 /// One failed source owner-side page collection boundary.
 ///
 /// These are private invalid-owner/lifecycle observations. The collector
@@ -2224,6 +2236,9 @@ unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear(
             return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
         }
     }
+    if !record_claimed_page_released(page_ref) {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    }
     // SAFETY: the preceding exact-range check proves the source PageMap
     // publication that is removed before any ordinary bitmap/metadata write.
     if unsafe { page_map.unregister_range(slice_start, page_map_size) }.is_err() {
@@ -2346,6 +2361,9 @@ unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear(
         if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
             return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
         }
+    }
+    if !record_claimed_page_released(page_ref) {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     }
     // Source terminal order is PageMap unregister, one ordinary main-arena
     // bit clear, metadata retirement, then full singleton slice release.
@@ -2691,6 +2709,12 @@ unsafe fn release_claimed_non_arena_singleton_page_with_list_removal(
                     ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
                 );
             }
+            if !record_claimed_page_released(page_ref) {
+                return retain(
+                    OsAlignedPageOwner::Published(published),
+                    ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
+                );
+            }
             let layout = published.layout();
             // Source terminal order is PageMap unregister, secondary alias
             // clear, primary retirement, then exact mapping reclaim.
@@ -2745,6 +2769,9 @@ unsafe fn release_claimed_non_arena_singleton_page_with_list_removal(
                 || page_ref.used() != 0
                 || !page_ref.is_queue_detached()
             {
+                return retain(ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved);
+            }
+            if !record_claimed_page_released(page_ref) {
                 return retain(ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved);
             }
             if unsafe {
@@ -36907,6 +36934,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Copies this session's bounded deferred-free source identity without
     /// exposing the session itself. It is valid only for a caller-stack phase
     /// that releases this engine before it invokes user code.
+    /// `mi_stats_merge_theap_to_heap` (`src/stats.c:453-458`): merge this
+    /// engine's Theap statistics into its Heap and reset them.
+    #[inline]
+    pub(crate) fn merge_theap_statistics_into_heap(&self) -> bool {
+        self.session.theap().merge_statistics_into_owning_heap_after_collection()
+    }
+
     #[inline]
     pub(crate) fn deferred_free_source(&self) -> Option<crate::deferred_free::DeferredFreeSource> {
         self.session.deferred_free_source()
