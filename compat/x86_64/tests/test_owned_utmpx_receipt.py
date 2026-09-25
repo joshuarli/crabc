@@ -132,9 +132,9 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             receipt.retained_static_admitted_inputs(self.workspace, product, raw, "static")
 
     def test_shared_static_authority_is_the_reviewed_extraction(self) -> None:
-        self.assertEqual(receipt.STATIC_LINK_AUTHORITY_COMMIT, "06135a4c927f0ba4c57d11331193d8a4c6e1b144")
+        self.assertEqual(receipt.STATIC_LINK_AUTHORITY_COMMIT, "a28c5934f8664687b5bfe9a70ad28cf9b476e76c")
         self.assertEqual(receipt.STATIC_LINK_AUTHORITY_SHA256,
-                         "044d744f273472425329f8228f4e57535e1686f157e547f8226a28b009d33c97")
+                         "48a3e80d8a05c737178254549ab4af329317db11c76d598f105c7ba841c7011a")
         self.assertEqual(receipt.digest(ROOT / "compat/x86_64/owned_static_link_authority.py"),
                          receipt.STATIC_LINK_AUTHORITY_SHA256)
 
@@ -490,6 +490,22 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         stream.write_bytes(subprocess.check_output(["readelf", "--symbols", "--wide", str(foreign)]))
         with self.assertRaisesRegex(receipt.ReceiptError, "raw symbols do not describe"):
             receipt.validate_symbol_byte_stream(stream, candidate, "/candidate", frozenset({".dynsym", ".symtab"}))
+
+    def test_raw_symbol_stream_matches_readelf_for_a_section_name_past_its_buffer(self) -> None:
+        # Per-module Rust archive members carry function sections whose names
+        # exceed readelf's printable section-name buffer.
+        section = ".text." + "x" * 400
+        source = self.root / "long.c"
+        source.write_text(f'__attribute__((section("{section}"))) int long_named(void) {{ return 1; }}\n')
+        compiler = shutil.which("cc") or shutil.which("gcc")
+        if compiler is None:
+            self.skipTest("no C compiler for the ordinary object fixture")
+        candidate = self.root / "long.o"
+        subprocess.check_call([compiler, "-c", str(source), "-o", str(candidate)])
+        stream = self.root / "long-symbols.txt"
+        stream.write_bytes(subprocess.check_output(["readelf", "--symbols", "--wide", str(candidate)]))
+        self.assertNotIn(section, stream.read_text())
+        receipt.validate_symbol_byte_stream(stream, candidate, "/candidate", frozenset({".symtab"}))
 
     def test_native_runner_failure_keeps_raw_diagnostics_without_a_receipt(self) -> None:
         output = self.root / "failed-native-collection"

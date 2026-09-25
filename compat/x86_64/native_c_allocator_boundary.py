@@ -816,10 +816,13 @@ def _runtime_static_member_links(work: Path, output: Path, static_product: Path,
             map_text = link_map.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
             raise AllocatorBoundaryError(f"{mode} C runtime link sidecar is unreadable") from error
+        # The trace records archive extraction. Only the C member must also
+        # keep sections: `--gc-sections` may drop a provider member whose one
+        # function (for example realpath) this workload never reaches.
         for label, member in selected.items():
             require(trace_lines.count(member) == 1,
                     f"{mode} C runtime trace selection differs for {label}")
-            require(member + ":" in map_text,
+            require(label != "static_c_member" or member + ":" in map_text,
                     f"{mode} C runtime map selection differs for {label}")
         result[mode] = {
             "map": identity(link_map, logical_path=link_map.relative_to(output).as_posix()),

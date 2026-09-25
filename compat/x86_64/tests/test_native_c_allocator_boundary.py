@@ -155,8 +155,14 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             (output / "static-static-pie.crabc-link.map").write_text(
                 f"  {archive}(native-c-root.rcgu.o):(.text.root)\n", encoding="utf-8",
             )
-            with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "map selection"):
+            with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "map selection differs for static_c_member"):
                 BOUNDARY._runtime_static_member_links(output, output, static, imports)
+            # An extracted provider member whose sections `--gc-sections`
+            # collected away is still selected by the trace.
+            (output / "static-static-pie.crabc-link.map").write_text(
+                f"  {archive}(selected-c-mimalloc.o):(.text.c)\n", encoding="utf-8",
+            )
+            BOUNDARY._runtime_static_member_links(output, output, static, imports)
 
     def test_public_reader_threads_reconstructed_runtime_imports_to_startup_replay(self) -> None:
         scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"

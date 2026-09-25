@@ -322,6 +322,12 @@ DYNAMIC_LINK_RECEIPTS = (
     "dynamic-pie-contract.crabc-link.json",
     "dynamic-non-pie-contract.crabc-link.json",
 )
+# The dynamic driver also retains each link's ELF facts and LLD map beside its
+# receipt (`owned_dynamic_elf.py`); they are retained bytes, not extra claims.
+DYNAMIC_LINK_DRIVER_EVIDENCE = tuple(
+    receipt.removesuffix(".crabc-link.json") + suffix
+    for receipt in DYNAMIC_LINK_RECEIPTS for suffix in (".crabc-elf.json", ".crabc-link.map")
+)
 ROOT_TREES = (
     "musl-dynamic-pie-root",
     "musl-dynamic-non-pie-root",
@@ -805,6 +811,12 @@ def _validate_image_inputs(
     return manifest
 
 
+# GNU readelf prints section names through a fixed printable-section-name
+# buffer that keeps the first 256 bytes; per-module Rust archive members carry
+# longer function-section names.
+READELF_SECTION_NAME_BYTES = 256
+
+
 def require_archive_relocation_stream(path: Path, artifact: Path, logical_path: str) -> None:
     """Derive the full archive ``readelf --relocs`` rendering from retained members.
 
@@ -828,7 +840,7 @@ def require_archive_relocation_stream(path: Path, artifact: Path, logical_path: 
             require(section[9] == 24 and section[5] % 24 == 0,
                     "retained archive relocation table differs")
             expected.append((member, "Relocation section '%s' at offset 0x%x contains %d %s:" % (
-                section_name(elf, section), section[4], section[5] // 24,
+                section_name(elf, section)[:READELF_SECTION_NAME_BYTES], section[4], section[5] // 24,
                 "entry" if section[5] == 24 else "entries",
             )))
             for offset in range(0, section[5], 24):
@@ -838,7 +850,7 @@ def require_archive_relocation_stream(path: Path, artifact: Path, logical_path: 
                 require(kind in RAW_ARCHIVE_RELOCATION_NAMES, "unclassified archive ELF relocation")
                 name = symbol["name"]
                 if symbol["type"] == "3" and not name:
-                    name = section_name(elf, elf.sections[symbol["section"]])
+                    name = section_name(elf, elf.sections[symbol["section"]])[:READELF_SECTION_NAME_BYTES]
                 rows.append((member, destination, info, RAW_ARCHIVE_RELOCATION_NAMES[kind],
                              symbol["value"], name, addend))
     actual_headers: list[tuple[str, str]] = []
@@ -1505,6 +1517,7 @@ def _direct_work_files() -> set[str]:
     files.update(LINK_MAPS.values())
     files.update(SYMBOL_STREAMS)
     files.update(DYNAMIC_LINK_RECEIPTS)
+    files.update(DYNAMIC_LINK_DRIVER_EVIDENCE)
     files.update(STATIC_LINK_RECEIPTS)
     files.update(STATIC_LINK_TRACES)
     return files
@@ -1958,7 +1971,15 @@ def _coverage() -> dict[str, object]:
     }
 
 
-def _expected_retained_paths(work: Path) -> set[str]:
+HISTORICAL_INPUT_COPY = "retained/historical/input-identities.json"
+
+
+def _expected_retained_paths(work: Path, historical: bool = True) -> set[str]:
+    """Return the retained roster; the pre-receipt ledger copy is optional.
+
+    A receipt collected directly on current products has no earlier plain
+    runner ledger to retain, so it records ``historical_evidence: null``.
+    """
     paths = {
         "retained/oracle/compiler-wrapper",
         "retained/oracle/libc.so",
@@ -1973,8 +1994,9 @@ def _expected_retained_paths(work: Path) -> set[str]:
         "retained/products/dynamic-driver",
         "retained/products/dynamic-libc.so",
         "retained/products/dynamic-loader",
-        "retained/historical/input-identities.json",
     }
+    if historical:
+        paths.add(HISTORICAL_INPUT_COPY)
     paths.update(_input_copy_path(name) for name in INPUT_NAMES)
     paths.update(_collector_copy_path(name) for name in COLLECTOR_PATHS)
     paths.update(_image_copy_path(invocation) for invocation in trusted_image_manifest()["files"])
@@ -1984,7 +2006,7 @@ def _expected_retained_paths(work: Path) -> set[str]:
     return paths
 
 
-def _artifact_map(work: Path) -> dict[str, dict[str, object]]:
+def _artifact_map(work: Path, historical: bool) -> dict[str, dict[str, object]]:
     expected_direct = _direct_work_files()
     direct = {
         path.name for path in work.iterdir()
@@ -1998,7 +2020,7 @@ def _artifact_map(work: Path) -> dict[str, dict[str, object]]:
         for path in retained_root.rglob("*")
         if path.is_file() and not path.is_symlink()
     }
-    expected_retained = _expected_retained_paths(work)
+    expected_retained = _expected_retained_paths(work, historical)
     git_objects = {name for name in observed_retained if name.startswith("retained/source/git-objects/")}
     require(git_objects and observed_retained == expected_retained | git_objects,
             f"retained pthread receipt file roster changed: missing={sorted(expected_retained - observed_retained)} extra={sorted(observed_retained - expected_retained - git_objects)}")
@@ -2212,7 +2234,7 @@ def _copy_product_sidecars(work: Path, product: Mapping[str, object], inputs: Ma
 
 def _copy_historical(work: Path, historical_inputs: Path) -> None:
     _load_historical_inputs(historical_inputs)
-    _copy_regular(historical_inputs, work / "retained/historical/input-identities.json", "historical input identities")
+    _copy_regular(historical_inputs, work / HISTORICAL_INPUT_COPY, "historical input identities")
 
 
 def _source_contract_records(work: Path) -> dict[str, object]:
@@ -2445,7 +2467,7 @@ def _validate_historical(work: Path, historical: Mapping[str, object], artifacts
         require(isinstance(historical[key], str) and re.fullmatch(r"[0-9a-f]{40}", historical[key]) is not None,
                 f"historical evidence {key} is invalid")
     require(historical["source_commit"] != source["revision"], "historical evidence is confused with selected product source")
-    relative = "retained/historical/input-identities.json"
+    relative = HISTORICAL_INPUT_COPY
     require(historical["input_identities"] == relative, "historical input path changed")
     path = validate_retained_artifact(work, artifacts[relative], "historical input identities")
     old = _load_historical_inputs(path)
@@ -2552,7 +2574,8 @@ def validate_report(report_path: Path) -> dict[str, object]:
     }
     require(git_objects and all(re.fullmatch(r"retained/source/git-objects/[0-9a-f]{40}", relative)
                                 is not None for relative in git_objects)
-            and set(artifacts) == _direct_work_files() | _expected_retained_paths(work) | git_objects,
+            and set(artifacts) == _direct_work_files()
+                | _expected_retained_paths(work, report["historical_evidence"] is not None) | git_objects,
             "pthread alias artifact roster changed")
     for relative, record in artifacts.items():
         require(relative == record.get("path") if isinstance(record, dict) else False,
@@ -2615,8 +2638,9 @@ def validate_report(report_path: Path) -> dict[str, object]:
     require(isinstance(oracle, dict), "oracle is invalid")
     _validate_oracle(work, oracle, artifacts, selected)
     historical = report["historical_evidence"]
-    require(isinstance(historical, dict), "historical evidence is invalid")
-    _validate_historical(work, historical, artifacts, inputs, source)
+    require(historical is None or isinstance(historical, dict), "historical evidence is invalid")
+    if historical is not None:
+        _validate_historical(work, historical, artifacts, inputs, source)
     _validate_coverage(report["coverage"])
     commands = report["commands"]
     require(isinstance(commands, dict), "commands are invalid")
@@ -2654,10 +2678,14 @@ def collect_report(
     work: Path,
     root: Path,
     product_report: Path,
-    historical_inputs: Path,
-    historical_source_commit: str,
+    historical_inputs: Path | None = None,
+    historical_source_commit: str | None = None,
 ) -> Path:
-    """Seal a completed focused runner work directory into one replay receipt."""
+    """Seal a completed focused runner work directory into one replay receipt.
+
+    The pre-receipt input ledger and its commit are optional provenance: pass
+    both to retain an earlier plain runner's ledger, or neither.
+    """
 
     work = work.resolve(strict=True)
     root = root.resolve(strict=True)
@@ -2685,20 +2713,32 @@ def collect_report(
     _copy_source_contract(work, root, str(selected_source["revision"]), selected_git_files)
     _copy_product_sidecars(work, product, inputs)
     _canonical_static_preparation(work, selected_source, inputs)
-    _copy_historical(work, historical_inputs.resolve(strict=True))
-    require(re.fullmatch(r"[0-9a-f]{40}", historical_source_commit) is not None,
-            "historical source commit is invalid")
-    try:
-        historical_tree = _git(root, "rev-parse", historical_source_commit + "^{tree}").decode("ascii").strip()
-    except ReceiptError:
-        raise ReceiptError("historical source commit is unavailable in this checkout") from None
-    require(historical_source_commit != current["revision"], "historical source must differ from current collection source")
+    require((historical_inputs is None) == (historical_source_commit is None),
+            "historical inputs and their source commit are supplied together")
+    historical_evidence = None
+    if historical_inputs is not None:
+        _copy_historical(work, historical_inputs.resolve(strict=True))
+        require(re.fullmatch(r"[0-9a-f]{40}", historical_source_commit) is not None,
+                "historical source commit is invalid")
+        try:
+            historical_tree = _git(root, "rev-parse", historical_source_commit + "^{tree}").decode("ascii").strip()
+        except ReceiptError:
+            raise ReceiptError("historical source commit is unavailable in this checkout") from None
+        require(historical_source_commit != current["revision"],
+                "historical source must differ from current collection source")
+        historical_evidence = {
+            "role": "pre-receipt-pthread-alias-matrix",
+            "used_for_selected_products": False,
+            "source_commit": historical_source_commit,
+            "source_tree": historical_tree,
+            "input_identities": HISTORICAL_INPUT_COPY,
+        }
     for root_name in ROOT_TREES:
         _write_tree_record(work / root_name, work / f"retained/runtime-roots/{root_name}.json")
 
     validate_elf_output_modes(work)
 
-    artifacts = _artifact_map(work)
+    artifacts = _artifact_map(work, historical_evidence is not None)
     source_records = _source_contract_records(work)
     report = {
         "schema": SCHEMA,
@@ -2769,13 +2809,7 @@ def collect_report(
             "shared": "retained/oracle/libc.so",
             "archive": "retained/oracle/libc.a",
         },
-        "historical_evidence": {
-            "role": "pre-receipt-pthread-alias-matrix",
-            "used_for_selected_products": False,
-            "source_commit": historical_source_commit,
-            "source_tree": historical_tree,
-            "input_identities": "retained/historical/input-identities.json",
-        },
+        "historical_evidence": historical_evidence,
         "coverage": _coverage(),
         "feature_source": evaluate_feature_source(root),
         "artifacts": artifacts,
@@ -2806,8 +2840,8 @@ def collect_native(
     receipt_dir: Path,
     product_report: Path,
     static_preparation: Path,
-    historical_inputs: Path,
-    historical_source_commit: str,
+    historical_inputs: Path | None,
+    historical_source_commit: str | None,
     static_product: Path,
     dynamic_product: Path,
 ) -> Path:
@@ -2828,8 +2862,8 @@ def collect_native(
         "--receipt-dir", str(receipt_dir),
         "--product-report", str(product_report),
         "--static-preparation", str(static_preparation),
-        "--historical-inputs", str(historical_inputs),
-        "--historical-source-commit", historical_source_commit,
+        *(("--historical-inputs", str(historical_inputs), "--historical-source-commit", historical_source_commit)
+          if historical_inputs is not None else ()),
         str(static_product), str(dynamic_product),
     ]
     try:
@@ -2881,9 +2915,10 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
             parsed.historical_source_commit, parsed.receipt_dir, parsed.static_product, parsed.dynamic_product,
         )), "invalid --check-work arguments")
     elif parsed.collect_report:
-        require(all(value is not None for value in (
-            parsed.root, parsed.work, parsed.product_report, parsed.historical_inputs, parsed.historical_source_commit,
-        )), "--collect-report requires --root, --work, --product-report, --historical-inputs, and --historical-source-commit")
+        require(all(value is not None for value in (parsed.root, parsed.work, parsed.product_report)),
+                "--collect-report requires --root, --work, and --product-report")
+        require((parsed.historical_inputs is None) == (parsed.historical_source_commit is None),
+                "--historical-inputs and --historical-source-commit are supplied together")
         require(all(value is None for value in (
             parsed.output, parsed.static_preparation, parsed.receipt_dir, parsed.static_product, parsed.dynamic_product,
         )),
@@ -2891,8 +2926,10 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     elif parsed.collect_native:
         require(all(value is not None for value in (
             parsed.root, parsed.receipt_dir, parsed.product_report, parsed.static_preparation,
-            parsed.historical_inputs, parsed.historical_source_commit, parsed.static_product, parsed.dynamic_product,
-        )), "--collect-native requires root, receipt, products, preparation, and historical inputs")
+            parsed.static_product, parsed.dynamic_product,
+        )), "--collect-native requires root, receipt, products, and preparation")
+        require((parsed.historical_inputs is None) == (parsed.historical_source_commit is None),
+                "--historical-inputs and --historical-source-commit are supplied together")
         require(all(value is None for value in (parsed.work, parsed.output)),
                 "--collect-native does not take --work or --output")
     else:

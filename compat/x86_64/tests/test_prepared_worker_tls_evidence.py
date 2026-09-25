@@ -348,9 +348,14 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
             EVIDENCE.check_full_dynamic_fork_order(
                 cargo.replace('x86-owned-dynamic-runtime = ["x86-owned-static-runtime"]',
                               'x86-owned-dynamic-runtime = []'),atfork)
-        child='loader_fork.complete(true);\n            let Some(reset) = deferred_child_registry_reset else {\n                super::immediate_termination::_Exit(127)\n            };\n            reset.complete();'
-        reordered='let Some(reset) = deferred_child_registry_reset else {\n                super::immediate_termination::_Exit(127)\n            };\n            reset.complete();\n            loader_fork.complete(true);'
-        self.assertIn(child,atfork)
+        # Swap the loader completion after the registry reset in the real
+        # source, whatever its indentation or `_Exit` path spelling.
+        start=atfork.index('loader_fork.complete(true);')
+        end=atfork.index('reset.complete();',start)+len('reset.complete();')
+        child=atfork[start:end]
+        reset=child[len('loader_fork.complete(true);'):].strip()
+        self.assertTrue(reset.startswith('let Some(reset) = deferred_child_registry_reset else'))
+        reordered=reset+'\n'+'loader_fork.complete(true);'
         with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
             EVIDENCE.check_full_dynamic_fork_order(cargo,atfork.replace(child,reordered))
 

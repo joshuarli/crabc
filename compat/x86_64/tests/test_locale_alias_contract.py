@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import re
 import unittest
 
 
@@ -83,7 +84,8 @@ class LocaleAliasContractTests(unittest.TestCase):
         source = "\n".join(path.read_text(encoding="utf-8") for path in SOURCES.values())
         for public, internal in contract["visible_aliases"].items():
             with self.subTest(public=public):
-                self.assertIn(f'".weak {public}", ".set {public}, {internal}"', source)
+                # Per-member source blocks may wrap the two directives.
+                self.assertRegex(source, rf'"\.weak {re.escape(public)}",\s*"\.set {re.escape(public)}, {re.escape(internal)}"')
                 self.assertTrue(
                     f'#[export_name = "{internal}"]' in source
                     or f'{public}, "{internal}"' in source,
@@ -97,9 +99,9 @@ class LocaleAliasContractTests(unittest.TestCase):
                 self.assertIn(f'#[export_name = "{internal}"]', source)
         timezone = SOURCES["timezone"].read_text(encoding="utf-8")
         objects = SOURCES["objects"].read_text(encoding="utf-8")
-        self.assertIn('".weak __freelocale", ".set __freelocale, freelocale"', objects)
-        self.assertIn("#[no_mangle]\npub unsafe extern \"C\" fn freelocale", objects)
-        self.assertIn("#[linkage = \"weak\"]\npub extern \"C\" fn tzset()", timezone)
+        self.assertRegex(objects, r'"\.weak __freelocale",\s*"\.set __freelocale, freelocale"')
+        self.assertRegex(objects, r'#\[no_mangle\]\s*pub unsafe extern "C" fn freelocale')
+        self.assertRegex(timezone, r'#\[linkage = "weak"\]\s*pub extern "C" fn tzset\(\)')
         self.assertIn("fn refresh_tzset()", timezone)
         self.assertNotIn('export_name = "__tzset"', timezone)
 

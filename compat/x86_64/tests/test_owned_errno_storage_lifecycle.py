@@ -305,6 +305,32 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(layout["archive_member"], {"name": "provider.o", "index": 1, "occurrence": 0})
 
+    def test_static_h_errno_layout_selects_the_defining_member_among_consumers(self) -> None:
+        # One member per Rust module: sibling members reference h_errno as UND.
+        consumer_symbols = STATIC_LAYOUT_SYMBOLS.replace(
+            "0000000000000000     4 OBJECT  GLOBAL DEFAULT    1 h_errno",
+            "0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND h_errno",
+        )
+        self.assertNotEqual(consumer_symbols, STATIC_LAYOUT_SYMBOLS)
+
+        def layout(provider_symbols: str) -> dict[str, object]:
+            return reader.validate_static_h_errno_layout(
+                archive_member_block("consumer.o", STATIC_LAYOUT_HEADER)
+                + archive_member_block("provider.o", STATIC_LAYOUT_HEADER),
+                archive_member_block("consumer.o", STATIC_LAYOUT_SECTIONS)
+                + archive_member_block("provider.o", STATIC_LAYOUT_SECTIONS),
+                archive_member_block("consumer.o", consumer_symbols)
+                + archive_member_block("provider.o", provider_symbols),
+                "consumer.o\nprovider.o\n",
+                "/fixture/static.a",
+                "per-module static archive",
+            )
+
+        self.assertEqual(layout(STATIC_LAYOUT_SYMBOLS)["archive_member"],
+                         {"name": "provider.o", "index": 1, "occurrence": 0})
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "0 static archive h_errno definitions"):
+            layout(consumer_symbols)
+
     def test_h_errno_layout_replay_uses_recorded_archive_spelling_for_host_products(self) -> None:
         """Complete archive facts retain /workspace while replay sees host paths."""
 

@@ -262,11 +262,20 @@ DYNAMIC_EXECUTABLE_LINK_SIDECARS = (
     ("candidate-dynamic-non-pie", "candidate-dynamic-non-pie.crabc-link.json", "non-pie"),
 )
 
+# The driver also retains each link's ELF facts and LLD map beside the receipt
+# (`owned_dynamic_elf.py`); they are retained bytes, not additional claims.
+DYNAMIC_EXECUTABLE_DRIVER_EVIDENCE = tuple(
+    executable + suffix
+    for executable, _sidecar, _linkage in DYNAMIC_EXECUTABLE_LINK_SIDECARS
+    for suffix in (".crabc-elf.json", ".crabc-link.map")
+)
+
 RUNNER_ARTIFACTS = (
     "probe.o", "oracle-static", "candidate-static", "candidate-static-pie",
     "oracle-dynamic-pie", "oracle-dynamic-non-pie",
     "candidate-dynamic-pie", "candidate-dynamic-non-pie",
     *(sidecar for _executable, sidecar, _linkage in DYNAMIC_EXECUTABLE_LINK_SIDECARS),
+    *DYNAMIC_EXECUTABLE_DRIVER_EVIDENCE,
 )
 
 RUNNER_GENERATED_ENTRIES = (
@@ -558,7 +567,7 @@ def validate_source_contract(root: Path) -> dict[str, object]:
     timezone = texts["libc/src/c_abi/x86_64/owned_timezone.rs"]
     static_c_abi = texts["libc/src/c_abi/x86_64/static_c_abi.rs"]
     oracle_wrapper = (root / "docker/x86_64-musl-oracle-gcc").read_text(encoding="utf-8")
-    if '".weak __freelocale", ".set __freelocale, freelocale"' not in objects:
+    if re.search(r'"\.weak __freelocale",\s*"\.set __freelocale, freelocale"', objects) is None:
         _fail("source reverse freelocale declaration changed")
     if '#[linkage = "weak"]\npub extern "C" fn tzset()' not in timezone:
         _fail("source public tzset declaration changed")
@@ -1728,6 +1737,10 @@ def collect(root: Path, output: Path) -> dict[str, object]:
     output = output.absolute()
     output_relative = _require_native_collection(root, output)
     output.mkdir(parents=True)
+    # The dynamic builder leaves directory modes to inheritance. Clear an
+    # inherited setgid (a setgid checkout `.work`) so the products built here
+    # carry the ordinary product modes the selector's supplied cohort has.
+    os.chmod(output, 0o755)
     try:
         before = _capture_source_phase(root, output, "inputs/source", selected_sources=CURRENT_SELECTED_SOURCES)
         source_state = _source_state(before)

@@ -709,6 +709,57 @@ class ClosureTests(unittest.TestCase):
         with self.assertRaises(selection.SelectionError):
             selection.evidence_blockers(declaration=None, semantic_receipts=[], family_receipts=[], source_matches=0)
 
+    def test_semantic_receipt_blocker_names_each_absent_companion(self):
+        declaration = None
+        partial = selection.evidence_blockers(declaration=declaration, semantic_receipts=['crt_startup_report'],
+                                              family_receipts=[{}], source_matches=True,
+                                              required_semantic_receipts=['crt_startup_report', 'utmpx_receipt_report'])
+        self.assertIn({'code': 'semantic-receipts-missing',
+                       'subject': 'owner component extraction, ABI, alias and lifecycle readers',
+                       'companions': ['utmpx_receipt_report']}, partial)
+        complete = selection.evidence_blockers(declaration=declaration, semantic_receipts=['crt_startup_report'],
+                                               family_receipts=[{}], source_matches=True,
+                                               required_semantic_receipts=['crt_startup_report'])
+        self.assertNotIn('semantic-receipts-missing', {row['code'] for row in complete})
+        self.assertNotIn('family-receipts-missing', {row['code'] for row in complete})
+
+
+class LedgerFamilyAdmissionTests(unittest.TestCase):
+    """Foundation-verified families count only through the validated ledger."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.contract = selection.load_contract(selection.CONTRACT_PATH)
+        cls.families = selection.load_source_inputs(cls.contract, selection.CONTRACT_PATH)['families']
+
+    def test_each_verified_family_discharges_only_its_own_row(self):
+        admissions = selection.ledger_family_admissions(self.contract, self.families)
+        verified = {row['id'] for row in self.families if row['status'] == 'foundation-verified'}
+        self.assertEqual({row['family'] for row in admissions}, verified)
+        blockers, evidence = selection.family_semantic_evidence(
+            self.families, headers_layouts_companion=None, text_family_companion=None, ledger_admissions=admissions)
+        self.assertEqual({row['family'] for row in blockers},
+                         {row['id'] for row in self.families} - verified)
+        self.assertTrue(all(row['ledger_status'] == 'planned' for row in blockers))
+        self.assertEqual(len(evidence), len(verified))
+
+    def test_rejected_ledger_or_differing_roster_rejects_admission(self):
+        import validate_parity_ledger
+        with mock.patch.object(validate_parity_ledger, 'validate_ledger',
+                               side_effect=validate_parity_ledger.LedgerError('receipt replay failed')):
+            with self.assertRaisesRegex(selection.SelectionError, 'receipt replay failed'):
+                selection.ledger_family_admissions(self.contract, self.families)
+        promoted = [dict(row, status='foundation-verified') for row in self.families]
+        with self.assertRaisesRegex(selection.SelectionError, 'roster differs'):
+            selection.ledger_family_admissions(self.contract, promoted)
+
+    def test_forged_admission_record_is_rejected(self):
+        planned = next(row['id'] for row in self.families if row['status'] == 'planned')
+        forged = {'family': planned, 'status': selection.LEDGER_FAMILY_ADMISSION_STATUS, 'ledger_status': 'planned'}
+        with self.assertRaisesRegex(selection.SelectionError, 'admission record differs'):
+            selection.family_semantic_evidence(self.families, headers_layouts_companion=None,
+                                               text_family_companion=None, ledger_admissions=[forged])
+
 
 class PathAndCommandTests(unittest.TestCase):
     def test_output_freshness_and_physical_parent_checked_before_mutation(self):

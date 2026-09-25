@@ -166,11 +166,12 @@ bytes before joining `main`, `_start`, seven global providers, and nine weak
 providers to their fully relocated final ELF bytes. That last finite map and
 relocation proof is the byte-identical reviewed
 `compat/x86_64/owned_static_link_authority.py` extraction from commit
-`06135a4c927f0ba4c57d11331193d8a4c6e1b144` (SHA-256
-`044d744f273472425329f8228f4e57535e1686f157e547f8226a28b009d33c97`).
+`a28c5934f8664687b5bfe9a70ad28cf9b476e76c` (SHA-256
+`48a3e80d8a05c737178254549ab4af329317db11c76d598f105c7ba841c7011a`).
 That reviewed helper admits TLS-free static links only when selected inputs and
 the final ELF have no TLS geometry to prove, and proves the exact RuntimeV1
-weak-descriptor zero-GOT absence form. Those generic static-link authority
+weak-descriptor zero-GOT absence form, and joins an undefined hidden target to
+its sibling archive-member definition. Those generic static-link authority
 checks do not add utmpx semantics; the utmpx reader still admits the exact
 shared source byte and derives its eight-alias component projection itself.
 

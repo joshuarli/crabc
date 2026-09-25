@@ -45,7 +45,7 @@ cd "$ROOT"
 mkdir -p "$TMPDIR"
 
 usage() {
-    printf 'usage: %s [--receipt-dir DIR --product-report REPORT --static-preparation PREPARATION --historical-inputs INPUTS --historical-source-commit COMMIT] STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
+    printf 'usage: %s [--receipt-dir DIR --product-report REPORT --static-preparation PREPARATION [--historical-inputs INPUTS --historical-source-commit COMMIT]] STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
     exit 2
 }
 
@@ -92,7 +92,12 @@ while [ "$#" -gt 0 ]; do
 done
 [ "$#" -eq 2 ] || usage
 if [ -n "$RECEIPT_DIR" ]; then
-    [ -n "$PRODUCT_REPORT" ] && [ -n "$STATIC_PREPARATION" ] && [ -n "$HISTORICAL_INPUTS" ] && [ -n "$HISTORICAL_SOURCE_COMMIT" ] || usage
+    # The earlier plain runner's input ledger is optional provenance.
+    [ -n "$PRODUCT_REPORT" ] && [ -n "$STATIC_PREPARATION" ] || usage
+    if { [ -n "$HISTORICAL_INPUTS" ] && [ -z "$HISTORICAL_SOURCE_COMMIT" ]; } ||
+        { [ -z "$HISTORICAL_INPUTS" ] && [ -n "$HISTORICAL_SOURCE_COMMIT" ]; }; then
+        usage
+    fi
 else
     [ -z "$PRODUCT_REPORT" ] && [ -z "$STATIC_PREPARATION" ] && [ -z "$HISTORICAL_INPUTS" ] && [ -z "$HISTORICAL_SOURCE_COMMIT" ] || usage
 fi
@@ -131,7 +136,9 @@ PY
 )"
     PRODUCT_REPORT="$(realpath -e "$PRODUCT_REPORT")"
     STATIC_PREPARATION="$(realpath -e "$STATIC_PREPARATION")"
-    HISTORICAL_INPUTS="$(realpath -e "$HISTORICAL_INPUTS")"
+    if [ -n "$HISTORICAL_INPUTS" ]; then
+        HISTORICAL_INPUTS="$(realpath -e "$HISTORICAL_INPUTS")"
+    fi
 fi
 python3 -B - "$ROOT" "$TMPDIR" "$static_product" "$dynamic_product" "$RECEIPT_DIR" "$PRODUCT_REPORT" "$STATIC_PREPARATION" "$HISTORICAL_INPUTS" <<'PY'
 import hashlib
@@ -201,7 +208,10 @@ if receipt:
     for product, label in ((static, "static product"), (dynamic, "dynamic product")):
         if overlaps(receipt_path, product):
             raise SystemExit(f"owned pthread timed feature contract receipt directory overlaps {label}")
-    for path, label in ((Path(product_report), "product anchor"), (Path(static_preparation), "static preparation"), (Path(historical), "historical input identities")):
+    supplied = [(Path(product_report), "product anchor"), (Path(static_preparation), "static preparation")]
+    if historical:
+        supplied.append((Path(historical), "historical input identities"))
+    for path, label in supplied:
         if not path.is_file() or path.is_symlink():
             raise SystemExit(f"owned pthread timed feature contract missing physical {label}: {path}")
 PY
@@ -520,9 +530,12 @@ done
 python3 -B "$READER" --check-work --work "$WORK"
 
 if [ -n "$RECEIPT_DIR" ]; then
+    historical=()
+    if [ -n "$HISTORICAL_INPUTS" ]; then
+        historical=(--historical-inputs "$HISTORICAL_INPUTS" --historical-source-commit "$HISTORICAL_SOURCE_COMMIT")
+    fi
     python3 -B "$READER" --collect-report --root "$ROOT" --work "$WORK" \
-        --product-report "$PRODUCT_REPORT" --historical-inputs "$HISTORICAL_INPUTS" \
-        --historical-source-commit "$HISTORICAL_SOURCE_COMMIT"
+        --product-report "$PRODUCT_REPORT" "${historical[@]}"
     python3 -B "$READER" --validate-report "$WORK/report.json"
 fi
 

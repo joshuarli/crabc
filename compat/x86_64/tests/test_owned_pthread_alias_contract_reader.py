@@ -22,8 +22,11 @@ from owned_pthread_alias_contract_reader import (
     DYNAMIC_STATE_QUALIFICATION,
     INPUT_NAMES,
     INPUT_SCHEMA,
+    HISTORICAL_INPUT_COPY,
     ReceiptError,
     SymbolRow,
+    _expected_retained_paths,
+    _parse_args,
     _load_inputs,
     _shared_symbols,
     _validate_dynamic_link_receipt,
@@ -47,6 +50,17 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.scratch.cleanup()
+
+    def test_current_product_receipt_needs_no_pre_receipt_ledger(self) -> None:
+        """The earlier plain-runner ledger is optional provenance, never half supplied."""
+
+        base = ["--collect-report", "--root", "r", "--work", "w", "--product-report", "p"]
+        _parse_args(base)
+        _parse_args(base + ["--historical-inputs", "h", "--historical-source-commit", "c"])
+        for partial in (["--historical-inputs", "h"], ["--historical-source-commit", "c"]):
+            with self.subTest(partial=partial), self.assertRaises(ReceiptError):
+                _parse_args(base + partial)
+        self.assertEqual(_expected_retained_paths(True) - _expected_retained_paths(False), {HISTORICAL_INPUT_COPY})
 
     def test_retained_command_output_mutation_is_rejected(self) -> None:
         """The old input-only ledger could not bind a passing runtime stream."""

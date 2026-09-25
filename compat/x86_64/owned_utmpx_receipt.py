@@ -89,8 +89,8 @@ WEAK = ("endutent", "setutent", "getutent", "getutid", "getutline", "pututline",
 # byte-for-byte from this reviewed extraction. Its TLS-free static-link and
 # exact weak RuntimeV1 zero-GOT cases are authority checks only; this component
 # still supplies its own finite function roster and trace/member admission.
-STATIC_LINK_AUTHORITY_COMMIT = "06135a4c927f0ba4c57d11331193d8a4c6e1b144"
-STATIC_LINK_AUTHORITY_SHA256 = "044d744f273472425329f8228f4e57535e1686f157e547f8226a28b009d33c97"
+STATIC_LINK_AUTHORITY_COMMIT = "a28c5934f8664687b5bfe9a70ad28cf9b476e76c"
+STATIC_LINK_AUTHORITY_SHA256 = "48a3e80d8a05c737178254549ab4af329317db11c76d598f105c7ba841c7011a"
 TRUSTED_READER_SOURCES = (
     "compat/x86_64/owned_utmpx_receipt.py",
     "compat/x86_64/owned_posix_product_evidence.py",
@@ -591,6 +591,9 @@ def elf_section_name(elf: Elf, section: tuple[Any, ...]) -> str:
         raise ReceiptError("retained ELF section name differs") from error
 
 
+READELF_SECTION_NAME_BYTES = 256
+
+
 def expected_symbol_rows(artifact: Path, logical_path: str, tables: frozenset[str]) -> list[tuple[Any, ...]]:
     """Derive every readelf symbol row from an ELF or each member of an ar."""
     data = regular(artifact, "retained symbol artifact").read_bytes()
@@ -611,7 +614,10 @@ def expected_symbol_rows(artifact: Path, logical_path: str, tables: frozenset[st
                 kind = {"0": "NOTYPE", "3": "SECTION", "4": "FILE", "5": "COMMON", "6": "TLS", "10": "IFUNC"}.get(row["type"], row["type"])
                 name = row["name"]
                 if kind == "SECTION" and not name:
-                    name = elf_section_name(elf, elf.sections[row["section"]])
+                    # GNU readelf renders a section symbol's name through its
+                    # fixed-size printable-section-name buffer, which keeps
+                    # the first 256 bytes (per-module Rust sections exceed it).
+                    name = elf_section_name(elf, elf.sections[row["section"]])[:READELF_SECTION_NAME_BYTES]
                 owner = {0: "UND", 0xfff1: "ABS", 0xfff2: "COM"}.get(row["section"], str(row["section"]))
                 expected.append((member, table, number, row["value"], row["size"], kind,
                                  row["binding"], row["visibility"], owner, name))

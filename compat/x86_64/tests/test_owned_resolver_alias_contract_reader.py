@@ -9,6 +9,7 @@ from unittest import mock
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -456,10 +457,12 @@ class ResolverAliasOrdinaryBoundaryRegressionTests(unittest.TestCase):
 
         source = (ROOT / 'libc/src/c_abi/x86_64/resolver_runtime.rs').read_text(encoding='utf-8')
         _validate_selected_source_text(source)
-        marker = '#[cfg(not(crabc_x86_owned_runtime))]\n#[no_mangle]\npub unsafe extern "C" fn getaddrinfo('
-        self.assertIn(marker, source)
+        # The definition sits indented inside its archive-member wrapper.
+        attached = re.search(r'#\[cfg\(not\(crabc_x86_owned_runtime\)\)\]\s*(#\[no_mangle\]\s*pub unsafe extern "C" fn getaddrinfo\()',
+                             source)
+        self.assertIsNotNone(attached)
         with self.assertRaisesRegex(ReceiptError, 'legacy getaddrinfo caller is not excluded'):
-            _validate_selected_source_text(source.replace(marker, '#[no_mangle]\npub unsafe extern "C" fn getaddrinfo(', 1))
+            _validate_selected_source_text(source[:attached.start()] + attached.group(1) + source[attached.end():])
 
     def test_header_commands_use_only_pinned_raw_compiler_and_selected_headers(self) -> None:
         runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')

@@ -655,7 +655,12 @@ def validate_static_h_errno_layout(
         # A complete archive may contain legitimate symbol-free members. They
         # cannot define h_errno, but their absence of a .symtab must not erase
         # the exact selected member that does.
-        rows = _fact_symbol_matches(member, ".symtab", "h_errno", description, allow_absent_table=True)
+        # With one archive member per Rust module, other members reference
+        # h_errno as an undefined symbol; only a defining row selects a member.
+        rows = [
+            row for row in _fact_symbol_matches(member, ".symtab", "h_errno", description, allow_absent_table=True)
+            if row.get("section_index") != "UND"
+        ]
         if len(rows) > 1:
             fail(f"{description} has duplicate static archive h_errno definitions in one member")
         if rows:

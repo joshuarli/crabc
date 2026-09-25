@@ -248,14 +248,15 @@ def check_full_dynamic_fork_order(cargo: str, atfork: str) -> dict[str, Any]:
         'super::owned_aio::atfork(1)',
     ),'dynamic inner child transaction')
     fork=_body(atfork,'fork')
+    # Both inner transactions take the caller's prepared-image flag.
     _ordered(fork,(
-        'fork_without_handlers_deferred_registry_reset()',
+        'fork_without_handlers_deferred_registry_reset(prepared_image)',
         'loader_fork.complete(true)',
         'let Some(reset) = deferred_child_registry_reset else',
         'reset.complete()',
     ),'active full dynamic fork')
     bare=_body(atfork,'_Fork')
-    require('fork_without_handlers()' in bare,'_Fork no longer uses its immediate child transaction')
+    require('fork_without_handlers(false)' in bare,'_Fork no longer uses its immediate child transaction')
     require('prepare_fork' not in bare and 'loader_fork.complete' not in bare
             and 'fork_without_handlers_deferred_registry_reset' not in bare,
             '_Fork gained a loader or deferred-registry transaction')

@@ -21,6 +21,8 @@ class AuthorityError(ValueError):
     pass
 
 
+READELF_SECTION_NAME_BYTES = 256
+
 def require(condition, message):
     if not condition:
         raise AuthorityError(message)
@@ -172,7 +174,9 @@ def require_symbol_stream(path, artifact, logical_path, tables):
                 kind = {'0': 'NOTYPE', '3': 'SECTION', '4': 'FILE', '5': 'COMMON', '6': 'TLS', '10': 'IFUNC'}.get(row['type'], row['type'])
                 name = row['name']
                 if kind == 'SECTION' and not name:
-                    name = section_name(elf, elf.sections[row['section']])
+                    # GNU readelf prints a section symbol's name through its
+                    # fixed printable-section-name buffer: the first 256 bytes.
+                    name = section_name(elf, elf.sections[row['section']])[:READELF_SECTION_NAME_BYTES]
                 owner = {0: 'UND', 0xfff1: 'ABS', 0xfff2: 'COM'}.get(row['section'], str(row['section']))
                 expected.append((member, table, number, row['value'], row['size'], kind,
                                  row['binding'], row['visibility'], owner, name))

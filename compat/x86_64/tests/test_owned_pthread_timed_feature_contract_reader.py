@@ -30,6 +30,43 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
             f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
         ))
 
+    def test_current_product_receipt_needs_no_pre_receipt_ledger(self) -> None:
+        """The earlier plain-runner ledger is optional provenance, never half supplied."""
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        native = ["--collect-native", "--root", "r", "--receipt-dir", "d", "--product-report", "p",
+                  "--static-preparation", "s", "--static-product", "a", "--dynamic-product", "b"]
+        report = ["--collect-report", "--root", "r", "--work", "w", "--product-report", "p"]
+        for base in (native, report):
+            reader._parse_args(base)
+            reader._parse_args(base + ["--historical-inputs", "h", "--historical-source-commit", "c"])
+            for partial in (["--historical-inputs", "h"], ["--historical-source-commit", "c"]):
+                with self.subTest(base=base[0], partial=partial), self.assertRaises(reader.ReceiptError):
+                    reader._parse_args(base + partial)
+
+    def test_archive_relocation_stream_matches_readelf_past_its_section_name_buffer(self) -> None:
+        """Per-module archive members name sections longer than readelf prints."""
+        import subprocess
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        compiler, archiver = shutil.which("gcc") or shutil.which("cc"), shutil.which("ar")
+        if compiler is None or archiver is None or shutil.which("readelf") is None:
+            self.skipTest("no C compiler, ar, or readelf for the ordinary archive fixture")
+        parent = Path(__file__).resolve().parents[3] / ".work/x86_64/tmp"
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as scratch:
+            work = Path(scratch)
+            section = ".data." + "y" * 400
+            (work / "long.c").write_text(
+                f'static int counter __attribute__((used, section("{section}"))) = 1;\n'
+                f'__attribute__((section("{section.replace(".data.", ".text.")}"))) int long_named(void)'
+                ' { return counter; }\n')
+            subprocess.check_call([compiler, "-O0", "-fno-asynchronous-unwind-tables", "-c",
+                                   str(work / "long.c"), "-o", str(work / "long.o")])
+            subprocess.check_call([archiver, "rcD", str(work / "libl.a"), str(work / "long.o")])
+            stream = work / "relocations.txt"
+            stream.write_bytes(subprocess.check_output(["readelf", "--relocs", "--wide", str(work / "libl.a")]))
+            self.assertNotIn(section, stream.read_text())
+            reader.require_archive_relocation_stream(stream, work / "libl.a", str(work / "libl.a"))
+
     def test_four_feature_owned_aliases_have_one_fixed_roster(self) -> None:
         reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
         self.assertEqual(

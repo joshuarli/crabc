@@ -97,8 +97,12 @@ variables, `h_errno` accessor macro and 13 ABI-only spellings. The nested accoun
 retains its adapter and policy identities, qualified types, direct and transitive
 observations, and current-source comparison. This selected data agreement leaves
 callable declarations, object layout and accessor-to-storage behavior open.
-Component and family receipt adapters remain to be integrated, so current
-reports retain those blockers and `require-closure` refuses them. The optional
+Each `foundation-verified` family discharges its
+`family-semantic-evidence-unavailable` row only through
+`ledger_family_admissions`, which reruns `validate_parity_ledger` (and so the
+receipt replays that status requires) on the bound `parity.toml`; planned
+families keep their rows. `semantic-receipts-missing` names every component
+companion still absent, and `require-closure` refuses any open blocker. The optional
 public-data linkage companion is a narrow exception to that absence: it records
 ordinary link/addressability evidence without claiming object lifecycle,
 strong override, interposition, COPY relocation, header feature-profile, or

@@ -807,17 +807,29 @@ def reference_static_metadata(occurrences: Sequence[Mapping[str, Any]], explicit
             'reason': None if metadata is not None else 'absent, conflicting or source-incompatible oracle static definition metadata'}
 
 
-def evidence_blockers(*, declaration: Any, semantic_receipts: Sequence[Any], family_receipts: Sequence[Any], source_matches: bool) -> list[dict[str, str]]:
+def evidence_blockers(*, declaration: Any, semantic_receipts: Sequence[Any], family_receipts: Sequence[Any], source_matches: bool,
+                      required_semantic_receipts: Sequence[str] = ()) -> list[dict[str, Any]]:
+    """Name the aggregate evidence absences that no identity row carries.
+
+    `semantic_receipts` names the attached component companions.  When
+    `required_semantic_receipts` names the selector's finite companion roster,
+    each absent member keeps the aggregate blocker open (and is listed), so a
+    single attached reader cannot stand in for the others.
+    """
     require(type(source_matches) is bool, 'source match is not Boolean')
-    blockers = []
+    blockers: list[dict[str, Any]] = []
     if declaration is None:
         blockers.append({'code': 'declaration-companion-missing', 'subject': 'enumerable compiler declaration/profile facts'})
     elif declaration['complete'] is not True:
         blockers.append({'code': 'declaration-companion-incomplete', 'subject': 'unresolved compiler declaration occurrences'})
     if declaration is not None and declaration['current_selecting_source']['matches_retained'] is not True:
         blockers.append({'code': 'declaration-source-mismatch', 'subject': 'retained declaration source differs from current selected source'})
+    missing = sorted(set(required_semantic_receipts) - set(semantic_receipts))
     if not semantic_receipts:
         blockers.append({'code': 'semantic-receipts-missing', 'subject': 'owner component extraction, ABI, alias and lifecycle readers'})
+    elif missing:
+        blockers.append({'code': 'semantic-receipts-missing', 'subject': 'owner component extraction, ABI, alias and lifecycle readers',
+                         'companions': missing})
     if not family_receipts:
         blockers.append({'code': 'family-receipts-missing', 'subject': 'complete selected native family evidence'})
     if not source_matches:
@@ -1649,14 +1661,70 @@ def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
     return blockers, evidence
 
 
+LEDGER_FAMILY_ADMISSION_STATUS = 'ledger-family-admission-attached'
+LEDGER_ADMITTED_STATUS = 'foundation-verified'
+
+
+def ledger_family_admissions(contract: Mapping[str, Any],
+                             families: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Admit each `foundation-verified` family through the ledger validator.
+
+    A family's ledger status is not a caller claim.  `validate_parity_ledger`
+    accepts `foundation-verified` only with every receipt that status depends
+    on (for example a family admission or component receipt, which it replays
+    through the owning reader), so selection consumes that validator's
+    acceptance of the same bound parity bytes, never the status string alone.
+    A rejected ledger rejects the report.  Planned families receive no record
+    and keep their `family-semantic-evidence-unavailable` blocker.
+    """
+    import validate_parity_ledger as parity_ledger
+
+    path = source_path(contract['inputs']['parity'])
+    require(path == parity_ledger.LEDGER_PATH.resolve(), 'selection parity input is not the validated ledger')
+    before = selecting_source_file_identity(path)
+    try:
+        data = parity_ledger.load_toml(path)
+        parity_ledger.validate_ledger(data)
+    except (parity_ledger.LedgerError, OSError, ValueError, TypeError) as error:
+        raise SelectionError(f'parity ledger family admission rejected: {error}') from error
+    require(same(before, selecting_source_file_identity(path)), 'parity ledger changed during family admission')
+    ledger_families = [{'id': row.get('id'), 'status': row.get('status')} for row in data.get('family', [])]
+    require(same(ledger_families, [{'id': row['id'], 'status': row['status']} for row in families]),
+            'selection family roster differs from the validated ledger')
+    return [{
+        'family': row['id'],
+        'status': LEDGER_FAMILY_ADMISSION_STATUS,
+        'ledger': before,
+        'ledger_status': row['status'],
+        'requirements_discharged': ['family-semantic-evidence-unavailable'],
+    } for row in ledger_families if row['status'] == LEDGER_ADMITTED_STATUS]
+
+
 def family_semantic_evidence(families: Sequence[Mapping[str, Any]], *,
                              headers_layouts_companion: Mapping[str, Any] | None,
                              text_family_companion: Mapping[str, Any] | None,
-                             paths: Mapping[str, Path] | None = None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
-    """Name the multi-family selector boundary without hiding old callers."""
-    return headers_layouts_family_evidence(
+                             paths: Mapping[str, Path] | None = None,
+                             ledger_admissions: Sequence[Mapping[str, Any]] = ()) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    """Name the multi-family selector boundary without hiding old callers.
+
+    Component companions discharge only their own family's row; ledger
+    admissions (from `ledger_family_admissions`) discharge each admitted
+    family's row.  Every other family keeps its named blocker.
+    """
+    blockers, evidence = headers_layouts_family_evidence(
         families, headers_layouts_companion, text_family_companion, paths=paths,
     )
+    ids = {family['id'] for family in families}
+    admitted = set()
+    for record in ledger_admissions:
+        require(record.get('status') == LEDGER_FAMILY_ADMISSION_STATUS and record.get('family') in ids
+                and record.get('ledger_status') == LEDGER_ADMITTED_STATUS
+                and record['family'] not in admitted,
+                'ledger family admission record differs')
+        admitted.add(record['family'])
+    blockers = [row for row in blockers if row['family'] not in admitted]
+    evidence.extend(copy.deepcopy(list(ledger_admissions)))
+    return blockers, evidence
 
 
 def _recheck_headers_layouts_aggregate(companion: Mapping[str, Any] | None) -> None:
@@ -2679,13 +2747,22 @@ def bsd_random_receipt_adapter(report_path: Path | None, *, paths: Mapping[str, 
     # The owning link receipts contain /workspace paths and sealed product
     # links. Replay them inside that exact native mount, then bind the same
     # physical files and selected product roots here on the host.
-    container_path = Path('/workspace') / path.relative_to(ROOT)
-    command = [str(ROOT / 'scripts/dev-x86_64.sh'), 'owned-bsd-random-receipt',
-               'validate-report', str(container_path)]
-    completed = subprocess.run(command, cwd=ROOT, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    require(completed.returncode == 0,
-            f'BSD random native receipt rejected: {completed.stderr.decode(errors="replace")}')
+    # Inside the pinned image (the evidence-set assembly and gate evaluation
+    # path) that mount is this checkout, so the owner replays directly.
+    if ROOT == Path('/workspace'):
+        try:
+            bsd_random_evidence.validate_report(path)
+        except (bsd_random_evidence.ReceiptError, bsd_random_evidence.products.ProductEvidenceError,
+                OSError, subprocess.SubprocessError, ValueError) as error:
+            raise SelectionError(f'BSD random native receipt rejected: {error}') from error
+    else:
+        container_path = Path('/workspace') / path.relative_to(ROOT)
+        command = [str(ROOT / 'scripts/dev-x86_64.sh'), 'owned-bsd-random-receipt',
+                   'validate-report', str(container_path)]
+        completed = subprocess.run(command, cwd=ROOT, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        require(completed.returncode == 0,
+                f'BSD random native receipt rejected: {completed.stderr.decode(errors="replace")}')
     require(same(before, file_identity(path)), 'BSD random receipt changed during replay')
     report = exact(read_json(path), {'schema', 'scope', 'files', 'products', 'oracle_link', 'scenario_roots'},
                    'BSD random receipt')
@@ -9839,9 +9916,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     family_evidence_blockers, family_semantic_receipts = family_semantic_evidence(
         inputs['families'], headers_layouts_companion=headers_layouts_aggregate_companion,
         text_family_companion=text_family_semantic_companion, paths=paths,
+        ledger_admissions=ledger_family_admissions(contract, inputs['families']),
     )
     headers_layouts_aggregate_evidence = [
-        receipt for receipt in family_semantic_receipts if receipt['family'] == HEADERS_LAYOUTS_FAMILY
+        receipt for receipt in family_semantic_receipts
+        if receipt['family'] == HEADERS_LAYOUTS_FAMILY and receipt['status'] != LEDGER_FAMILY_ADMISSION_STATUS
     ]
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
@@ -9879,7 +9958,35 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
     blockers = accounting.pop('blockers')
-    blockers.extend(evidence_blockers(declaration=declaration, semantic_receipts=[], family_receipts=[], source_matches=source_matches))
+    component_companions = {
+        'ordinary_declaration_abi_report': (declaration or {}).get('ordinary_declaration_abi'),
+        'loader_debug_report': public_data_linkage_companion,
+        'compiler_helper_aggregate_report': compiler_helper_companion,
+        'loader_runtime_registry_report': loader_runtime_registry_companion,
+        'pthread_alias_contract_report': pthread_alias_contract_companion,
+        'prepared_worker_tls_report': prepared_worker_tls_companion,
+        'errno_storage_lifecycle_report': errno_storage_lifecycle_companion,
+        'native_c_allocator_boundary_report': native_c_allocator_boundary_companion,
+        'stdio_alias_contract_report': stdio_alias_contract_companion,
+        'crt_startup_report': crt_startup_companion,
+        'syscall_alias_contract_report': syscall_alias_contract_companion,
+        'utmpx_receipt_report': utmpx_receipt_companion,
+        'pthread_timed_feature_report': pthread_timed_feature_companion,
+        'resolver_alias_receipt_report': resolver_alias_receipt_companion,
+        'locale_alias_contract_report': locale_alias_contract_companion,
+        'headers_layouts_aggregate_report': headers_layouts_aggregate_companion,
+        'text_family_semantic_report': text_family_semantic_companion,
+        'posix_sysv_signal_admission_report': posix_sysv_signal_admission_companion,
+        'bsd_random_receipt_report': bsd_random_receipt_companion,
+        'public_data_declaration_runtime_report': public_data_declaration_runtime_companion,
+        'loader_structural_owner_receipt_report': loader_structural_owner_companion,
+    }
+    blockers.extend(evidence_blockers(
+        declaration=declaration,
+        semantic_receipts=[name for name, companion in component_companions.items() if companion is not None],
+        family_receipts=family_semantic_receipts, source_matches=source_matches,
+        required_semantic_receipts=list(component_companions),
+    ))
     blockers.extend(family_evidence_blockers)
     require(same(source_before, selection_source()), 'selection source changed while building report')
     require(same(inputs['bindings'], load_source_inputs(contract, contract_path)['bindings']), 'selection input bytes changed during report')

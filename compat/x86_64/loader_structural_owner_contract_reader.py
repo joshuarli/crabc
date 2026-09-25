@@ -48,7 +48,10 @@ IMAGE_INPUT_PATHS = {
     "timeout": "/usr/bin/timeout",
     "chroot": "/usr/sbin/chroot",
 }
-IMAGE_MANIFEST_SOURCE = "compat/x86_64/owned-resolver-alias-image-inputs.json"
+# The current pinned-image input manifest shared with the resolver alias
+# receipt; the dash-named file is its pre-repin predecessor.
+IMAGE_MANIFEST_SOURCE = "compat/x86_64/owned_resolver_alias_image_inputs.json"
+IMAGE_MANIFEST_SCHEMA = "crabc.x86_64-owned-resolver-alias-image-inputs/v1"
 IDENTITIES = (
     "__dls2b", "__dls3", "_dlstart", "__ldso_register_dlopen",
     "__ldso_register_dlsym", "__ldso_register_dlclose",
@@ -539,7 +542,7 @@ def validate_runtime_lock_source(lock: str) -> None:
     require(code.count("static LOCK: AtomicI32 = AtomicI32::new(0);") == 1,
             "always-atomic graph lock declaration differs")
     acquire = rust_function_body(lock, "fn acquire(lock: &AtomicI32)")
-    _ordered(acquire, ("lock.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)",), "always-atomic graph lock")
+    _ordered(acquire, ("lock.compare_exchange(FREE, HELD, Ordering::Acquire, Ordering::Relaxed)",), "always-atomic graph lock")
     runtime_impl = lock[lock.find("impl RuntimeGuard"):]
     runtime_acquire = rust_function_body(runtime_impl, "pub(super) fn acquire()")
     require(_rust_code(runtime_acquire).count("acquire(&LOCK);") == 1,
@@ -859,7 +862,7 @@ def _trusted_image_manifest(root: Path) -> dict[str, object]:
     """Read the existing pinned-image authority for this exact invocation set."""
     manifest = _read_json(_physical_regular(root / IMAGE_MANIFEST_SOURCE, "pinned image manifest"),
                           "pinned image manifest")
-    require(manifest.get("image") == PINNED_IMAGE and manifest.get("path") == COMMAND_ENVIRONMENT["PATH"],
+    require(manifest.get("schema") == IMAGE_MANIFEST_SCHEMA and manifest.get("image") == PINNED_IMAGE,
             "pinned image manifest identity differs")
     files = manifest.get("files")
     require(isinstance(files, Mapping), "pinned image manifest file roster differs")

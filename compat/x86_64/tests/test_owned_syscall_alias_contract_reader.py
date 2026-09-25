@@ -8,6 +8,7 @@ import unittest
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from unittest import mock
 import hashlib
@@ -44,6 +45,24 @@ import owned_syscall_alias_contract_reader as syscall_reader
 
 
 class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
+    def test_symbol_stream_matches_readelf_for_a_section_name_past_its_buffer(self) -> None:
+        # Per-module Rust archive members carry function sections whose names
+        # exceed readelf's printable section-name buffer.
+        compiler = shutil.which("cc") or shutil.which("gcc")
+        if compiler is None or shutil.which("readelf") is None:
+            self.skipTest("no C compiler or readelf for the ordinary object fixture")
+        parent = SOURCE_DIR.parents[1] / ".work/x86_64/tmp"
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as scratch:
+            work = Path(scratch)
+            section = ".text." + "x" * 400
+            (work / "long.c").write_text(f'__attribute__((section("{section}"))) int long_named(void) {{ return 1; }}\n')
+            subprocess.check_call([compiler, "-c", str(work / "long.c"), "-o", str(work / "long.o")])
+            stream = work / "long-symbols.txt"
+            stream.write_bytes(subprocess.check_output(["readelf", "--symbols", "--wide", str(work / "long.o")]))
+            self.assertNotIn(section, stream.read_text())
+            authority.require_symbol_stream(stream, work / "long.o", "/candidate", {".symtab"})
+
     def test_current_image_manifest_uses_the_selected_toolchain_and_preserves_legacy_manifest(self) -> None:
         toolchain = tomllib.loads((syscall_reader.ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
         current = json.loads(syscall_reader.IMAGE_MANIFEST.read_text())

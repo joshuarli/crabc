@@ -106,11 +106,11 @@ Native collection records checkout and supplied-product paths under the fixed
 `/workspace` mount. It separately retains the pinned image invocations for
 the musl compiler/runtime, `timeout`, and `chroot`; retained host replay uses
 those copied identities and canonical recorded paths, never an ambient host
-`/opt` or `/usr/local` tool. The existing pinned-image manifest
-`owned-resolver-alias-image-inputs.json` is a source-contract input for this
-finite invocation set: it resolves `/usr/bin/timeout` and `/usr/sbin/chroot`
-to their one physical `/bin/coreutils` target while preserving their canonical
-argv spellings.
+`/opt` or `/usr/local` tool. The current pinned-image manifest
+`owned_resolver_alias_image_inputs.json` (schema and image both checked) is a
+source-contract input for this finite invocation set: it resolves each
+canonical argv spelling, including `/usr/bin/timeout` and `/usr/sbin/chroot`,
+to its one physical target.
 
 ## Exact startup and constructor tail
 

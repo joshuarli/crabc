@@ -48,7 +48,7 @@ paths = [
   "compat/x86_64/loader_runtime_registry_evidence.py",
   "compat/x86_64/loader_debug_abi_evidence.py",
   "compat/x86_64/owned_posix_product_evidence.py",
-  "compat/x86_64/owned-resolver-alias-image-inputs.json",
+  "compat/x86_64/owned_resolver_alias_image_inputs.json",
 ]
 
 [selection]

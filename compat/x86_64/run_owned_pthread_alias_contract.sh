@@ -17,7 +17,7 @@ readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 cd "$ROOT"
 
 usage() {
-    printf 'usage: %s [--receipt-dir DIR --product-report REPORT --historical-inputs INPUTS --historical-source-commit COMMIT] STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
+    printf 'usage: %s [--receipt-dir DIR --product-report REPORT [--historical-inputs INPUTS --historical-source-commit COMMIT]] STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
     exit 2
 }
 
@@ -58,7 +58,12 @@ while [ "$#" -gt 0 ]; do
 done
 [ "$#" -eq 2 ] || usage
 if [ -n "$RECEIPT_DIR" ]; then
-    [ -n "$PRODUCT_REPORT" ] && [ -n "$HISTORICAL_INPUTS" ] && [ -n "$HISTORICAL_SOURCE_COMMIT" ] || usage
+    # The earlier plain runner's input ledger is optional provenance.
+    [ -n "$PRODUCT_REPORT" ] || usage
+    if { [ -n "$HISTORICAL_INPUTS" ] && [ -z "$HISTORICAL_SOURCE_COMMIT" ]; } ||
+        { [ -z "$HISTORICAL_INPUTS" ] && [ -n "$HISTORICAL_SOURCE_COMMIT" ]; }; then
+        usage
+    fi
 else
     [ -z "$PRODUCT_REPORT" ] && [ -z "$HISTORICAL_INPUTS" ] && [ -z "$HISTORICAL_SOURCE_COMMIT" ] || usage
 fi
@@ -93,7 +98,9 @@ print(candidate)
 PY
 )"
     PRODUCT_REPORT="$(realpath -e "$PRODUCT_REPORT")"
-    HISTORICAL_INPUTS="$(realpath -e "$HISTORICAL_INPUTS")"
+    if [ -n "$HISTORICAL_INPUTS" ]; then
+        HISTORICAL_INPUTS="$(realpath -e "$HISTORICAL_INPUTS")"
+    fi
 fi
 python3 -B - "$ROOT" "$TMPDIR" "$static_product" "$dynamic_product" "$RECEIPT_DIR" "$PRODUCT_REPORT" "$HISTORICAL_INPUTS" <<'PY'
 import hashlib
@@ -152,7 +159,10 @@ if receipt:
     for product, label in ((static, "static product"), (dynamic, "dynamic product")):
         if overlaps(receipt_path, product):
             raise SystemExit(f"owned pthread alias contract receipt directory overlaps {label}")
-    for path, label in ((Path(product_report), "product anchor"), (Path(historical), "historical input identities")):
+    supplied = [(Path(product_report), "product anchor")]
+    if historical:
+        supplied.append((Path(historical), "historical input identities"))
+    for path, label in supplied:
         if not path.is_file() or path.is_symlink():
             raise SystemExit(f"owned pthread alias contract missing physical {label}: {path}")
 PY
@@ -360,9 +370,12 @@ done
 python3 -B "$READER" --check-work --work "$WORK"
 
 if [ -n "$RECEIPT_DIR" ]; then
+    historical=()
+    if [ -n "$HISTORICAL_INPUTS" ]; then
+        historical=(--historical-inputs "$HISTORICAL_INPUTS" --historical-source-commit "$HISTORICAL_SOURCE_COMMIT")
+    fi
     python3 -B "$READER" --collect-report --root "$ROOT" --work "$WORK" \
-        --product-report "$PRODUCT_REPORT" --historical-inputs "$HISTORICAL_INPUTS" \
-        --historical-source-commit "$HISTORICAL_SOURCE_COMMIT"
+        --product-report "$PRODUCT_REPORT" "${historical[@]}"
     python3 -B "$READER" --validate-report "$WORK/report.json"
 fi
 

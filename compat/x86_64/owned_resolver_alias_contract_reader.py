@@ -1035,7 +1035,9 @@ def _validate_linked_public_symbol_domains(receipt_root: Path, artifacts: Mappin
 
 def _validate_selected_source_text(source: str) -> None:
     """Bind the selected private callers without treating legacy DNS as live."""
-    assembly = source[source.index('core::arch::global_asm!('):source.index('/// Encode one selected recursive Internet DNS question')]
+    # Each musl-shaped source object (static archive member) carries its own
+    # `global_asm!` alias block; bind the lines across all of them.
+    assembly = '\n'.join(re.findall(r'core::arch::global_asm!\((.*?)\);', source, flags=re.S))
     for line in ('.hidden __res_mkquery', '.weak res_mkquery', '.set res_mkquery, __res_mkquery',
                  '.hidden __res_send', '.weak res_send', '.set res_send, __res_send',
                  '.weak res_search', '.set res_search, res_query'):
@@ -1047,11 +1049,17 @@ def _validate_selected_source_text(source: str) -> None:
     getaddrinfo = 'pub unsafe extern "C" fn getaddrinfo('
     getaddrinfo_start = source.index(getaddrinfo, legacy_start)
     require('__res_send(' in source[legacy_start:getaddrinfo_start], 'resolver legacy source caller differs')
-    attached_cfg = '#[cfg(not(crabc_x86_owned_runtime))]\n#[no_mangle]\n' + getaddrinfo
-    require(attached_cfg in source,
+    attached_cfg = r'#\[cfg\(not\(crabc_x86_owned_runtime\)\)\]\s*#\[no_mangle\]\s*' + re.escape(getaddrinfo)
+    require(re.search(attached_cfg, source) is not None,
             'resolver legacy getaddrinfo caller is not excluded from the selected runtime')
-    getaddrinfo_end = source.index('\n}', getaddrinfo_start) + 2
-    getaddrinfo_body = source[getaddrinfo_start:getaddrinfo_end]
+    # The definition may be indented inside its archive-member wrapper; its
+    # body ends at the brace that closes the one opened after the signature.
+    cursor, depth = source.index('{', getaddrinfo_start) + 1, 1
+    while depth:
+        require(cursor < len(source), 'resolver legacy getaddrinfo body is truncated')
+        depth += {'{': 1, '}': -1}.get(source[cursor], 0)
+        cursor += 1
+    getaddrinfo_body = source[getaddrinfo_start:cursor]
     require('resolve_symbolic(' in getaddrinfo_body,
             'resolver legacy getaddrinfo caller chain differs')
     symbolic_start = source.index('unsafe fn resolve_symbolic(')
