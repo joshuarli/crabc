@@ -3422,12 +3422,13 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             ),
         };
         let sequence = ticket.sequence();
-        let Some(tld_pointer) = engine.allocate_zeroed(size_of::<ThreadLocalData>()) else {
+        // `mi_tld_create` requests the source `sizeof(mi_tld_t)`.
+        let Some(tld_pointer) = engine.allocate_zeroed(crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE) else {
             return ChildThreadAllocationOutcome::Rejected(ChildThreadStartError::TldAllocation);
         };
         let tld_block = ChildMetadataImageBlock {
             pointer: tld_pointer,
-            size: size_of::<ThreadLocalData>(),
+            size: crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE,
         };
         let tld_memid = MemoryId::malloc(
             tld_pointer.as_ptr(),
