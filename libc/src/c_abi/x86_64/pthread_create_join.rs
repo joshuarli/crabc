@@ -575,11 +575,10 @@ struct ThreadControl {
     // separately from this control allocation. A failed later-map reclamation
     // retry must not unmap the TLS image twice.
     tls_released: AtomicU8,
-    // A private worker stack has a lower guard and is distinct from the
-    // control mapping so an initialized pthread_attr_t can select an exact
-    // stack size or a caller-owned stack without weakening control lifetime.
-    // A null mapping/zero length means caller-owned and therefore never gets
-    // unmapped by this lifecycle owner.
+    // A private worker stack has a lower guard, and its mapping also holds
+    // this control page above the usable stack, released last with it. A
+    // caller-owned stack (null mapping/zero length) is never unmapped by this
+    // lifecycle owner and its control has its own mapping.
     stack_released: AtomicU8,
     stack_mapping: *mut u8,
     stack_mapping_size: usize,
@@ -1975,13 +1974,18 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
         }
         unsafe { (*control).tls_released.store(1, Ordering::Release) };
     }
+    let stack_mapping = unsafe { (*control).stack_mapping };
+    let stack_mapping_size = unsafe { (*control).stack_mapping_size };
+    let control_mapping = unsafe { (*control).control_mapping };
+    // An owned stack's mapping also holds this control page (see
+    // allocate_selected_worker_stack); it is released last, as one unit.
+    let control_in_stack = !stack_mapping.is_null()
+        && control_mapping == stack_mapping.wrapping_add(stack_mapping_size - CONTROL_REGION_SIZE);
     if unsafe { (*control).stack_released.load(Ordering::Acquire) } == 0 {
-        let stack_mapping = unsafe { (*control).stack_mapping };
-        let stack_mapping_size = unsafe { (*control).stack_mapping_size };
         // A caller stack remains caller-owned even after the worker has
         // stopped. Private stacks are unmapped only after the same clear-tid
         // and registry-withdrawal proof that released the TLS block above.
-        if !stack_mapping.is_null() {
+        if !stack_mapping.is_null() && !control_in_stack {
             let stack_unmap_result = unsafe { unmap_worker(stack_mapping, stack_mapping_size) };
             if is_linux_error(stack_unmap_result) {
                 return Err(positive_linux_error(stack_unmap_result));
@@ -1989,7 +1993,6 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
         }
         unsafe { (*control).stack_released.store(1, Ordering::Release) };
     }
-    let control_mapping = unsafe { (*control).control_mapping };
     #[cfg(any(
         feature = "native-mimalloc-shadow-test-audit",
         all(feature = "native-mimalloc-shadow", feature = "x86-owned-allocator-lifecycle-test-audit"),
@@ -2000,7 +2003,11 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
             .load(Ordering::Acquire)
             .is_null()
     };
-    let unmap_result = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
+    let unmap_result = if control_in_stack {
+        unsafe { unmap_worker(stack_mapping, stack_mapping_size) }
+    } else {
+        unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) }
+    };
     if is_linux_error(unmap_result) {
         return Err(positive_linux_error(unmap_result));
     }
@@ -2241,6 +2248,9 @@ struct SelectedWorkerStack {
     bounds: SelectedThreadStackBounds,
     mapping: *mut u8,
     mapping_size: usize,
+    // For an owned stack, the control page directly above the usable stack in
+    // the same mapping (null for a caller stack, which needs its own).
+    control: *mut u8,
 }
 
 #[inline]
@@ -2296,12 +2306,17 @@ unsafe fn allocate_selected_worker_stack(
             bounds: SelectedThreadStackBounds { top: stack_top, size: stack_size, guard_size: 0 },
             mapping: core::ptr::null_mut(),
             mapping_size: 0,
+            control: core::ptr::null_mut(),
         });
     }
 
     let guard_size = round_up_to_page(attributes.guard_size)?;
     let stack_size = round_up_to_page(attributes.stack_size)?;
-    let mapping_size = guard_size.checked_add(stack_size)?;
+    // Like musl's one guard/stack/TLS/pthread mapping, the control page sits
+    // directly above the usable stack in the same mapping: one mmap and one
+    // mprotect per owned stack instead of a second private mapping. The
+    // usable bounds below still end at the stack top, below the control.
+    let mapping_size = guard_size.checked_add(stack_size)?.checked_add(CONTROL_REGION_SIZE)?;
     // SAFETY: this lifecycle owns the newly mapped anonymous range until a
     // failed create or later join/reaper releases it.
     let mapping = unsafe { map_private_range(mapping_size, PROT_NONE) };
@@ -2314,7 +2329,7 @@ unsafe fn allocate_selected_worker_stack(
         raw_syscall::syscall3(
             raw_syscall::SYS_MPROTECT,
             mapping.add(guard_size) as usize as i64,
-            stack_size as i64,
+            (stack_size + CONTROL_REGION_SIZE) as i64,
             PROT_READ_WRITE,
         )
     };
@@ -2322,17 +2337,16 @@ unsafe fn allocate_selected_worker_stack(
         let _ = unsafe { unmap_worker(mapping, mapping_size) };
         return None;
     }
+    // `mapping_size` has already checked the sum, so the stack top is one
+    // byte past the owned writable stack and the control page starts there.
+    // The clone assembly realigns the top before reserving its one callback
+    // argument word.
+    let stack_top = unsafe { mapping.add(guard_size + stack_size) };
     Some(SelectedWorkerStack {
-        // `mapping_size` has already checked the sum, so this points one byte
-        // past the owned writable stack. The clone assembly realigns it before
-        // reserving its one callback argument word.
-        bounds: SelectedThreadStackBounds {
-            top: unsafe { mapping.add(mapping_size) } as usize,
-            size: stack_size,
-            guard_size,
-        },
+        bounds: SelectedThreadStackBounds { top: stack_top as usize, size: stack_size, guard_size },
         mapping,
         mapping_size,
+        control: stack_top,
     })
 }
 
@@ -2801,25 +2815,30 @@ unsafe fn create_selected_worker_with_attributes(
         // fallback or an attempt to derive an errno-only image.
         None => return EAGAIN,
     };
-    let control_mapping = unsafe { map_private_range(CONTROL_REGION_SIZE, PROT_READ_WRITE) };
-    if control_mapping.is_null() {
-        let _ = unsafe { static_tls::release_thread(tls_block) };
-        return EAGAIN;
-    }
     let worker_stack = match unsafe { allocate_selected_worker_stack(attributes) } {
         Some(stack) => stack,
         None => {
-            let _ = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
             let _ = unsafe { static_tls::release_thread(tls_block) };
             return EAGAIN;
         }
     };
+    // An owned stack carries its control page; a caller stack needs one.
+    let control_mapping = if worker_stack.control.is_null() {
+        let mapping = unsafe { map_private_range(CONTROL_REGION_SIZE, PROT_READ_WRITE) };
+        if mapping.is_null() {
+            let _ = unsafe { static_tls::release_thread(tls_block) };
+            return EAGAIN;
+        }
+        mapping
+    } else {
+        worker_stack.control
+    };
 
     let control = control_mapping.cast::<ThreadControl>();
 
-    // SAFETY: mmap returned a private page-aligned zeroed control allocation;
-    // the selected stack is either another private mapping or caller-owned as
-    // documented by pthread_attr_setstack. Static Initial TLS v1 already
+    // SAFETY: the control is one private page-aligned zeroed page, either its
+    // own mapping or the fresh top page of the owned stack mapping; a caller
+    // stack is caller-owned as documented by pthread_attr_setstack. Static Initial TLS v1 already
     // copied the final executable's exact initialized and TBSS TLS image and
     // wrote its minimal Variant-II self word before this record becomes
     // visible.
@@ -3015,7 +3034,9 @@ unsafe fn create_selected_worker_with_attributes(
         if !worker_stack.mapping.is_null() {
             let _ = unsafe { unmap_worker(worker_stack.mapping, worker_stack.mapping_size) };
         }
-        let _ = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
+        if worker_stack.control.is_null() {
+            let _ = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
+        }
         let _ = unsafe { static_tls::release_thread(tls_block) };
         // Musl intentionally translates every clone failure to EAGAIN.
         return EAGAIN;
