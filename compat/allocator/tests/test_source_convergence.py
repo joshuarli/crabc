@@ -19,7 +19,7 @@ PIN = {"version": "3.5.0", "revision": "a" * 40}
 
 def row(**changes: object) -> dict:
     value = {"upstream": "src/alloc.c", "name": "mi_malloc", "source_region": "mi_malloc", "rust_item": "malloc",
-             "intentional_difference": "", "implemented": True, "unit_verified": True,
+             "intentional_difference": "", "difference_kind": "none", "implemented": True, "unit_verified": True,
              "differential_verified": True, "stress_verified": False, "performance_qualified": True}
     value.update(changes)
     return value
@@ -44,21 +44,36 @@ class SourceConvergenceTests(unittest.TestCase):
         return {row["id"]: row for row in convergence.conditions(manifest, register, upstream, PIN)}
 
     def test_a_closed_carried_register_and_complete_port_map_converge(self) -> None:
-        result = self.evaluate(port_map(row(intentional_difference="See CRABC-MI-ONE.")))
+        result = self.evaluate(port_map(row(intentional_difference="See CRABC-MI-ONE.", difference_kind="boundary")))
         self.assertTrue(all(value["met"] for value in result.values()), result)
 
     def test_names_unimplemented_partial_and_unverified_rows(self) -> None:
         result = self.evaluate(port_map(row(name="a", implemented=False, rust_item="unimplemented"),
                                         row(name="b", rust_item="partial: some", differential_verified=False),
-                                        row(intentional_difference="CRABC-MI-ONE")))
+                                        row(intentional_difference="CRABC-MI-ONE", difference_kind="boundary")))
         self.assertEqual(result["implemented"]["detail"], [
             "src/alloc.c:a lacks implemented", "src/alloc.c:b lacks differential_verified"])
         self.assertEqual(result["transitional"]["detail"], ["src/alloc.c:a is unimplemented", "src/alloc.c:b is partial"])
 
-    def test_an_intentional_difference_needs_differential_and_performance_evidence(self) -> None:
-        result = self.evaluate(port_map(row(intentional_difference="CRABC-MI-ONE", performance_qualified=False)))
+    def test_only_an_algorithmic_divergence_needs_differential_and_performance_evidence(self) -> None:
+        result = self.evaluate(port_map(
+            row(name="a", intentional_difference="CRABC-MI-ONE", difference_kind="algorithmic",
+                performance_qualified=False),
+            row(name="b", intentional_difference="Scope only.", difference_kind="boundary",
+                performance_qualified=False, differential_verified=True)))
         self.assertEqual(result["intentional-differences"]["detail"], [
-            "src/alloc.c:mi_malloc states an intentional difference without performance_qualified"])
+            "src/alloc.c:a states an algorithmic divergence without performance_qualified"])
+
+    def test_the_port_map_schema_rejects_an_unknown_or_contradicting_kind(self) -> None:
+        import run as runner
+
+        runner.validate_difference_kind({"intentional_difference": "x", "difference_kind": "boundary"}, "row")
+        for record in ({"intentional_difference": "x", "difference_kind": "scope"},
+                       {"intentional_difference": "", "difference_kind": "algorithmic"},
+                       {"intentional_difference": "x", "difference_kind": "none"},
+                       {"intentional_difference": "x"}):
+            with self.subTest(record=record), self.assertRaises(runner.HarnessError):
+                runner.validate_difference_kind(record, "row")
 
     def test_names_open_unidentified_and_uncarried_register_entries(self) -> None:
         register = REGISTER + "\n### `CRABC-MI-TWO` — observed red\n\n### A prose heading\n"
@@ -70,7 +85,7 @@ class SourceConvergenceTests(unittest.TestCase):
         ])
 
     def test_names_a_pin_mismatch(self) -> None:
-        manifest = port_map(row(intentional_difference="CRABC-MI-ONE"))
+        manifest = port_map(row(intentional_difference="CRABC-MI-ONE", difference_kind="boundary"))
         manifest["metadata"]["upstream_revision"] = "b" * 40
         result = self.evaluate(manifest, upstream="nothing")
         self.assertEqual(len(result["pin"]["detail"]), 2)

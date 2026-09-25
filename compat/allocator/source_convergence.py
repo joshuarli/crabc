@@ -14,9 +14,11 @@ that into conditions over the existing manifests only, never over prose:
   unit-verified and differential-verified.
 * ``transitional``: no port-map row's ``rust_item`` is ``unimplemented`` or
   ``partial: ...``.
-* ``intentional-differences``: every row carrying an
-  ``intentional_difference`` (its rationale) is also differential-verified
-  and performance-qualified.
+* ``intentional-differences``: every row whose ``difference_kind`` is
+  ``algorithmic`` (its ``intentional_difference`` is the rationale) is also
+  differential-verified and performance-qualified; ``run.py --check`` owns
+  the field's schema. ``boundary`` rows are scope, representation,
+  integration-owner or fail-closed notes and need no such evidence.
 * ``known-differences``: every ``### `` entry of ``known-differences.md``
   has a stable backticked identifier and one of the register's closed
   statuses (``accepted`` or ``rejected``; ``observed`` and ``pending`` are
@@ -85,11 +87,12 @@ def conditions(port_map: Mapping[str, Any], known_differences: str, upstream: st
                    for row in rows if not all(row.get(flag) is True for flag in REQUIRED_FLAGS)]
     transitional = [f"{row_label(row)} is {row['rust_item'].split(':', 1)[0]}" for row in rows
                     if row.get("rust_item") == "unimplemented" or str(row.get("rust_item", "")).startswith("partial")]
-    differences = [
-        f"{row_label(row)} states an intentional difference without "
+    differences = [f"{row_label(row)} has no difference_kind" for row in rows if "difference_kind" not in row]
+    differences += [
+        f"{row_label(row)} states an algorithmic divergence without "
         f"{', '.join(flag for flag in DIFFERENCE_EVIDENCE_FLAGS if row.get(flag) is not True)}"
         for row in rows
-        if str(row.get("intentional_difference", "")).strip()
+        if row.get("difference_kind") == "algorithmic"
         and not all(row.get(flag) is True for flag in DIFFERENCE_EVIDENCE_FLAGS)
     ]
 
@@ -114,7 +117,7 @@ def conditions(port_map: Mapping[str, Any], known_differences: str, upstream: st
         condition("pin", pin_unmet, f"port-map and UPSTREAM.md name {pin['version']} {pin['revision']}"),
         condition("implemented", implemented, f"{len(rows)} port-map rows implemented and verified"),
         condition("transitional", transitional, "no port-map row is partial or unimplemented"),
-        condition("intentional-differences", differences, "every intentional difference has its evidence flags"),
+        condition("intentional-differences", differences, "every algorithmic divergence has its evidence flags"),
         condition("known-differences", register, "every register entry is closed and carried"),
     ]
 
