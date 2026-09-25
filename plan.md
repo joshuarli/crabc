@@ -27,10 +27,14 @@ are not transferable passes for a different revision.
   conditions. `compat.abi-differential` reads all its evidence rows from one
   published set (`abi-differential-evidence assemble`); only the selection
   closure (382 named blockers, mostly companion receipts and unadmitted
-  families) stays unmet. Two families still carry prose evidence rows
-  (`libc.c-abi-compat`, `consumer.rust-std-lto`; lanes `c-abi-family` and
-  `rust-std-lto`), plus `performance.release`. C mimalloc remains the
-  selected backend; allocator M2–M11 remain open. Every freestanding-C runner builds `libc.a` through
+  families) stays unmet. Only `libc.c-abi-compat` still carries a prose
+  evidence row (lane `c-abi-family`). `consumer.rust-std-lto` and
+  `consumer.source-build` pass their evidence on development cohorts and
+  publish receipts; `performance.release` is a read-only receipt gate whose
+  runtime, native-facade and allocator M9 inputs do not exist yet. Allocator
+  M4 passes all but the upstream `test-api.c` link (waits on M6/M7 adapter
+  exports); M5 passes six of ten gates. C mimalloc remains the selected
+  backend; allocator M2–M11 remain open. Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
   measures the Rust local path at 0.067× pinned C single-thread (0.25× sanity
