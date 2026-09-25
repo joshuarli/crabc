@@ -2445,8 +2445,13 @@ unsafe fn map_elf_with_status(
                 page_offset as i64,
             ))?;
         }
+        // Only the tail of the last file-backed page holds file bytes that
+        // must become zero. Every later page is still the reservation's
+        // untouched anonymous zero fill, as in musl's separate bss mapping;
+        // writing it would make the whole .bss resident at load.
         let zero_start = base.checked_add(vaddr).and_then(|v| v.checked_add(filesz)).ok_or(ENOEXEC)?;
-        let zero_end = base.checked_add(vaddr).and_then(|v| v.checked_add(memsz)).ok_or(ENOEXEC)?;
+        let segment_end = base.checked_add(vaddr).and_then(|v| v.checked_add(memsz)).ok_or(ENOEXEC)?;
+        let zero_end = segment_end.min(align_up(zero_start));
         if zero_end > zero_start {
             core::ptr::write_bytes(zero_start as *mut u8, 0, usize::try_from(zero_end - zero_start).map_err(|_| ENOEXEC)?);
         }
