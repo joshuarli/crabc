@@ -252,6 +252,8 @@
     }
   ],
   "native_tests_owned_elsewhere": {
-    "native_error_sites": "compat/allocator/x86_64_m7_gate.py"
+    "native_error_sites": "compat/allocator/x86_64_m7_gate.py",
+    "native_option_profiles": "compat/allocator/x86_64_m7_gate.py",
+    "native_persistent_owner_local_trace": "compat/allocator/m3-local-engine-x86_64-v3.5.0.json"
   }
 }
