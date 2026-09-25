@@ -98,6 +98,10 @@ default `--archive-dir`/`--index`. Each archive must match its manifest digest;
 it is kept if already present, else copied from the primary checkout's same
 directory, else downloaded from the exact manifest URL. An existing index
 snapshot is kept unless `--refresh-index` is given.
+`scripts/lanes/prepare-worktree.sh` runs this helper in a fresh lane worktree
+whose `apks` directory is absent, so its `materialized-dynamic-sysroot`
+package-corpus case has its input; run the command above once in the primary
+checkout to let worktrees copy instead of download.
 
 The package closure includes third-party application DSOs such as `libgcc_s`
 and `libstdc++`; those archives and bytes are shared by both roots. They are

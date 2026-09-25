@@ -3,7 +3,12 @@
 # registry closure into its own .work/x86_64/cargo, vendor that closure where
 # the source-runtime libc builder authenticates it, and seed the allocator's
 # verified mimalloc archive caches from the primary checkout when absent.
-# The allocator runner re-verifies the copied archive before use.
+# The allocator runner re-verifies the copied archive before use. It also
+# materializes the pinned x86 package-corpus input that
+# `materialized-dynamic-sysroot` consumes: `compat/corpus/fetch_x86.py` keeps
+# only archives matching their manifest SHA-256, copying from the primary
+# checkout before downloading, and the corpus runner re-authenticates the
+# index with the pinned signing key.
 set -eu
 root=$(git rev-parse --show-toplevel)
 common=$(cd "$(git rev-parse --git-common-dir)" && pwd)
@@ -26,3 +31,8 @@ for cache in .work/allocator-cache .work/allocator-x86_64/allocator-cache; do
         done
     fi
 done
+corpus=.work/x86_64/owned-package-corpus-input
+if [ ! -d "$root/$corpus/apks" ]; then
+    python3 -B "$root/compat/corpus/fetch_x86.py" ||
+        printf 'prepare-worktree: x86 package-corpus input unavailable; run ./scripts/dev-x86_64.sh owned-package-corpus-input\n' >&2
+fi
