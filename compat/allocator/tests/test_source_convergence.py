@@ -64,6 +64,14 @@ class SourceConvergenceTests(unittest.TestCase):
         self.assertEqual(result["intentional-differences"]["detail"], [
             "src/alloc.c:a states an algorithmic divergence without performance_qualified"])
 
+    def test_an_admitted_not_applicable_entry_stands_in_for_the_evidence_flags(self) -> None:
+        manifest = port_map(row(name="a", intentional_difference="CRABC-MI-ONE", difference_kind="algorithmic",
+                                performance_qualified=False, differential_verified=False))
+        self.assertEqual(len(self.evaluate(manifest)["intentional-differences"]["detail"]), 1)
+        result = {item["id"]: item for item in convergence.conditions(
+            manifest, REGISTER, "a" * 40, PIN, not_applicable={"src/alloc.c:a"})}
+        self.assertTrue(result["intentional-differences"]["met"])
+
     def test_the_port_map_schema_rejects_an_unknown_or_contradicting_kind(self) -> None:
         import run as runner
 

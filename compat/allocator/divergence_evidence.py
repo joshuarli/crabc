@@ -13,6 +13,14 @@ the row back to the source algorithm, or names:
   qualified engine report must measure, ``not_applicable`` with the reason,
   or ``blocked`` naming what is missing.
 
+``not_applicable`` is admitted only where pinned C has no valid-program
+behavior to compare: both kinds must be ``not_applicable`` with nonempty
+reasons, and the entry's ``c_defect`` must name the pinned C source lines
+where C faults or has undefined behavior plus the accepted
+``known-differences.md`` entry that records the defect and is carried by
+this row. Such an entry stands in for the row's evidence flags in the
+source-convergence reader; nothing else may use ``not_applicable``.
+
 The default run executes each differential and reads the qualified reports,
 then names every row whose evidence is incomplete. It never changes the
 port-map evidence flags: an owner sets those after this run passes.
@@ -22,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -31,6 +40,8 @@ from typing import Any, Callable, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "compat/allocator/divergence-evidence-v3.5.0.json"
 PORT_MAP = ROOT / "compat/allocator/port-map.toml"
+KNOWN_DIFFERENCES = ROOT / "compat/allocator/known-differences.md"
+C_DEFECT_LINE = re.compile(r"^(?:src|include)/[A-Za-z0-9_/.-]+\.[ch]:\d+(?:-\d+)?$")
 SCHEMA = "crabc-mimalloc-divergence-evidence"
 
 
@@ -47,7 +58,46 @@ def algorithmic_rows(port_map: Mapping[str, Any]) -> list[str]:
     return sorted(rows)
 
 
-def validate_manifest(manifest: Mapping[str, Any], port_map: Mapping[str, Any]) -> dict[str, Any]:
+def not_applicable_unmet(key: str, entry: Mapping[str, Any], port_map: Mapping[str, Any],
+                         register_text: str) -> list[str]:
+    """Why a not_applicable entry is not admissible; empty when it is (or does not use not_applicable)."""
+
+    import source_convergence
+
+    kinds = [name for name in ("differential", "performance")
+             if isinstance(entry.get(name), Mapping) and "not_applicable" in entry[name]]
+    if not kinds:
+        return []
+    unmet = []
+    if len(kinds) != 2:
+        unmet.append(f"{key}: not_applicable must cover both differential and performance")
+    for name in kinds:
+        if not str(entry[name]["not_applicable"]).strip():
+            unmet.append(f"{key}: {name} not_applicable needs a reason")
+    rows = {(row["upstream"] if kind == "unit" else f"{row['upstream']}:{row['name']}"): row
+            for kind in ("unit", "item") for row in port_map.get(kind, [])}
+    if rows.get(key, {}).get("difference_kind") != "algorithmic":
+        unmet.append(f"{key}: not_applicable is admitted only for an algorithmic row")
+    defect = entry.get("c_defect")
+    if not isinstance(defect, Mapping):
+        return unmet + [f"{key}: not_applicable needs a c_defect naming the pinned C lines and its known difference"]
+    lines = defect.get("source_lines")
+    if not isinstance(lines, list) or not lines or not all(isinstance(line, str) and C_DEFECT_LINE.match(line)
+                                                           for line in lines):
+        unmet.append(f"{key}: c_defect.source_lines must name pinned C path:line[-line] entries")
+    identifier = defect.get("known_difference")
+    register = {item["id"]: item for item in source_convergence.known_difference_entries(register_text) if item["id"]}
+    record = register.get(identifier)
+    if record is None or (record["status"] or "").strip("*`") != "accepted":
+        unmet.append(f"{key}: c_defect.known_difference {identifier!r} is not an accepted known-differences entry")
+    elif key not in [ref for line in record["carriers"] for ref in line] and identifier not in str(
+            rows.get(key, {}).get("intentional_difference", "")):
+        unmet.append(f"{key}: known difference {identifier} is not carried by this row")
+    return unmet
+
+
+def validate_manifest(manifest: Mapping[str, Any], port_map: Mapping[str, Any],
+                      register_text: str | None = None) -> dict[str, Any]:
     if manifest.get("schema") != SCHEMA or manifest.get("format") != 1:
         raise EvidenceError("divergence evidence manifest schema changed")
     rows = manifest.get("rows")
@@ -67,7 +117,7 @@ def validate_manifest(manifest: Mapping[str, Any], port_map: Mapping[str, Any]) 
                 raise EvidenceError(f"{key} owned entry must name only its owner and disposition")
             continue
         differential, performance = entry.get("differential"), entry.get("performance")
-        if set(entry) != {"differential", "performance"}:
+        if set(entry) - {"c_defect"} != {"differential", "performance"}:
             raise EvidenceError(f"{key} must name differential and performance evidence, or an owner")
         if not isinstance(differential, Mapping) or not (
             (set(differential) == {"command", "scope"} and isinstance(differential["command"], list)
@@ -80,7 +130,20 @@ def validate_manifest(manifest: Mapping[str, Any], port_map: Mapping[str, Any]) 
         if len(kinds) != 1 or not kinds <= {"integrated_rows", "engine_rows", "not_applicable", "blocked"}:
             raise EvidenceError(f"{key} performance must name exactly one of integrated_rows, engine_rows, "
                                 "not_applicable or blocked")
+        if "c_defect" in entry and "not_applicable" not in entry["differential"]:
+            raise EvidenceError(f"{key} c_defect belongs only to a not_applicable entry")
+        text = KNOWN_DIFFERENCES.read_text(encoding="utf-8") if register_text is None else register_text
+        reasons = not_applicable_unmet(key, entry, port_map, text)
+        if reasons:
+            raise EvidenceError("; ".join(reasons))
     return {"rows": expected}
+
+
+def accepted_not_applicable(manifest: Mapping[str, Any]) -> set[str]:
+    """Rows whose validated evidence entry is not_applicable in both kinds."""
+
+    return {key for key, entry in manifest["rows"].items()
+            if "not_applicable" in (entry.get("differential") or {}) and "not_applicable" in (entry.get("performance") or {})}
 
 
 def run_command(command: Sequence[str]) -> dict[str, Any]:

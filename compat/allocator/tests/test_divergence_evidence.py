@@ -35,6 +35,46 @@ class DivergenceEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "runnable"):
             evidence.validate_manifest(manifest, self.port_map)
 
+    OS_ROW = "src/arena.c:os-fallback-commit-on-demand-initially-committed-correction"
+
+    def rejects(self, change, expected: str, port_map=None, register: str | None = None) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        change(manifest["rows"][self.OS_ROW])
+        with self.assertRaisesRegex(evidence.EvidenceError, expected):
+            evidence.validate_manifest(manifest, port_map or self.port_map, register)
+
+    def test_not_applicable_is_admitted_only_with_its_c_defect_record(self) -> None:
+        evidence.validate_manifest(self.manifest, self.port_map)
+        self.assertEqual(evidence.accepted_not_applicable(self.manifest), {self.OS_ROW})
+        self.rejects(lambda entry: entry.pop("c_defect"), "needs a c_defect")
+        self.rejects(lambda entry: entry["c_defect"].update(source_lines=[]), "source_lines")
+        self.rejects(lambda entry: entry["c_defect"].update(source_lines=["arena.c line 855"]), "source_lines")
+        self.rejects(lambda entry: entry["performance"].update(not_applicable=" "), "needs a reason")
+        self.rejects(lambda entry: entry.update(performance={"blocked": "x"}), "cover both")
+        self.rejects(lambda entry: entry["c_defect"].update(known_difference="CRABC-MI-ABSENT"),
+                     "not an accepted known-differences entry")
+        self.rejects(lambda entry: entry["c_defect"].update(known_difference="CRABC-MI-RANDOM-WEAK-EXPANSION"),
+                     "not carried by this row")
+        register = evidence.KNOWN_DIFFERENCES.read_text(encoding="utf-8").replace(
+            "`CRABC-MI-OS-ON-DEMAND-ARENA-REFUSAL` — accepted", "`CRABC-MI-OS-ON-DEMAND-ARENA-REFUSAL` — observed")
+        self.rejects(lambda entry: None, "not an accepted known-differences entry", register=register)
+
+    def test_not_applicable_is_rejected_for_a_row_that_is_not_algorithmic(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        port_map = copy.deepcopy(self.port_map)
+        target = next(row for row in port_map["item"] if row.get("name") == "linux-os-reuse-contained-range-noop")
+        target["difference_kind"] = "algorithmic"
+        manifest["rows"]["src/os.c:linux-os-reuse-contained-range-noop"] = copy.deepcopy(manifest["rows"][self.OS_ROW])
+        with self.assertRaisesRegex(evidence.EvidenceError, "not carried by this row"):
+            evidence.validate_manifest(manifest, port_map)
+        target["difference_kind"] = "boundary"
+        with self.assertRaisesRegex(evidence.EvidenceError, "not algorithmic"):
+            evidence.validate_manifest(manifest, port_map)
+        reasons = evidence.not_applicable_unmet(
+            "src/os.c:linux-os-reuse-contained-range-noop", manifest["rows"][self.OS_ROW], port_map,
+            evidence.KNOWN_DIFFERENCES.read_text(encoding="utf-8"))
+        self.assertTrue(any("only for an algorithmic row" in reason for reason in reasons), reasons)
+
     def test_names_owned_blocked_failed_and_unmeasured_rows(self) -> None:
         results = {row["row"]: row for row in evidence.evaluate(
             self.manifest, run=lambda command: {"status": 1 if "heap_lifecycle" in command[1] else 0})}

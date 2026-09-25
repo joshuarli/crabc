@@ -16,7 +16,9 @@ that into conditions over the existing manifests only, never over prose:
   ``partial: ...``.
 * ``intentional-differences``: every row whose ``difference_kind`` is
   ``algorithmic`` (its ``intentional_difference`` is the rationale) is also
-  differential-verified and performance-qualified; ``run.py --check`` owns
+  differential-verified and performance-qualified, unless its validated
+  ``divergence-evidence`` entry is ``not_applicable`` because pinned C faults
+  there (``divergence_evidence.not_applicable_unmet``); ``run.py --check`` owns
   the field's schema. ``boundary`` rows are scope, representation,
   integration-owner or fail-closed notes and need no such evidence.
 * ``known-differences``: every ``### `` entry of ``known-differences.md``
@@ -82,7 +84,7 @@ def known_difference_entries(text: str) -> list[dict[str, Any]]:
 
 
 def conditions(port_map: Mapping[str, Any], known_differences: str, upstream: str,
-               pin: Mapping[str, str]) -> list[dict[str, Any]]:
+               pin: Mapping[str, str], not_applicable: set[str] = frozenset()) -> list[dict[str, Any]]:
     rows = port_map_rows(port_map)
     metadata = port_map.get("metadata", {})
 
@@ -104,6 +106,7 @@ def conditions(port_map: Mapping[str, Any], known_differences: str, upstream: st
         for row in rows
         if row.get("difference_kind") == "algorithmic"
         and not all(row.get(flag) is True for flag in DIFFERENCE_EVIDENCE_FLAGS)
+        and (row["upstream"] if row["kind"] == "unit" else f"{row['upstream']}:{row.get('name')}") not in not_applicable
     ]
 
     carried = {identifier for row in rows for identifier in IDENTIFIER.findall(str(row.get("intentional_difference", "")))}
@@ -150,8 +153,15 @@ def evaluate(root: Path = ROOT) -> list[dict[str, Any]]:
         raise RuntimeError(f"source convergence must be read by the checkout that owns this reader: {root}")
     with PORT_MAP.open("rb") as stream:
         port_map = tomllib.load(stream)
+    import divergence_evidence
+
+    # A validated not_applicable divergence entry (pinned C faults, with its
+    # recorded known difference) stands in for the row's evidence flags.
+    manifest = json.loads(divergence_evidence.MANIFEST.read_text(encoding="utf-8"))
+    divergence_evidence.validate_manifest(manifest, port_map)
     return conditions(port_map, KNOWN_DIFFERENCES.read_text(encoding="utf-8"),
-                      UPSTREAM.read_text(encoding="utf-8"), load_pin())
+                      UPSTREAM.read_text(encoding="utf-8"), load_pin(),
+                      divergence_evidence.accepted_not_applicable(manifest))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

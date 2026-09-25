@@ -57,6 +57,12 @@
       },
       "performance": {
         "not_applicable": "reached only with the non-default disallow_arena_alloc and page_commit_on_demand options, which no measured or qualified configuration selects"
+      },
+      "c_defect": {
+        "source_lines": [
+          "src/arena.c:819-855"
+        ],
+        "known_difference": "CRABC-MI-OS-ON-DEMAND-ARENA-REFUSAL"
       }
     },
     "src/page-map.c:mi-page-map-init-once-process-publication": {
