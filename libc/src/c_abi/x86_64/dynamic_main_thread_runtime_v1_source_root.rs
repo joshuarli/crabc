@@ -10,6 +10,10 @@
 //! descriptor. It is never selected by `libc.a`, an installed sysroot, or a
 //! public `libc.so` product.
 
+// Defined before the leaf modules so the shared exit leaf can use it.
+#[cfg(crabc_general_dynamic_lifecycle)]
+include!("static_archive_member.rs");
+
 #[allow(dead_code)]
 #[path = "errno.rs"]
 mod errno;
