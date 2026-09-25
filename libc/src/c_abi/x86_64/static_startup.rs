@@ -100,7 +100,7 @@ unsafe fn startup_vectors(argc: c_int, argv: *const *const c_char) -> Option<Sta
 // Both process compositions retain this one registration implementation;
 // static startup continues to own its no-loader exit sequence below.
 #[path = "process_exit.rs"]
-mod process_exit;
+pub(super) mod process_exit;
 pub use process_exit::{atexit, __cxa_atexit, __cxa_finalize, __funcs_on_exit};
 
 /// The executable's CRT `fini` callback in the owned static product.

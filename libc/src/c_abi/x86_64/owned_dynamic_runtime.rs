@@ -7,7 +7,7 @@
 
 use super::{auxv_observation, environment, errno, immediate_termination, startup_security};
 #[path = "process_exit.rs"]
-mod process_exit;
+pub(super) mod process_exit;
 #[path = "dynamic_main_thread_runtime_v1_lifecycle.rs"]
 mod startup;
 #[path = "conventional_startup_v1.rs"]

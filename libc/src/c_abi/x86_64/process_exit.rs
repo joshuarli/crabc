@@ -15,12 +15,61 @@
 //! fails as musl's does when calloc fails. Each process composition includes
 //! exactly one copy; CRT/main/loader ordering belongs to its startup owner.
 //!
-//! Intentional difference: musl serializes registration and dispatch with
-//! `__atexit_lockptr`, which fork also takes. This owner has no lock yet, so
-//! concurrent registration remains unqualified; callers must serialize it.
+//! In the owned products, `LOCK`/`UNLOCK` of musl's private `lock` word
+//! (published to fork as `__atexit_lockptr`) serialize registration and
+//! dispatch through the shared `musl_lock` owner, and the fork transaction
+//! holds it over raw fork like the other `atfork_locks`. The isolated fixture
+//! roots have no threads or fork owner and keep the registry unlocked.
 
 use core::ffi::{c_int, c_void};
 use core::ptr::{addr_of_mut, null_mut};
+#[cfg(crabc_x86_owned_runtime)]
+use core::sync::atomic::{AtomicI32, Ordering};
+
+// musl atexit.c `static volatile int lock[1]`: a musl `__lock` word.
+#[cfg(crabc_x86_owned_runtime)]
+static LOCK: AtomicI32 = AtomicI32::new(0);
+
+#[inline]
+fn lock() {
+    #[cfg(crabc_x86_owned_runtime)]
+    super::super::musl_lock::lock(&LOCK);
+}
+
+#[inline]
+fn unlock() {
+    #[cfg(crabc_x86_owned_runtime)]
+    super::super::musl_lock::unlock(&LOCK);
+}
+
+/// Take the registry lock before raw `fork` (musl's `__atexit_lockptr`).
+///
+/// # Safety
+/// The caller makes exactly one matching parent/error or child completion
+/// before user callbacks resume.
+#[cfg(crabc_x86_owned_runtime)]
+pub(crate) unsafe fn pthread_fork_prepare() {
+    lock();
+}
+
+/// Release the registry lock in the original process after raw `fork`.
+///
+/// # Safety
+/// Completes one preceding `pthread_fork_prepare` in the parent or on failure.
+#[cfg(crabc_x86_owned_runtime)]
+pub(crate) unsafe fn pthread_fork_parent() {
+    unlock();
+}
+
+/// Clear the copied registry lock in the sole `fork` child, as musl's fork
+/// zeroes each copied `atfork_locks` word.
+///
+/// # Safety
+/// Runs once after the matching prepared raw fork, before user callbacks.
+#[cfg(crabc_x86_owned_runtime)]
+pub(crate) unsafe fn pthread_fork_child() {
+    LOCK.store(0, Ordering::Relaxed);
+}
 
 const COUNT: usize = 32;
 type ExitFunction = unsafe extern "C" fn(*mut c_void);
@@ -70,20 +119,34 @@ unsafe fn allocate_block() -> *mut FunctionList {
 /// entry point and does not select any DSO-specific semantics.
 ///
 /// # Safety
-/// Callers must serialize registration and dispatch. The callback and its
-/// argument must remain valid through ordinary process exit.
+/// The callback and its argument must remain valid through ordinary process
+/// exit. Registration is serialized by the registry lock.
 #[no_mangle]
 pub unsafe extern "C" fn __cxa_atexit(
     callback: Option<ExitFunction>,
     argument: *mut c_void,
     _dso: *mut c_void,
 ) -> c_int {
-    // SAFETY: registration is serialized by the caller contract; these
-    // process-lifetime statics are touched only here and in dispatch.
-    unsafe {
+    lock();
+    // SAFETY: the registry lock serializes these process-lifetime statics,
+    // which are touched only here and in dispatch.
+    let result = unsafe {
         if FINISHED_ATEXIT {
-            return -1;
+            -1
+        } else {
+            register_held(callback, argument)
         }
+    };
+    unlock();
+    result
+}
+
+/// Append one registration, chaining a new block when the head is full.
+///
+/// # Safety
+/// The caller holds the registry lock and dispatch has not finished.
+unsafe fn register_held(callback: Option<ExitFunction>, argument: *mut c_void) -> c_int {
+    unsafe {
         if HEAD.is_null() {
             HEAD = addr_of_mut!(BUILTIN);
         }
@@ -141,11 +204,15 @@ pub unsafe extern "C" fn atexit(callback: Option<PlainExitFunction>) -> c_int {
 /// and argument must remain valid. Recursive dispatch is not admitted.
 #[no_mangle]
 pub unsafe extern "C" fn __funcs_on_exit() {
+    lock();
     loop {
-        // SAFETY: exclusive exit ownership; the head block is live storage.
+        // SAFETY: the registry lock is held here; the head block is live.
         let (callback, argument) = unsafe {
             if HEAD.is_null() {
+                // Unlock so a global destructor calling atexit fails rather
+                // than deadlocks, as musl does.
                 FINISHED_ATEXIT = true;
+                unlock();
                 return;
             }
             if SLOT == 0 {
@@ -157,7 +224,9 @@ pub unsafe extern "C" fn __funcs_on_exit() {
             ((*HEAD).functions[SLOT], (*HEAD).arguments[SLOT])
         };
         if let Some(callback) = callback {
+            unlock();
             unsafe { callback(argument) };
+            lock();
         }
     }
 }

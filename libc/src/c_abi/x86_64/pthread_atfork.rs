@@ -54,6 +54,12 @@ use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::AtomicPtr;
 
 use super::c_status;
+// musl atexit.c's registry lock, owned by whichever startup composition
+// includes `process_exit.rs`.
+#[cfg(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)))]
+use crate::x86_64_static_c_abi::static_startup::process_exit as ordinary_exit_registry;
+#[cfg(all(crabc_x86_owned_runtime, crabc_x86_dynamic_runtime))]
+use crate::x86_64_static_c_abi::owned_dynamic_runtime::process_exit as ordinary_exit_registry;
 use super::{
     pthread_create_join, pthread_identity, pthread_tsd,
     signal_execution, static_tls,
@@ -313,8 +319,10 @@ static_archive_member! { fork_source {
         #[cfg(crabc_x86_owned_runtime)]
         unsafe {
             // Musl `fork.c` locks __at_quick_exit_lockptr after pthread-key
-            // metadata. Its random lock is next, before named IPC and stdio.
+            // metadata, then __atexit_lockptr. Its random lock is next,
+            // before named IPC and stdio.
             crate::x86_64_static_c_abi::owned_quick_exit::pthread_fork_prepare();
+            ordinary_exit_registry::pthread_fork_prepare();
             crate::x86_64_static_c_abi::bsd_random::pthread_fork_prepare();
             crate::x86_64_static_c_abi::owned_named_ipc::pthread_fork_prepare();
             crate::x86_64_static_c_abi::stdio_standard::pthread_fork_prepare();
@@ -351,6 +359,7 @@ static_archive_member! { fork_source {
                 // `fork.c` completes its private atfork locks forward: the copied
                 // quick-exit guard, BSD random, then named IPC/stdio-family state.
                 crate::x86_64_static_c_abi::owned_quick_exit::pthread_fork_child();
+                ordinary_exit_registry::pthread_fork_child();
                 crate::x86_64_static_c_abi::bsd_random::pthread_fork_child();
                 crate::x86_64_static_c_abi::owned_named_ipc::pthread_fork_child();
                 crate::x86_64_static_c_abi::stdio_standard::pthread_fork_child();
@@ -382,6 +391,7 @@ static_archive_member! { fork_source {
                 // `fork.c` completes its private atfork locks forward before user
                 // parent callbacks: quick-exit, BSD random, then named IPC/stdio.
                 crate::x86_64_static_c_abi::owned_quick_exit::pthread_fork_parent();
+                ordinary_exit_registry::pthread_fork_parent();
                 crate::x86_64_static_c_abi::bsd_random::pthread_fork_parent();
                 crate::x86_64_static_c_abi::owned_named_ipc::pthread_fork_parent();
                 crate::x86_64_static_c_abi::stdio_standard::pthread_fork_parent();
