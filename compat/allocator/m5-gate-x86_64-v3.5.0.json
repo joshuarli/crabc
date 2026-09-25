@@ -250,5 +250,8 @@
         "Early performance proof needs the local-path structural gate of 0.25x pinned C; the engine measures about 0.04x (lane alloc-perf), and qualifying measurements need an uncontended host."
       ]
     }
-  ]
+  ],
+  "native_tests_owned_elsewhere": {
+    "native_error_sites": "compat/allocator/x86_64_m7_gate.py"
+  }
 }

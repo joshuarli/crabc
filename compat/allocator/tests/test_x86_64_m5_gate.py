@@ -41,7 +41,8 @@ class M5GateContractTests(unittest.TestCase):
     def test_checked_in_contract_claims_every_native_target_and_blocks_missing_evidence(self) -> None:
         summary = self.validate()
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
-        self.assertEqual(summary["native_target_count"], len(self.targets))
+        elsewhere = set(self.contract.get("native_tests_owned_elsewhere", {}))
+        self.assertEqual(summary["native_target_count"], len(self.targets - elsewhere))
         missing = set(summary["missing_evidence"])
         for entry in self.contract["gates"]:
             if missing & set(entry["evidence"]):
@@ -71,6 +72,13 @@ class M5GateContractTests(unittest.TestCase):
         absent["evidence"]["native:generic-exit"]["native_tests"].append("native_not_a_target")
         with self.assertRaisesRegex(harness.HarnessError, "absent native target"):
             self.validate(absent)
+
+    def test_a_target_owned_elsewhere_must_be_cited_by_that_gate(self) -> None:
+        uncited = copy.deepcopy(self.contract)
+        target = uncited["evidence"]["native:pointer-dispatch"]["native_tests"].pop()
+        uncited["native_tests_owned_elsewhere"] = {target: "compat/allocator/x86_64_m7_gate.py"}
+        with self.assertRaisesRegex(harness.HarnessError, "does not cite it"):
+            self.validate(uncited)
 
     def test_missing_evidence_requires_a_reviewed_blocker(self) -> None:
         unblocked = copy.deepcopy(self.contract)

@@ -154,7 +154,21 @@ def validate_contract(
             raise harness.HarnessError(
                 f"M5 evidence {evidence_id} must record scope with exactly native_tests, command, or receipt"
             )
-    unclaimed = sorted(native_targets - set(claimed))
+    # A native target may instead belong to another milestone's gate, which
+    # must name that contract; it is then neither run nor claimed here.
+    elsewhere = contract.get("native_tests_owned_elsewhere", {})
+    if not isinstance(elsewhere, Mapping):
+        raise harness.HarnessError("M5 native_tests_owned_elsewhere must map targets to their owning gate")
+    for target, owner in elsewhere.items():
+        if target not in native_targets:
+            raise harness.HarnessError(f"M5 names an absent native target as owned elsewhere: {target}")
+        if target in claimed:
+            raise harness.HarnessError(f"M5 native target {target} is both claimed and owned elsewhere")
+        if not isinstance(owner, str) or not (harness.ROOT / owner).is_file() or target not in (
+            harness.ROOT / owner
+        ).read_text():
+            raise harness.HarnessError(f"M5 native target {target} names an owning gate that does not cite it")
+    unclaimed = sorted(native_targets - set(claimed) - set(elsewhere))
     if unclaimed:
         raise harness.HarnessError(f"M5 evidence omits native integration targets: {unclaimed}")
 
