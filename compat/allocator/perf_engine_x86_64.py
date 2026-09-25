@@ -302,7 +302,7 @@ def ptrace(request: int, pid: int, data: int = 0) -> None:
 
 
 def spawn(
-    binary: Path,
+    binary: Path | tuple[Path, str],
     arguments: Sequence[str],
     *,
     cpus: Sequence[int],
@@ -311,6 +311,9 @@ def spawn(
     pass_fds: Sequence[int] = (),
     trace_exit: bool = False,
 ) -> int:
+    # A (root, path) executable runs chrooted into an installed product's
+    # runtime tree, where its PT_INTERP and libc resolve.
+    root, program = (binary if isinstance(binary, tuple) else (None, str(binary)))
     if trace_exit:
         _ptrace_function()  # resolve libc's ptrace before fork, not in the child
     pid = os.fork()
@@ -327,7 +330,10 @@ def spawn(
             os.close(stderr)
             for descriptor in pass_fds:
                 os.set_inheritable(descriptor, True)
-            os.execve(str(binary), [str(binary), *arguments], clean_environment())
+            if root is not None:
+                os.chroot(root)
+                os.chdir("/")
+            os.execve(program, [program, *arguments], clean_environment())
         except BaseException as error:  # noqa: BLE001 - child must never return
             os.write(2, f"fixture exec failure: {error}\n".encode("utf-8", errors="replace"))
             os._exit(127)

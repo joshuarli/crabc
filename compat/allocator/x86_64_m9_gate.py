@@ -19,9 +19,11 @@ read-only: it measures nothing and names every unmet condition.
 * ``m9.codegen-audit``: one complete ``allocator-codegen-audit`` report from a
   clean checkout whose source seal matches this checkout, with no Rust-only
   structural cost (``rust_excess``) in any traced region.
-* ``m9.source-convergence`` and ``m9.integrated-products``: declared missing.
-  No convergence reader exists, and no existing M8 or native-shadow receipt
-  measures integrated-product C/Rust performance or memory to read.
+* ``m9.source-convergence``: every condition of ``source_convergence.py``
+  (port-map closure, no transitional rows, evidence for every intentional
+  difference, a closed and carried known-differences register).
+* ``m9.integrated-products``: at least one ``perf_integrated_x86_64`` report
+  that ``inspect_integrated_report`` accepts.
 * ``m9.correctness``: the retained M4, M5, M6 and M7 gate reports passed.
   They record no source identity, so each must also be no older than the
   newest accepted qualified report. M8 has no gate here and is named.
@@ -39,7 +41,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import perf_engine_x86_64 as engine
+import perf_integrated_x86_64 as integrated
 import run as harness
+import source_convergence
 
 
 CONDITION_IDS = (
@@ -56,20 +60,6 @@ ENGINE_REPORTS = engine.REPORT_ROOT
 CODEGEN_REPORTS = engine.REPORT_ROOT.parent / "codegen-audit"
 CORRECTNESS_GATES = ("m4", "m5", "m6", "m7")
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m9-gate"
-DECLARED_MISSING = {
-    "m9.source-convergence": [
-        "plan.md M9 requires source-faithful convergence of the Rust port; no convergence reader exists in "
-        "compat/allocator, so this gate cannot establish it"
-    ],
-    "m9.integrated-products": [
-        "the engine matrix measures one opaque engine boundary (scope.fully_integrated_products is false); "
-        "no fully-integrated-product C/Rust allocator performance and memory comparison exists: the M8 and "
-        "native-shadow receipts (compat/x86_64/run_dynamic_native_allocator.py, "
-        "compat/x86_64/native_c_allocator_boundary.py, compat/allocator/native_churn_rss_smoke.py) compare "
-        "ownership, lifecycle and liveness, not throughput, tail latency or peak memory"
-    ],
-}
-
 Reader = Callable[[Path, Path], Mapping[str, Any]]
 
 
@@ -196,6 +186,42 @@ def codegen_condition(path: Path | None) -> dict[str, Any]:
                       f"{harness.relative(Path(path))} has no Rust-only structural cost")
 
 
+def convergence_condition(evaluate_convergence: Callable[[Path], Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
+    try:
+        rows = evaluate_convergence(harness.ROOT)
+    except Exception as error:  # noqa: BLE001
+        return _condition("m9.source-convergence", [f"{type(error).__name__}: {error}"], "")
+    unmet = [f"{row['id']}: {item}" for row in rows if not row["met"] for item in row["detail"]]
+    return _condition("m9.source-convergence", unmet, "every source-convergence condition is met")
+
+
+def discover_integrated(directory: Path = integrated.REPORT_ROOT) -> list[Path]:
+    return sorted(directory.glob("*.json")) if directory.is_dir() else []
+
+
+def integrated_condition(
+    paths: Sequence[Path], inspect: Callable[[Path, Path], Mapping[str, Any]]
+) -> dict[str, Any]:
+    """At least one integrated-product report must qualify."""
+
+    unmet: list[str] = []
+    accepted = []
+    for path in paths:
+        try:
+            result = inspect(harness.ROOT, path)
+        except Exception as error:  # noqa: BLE001
+            result = {"unmet": [f"{type(error).__name__}: {error}"]}
+        if result["unmet"]:
+            unmet.append(f"{harness.relative(Path(path))}: " + "; ".join(result["unmet"]))
+        else:
+            accepted.append(path)
+    if not accepted:
+        unmet.insert(0, f"no qualified integrated-product report among {len(paths)} read "
+                        "(allocator-perf-integrated --full)")
+        return _condition("m9.integrated-products", unmet, "")
+    return _condition("m9.integrated-products", [], f"{harness.relative(Path(accepted[0]))} qualifies")
+
+
 def correctness_condition(accepted_paths: Sequence[Path], gate_root: Path = harness.ARTIFACT_ROOT / "x86_64") -> dict[str, Any]:
     unmet = ["allocator M8 has no gate in this launcher"]
     newest = max((Path(path).stat().st_mtime for path in accepted_paths), default=None)
@@ -220,6 +246,9 @@ def evaluate(
     report_paths: Sequence[Path], codegen_report: Path | None,
     inspect: Callable[[Path, Path], Mapping[str, Any]] = engine.inspect_full_report,
     gate_root: Path = harness.ARTIFACT_ROOT / "x86_64",
+    integrated_reports: Sequence[Path] | None = None,
+    inspect_integrated: Callable[[Path, Path], Mapping[str, Any]] = integrated.inspect_integrated_report,
+    evaluate_convergence: Callable[[Path], Sequence[Mapping[str, Any]]] = source_convergence.evaluate,
 ) -> dict[str, Any]:
     records = read_reports(report_paths, inspect)
     accepted = [Path(path) for path, record in zip(report_paths, records) if not record["unmet"]]
@@ -227,7 +256,9 @@ def evaluate(
         matrix_condition(records),
         *report_conditions(records),
         codegen_condition(codegen_report),
-        *(_condition(identifier, detail, "") for identifier, detail in DECLARED_MISSING.items()),
+        convergence_condition(evaluate_convergence),
+        integrated_condition(discover_integrated() if integrated_reports is None else integrated_reports,
+                             inspect_integrated),
         correctness_condition(accepted, gate_root),
     ]
     assert [row["id"] for row in conditions] == list(CONDITION_IDS)
@@ -265,8 +296,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     for row in result["conditions"]:
         print(f"{row['id']}: {'met' if row['met'] else 'unmet'}")
         if not row["met"]:
-            for item in row["detail"]:
+            for item in row["detail"][:20]:
                 print(f"  - {item if len(item) <= 600 else item[:600] + ' ...'}")
+            if len(row["detail"]) > 20:
+                print(f"  - ... {len(row['detail']) - 20} more in the gate report")
     if result["unmet"]:
         print(f"M9 unmet: {len(result['unmet'])}/{len(CONDITION_IDS)} conditions; "
               f"report {harness.relative(ARTIFACTS / 'report.json')}", file=sys.stderr)

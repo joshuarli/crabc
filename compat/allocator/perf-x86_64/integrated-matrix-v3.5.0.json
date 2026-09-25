@@ -1,0 +1,22 @@
+{
+  "schema": "crabc-mimalloc-x86_64-integrated-performance-matrix",
+  "format": 1,
+  "statement": "The engine fixture and one libc-malloc backend (integrated-libc-backend.c), compiled once per link mode by the installed product drivers and linked through the installed static and dynamic products: the accepted C backend on one side, the native Rust shadow on the other, both through libc malloc/free. Only the linked product differs.",
+  "products": {
+    "static": {"builder": "scripts/build_x86_64_owned_sysroot.py", "driver": "bin/crabc-cc", "mode_flags": ["-static"], "chroot": false},
+    "dynamic": {"builder": "scripts/build_x86_64_owned_dynamic_sysroot.py", "driver": "bin/crabc-cc-dynamic", "mode_flags": ["--dynamic-pie"], "chroot": true}
+  },
+  "backends": {
+    "pinned_c": "accepted-c",
+    "rust_engine": "native-shadow"
+  },
+  "compile_flags": ["-std=c11", "-O3", "-DNDEBUG", "-fno-builtin"],
+  "engine_rows": ["alloc_free_64", "realloc_inplace_1024", "local_scaling_4", "remote_free_1", "churn_8k", "thread_churn_4"],
+  "startup_row": {
+    "name": "startup_first_alloc",
+    "measures": "process start through the product's startup, one malloc/free and exit, launched by vfork+exec",
+    "program_arguments": ["alloc_free", "size=64", "iterations=1", "batches=1"],
+    "launches_per_batch": 20,
+    "batches": 16
+  }
+}

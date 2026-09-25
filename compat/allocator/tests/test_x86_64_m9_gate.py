@@ -29,6 +29,8 @@ sys.modules[SPEC.name] = gate
 SPEC.loader.exec_module(gate)
 engine = gate.engine
 
+from test_perf_integrated_x86_64 import IntegratedReaderTests  # noqa: E402,F401
+from test_source_convergence import SourceConvergenceTests  # noqa: E402,F401
 from test_perf_engine_x86_64 import (  # noqa: E402,F401
     FixturePeakHookTests, HostClassificationTests, PeakHookABTests, QualifiedReportTests)
 
@@ -77,7 +79,8 @@ class GateFixture(unittest.TestCase):
 
 class AgreementTests(GateFixture):
     def evaluate(self, paths: list[Path]) -> dict:
-        return gate.evaluate(paths, None, inspect=self.inspect, gate_root=self.root / "gates")
+        return gate.evaluate(paths, None, inspect=self.inspect, gate_root=self.root / "gates",
+                             integrated_reports=[], evaluate_convergence=lambda root: [])
 
     def test_three_agreeing_accepted_reports_meet_reports_and_agreement(self) -> None:
         paths = [self.report_file(f"r{index}", accepted()) for index in range(3)]
@@ -122,11 +125,23 @@ class AgreementTests(GateFixture):
         self.assertTrue(any("b.json critical roster differs" in item for item in detail), detail)
         self.assertTrue(any("c.json metrics do not cover exactly its critical roster" in item for item in detail), detail)
 
-    def test_declared_missing_conditions_stay_named(self) -> None:
+    def test_convergence_and_integrated_conditions_come_from_their_readers(self) -> None:
         result = self.evaluate([])
-        for identifier in ("m9.source-convergence", "m9.integrated-products"):
-            self.assertFalse(self.condition(result, identifier)["met"])
-            self.assertTrue(self.condition(result, identifier)["detail"])
+        self.assertTrue(self.condition(result, "m9.source-convergence")["met"])
+        self.assertIn("no qualified integrated-product report among 0 read",
+                      self.condition(result, "m9.integrated-products")["detail"][0])
+        convergence = gate.convergence_condition(lambda root: [
+            {"id": "transitional", "met": False, "detail": ["src/a.c:x is partial"]},
+            {"id": "pin", "met": True, "detail": "ok"}])
+        self.assertEqual(convergence["detail"], ["transitional: src/a.c:x is partial"])
+
+    def test_one_accepted_integrated_report_meets_its_condition(self) -> None:
+        good, bad = self.root / "good.json", self.root / "bad.json"
+        results = {good: {"unmet": []}, bad: {"unmet": ["host is not uncontended: x"]}}
+        condition = gate.integrated_condition([bad, good], lambda root, path: results[path])
+        self.assertTrue(condition["met"])
+        condition = gate.integrated_condition([bad], lambda root, path: results[path])
+        self.assertIn("bad.json: host is not uncontended: x", condition["detail"][1])
 
     def test_the_matrix_condition_comes_from_report_coverage(self) -> None:
         self.assertIn("no full report carries", self.condition(self.evaluate([]), "m9.matrix")["detail"][0])
