@@ -84,6 +84,16 @@ class SourceConvergenceTests(unittest.TestCase):
             "known-differences.md:11 entry 'A prose heading' has no stable identifier",
         ])
 
+    def test_a_register_port_map_line_carries_an_accepted_entry(self) -> None:
+        register = ("### `CRABC-MI-ONE` — accepted boundary\n\n- **Port map:** `src/alloc.c:mi_malloc`\n\n"
+                    "### `CRABC-MI-TWO` — accepted boundary\n\n- **Port map:** `src/alloc.c:absent`\n\n"
+                    "## Entry requirements\n\n- **Port map:** `src/alloc.c:mi_malloc` is the line syntax\n")
+        result = self.evaluate(port_map(row()), register)
+        self.assertEqual(result["known-differences"]["detail"], [
+            "known-differences.md:5 CRABC-MI-TWO names absent port-map rows ['src/alloc.c:absent']",
+            "known-differences.md:5 accepted CRABC-MI-TWO is carried by no port-map row's evidence flags",
+        ])
+
     def test_names_a_pin_mismatch(self) -> None:
         manifest = port_map(row(intentional_difference="CRABC-MI-ONE", difference_kind="boundary"))
         manifest["metadata"]["upstream_revision"] = "b" * 40

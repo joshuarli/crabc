@@ -222,6 +222,7 @@ are compared.
 
 ### `CRABC-MI-SCOPED-REGULAR-AND-FULL-REMOTE-PRODUCER` — accepted bounded routing boundary
 
+- **Port map:** `src/free.c:live-owner-remote-free-push-and-collection-protocol`, `src/page.c:non-abandoning-full-page-remote-free-collection`
 - **Upstream/Rust:** `src/free.c:mi_free_block_mt` and
   `src/page.c:mi_page_thread_free_collect`,
   `mi_page_queue_find_free_ex`, `mi_page_to_full`, and
@@ -313,6 +314,7 @@ are compared.
 
 ### `CRABC-MI-OWNED-TLS-KEY-REGISTRY-INVALID-OWNER` — accepted private terminal boundary
 
+- **Port map:** `src/threadlocal.c:allocator-owned-process-global-regular-tls-key-registry`
 - **Upstream/Rust:** `src/threadlocal.c:221-315`, especially
   `mi_thread_local_create_expand` / `_mi_thread_locals_done`, and
   `owned_tls_key_registry::OwnedThreadLocalKeyRegistry` with its typed bitmap
@@ -348,6 +350,7 @@ are compared.
 
 ### `CRABC-MI-MAIN-STATIC-LOCK-POISON` — accepted invalid-owner teardown boundary
 
+- **Port map:** `src/init.c:ticket-zero-process-static-main-heap-default-theap-attachment`
 - **Upstream/Rust:** `src/theap.c:_mi_tld_detach_theaps` and
   `src/init.c:mi_thread_theaps_done` / `main_theap::MainStaticTheapAttachment::teardown`.
 - **Category:** private invalid-owner lifecycle handling only. It has no C ABI
@@ -377,6 +380,7 @@ are compared.
 
 ### `CRABC-MI-MAIN-STATIC-INIT-POISON` — accepted invalid-owner initialization boundary
 
+- **Port map:** `src/init.c:ticket-zero-process-static-main-heap-default-theap-attachment`
 - **Upstream/Rust:** `src/theap.c:_mi_theap_init` / `src/init.c:_mi_thread_init_with_heap`
   and `main_theap::MainStaticTheapAttachment::begin_after_heap_foundation` /
   `types::Theap::initialize_main_static`.
@@ -410,6 +414,7 @@ are compared.
 
 ### `CRABC-MI-BOUNDED-PROCESS-MAIN-INITIALIZATION` — accepted incomplete process lifecycle
 
+- **Port map:** `src/init.c:bounded-source-main-process-initialization-order`
 - **Upstream/Rust:** `src/init.c:108-118,151-214,236-250,305-360,536-592`, including
   `src/init.c:196-198`'s static-main-Heap kind-only `memid` -> Release
   `heap_main` -> `_mi_heap_init` order, and `src/heap.c:102-126`'s remaining
@@ -756,6 +761,7 @@ are compared.
 
 ### `CRABC-MI-PROCESS-PAGE-MAP-COLD-ROOT` — accepted bounded cold-root safety divergence
 
+- **Port map:** `src/page-map.c:mi-page-map-init-once-process-publication`
 - **Upstream/Rust:** `src/page-map.c:228-365`, especially static
   `mi_page_map_empty`, `__mi_page_map`, `mi_page_map_init_once`, and
   `_mi_page_map_init`, plus `src/subproc.c:253-255`; represented by
@@ -891,6 +897,7 @@ are compared.
 
 ### `CRABC-MI-NORMAL-OFFSET-OS-ALLOCATION-OWNER` — accepted private VM-substrate safety boundary
 
+- **Port map:** `src/os.c:normal-offset-os-allocation-full-provenance-owner`
 - **Upstream/Rust:** pinned `src/os.c:240-294,344-430,438-467,502-527` plus
   the selected `src/arena.c:1885-1912` regular one-arena caller, represented
   by `os::NormalOsAllocation`, `NormalOsBaseAllocation`,
@@ -927,6 +934,7 @@ are compared.
 
 ### `CRABC-MI-LINUX-REUSE-NOOP` — accepted private VM-substrate safety boundary
 
+- **Port map:** `src/os.c:linux-os-reuse-contained-range-noop`
 - **Upstream/Rust:** pinned `src/os.c:643-653` and
   `src/prim/unix/prim.c:536-542`, represented by `os::Mapping::reuse`,
   `os::reuse_arena_range`, and `ReuseOutcome::NoOp`; the sole selected caller
@@ -963,6 +971,7 @@ are compared.
 
 ### `CRABC-MI-FIXED-NUMA-CACHE-WRAPPER` — accepted private VM-substrate boundary
 
+- **Port map:** `src/os.c:fixed-no-option-numa-cache-and-current-node-normalization`
 - **Upstream/Rust:** pinned `src/os.c:860-898`
   (`_mi_os_numa_node_count`, `mi_os_numa_node_get`, and `_mi_os_numa_node`),
   represented by `os::os_numa_node_count` and `os::os_numa_node` over the
@@ -1005,6 +1014,7 @@ are compared.
 
 ### `CRABC-MI-ORDINARY-BITMAP-HIGHEST-SET-STALE-CHUNKMAP` — accepted checked observer boundary
 
+- **Port map:** `src/bitmap.c:ordinary-bitmap-highest-set-relaxed-stale-chunkmap-scan`
 - **Upstream/Rust:** pinned `src/bitmap.c:1383-1403` `mi_bitmap_bsr`, with
   its `src/bitmap.h:205-208` result contract, represented by
   `bitmap::BitmapView::highest_set_relaxed`.
@@ -1031,6 +1041,7 @@ are compared.
 
 ### `CRABC-MI-ORDINARY-BITMAP-POPCOUNT-CONSERVATIVE-CHUNKMAP` — accepted checked observer boundary
 
+- **Port map:** `src/bitmap.c:ordinary-bitmap-popcount-relaxed-conservative-chunkmap`
 - **Upstream/Rust:** pinned `src/bitmap.c:1406-1420` `mi_bitmap_popcount`,
   represented by `bitmap::BitmapView::popcount_relaxed`.
 - **Category:** private ordinary-bitmap M2 observer. It has no public C ABI
@@ -1052,6 +1063,7 @@ are compared.
 
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 
+- **Port map:** `src/arena.c:mi-manage-os-memory-ex2-process-shared-one-arena`, `src/arena.c:process-ready-published-shared-arena-pair`
 - **Upstream/Rust:** `src/arena.c:341-406,525-569,1573-1611,1676-1791,1794-1912`,
   especially `mi_arena_reserve`, its one-at-a-time fresh-arena retry point,
   `mi_arenas_add`, `mi_arena_initialize`, `mi_manage_os_memory_ex2`, and the
@@ -1153,6 +1165,7 @@ are compared.
 
 ### `CRABC-MI-ABANDONED-BIT-ORDINARY-PAGE-GUARD` — accepted checked invariant
 
+- **Port map:** `src/bitmap.c:abandoned-page-claim-and-clear-once-set-quiescence`
 - **Upstream/Rust:** pinned `src/arena.c:655-671`
   `mi_arena_try_claim_abandoned`, `src/arena.c:684-696`
   `mi_page_arena_pages`, `src/arena.c:725-778`
@@ -1208,6 +1221,7 @@ are compared.
 
 ### `CRABC-MI-STATIC-MAIN-PROCESS-PAGE-LIFECYCLE` — accepted bounded page-owner slice
 
+- **Port map:** `src/arena.c:main-static-process-page-map-arena-lifecycle`
 - **Upstream/Rust:** static main-heap setup and thread attachment in
   `src/init.c:181-224,305-360`; main-heap `pages_main` selection in
   `src/arena.c:674-723`; fresh arena page publication in
@@ -1251,6 +1265,7 @@ are compared.
 
 ### `CRABC-MI-LATER-MAIN-PROCESS-PAGE-LIFECYCLE` — accepted bounded page-owner slice
 
+- **Port map:** `src/arena.c:later-main-process-page-map-arena-lifecycle`
 - **Upstream/Rust:** later-thread `_mi_thread_init_with_heap(mi_heap_main())`
   setup and `_mi_thread_done` ordering in `src/init.c:236-282,305-360,377-421,
   448-481`; `_mi_theap_collect_abandon`'s visit order in
@@ -1989,6 +2004,7 @@ transfer capability.
 
 ### `CRABC-MI-SHARED-MAIN-NO-PAGE-LIFECYCLE` — accepted incomplete lifecycle boundary
 
+- **Port map:** `src/init.c:later-thread-process-static-main-heap-no-page-attachment`
 - **Upstream/Rust:** the ordinary later-thread
   `_mi_thread_init_with_heap(mi_heap_main())` and `_mi_thread_done` branch in
   `src/init.c:236-282,305-360,377-421,448-481`, with
@@ -2035,6 +2051,7 @@ transfer capability.
 
 ### `CRABC-MI-RUNTIME-NO-PAGE-PTHREAD-BRIDGE` — accepted private runtime bridge
 
+- **Port map:** `src/init.c:private-no-page-process-pthread-runtime-lifecycle`
 - **Upstream/Rust:** the same source-order no-page initialization and finish
   boundary in `src/init.c:236-282,305-360,377-421,448-481`,
   `src/theap.c:228-306,414-449`, and `src/threadlocal.c:205-214`, plus pinned
@@ -2093,6 +2110,7 @@ transfer capability.
 
 ### `CRABC-MI-RUNTIME-PAGE-OWNER-NORMAL-FINISH-WITNESS` — accepted bounded evidence path
 
+- **Port map:** `src/init.c:private-lazy-ticket-zero-runtime-first-arena-page-owner`
 - **Upstream/Rust:** later-main `_mi_thread_done` / `_mi_thread_theaps_done`
   ordering from `src/init.c:377-421,448-481`, the dynamic regular-slot clear
   and `MI_ABANDON` traversal from `src/threadlocal.c:205-214` and
@@ -2319,6 +2337,7 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
 
 ### `CRABC-MI-DYNAMIC-THEAP-INVALID-OWNER` — accepted private lifecycle boundary
 
+- **Port map:** `src/theap.c:private-current-thread-regular-key-dynamic-theap-attachment`
 - **Upstream/Rust:** `src/threadlocal.c:23-214`, `src/init.c:236-360,377-421,448-481`,
   `src/theap.c:228-306,357-369,414-449`, and `src/heap.c:60-100` /
   `dynamic_theap::DynamicTheapAttachment`, `DynamicTheapPageSession`, and
@@ -3002,6 +3021,7 @@ existing teardown. A sole, arena-backed, non-singleton,
 
 ### `CRABC-MI-RANDOM-WEAK-EXPANSION` — accepted degraded-entropy substitution
 
+- **Port map:** `src/random.c`, `src/random.c:original-chacha-context-state-and-output-contract`
 - **Upstream/Rust:** `src/random.c:_mi_os_random_weak` and
   `mi_random_init_ex` / `random::WeakObservations::expand_into`.
 - **Category:** allocator random-state behavior only after `getrandom` errors
@@ -3071,8 +3091,12 @@ Each entry must state:
   configuration, performance, diagnostics, or invalid-use handling;
 - a minimal reproducer and exact-C differential result for valid programs;
 - its written design note, when it is algorithmic or behavioral;
-- Linux/AArch64 performance and memory evidence; and
-- the decision and conditions that would remove the difference.
+- Linux/AArch64 performance and memory evidence;
+- the decision and conditions that would remove the difference; and
+- the port-map row or rows that carry it, as one line
+  ``- **Port map:** `upstream:name`, ...`` (a unit row is its bare
+  `upstream` path), unless a carrying row's `intentional_difference` names
+  the identifier.
 
 `crabc-libc` ownership of C ABI and `errno`, and direct crabc lifecycle wiring
 for threads and fork, are integration boundaries rather than implicit

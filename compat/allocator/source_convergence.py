@@ -23,7 +23,9 @@ that into conditions over the existing manifests only, never over prose:
   has a stable backticked identifier and one of the register's closed
   statuses (``accepted`` or ``rejected``; ``observed`` and ``pending`` are
   open by the register's own entry requirements). Each accepted identifier
-  is carried by at least one port-map row, whose flags are its evidence.
+  is carried by at least one port-map row, whose flags are its evidence:
+  either the row's ``intentional_difference`` names it, or the entry's one
+  ``- **Port map:** `upstream:name`, ...`` line names existing rows.
 
 Each condition names every failing row or entry; ``--summary`` prints counts.
 """
@@ -59,16 +61,24 @@ def port_map_rows(port_map: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [dict(row, kind=kind) for kind in ("unit", "item") for row in port_map.get(kind, [])]
 
 
+CARRIER = re.compile(r"^- \*\*Port map:\*\* (?P<refs>.+)$")
+
+
 def known_difference_entries(text: str) -> list[dict[str, Any]]:
-    entries = []
+    entries: list[dict[str, Any]] = []
     for number, line in enumerate(text.splitlines(), start=1):
+        if line.startswith("## "):
+            entries.append({"section": True})
         if not line.startswith("### "):
+            carrier = CARRIER.match(line)
+            if carrier and entries and not entries[-1].get("section"):
+                entries[-1]["carriers"].append(re.findall(r"`([^`]+)`", carrier.group("refs")))
             continue
         match = ENTRY.match(line)
         entries.append({"line": number, "heading": line[4:].strip(),
                         "id": match.group("id") if match else None,
-                        "status": match.group("status") if match else None})
-    return entries
+                        "status": match.group("status") if match else None, "carriers": []})
+    return [entry for entry in entries if not entry.get("section")]
 
 
 def conditions(port_map: Mapping[str, Any], known_differences: str, upstream: str,
@@ -97,6 +107,7 @@ def conditions(port_map: Mapping[str, Any], known_differences: str, upstream: st
     ]
 
     carried = {identifier for row in rows for identifier in IDENTIFIER.findall(str(row.get("intentional_difference", "")))}
+    row_keys = {row["upstream"] if row["kind"] == "unit" else f"{row['upstream']}:{row.get('name')}" for row in rows}
     register = []
     for entry in known_difference_entries(known_differences):
         where = f"known-differences.md:{entry['line']}"
@@ -105,9 +116,15 @@ def conditions(port_map: Mapping[str, Any], known_differences: str, upstream: st
                 register.append(f"{where} entry {entry['heading']!r} has no stable identifier")
             continue
         status = (entry["status"] or "").strip("*`")
+        named = [ref for line in entry["carriers"] for ref in line]
+        unknown = [ref for ref in named if ref not in row_keys]
+        if len(entry["carriers"]) > 1:
+            register.append(f"{where} {entry['id']} has more than one Port map line")
+        if unknown:
+            register.append(f"{where} {entry['id']} names absent port-map rows {unknown}")
         if status not in CLOSED_STATUSES:
             register.append(f"{where} {entry['id']} is {status!r}, not {' or '.join(CLOSED_STATUSES)}")
-        elif status == "accepted" and entry["id"] not in carried:
+        elif status == "accepted" and entry["id"] not in carried and not (named and not unknown):
             register.append(f"{where} accepted {entry['id']} is carried by no port-map row's evidence flags")
 
     def condition(identifier: str, unmet: Sequence[str], detail: str) -> dict[str, Any]:
