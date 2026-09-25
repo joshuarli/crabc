@@ -68,10 +68,6 @@
     "src/page-map.c:mi-page-map-init-once-process-publication": {
       "owner": "m2-vm-arenas",
       "disposition": "port the source cold-root recovery back to pinned C behavior"
-    },
-    "src/heap.c:main-subprocess-non-main-heap-lifecycle": {
-      "owner": "m6",
-      "disposition": "port the source main-Heap in-place realloc reuse back to pinned C behavior"
     }
   }
 }

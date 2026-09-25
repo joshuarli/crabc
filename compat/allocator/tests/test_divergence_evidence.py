@@ -78,7 +78,7 @@ class DivergenceEvidenceTests(unittest.TestCase):
     def test_names_owned_blocked_failed_and_unmeasured_rows(self) -> None:
         results = {row["row"]: row for row in evidence.evaluate(
             self.manifest, run=lambda command: {"status": 1 if "heap_lifecycle" in command[1] else 0})}
-        self.assertIn("owned by m6", results["src/heap.c:main-subprocess-non-main-heap-lifecycle"]["detail"][0])
+        self.assertIn("owned by m2-vm-arenas", results["src/page-map.c:mi-page-map-init-once-process-publication"]["detail"][0])
         child = results["src/heap.c:child-thread-empty-non-main-heap-lifecycle"]["detail"]
         self.assertTrue(any("heap_lifecycle.py failed" in item for item in child), child)
         self.assertTrue(any("performance blocked" in item for item in child), child)
