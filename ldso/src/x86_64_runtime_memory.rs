@@ -87,6 +87,17 @@ fn map(bytes: usize) -> Option<*mut u8> {
 
 /// Allocate `bytes` (at least one) zeroed bytes aligned to `align`.
 pub(super) fn allocate(bytes: usize, align: usize) -> Option<*mut u8> {
+    allocate_block(bytes, align, true)
+}
+
+/// [`allocate`] for a caller that writes every byte it later reads
+/// (LoaderBuffer initializes each element; LoaderVec reads only pushed
+/// ones): a recycled block keeps its stale bytes instead of being zeroed.
+fn allocate_uninitialized(bytes: usize, align: usize) -> Option<*mut u8> {
+    allocate_block(bytes, align, false)
+}
+
+fn allocate_block(bytes: usize, align: usize, zeroed: bool) -> Option<*mut u8> {
     let bytes = bytes.max(1);
     if bytes > isize::MAX as usize || align > PAGE as usize { return None; }
     let Some((index, size)) = class(bytes, align) else { return map(bytes); };
@@ -98,7 +109,7 @@ pub(super) fn allocate(bytes: usize, align: usize) -> Option<*mut u8> {
         // SAFETY: a free block stores its successor in its first word.
         pool.free[index] = unsafe { block.cast::<*mut u8>().read() };
         // SAFETY: the block is `size` bytes of pool memory owned by us now.
-        unsafe { core::ptr::write_bytes(block, 0, size); }
+        if zeroed { unsafe { core::ptr::write_bytes(block, 0, size); } }
         block
     } else {
         // Carve the block at the next `size`-aligned address of the current
@@ -146,7 +157,7 @@ pub(super) struct LoaderBuffer<T: Copy> { pointer: *mut T, length: usize, bytes:
 impl<T: Copy> LoaderBuffer<T> {
     pub(super) fn new(length: usize, value: T) -> Option<Self> {
         let bytes = length.checked_mul(core::mem::size_of::<T>())?.max(1);
-        let pointer = allocate(bytes, core::mem::align_of::<T>())?.cast::<T>();
+        let pointer = allocate_uninitialized(bytes, core::mem::align_of::<T>())?.cast::<T>();
         for index in 0..length { unsafe { core::ptr::write(pointer.add(index), value); } }
         Some(Self { pointer, length, bytes })
     }
@@ -207,7 +218,7 @@ impl<T> LoaderVec<T> {
         // element, with small vectors drawn from the pool.
         let capacity = required.max(self.capacity.checked_mul(2)?).max(4);
         let bytes = capacity.checked_mul(size)?;
-        let pointer = allocate(bytes, core::mem::align_of::<T>())?.cast::<T>();
+        let pointer = allocate_uninitialized(bytes, core::mem::align_of::<T>())?.cast::<T>();
         if self.capacity != 0 {
             unsafe {
                 core::ptr::copy_nonoverlapping(self.pointer, pointer, self.length);
