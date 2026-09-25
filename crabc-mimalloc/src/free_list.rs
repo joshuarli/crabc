@@ -152,6 +152,7 @@ impl LocalFreeList {
     /// fields while this raw view is used. A live client may concurrently
     /// access only its distinct current block and disjoint atomic producer
     /// projection.
+    #[inline(always)]
     pub(crate) unsafe fn from_page_state(
         state: PageFreeListState,
     ) -> Result<Self, FreeListError> {
@@ -217,7 +218,7 @@ impl LocalFreeList {
     /// other owner operation may observe the projected ordinary fields while
     /// this value is used. A valid live client may retain only the disjoint
     /// remote-free producer atomics.
-    #[inline]
+    #[inline(always)]
     pub(crate) unsafe fn from_page_at(page: NonNull<Page>) -> Result<Self, FreeListError> {
         // SAFETY: the caller upholds the ordinary-field, block-partition, and
         // stable live-page contracts needed by the raw narrow projection.
@@ -392,7 +393,7 @@ impl LocalFreeList {
     /// pointer remains valid only while this page backing area remains live;
     /// its allocation, aliasing, and eventual exactly-once local-free duties
     /// remain the caller's responsibility.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn pop(&mut self, zero: bool) -> Result<Option<NonNull<u8>>, FreeListError> {
         let Some(block) = NonNull::new(self.free()) else {
             return Ok(None);
@@ -437,7 +438,7 @@ impl LocalFreeList {
     /// does not detect. A pointer outside the initialized range, or a free
     /// attempted after the checked `used == 0` state, instead returns an error
     /// without writing a link.
-    #[inline]
+    #[inline(always)]
     pub(crate) unsafe fn push_local(
         &mut self,
         block: NonNull<u8>,
@@ -487,7 +488,7 @@ impl LocalFreeList {
     /// This is `mi_page_free_quick_collect`. It deliberately leaves a
     /// non-empty immediate list untouched, preserving the source's monotonic
     /// local-free behavior.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn quick_collect(&mut self) -> Result<bool, FreeListError> {
         if !self.free().is_null() {
             return Ok(true);
@@ -588,7 +589,7 @@ impl LocalFreeList {
     /// link-aligned in-range interior word is still a writable link slot:
     /// `block_size` is a nonzero multiple of `LINK_ALIGN`, so the aligned
     /// offset leaves at least `LINK_SIZE` initialized bytes before the end.
-    #[inline]
+    #[inline(always)]
     fn validate_initialized_block(&self, block: NonNull<u8>) -> Result<(), FreeListError> {
         // Construction proved `reserved * block_size <= bytes`, and
         // `capacity <= reserved`, so this product cannot overflow.
@@ -602,7 +603,7 @@ impl LocalFreeList {
         Ok(())
     }
 
-    #[inline]
+    #[inline(always)]
     fn checked_next(&self, block: NonNull<u8>) -> Result<*mut u8, FreeListError> {
         self.validate_initialized_block(block)?;
         // SAFETY: `block` is an initialized free-list node. Every link is

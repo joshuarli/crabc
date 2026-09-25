@@ -6718,6 +6718,30 @@ impl Theap {
     /// for the permanent process page session, where unrelated linked-list
     /// fields remain concurrently observable through the shared-Heap protocol.
     #[inline]
+    /// Performs `_mi_malloc_generic`'s `++theap->generic_count < 1000` only
+    /// when it stays below the administration threshold, and reports
+    /// whether it did. A `false` result changes nothing, so the caller can
+    /// defer the complete step to [`Self::advance_generic_allocation_administration_at`].
+    ///
+    /// # Safety
+    ///
+    /// Same exclusive generic-counter ownership as
+    /// [`Self::advance_generic_allocation_administration_at`].
+    #[inline]
+    pub(crate) unsafe fn advance_generic_count_below_administration_at(pointer: NonNull<Theap>) -> bool {
+        // SAFETY: forwarded; this projects the one source counter only.
+        let generic_count = unsafe { core::ptr::addr_of_mut!((*pointer.as_ptr()).generic_count) };
+        // SAFETY: see above.
+        unsafe {
+            if *generic_count + 1 < 1_000 {
+                *generic_count += 1;
+                true
+            } else {
+                false
+            }
+        }
+    }
+
     pub(crate) unsafe fn advance_generic_allocation_administration_at(
         pointer: NonNull<Theap>,
         generic_collect_frequency: impl FnOnce() -> isize,

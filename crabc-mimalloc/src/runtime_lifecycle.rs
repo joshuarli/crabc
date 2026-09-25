@@ -9039,6 +9039,37 @@ fn fail_stop_with_current_thread_native_owner() -> ! {
     crabc_core::process::exit_immediately(134)
 }
 
+/// Returns the current thread's Theap when the native local fast paths
+/// (`crate::local_fast_path`) may use it for this admitted operation.
+///
+/// Beyond the published owner-local Theap (non-null only between two healthy
+/// owner-local operations; see `main_heap_thread::owner_local_fast_theap`)
+/// this requires what every complete owner-local operation also requires:
+/// the process is active and not past logical process-done, the thread is
+/// not a child-subprocess member, its later owner is installed and attached,
+/// its compiler-TLS owner cell is not borrowed (so no owner operation is
+/// suspended beneath this one), and the fast and default TLS roots still
+/// select exactly that Theap, as pinned `_mi_theap_default()` does. It is
+/// read-only and allocation-free.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn native_local_fast_theap() -> Option<core::ptr::NonNull<crate::types::Theap>> {
+    let theap = crate::main_heap_thread::owner_local_fast_theap()?;
+    let presence = current_thread_native_owner_presence();
+    if !presence.later_installed
+        || presence.state != ThreadLifecycleState::Attached
+        || !current_thread_native_persistent_owner_cell().is_active()
+        || crate::compiler_tls::fast_slot_peek() != Some(theap.cast())
+        || crate::compiler_tls::default_theap() != theap
+        || crate::subproc::lifecycle::current_thread_is_child_member()
+        || !RUNTIME_PROCESS.is_active()
+        || RUNTIME_PROCESS.logical_process_done_is_complete()
+    {
+        return None;
+    }
+    Some(theap)
+}
+
 #[inline]
 fn current_thread_has_native_persistent_owner() -> bool {
     let presence = current_thread_native_owner_presence();
@@ -10562,6 +10593,23 @@ fn native_allocate_shaped(
             return NativePageAllocationResult::AllocationFailed;
         }
     }
+    // The local fast path's gate excludes child-subprocess members, so it
+    // may precede their route.
+    #[cfg(target_arch = "x86_64")]
+    if let Some(theap) = native_local_fast_theap() {
+        let alignment = match shape {
+            NativeAllocationShape::Ordinary => Some(None),
+            NativeAllocationShape::Aligned { alignment, offset: 0 } => Some(Some(alignment)),
+            NativeAllocationShape::Aligned { .. } => None,
+        };
+        if let Some(alignment) = alignment {
+            // SAFETY: the gate holds for this admitted operation, and the
+            // aligned precheck above proved any alignment a power of two.
+            if let Some(block) = unsafe { crate::local_fast_path::allocate(theap, request, alignment, zero) } {
+                return NativePageAllocationResult::Allocated(block);
+            }
+        }
+    }
     // A thread admitted to a child subprocess allocates from its own child
     // Theap, as source `mi_malloc` does through that thread's default Theap.
     if let Some(result) = crate::subproc::lifecycle::native_child_thread_allocate(
@@ -10574,6 +10622,18 @@ fn native_allocate_shaped(
     ) {
         return result;
     }
+    native_allocate_shaped_owner(request, shape, zero)
+}
+
+/// The owner-selecting remainder of [`native_allocate_shaped`] after its
+/// admission, validation, local fast-path, and child-subprocess steps. It is
+/// kept out of line so the fast path does not pay this path's frame.
+#[inline(never)]
+fn native_allocate_shaped_owner(
+    request: usize,
+    shape: NativeAllocationShape,
+    zero: bool,
+) -> NativePageAllocationResult {
     // Pinned `mi_heap_malloc` receives an already-selected heap/theap before
     // it enters its allocation control flow. Mirror that selection here: an
     // installed compiler-TLS cell is the current source owner, so ordinary
@@ -11362,6 +11422,37 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         RUNTIME_PROCESS.retain_page_owner();
         return NativePageFreeResult::Retained;
     };
+    #[cfg(target_arch = "x86_64")]
+    if let Some(theap) = native_local_fast_theap() {
+        // SAFETY: `native_free` accepts only an exact current native
+        // allocation, which keeps its PageMap registration and page live.
+        if let Ok(Some(page)) = unsafe { page_map.lookup_page_for_live_client(block) } {
+            if let Some(current) = current_thread_identity() {
+                // SAFETY: the gate holds for this admitted operation; `page`
+                // is `block`'s registered page and the caller consumes it.
+                if unsafe { crate::local_fast_path::free(theap, page, block, current.get()) } {
+                    return NativePageFreeResult::Freed;
+                }
+            }
+        }
+    }
+    // SAFETY: forwarded exact-live-allocation contract.
+    unsafe { native_free_pointer_first(block, page_map) }
+}
+
+/// The pointer-first remainder of [`native_free`] after its admission,
+/// PageMap witness, and local fast-path steps, kept out of line so the fast
+/// path does not pay this path's frame.
+///
+/// # Safety
+///
+/// Same exact-live-allocation contract as [`native_free`], under its
+/// admitted operation.
+#[inline(never)]
+unsafe fn native_free_pointer_first(
+    block: core::ptr::NonNull<u8>,
+    page_map: crate::process_page_map::ProcessPageMapRoot,
+) -> NativePageFreeResult {
     // SAFETY: `native_free` accepts only an exact current native allocation.
     // Its source lifetime keeps the selected registration and page metadata
     // stable until one branch below consumes the observation. The lookup

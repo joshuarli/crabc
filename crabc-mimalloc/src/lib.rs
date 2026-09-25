@@ -71,6 +71,8 @@ mod deferred_free;
 mod diagnostic_output;
 mod free_list;
 mod invariants;
+#[cfg(target_arch = "x86_64")]
+mod local_fast_path;
 #[cfg(all(test, target_arch = "x86_64"))]
 mod native_local_trace;
 mod lock;

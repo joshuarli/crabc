@@ -205,8 +205,8 @@ use crate::types::page_queue::{
     page_queue_has_member_link_coherence, page_queue_remove_metadata,
 };
 
-const RETIRE_CYCLES: u8 = 16;
-const RETIRE_MAX_PAGES: usize = 3;
+pub(crate) const RETIRE_CYCLES: u8 = 16;
+pub(crate) const RETIRE_MAX_PAGES: usize = 3;
 
 /// Ports `mi_page_is_huge` for the page shapes this engine can keep live.
 ///
@@ -4538,6 +4538,16 @@ impl OwnerLocalMainHeapPageSession {
         // stack borrow can end.
         self.mapped_abandoned_claim_selector = Some(NonNull::from(selector).cast());
         Ok(())
+    }
+
+    /// See `MainHeapThreadPageSession::local_fast_path_theap`; a terminal
+    /// mapped-abandoned selector also withholds the fast paths.
+    #[inline]
+    fn local_fast_path_theap(&self) -> Option<NonNull<crate::types::Theap>> {
+        if self.active.is_none() || self.is_static_main_mapped_regular_claim_terminal() {
+            return None;
+        }
+        self.active().local_fast_path_theap()
     }
 
     #[inline]
@@ -10253,7 +10263,17 @@ impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, Own
         let _unbind = OwnerLocalMainHeapPageSessionUnbind {
             session: core::ptr::addr_of_mut!(self.session),
         };
-        Ok(operation(self))
+        let result = operation(self);
+        // Offer this Theap to the native local fast paths only when the
+        // operation left every engine gate open; the unbind guard's
+        // `Borrowed -> Idle` transition publishes it.
+        let fast_theap = if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            None
+        } else {
+            self.session.local_fast_path_theap()
+        };
+        crate::main_heap_thread::stage_owner_local_fast_theap(fast_theap);
+        Ok(result)
     }
 
     /// Performs the all-free quiescence check while the source attachment is

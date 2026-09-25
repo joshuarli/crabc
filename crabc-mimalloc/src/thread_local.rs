@@ -698,6 +698,13 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
     /// move it. If the closure unwinds after a one-way source mutation, the
     /// guard conservatively retains the exact payload and refuses ordinary
     /// reentry; only source teardown may inspect it again.
+    /// Whether the payload is installed and no operation currently borrows
+    /// it: the only state in which [`Self::with_owner`] would admit one.
+    #[inline(always)]
+    pub(crate) fn is_active(self: Pin<&Self>) -> bool {
+        self.get_ref().state.get() == PersistentCompilerTlsOwnerState::Active
+    }
+
     pub(crate) fn with_owner<R>(
         self: Pin<&Self>,
         operation: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> R,
