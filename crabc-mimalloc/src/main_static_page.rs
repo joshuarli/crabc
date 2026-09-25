@@ -2945,6 +2945,19 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         )
     }
 
+    /// The active engine's Theap when the native local fast paths may use it
+    /// (see `PageAllocatorEngine::local_fast_path_theap`); `None` in every
+    /// non-active state.
+    #[inline]
+    pub(crate) fn local_fast_path_theap(&self) -> Option<NonNull<crate::types::Theap>> {
+        match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                active.engine.local_fast_path_theap()
+            }
+            _ => None,
+        }
+    }
+
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_is_waiting_for_first_page(&self) -> bool {

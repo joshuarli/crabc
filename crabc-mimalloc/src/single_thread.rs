@@ -40466,6 +40466,20 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 .is_static_main_mapped_regular_claim_terminal()
     }
 
+    /// This engine's Theap when the native local fast paths
+    /// (`crate::local_fast_path`) may use it until the next engine
+    /// operation: no retained collection poison, no ordinary-operation
+    /// refusal, and no pending OS release. Only a permanently bound session
+    /// (the initial owner's static main session) may be asked between
+    /// operations; owner-local engines stage theirs while bound.
+    #[inline]
+    pub(crate) fn local_fast_path_theap(&self) -> Option<NonNull<crate::types::Theap>> {
+        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            return None;
+        }
+        Some(NonNull::from(self.session.theap()))
+    }
+
     #[inline]
     fn is_collection_poisoned(&self) -> bool {
         // An awaiting dynamic backing-release continuation has not suffered

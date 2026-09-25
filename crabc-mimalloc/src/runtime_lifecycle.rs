@@ -8289,6 +8289,18 @@ impl NativeInitialPersistentThreadOwner {
         self.allocator.is_retained()
     }
 
+    /// The static main Theap when the native local fast paths may use it
+    /// after this operation: an active healthy engine with no selected
+    /// deferred-free callback in flight.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn local_fast_path_theap(&self) -> Option<core::ptr::NonNull<crate::types::Theap>> {
+        if self.deferred_free_callback_active.load(Ordering::Acquire) != 0 {
+            return None;
+        }
+        self.allocator.local_fast_path_theap()
+    }
+
     /// Prepares this direct initial source owner for the prepared raw-fork
     /// child and reports whether its copied image is safe.
     ///
@@ -8872,6 +8884,8 @@ fn current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate(
         FORK_GATE_HELD,
         "the pinned initial-owner fork preparation runs only under the held zero-admission gate"
     );
+    #[cfg(target_arch = "x86_64")]
+    set_initial_owner_fast_theap(None);
     current_thread_native_initial_persistent_owner_cell()
         .with_owner(|owner| owner.get_mut().prepare_quiescent_for_held_fork_gate())
         .unwrap_or(false)
@@ -8909,9 +8923,13 @@ fn with_pointer_associated_initial_persistent_owner<R>(
     if !current_thread_native_owner_presence().initial_installed {
         return Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled);
     }
-    match current_thread_native_initial_persistent_owner_cell()
-        .with_owner(|owner| operation(owner.get_mut()))
-    {
+    match current_thread_native_initial_persistent_owner_cell().with_owner(|owner| {
+        let owner = owner.get_mut();
+        let result = operation(owner);
+        #[cfg(target_arch = "x86_64")]
+        set_initial_owner_fast_theap(owner.local_fast_path_theap());
+        result
+    }) {
         Ok(result) => Ok(result),
         Err(PersistentCompilerTlsOwnerError::NotAttached) => {
             Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled)
@@ -9078,6 +9096,22 @@ fn fail_stop_with_current_thread_native_owner() -> ! {
     crabc_core::process::exit_immediately(134)
 }
 
+/// The initial owner's static main Theap while its last operation left it
+/// usable by the native local fast paths, or null. Only the initial owner's
+/// operations, which all end through `with_pointer_associated_initial_persistent_owner`,
+/// publish it; its other direct cell projections (fork preparation,
+/// reclaim-on-free) clear it first.
+#[cfg(target_arch = "x86_64")]
+#[thread_local]
+static mut INITIAL_OWNER_FAST_THEAP: *mut crate::types::Theap = core::ptr::null_mut();
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn set_initial_owner_fast_theap(theap: Option<core::ptr::NonNull<crate::types::Theap>>) {
+    // SAFETY: current-thread compiler TLS scalar write.
+    unsafe { INITIAL_OWNER_FAST_THEAP = theap.map_or(core::ptr::null_mut(), core::ptr::NonNull::as_ptr) };
+}
+
 /// Returns the current thread's Theap when the native local fast paths
 /// (`crate::local_fast_path`) may use it for this admitted operation.
 ///
@@ -9093,12 +9127,29 @@ fn fail_stop_with_current_thread_native_owner() -> ! {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn native_local_fast_theap() -> Option<core::ptr::NonNull<crate::types::Theap>> {
-    let theap = crate::main_heap_thread::owner_local_fast_theap()?;
     let presence = current_thread_native_owner_presence();
-    if !presence.later_installed
-        || presence.state != ThreadLifecycleState::Attached
-        || !current_thread_native_persistent_owner_cell().is_active()
-        || crate::compiler_tls::fast_slot_peek() != Some(theap.cast())
+    // Mirror the complete allocation's owner selection: an installed initial
+    // owner first, then an attached later owner.
+    let theap = if presence.initial_installed {
+        // SAFETY: current-thread compiler TLS scalar read.
+        let theap = core::ptr::NonNull::new(unsafe { INITIAL_OWNER_FAST_THEAP })?;
+        if !RUNTIME_PROCESS.is_on_initial_allocation_thread()
+            || !current_thread_native_initial_persistent_owner_cell().is_active()
+        {
+            return None;
+        }
+        theap
+    } else {
+        let theap = crate::main_heap_thread::owner_local_fast_theap()?;
+        if !presence.later_installed
+            || presence.state != ThreadLifecycleState::Attached
+            || !current_thread_native_persistent_owner_cell().is_active()
+        {
+            return None;
+        }
+        theap
+    };
+    if crate::compiler_tls::fast_slot_peek() != Some(theap.cast())
         || crate::compiler_tls::default_theap() != theap
         || crate::subproc::lifecycle::current_thread_is_child_member()
         || !RUNTIME_PROCESS.is_active()
@@ -10639,6 +10690,36 @@ fn native_allocate_shaped(
     let Some(_operation) = enter_native_allocation_operation() else {
         return NativePageAllocationResult::Unavailable;
     };
+    // The local fast path's gate excludes child-subprocess members, and it
+    // accepts only small requests with a power-of-two alignment no larger
+    // than the request at offset zero, which the aligned precheck below
+    // always passes; so it may precede both.
+    #[cfg(target_arch = "x86_64")]
+    if let Some(theap) = native_local_fast_theap() {
+        let alignment = match shape {
+            NativeAllocationShape::Ordinary => Some(None),
+            NativeAllocationShape::Aligned { alignment, offset: 0 } => Some(Some(alignment)),
+            NativeAllocationShape::Aligned { .. } => None,
+        };
+        if let Some(alignment) = alignment {
+            // SAFETY: the gate holds for this admitted operation; the fast
+            // path itself declines any alignment that is not a power of two.
+            if let Some(block) = unsafe { crate::local_fast_path::allocate(theap, request, alignment, zero) } {
+                return NativePageAllocationResult::Allocated(block);
+            }
+        }
+    }
+    native_allocate_shaped_slow(request, shape, zero)
+}
+
+/// The admitted remainder of [`native_allocate_shaped`] after its local fast
+/// path, kept out of line so the fast path does not pay this path's frame.
+#[inline(never)]
+fn native_allocate_shaped_slow(
+    request: usize,
+    shape: NativeAllocationShape,
+    zero: bool,
+) -> NativePageAllocationResult {
     // An invalid alignment fails before any allocation. An oversized request
     // is not refused here: as in pinned `_mi_malloc_generic`, the engine
     // counts it, runs administration, and retries once after a forced
@@ -10650,23 +10731,6 @@ fn native_allocate_shaped(
         if let Some(report) = SourceErrorReport::aligned_precheck(request, alignment, offset) {
             let _ = crate::process_init::process_error_message(report);
             return NativePageAllocationResult::AllocationFailed;
-        }
-    }
-    // The local fast path's gate excludes child-subprocess members, so it
-    // may precede their route.
-    #[cfg(target_arch = "x86_64")]
-    if let Some(theap) = native_local_fast_theap() {
-        let alignment = match shape {
-            NativeAllocationShape::Ordinary => Some(None),
-            NativeAllocationShape::Aligned { alignment, offset: 0 } => Some(Some(alignment)),
-            NativeAllocationShape::Aligned { .. } => None,
-        };
-        if let Some(alignment) = alignment {
-            // SAFETY: the gate holds for this admitted operation, and the
-            // aligned precheck above proved any alignment a power of two.
-            if let Some(block) = unsafe { crate::local_fast_path::allocate(theap, request, alignment, zero) } {
-                return NativePageAllocationResult::Allocated(block);
-            }
         }
     }
     // A thread admitted to a child subprocess allocates from its own child
@@ -10684,10 +10748,9 @@ fn native_allocate_shaped(
     native_allocate_shaped_owner(request, shape, zero)
 }
 
-/// The owner-selecting remainder of [`native_allocate_shaped`] after its
-/// admission, validation, local fast-path, and child-subprocess steps. It is
-/// kept out of line so the fast path does not pay this path's frame.
-#[inline(never)]
+/// The owner-selecting remainder of [`native_allocate_shaped_slow`] after
+/// its validation and child-subprocess steps.
+#[inline]
 fn native_allocate_shaped_owner(
     request: usize,
     shape: NativeAllocationShape,
@@ -11809,6 +11872,8 @@ fn native_free_reclaim_on_free_into_current_thread(
         if !current_thread_native_owner_presence().initial_installed {
             return ReclaimOnFreeOutcome::Declined;
         }
+        #[cfg(target_arch = "x86_64")]
+        set_initial_owner_fast_theap(None);
         return current_thread_native_initial_persistent_owner_cell()
             .with_owner(|owner| {
                 let owner = owner.get_mut();

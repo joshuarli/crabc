@@ -24,8 +24,10 @@
 //! extension, fresh pages), `_mi_page_free`, `_mi_page_unfull`, or remote
 //! frees.
 //!
-//! They keep the checks the normal-release C build performs and add only
-//! the `LocalFreeList` containment check every Rust free-list access makes.
+//! They keep the checks the normal-release C build performs and no others:
+//! as in `mi_block_next` without `MI_ENCODE_FREELIST`, list links are
+//! trusted to name blocks of their page, which holds for every valid
+//! program. The complete path's `LocalFreeList` keeps its containment checks.
 
 use core::ptr::NonNull;
 
@@ -33,9 +35,8 @@ use crate::config::{
     BIN_HUGE, PAGE_MAX_START_BLOCK_ALIGN2, PAGE_OSPAGE_BLOCK_ALIGN2, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
     SMALL_SIZE_MAX, WORD_SIZE,
 };
-use crate::free_list::LocalFreeList;
 use crate::single_thread::{RETIRE_CYCLES, RETIRE_MAX_PAGES};
-use crate::types::{EMPTY_PAGE, Page, Theap};
+use crate::types::{Block, EMPTY_PAGE, Page, Theap};
 use crate::{invariants, size_class};
 
 /// Source `alloc-aligned.c:mi_malloc_is_naturally_aligned` for requests up
@@ -71,8 +72,8 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
 /// (`main_heap_thread::owner_local_fast_theap`) with the runtime gates of
 /// `runtime_lifecycle::native_local_fast_theap` checked in this same native
 /// operation, so this thread exclusively owns the Theap's ordinary fields and
-/// every ordinary page field of its queued pages. Any `alignment` must be a
-/// valid power of two.
+/// every ordinary page field of its queued pages. An `alignment` that is not
+/// a power of two is declined.
 #[inline]
 pub(crate) unsafe fn allocate(
     theap: NonNull<Theap>,
@@ -80,7 +81,10 @@ pub(crate) unsafe fn allocate(
     alignment: Option<usize>,
     zero: bool,
 ) -> Option<NonNull<u8>> {
-    if size < WORD_SIZE || size > SMALL_SIZE_MAX || alignment.is_some_and(|alignment| alignment > size) {
+    if size < WORD_SIZE
+        || size > SMALL_SIZE_MAX
+        || alignment.is_some_and(|alignment| !alignment.is_power_of_two() || alignment > size)
+    {
         return None;
     }
     let direct_index = invariants::word_count(size)?;
@@ -99,10 +103,9 @@ pub(crate) unsafe fn allocate(
             if alignment.is_some_and(|alignment| head.addr() & (alignment - 1) != 0) {
                 return None;
             }
-            // SAFETY: the owner exclusively controls this page's ordinary
-            // local-list fields and the popped head block.
-            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }.ok()?;
-            return free_list.pop(zero).ok()?;
+            // SAFETY: the owner exclusively controls this live page's
+            // ordinary local-list fields and its non-null immediate head.
+            return Some(unsafe { pop_immediate(page, zero) });
         }
     }
 
@@ -124,17 +127,15 @@ pub(crate) unsafe fn allocate(
         return None;
     }
     // SAFETY: exclusive ordinary-field ownership, as above. The head has an
-    // immediate or local-free block, so quick collection and the pop below
-    // succeed unless that list is corrupt; the complete path then rejects the
-    // same list.
-    let mut free_list = unsafe { LocalFreeList::from_page_at(first) }.ok()?;
-    if !free_list.quick_collect().ok()? {
-        return None;
-    }
-    // SAFETY: `mi_page_queue_lookup_free_first` clears this owner-only byte
-    // once it selects the head.
-    unsafe { Page::set_retire_expire_at(first, 0) };
-    let block = free_list.pop(zero).ok()??;
+    // immediate or local-free block, so `mi_page_free_quick_collect` leaves
+    // `free` non-null for the pop.
+    let block = unsafe {
+        quick_collect(first);
+        // `mi_page_queue_lookup_free_first` clears this owner-only byte once
+        // it selects the head.
+        Page::set_retire_expire_at(first, 0);
+        pop_immediate(first, zero)
+    };
     debug_assert!(alignment.is_none_or(|alignment| block.as_ptr().addr() & (alignment - 1) == 0));
     Some(block)
 }
@@ -193,13 +194,12 @@ pub(crate) unsafe fn free(
         }
         retire_bin = bin;
     }
-    // SAFETY: the owner exclusively controls the ordinary local-list fields;
-    // `push_local` validates `block` before writing any link.
-    let Ok(mut free_list) = (unsafe { LocalFreeList::from_page_at(page) }) else { return false };
-    // SAFETY: forwarded exact-live, consumed-block contract.
-    if unsafe { free_list.push_local(block) }.is_err() {
+    if used == 0 {
         return false;
     }
+    // SAFETY: the owner exclusively controls the ordinary local-list fields,
+    // and the caller consumes exact live `block` of this page.
+    unsafe { push_local_free(page, block) };
     if retire {
         // SAFETY: a fresh shared projection after the local-list writes; the
         // flag is the page's atomic `xthread_id` word.
@@ -216,4 +216,69 @@ pub(crate) unsafe fn free(
         }
     }
     true
+}
+
+/// `mi_page_malloc_zero`'s pop of the immediate head, with its zeroing
+/// branch (`free_is_zero` pages skip the clear; the link word is always
+/// cleared).
+///
+/// # Safety
+///
+/// The caller exclusively owns `page`'s ordinary local-list fields, its
+/// immediate list is non-empty, and every link names a block of this page
+/// (the source invariant `mi_block_next` relies on in normal release).
+#[inline(always)]
+unsafe fn pop_immediate(page: NonNull<Page>, zero: bool) -> NonNull<u8> {
+    // SAFETY: forwarded; this projects only the owner's ordinary fields.
+    let state = unsafe { Page::local_free_list_state_at(page) };
+    // SAFETY: forwarded non-empty immediate list of valid block links.
+    unsafe {
+        let block = *state.free.as_ptr();
+        let link = block.cast::<*mut Block>();
+        let next = *link;
+        *link = core::ptr::null_mut();
+        *state.free.as_ptr() = next;
+        *state.used.as_ptr() += 1;
+        let block = NonNull::new_unchecked(block.cast::<u8>());
+        if zero && !*state.free_is_zero.as_ptr() {
+            core::ptr::write_bytes(block.as_ptr(), 0, state.block_size);
+        }
+        block
+    }
+}
+
+/// `mi_page_free_quick_collect` after the caller saw `free` or `local_free`
+/// non-empty.
+///
+/// # Safety
+///
+/// Same ownership contract as [`pop_immediate`].
+#[inline(always)]
+unsafe fn quick_collect(page: NonNull<Page>) {
+    // SAFETY: forwarded ordinary-field ownership.
+    unsafe {
+        let state = Page::local_free_list_state_at(page);
+        if (*state.free.as_ptr()).is_null() {
+            *state.free.as_ptr() = *state.local_free.as_ptr();
+            *state.local_free.as_ptr() = core::ptr::null_mut();
+            *state.free_is_zero.as_ptr() = false;
+        }
+    }
+}
+
+/// `mi_free_block_local`'s push onto `local_free` and `used` decrement.
+///
+/// # Safety
+///
+/// Same ownership contract as [`pop_immediate`]; `block` is an exact live
+/// block of `page` that the caller consumes, and `used` is nonzero.
+#[inline(always)]
+unsafe fn push_local_free(page: NonNull<Page>, block: NonNull<u8>) {
+    // SAFETY: forwarded ordinary-field ownership and consumed live block.
+    unsafe {
+        let state = Page::local_free_list_state_at(page);
+        *block.as_ptr().cast::<*mut Block>() = *state.local_free.as_ptr();
+        *state.used.as_ptr() -= 1;
+        *state.local_free.as_ptr() = block.as_ptr().cast::<Block>();
+    }
 }
