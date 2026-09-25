@@ -47,14 +47,16 @@ are not transferable passes for a different revision.
   PSS fails every row.
 - **Resume here, in order:**
   1. Family admissions are the critical path: every selected-private
-     capability completes when its family is admitted. Get one passing
-     `materialized-dynamic-sysroot` qualification on a clean checkout (lane
-     `dynamic-product`), then run the `libc.posix-runtime` admission
-     sequence (`owned-posix-native-execution.md`) in a frozen checkout of
-     merged `main` (`.work/worktrees/main-verify`), then `libc.pthread-tls`,
-     `libc.text-math-locale-stdio` (lane `pattern` builds its aggregate),
-     `libc.resolver`, `libc.c-abi-compat`, `ldso.dynamic-runtime`, and the
-     sysroot families in dependency order.
+     capability completes when its family is admitted. Admission receipts
+     reconstruct against the current source seal, so a family transition
+     only holds on the one clean candidate revision that names its receipt
+     and regenerates it; the final transition is a single candidate on which
+     the whole chain runs. Until then, run complete preflights on one frozen
+     revision to surface every failure: `materialized-dynamic-sysroot` first
+     passed at `4ddc94ebe` (lane `dynamic-product`), which is now preflighting
+     `libc.posix-runtime` (`owned-posix-native-execution.md`),
+     `libc.pthread-tls`, `libc.text-math-locale-stdio`, `libc.resolver`, the
+     loader and sysroot families, and the consumer gates on that cohort.
   2. Keep 16 lanes running (`.work/tmp/lane-agents.txt` holds the map and
      backlog). Merge a lane's `[[family.verified_slice]]` change only after
      rerunning its cited commands in the frozen checkout.
