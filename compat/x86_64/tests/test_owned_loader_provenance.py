@@ -40,6 +40,8 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             "ldso/build.rs",
             "ldso/src/lib.rs",
             "ldso/src/x86_64_initial_graph.rs",
+            "libc/src/c_abi/x86_64/owned_discard_unwind.ld",
+            "ldso/x86_64-owned-bss-layout.ld",
         )
         for relative in self.sources:
             path = self.root / relative
@@ -131,6 +133,8 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
                 "rust-toolchain.toml",
                 ".cargo/config.toml",
                 "ldso/Cargo.toml",
+                "libc/src/c_abi/x86_64/owned_discard_unwind.ld",
+                "ldso/x86_64-owned-bss-layout.ld",
             ],
         )
 

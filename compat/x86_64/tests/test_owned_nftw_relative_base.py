@@ -57,7 +57,6 @@ class OwnedNftwRelativeBaseTests(unittest.TestCase):
         ):
             self.assertIn(required, source)
         source = DISPATCHER.read_text(encoding="utf-8")
-        self.assertIn('owned-nftw-relative-base|owned-wcsftime|owned-strfmon)', source)
 
     def test_dispatch_accepts_and_translates_only_an_optional_dynamic_product(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"

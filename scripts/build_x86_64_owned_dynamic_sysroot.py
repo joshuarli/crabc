@@ -54,6 +54,9 @@ SHARED_LIBC_MIMALLOC_HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_
 # few 64 KiB fault-around windows of libc text. See the file's header.
 SHARED_LIBC_SYMBOL_ORDER = ROOT / "libc/src/c_abi/x86_64/owned_dynamic_hot.order"
 # Both runtime images discard their unused unwind tables, as musl's do.
+# Import-time root; provenance re-roots these through ROOT so a relocated
+# checkout records them like every other configuration input.
+_IMPORT_ROOT = ROOT
 RUNTIME_DISCARD_UNWIND_SCRIPT = ROOT / "libc/src/c_abi/x86_64/owned_discard_unwind.ld"
 # The interpreter keeps its small .bss statics on one page before the pool chunk.
 LOADER_BSS_LAYOUT_SCRIPT = ROOT / "ldso/x86_64-owned-bss-layout.ld"
@@ -521,8 +524,8 @@ def loader_provenance(
         _source_file_identity(ROOT / "rust-toolchain.toml", "pinned Rust toolchain configuration"),
         _source_file_identity(ROOT / ".cargo/config.toml", "workspace Cargo configuration"),
         _source_file_identity(ROOT / "ldso/Cargo.toml", "loader Cargo configuration"),
-        _source_file_identity(RUNTIME_DISCARD_UNWIND_SCRIPT, "runtime unwind-table discard script"),
-        _source_file_identity(LOADER_BSS_LAYOUT_SCRIPT, "loader .bss layout script"),
+        _source_file_identity(ROOT / RUNTIME_DISCARD_UNWIND_SCRIPT.relative_to(_IMPORT_ROOT), "runtime unwind-table discard script"),
+        _source_file_identity(ROOT / LOADER_BSS_LAYOUT_SCRIPT.relative_to(_IMPORT_ROOT), "loader .bss layout script"),
     ]
     installed = {
         "path": LOADER_ARTIFACT,
