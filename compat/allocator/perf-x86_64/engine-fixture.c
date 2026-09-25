@@ -21,6 +21,14 @@
  * READY_FREED to `ready_fd` and wait for one byte on `control_fd` after each,
  * so the parent can snapshot /proc while the process is quiescent.
  *
+ * Given `ready_fd` and `control_fd`, a timed workload also runs one untimed
+ * peak-state probe after its last timed batch: every participant rebuilds
+ * the largest live set one of its batches holds (a batch's blocks, a grown
+ * realloc block, a full remote ring, every churn thread's blocks, or the
+ * persistent live set), the process writes READY_PEAK and waits for the
+ * parent, and the probe then releases that set through the workload's own
+ * free path.  No timed batch contains the pause.
+ *
  * Multi-threaded workloads pin each worker to one listed CPU; the initial
  * thread only coordinates barriers and never allocates during timing.  A
  * multi-threaded batch spans the first participant's own start timestamp to
@@ -471,6 +479,63 @@ static void finish_worker(struct worker *worker)
   }
 }
 
+/* ---- peak-state probe (untimed, after the last batch) ------------------- */
+
+static int barrier_parent(const struct params *params, const char *line);
+
+static int peak_hook(const struct params *params)
+{
+  return params->ready_fd >= 0 && params->control_fd >= 0;
+}
+
+struct peak {
+  void *block;
+};
+
+/* Rebuild this participant's largest live batch state. */
+static void peak_enter(struct worker *worker, struct peak *peak)
+{
+  const struct params *params = worker->params;
+  const char *name = params->workload;
+  size_t index;
+  peak->block = NULL;
+  if (strcmp(name, "alloc_free") == 0 || strcmp(name, "local_scaling") == 0
+      || strcmp(name, "realloc_inplace") == 0) {
+    peak->block = checked(crabc_allocator_engine_malloc(params->size));
+    touch(peak->block, params->size, 1);
+  } else if (strcmp(name, "calloc_free") == 0) {
+    peak->block = checked(crabc_allocator_engine_calloc(1, params->size));
+    touch(peak->block, params->size, 1);
+  } else if (strcmp(name, "aligned_free") == 0) {
+    peak->block = checked(crabc_allocator_engine_aligned(params->alignment, params->size));
+    touch(peak->block, params->size, 1);
+  } else if (strcmp(name, "realloc_grow") == 0) {
+    size_t size = params->size;
+    unsigned char *block = checked(crabc_allocator_engine_malloc(size));
+    while (size < params->max_size) {
+      size = size * 2 > params->max_size ? params->max_size : size * 2;
+      block = checked(crabc_allocator_engine_realloc(block, size));
+      block[size - 1] = (unsigned char)size;
+    }
+    peak->block = block;
+  } else if (strcmp(name, "alloc_batch") == 0) {
+    for (index = 0; index < params->count; index++) {
+      worker->slots[index] = checked(crabc_allocator_engine_malloc(params->size));
+      touch(worker->slots[index], params->size, (unsigned)index);
+    }
+  }
+  /* usable_size, churn and churn_scaling keep their live sets across batches. */
+}
+
+static void peak_leave(struct worker *worker, struct peak *peak)
+{
+  size_t index;
+  if (strcmp(worker->params->workload, "alloc_batch") == 0) {
+    for (index = 0; index < worker->params->count; index++) crabc_allocator_engine_free(worker->slots[index]);
+  }
+  if (peak->block != NULL) crabc_allocator_engine_free(peak->block);
+}
+
 /* ---- single-thread driver (initial thread) ------------------------------ */
 
 static int run_initial_thread(const struct params *params)
@@ -491,6 +556,12 @@ static int run_initial_thread(const struct params *params)
     const uint64_t after = now_ns();
     print_batch(after - before, thread_cpu_ns() - before_cpu, operations);
   }
+  if (peak_hook(params)) {
+    struct peak peak;
+    peak_enter(&worker, &peak);
+    if (barrier_parent(params, "READY_PEAK\n") != 0) return 65;
+    peak_leave(&worker, &peak);
+  }
   finish_worker(&worker);
   return 0;
 }
@@ -501,6 +572,11 @@ struct shared {
   const struct params *params;
   pthread_barrier_t start;
   pthread_barrier_t finish;
+  /* Peak probe: participants hold their peak state from `peak` to `peak_done`;
+   * remote consumers drain before `peak_drained`. */
+  pthread_barrier_t peak;
+  pthread_barrier_t peak_done;
+  pthread_barrier_t peak_drained;
   _Atomic uint64_t operations[MAX_WORKERS];
   _Atomic uint64_t cpu_ns[MAX_WORKERS];
   /* Each participant's own work interval: a descheduled coordinator cannot
@@ -571,9 +647,38 @@ static void *independent_worker(void *raw)
     atomic_store(&shared->operations[argument->index], operations);
     barrier_wait(&shared->finish);
   }
+  if (peak_hook(params)) {
+    struct peak peak;
+    peak_enter(&worker, &peak);
+    barrier_wait(&shared->peak);
+    barrier_wait(&shared->peak_done);
+    peak_leave(&worker, &peak);
+  }
   finish_worker(&worker);
   if (crabc_allocator_engine_thread_done() != 0) die("backend thread_done failed");
   return NULL;
+}
+
+/* The initial thread's side of one peak probe over `participants` threads. */
+static int coordinate_peak(struct shared *shared, int drained)
+{
+  const struct params *params = shared->params;
+  if (!peak_hook(params)) return 0;
+  barrier_wait(&shared->peak);
+  if (barrier_parent(params, "READY_PEAK\n") != 0) return 65;
+  barrier_wait(&shared->peak_done);
+  if (drained) barrier_wait(&shared->peak_drained);
+  return 0;
+}
+
+static int init_barriers(struct shared *shared, size_t participants)
+{
+  const unsigned count = (unsigned)participants + 1;
+  return pthread_barrier_init(&shared->start, NULL, count) == 0
+      && pthread_barrier_init(&shared->finish, NULL, count) == 0
+      && pthread_barrier_init(&shared->peak, NULL, count) == 0
+      && pthread_barrier_init(&shared->peak_done, NULL, count) == 0
+      && pthread_barrier_init(&shared->peak_drained, NULL, count) == 0 ? 0 : -1;
 }
 
 static int run_independent_workers(const struct params *params)
@@ -589,8 +694,7 @@ static int run_independent_workers(const struct params *params)
     fail("each independent worker needs a distinct listed CPU");
     return 64;
   }
-  if (pthread_barrier_init(&shared.start, NULL, (unsigned)params->workers + 1) != 0
-      || pthread_barrier_init(&shared.finish, NULL, (unsigned)params->workers + 1) != 0) {
+  if (init_barriers(&shared, params->workers) != 0) {
     fail("barrier init failed");
     return 65;
   }
@@ -613,6 +717,7 @@ static int run_independent_workers(const struct params *params)
     }
     print_batch(batch_interval(&shared, params->workers), cpu, operations);
   }
+  if (coordinate_peak(&shared, 0) != 0) return 65;
   for (index = 0; index < params->workers; index++) {
     if (pthread_join(threads[index], NULL) != 0) {
       fail("pthread_join failed");
@@ -667,6 +772,20 @@ static void *remote_producer(void *raw)
     atomic_store(&shared->operations[2 * pair->index], params->iterations);
     barrier_wait(&shared->finish);
   }
+  if (peak_hook(params)) {
+    /* The most blocks a pair holds in flight: one full ring. */
+    const size_t head = atomic_load_explicit(&pair->ring.head, memory_order_relaxed);
+    size_t index;
+    for (index = 0; index < REMOTE_RING; index++) {
+      void *block = checked(crabc_allocator_engine_malloc(params->size));
+      touch(block, params->size, (unsigned)index);
+      pair->ring.blocks[(head + index) % REMOTE_RING] = block;
+    }
+    atomic_store_explicit(&pair->ring.head, head + REMOTE_RING, memory_order_release);
+    barrier_wait(&shared->peak);
+    barrier_wait(&shared->peak_done);
+    barrier_wait(&shared->peak_drained);
+  }
   if (crabc_allocator_engine_thread_done() != 0) die("backend producer thread_done failed");
   return NULL;
 }
@@ -698,6 +817,19 @@ static void *remote_consumer(void *raw)
     atomic_store(&shared->operations[2 * pair->index + 1], params->iterations);
     barrier_wait(&shared->finish);
   }
+  if (peak_hook(params)) {
+    size_t index;
+    barrier_wait(&shared->peak);
+    barrier_wait(&shared->peak_done);
+    /* Drain the full ring through the same remote free path. */
+    for (index = 0; index < REMOTE_RING; index++) {
+      const size_t tail = atomic_load_explicit(&pair->ring.tail, memory_order_relaxed);
+      if (atomic_load_explicit(&pair->ring.head, memory_order_acquire) == tail) die("peak ring is not full");
+      crabc_allocator_engine_free(pair->ring.blocks[tail % REMOTE_RING]);
+      atomic_store_explicit(&pair->ring.tail, tail + 1, memory_order_release);
+    }
+    barrier_wait(&shared->peak_drained);
+  }
   if (crabc_allocator_engine_thread_done() != 0) die("backend consumer thread_done failed");
   return NULL;
 }
@@ -723,10 +855,7 @@ static int run_remote_free(const struct params *params)
   pairs = aligned_alloc(64, sizeof *pairs * params->workers);
   if (pairs == NULL) return 65;
   memset(pairs, 0, sizeof *pairs * params->workers);
-  if (pthread_barrier_init(&shared.start, NULL, (unsigned)thread_count + 1) != 0
-      || pthread_barrier_init(&shared.finish, NULL, (unsigned)thread_count + 1) != 0) {
-    return 65;
-  }
+  if (init_barriers(&shared, thread_count) != 0) return 65;
   for (index = 0; index < params->workers; index++) {
     pairs[index].shared = &shared;
     pairs[index].index = index;
@@ -747,6 +876,7 @@ static int run_remote_free(const struct params *params)
     }
     print_batch(batch_interval(&shared, thread_count), cpu, operations);
   }
+  if (coordinate_peak(&shared, 1) != 0) return 65;
   for (index = 0; index < thread_count; index++) {
     if (pthread_join(threads[index], NULL) != 0) return 67;
   }
@@ -764,6 +894,8 @@ static int run_remote_free(const struct params *params)
 struct churn_thread {
   const struct params *params;
   void **survivors;
+  /* Non-null only for the peak probe's threads. */
+  struct shared *peak;
   size_t index;
   /* The short-lived thread's whole CPU time, read just before it returns. */
   uint64_t cpu_ns;
@@ -778,6 +910,11 @@ static void *churn_thread_main(void *raw)
   for (index = 0; index < params->count; index++) {
     thread->survivors[index] = checked(crabc_allocator_engine_malloc(params->size));
     touch(thread->survivors[index], params->size, (unsigned)index);
+  }
+  if (thread->peak != NULL) {
+    /* Every churn thread attached with all of its blocks live. */
+    barrier_wait(&thread->peak->peak);
+    barrier_wait(&thread->peak->peak_done);
   }
   for (index = 0; index < params->count; index += 2) {
     crabc_allocator_engine_free(thread->survivors[index]);
@@ -809,6 +946,7 @@ static int run_thread_churn(const struct params *params)
     for (index = 0; index < params->workers; index++) {
       threads[index].params = params;
       threads[index].survivors = survivors + index * params->count;
+      threads[index].peak = NULL;
       threads[index].index = index;
       if (pthread_create(&handles[index], NULL, churn_thread_main, &threads[index]) != 0) die("pthread_create failed");
     }
@@ -826,6 +964,26 @@ static int run_thread_churn(const struct params *params)
     cpu = thread_cpu_ns() - before_cpu;
     for (index = 0; index < params->workers; index++) cpu += threads[index].cpu_ns;
     print_batch(after - before, cpu, 2 * (uint64_t)params->workers * params->count);
+  }
+  if (peak_hook(params)) {
+    struct shared shared;
+    size_t index;
+    memset(&shared, 0, sizeof shared);
+    shared.params = params;
+    if (init_barriers(&shared, params->workers) != 0) return 65;
+    for (index = 0; index < params->workers; index++) {
+      threads[index].survivors = survivors + index * params->count;
+      threads[index].peak = &shared;
+      if (pthread_create(&handles[index], NULL, churn_thread_main, &threads[index]) != 0) die("pthread_create failed");
+    }
+    if (coordinate_peak(&shared, 0) != 0) return 65;
+    for (index = 0; index < params->workers; index++) {
+      if (pthread_join(handles[index], NULL) != 0) die("pthread_join failed");
+    }
+    for (index = 0; index < params->workers * params->count; index++) {
+      if (survivors[index] != NULL) crabc_allocator_engine_free(survivors[index]);
+      survivors[index] = NULL;
+    }
   }
   free(survivors);
   return 0;

@@ -20,8 +20,12 @@ source, toolchain, host, load, and artifact provenance.
 sanity check (single-thread Rust/C throughput and independent four-worker
 scaling); ``--set matrix`` measures the complete equivalent workload/memory
 matrix. Every timed row records throughput, the per-process p99 batch cost
-(the slow-batch tail) and the exec image's peak RSS (``VmHWM`` read at a
-ptrace exit stop); every memory row records peak RSS and live PSS.
+(the slow-batch tail), the exec image's peak RSS (``VmHWM`` read at a
+ptrace exit stop) and its peak-state PSS, read while the fixture holds its
+largest live batch state at an untimed READY_PEAK pause after the last
+timed batch (``--no-peak-hook`` omits the pause; ``--compare-peak-hook``
+records the timed-sample distributions of a run with and one without it).
+Every memory row records peak RSS and live PSS.
 
 Each report also records raw host-contention evidence (load average,
 /proc/stat CPU windows before, between and after rows, visible competing
@@ -341,7 +345,40 @@ def exit_memory_snapshot(pid: int) -> dict[str, Any]:
     return {"status": parse_status(status), "smaps_rollup": shared.parse_smaps_rollup(rollup)}
 
 
-def wait_traced_exit(pid: int, timeout: float) -> tuple[int, Any, bool, dict[str, Any] | None]:
+class PeakProbe:
+    """The parent side of a timed fixture's one READY_PEAK pause."""
+
+    def __init__(self, ready: int, control: int) -> None:
+        self.ready, self.control = ready, control
+        self.received = bytearray()
+        self.snapshot: dict[str, Any] | None = None
+        self.closed = False
+
+    def poll(self, pid: int, wait: float) -> bool:
+        """Serve the pause if it is pending; True when this call made progress."""
+
+        if self.closed or self.snapshot is not None:
+            return False
+        ready, _, _ = select.select([self.ready], [], [], wait)
+        if not ready:
+            return False
+        chunk = os.read(self.ready, 64)
+        if not chunk:
+            self.closed = True
+            return True
+        self.received.extend(chunk)
+        if self.received.endswith(b"\n"):
+            if bytes(self.received) != b"READY_PEAK\n":
+                raise HarnessError(f"timed fixture wrote {bytes(self.received)!r}, not READY_PEAK")
+            # The peak state is live and every participant is parked.
+            self.snapshot = memory_snapshot(pid)
+            os.write(self.control, b"1")
+        return True
+
+
+def wait_traced_exit(
+    pid: int, timeout: float, peak: PeakProbe | None = None
+) -> tuple[int, Any, bool, dict[str, Any] | None]:
     """Reap a PTRACE_TRACEME child, snapshotting it once at PTRACE_EVENT_EXIT.
 
     Only the initial thread is traced (no TRACECLONE), and it stops only at
@@ -355,6 +392,14 @@ def wait_traced_exit(pid: int, timeout: float) -> tuple[int, Any, bool, dict[str
     exec_stop_seen = False
     snapshot: dict[str, Any] | None = None
     while True:
+        try:
+            if peak is not None and peak.poll(pid, 0):
+                continue
+        except (HarnessError, OSError):
+            os.kill(pid, signal.SIGKILL)
+            while os.WIFSTOPPED(os.wait4(pid, 0)[1]):
+                pass
+            raise
         completed_pid, status, usage = os.wait4(pid, os.WNOHANG)
         if completed_pid == pid:
             if not os.WIFSTOPPED(status):
@@ -375,15 +420,19 @@ def wait_traced_exit(pid: int, timeout: float) -> tuple[int, Any, bool, dict[str
                 _, status, usage = os.wait4(pid, 0)
                 if not os.WIFSTOPPED(status):
                     return status, usage, True, snapshot
-        time.sleep(0.001)
+        if peak is None or peak.snapshot is not None or peak.closed:
+            time.sleep(0.001)
+        else:
+            peak.poll(pid, 0.001)
 
 
 def finish_process(
-    pid: int, started: int, timeout: float, stdout_path: Path, stderr_path: Path, *, traced: bool = False
+    pid: int, started: int, timeout: float, stdout_path: Path, stderr_path: Path, *, traced: bool = False,
+    peak: PeakProbe | None = None,
 ) -> tuple[dict[str, Any], str]:
     exit_memory = None
     if traced:
-        status, usage, timed_out, exit_memory = wait_traced_exit(pid, timeout)
+        status, usage, timed_out, exit_memory = wait_traced_exit(pid, timeout, peak)
     else:
         status, usage, timed_out = shared.wait_with_rusage(pid, timeout)
     stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
@@ -411,17 +460,42 @@ def run_timed_sample(
     timeout: float,
     scratch: Path,
     sample_name: str,
+    peak_hook: bool = True,
 ) -> dict[str, Any]:
+    """One timed process; with ``peak_hook`` it also serves the untimed READY_PEAK pause."""
+
     arguments = fixture_arguments(row, batch_divisor=batch_divisor, cpus=cpus)
     stdout_path = scratch / f"{sample_name}.stdout"
     stderr_path = scratch / f"{sample_name}.stderr"
+    descriptors: list[int] = []
+    probe = None
+    if peak_hook:
+        ready_read, ready_write = os.pipe()
+        control_read, control_write = os.pipe()
+        descriptors = [ready_read, ready_write, control_read, control_write]
+        arguments.extend((f"ready_fd={ready_write}", f"control_fd={control_read}"))
+        probe = PeakProbe(ready_read, control_write)
     started = time.monotonic_ns()
-    pid = spawn(binary, arguments, cpus=cpus, stdout_path=stdout_path, stderr_path=stderr_path, trace_exit=True)
-    process, stdout = finish_process(pid, started, timeout, stdout_path, stderr_path, traced=True)
+    try:
+        pid = spawn(binary, arguments, cpus=cpus, stdout_path=stdout_path, stderr_path=stderr_path, trace_exit=True,
+                    pass_fds=(ready_write, control_read) if peak_hook else ())
+        if peak_hook:
+            os.close(ready_write)
+            os.close(control_read)
+            descriptors = [ready_read, control_write]
+        process, stdout = finish_process(pid, started, timeout, stdout_path, stderr_path, traced=True, peak=probe)
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
     if process["exit_memory"] is None:
         raise HarnessError("fixture exited without its PTRACE_EVENT_EXIT memory snapshot")
     batches = parse_timed_output(stdout, expected_batches=expected_batches(row, batch_divisor))
-    return {"arguments": arguments, "cpus": list(cpus), "process": process, "batches": batches}
+    sample = {"arguments": arguments, "cpus": list(cpus), "process": process, "batches": batches}
+    if peak_hook:
+        if probe.snapshot is None:
+            raise HarnessError("timed fixture exited without its READY_PEAK pause")
+        sample["peak_state"] = probe.snapshot
+    return sample
 
 
 def read_ready(descriptor: int, expected: bytes, timeout: float) -> None:
@@ -581,6 +655,13 @@ def sample_batch_p99_ns_per_op(sample: Mapping[str, Any]) -> float:
     return quantile([batch["ns"] / batch["ops"] for batch in sample["batches"]], 0.99)
 
 
+def sample_peak_pss_kib(sample: Mapping[str, Any]) -> int | None:
+    """PSS at the untimed peak-state pause, or None without the peak hook."""
+
+    state = sample.get("peak_state")
+    return int(state["smaps_rollup"]["pss_kib"]) if isinstance(state, Mapping) else None
+
+
 def sample_peak_rss_kib(sample: Mapping[str, Any]) -> int:
     """The exec image's own RSS high-water mark, read at its exit stop."""
 
@@ -651,8 +732,23 @@ def throughput_comparison(
         "peak_rss_kib": ratio_summary(
             [sample_peak_rss_kib(sample) for sample in c_samples],
             [sample_peak_rss_kib(sample) for sample in rust_samples], seed=seed ^ RSS_SEED),
+        "peak_pss_kib": peak_pss_summary(c_samples, rust_samples, seed=seed),
         "bootstrap": {"resamples": BOOTSTRAP_RESAMPLES, "seed": seed},
     }
+
+
+def peak_pss_values(samples: Sequence[Mapping[str, Any]]) -> list[int] | None:
+    values = [sample_peak_pss_kib(sample) for sample in samples]
+    return None if not values or None in values else values
+
+
+def peak_pss_summary(
+    c_samples: Sequence[Mapping[str, Any]], rust_samples: Sequence[Mapping[str, Any]], *, seed: int
+) -> dict[str, Any] | None:
+    c_values, rust_values = peak_pss_values(c_samples), peak_pss_values(rust_samples)
+    if c_values is None or rust_values is None:
+        return None
+    return ratio_summary(c_values, rust_values, seed=seed ^ PSS_SEED)
 
 
 def resource_summary(samples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -1325,13 +1421,36 @@ QUALIFIED_HOST_FIELDS = (
     "cpu_model", "kernel_release", "logical_cpus", "allowed_cpus", "measurement_cpus",
     "scaling_governors", "transparent_hugepage",
 )
-# False until the shared fixture gives timed workloads a peak-state hook.
-TIMED_PEAK_PSS_MEASURED = False
-TIMED_PSS_GAP = (
-    "timed matrix rows have no peak-PSS measurement: Linux keeps no PSS high-water mark and the "
-    "shared engine fixture has no in-batch peak-state hook for timed workloads (only memory_* rows "
-    "stop at READY_LIVE), so the promotion table's per-row peak PSS is unobservable here"
-)
+# Linux keeps no PSS high-water mark, so a timed row's peak PSS is read at
+# the fixture's untimed READY_PEAK pause; a report without it cannot qualify.
+PEAK_HOOK_GAP = "report was measured with --no-peak-hook, so timed rows have no peak-state PSS"
+
+
+def metric_coverage(report: Mapping[str, Any], manifest: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Per matrix row, the promotion-table metrics its raw samples lack."""
+
+    timed, memory = selected_rows(manifest, QUALIFIED_ROW_SET)
+    missing: dict[str, list[str]] = {}
+    for row in timed:
+        entry = report.get("rows", {}).get(row["name"])
+        if not isinstance(entry, Mapping) or entry.get("status") != "measured":
+            missing[row["name"]] = ["throughput", "tail_latency", "peak_rss", "peak_pss"]
+            continue
+        lacks = []
+        for sample in (*entry["lanes"]["pinned_c"]["samples"], *entry["lanes"]["rust_engine"]["samples"]):
+            if not isinstance(sample, Mapping):
+                continue
+            if not isinstance(sample.get("process", {}).get("exit_memory"), Mapping) and "peak_rss" not in lacks:
+                lacks.append("peak_rss")
+            if sample_peak_pss_kib(sample) is None and "peak_pss" not in lacks:
+                lacks.append("peak_pss")
+        if lacks:
+            missing[row["name"]] = lacks
+    for row in memory:
+        entry = report.get("memory_rows", {}).get(row["name"])
+        if not isinstance(entry, Mapping) or entry.get("status") != "measured":
+            missing[row["name"]] = ["peak_rss", "peak_pss"]
+    return missing
 
 
 def critical_rows(manifest: Mapping[str, Any]) -> list[str]:
@@ -1423,8 +1542,12 @@ def qualification_unmet(report: Mapping[str, Any], manifest: Mapping[str, Any] |
                                       ("memory", memory, report.get("memory_rows", {}))):
             for row in rows:
                 unmet.extend(_row_unmet(group, row, recorded.get(row["name"]), mode))
-    if not TIMED_PEAK_PSS_MEASURED:
-        unmet.append(TIMED_PSS_GAP)
+    if report.get("peak_hook") is not True:
+        unmet.append(PEAK_HOOK_GAP)
+    else:
+        for name, lacks in sorted(metric_coverage(report, manifest).items()):
+            if report.get("rows", {}).get(name, {}).get("status") == "measured":
+                unmet.append(f"timed row {name} samples lack {', '.join(lacks)}")
     record = report.get("uncontended_host")
     if not isinstance(record, Mapping) or not isinstance(record.get("evidence"), Mapping):
         unmet.append("report has no uncontended_host record with raw evidence")
@@ -1458,7 +1581,8 @@ def qualified_metrics(report: Mapping[str, Any], manifest: Mapping[str, Any]) ->
         throughput[row["name"]] = throughput_distribution(c_samples, rust_samples, seed=seed)
         rss[row["name"]] = ratio_distribution([sample_peak_rss_kib(item) for item in c_samples],
                                               [sample_peak_rss_kib(item) for item in rust_samples], seed=seed ^ RSS_SEED)
-        pss[row["name"]] = None
+        pss[row["name"]] = ratio_distribution(peak_pss_values(c_samples) or [], peak_pss_values(rust_samples) or [],
+                                              seed=seed ^ PSS_SEED)
         tail[row["name"]] = entry["comparison"]["batch_p99_ns_per_op"]["ratio_rust_over_c"]["bootstrap_95th_percentile"]
     for row in memory:
         entry = report["memory_rows"][row["name"]]
@@ -1537,7 +1661,12 @@ def inspect_full_report(root: Path, path: Path) -> dict[str, Any]:
         # The unmet conditions above already name the incomplete rows.
         if not unmet:
             unmet.append("report metrics cannot be derived from its raw samples")
-    return {"unmet": unmet, "identity": identity, "metrics": metrics, "critical_rows": critical_rows(manifest)}
+    try:
+        coverage = metric_coverage(report, manifest)
+    except (KeyError, TypeError, AttributeError):
+        coverage = None
+    return {"unmet": unmet, "identity": identity, "metrics": metrics, "critical_rows": critical_rows(manifest),
+            "coverage": coverage}
 
 
 def validate_qualified_full_report(root: Path, path: Path) -> dict[str, Any]:
@@ -1553,6 +1682,74 @@ def validate_qualified_full_report(root: Path, path: Path) -> dict[str, Any]:
     if inspected["unmet"]:
         raise HarnessError(f"{path} is not a qualified full report: " + "; ".join(inspected["unmet"]))
     return {key: inspected[key] for key in ("identity", "metrics", "critical_rows")}
+
+
+# ---- peak-hook effect -------------------------------------------------------
+
+
+def independent_ratio(numerator: Sequence[float], denominator: Sequence[float], *, seed: int) -> dict[str, float]:
+    """Median ratio of two independent sample sets with a bootstrap 90% interval."""
+
+    source = random.Random(seed)
+    draws = []
+    for _ in range(BOOTSTRAP_RESAMPLES):
+        top = statistics.median(source.choice(numerator) for _ in numerator)
+        bottom = statistics.median(source.choice(denominator) for _ in denominator)
+        draws.append(top / bottom)
+    return {
+        "median": statistics.median(numerator) / statistics.median(denominator),
+        "bootstrap_5th_percentile": quantile(draws, 0.05),
+        "bootstrap_95th_percentile": quantile(draws, 0.95),
+    }
+
+
+def peak_hook_effect(with_hook: Mapping[str, Any], without_hook: Mapping[str, Any]) -> dict[str, Any]:
+    """Timed-sample distributions of one report with the READY_PEAK pause and one without.
+
+    The pause runs after the last timed batch, so every per-row, per-lane
+    with/without cost ratio should be consistent with 1 up to host noise.
+    """
+
+    if with_hook.get("peak_hook") is not True or without_hook.get("peak_hook") is not False:
+        raise HarnessError("compare a --peak-hook report with a --no-peak-hook report, in that order")
+    for key in ("mode", "row_set"):
+        if with_hook.get(key) != without_hook.get(key):
+            raise HarnessError(f"peak-hook comparison reports differ in {key}")
+    if with_hook["provenance"]["inputs"] != without_hook["provenance"]["inputs"]:
+        raise HarnessError("peak-hook comparison reports measured different sealed inputs")
+    rows: dict[str, Any] = {}
+    outside = {lane: {"cost": [], "batch_p99": []} for lane in LANES}
+    for index, (name, entry) in enumerate(sorted(with_hook["rows"].items())):
+        other = without_hook["rows"].get(name, {})
+        if entry.get("status") != "measured" or other.get("status") != "measured":
+            continue
+        row: dict[str, Any] = {}
+        for lane in LANES:
+            lane_record: dict[str, Any] = {}
+            for metric, measure in (("cost", sample_ns_per_op), ("batch_p99", sample_batch_p99_ns_per_op)):
+                present = [measure(sample) for sample in entry["lanes"][lane]["samples"]]
+                absent = [measure(sample) for sample in other["lanes"][lane]["samples"]]
+                ratio = independent_ratio(present, absent, seed=0x9EAC + 31 * index + (metric == "cost"))
+                lane_record[metric] = {
+                    "unit": "wall ns per allocator call",
+                    "with_hook_samples": present,
+                    "without_hook_samples": absent,
+                    "ratio_with_over_without": ratio,
+                }
+                if not ratio["bootstrap_5th_percentile"] <= 1.0 <= ratio["bootstrap_95th_percentile"]:
+                    outside[lane][metric].append(name)
+            row[lane] = lane_record
+        rows[name] = row
+    return {
+        "kind": "crabc-mimalloc-x86_64-engine-peak-hook-effect",
+        "with_hook": {"label": with_hook.get("label"), "git": with_hook["provenance"]["git"]},
+        "without_hook": {"label": without_hook.get("label"), "git": without_hook["provenance"]["git"]},
+        "hosts": {"with_hook": with_hook.get("uncontended_host", {}).get("status"),
+                  "without_hook": without_hook.get("uncontended_host", {}).get("status")},
+        "rows": rows,
+        "rows_whose_90_percent_interval_excludes_1": outside,
+        "compared_rows": len(rows),
+    }
 
 
 # ---- driver -----------------------------------------------------------------
@@ -1584,7 +1781,7 @@ def paired_plan(samples: int, *, seed: int) -> list[tuple[str, int]]:
 def measure_rows(
     rows: Sequence[Mapping[str, Any]], binaries: Mapping[str, Path], *, memory: bool, mode: Mapping[str, Any],
     cpu_pool: Sequence[int] | None, timeout: float, scratch: Path, seed: int,
-    host_evidence: dict[str, Any] | None = None,
+    host_evidence: dict[str, Any] | None = None, peak_hook: bool = True,
 ) -> dict[str, Any]:
     results: dict[str, Any] = {}
     for row_index, row in enumerate(rows):
@@ -1600,6 +1797,8 @@ def measure_rows(
         row_seed = seed + 1009 * row_index
         runner = run_memory_sample if memory else run_timed_sample
         kwargs: dict[str, Any] = {"batch_divisor": mode["batch_divisor"], "cpus": cpus, "timeout": timeout, "scratch": scratch}
+        if not memory:
+            kwargs["peak_hook"] = peak_hook
         by_lane: dict[str, list[Any]] = {lane: [None] * mode["samples"] for lane in LANES}
         plan = paired_plan(mode["samples"], seed=row_seed)
         entry["cpus"] = cpus
@@ -1642,6 +1841,10 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--label", default="engine", help="report label")
     parser.add_argument("--offline", action="store_true", help="require the pinned C archive in the local cache")
     parser.add_argument("--timeout", type=float, default=180.0, help="per-process timeout in seconds")
+    parser.add_argument("--no-peak-hook", dest="peak_hook", action="store_false",
+                        help="omit the untimed READY_PEAK pause (only to show it leaves timed samples unchanged)")
+    parser.add_argument("--compare-peak-hook", nargs=2, metavar=("WITH", "WITHOUT"), type=Path, default=None,
+                        help="compare the timed samples of two reports taken with and without the peak hook")
     arguments = parser.parse_args(argv)
     validate_label(arguments.label)
     if arguments.timeout <= 0:
@@ -1678,6 +1881,7 @@ def run(arguments: argparse.Namespace) -> Path:
         "label": label,
         "mode": mode_name,
         "row_set": arguments.row_set,
+        "peak_hook": arguments.peak_hook,
         "status": "pending",
         "scope": {
             "claim": "pinned-C versus Rust persistent-engine performance and memory through one opaque engine boundary",
@@ -1706,7 +1910,7 @@ def run(arguments: argparse.Namespace) -> Path:
         seed = 0x4352_4142_4550
         report["rows"] = measure_rows(timed_rows, built["binaries"], memory=False, mode=mode,
                                       cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch, seed=seed,
-                                      host_evidence=host_evidence)
+                                      host_evidence=host_evidence, peak_hook=arguments.peak_hook)
         report["memory_rows"] = measure_rows(memory_rows, built["binaries"], memory=True, mode=mode,
                                              cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch,
                                              seed=seed ^ 0x4D45_4D, host_evidence=host_evidence)
@@ -1727,10 +1931,23 @@ def run(arguments: argparse.Namespace) -> Path:
     return report_path
 
 
+def compare_peak_hook(arguments: argparse.Namespace) -> Path:
+    with_path, without_path = arguments.compare_peak_hook
+    effect = peak_hook_effect(json.loads(with_path.read_text(encoding="utf-8")),
+                              json.loads(without_path.read_text(encoding="utf-8")))
+    path = REPORT_ROOT / f"peak-hook-effect-{arguments.label}.json"
+    atomic_write_json(path, effect)
+    for lane, metrics in effect["rows_whose_90_percent_interval_excludes_1"].items():
+        for metric, names in metrics.items():
+            print(f"{lane} {metric}: {len(names)}/{effect['compared_rows']} rows outside a 90% interval around 1: "
+                  f"{', '.join(names)}", file=sys.stderr)
+    return path
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = parse_arguments(argv)
     try:
-        path = run(arguments)
+        path = compare_peak_hook(arguments) if arguments.compare_peak_hook else run(arguments)
     except (HarnessError, OSError, tarfile.TarError, json.JSONDecodeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2

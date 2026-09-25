@@ -25,11 +25,15 @@ sys.modules[SPEC.name] = engine
 SPEC.loader.exec_module(engine)
 
 
-def timed_sample(costs: list[int], cpu_share: float = 1.0, peak_rss_kib: int = 1000) -> dict[str, object]:
-    return {
+def timed_sample(costs: list[int], cpu_share: float = 1.0, peak_rss_kib: int = 1000,
+                 peak_pss_kib: int | None = 900) -> dict[str, object]:
+    sample: dict[str, object] = {
         "batches": [{"ns": cost * 100, "cpu_ns": round(cost * 100 * cpu_share), "ops": 100} for cost in costs],
         "process": {"exit_memory": {"status": {"vm_hwm_kib": peak_rss_kib}}},
     }
+    if peak_pss_kib is not None:
+        sample["peak_state"] = {"smaps_rollup": {"pss_kib": peak_pss_kib, "rss_kib": peak_pss_kib}}
+    return sample
 
 
 def architecture_row(manifest: dict, key: str) -> dict:
@@ -259,7 +263,7 @@ def idle_host(cpus: list[int]) -> dict[str, object]:
     }
 
 
-def synthetic_report(rust_cost_factor: float = 1.0) -> dict[str, object]:
+def synthetic_report(rust_cost_factor: float = 1.0, peak_hook: bool = True) -> dict[str, object]:
     """A complete --full --set matrix report of the current checkout from synthetic raw samples."""
 
     manifest = engine.load_manifest()
@@ -268,7 +272,7 @@ def synthetic_report(rust_cost_factor: float = 1.0) -> dict[str, object]:
     cpus = list(range(8))
     report: dict[str, object] = {
         "schema": engine.SCHEMA, "kind": engine.KIND, "label": "synthetic", "mode": "full", "row_set": "matrix",
-        "status": "ok", "failed_rows": [],
+        "peak_hook": peak_hook, "status": "ok", "failed_rows": [],
         "native_execution_provenance": {"execution_mode": "native", "host_architecture": "x86_64"},
         "provenance": {
             "git": {"head": "0" * 40, "clean": True, "dirty_paths": []},
@@ -287,7 +291,8 @@ def synthetic_report(rust_cost_factor: float = 1.0) -> dict[str, object]:
         batches = engine.expected_batches(row, mode["batch_divisor"])
         lanes = {
             lane: [timed_sample([10 * factor + (sample + batch) % 3 for batch in range(batches)],
-                                peak_rss_kib=1000 + sample) for sample in range(mode["samples"])]
+                                peak_rss_kib=1000 + sample, peak_pss_kib=900 + sample if peak_hook else None)
+                   for sample in range(mode["samples"])]
             for lane, factor in (("pinned_c", 1), ("rust_engine", rust_cost_factor))
         }
         seed = 100 + index
@@ -335,8 +340,7 @@ class QualifiedReportTests(unittest.TestCase):
         return engine.inspect_full_report(engine.ROOT, self.write(report))["unmet"]
 
     def test_a_complete_uncontended_report_returns_the_release_gate_shape(self) -> None:
-        with patch.object(engine, "TIMED_PEAK_PSS_MEASURED", True):
-            validated = engine.validate_qualified_full_report(engine.ROOT, self.write(self.report))
+        validated = engine.validate_qualified_full_report(engine.ROOT, self.write(self.report))
         roster = engine.critical_rows(engine.load_manifest())
         metrics = validated["metrics"]
         self.assertEqual(set(validated), {"identity", "metrics", "critical_rows"})
@@ -346,26 +350,33 @@ class QualifiedReportTests(unittest.TestCase):
         self.assertEqual(sorted(metrics["memory"]["critical_peak_upper"]), roster)
         self.assertLess(abs(metrics["throughput"]["suite_geometric_mean_lower_95"] - 1.0), 0.2)
         self.assertIsNotNone(metrics["memory"]["geometric_mean_peak_upper"]["rss"])
-        # No timed row has a peak PSS, so neither does the suite.
-        self.assertIsNone(metrics["memory"]["geometric_mean_peak_upper"]["pss"])
-        self.assertIsNone(metrics["memory"]["critical_peak_upper"][roster[0]]["pss"])
+        self.assertLess(abs(metrics["memory"]["geometric_mean_peak_upper"]["pss"] - 1.0), 0.1)
+        self.assertLess(abs(metrics["memory"]["critical_peak_upper"][roster[0]]["pss"] - 1.0), 0.1)
         self.assertEqual(set(validated["identity"]), {"source", "configuration", "host"})
 
     def test_a_slower_rust_lane_lowers_every_throughput_bound(self) -> None:
-        with patch.object(engine, "TIMED_PEAK_PSS_MEASURED", True):
-            metrics = engine.validate_qualified_full_report(engine.ROOT, self.write(synthetic_report(2.0)))["metrics"]
+        metrics = engine.validate_qualified_full_report(engine.ROOT, self.write(synthetic_report(2.0)))["metrics"]
         self.assertLess(metrics["throughput"]["suite_geometric_mean_lower_95"], 0.6)
         self.assertTrue(all(bound < 0.6 for bound in metrics["throughput"]["critical_lower_95"].values()))
         self.assertTrue(all(bound > 1.5 for bound in metrics["tail_latency"]["critical_p99_upper_95"].values()))
 
-    def test_the_timed_peak_pss_gap_is_always_named(self) -> None:
-        self.assertEqual(self.unmet(self.report), [engine.TIMED_PSS_GAP])
-        with self.assertRaisesRegex(engine.HarnessError, "no peak-PSS measurement"):
-            engine.validate_qualified_full_report(engine.ROOT, self.write(self.report))
+    def test_a_report_without_the_peak_hook_is_named_from_its_evidence(self) -> None:
+        report = synthetic_report(peak_hook=False)
+        self.assertEqual(self.unmet(report), [engine.PEAK_HOOK_GAP])
+        with self.assertRaisesRegex(engine.HarnessError, "no-peak-hook"):
+            engine.validate_qualified_full_report(engine.ROOT, self.write(report))
+        inspected = engine.inspect_full_report(engine.ROOT, self.write(report))
+        self.assertEqual(inspected["coverage"]["alloc_free_64"], ["peak_pss"])
+        self.assertIsNone(inspected["metrics"]["memory"]["critical_peak_upper"]["alloc_free_64"]["pss"])
+        self.assertEqual(engine.inspect_full_report(engine.ROOT, self.write(self.report))["coverage"], {})
+
+    def test_a_sample_missing_its_peak_state_is_named(self) -> None:
+        report = copy.deepcopy(self.report)
+        del report["rows"]["churn_8k"]["lanes"]["rust_engine"]["samples"][3]["peak_state"]
+        self.assert_named(report, "timed row churn_8k samples lack peak_pss")
 
     def assert_named(self, report: dict[str, object], expected: str) -> None:
-        with patch.object(engine, "TIMED_PEAK_PSS_MEASURED", True):
-            unmet = self.unmet(report)
+        unmet = self.unmet(report)
         self.assertTrue(any(expected in item for item in unmet), unmet)
 
     def test_rejects_a_smoke_or_architecture_report(self) -> None:
@@ -379,8 +390,7 @@ class QualifiedReportTests(unittest.TestCase):
         report["rows"]["alloc_free_4194304"] = {"status": "failed", "reason": "fixture failed: signal 6"}
         del report["rows"]["churn_8k"]
         report["memory_rows"]["memory_churn_8k"] = {"status": "unavailable", "reason": "needs 1 CPU"}
-        with patch.object(engine, "TIMED_PEAK_PSS_MEASURED", True):
-            unmet = self.unmet(report)
+        unmet = self.unmet(report)
         for expected in ("failed rows ['alloc_free_4194304']", "alloc_free_4194304 is failed: fixture failed",
                          "timed row churn_8k is absent", "memory row memory_churn_8k is unavailable"):
             self.assertTrue(any(expected in item for item in unmet), (expected, unmet))
@@ -403,8 +413,7 @@ class QualifiedReportTests(unittest.TestCase):
         report["provenance"]["inputs"]["fixture"]["sha256"] = "0" * 64
         report["provenance"]["inputs"]["engine_sources"]["sha256"] = "1" * 64
         report["provenance"]["git"] = {"clean": False, "dirty_paths": [" M crabc-mimalloc/src/lib.rs"]}
-        with patch.object(engine, "TIMED_PEAK_PSS_MEASURED", True):
-            unmet = self.unmet(report)
+        unmet = self.unmet(report)
         for expected in ("source seal: fixture differs", "source seal: engine_sources differs", "clean Git tree"):
             self.assertTrue(any(expected in item for item in unmet), (expected, unmet))
 
@@ -414,8 +423,7 @@ class QualifiedReportTests(unittest.TestCase):
         evidence["windows"][0] = idle_window("start", list(range(8)), load1=37.3)
         evidence["windows"][1] = idle_window("row:x", list(range(8)), busy_ticks=60)
         report["uncontended_host"] = engine.uncontended_host_record(evidence)
-        with patch.object(engine, "TIMED_PEAK_PSS_MEASURED", True):
-            unmet = self.unmet(report)
+        unmet = self.unmet(report)
         self.assertEqual(report["uncontended_host"]["status"], "contended")
         for expected in ("start 1-minute load average 37.3 > 1.0", "window row:x: host busy fraction 0.6",
                          "window row:x: measurement CPU 0 busy fraction 0.6"):
@@ -488,6 +496,112 @@ class ExitTraceTests(unittest.TestCase):
         self.assertEqual(process["status"], {"code": 0, "kind": "exit"})
         self.assertGreater(process["exit_memory"]["status"]["vm_hwm_kib"], 0)
         self.assertIn("pss_kib", process["exit_memory"]["smaps_rollup"])
+
+
+class PeakHookEffectTests(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = patch.object(engine, "BOOTSTRAP_RESAMPLES", 24)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_identical_timed_samples_are_consistent_with_no_effect(self) -> None:
+        effect = engine.peak_hook_effect(synthetic_report(), synthetic_report(peak_hook=False))
+        self.assertEqual(effect["compared_rows"], len(engine.selected_rows(engine.load_manifest(), "matrix")[0]))
+        self.assertEqual(effect["rows_whose_90_percent_interval_excludes_1"],
+                         {lane: {"cost": [], "batch_p99": []} for lane in engine.LANES})
+        row = effect["rows"]["alloc_free_64"]["rust_engine"]["cost"]
+        self.assertEqual(len(row["with_hook_samples"]), engine.load_manifest()["modes"]["full"]["samples"])
+        self.assertEqual(row["ratio_with_over_without"]["median"], 1.0)
+
+    def test_a_perturbed_lane_is_named(self) -> None:
+        effect = engine.peak_hook_effect(synthetic_report(rust_cost_factor=2.0), synthetic_report(peak_hook=False))
+        outside = effect["rows_whose_90_percent_interval_excludes_1"]
+        self.assertIn("alloc_free_64", outside["rust_engine"]["cost"])
+        self.assertEqual(outside["pinned_c"]["cost"], [])
+
+    def test_the_reports_must_be_a_with_and_a_without_pair(self) -> None:
+        with self.assertRaisesRegex(engine.HarnessError, "in that order"):
+            engine.peak_hook_effect(synthetic_report(peak_hook=False), synthetic_report())
+
+
+STUB_BACKEND = """
+#include <malloc.h>
+#include <stdlib.h>
+#include "engine-api.h"
+int crabc_allocator_engine_process_init(void) { return 0; }
+int crabc_allocator_engine_thread_init(void) { return 0; }
+int crabc_allocator_engine_thread_done(void) { return 0; }
+void *crabc_allocator_engine_malloc(size_t size) { return malloc(size); }
+void crabc_allocator_engine_free(void *block) { free(block); }
+void *crabc_allocator_engine_calloc(size_t count, size_t size) { return calloc(count, size); }
+void *crabc_allocator_engine_realloc(void *block, size_t size) { return realloc(block, size); }
+void *crabc_allocator_engine_aligned(size_t alignment, size_t size) { return aligned_alloc(alignment, size); }
+size_t crabc_allocator_engine_usable_size(const void *block) { return malloc_usable_size((void *)block); }
+"""
+
+
+class FixturePeakHookTests(unittest.TestCase):
+    """The real fixture's READY_PEAK pause, linked with a libc-malloc stub backend."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        compiler = next((name for name in ("musl-gcc", "cc", "gcc") if engine.shutil.which(name)), None)
+        if compiler is None:
+            raise unittest.SkipTest("no C compiler")
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        (root / "stub.c").write_text(STUB_BACKEND, encoding="utf-8")
+        cls.binary = root / "fixture"
+        completed = engine.subprocess.run(
+            [compiler, "-std=gnu11", "-O2", "-pthread", "-I", str(engine.FIXTURE_ROOT), str(engine.FIXTURE),
+             str(root / "stub.c"), "-o", str(cls.binary)], capture_output=True, text=True)
+        if completed.returncode != 0:
+            raise AssertionError(completed.stderr)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.directory.cleanup()
+
+    def run_row(self, row: dict, *, peak_hook: bool) -> dict:
+        cpus = sorted(os.sched_getaffinity(0))[: engine.row_thread_count(row)]
+        if len(cpus) < engine.row_thread_count(row):
+            self.skipTest("too few CPUs")
+        with tempfile.TemporaryDirectory() as scratch:
+            try:
+                return engine.run_timed_sample(self.binary, row, batch_divisor=1, cpus=cpus, timeout=60.0,
+                                               scratch=Path(scratch), sample_name="s", peak_hook=peak_hook)
+            except engine.HarnessError as error:
+                if "Operation not permitted" in str(error):
+                    self.skipTest(f"ptrace is not permitted here: {error}")
+                raise
+
+    def test_every_timed_driver_pauses_once_at_its_peak_state(self) -> None:
+        rows = [
+            {"workload": "alloc_batch", "params": {"size": 4096, "count": 256, "iterations": 2, "batches": 2}},
+            {"workload": "realloc_grow", "params": {"size": 16, "max_size": 1 << 20, "iterations": 2, "batches": 2}},
+            {"workload": "local_scaling", "params": {"size": 64, "workers": 2, "iterations": 100, "batches": 2}},
+            {"workload": "churn_scaling", "params": {"live": 256, "max_size": 8192, "iterations": 100,
+                                                     "batches": 2, "workers": 2, "seed": 3}},
+            {"workload": "remote_free", "params": {"size": 4096, "workers": 1, "iterations": 100, "batches": 2}},
+            {"workload": "thread_churn", "params": {"size": 4096, "count": 64, "workers": 2, "batches": 2}},
+            {"workload": "usable_size", "params": {"size": 64, "count": 64, "iterations": 2, "batches": 2}},
+        ]
+        for row in rows:
+            with self.subTest(workload=row["workload"]):
+                sample = self.run_row(row, peak_hook=True)
+                self.assertEqual(len(sample["batches"]), 2)
+                self.assertGreater(sample["peak_state"]["smaps_rollup"]["pss_kib"], 0)
+                self.assertGreater(sample["process"]["exit_memory"]["status"]["vm_hwm_kib"], 0)
+                self.assertNotIn("peak_state", self.run_row(row, peak_hook=False))
+
+    def test_the_peak_state_holds_the_batch_live_set(self) -> None:
+        # The fixture touches each block's first and last byte: two resident
+        # pages per 64 KiB block, so 240 more live blocks add about 1.9 MiB.
+        def resident(count: int) -> int:
+            row = {"workload": "alloc_batch", "params": {"size": 65536, "count": count, "iterations": 1, "batches": 1}}
+            return self.run_row(row, peak_hook=True)["peak_state"]["smaps_rollup"]["rss_kib"]
+
+        self.assertGreater(resident(256) - resident(16), 240 * 8 * 9 // 10)
 
 
 if __name__ == "__main__":

@@ -7,8 +7,9 @@ reports; correctness stays green" (plan.md Milestones). This gate is
 read-only: it measures nothing and names every unmet condition.
 
 * ``m9.matrix``: the engine matrix manifest validates, its critical roster
-  names timed matrix rows, and the harness measures every promotion-table
-  metric per row.
+  names timed matrix rows, and at least one full report's raw samples carry
+  every promotion-table metric (throughput, p99, peak RSS, peak PSS) of
+  every matrix row.
 * ``m9.qualified-reports``: at least three engine reports that
   ``perf_engine_x86_64.validate_qualified_full_report`` accepts. Without
   ``--report`` every ``--full`` report under the engine report directory is
@@ -18,8 +19,9 @@ read-only: it measures nothing and names every unmet condition.
 * ``m9.codegen-audit``: one complete ``allocator-codegen-audit`` report from a
   clean checkout whose source seal matches this checkout, with no Rust-only
   structural cost (``rust_excess``) in any traced region.
-* ``m9.source-convergence`` and ``m9.integrated-products``: declared missing;
-  no reader for either exists in this launcher.
+* ``m9.source-convergence`` and ``m9.integrated-products``: declared missing.
+  No convergence reader exists, and no existing M8 or native-shadow receipt
+  measures integrated-product C/Rust performance or memory to read.
 * ``m9.correctness``: the retained M4, M5, M6 and M7 gate reports passed.
   They record no source identity, so each must also be no older than the
   newest accepted qualified report. M8 has no gate here and is named.
@@ -61,7 +63,10 @@ DECLARED_MISSING = {
     ],
     "m9.integrated-products": [
         "the engine matrix measures one opaque engine boundary (scope.fully_integrated_products is false); "
-        "no fully-integrated-product C/Rust allocator comparison exists"
+        "no fully-integrated-product C/Rust allocator performance and memory comparison exists: the M8 and "
+        "native-shadow receipts (compat/x86_64/run_dynamic_native_allocator.py, "
+        "compat/x86_64/native_c_allocator_boundary.py, compat/allocator/native_churn_rss_smoke.py) compare "
+        "ownership, lifecycle and liveness, not throughput, tail latency or peak memory"
     ],
 }
 
@@ -72,15 +77,25 @@ def _condition(identifier: str, unmet: Sequence[str], detail: str) -> dict[str, 
     return {"id": identifier, "met": not unmet, "detail": detail if not unmet else list(unmet)}
 
 
-def matrix_condition() -> dict[str, Any]:
+def matrix_condition(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Met when one full report's raw samples carry every metric of every matrix row."""
+
     try:
         manifest = engine.load_manifest()
     except engine.HarnessError as error:
         return _condition("m9.matrix", [str(error)], "")
-    unmet = [] if engine.TIMED_PEAK_PSS_MEASURED else [engine.TIMED_PSS_GAP]
     timed, memory = engine.selected_rows(manifest, engine.QUALIFIED_ROW_SET)
+    covered = [record["path"] for record in records if record.get("coverage") == {}]
+    unmet = []
+    if not covered:
+        unmet.append("no full report carries throughput, tail, peak RSS and peak PSS for every matrix row")
+        for record in records:
+            coverage = record.get("coverage")
+            if coverage:
+                unmet.append(f"{record['path']}: " + "; ".join(
+                    f"{name} lacks {', '.join(lacks)}" for name, lacks in sorted(coverage.items())))
     return _condition("m9.matrix", unmet, f"{len(timed)} timed and {len(memory)} memory rows, "
-                      f"{len(engine.critical_rows(manifest))} critical")
+                      f"{len(engine.critical_rows(manifest))} critical, all measured in {covered[:1]}")
 
 
 def discover_reports(directory: Path = ENGINE_REPORTS) -> list[Path]:
@@ -209,7 +224,7 @@ def evaluate(
     records = read_reports(report_paths, inspect)
     accepted = [Path(path) for path, record in zip(report_paths, records) if not record["unmet"]]
     conditions = [
-        matrix_condition(),
+        matrix_condition(records),
         *report_conditions(records),
         codegen_condition(codegen_report),
         *(_condition(identifier, detail, "") for identifier, detail in DECLARED_MISSING.items()),

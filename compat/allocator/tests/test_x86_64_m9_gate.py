@@ -17,7 +17,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -30,7 +29,8 @@ sys.modules[SPEC.name] = gate
 SPEC.loader.exec_module(gate)
 engine = gate.engine
 
-from test_perf_engine_x86_64 import HostClassificationTests, QualifiedReportTests  # noqa: E402,F401
+from test_perf_engine_x86_64 import (  # noqa: E402,F401
+    FixturePeakHookTests, HostClassificationTests, PeakHookEffectTests, QualifiedReportTests)
 
 
 ROSTER = ["alloc_free_64", "remote_free_1"]
@@ -128,10 +128,15 @@ class AgreementTests(GateFixture):
             self.assertFalse(self.condition(result, identifier)["met"])
             self.assertTrue(self.condition(result, identifier)["detail"])
 
-    def test_the_matrix_condition_names_the_timed_pss_gap(self) -> None:
-        self.assertEqual(self.condition(self.evaluate([]), "m9.matrix")["detail"], [engine.TIMED_PSS_GAP])
-        with patch.object(engine, "TIMED_PEAK_PSS_MEASURED", True):
-            self.assertTrue(self.condition(self.evaluate([]), "m9.matrix")["met"])
+    def test_the_matrix_condition_comes_from_report_coverage(self) -> None:
+        self.assertIn("no full report carries", self.condition(self.evaluate([]), "m9.matrix")["detail"][0])
+        partial = accepted()
+        partial["coverage"] = {"alloc_free_64": ["peak_pss"]}
+        detail = self.condition(self.evaluate([self.report_file("p", partial)]), "m9.matrix")["detail"]
+        self.assertTrue(any("p.json: alloc_free_64 lacks peak_pss" in item for item in detail), detail)
+        complete = accepted()
+        complete["coverage"] = {}
+        self.assertTrue(self.condition(self.evaluate([self.report_file("c", complete)]), "m9.matrix")["met"])
 
     def test_discovery_reads_only_full_mode_reports(self) -> None:
         (self.root / "smoke.json").write_text(json.dumps({"mode": "smoke"}), encoding="utf-8")
