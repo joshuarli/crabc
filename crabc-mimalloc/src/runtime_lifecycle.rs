@@ -2112,6 +2112,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
             | ThreadAttachResult::Reentrant
             | ThreadAttachResult::AlreadyAttached
             | ThreadAttachResult::Finished
+            | ThreadAttachResult::Deferred
             | ThreadAttachResult::Retained => {
                 return TicketZeroOwnerExitFreeOutcome::Retained(self);
             }
@@ -2201,6 +2202,7 @@ impl TicketZeroOwnerExitReclaimRoute {
             | ThreadAttachResult::Reentrant
             | ThreadAttachResult::AlreadyAttached
             | ThreadAttachResult::Finished
+            | ThreadAttachResult::Deferred
             | ThreadAttachResult::Retained => {
                 return TicketZeroOwnerExitReclaimOutcome::Retained(Self {
                     route,
@@ -2458,6 +2460,13 @@ pub enum ThreadAttachResult {
     Reentrant,
     /// A completed worker lifecycle cannot be reattached on the same thread.
     Finished,
+    /// Pinned `_mi_thread_init` failed to allocate this thread's TLD or Theap
+    /// metadata (`src/init.c:267-269`, `src/theap.c:327-329`) and reported
+    /// the error. As in C the thread still runs: nothing was published, no
+    /// admission is held, and each later allocation retries the attachment
+    /// and fails while it keeps failing. A deferred thread that never
+    /// attaches finishes cleanly.
+    Deferred,
 }
 
 /// Result of attempting the private worker-exit lifecycle transition.
@@ -8375,6 +8384,10 @@ struct ThreadLifecycleSlot {
     /// Historical direct-test-only session generation.
     #[cfg(test)]
     next_page_owner_session_generation: usize,
+    /// A `Fresh` worker whose attachment failed with a reported metadata
+    /// allocation error ([`ThreadAttachResult::Deferred`]): its allocations
+    /// retry the attachment, and it may finish without ever attaching.
+    attach_deferred: bool,
 }
 
 /// Reads only source-owned TLS fields after permanent native exclusion.
@@ -8548,6 +8561,7 @@ impl ThreadLifecycleSlot {
             page_owner: None,
             #[cfg(test)]
             next_page_owner_session_generation: 0,
+            attach_deferred: false,
         }
     }
 
@@ -10772,6 +10786,11 @@ fn native_allocate_shaped_owner(
     // without an installed owner may promote the initial static source.
     if RUNTIME_PROCESS.is_on_initial_allocation_thread() {
         return native_initial_thread_allocate(request, shape, zero);
+    }
+    // An uninitialized thread's generic allocation runs `_mi_thread_init`
+    // first; while it fails, the allocation returns NULL after its report.
+    if current_thread_attach_is_deferred() && !retry_deferred_attachment() {
+        return NativePageAllocationResult::AllocationFailed;
     }
     // A final B-side free may already have recorded one or more A terminal
     // completions for this attachment. Those entries retain only A's parked
@@ -15660,7 +15679,8 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     match install_mapped_regular_owner_exit_page_owner(publish_before_exit, free_after_exit) {
@@ -15815,7 +15835,8 @@ fn ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_e
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let mut session = match begin_current_thread_page_owner_session() {
@@ -15969,7 +15990,8 @@ pub fn ticket_zero_later_thread_retired_then_live_session_owner_exit_through_nor
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let mut session = match begin_current_thread_page_owner_session() {
@@ -16048,7 +16070,8 @@ pub fn ticket_zero_later_thread_all_free_session_through_normal_finish(
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let mut session = match begin_current_thread_page_owner_session() {
@@ -16111,7 +16134,8 @@ pub fn ticket_zero_later_thread_source_published_session_through_normal_finish(
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let mut session = match begin_current_thread_page_owner_session() {
@@ -16186,7 +16210,8 @@ pub fn ticket_zero_later_thread_single_source_published_session_through_normal_f
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let mut session = match begin_current_thread_page_owner_session() {
@@ -16255,7 +16280,8 @@ pub fn ticket_zero_later_thread_active_session_rejects_normal_finish(
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let mut session = match begin_current_thread_page_owner_session() {
@@ -16343,7 +16369,8 @@ fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     match install_mapped_regular_owner_exit_reclaim_page_owner(predecessor, reclaim_after_exit) {
@@ -16428,7 +16455,8 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit(
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let page_result = RUNTIME_PROCESS.with_dormant_page_pair(|pair| {
@@ -16633,7 +16661,8 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim(
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let page_result = RUNTIME_PROCESS.with_dormant_page_pair(|pair| {
@@ -16783,7 +16812,8 @@ pub fn ticket_zero_later_thread_persistent_local_workload() -> TicketZeroLaterTh
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let page_result = (|| {
@@ -16836,7 +16866,8 @@ pub fn ticket_zero_later_thread_remote_free_roundtrip(
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     let page_result = (|| {
@@ -16895,7 +16926,8 @@ pub fn ticket_zero_later_thread_page_roundtrip(
         ThreadAttachResult::Inactive
         | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
-        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+        | ThreadAttachResult::Finished
+        | ThreadAttachResult::Deferred => return TicketZeroLaterThreadPageResult::Unavailable,
     }
 
     enum ScopedPageResult {
@@ -16983,6 +17015,18 @@ pub fn after_fork_parent() {
 /// [`ThreadAttachResult::Attached`].
 #[doc(hidden)]
 pub fn attach_current_thread() -> ThreadAttachResult {
+    attach_current_thread_reporting(false)
+}
+
+/// [`attach_current_thread`] with the reports of a deferred attachment
+/// delivered or not.
+///
+/// Libc attaches a worker before its user code, which C does not: pinned
+/// `_mi_thread_init` first runs at the thread's first generic allocation.
+/// That eager attachment therefore stays silent on a metadata failure, and
+/// only the allocation-time retry reports, exactly once per allocation as C
+/// does.
+fn attach_current_thread_reporting(report_deferred: bool) -> ThreadAttachResult {
     // Claim the current-thread recursion boundary before allocator-operation
     // admission. An outer attachment may be preparing this exact TLS slot;
     // a nested call must then report `Reentrant` without asking the operation
@@ -16994,7 +17038,7 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     // it means a live source operation owns the descriptor, not that this
     // thread's source has reached retirement. Only the source continuation
     // below can make the pre-existing retirement decision.
-    let Some(result) = attach_current_thread_after_entry(entry, || {}) else {
+    let Some(result) = attach_current_thread_after_entry(entry, || {}, report_deferred) else {
         return ThreadAttachResult::Inactive;
     };
     if result == ThreadAttachResult::Inactive { admission::mark_current_source_retired(); }
@@ -17005,7 +17049,7 @@ fn attach_current_thread_with_entry(before_source: impl FnOnce()) -> ThreadAttac
     let Some(entry) = ThreadAttachmentEntry::claim() else {
         return ThreadAttachResult::Reentrant;
     };
-    attach_current_thread_after_entry(entry, before_source)
+    attach_current_thread_after_entry(entry, before_source, false)
         .unwrap_or(ThreadAttachResult::Inactive)
 }
 
@@ -17019,6 +17063,7 @@ fn attach_current_thread_with_entry(before_source: impl FnOnce()) -> ThreadAttac
 fn attach_current_thread_after_entry(
     _entry: ThreadAttachmentEntry,
     before_source: impl FnOnce(),
+    report_deferred: bool,
 ) -> Option<ThreadAttachResult> {
     #[cfg(target_arch = "x86_64")]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
@@ -17114,6 +17159,17 @@ fn attach_current_thread_after_entry(
     // to observe this still-Fresh slot. The independent entry claim above
     // prevents those callbacks from beginning a second attachment.
     let attachment = unsafe { MainHeapThreadAttachment::begin_with_vm_process(main_heap, config, process) };
+    // The paused AArch64 runtime keeps its existing terminal retention.
+    #[cfg(target_arch = "x86_64")]
+    let deferred = match &attachment {
+        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => deferred_attach_reports(*error),
+        _ => None,
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let deferred: Option<[SourceErrorReport; 2]> = None;
+    if let Some(reports) = deferred {
+        return Some(defer_current_thread_attachment(reports, report_deferred));
+    }
     let slot = current_thread_slot();
     Some(match attachment {
         Ok(attachment) => {
@@ -17170,6 +17226,69 @@ fn attach_current_thread_after_entry(
             ThreadAttachResult::Retained
         }
     })
+}
+
+/// The source reports of a metadata allocation failure during
+/// `_mi_thread_init`: the metadata Theap's generic allocation reports
+/// out-of-memory for the requested size (`src/page.c:1061-1064`, through
+/// `_mi_meta_zalloc`), then `mi_tld_create` or `_mi_theap_alloc` reports its
+/// own failure. Every other attachment rejection keeps its existing
+/// terminal handling.
+#[cfg(target_arch = "x86_64")]
+fn deferred_attach_reports(error: MainHeapThreadAttachmentError) -> Option<[SourceErrorReport; 2]> {
+    use crate::diagnostic_output::SourceErrorReport as Report;
+    use crate::meta::MetaError;
+    match error {
+        MainHeapThreadAttachmentError::ThreadLocalData(crate::tld::ThreadLocalDataError::Metadata(
+            MetaError::AllocationUnavailable,
+        )) => Some([
+            Report::OutOfMemory { size: crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE },
+            Report::ThreadLocalDataAllocation,
+        ]),
+        MainHeapThreadAttachmentError::TheapMetadata(MetaError::AllocationUnavailable) => Some([
+            Report::OutOfMemory { size: core::mem::size_of::<crate::types::Theap>() },
+            Report::TheapAllocation,
+        ]),
+        _ => None,
+    }
+}
+
+/// Completes a [`ThreadAttachResult::Deferred`] attachment: release the
+/// worker admission claimed for it, mark the still-`Fresh` slot deferred,
+/// then report with no slot or allocator projection live (a reporting
+/// callback may reenter and allocate).
+fn defer_current_thread_attachment(reports: [SourceErrorReport; 2], report: bool) -> ThreadAttachResult {
+    {
+        let slot = current_thread_slot();
+        if let Some(admission) = slot.admission.take() {
+            if let Err(admission) = RUNTIME_FORK_ADMISSION.release_later_thread(admission) {
+                slot.admission = Some(admission);
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain();
+                return ThreadAttachResult::Retained;
+            }
+        }
+        slot.attach_deferred = true;
+    }
+    if report {
+        for report in reports {
+            let _ = crate::process_init::process_error_message(report);
+        }
+    }
+    ThreadAttachResult::Deferred
+}
+
+/// Whether the calling thread is a deferred worker that has not attached.
+#[inline]
+fn current_thread_attach_is_deferred() -> bool {
+    let slot = current_thread_slot();
+    slot.attach_deferred && slot.state == ThreadLifecycleState::Fresh
+}
+
+/// `_mi_thread_init` on each generic allocation of an uninitialized thread:
+/// retry the deferred attachment. `true` when the thread is now attached.
+fn retry_deferred_attachment() -> bool {
+    matches!(attach_current_thread_reporting(true), ThreadAttachResult::Attached | ThreadAttachResult::AlreadyAttached)
 }
 
 /// Creates the one fresh native owner permitted for selected ordinary-exit
@@ -17248,6 +17367,10 @@ pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
         ThreadAttachResult::Attached => ThreadFinalProcessExitOwnerResult::Reinitialized,
         ThreadAttachResult::Inactive => ThreadFinalProcessExitOwnerResult::Invalid,
         ThreadAttachResult::Retained => ThreadFinalProcessExitOwnerResult::Retained,
+        // The final task's exit callbacks need an owner the process-done
+        // transition can finish. A metadata failure here keeps the existing
+        // fail-closed retention rather than a lazily attached final owner.
+        ThreadAttachResult::Deferred => ThreadFinalProcessExitOwnerResult::Retained,
         ThreadAttachResult::AlreadyAttached | ThreadAttachResult::Reentrant | ThreadAttachResult::Finished => {
             // The direct `Fresh -> attach` call has no user-code or allocator
             // boundary. A different result would mean the current TLS image
@@ -17369,6 +17492,13 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
     // Heaps; the thread's own finish below handles its main-Heap Theap.
     if !crate::subproc::main_heaps::native_thread_done() {
         return ThreadFinishResult::Retained;
+    }
+    if current_thread_attach_is_deferred() {
+        // A deferred worker never published source state; C's thread done
+        // finds its Theap uninitialized and returns.
+        current_thread_slot().state = ThreadLifecycleState::Finished;
+        admission::mark_current_source_retired();
+        return ThreadFinishResult::Finished;
     }
     let result = finish_current_thread_after_user_destructors();
     if matches!(result, ThreadFinishResult::Finished | ThreadFinishResult::AlreadyFinished | ThreadFinishResult::NotAttached) {

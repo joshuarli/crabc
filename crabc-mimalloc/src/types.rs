@@ -1447,6 +1447,16 @@ pub(crate) struct HeapMainStaticFields {
     pub(crate) memid: MemoryId,
 }
 
+/// `sizeof(mi_tld_t)` of the pinned x86-64 musl release build.
+///
+/// A later thread's TLD is requested from the metadata Theap at this source
+/// size, so it takes the same size class, metadata page share, and
+/// out-of-memory report (`src/init.c:263-269`) as C. `ThreadLocalData` is
+/// smaller (its `PrivateLock` replaces a 40-byte pthread mutex) and occupies
+/// the prefix; this is an allocation footprint, not a layout claim.
+pub(crate) const SOURCE_THREAD_LOCAL_DATA_SIZE: usize = 112;
+const _: () = assert!(size_of::<ThreadLocalData>() <= SOURCE_THREAD_LOCAL_DATA_SIZE);
+
 /// Source-ordered `mi_tld_t` fields.
 ///
 /// The field order and meanings match pinned `include/mimalloc/types.h`, but

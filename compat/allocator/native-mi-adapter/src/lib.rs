@@ -175,7 +175,11 @@ fn bind_thread_cold(key: PthreadKey) {
         let registered = unsafe {
             register_current_native_allocator_worker_descriptor(current_native_allocator_thread_descriptor())
         };
-        if !registered || attach_current_thread() != ThreadAttachResult::Attached {
+        // A deferred attachment (a failed `_mi_thread_init`) still runs the
+        // thread; its allocations retry the attachment, as in C.
+        if !registered
+            || !matches!(attach_current_thread(), ThreadAttachResult::Attached | ThreadAttachResult::Deferred)
+        {
             // SAFETY: an unattached worker cannot allocate; stop here.
             unsafe { abort() }
         }

@@ -976,6 +976,10 @@ pub(crate) enum SourceErrorReport {
     BadAlignment { size: usize, alignment: usize, offset: usize },
     /// `mi_reserve_os_memory_ex2`, `src/arena.c:1891-1894` (EOVERFLOW).
     ReservationTooLarge { size: usize },
+    /// `mi_tld_create`, `src/init.c:267-269` (ENOMEM).
+    ThreadLocalDataAllocation,
+    /// `_mi_theap_alloc`, `src/theap.c:327-329` (ENOMEM).
+    TheapAllocation,
 }
 
 impl SourceErrorReport {
@@ -985,7 +989,7 @@ impl SourceErrorReport {
             Self::AllocationTooLarge { .. }
             | Self::AlignedLargeAlignmentOffset { .. }
             | Self::ReservationTooLarge { .. } => Errno::OVERFLOW,
-            Self::OutOfMemory { .. } => Errno::NOMEM,
+            Self::OutOfMemory { .. } | Self::ThreadLocalDataAllocation | Self::TheapAllocation => Errno::NOMEM,
             Self::AlignedTooLarge { .. } | Self::BadAlignment { .. } => Errno::INVAL,
         }
     }
@@ -1024,6 +1028,12 @@ impl SourceErrorReport {
                 message.append(b", offset ");
                 decimal(&mut message, offset);
                 message.append(b")\n");
+            }
+            Self::ThreadLocalDataAllocation => {
+                message.append(b"unable to allocate memory for thread local data\n");
+            }
+            Self::TheapAllocation => {
+                message.append(b"unable to allocate theap meta-data\n");
             }
             Self::ReservationTooLarge { size } => {
                 message.append(b"memory reservation request is too large (size ");

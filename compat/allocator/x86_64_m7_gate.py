@@ -631,11 +631,19 @@ ADAPTER_TRACE_BEGIN = "CRABC_MI_M7_ADAPTER_TRACE_BEGIN"
 ADAPTER_TRACE_END = "CRABC_MI_M7_ADAPTER_TRACE_END"
 
 
-def run_adapter_differential(offline: bool) -> dict[str, Any]:
-    """Link the shared M7 driver against pinned C and the native adapter.
+THREAD_INIT_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_thread_init_driver.c"
+THREAD_INIT_TRACE_BEGIN = "CRABC_MI_M7_THREAD_INIT_TRACE_BEGIN"
+THREAD_INIT_TRACE_END = "CRABC_MI_M7_THREAD_INIT_TRACE_END"
+
+
+def run_adapter_differential(
+    offline: bool, *, driver: Path = ADAPTER_DRIVER, begin: str = ADAPTER_TRACE_BEGIN,
+    end: str = ADAPTER_TRACE_END, report_name: str = "adapter.json",
+) -> dict[str, Any]:
+    """Link one shared M7 driver against pinned C and the native adapter.
 
     The M4 gate owns the adapter build; this reuses its C and adapter link
-    steps with the M7 driver in place of the M4 one.
+    steps with an M7 driver in place of the M4 one.
     """
 
     import x86_64_m4_gate as m4
@@ -652,7 +660,7 @@ def run_adapter_differential(offline: bool) -> dict[str, Any]:
             [
                 compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
                 *harness.CONFIGURATION_PROFILES["release"], "-I", str(source / "include"),
-                str(ADAPTER_DRIVER), str(source / "src/static.c"), "-pthread", "-o", str(c_driver),
+                str(driver), str(source / "src/static.c"), "-pthread", "-o", str(c_driver),
             ],
             cwd=source,
         )
@@ -662,7 +670,7 @@ def run_adapter_differential(offline: bool) -> dict[str, Any]:
         link = harness.command_record(
             [
                 compiler, "-std=c11", "-O2", "-I", str(source / "include"),
-                str(ADAPTER_DRIVER), str(library), "-pthread", "-o", str(rust_driver),
+                str(driver), str(library), "-pthread", "-o", str(rust_driver),
             ],
             cwd=source,
         )
@@ -674,14 +682,13 @@ def run_adapter_differential(offline: bool) -> dict[str, Any]:
     for side, execution in executions.items():
         harness.require_success(execution, f"M7 adapter {side} driver")
     traces = {
-        side: parse_options_trace(str(execution["stdout"]), f"{side} M7 adapter trace",
-                                  ADAPTER_TRACE_BEGIN, ADAPTER_TRACE_END)
+        side: parse_options_trace(str(execution["stdout"]), f"{side} M7 adapter trace", begin, end)
         for side, execution in executions.items()
     }
     compare_options_traces(traces["c"], traces["rust"])
     report = {"compared_key_count": len(traces["c"]), "status": "passed", "trace": traces["c"]}
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    harness.write_json(ARTIFACTS / "adapter.json", report)
+    harness.write_json(ARTIFACTS / report_name, report)
     return report
 
 
@@ -741,6 +748,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust options/environment differential")
     mode.add_argument("--option-effects-differential", action="store_true",
         help="run the pinned-C/Rust option-effects differential")
+    mode.add_argument("--thread-init-differential", action="store_true",
+        help="run the shared-driver pinned-C/native-adapter thread-initialization failure differential")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -752,6 +761,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.options_differential:
         report = run_options_differential(arguments.offline)
         print(f"M7 options/environment differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.thread_init_differential:
+        report = run_adapter_differential(
+            arguments.offline, driver=THREAD_INIT_DRIVER, begin=THREAD_INIT_TRACE_BEGIN,
+            end=THREAD_INIT_TRACE_END, report_name="thread-init.json",
+        )
+        print(f"M7 thread-initialization differential passed: {report['compared_key_count']} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

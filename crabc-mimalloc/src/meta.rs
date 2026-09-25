@@ -621,7 +621,7 @@ impl<'owner> MetaAllocation<'owner> {
             || self.dynamic_theap_initialized
             || self.dynamic_thread_local_backing_projected
             || self.dynamic_arena_pages_initialized
-            || self.requested_size != size_of::<ThreadLocalData>()
+            || self.requested_size != crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE
             || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
         {
             return false;
@@ -663,7 +663,7 @@ impl<'owner> MetaAllocation<'owner> {
             || self.dynamic_theap_initialized
             || self.dynamic_thread_local_backing_projected
             || self.dynamic_arena_pages_initialized
-            || self.requested_size != size_of::<ThreadLocalData>()
+            || self.requested_size != crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE
             || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
         {
             return None;
@@ -697,7 +697,7 @@ impl<'owner> MetaAllocation<'owner> {
     pub(crate) unsafe fn newly_initialized_thread_local_data_mut(&mut self) -> &mut ThreadLocalData {
         debug_assert!(self.thread_local_data_initialized);
         debug_assert!(self.is_live());
-        debug_assert_eq!(self.requested_size, size_of::<ThreadLocalData>());
+        debug_assert_eq!(self.requested_size, crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE);
         debug_assert_eq!(self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>(), 0);
         // SAFETY: the caller's explicit contract establishes that the
         // successful typed initializer immediately before this call wrote a
@@ -931,7 +931,7 @@ impl MetaAllocation<'static> {
             || self.dynamic_theap_initialized
             || self.dynamic_thread_local_backing_projected
             || self.dynamic_arena_pages_initialized
-            || self.requested_size != size_of::<ThreadLocalData>()
+            || self.requested_size != crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE
             || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
             || !self.has_consistent_malloc_provenance()
         {
@@ -1018,7 +1018,7 @@ impl MetaAllocation<'static> {
         // SAFETY: the caller supplies the same explicit-transfer proof as
         // the Theap inverse, for the separately typed TLD image.
         let memory = unsafe { pointer.as_ref().memory_id() };
-        let mut allocation = Self::new(owner, pointer.cast(), size_of::<ThreadLocalData>(),
+        let mut allocation = Self::new(owner, pointer.cast(), crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE,
             MetaAllocationOrigin::DirectZeroed);
         if !allocation.matches_memory_id(memory) { return None; }
         allocation.thread_local_data_initialized = true;

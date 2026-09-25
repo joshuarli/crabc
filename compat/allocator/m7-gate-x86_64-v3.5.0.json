@@ -72,6 +72,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--error-sites-differential"],
       "scope": "Pinned C and Rust report the same error code and message at each selected-source _mi_error_message site (for example oversized or overflowing allocation, invalid or double free, corrupted free lists, and arena/PageMap failures), and the libc boundary applies the default errno result."
     },
+    "differential:thread-init-failure": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--thread-init-differential"],
+      "scope": "One driver linked against pinned C and against the Rust native adapter: a worker whose thread-local-data or Theap metadata allocation fails reports the source out-of-memory and thread-initialization errors on each allocation attempt, fails that allocation with ENOMEM, keeps its thread running, and allocates normally once metadata is available again."
+    },
     "differential:option-effects": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--option-effects-differential"],
       "scope": "For every descriptor with an allocator effect, a pinned-C/Rust trace in which mi_option_set before first use changes the same VM, arena, purge, reclaim, page-queue, and PageMap decision."
@@ -227,10 +231,11 @@
         "differential:diagnostic-output-owner",
         "differential:options-environment",
         "differential:error-reporting-sites",
+        "differential:thread-init-failure",
         "differential:adapter"
       ],
       "blocked_by": [
-        "Under the selected release flags (`-DMI_DEBUG=0 -DMI_SECURE=0 -DMI_GUARDED=0 -DMI_STAT=0`), the pinned preprocessor keeps 19 of the 37 `_mi_error_message` sites outside src/options.c; the other 18 (os.c:195, heap.c:51, arena.c:290,1047, alloc-posix.c:73, free.c:177,188,207,318,323,570,582,724,727, alloc.c:701,918, alloc-aligned.c:38, page-map.c:68) are compiled out and belong to the debug, secure, and guarded profiles. The error-site differential covers page.c:953,1063, alloc-aligned.c:83,165,192, and arena.c:1892 (the startup `reserve_os_memory` reservation). Of the rest, alloc.c:745 (`mi_try_new_handler`), reached through the adapter's `mi_new` family, and heap.c:79,138 and threadlocal.c:138 (first-class Heaps, owned by M6), and the valid-program failure paths page-map.c:304, init.c:268, theap.c:328, and libc.c:148 are unported; C continues after these, while the Rust runtime retains the process or rejects the thread. page.c:166,171 and arena.c:1457,1463,1476 are not applicable: they are reached only by an invalid program, and `known-differences.md` records the stricter Rust response as CRABC-MI-INVALID-PROGRAM-ERROR-SITES. libc keeps musl's errno for native allocation failures by the ABI decision, so the error handler and default errno are observable only through the native adapter.",
+        "Under the selected release flags (`-DMI_DEBUG=0 -DMI_SECURE=0 -DMI_GUARDED=0 -DMI_STAT=0`), the pinned preprocessor keeps 19 of the 37 `_mi_error_message` sites outside src/options.c; the other 18 (os.c:195, heap.c:51, arena.c:290,1047, alloc-posix.c:73, free.c:177,188,207,318,323,570,582,724,727, alloc.c:701,918, alloc-aligned.c:38, page-map.c:68) are compiled out and belong to the debug, secure, and guarded profiles. The error-site differential covers page.c:953,1063, alloc-aligned.c:83,165,192, and arena.c:1892 (the startup `reserve_os_memory` reservation). Of the rest, alloc.c:745 (`mi_try_new_handler`), reached through the adapter's `mi_new` family, and heap.c:79,138 and threadlocal.c:138 (first-class Heaps, owned by M6), and the valid-program startup failure page-map.c:304 is unported; C continues after it, while the Rust runtime retains the process. init.c:268 and theap.c:328 (thread-local-data and Theap metadata failures) follow C's lazy retry, covered by the thread-init-failure differential. libc.c:148 (`pthread_key_create` for the thread-done key) is not applicable: crabc libc drives thread finish directly and has no key to create. page.c:166,171 and arena.c:1457,1463,1476 are not applicable: they are reached only by an invalid program, and `known-differences.md` records the stricter Rust response as CRABC-MI-INVALID-PROGRAM-ERROR-SITES. libc keeps musl's errno for native allocation failures by the ABI decision, so the error handler and default errno are observable only through the native adapter.",
 
         "The `MI_XMALLOC` abort-on-allocation-failure profile is absent."
       ]

@@ -346,7 +346,7 @@ impl ThreadLocalDataOwner {
             (ThreadLocalDataStorage::MainStatic(storage), registration)
         } else {
             let mut allocation = metadata
-                .zalloc_for_main_subprocess(config, subprocess, size_of::<ThreadLocalData>())
+                .zalloc_for_main_subprocess(config, subprocess, crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE)
                 .map_err(ThreadLocalDataError::Metadata)?;
             let initialized = allocation
                 .initialize_thread_local_data_subprocess_attached_no_theap(
@@ -416,7 +416,7 @@ impl ThreadLocalDataOwner {
         let sequence = ticket.sequence();
         debug_assert!(!ticket.is_first_main_tld());
         let mut allocation = metadata
-            .zalloc_for_main_subprocess(config, subprocess, size_of::<ThreadLocalData>())
+            .zalloc_for_main_subprocess(config, subprocess, crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE)
             .map_err(ThreadLocalDataError::Metadata)?;
         if !allocation.initialize_thread_local_data_subprocess_attached_no_theap(
             thread,
@@ -1055,7 +1055,7 @@ mod tests {
                 let malloc = memory.malloc_memory();
                 let metadata_result_is_tld = malloc.is_some_and(|allocation| {
                     allocation.base == (tld as *const ThreadLocalData).cast_mut().cast()
-                        && allocation.size == size_of::<ThreadLocalData>()
+                        && allocation.size == crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE
                 }) && metadata.test_allocation_audit().live_capability_count == 1;
                 (
                     true,
@@ -1073,7 +1073,7 @@ mod tests {
                         allocation.base == (tld as *const ThreadLocalData).cast_mut().cast()
                     }),
                     malloc.is_some_and(|allocation| {
-                        allocation.size == size_of::<ThreadLocalData>()
+                        allocation.size == crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE
                     }),
                     memory.is_pinned(),
                     memory.initially_committed(),
@@ -1277,7 +1277,7 @@ mod tests {
 
             metadata
                 .get_ref()
-                .test_fail_next_direct_zeroed_size(size_of::<ThreadLocalData>());
+                .test_fail_next_direct_zeroed_size(crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE);
             assert!(matches!(
                 unsafe {
                     ThreadLocalDataOwner::begin_with_test_metadata(

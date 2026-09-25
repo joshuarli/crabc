@@ -135,6 +135,12 @@ pub(super) unsafe fn initialize_selected_process(page_size: usize) -> bool {
 pub(super) fn attach_selected_worker() -> SelectedWorkerNativeAttach {
     match attach_current_thread() {
         ThreadAttachResult::Attached => SelectedWorkerNativeAttach::Attached,
+        // Pinned mimalloc initializes a thread at its first allocation, and a
+        // failed `_mi_thread_init` fails only that thread's allocations. The
+        // runtime deferred this worker's attachment without publishing any
+        // owner; the thread runs, its allocations retry the attachment, and
+        // its finish completes cleanly.
+        ThreadAttachResult::Deferred => SelectedWorkerNativeAttach::Attached,
         // `attach_current_thread` marks the just-published descriptor retired
         // when it observes Inactive. It returns before attachment/admission
         // installation, so this is the sole result whose native TLS owner is
