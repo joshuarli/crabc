@@ -593,7 +593,14 @@ def source_path(value: str) -> Path:
 
 def validate_contract(value: Any) -> dict[str, Any]:
     result = exact(value, {'schema', 'target', 'inputs', 'profiles', 'owner_groups', 'structural_groups',
-                           'object_contracts', 'private_protocols', 'requirements'}, 'selection contract')
+                           'object_contracts', 'private_protocols', 'module_private_symbols', 'requirements'},
+                   'selection contract')
+    module_private = exact(result['module_private_symbols'], {'id', 'owner', 'family', 'sources', 'reason'},
+                           'module-private symbol rule')
+    for key in ('id', 'owner', 'family', 'reason'):
+        string(module_private[key], f'module-private {key}')
+    for path in strings(module_private['sources'], 'module-private sources', empty=False):
+        source_path(path)
     require(result['schema'] == CONTRACT_SCHEMA and result['target'] == TARGET, 'selection schema/target changed')
     require(same(result['inputs'], INPUT_PATHS), 'selection input roster differs')
     for path in result['inputs'].values():
@@ -2344,6 +2351,90 @@ def account_placements(expanded: Sequence[Mapping[str, Any]], facts: Mapping[str
     return {'identities': [records[key] for key in sorted(records, key=identity_order)], 'artifacts': artifacts,
             'occurrences': occurrences, 'placement_joins': joins, 'private_protocol_joins': protocol_joins,
             'data_alias_observations': aliases, 'function_alias_observations': function_aliases, 'blockers': blockers}
+
+
+MODULE_PRIVATE_GROUP = 'owned-rust-module-private'
+MODULE_PRIVATE_REASONS = (
+    'candidate binding ownership is unresolved',
+    'candidate definition placement is not selected: candidate-static',
+    ORDINARY_IMPORT_REASON,
+)
+
+
+def attach_module_private_symbols(accounting: Mapping[str, Any], rule: Mapping[str, Any],
+                                  rust_members: Sequence[str]) -> list[dict[str, Any]]:
+    """Own the hidden cross-module symbols of the per-member owned static archive.
+
+    `rust_members` is the fixed-C producer account's authenticated roster of
+    static Rust module members. An identity that no reviewed owner selected is
+    owned here only when every one of its rows satisfies all of:
+
+    - candidate-static rows lie in those Rust members, are HIDDEN, GLOBAL or
+      WEAK, and exactly one of them defines the name (the rest are undefined
+      references the static link resolves to that one non-interposable
+      definition);
+    - candidate-shared rows are LOCAL `.symtab` definitions (no `.dynsym`
+      row), and no other candidate artifact names it;
+    - pinned musl has no DEFAULT-visibility definition of the name.
+
+    Any other row keeps the identity's ordinary blockers, so this cannot waive
+    a public, loader, CRT or musl-visible symbol.
+    """
+    members = set(strings(list(rust_members), 'static Rust members', empty=False))
+    rule = exact(rule, {'id', 'owner', 'family', 'sources', 'reason'}, 'module-private symbol rule')
+    require(rule['id'] == MODULE_PRIVATE_GROUP, 'module-private symbol rule identity differs')
+    records, _placements, occurrences = _accounting_indexes(accounting, description='module-private attachment')
+    by_identity: dict[tuple[str, str | None, bool], list[Mapping[str, Any]]] = {}
+    for occurrence in occurrences.values():
+        if occurrence.get('role') == 'unnamed':
+            continue
+        by_identity.setdefault(identity_key(row_identity(occurrence['row'])), []).append(occurrence)
+    joins, owned = [], set()
+    for key, record in records.items():
+        selection = record.get('selection', {})
+        if selection.get('disposition') != 'unresolved' or selection.get('owner') is not None:
+            continue
+        if not set(record['unresolved']) <= set(MODULE_PRIVATE_REASONS):
+            continue
+        rows = by_identity.get(key, [])
+        static = [r for r in rows if r['artifact_key'] == 'candidate-static']
+        shared = [r for r in rows if r['artifact_key'] == 'candidate-shared']
+        others = [r for r in rows if r['artifact_key'] not in {'candidate-static', 'candidate-shared'}
+                  and not r['artifact_key'].startswith('reference-')]
+        reference_public = [r for r in rows if r['artifact_key'].startswith('reference-')
+                            and r['row']['section_index'] != 'UND' and r['row']['visibility'] == 'DEFAULT'
+                            and r['row']['binding'] != 'LOCAL']
+        definitions = [r for r in static if r['role'] == 'definition']
+        if not (static and not others and not reference_public and len(definitions) == 1
+                and all(r['table'] == '.symtab' and r['member_name'] in members
+                        and r['member_occurrence'] == 0 and r['row']['visibility'] == 'HIDDEN'
+                        and r['row']['binding'] in {'GLOBAL', 'WEAK'} and r['role'] in {'definition', 'import'}
+                        for r in static)
+                and all(r['table'] == '.symtab' and r['role'] == 'local-definition' for r in shared)):
+            continue
+        record['selection'] = {'disposition': 'private-provider', 'owner': rule['owner'], 'group': MODULE_PRIVATE_GROUP,
+                               'family': rule['family'], 'reason': rule['reason']}
+        discharged = sorted(record['unresolved'])
+        record['unresolved'] = []
+        for row in static:
+            row['accounting'] = {'disposition': 'private-provider', 'owner': rule['owner'], 'scope': 'candidate-static'}
+        owned.add(key)
+        joins.append({
+            'identity': copy.deepcopy(record['identity']),
+            'owner': rule['owner'],
+            'definition_member': definitions[0]['member_name'],
+            'definition_index': definitions[0]['index'],
+            'reference_indices': sorted(r['index'] for r in static if r['role'] == 'import'),
+            'shared_local_indices': sorted(r['index'] for r in shared),
+            'discharged_reasons': discharged,
+        })
+    if owned:
+        accounting['blockers'][:] = [
+            blocker for blocker in accounting['blockers']
+            if not (blocker.get('code') == 'identity-unresolved'
+                    and identity_key(blocker.get('identity', {})) in owned)
+        ]
+    return sorted(joins, key=lambda row: json.dumps(row['identity'], sort_keys=True))
 
 
 def _common_checkout(root: Path) -> Path:
@@ -9736,6 +9827,41 @@ def _recheck_loader_structural_owner(companion: Mapping[str, Any] | None, *, pat
             'loader structural-owner changed during final recheck')
 
 
+def _admit(rejected: dict[str, str], keyword: str, adapter: Any) -> Any:
+    """Run one companion adapter; a rejection becomes that companion's blocker.
+
+    The selector keeps accounting for every other companion instead of
+    aborting: the rejected receipt is simply not attached, and its reason is
+    the named `companion-rejected` blocker.
+    """
+    try:
+        return adapter()
+    except SelectionError as error:
+        rejected[keyword] = str(error)
+        return None
+
+
+def _attach(rejected: dict[str, str], keyword: str, accounting: dict[str, Any],
+            companion: Mapping[str, Any] | None, attach: Any, *, empty: Any = None) -> tuple[Any, Any]:
+    """Apply one companion's joins atomically, or reject it and restore accounting.
+
+    Returns the joins and the companion (``None`` once rejected). Nothing a
+    rejected attachment changed survives: accounting is restored from a
+    snapshot taken before it ran.
+    """
+    empty = [] if empty is None else empty
+    if companion is None:
+        return attach(), None
+    snapshot = copy.deepcopy(accounting)
+    try:
+        return attach(), companion
+    except SelectionError as error:
+        accounting.clear()
+        accounting.update(snapshot)
+        rejected[keyword] = str(error)
+        return copy.deepcopy(empty), None
+
+
 def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration_report: Path | None,
                   ordinary_declaration_abi_report: Path | None = None,
                   ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
@@ -9782,59 +9908,62 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     # them before the expensive declaration envelope so malformed runtime
     # evidence fails without paying for a second long compiler-report replay.
     # They are still attached only after the common placement accounting below.
-    loader_runtime_registry_companion = loader_runtime_registry_adapter(
+    rejected: dict[str, str] = {}
+    loader_runtime_registry_companion = _admit(rejected, 'loader_runtime_registry_report', lambda: loader_runtime_registry_adapter(
         loader_runtime_registry_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
-    )
-    pthread_alias_contract_companion = pthread_alias_contract_adapter(
+    ))
+    pthread_alias_contract_companion = _admit(rejected, 'pthread_alias_contract_report', lambda: pthread_alias_contract_adapter(
         pthread_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
-    )
-    prepared_worker_tls_companion = prepared_worker_tls_adapter(
+    ))
+    prepared_worker_tls_companion = _admit(rejected, 'prepared_worker_tls_report', lambda: prepared_worker_tls_adapter(
         prepared_worker_tls_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
-    )
-    errno_storage_lifecycle_companion = errno_storage_lifecycle_adapter(
+    ))
+    errno_storage_lifecycle_companion = _admit(rejected, 'errno_storage_lifecycle_report', lambda: errno_storage_lifecycle_adapter(
         errno_storage_lifecycle_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
-    )
-    native_c_allocator_boundary_companion = native_c_allocator_boundary_adapter(
+    ))
+    native_c_allocator_boundary_companion = _admit(rejected, 'native_c_allocator_boundary_report', lambda: native_c_allocator_boundary_adapter(
         native_c_allocator_boundary_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         fixed_c_companion=fixed_c_producer_metadata_companion,
-    )
-    stdio_alias_contract_companion = native_stdio_alias_adapter(
+    ))
+    stdio_alias_contract_companion = _admit(rejected, 'stdio_alias_contract_report', lambda: native_stdio_alias_adapter(
         stdio_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
-    )
-    crt_startup_companion = native_crt_startup_adapter(
+    ))
+    crt_startup_companion = _admit(rejected, 'crt_startup_report', lambda: native_crt_startup_adapter(
         crt_startup_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
-    )
-    syscall_alias_contract_companion = native_syscall_alias_adapter(
+    ))
+    syscall_alias_contract_companion = _admit(rejected, 'syscall_alias_contract_report', lambda: native_syscall_alias_adapter(
         syscall_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
-    )
-    utmpx_receipt_companion = native_utmpx_adapter(
+    ))
+    utmpx_receipt_companion = _admit(rejected, 'utmpx_receipt_report', lambda: native_utmpx_adapter(
         utmpx_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
-    )
-    pthread_timed_feature_companion = native_pthread_timed_feature_adapter(
+    ))
+    pthread_timed_feature_companion = _admit(rejected, 'pthread_timed_feature_report', lambda: native_pthread_timed_feature_adapter(
         pthread_timed_feature_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         product_anchor=loader_debug_report,
-    )
-    resolver_alias_receipt_companion = native_resolver_alias_adapter(
+    ))
+    resolver_alias_receipt_companion = _admit(rejected, 'resolver_alias_receipt_report', lambda: native_resolver_alias_adapter(
         resolver_alias_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         product_report=loader_debug_report,
-    )
-    locale_alias_contract_companion = native_locale_alias_adapter(
+    ))
+    locale_alias_contract_companion = _admit(rejected, 'locale_alias_contract_report', lambda: native_locale_alias_adapter(
         locale_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
-    )
-    loader_structural_owner_companion = native_loader_structural_owner_adapter(
+    ))
+    loader_structural_owner_companion = _admit(rejected, 'loader_structural_owner_receipt_report', lambda: native_loader_structural_owner_adapter(
         loader_structural_owner_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         loader_debug_report=loader_debug_report, loader_runtime_registry_report=loader_runtime_registry_report,
-    )
-    headers_layouts_aggregate_companion = headers_layouts_aggregate_adapter(headers_layouts_aggregate_report)
-    text_family_semantic_companion = text_family_semantic_adapter(
+    ))
+    headers_layouts_aggregate_companion = _admit(
+        rejected, 'headers_layouts_aggregate_report',
+        lambda: headers_layouts_aggregate_adapter(headers_layouts_aggregate_report))
+    text_family_semantic_companion = _admit(rejected, 'text_family_semantic_report', lambda: text_family_semantic_adapter(
         text_family_semantic_report, paths=paths, source=source_before,
-    )
-    posix_sysv_signal_admission_companion = posix_sysv_signal_admission_adapter(
+    ))
+    posix_sysv_signal_admission_companion = _admit(rejected, 'posix_sysv_signal_admission_report', lambda: posix_sysv_signal_admission_adapter(
         posix_sysv_signal_admission_report, paths=paths, source=source_before,
-    )
-    bsd_random_receipt_companion = bsd_random_receipt_adapter(
+    ))
+    bsd_random_receipt_companion = _admit(rejected, 'bsd_random_receipt_report', lambda: bsd_random_receipt_adapter(
         bsd_random_receipt_report, paths=paths, source=source_before,
-    )
+    ))
     declaration = declaration_adapter(
         declaration_report,
         selected_objects=contract['object_contracts'],
@@ -9844,18 +9973,18 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         callable_matrix_projection=inputs['callable_declaration_matrix'],
         ordinary_declaration_abi_report=ordinary_declaration_abi_report,
     )
-    public_data_linkage_companion = public_data_linkage_adapter(
+    public_data_linkage_companion = _admit(rejected, 'loader_debug_report', lambda: public_data_linkage_adapter(
         ordinary_link_report, loader_debug_report, contract=contract,
         selected_objects=contract['object_contracts'], source=source_before, paths=paths,
-    )
-    public_data_declaration_runtime_companion = public_data_declaration_runtime_adapter(
+    ))
+    public_data_declaration_runtime_companion = _admit(rejected, 'public_data_declaration_runtime_report', lambda: public_data_declaration_runtime_adapter(
         public_data_declaration_runtime_report, paths=paths, source=source_before, measurement=measurement,
         declaration_report=declaration_report, ordinary_declaration_abi_report=ordinary_declaration_abi_report,
         ordinary_link_report=ordinary_link_report, errno_storage_lifecycle_report=errno_storage_lifecycle_report,
-    )
-    compiler_helper_companion = compiler_helper_adapter(
+    ))
+    compiler_helper_companion = _admit(rejected, 'compiler_helper_aggregate_report', lambda: compiler_helper_adapter(
         compiler_helper_aggregate_report, ordinary_report_path=ordinary_link_report, paths=paths,
-    )
+    ))
     expanded = expand_obligations(contract, inputs)
     fixed_c_producer_metadata_pending = attach_fixed_c_producer_metadata(
         expanded, fixed_c_producer_metadata_companion,
@@ -9864,55 +9993,89 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         expanded, compiler_helper_companion, contract, inputs,
     )
     accounting = account_placements(expanded, facts)
+    module_private_joins = attach_module_private_symbols(
+        accounting, contract['module_private_symbols'],
+        fixed_c_producer_metadata_companion['account']['archive_map']['static_rust_members'],
+    )
     fixed_c_producer_metadata_joins = bind_fixed_c_producer_metadata_joins(
         accounting, fixed_c_producer_metadata_pending,
     )
     compiler_helper_shared_placement_joins = bind_compiler_helper_shared_placement_joins(
         accounting, compiler_helper_shared_placement_pending,
     )
-    public_data_linkage_joins = attach_public_data_linkage(accounting, public_data_linkage_companion)
+    public_data_linkage_joins, public_data_linkage_companion = _attach(
+        rejected, 'loader_debug_report', accounting, public_data_linkage_companion,
+        lambda: attach_public_data_linkage(accounting, public_data_linkage_companion))
     compiler_helper_import_joins = attach_compiler_helper_import(accounting, compiler_helper_companion)
-    loader_runtime_registry_joins = attach_loader_runtime_registry(accounting, loader_runtime_registry_companion)
-    pthread_alias_contract_joins = attach_pthread_alias_contract(accounting, pthread_alias_contract_companion)
-    prepared_worker_tls_joins = attach_prepared_worker_tls(accounting, prepared_worker_tls_companion)
-    errno_storage_lifecycle_joins = attach_errno_storage_lifecycle(
-        accounting, errno_storage_lifecycle_companion, inputs,
-    )
-    public_data_declaration_runtime_joins = attach_public_data_declaration_runtime(
-        declaration, accounting, public_data_declaration_runtime_companion, errno_storage_lifecycle_joins,
-    )
-    native_c_allocator_boundary_joins = attach_native_c_allocator_boundary(
-        accounting, native_c_allocator_boundary_companion,
-    )
-    native_c_allocator_runtime_import_joins = attach_native_c_allocator_runtime_imports(
-        accounting, native_c_allocator_boundary_companion,
-    )
-    stdio_alias_contract_joins = attach_native_stdio_alias(
-        accounting, stdio_alias_contract_companion,
-    )
-    crt_startup_joins = attach_native_crt_startup(accounting, crt_startup_companion)
-    crt_descriptor_handoff_joins = attach_native_crt_descriptor_handoff(accounting, crt_startup_companion)
-    runtimev1_descriptor_lifecycle_joins = attach_runtimev1_descriptor_lifecycle(
-        accounting,
-        crt_companion=crt_startup_companion,
-        prepared_worker_companion=prepared_worker_tls_companion,
-        crt_startup_joins=crt_startup_joins,
-        crt_descriptor_handoff_joins=crt_descriptor_handoff_joins,
-        prepared_worker_tls_joins=prepared_worker_tls_joins,
-    )
-    syscall_alias_contract_joins = attach_native_syscall_alias(accounting, syscall_alias_contract_companion)
-    utmpx_receipt_joins = attach_native_utmpx(accounting, utmpx_receipt_companion)
-    pthread_timed_feature_joins = attach_native_pthread_timed_feature(accounting, pthread_timed_feature_companion)
-    resolver_alias_receipt_joins = attach_native_resolver_alias(accounting, resolver_alias_receipt_companion)
-    locale_alias_contract_joins = attach_native_locale_alias(accounting, locale_alias_contract_companion)
-    loader_structural_owner_joins = attach_loader_structural_owner(accounting, loader_structural_owner_companion)
-    text_fopen64_structural_joins = attach_text_family_fopen64_structural(
-        accounting, text_family_semantic_companion, paths=paths,
-    )
-    posix_sysv_signal_admission_joins = attach_posix_sysv_signal_admission(
-        accounting, posix_sysv_signal_admission_companion, paths=paths,
-    )
-    bsd_random_receipt_joins = attach_bsd_random_receipt(accounting, bsd_random_receipt_companion)
+    loader_runtime_registry_joins, loader_runtime_registry_companion = _attach(
+        rejected, 'loader_runtime_registry_report', accounting, loader_runtime_registry_companion,
+        lambda: attach_loader_runtime_registry(accounting, loader_runtime_registry_companion))
+    pthread_alias_contract_joins, pthread_alias_contract_companion = _attach(
+        rejected, 'pthread_alias_contract_report', accounting, pthread_alias_contract_companion,
+        lambda: attach_pthread_alias_contract(accounting, pthread_alias_contract_companion))
+    prepared_worker_tls_joins, prepared_worker_tls_companion = _attach(
+        rejected, 'prepared_worker_tls_report', accounting, prepared_worker_tls_companion,
+        lambda: attach_prepared_worker_tls(accounting, prepared_worker_tls_companion))
+    errno_storage_lifecycle_joins, errno_storage_lifecycle_companion = _attach(
+        rejected, 'errno_storage_lifecycle_report', accounting, errno_storage_lifecycle_companion,
+        lambda: attach_errno_storage_lifecycle(accounting, errno_storage_lifecycle_companion, inputs))
+    public_data_declaration_runtime_joins, public_data_declaration_runtime_companion = _attach(
+        rejected, 'public_data_declaration_runtime_report', accounting, public_data_declaration_runtime_companion,
+        lambda: attach_public_data_declaration_runtime(
+            declaration, accounting, public_data_declaration_runtime_companion, errno_storage_lifecycle_joins))
+    (native_c_allocator_boundary_joins, native_c_allocator_runtime_import_joins), native_c_allocator_boundary_companion = _attach(
+        rejected, 'native_c_allocator_boundary_report', accounting, native_c_allocator_boundary_companion,
+        lambda: (attach_native_c_allocator_boundary(accounting, native_c_allocator_boundary_companion),
+                 attach_native_c_allocator_runtime_imports(accounting, native_c_allocator_boundary_companion)),
+        empty=([], []))
+    stdio_alias_contract_joins, stdio_alias_contract_companion = _attach(
+        rejected, 'stdio_alias_contract_report', accounting, stdio_alias_contract_companion,
+        lambda: attach_native_stdio_alias(accounting, stdio_alias_contract_companion))
+    (crt_startup_joins, crt_descriptor_handoff_joins), crt_startup_companion = _attach(
+        rejected, 'crt_startup_report', accounting, crt_startup_companion,
+        lambda: (attach_native_crt_startup(accounting, crt_startup_companion),
+                 attach_native_crt_descriptor_handoff(accounting, crt_startup_companion)),
+        empty=([], []))
+    # The RuntimeV1 lifecycle join pairs the CRT and prepared-worker receipts;
+    # its rejection names the pairing rather than either component.
+    runtimev1_descriptor_lifecycle_joins, _paired = _attach(
+        rejected, 'runtimev1_descriptor_lifecycle', accounting,
+        crt_startup_companion if prepared_worker_tls_companion is not None else None,
+        lambda: attach_runtimev1_descriptor_lifecycle(
+            accounting,
+            crt_companion=crt_startup_companion,
+            prepared_worker_companion=prepared_worker_tls_companion,
+            crt_startup_joins=crt_startup_joins,
+            crt_descriptor_handoff_joins=crt_descriptor_handoff_joins,
+            prepared_worker_tls_joins=prepared_worker_tls_joins,
+        ))
+    syscall_alias_contract_joins, syscall_alias_contract_companion = _attach(
+        rejected, 'syscall_alias_contract_report', accounting, syscall_alias_contract_companion,
+        lambda: attach_native_syscall_alias(accounting, syscall_alias_contract_companion))
+    utmpx_receipt_joins, utmpx_receipt_companion = _attach(
+        rejected, 'utmpx_receipt_report', accounting, utmpx_receipt_companion,
+        lambda: attach_native_utmpx(accounting, utmpx_receipt_companion))
+    pthread_timed_feature_joins, pthread_timed_feature_companion = _attach(
+        rejected, 'pthread_timed_feature_report', accounting, pthread_timed_feature_companion,
+        lambda: attach_native_pthread_timed_feature(accounting, pthread_timed_feature_companion))
+    resolver_alias_receipt_joins, resolver_alias_receipt_companion = _attach(
+        rejected, 'resolver_alias_receipt_report', accounting, resolver_alias_receipt_companion,
+        lambda: attach_native_resolver_alias(accounting, resolver_alias_receipt_companion))
+    locale_alias_contract_joins, locale_alias_contract_companion = _attach(
+        rejected, 'locale_alias_contract_report', accounting, locale_alias_contract_companion,
+        lambda: attach_native_locale_alias(accounting, locale_alias_contract_companion))
+    loader_structural_owner_joins, loader_structural_owner_companion = _attach(
+        rejected, 'loader_structural_owner_receipt_report', accounting, loader_structural_owner_companion,
+        lambda: attach_loader_structural_owner(accounting, loader_structural_owner_companion))
+    text_fopen64_structural_joins, text_family_semantic_companion = _attach(
+        rejected, 'text_family_semantic_report', accounting, text_family_semantic_companion,
+        lambda: attach_text_family_fopen64_structural(accounting, text_family_semantic_companion, paths=paths))
+    posix_sysv_signal_admission_joins, posix_sysv_signal_admission_companion = _attach(
+        rejected, 'posix_sysv_signal_admission_report', accounting, posix_sysv_signal_admission_companion,
+        lambda: attach_posix_sysv_signal_admission(accounting, posix_sysv_signal_admission_companion, paths=paths))
+    bsd_random_receipt_joins, bsd_random_receipt_companion = _attach(
+        rejected, 'bsd_random_receipt_report', accounting, bsd_random_receipt_companion,
+        lambda: attach_bsd_random_receipt(accounting, bsd_random_receipt_companion))
     family_evidence_blockers, family_semantic_receipts = family_semantic_evidence(
         inputs['families'], headers_layouts_companion=headers_layouts_aggregate_companion,
         text_family_companion=text_family_semantic_companion, paths=paths,
@@ -9988,6 +10151,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         required_semantic_receipts=list(component_companions),
     ))
     blockers.extend(family_evidence_blockers)
+    blockers.extend({'code': 'companion-rejected', 'companion': name, 'detail': detail}
+                    for name, detail in sorted(rejected.items()))
     require(same(source_before, selection_source()), 'selection source changed while building report')
     require(same(inputs['bindings'], load_source_inputs(contract, contract_path)['bindings']), 'selection input bytes changed during report')
     blockers = sorted(blockers, key=lambda item: json.dumps(item, sort_keys=True))
@@ -9995,6 +10160,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'contract': contract, 'measurement': measurement, 'declaration_companion': declaration,
             'fixed_c_producer_metadata_companion': fixed_c_producer_metadata_companion,
             'fixed_c_producer_metadata_joins': fixed_c_producer_metadata_joins,
+            'module_private_joins': module_private_joins,
             'public_data_linkage_companion': public_data_linkage_companion,
             'public_data_linkage_joins': public_data_linkage_joins,
             'public_data_declaration_runtime_companion': public_data_declaration_runtime_companion,

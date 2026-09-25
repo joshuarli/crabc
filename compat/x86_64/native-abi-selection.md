@@ -97,6 +97,21 @@ variables, `h_errno` accessor macro and 13 ABI-only spellings. The nested accoun
 retains its adapter and policy identities, qualified types, direct and transitive
 observations, and current-source comparison. This selected data agreement leaves
 callable declarations, object layout and accessor-to-storage behavior open.
+The per-member static archive exposes the owned Rust libc's cross-module
+helpers (mangled Rust items, compiler `anon.*` constants, private `__crabc_*`
+entries) as hidden archive symbols. `[module_private_symbols]` and
+`attach_module_private_symbols` own such an identity only when no reviewed
+rule selected it and every row has the private shape: its static rows are
+HIDDEN GLOBAL/WEAK rows in the fixed-C producer account's authenticated Rust
+members with exactly one definition, its shared rows are LOCAL `.symtab`
+definitions, no other candidate artifact names it, and pinned musl has no
+public definition of it. Any other row keeps its ordinary blockers; the report
+retains each owned identity in `module_private_joins`.
+
+A companion whose reader or attachment rejects it no longer aborts the
+report: `_admit`/`_attach` leave it unattached (restoring accounting from a
+snapshot) and record a `companion-rejected` blocker naming it and the reason.
+
 Each `foundation-verified` family discharges its
 `family-semantic-evidence-unavailable` row only through
 `ledger_family_admissions`, which reruns `validate_parity_ledger` (and so the

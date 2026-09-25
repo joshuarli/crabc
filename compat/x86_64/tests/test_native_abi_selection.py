@@ -724,6 +724,102 @@ class ClosureTests(unittest.TestCase):
         self.assertNotIn('family-receipts-missing', {row['code'] for row in complete})
 
 
+class ModulePrivateSymbolTests(unittest.TestCase):
+    """Hidden cross-module Rust symbols are owned only by their full row shape."""
+
+    MEMBERS = ['a.rcgu.o', 'b.rcgu.o']
+
+    @staticmethod
+    def row(index, artifact, table, member, section, binding, visibility, name='_RNvC1x6helper'):
+        role = 'import' if section == 'UND' else ('local-definition' if binding == 'LOCAL' else 'definition')
+        return {'index': index, 'artifact_key': artifact, 'table': table, 'member_name': member,
+                'member_occurrence': 0 if member else None, 'role': role,
+                'row': {'name': name, 'version': None, 'version_default': False, 'section_index': section,
+                        'binding': binding, 'visibility': visibility, 'type': 'FUNC'}}
+
+    def accounting(self, *extra):
+        rows = [
+            self.row(0, 'candidate-static', '.symtab', 'a.rcgu.o', '3', 'GLOBAL', 'HIDDEN'),
+            self.row(1, 'candidate-static', '.symtab', 'b.rcgu.o', 'UND', 'GLOBAL', 'HIDDEN'),
+            self.row(2, 'candidate-shared', '.symtab', None, '9', 'LOCAL', 'HIDDEN'),
+            *extra,
+        ]
+        identity = selection.identity('_RNvC1x6helper')
+        reasons = sorted(selection.MODULE_PRIVATE_REASONS)
+        return {
+            'identities': [{'identity': identity, 'selection': {'disposition': 'unresolved', 'owner': None, 'reason': 'x'},
+                            'expected_placements': [], 'unresolved': reasons}],
+            'occurrences': rows, 'placement_joins': [],
+            'blockers': [{'code': 'identity-unresolved', 'identity': identity, 'reason': r} for r in reasons],
+        }
+
+    def attach(self, accounting):
+        rule = selection.load_contract(selection.CONTRACT_PATH)['module_private_symbols']
+        return selection.attach_module_private_symbols(accounting, rule, self.MEMBERS)
+
+    def test_hidden_cross_member_definition_is_owned_with_its_references(self):
+        accounting = self.accounting()
+        joins = self.attach(accounting)
+        self.assertEqual([(j['definition_member'], j['reference_indices'], j['shared_local_indices']) for j in joins],
+                         [('a.rcgu.o', [1], [2])])
+        self.assertEqual(accounting['blockers'], [])
+        self.assertEqual(accounting['identities'][0]['selection']['disposition'], 'private-provider')
+
+    def test_any_public_foreign_or_ambiguous_row_keeps_the_blockers(self):
+        cases = {
+            'dynsym export': self.row(3, 'candidate-shared', '.dynsym', None, '9', 'GLOBAL', 'DEFAULT'),
+            'default static reference': self.row(3, 'candidate-static', '.symtab', 'b.rcgu.o', 'UND', 'GLOBAL', 'DEFAULT'),
+            'non-Rust member': self.row(3, 'candidate-static', '.symtab', 'c-static.o', 'UND', 'GLOBAL', 'HIDDEN'),
+            'second definition': self.row(3, 'candidate-static', '.symtab', 'b.rcgu.o', '4', 'WEAK', 'HIDDEN'),
+            'loader occurrence': self.row(3, 'candidate-loader', '.symtab', None, '5', 'LOCAL', 'HIDDEN'),
+            'musl public name': self.row(3, 'reference-static', '.symtab', 'x.lo', '1', 'GLOBAL', 'DEFAULT'),
+        }
+        for label, extra in cases.items():
+            with self.subTest(label):
+                accounting = self.accounting(extra)
+                self.assertEqual(self.attach(accounting), [])
+                self.assertEqual(len(accounting['blockers']), len(selection.MODULE_PRIVATE_REASONS))
+
+    def test_an_identity_with_another_open_reason_is_not_owned(self):
+        accounting = self.accounting()
+        accounting['identities'][0]['unresolved'].append('selected boundary requires its declaration/consumer/compiler/oracle receipt')
+        self.assertEqual(self.attach(accounting), [])
+
+
+class CompanionRejectionTests(unittest.TestCase):
+    """One rejected companion is a named blocker, never an aborted report."""
+
+    def test_rejected_adapter_is_recorded_and_not_attached(self):
+        rejected = {}
+
+        def adapter():
+            raise selection.SelectionError('roster differs')
+
+        self.assertIsNone(selection._admit(rejected, 'stdio_alias_contract_report', adapter))
+        self.assertEqual(rejected, {'stdio_alias_contract_report': 'roster differs'})
+        self.assertEqual(selection._admit(rejected, 'crt_startup_report', lambda: {'ok': True}), {'ok': True})
+
+    def test_rejected_attachment_restores_every_change_it_made(self):
+        accounting = {'identities': [{'unresolved': ['reason']}], 'blockers': [{'code': 'identity-unresolved'}]}
+        before = copy.deepcopy(accounting)
+
+        def attach():
+            accounting['identities'][0]['unresolved'].clear()
+            accounting['blockers'][:] = []
+            raise selection.SelectionError('locale alias candidate occurrence roster differs')
+
+        rejected = {}
+        joins, companion = selection._attach(rejected, 'locale_alias_contract_report', accounting, {'c': 1}, attach)
+        self.assertEqual((joins, companion), ([], None))
+        self.assertEqual(accounting, before)
+        self.assertIn('locale_alias_contract_report', rejected)
+
+    def test_accepted_attachment_keeps_its_joins_and_companion(self):
+        rejected = {}
+        joins, companion = selection._attach(rejected, 'utmpx_receipt_report', {}, {'c': 1}, lambda: [{'join': 1}])
+        self.assertEqual((joins, companion, rejected), ([{'join': 1}], {'c': 1}, {}))
+
+
 class LedgerFamilyAdmissionTests(unittest.TestCase):
     """Foundation-verified families count only through the validated ledger."""
 

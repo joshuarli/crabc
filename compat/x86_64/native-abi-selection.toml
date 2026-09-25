@@ -891,6 +891,20 @@ placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "WEAK",
 reason = "Source-faithful musl weak_alias(__stack_chk_fail, __stack_chk_fail_local): a hidden weak same-address companion in the archive, localized in the shared libc. It is never an installed C identity."
 static_metadata_rule = "explicit"
 
+# Implementation-private symbols of the owned Rust libc. The installed static
+# archive has one member per Rust module, so cross-module helpers (mangled Rust
+# items, compiler `anon.*` constants, private `__crabc_*` entries) appear as
+# hidden archive symbols. This is a structural rule, not a name class: an
+# identity is owned here only when every candidate row satisfies it (see
+# `attach_module_private_symbols`); any public or musl-shared exposure keeps
+# its ordinary unresolved blocker.
+[module_private_symbols]
+id = "owned-rust-module-private"
+owner = "owned-rust-libc-module"
+family = "libc.c-abi-compat"
+sources = ["compat/x86_64/native_abi_selection.py", "compat/x86_64/owned_mimalloc_producer_metadata.py", "scripts/build_x86_64_owned_sysroot.py"]
+reason = "Hidden cross-module definition inside one authenticated Rust member of the owned static archive, local in libc.so and absent from every dynamic symbol table and every pinned-musl public definition."
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]
