@@ -11280,7 +11280,11 @@ unsafe fn native_reallocate_inner(
     // and so does every caller's default Theap (the Heap registry admits only
     // main Heaps), so that comparison holds for each live allocation and the
     // decision needs no read of the page's owner-only `heap` field.
-    if ordinary && matches!(
+    // `mi_page_heap(page) == _mi_theap_heap(theap)` fails for a block of a
+    // non-main Heap of the process main subprocess.
+    // SAFETY: the observation's page is live while its block is.
+    let same_heap = unsafe { crate::subproc::main_heaps::heap_of_page(allocation.page()) }.is_none();
+    if ordinary && same_heap && matches!(
         crate::alloc::reallocation_plan(Some(allocation.usable_size()), new_size, true),
         crate::alloc::ReallocationPlan::Reuse
     ) {
@@ -11303,7 +11307,12 @@ unsafe fn native_reallocate_inner(
         RUNTIME_PROCESS.retain_page_owner();
         return NativePageAllocationResult::Retained;
     };
-    if allocation.is_associated_with(current) {
+    // A block on this thread's Theap for a non-main Heap of the process main
+    // subprocess is replaced through the default Theap and freed as any
+    // block, as `mi_theap_realloc_zero_ex` does for a block of another Heap.
+    // SAFETY: the observation's page is live while its block is.
+    let heap_block = unsafe { crate::subproc::main_heaps::heap_of_page(allocation.page()) }.is_some();
+    if allocation.is_associated_with(current) && !heap_block {
         native_reallocate_pointer_first_local(
             allocation, new_size, current, replacement_shape, ordinary, zero,
         )
@@ -11386,6 +11395,15 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
             }
             RUNTIME_PROCESS.retain_page_owner();
             return NativePageFreeResult::Retained;
+        }
+        // A page of this thread's Theap for a non-main Heap of the process
+        // main subprocess is freed through that Theap's own engine.
+        // SAFETY: the observation associated the page with this thread.
+        if let Some(theap) = unsafe { crate::subproc::main_heaps::local_heap_theap_of_page(allocation.page()) } {
+            let block = allocation.client();
+            drop(allocation);
+            // SAFETY: the exact live block of that Theap's page.
+            return unsafe { crate::subproc::main_heaps::native_free_local(theap, block) };
         }
         return native_free_pointer_first_local(allocation, current);
     }
@@ -11557,6 +11575,13 @@ fn native_free_pointer_first_local(
 fn native_free_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
 ) -> NativePageFreeResult {
+    // A page of a non-main Heap of the process main subprocess takes the
+    // Heap-owned route with the process registry.
+    // SAFETY: the exact live allocation keeps its page and Heap alive.
+    if let Some(heap) = unsafe { crate::subproc::main_heaps::heap_of_page(allocation.page()) } {
+        // SAFETY: forwarded exact-live-allocation contract.
+        return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
+    }
     // A page of a child subprocess takes that child's own `mi_free_block_mt`
     // route: its abandoned pages belong to the child main Heap and arenas,
     // never to the process-main W03 tail below.
@@ -17124,6 +17149,11 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
             }
             Err(_) => ThreadFinishResult::Retained,
         };
+    }
+    // `mi_thread_theaps_done` first finishes the thread's Theaps of non-main
+    // Heaps; the thread's own finish below handles its main-Heap Theap.
+    if !crate::subproc::main_heaps::native_thread_done() {
+        return ThreadFinishResult::Retained;
     }
     let result = finish_current_thread_after_user_destructors();
     if matches!(result, ThreadFinishResult::Finished | ThreadFinishResult::AlreadyFinished | ThreadFinishResult::NotAttached) {

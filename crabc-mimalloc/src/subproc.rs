@@ -685,6 +685,13 @@ impl SubprocessIdentity {
         }
     }
 
+    /// The ready source main-Heap address, or null; an identity for Heap
+    /// comparisons and field-level Heap projections by their owners.
+    #[inline]
+    pub(crate) fn ready_main_heap_pointer(&self) -> *mut Heap {
+        self.ready_main_heap_identity().map_or(core::ptr::null_mut(), |identity| identity.heap.as_ptr())
+    }
+
     /// Checks whether `heap` is exactly the ready canonical source main-Heap
     /// image. This is comparison-only and grants no Heap projection.
     #[inline]
@@ -2598,3 +2605,5 @@ mod tests {
 pub(crate) mod registry;
 #[path = "subproc_lifecycle.rs"]
 pub(crate) mod lifecycle;
+#[path = "subproc_main_heaps.rs"]
+pub(crate) mod main_heaps;

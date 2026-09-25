@@ -15,15 +15,30 @@ import run as harness
 
 TEST = "types::heap_registry::lifecycle::tests::source_ordered_empty_heap_lifecycle_trace"
 FIELD_COUNT = 108
+# Heaps of the process main subprocess, each side in its own process.
+MAIN_TEST = "subproc::main_heaps::tests::source_ordered_main_subprocess_heap_trace"
+MAIN_FIELD_COUNT = 27
 
 
-def trace(output: str) -> list[int]:
-    rows = re.findall(r"^(?:test \S+ \.\.\. )?m6\.heap\.lifecycle\.(\d+)=(-?\d+)$", output, re.MULTILINE)
-    if [int(index) for index, _ in rows] != list(range(FIELD_COUNT)):
+def trace(output: str, section: str = "lifecycle", count: int = FIELD_COUNT) -> list[int]:
+    rows = re.findall(rf"^(?:test \S+ \.\.\. )?m6\.heap\.{section}\.(\d+)=(-?\d+)$", output, re.MULTILINE)
+    if [int(index) for index, _ in rows] != list(range(count)):
         raise harness.HarnessError(
-            f"heap lifecycle trace requires {FIELD_COUNT} ordered fields"
+            f"heap {section} trace requires {count} ordered fields"
         )
     return [int(value) for _, value in rows]
+
+
+def compare(section: str, expected: list[int], observed: list[int]) -> None:
+    if expected != observed:
+        differences = [
+            f"{index}: C={c_value} Rust={rust_value}"
+            for index, (c_value, rust_value) in enumerate(zip(expected, observed))
+            if c_value != rust_value
+        ]
+        raise harness.HarnessError(
+            f"pinned C/Rust heap {section} differs: " + ", ".join(differences)
+        )
 
 
 def main() -> None:
@@ -47,22 +62,21 @@ def main() -> None:
         oracle = harness.command_record([str(artifacts / "oracle")], cwd=source, timeout_seconds=60)
         (artifacts / "c.log").write_text(oracle["stdout"] + oracle["stderr"])
         harness.require_success(oracle, "heap lifecycle C oracle")
+        main_oracle = harness.command_record([str(artifacts / "oracle"), "main"], cwd=source, timeout_seconds=60)
+        (artifacts / "c-main.log").write_text(main_oracle["stdout"] + main_oracle["stderr"])
+        harness.require_success(main_oracle, "heap lifecycle main-subprocess C oracle")
     rust = harness.command_record(["python3", "compat/allocator/run_unit_x86_64.py", TEST],
         cwd=harness.ROOT, timeout_seconds=900)
     (artifacts / "rust.log").write_text(rust["stdout"] + rust["stderr"])
     harness.require_success(rust, "heap lifecycle Rust test")
-    expected = trace(oracle["stdout"])
-    observed = trace(rust["stdout"])
-    if expected != observed:
-        differences = [
-            f"{index}: C={c_value} Rust={rust_value}"
-            for index, (c_value, rust_value) in enumerate(zip(expected, observed))
-            if c_value != rust_value
-        ]
-        raise harness.HarnessError(
-            "pinned C/Rust heap lifecycle differs: " + ", ".join(differences)
-        )
-    print(f"heap lifecycle: {FIELD_COUNT} pinned C/Rust values match; {artifacts}")
+    main_rust = harness.command_record(["python3", "compat/allocator/run_unit_x86_64.py", MAIN_TEST],
+        cwd=harness.ROOT, timeout_seconds=900)
+    (artifacts / "rust-main.log").write_text(main_rust["stdout"] + main_rust["stderr"])
+    harness.require_success(main_rust, "heap lifecycle main-subprocess Rust test")
+    compare("lifecycle", trace(oracle["stdout"]), trace(rust["stdout"]))
+    compare("main", trace(main_oracle["stdout"], "main", MAIN_FIELD_COUNT),
+        trace(main_rust["stdout"], "main", MAIN_FIELD_COUNT))
+    print(f"heap lifecycle: {FIELD_COUNT} + {MAIN_FIELD_COUNT} pinned C/Rust values match; {artifacts}")
 
 
 if __name__ == "__main__":

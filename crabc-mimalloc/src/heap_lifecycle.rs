@@ -452,6 +452,62 @@ pub(crate) unsafe fn child_heap_force_destroy_for_subprocess_destroy(
     }
 }
 
+/// `_mi_heap_init` and the list push (`heap.c:103-124`) of a non-main Heap
+/// of `subprocess` into a fresh zeroed image block, with its key `slot`.
+///
+/// # Safety
+/// `block` is an exclusively owned zeroed block of at least
+/// `size_of::<NonMainHeapImage>()` bytes; `subprocess` is live.
+pub(crate) unsafe fn initialize_and_link_non_main_heap(
+    block: NonNull<u8>,
+    slot: OwnedThreadLocalKeyLease,
+    subprocess: &crate::subproc::SubprocessIdentity,
+) -> Result<NonNull<Heap>, HeapNewError> {
+    if block.as_ptr().addr() % align_of::<NonMainHeapImage>() != 0 {
+        return Err(HeapNewError::Retained);
+    }
+    let key = slot.key().raw();
+    let memory = crate::types::MemoryId::malloc(block.as_ptr(), size_of::<NonMainHeapImage>(), true);
+    let image = block.cast::<NonMainHeapImage>();
+    // SAFETY: forwarded; written whole before any list publishes it.
+    unsafe { image.as_ptr().write(NonMainHeapImage { heap: Heap::bootstrap_empty(), slot: Some(slot) }) };
+    let heap = image.cast::<Heap>();
+    // SAFETY: the image is exclusively owned until the push publishes it.
+    let heap_ref = unsafe { &mut *heap.as_ptr() };
+    heap_ref.initialize_non_main(subprocess, key, core::ptr::null_mut(), memory);
+    // SAFETY: the Heap was initialized for this subprocess just above.
+    unsafe { subprocess.heap_list().link_non_main(heap_ref, subprocess) }.map_err(HeapNewError::List)?;
+    Ok(heap)
+}
+
+/// [`unlink_empty_heap`] for a Heap of any subprocess given its main Heap:
+/// statistics to `main`, count and list removal, and the key release;
+/// returns the image for the caller's free.
+///
+/// # Safety
+/// `heap` is a live non-main Heap of `subprocess` without Theaps or pages
+/// that no thread uses, and `main` that subprocess's main Heap.
+pub(crate) unsafe fn unlink_non_main_heap(
+    heap: NonNull<Heap>,
+    main: NonNull<Heap>,
+    subprocess: &crate::subproc::SubprocessIdentity,
+) -> Result<NonNull<NonMainHeapImage>, HeapReleaseError> {
+    // SAFETY: forwarded.
+    let heap_ref = unsafe { &mut *heap.as_ptr() };
+    if !heap_ref.is_without_theaps_or_pages() {
+        return Err(HeapReleaseError::NotEmpty);
+    }
+    // SAFETY: `main` is the subprocess's live main Heap.
+    unsafe { heap_ref.merge_statistics_to_main(main) };
+    // SAFETY: the Heap has no Theap and stays pinned until its free.
+    unsafe { subprocess.heap_list().unlink_non_main(heap_ref, subprocess) }.map_err(HeapReleaseError::List)?;
+    let image = heap.cast::<NonMainHeapImage>();
+    // SAFETY: the image is off every list and exclusively owned now.
+    let mut slot = unsafe { (*image.as_ptr()).slot.take() }.ok_or(HeapReleaseError::Retained)?;
+    slot.release().map_err(|_| HeapReleaseError::Retained)?;
+    Ok(image)
+}
+
 /// `mi_heap_free` up to the image free: refuse the main Heap (`None`) and a
 /// Heap with a Theap or page, merge statistics to the main Heap, remove the
 /// count and list edges, and release the thread-local slot. Returns the image

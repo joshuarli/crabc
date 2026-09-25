@@ -94,6 +94,12 @@ abandoned pages, a thread finishing with a live block on a non-main Heap's
 page and with an OS-backed block on another, reclaim of abandoned pages on a
 free and on an allocation by later threads, and `mi_subproc_destroy` of that
 Heap with its abandoned page.
+A second oracle process runs the same Heap operations on an ordinary thread
+of the process main subprocess against the Rust `subproc::main_heaps` route:
+the Theap and list shapes of a first allocation, a huge OS-backed block that
+`mi_heap_delete` moves to the process main Heap's OS-abandoned list and a
+later free releases, one that `mi_heap_destroy` releases with its Heap, and
+1000 live Heaps, which grow the thread-local slot array.
 Logs live under `x86_64/heap-lifecycle` in the allocator artifacts
 directory.
 

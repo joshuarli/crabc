@@ -1707,8 +1707,13 @@ pub(crate) unsafe fn delete_non_main_heap_pages(
             // SAFETY: the live target main Heap of this child.
             let target_heap = unsafe { target.heap.as_ref() };
             // SAFETY: the arena's in-place main record; `mi_heap_ensure_arena_pages`.
-            let installed = unsafe {
-                target_heap.ensure_child_main_arena_pages(view.arena().arena_index, NonNull::from(&view.arena().pages_main))
+            let pages_main = NonNull::from(&view.arena().pages_main);
+            let installed = if target_heap.is_main_static() {
+                target_heap
+                    .install_main_arena_pages(crate::subproc::MainSubprocess::global(), view.arena().arena_index, pages_main)
+                    .is_ok()
+            } else {
+                unsafe { target_heap.ensure_child_main_arena_pages(view.arena().arena_index, pages_main) }
             };
             // SAFETY: the in-place main bitmap of a live arena.
             let joined = installed && unsafe { view.pages() }
@@ -36831,7 +36836,59 @@ impl<'arena, 'map, Backing: crate::page_backing::PageBacking<'arena>>
 impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::PageBacking<'arena>>
     PageAllocatorEngine<'arena, 'map, Session, Backing> {
 
-    /// Pinned `free.c:mi_abandoned_page_try_reclaim` into this engine's Theap,
+    /// Activates this engine over a session whose Theap is a Theap of a
+    /// non-main Heap of the process main subprocess, which pages over the
+    /// process registry like a later-main owner but keeps its own page state.
+    ///
+    /// # Safety
+    /// As for `activate_child_ordinary`, with `backing` the process
+    /// registry backing and `page_map` its PageMap projected for the ranges
+    /// this engine owns.
+    pub(crate) unsafe fn activate_owned_session(
+        session: Session,
+        backing: Backing,
+        page_map: &'map PageMap,
+        sequence: crate::types::ThreadSequence,
+    ) -> Self {
+        Self {
+            session,
+            arena: backing,
+            arena_lifetime: PhantomData,
+            requested_arena: ArenaId::none(),
+            page_map,
+            thread_sequence: sequence.get(),
+            pending_os_release: None,
+            collection_poison: None,
+            page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
+            #[cfg(test)]
+            page_free_collect_failure_once: PageCollectFailureInjection::None,
+            #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
+            shutdown_complete: false,
+        }
+    }
+
+    /// Ends an operation of an engine from [`Self::activate_owned_session`];
+    /// a failed one returns the engine, whose Drop retains its state.
+    pub(crate) fn finish_owned_session(mut self) -> Result<(), Self> {
+        if self.pending_os_release.is_some() || self.collection_poison.is_some() || self.page_commit_poison {
+            return Err(self);
+        }
+        self.shutdown_complete = true;
+        Ok(())
+    }
+
+    /// Pinned `free.c:mi_abandoned_page_try_reclaim` into this engine's Theap,    /// Pinned `free.c:mi_abandoned_page_try_reclaim` into this engine's Theap,
     /// which belongs to the thread whose free claimed `candidate`.
     ///
     /// The caller has already checked `_mi_thread_is_initialized()` by
@@ -37209,7 +37266,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// runtime has one narrower continuation: it recovers its permanent
     /// session, releases the artificial process PageMap exclusion, and may
     /// later reactivate only against the already-published first arena.
-    fn finish_quiescent_in_place(&mut self) -> bool {
+    pub(crate) fn finish_quiescent_in_place(&mut self) -> bool {
         if self.is_collection_poisoned() || self.pending_os_release.is_some() {
             return false;
         }
@@ -41431,14 +41488,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: this engine retains the just-detached source page. Resolve
         // its actual arena rather than assuming a process has only one.
         let page_arena = unsafe { self.arena.arena_for_memory(page.as_ref().memid()) };
-        let map = page_arena.and_then(|arena| {
-            NonNull::new(self.session.theap().heap())
-                .and_then(|heap| arena.main_heap_abandoned_page(heap, bin))
-        });
-        let Some(map) = map else {
-            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
-            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
-        };
+        let heap = NonNull::new(self.session.theap().heap());
         // Pinned `_mi_arenas_page_abandon` decides mapped versus unmapped
         // after the initial false collection, then `mi_abandoned_page_unown`
         // may collect a late remote publication before releasing the owner
@@ -41447,14 +41497,33 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // may become Empty during unown, while an initially full page remains
         // source-unmapped even if a late free makes it partial. Do not use a
         // second `used` read to reinterpret that already-selected source arm.
-        // SAFETY: false collection, regular queue/direct/count detachment,
-        // and this exact static-main bitmap/count capability establish the
-        // pinned `page.c` then `arena.c` abandonment order.
-        let result = unsafe {
-            abandoned::abandon_after_collect_with_before_unown(page, Some(&map), || {
-                self.session.theap().record_page_abandoned();
-                Ok(())
-            })
+        // The bitmap/count pair is the page's own Heap's: a subprocess main
+        // Heap's in-place `pages_main`, or a non-main Heap's `arena_pages`.
+        // SAFETY (both calls): false collection, regular queue/direct/count
+        // detachment, and this exact Heap bitmap/count capability establish
+        // the pinned `page.c` then `arena.c` abandonment order.
+        let result = match (page_arena, heap) {
+            // SAFETY: the session retains its live Heap.
+            (Some(arena), Some(heap)) if unsafe { heap.as_ref() }.is_subprocess_main() => arena
+                .main_heap_abandoned_page(heap, bin)
+                .map(|map| unsafe {
+                    abandoned::abandon_after_collect_with_before_unown(page, Some(&map), || {
+                        self.session.theap().record_page_abandoned();
+                        Ok(())
+                    })
+                }),
+            (Some(arena), Some(heap)) => crate::types::Heap::non_main_abandoned_page(heap, &arena, bin)
+                .map(|map| unsafe {
+                    abandoned::abandon_after_collect_with_before_unown(page, Some(&map), || {
+                        self.session.theap().record_page_abandoned();
+                        Ok(())
+                    })
+                }),
+            _ => None,
+        };
+        let Some(result) = result else {
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         };
         match result {
             Ok(AbandonResult::UnownedMapped) if used < reserved => Ok(()),

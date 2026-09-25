@@ -8,6 +8,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static void require(bool condition) { if (!condition) abort(); }
 
@@ -234,8 +235,95 @@ static void* worker_main(void* arg) {
   return NULL;
 }
 
-int main(void) {
+/* Heaps of the process main subprocess on the main thread (the `main`
+   argument, in its own process), printed as `m6.heap.main.*` in the field
+   order of
+   types::heap_registry::lifecycle::main::tests::source_ordered_main_subprocess_heap_trace:
+   test-api.c's heap-os1, heap-os2, and heap-many shapes. */
+static int64_t main_values[64];
+static size_t main_count;
+static void mpush(int64_t value) { require(main_count < 64); main_values[main_count++] = value; }
+
+static void main_subprocess_heaps(void) {
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  mi_heap_t* const main_heap = subproc->heap_main;
+  mi_theap_t* const theap = _mi_theap_default();
+  const int64_t theaps0 = subproc->stats.theaps.current;
+  const int64_t theaps_total0 = subproc->stats.theaps.total;
+  const int64_t heaps0 = (int64_t)mi_atomic_load_relaxed(&subproc->heap_count);
+
+  /* heap-os1: a Heap deleted with a live OS-backed block, then freed. */
+  mi_heap_t* const h = mi_heap_new();
+  require(h != NULL);
+  mpush(h->subproc == subproc && h->theaps == NULL && subproc->heaps == h);
+  mpush((int64_t)mi_atomic_load_relaxed(&subproc->heap_count) - heaps0);
+  void* const p = mi_heap_malloc_aligned(h, 1 << 20, 2 << 20);
+  require(p != NULL);
+  mi_page_t* const page = _mi_ptr_page(p);
+  mpush(mi_page_heap(page) == h && mi_memid_is_os(page->memid) && page->theap == h->theaps);
+  mpush(h->theaps != NULL && h->theaps->tld == theap->tld && theap->tld->theaps == h->theaps
+        && h->theaps->tnext == theap);
+  mpush(_mi_theap_cached() == h->theaps);
+  mpush(subproc->stats.theaps.current - theaps0);
+  mi_heap_delete(h);
+  mpush(mi_page_heap(page) == main_heap && main_heap->os_abandoned_pages == page
+        && mi_page_is_abandoned(page));
+  mpush(theap->tld->theaps == theap && theap->tprev == NULL);
+  mpush((int64_t)mi_atomic_load_relaxed(&subproc->heap_count) - heaps0);
+  mi_free(p);
+  mpush(main_heap->os_abandoned_pages == NULL);
+
+  /* heap-os2: a Heap destroyed with ten live OS-backed blocks. */
+  mi_heap_t* const h2 = mi_heap_new();
+  require(h2 != NULL);
+  mpush(_mi_theap_cached() == theap);
+  mpush(subproc->stats.theaps.current - theaps0);
+  long failed = 0;
+  for (int i = 0; i < 10; i++) {
+    int* const q = (int*)mi_heap_malloc_aligned(h2, 1 << 20, 2 << 20);
+    if (q == NULL) failed++; else q[0] = 42;
+  }
+  mpush(failed);
+  mpush((int64_t)h2->theaps->page_count);
+  mi_heap_destroy(h2);
+  mpush(main_heap->os_abandoned_pages == NULL);
+  mpush((int64_t)mi_atomic_load_relaxed(&subproc->heap_count) - heaps0);
+
+  /* heap-many: 1000 Heaps, each with a Theap and a block, then destroyed. */
+  enum { NHEAPS = 1000 };
+  static mi_heap_t* heaps[NHEAPS];
+  bool allocated = true;
+  for (size_t i = 0; i < NHEAPS; i++) {
+    heaps[i] = mi_heap_new();
+    if (heaps[i] == NULL || mi_heap_malloc(heaps[i], 32) == NULL) { allocated = false; break; }
+  }
+  mpush(allocated);
+  mpush((int64_t)mi_atomic_load_relaxed(&subproc->heap_count) - heaps0);
+  mpush((int64_t)mi_thread_locals_peek()->count);
+  mpush(subproc->stats.theaps.current - theaps0);
+  size_t theaps_on_tld = 0;
+  for (mi_theap_t* t = theap->tld->theaps; t != NULL; t = t->tnext) theaps_on_tld++;
+  mpush((int64_t)theaps_on_tld);
+  for (size_t i = 0; i < NHEAPS; i++) mi_heap_destroy(heaps[i]);
+  mpush((int64_t)mi_atomic_load_relaxed(&subproc->heap_count) - heaps0);
+  mpush(subproc->heaps == main_heap && main_heap->next == NULL);
+  mpush(theap->tld->theaps == theap);
+  mpush(subproc->stats.theaps.current - theaps0);
+  mpush(subproc->stats.theaps.total - theaps_total0);
+  mpush((int64_t)mi_thread_locals_peek()->count);
+}
+
+int main(int argc, char** argv) {
   mi_process_init();
+  if (argc > 1 && strcmp(argv[1], "main") == 0) {
+    /* A separate process: the process-global thread-local key registry
+       and the initial thread's roots start as in test-api.c. */
+    main_subprocess_heaps();
+    for (size_t i = 0; i < main_count; i++) {
+      printf("m6.heap.main.%zu=%lld\n", i, (long long)main_values[i]);
+    }
+    return 0;
+  }
   /* Match the Rust fixture's arena policy: one minimum-size reservation
      without eager commit. */
   mi_option_set(mi_option_arena_reserve, (long)(MI_ARENA_MIN_SIZE / MI_KiB));

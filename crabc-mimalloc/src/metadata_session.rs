@@ -239,6 +239,54 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         })
     }
 
+    /// The session of a thread's Theap for a non-main Heap of the process
+    /// main subprocess: as [`Self::new_for_non_main_heap`], with the main
+    /// subprocess in place of a child image. The same session type serves
+    /// both, because such a Theap pages exactly as a child thread's Theap for
+    /// a non-main Heap does (its own queues and page state, the Heap's own
+    /// per-arena page records); only the arena backing differs.
+    ///
+    /// # Safety
+    /// As for [`Self::new_for_non_main_heap`], with `heap` a live non-main
+    /// Heap of `subprocess` and `tld` the calling thread's attached TLD.
+    pub(crate) unsafe fn new_for_main_subprocess_heap(
+        subprocess: &'static crate::subproc::MainSubprocess,
+        tld: NonNull<ThreadLocalData>,
+        theap: NonNull<Theap>,
+        heap: NonNull<Heap>,
+        thread: LiveThreadId,
+        sequence: crate::types::ThreadSequence,
+        pending_os_release: &'session mut Option<OsAlignedPageOwner>,
+        page_engine: &'session mut crate::meta::ChildPageEngineState,
+        arena_pages: &'session mut dyn FnMut(usize, usize) -> Option<NonNull<u8>>,
+    ) -> Option<Self> {
+        let identity = subprocess.identity();
+        // SAFETY: the caller retains all images for this bounded projection.
+        let (tld_ref, theap_ref, heap_ref) = unsafe { (tld.as_ref(), theap.as_ref(), heap.as_ref()) };
+        if heap_ref.is_subprocess_main()
+            || !core::ptr::eq(heap_ref.subprocess_pointer(), identity.as_ptr())
+            || !tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
+            || !core::ptr::eq(theap_ref.heap.load(Ordering::Acquire), heap.as_ptr())
+            || !core::ptr::eq(theap_ref.tld, tld.as_ptr())
+            || theap_ref.is_detached()
+            || !theap_ref.is_initialized()
+            || pending_os_release.is_some()
+            || *page_engine != crate::meta::ChildPageEngineState::Active
+        {
+            return None;
+        }
+        Some(Self {
+            theap,
+            heap,
+            child: NonNull::from(identity),
+            thread,
+            pending_os_release,
+            page_engine,
+            non_main_arena_pages: Some(arena_pages),
+            _image: PhantomData,
+        })
+    }
+
     /// The session of a child thread's Theap for a non-main Heap of its
     /// child. Like [`Self::new`], plus `arena_pages` allocates the Heap's
     /// per-arena page record from the subprocess main Heap when a fresh
@@ -468,6 +516,25 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
     }
 
     fn child_reclaim_heap(&self) -> Option<NonNull<Heap>> { Some(self.heap) }
+    // Pinned `page.c:mi_page_to_full` gives a full page of an abandoning
+    // Theap to `_mi_page_abandon`; this ordinary Theap of a child main Heap
+    // or of any non-main Heap follows that source branch whenever its
+    // `allow_page_abandon` is set, never the non-abandoning `BIN_FULL` queue.
+    #[cfg(target_arch = "x86_64")]
+    fn selects_selected_main_arena_source_full_abandonment(&self) -> bool {
+        self.theap().allows_page_abandon()
+    }
+    #[cfg(target_arch = "x86_64")]
+    fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool { true }
+    fn push_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the retained Heap's OS-abandoned list is serialized by its
+        // own lock; the full-page transition owns this detached page.
+        unsafe { Heap::push_os_abandoned_page_at(self.heap, page) }
+    }
+    fn remove_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: as above; the all-free result owns the page's low bit.
+        unsafe { Heap::remove_os_abandoned_page_at(self.heap, page) }
+    }
     fn queue(&self, bin: usize) -> Option<&PageQueue> { self.theap().queue(bin) }
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
         unsafe { Theap::local_queue_mut_at(self.theap, bin) }
