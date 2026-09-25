@@ -4135,3 +4135,35 @@ unit_verified = true
 differential_verified = false
 stress_verified = false
 performance_qualified = false
+
+[[item]]
+upstream = "src/arena.c"
+name = "os-fallback-commit-on-demand-initially-committed-correction"
+source_region = "src/arena.c:819-855 ordinary OS fallback under mi_option_disallow_arena_alloc and mi_option_page_commit_on_demand, including the unconditional memid.initially_committed = true at line 855"
+rust_module = "crabc_mimalloc::os_page, crabc_mimalloc::single_thread, and crabc_mimalloc::meta"
+rust_item = "OsAlignedPageClaim::allocate_on_demand_for_process, OsAlignedPageClaim::commit_initial_page_prefix, PageAllocatorEngine::allocate_fresh_os_page, and extend_on_demand_page_before_allocation"
+intentional_difference = "CRABC-MI-OS-ON-DEMAND-ARENA-REFUSAL: pinned C publishes its uncommitted on-demand OS block span as initially committed, so _mi_page_init writes its first free-list link into PROT_NONE and faults; Rust keeps MemoryId::initially_committed false, commits the initial page prefix while the private Mapping is retained, and only then publishes the prefix, free-list links and capacity."
+difference_kind = "algorithmic"
+tests = ["crabc-mimalloc/src/meta.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/page.c"
+name = "invalid-program-error-sites"
+source_region = "release-live _mi_error_message sites reached only by an invalid program: src/page.c:164-172 _mi_page_thread_free_collect overlong remote list, and src/arena.c:1455-1478 _mi_arenas_free invalid arena, block, or already-free block"
+rust_module = "crabc_mimalloc::remote_free and crabc_mimalloc::single_thread"
+rust_item = "RemoteFreeError::TooManyRemoteBlocks and UsedCountUnderflow with a poisoned retained page; arena frees only of exact PageMap-resolved claims"
+intentional_difference = "CRABC-MI-INVALID-PROGRAM-ERROR-SITES: an invalid program reaches these C continuations only after the allocator has found its state corrupt; Rust poisons and retains the page or cannot reach the arena sites. The M7 gate's m7.callbacks items record them as not applicable to valid-program parity."
+difference_kind = "boundary"
+tests = ["crabc-mimalloc/src/remote_free.rs", "compat/allocator/x86_64_m7_gate.py", "compat/allocator/m7-gate-x86_64-v3.5.0.json", "compat/allocator/x86_64_m7_error_sites_oracle.c"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false

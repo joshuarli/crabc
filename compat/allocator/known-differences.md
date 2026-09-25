@@ -87,7 +87,9 @@ is not a valid C-program observable difference and has no C differential
 entry; the selected arena witness is source-level safety evidence over C's
 assertion-invalid input, not C/Rust invalid-input parity.
 
-### Native child source-owner repair
+### `CRABC-MI-NATIVE-CHILD-SOURCE-OWNER-REPAIR` — accepted integration boundary
+
+- **Port map:** `src/init.c:private-no-page-process-pthread-runtime-lifecycle`, `src/alloc.c:nondefault-crabc-libc-native-mimalloc-shadow-ordinary-boundary`
 
 Pinned mimalloc v3.5.0 has no Linux atfork handler which retires vanished
 Theap/TLD owners. The native runtime child continuation therefore is an
@@ -117,7 +119,9 @@ evidence from `./scripts/dev-x86_64.sh owned-native-allocator-fork`.
 Performance qualification remains required, and neither the allocator-level
 tests nor the installed probe qualifies automatic destruction.
 
-### Application allocator replacement in the owned libc
+### `CRABC-LIBC-APPLICATION-ALLOCATOR-REPLACEMENT` — accepted integration boundary
+
+- **Port map:** `src/alloc-override.c`
 
 The native-shadow libc, and the default C-backend wrapper
 (`libc/src/allocator_mimalloc.rs`) in the owned x86 static product, follow
@@ -140,7 +144,9 @@ binding. libc.so keeps musl's bindings. `./scripts/dev-x86_64.sh owned-allocator
 native-shadow evidence; `./scripts/dev-x86_64.sh owned-static-replacement`
 covers the default static product.
 
-### Metadata release provenance and exclusive-arena Theaps
+### `CRABC-MI-METADATA-RELEASE-EXCLUSIVE-ARENA-THEAP` — accepted integration boundary
+
+- **Port map:** `src/theap.c:requested-parent-arena-theap-prefix-lifecycle`, `src/subproc.c:metadata-free-kinds-child-ownership-and-deterministic-overlap`
 
 Pinned `src/subproc.c:29-81` returns Malloc IDs for every ordinary metadata
 allocation/replacement. Static main TLD/Theap/subprocess images take its
@@ -188,8 +194,9 @@ inside that window; the Rust release reaches the metadata backing lock the
 allocation already holds and completes after it. Only facts common to both
 are compared.
 
-### `CRABC-LIBC-SHADOW-ABI-REALLOC-NULL-ZERO-ALIGNMENT` — observed public-C ABI known red
+### `CRABC-LIBC-SHADOW-ABI-REALLOC-NULL-ZERO-ALIGNMENT` — accepted public-C ABI boundary
 
+- **Port map:** `src/alloc.c:nondefault-crabc-libc-native-mimalloc-shadow-ordinary-boundary`
 - **Backends:** `libc/src/allocator_mimalloc.rs:realloc` through the ordinary
   `libmimalloc-sys` 0.1.49 C-backed artifact, compared with
   `libc/src/allocator_native_mimalloc.rs:realloc` under the nondefault
@@ -214,7 +221,10 @@ are compared.
   freeable-misaligned-preserves-errno` and
   `native-rust-mimalloc-shadow = freeable-aligned-preserves-errno` outcomes;
   any other result is a harness failure rather than a silently normalized pass.
-- **Decision/removal:** pending. A successful matrix run proves that this
+- **Decision/removal:** accepted as a boundary difference: the 16-byte
+  alignment of a zero-size `realloc(NULL, 0)` result is the owned libc's own
+  C ABI requirement, which the native shadow meets and the ordinary wrapper
+  does not. Previously pending: A successful matrix run proves that this
   known red was observed exactly; it does not mark the two artifacts equivalent
   or promote either backend. Remove or change the row only with an explicit
   C-ABI decision and a focused default-backend implementation change plus musl
@@ -614,8 +624,9 @@ are compared.
   treating this coordinator as a complete process initializer or public
   allocator startup API.
 
-### `CRABC-MI-NORMAL-TLD-DIRECT-HELPER` — recorded M2 direct-helper differential boundary
+### `CRABC-MI-NORMAL-TLD-DIRECT-HELPER` — accepted M2 direct-helper differential boundary
 
+- **Port map:** `src/init.c:normal-tld-direct-helper-post-ticket-sequence-seven`
 - **Upstream/Rust:** pinned `src/init.c:155-157,236-250`, with its local
   zero initializer in `include/mimalloc/internal.h:104-110`, `MI_MEM_NONE`
   and TLD/subprocess-counter fields in `include/mimalloc/types.h:288-297,670-701`,
@@ -668,8 +679,9 @@ are compared.
   It does not compare literal Rust/C primitive invocation timing or any raw
   pointer, layout, or thread-ID value.
 
-### `CRABC-MI-STATIC-FIRST-TLD-CREATE-DIRECT` — recorded M2 selected static-success differential boundary
+### `CRABC-MI-STATIC-FIRST-TLD-CREATE-DIRECT` — accepted M2 selected static-success differential boundary
 
+- **Port map:** `src/init.c:static-first-tld-create-direct-success-arm`
 - **Upstream/Rust:** pinned `src/init.c:155-157,253-272`, with source
   main-subprocess identity in `src/subproc.c:12-15,95-101`, explicitly
   excluding `_mi_subproc_main_init` at `src/subproc.c:316-322`, selected
@@ -729,8 +741,9 @@ are compared.
   races, NUMA discovery/options policy, or allocator integration. Those need
   separate owner-bearing C/Rust evidence.
 
-### `CRABC-MI-STAGED-INITIAL-OWNER` — explicit staged ownership and evidence boundary
+### `CRABC-MI-STAGED-INITIAL-OWNER` — accepted staged ownership and evidence boundary
 
+- **Port map:** `src/init.c:bounded-source-main-process-initialization-order`
 - **Upstream/Rust:** pinned `src/init.c:305-360,536-592` installs the source
   default Theap before key setup and startup reservations. Rust represents the
   allocation-ready subset with `ProcessMainAllocationLease`, then moves the
@@ -829,8 +842,9 @@ are compared.
   alternate map for shared threads, or page-bearing runtime integration beyond
   the recorded bounded ticket-zero and sequential later-thread slices.
 
-### `CRABC-MI-PAGE-MAP-HEADER-AND-ROOT-OWNER` — recorded M2 success and lazy-commit differential boundary
+### `CRABC-MI-PAGE-MAP-HEADER-AND-ROOT-OWNER` — accepted M2 success and lazy-commit differential boundary
 
+- **Port map:** `src/page-map.c:mapped-two-level-page-map-lifecycle`
 - **Upstream/Rust:** pinned `src/page-map.c:228-457,236-269,386-427`, including
   `mi_page_map_t`, `mi_page_map_init_once`, `mi_page_map_commit_entries`,
   `mi_page_map_ensure_committed`, `mi_page_map_ensure_submap_at`,
@@ -1883,31 +1897,9 @@ transfer capability.
   authorize concurrent later-thread allocation routing, a public thread
   attachment API, process shutdown, or default backend use.
 
-### `CRABC-MI-TEST-ONLY-ON-DEMAND-FAILED-COMMIT` — resolved private fixture gap
+### `CRABC-MI-HUGE-FREE-TRACKING-OWNERSHIP` — accepted retained cleanup bookkeeping
 
-- **Former behavior:** the bounded `cfg(test)` ordinary reserved-medium seam
-  represented `src/page.c:845-863` by returning `None` after its paired-lease
-  direct mapping failure and requiring a later explicit retry of the unchanged
-  selected page. It was never a production allocation path or a C
-  fault-injection result.
-- **Resolved mapping:**
-  `PageAllocatorEngine::direct_page_commit_mapping_miss` now recognizes that
-  paired-lease `Mapping(Arena(Mapping))` error as the same direct mapping miss
-  as the already-fallback-eligible `ProcessMapping` error. The ordinary queue
-  keeps the failed selected page unchanged, runs false collection, and selects
-  a distinct fresh page; prefix publication and free-list extension failures
-  remain terminal. The distinct mapped-abandoned claim route still reabandons
-  and takes its one same-candidate false-mode retry.
-- **Evidence/scope:**
-  `main_heap_page::tests::ordinary_reserved_medium_on_demand_direct_commit_failure_falls_through_to_fresh_page`
-  injects the private Rust mapping failure and proves the two page identities,
-  original-page state/payload preservation, and normal release. The native
-  `allocator-on-demand` 23-field C/Rust differential remains a successful
-  direct-commit/reuse trace only; this record does not claim C fault-injection
-  equivalence, a production option/API/policy, or backend promotion.
-
-### `CRABC-MI-HUGE-FREE-TRACKING-OWNERSHIP` — retained cleanup bookkeeping
-
+- **Port map:** `src/os.c`, `src/arena.c`
 - **Source:** pinned v3.5.0 `src/arena.c:2167-2222` reserves/manages a huge
   prefix and frees it after unpublished manage rejection;
   `src/os.c:845-853` attempts every huge primitive free without retaining
@@ -1944,6 +1936,7 @@ transfer capability.
 
 ### `CRABC-MI-OS-ON-DEMAND-ARENA-REFUSAL` — accepted pinned-upstream safety correction
 
+- **Port map:** `src/arena.c:os-fallback-commit-on-demand-initially-committed-correction`
 - **Upstream/Rust:** pinned mimalloc v3.5.0
   `src/arena.c:819-855` takes the ordinary OS fallback when
   `mi_option_disallow_arena_alloc=1` and
@@ -2254,6 +2247,7 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
 
 ### `CRABC-MI-AUTOMATIC-PTHREAD-DESTRUCTOR-C-ORACLE-ONLY` — accepted evidence boundary
 
+- **Port map:** `src/init.c:private-no-page-process-pthread-runtime-lifecycle`
 - **Upstream/Rust:** pinned C `src/init.c:504-511`,
   `src/prim/unix/prim.c:1011-1040`, `src/init.c:426-477`,
   `src/threadlocal.c:205-214`, `src/theap.c:97-152`, and the selected
@@ -2297,8 +2291,12 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   pthread callback, a `Send` detached attachment, general lifecycle or
   destructor-ordering claims, public x86 support, or backend promotion.
 
-### `CRABC-MI-PROCESS-DONE-PTHREAD-KEY-C-ORACLE-ONLY` — observed late-worker boundary
+### `CRABC-MI-PROCESS-DONE-PTHREAD-KEY-C-ORACLE-ONLY` — accepted late-worker evidence boundary
 
+- **Port map:** `src/init.c:process-done-subprocess-destroy-order`
+- **Decision:** accepted for the reason under Difference: the pinned C late
+  worker keeps its Theap after an invalid key, so skipping the Rust bridge's
+  explicit finish would be neither source-faithful nor memory-safe.
 - **Upstream/Rust:** pinned `include/mimalloc/atomic.h:18-20`,
   `src/prim/unix/prim.c:1011-1040`, `src/init.c:305-360,595-648`,
   `src/prim/prim-tls.c:211-250`, and `src/free.c:223-255`, contrasted with
@@ -3054,6 +3052,8 @@ existing teardown. A sole, arena-backed, non-singleton,
 
 ### `CRABC-MI-INVALID-PROGRAM-ERROR-SITES` — accepted invalid-use handling
 
+- **Port map:** `src/page.c:invalid-program-error-sites`
+
 Status: accepted. Area: invalid-use handling and diagnostics.
 
 Three release-live pinned mimalloc v3.5.0 `_mi_error_message` sites are
@@ -3146,7 +3146,7 @@ oracle or justify a runtime fallback. Accepted differences require the design,
 differential, and performance evidence specified in
 [`docs/design/allocator.md`](../../docs/design/allocator.md).
 
-### `CRABC-MI-FORCED-COLLECTION-OS-RELEASE-OWNER` — private failure-retention boundary
+### `CRABC-MI-FORCED-COLLECTION-OS-RELEASE-OWNER` — accepted private failure-retention boundary
 
 Pinned `src/theap.c:mi_theap_collect_ex(MI_FORCE)` visits all owned queues
 before arena collection; `src/page.c:mi_malloc_generic_fallback` then retries
@@ -3172,7 +3172,9 @@ The focused regression
 covers two remotely emptied OS singletons in both huge and full queues, paired
 release failures, preservation of the next registered page, and explicit retry.
 
-### `CRABC-MI-OS-PUBLICATION-ROLLBACK-OWNER` — private provenance-failure retention
+### `CRABC-MI-OS-PUBLICATION-ROLLBACK-OWNER` — accepted private provenance-failure retention
+
+- **Port map:** `src/arena.c:os-aligned-singleton-metadata-page-map-and-release`
 
 Pinned mimalloc v3.5.0 `src/arena.c:951-1120` initializes primary metadata,
 Release-publishes its aligned aliases, and registers the clipped PageMap span;
