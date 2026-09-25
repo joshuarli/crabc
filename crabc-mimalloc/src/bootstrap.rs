@@ -507,6 +507,11 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// terminal release. The default has no list authority.
     #[inline]
     fn remove_selected_main_os_abandoned_page(&mut self, _page: NonNull<Page>) -> bool { false }
+    /// The Heap of a child subprocess this session's Theap belongs to, for
+    /// the child's own `mi_arenas_page_try_find_abandoned` before a fresh
+    /// page. `None` for every other session.
+    #[inline]
+    fn child_reclaim_heap(&self) -> Option<NonNull<crate::types::Heap>> { None }
     fn queue(&self, bin: usize) -> Option<&PageQueue>;
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue>;
     fn direct_page(&self, index: usize) -> Option<*mut Page>;

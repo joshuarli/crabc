@@ -2393,6 +2393,9 @@ impl ChildThreadOwner {
         let page_map = unsafe { pair.page_map_for_owned_ranges() }
             .map_err(ChildMetadataPageEngineError::BackingPair)?;
         let mut allocate_arena_pages = |size: usize, alignment: usize| -> Option<NonNull<u8>> {
+            if child.is_null() {
+                return None;
+            }
             // SAFETY: the outer engine borrows neither the owner nor the
             // child context; this nested operation runs on the thread's
             // main-Heap Theap with that Theap's own engine state.
@@ -2448,8 +2451,9 @@ impl ChildThreadOwner {
     /// frees the thread-local slot array, then each such Theap on the TLD
     /// list, in list order, is collected (`_mi_theap_collect_abandon`): its
     /// all-free pages are released and pages with live blocks are abandoned
-    /// to that Heap's own records. An OS-backed page cannot be abandoned and
-    /// returns [`ChildHeapTheapError::InvalidTransition`].
+    /// to that Heap's own records (an OS-backed page to its OS-abandoned
+    /// list). A failed page transition returns
+    /// [`ChildHeapTheapError::InvalidTransition`].
     ///
     /// # Safety
     /// As for [`Self::with_heap_theap_page_engine`], on the finishing thread.
@@ -2559,6 +2563,52 @@ impl ChildThreadOwner {
         heap_theap_key(heap).map_or(core::ptr::null_mut(), |key| self.thread_local_get(key))
     }
 
+    /// `mi_abandoned_page_try_reclaim` (`free.c:423-469`) of a claimed child
+    /// page into this thread: `_mi_page_associated_theap_peek` names the
+    /// Theap on the page's Heap's thread-local slot (the fast slot for a main
+    /// Heap), which must belong to that Heap; its engine then applies the
+    /// source reclaim limits and appends the page
+    /// (`reclaim_abandoned_page_on_free`). Otherwise the page is declined.
+    ///
+    /// # Safety
+    /// `this` is the running thread's owner; `child` is its locked context or
+    /// null (a reclaim never allocates a page record).
+    pub(crate) unsafe fn reclaim_on_free(
+        this: *mut Self,
+        child: *mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        candidate: crate::abandoned::ReclaimOnFreeCandidate<'_, crate::single_thread::ChildMappedAbandonedPage<'static>>,
+    ) -> crate::abandoned::ReclaimOnFreeOutcome {
+        use crate::abandoned::ReclaimOnFreeOutcome::Declined;
+        let Some(heap) = NonNull::new(candidate.page_heap()) else { return Declined };
+        // SAFETY: the claimed page keeps its Heap alive.
+        let theap = if unsafe { heap.as_ref() }.is_subprocess_main() {
+            crate::compiler_tls::fast_slot_peek().map(NonNull::cast::<Theap>)
+        } else {
+            // SAFETY: a short read of this owner's slot array.
+            heap_theap_key(heap).and_then(|key| NonNull::new(unsafe { (*this).thread_local_get(key) }.cast::<Theap>()))
+        };
+        let Some(theap) = theap else { return Declined };
+        // SAFETY: a Theap on this thread's slots is live.
+        if unsafe { Theap::heap_at(theap) } != heap.as_ptr() {
+            return Declined;
+        }
+        // SAFETY: short read of this owner's main-Heap Theap.
+        if Some(theap) == unsafe { (*this).theap_pointer() } {
+            // SAFETY: the admitted thread runs its own engine.
+            unsafe { (*this).with_page_engine(binding, |_image, engine| engine.reclaim_abandoned_page_on_free(candidate)) }
+                .unwrap_or(Declined)
+        } else {
+            // SAFETY: forwarded; one of this thread's non-main Theaps.
+            unsafe {
+                Self::with_heap_theap_page_engine(this, child, binding, theap, |engine| {
+                    engine.reclaim_abandoned_page_on_free(candidate)
+                })
+            }
+            .unwrap_or(Declined)
+        }
+    }
+
     /// Frees `block`, a live block observed through `binding`'s PageMap, on
     /// this thread: through the owning engine when one of this thread's
     /// Theaps owns its page, otherwise through the nonlocal route.
@@ -2602,7 +2652,11 @@ impl ChildThreadOwner {
             }
         }
         // SAFETY: forwarded; the page belongs to another owner or none.
-        match unsafe { crate::subproc::lifecycle::free_child_block_nonlocal(binding, allocation) } {
+        let reclaim = |candidate: crate::abandoned::ReclaimOnFreeCandidate<'_, crate::single_thread::ChildMappedAbandonedPage<'static>>| {
+            // SAFETY: forwarded; the owner and child are not otherwise borrowed.
+            unsafe { Self::reclaim_on_free(this, child, binding, candidate) }
+        };
+        match unsafe { crate::subproc::lifecycle::free_child_block_nonlocal(binding, allocation, reclaim) } {
             Some(crate::single_thread::ChildNonlocalFreeResult::Freed | crate::single_thread::ChildNonlocalFreeResult::Released) => Ok(()),
             _ => Err(ChildHeapTheapError::InvalidTransition),
         }

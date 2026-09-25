@@ -785,6 +785,63 @@ impl Heap {
         guard.unlock().is_ok() && freed
     }
 
+    /// The OS-abandoned push of `_mi_arenas_page_abandon`
+    /// (`arena.c:1340-1353`) for a child subprocess Heap: under the Heap's
+    /// `os_abandoned_pages_lock`, `page` goes to the front of the list.
+    ///
+    /// # Safety
+    /// `heap` is live; the caller holds `page`'s low owner bit after its
+    /// abandoned identity is set, and `page` is in no list. Only this lock's
+    /// holders touch the list and the pages' list links.
+    pub(crate) unsafe fn push_os_abandoned_page_at(heap: core::ptr::NonNull<Heap>, page: core::ptr::NonNull<super::Page>) -> bool {
+        let heap = heap.as_ptr();
+        // SAFETY: forwarded; the list fields are written only under the lock.
+        unsafe {
+            let Ok(guard) = (*heap).os_abandoned_pages_lock.lock() else { return false };
+            let page = page.as_ptr();
+            let head = core::ptr::read(core::ptr::addr_of!((*heap).os_abandoned_pages));
+            (*page).prev = core::ptr::null_mut();
+            (*page).next = head;
+            if !head.is_null() {
+                (*head).prev = page;
+            }
+            core::ptr::addr_of_mut!((*heap).os_abandoned_pages).write(page);
+            guard.unlock().is_ok()
+        }
+    }
+
+    /// The OS-abandoned removal of `_mi_arenas_page_unabandon`
+    /// (`arena.c:1410-1419`) for a child subprocess Heap.
+    ///
+    /// # Safety
+    /// As for [`Self::push_os_abandoned_page_at`], with `page` on the list.
+    pub(crate) unsafe fn remove_os_abandoned_page_at(heap: core::ptr::NonNull<Heap>, page: core::ptr::NonNull<super::Page>) -> bool {
+        let heap = heap.as_ptr();
+        // SAFETY: as above.
+        unsafe {
+            let Ok(guard) = (*heap).os_abandoned_pages_lock.lock() else { return false };
+            let page = page.as_ptr();
+            let (prev, next) = ((*page).prev, (*page).next);
+            if !prev.is_null() { (*prev).next = next; }
+            if !next.is_null() { (*next).prev = prev; }
+            if core::ptr::read(core::ptr::addr_of!((*heap).os_abandoned_pages)) == page {
+                core::ptr::addr_of_mut!((*heap).os_abandoned_pages).write(next);
+            }
+            (*page).next = core::ptr::null_mut();
+            (*page).prev = core::ptr::null_mut();
+            guard.unlock().is_ok()
+        }
+    }
+
+    /// The first page on this Heap's OS-abandoned list.
+    ///
+    /// # Safety
+    /// The caller excludes list changes (a Heap free with detached Theaps).
+    pub(crate) unsafe fn os_abandoned_head_at(heap: core::ptr::NonNull<Heap>) -> *mut super::Page {
+        // SAFETY: forwarded.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*heap.as_ptr()).os_abandoned_pages)) }
+    }
+
     /// Records one page leaving this Heap without a Theap
     /// (`mi_heap_stat_decrease` of `page_bins[bin]` and `pages`).
     #[inline]
@@ -964,6 +1021,15 @@ impl super::Page {
         false
     }
 
+    /// The next page on the list this page is linked in.
+    ///
+    /// # Safety
+    /// The caller excludes changes to that list.
+    pub(crate) unsafe fn next_at(page: core::ptr::NonNull<Self>) -> *mut Self {
+        // SAFETY: forwarded.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).next)) }
+    }
+
     /// Whether the page has the mapped-abandoned identity.
     ///
     /// # Safety
@@ -1024,6 +1090,17 @@ impl super::Theap {
     ) -> (*mut Self, *mut Self, *mut Self, *mut Self, *mut super::ThreadLocalData) {
         let theap = theap.as_ptr();
         unsafe { (*(*theap).hnext.get(), *(*theap).hprev.get(), (*theap).tnext, (*theap).tprev, (*theap).tld) }
+    }
+}
+
+#[cfg(test)]
+impl super::Page {
+    /// `(next, prev)` of a page.
+    ///
+    /// # Safety
+    /// No list operation runs during the read.
+    pub(crate) unsafe fn test_list_links(page: core::ptr::NonNull<Self>) -> (*mut Self, *mut Self) {
+        unsafe { ((*page.as_ptr()).next, (*page.as_ptr()).prev) }
     }
 }
 

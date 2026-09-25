@@ -60,6 +60,48 @@ static bool visit_count(mi_heap_t* heap, void* arg) {
 /* The Heap and block that outlive the worker thread. */
 static mi_heap_t* sixth;
 static void* sixth_block;
+static mi_heap_t* seventh;
+static void* seventh_block;
+
+/* A second thread allocates two main-Heap blocks and finishes, abandoning
+   their page. */
+static void* handoff[2];
+static void* abandon_main(void* arg) {
+  mi_subproc_add_current_thread(_mi_subproc_to_id((mi_subproc_t*)arg));
+  handoff[0] = mi_malloc(64);
+  handoff[1] = mi_malloc(64);
+  require(handoff[0] != NULL && handoff[1] != NULL);
+  mi_thread_done();
+  return NULL;
+}
+
+/* A third thread reclaims abandoned pages: on a free into the main Heap's
+   page while its own queue for the bin is empty (free.c:423-469), and on an
+   allocation from the non-main Heap whose page the first thread abandoned
+   (arena.c:725-776, page.c:307-340). */
+static void* reclaim_main(void* arg) {
+  mi_subproc_t* const subproc = (mi_subproc_t*)arg;
+  mi_subproc_add_current_thread(_mi_subproc_to_id(subproc));
+  mi_theap_t* const theap = _mi_theap_default();
+  mi_page_t* const page = _mi_ptr_page(handoff[1]);
+  const size_t bin = _mi_bin(mi_page_block_size(page));
+  push((int64_t)mi_atomic_load_relaxed(&subproc->heap_main->abandoned_count[bin]));
+  mi_free(handoff[0]);
+  push(!mi_page_is_abandoned(page) && page->theap == theap && mi_page_thread_id(page) == _mi_thread_id());
+  push((int64_t)page->used);
+  push((int64_t)mi_atomic_load_relaxed(&subproc->heap_main->abandoned_count[bin]));
+  push((int64_t)theap->page_count);
+  mi_page_t* const sixth_page = _mi_ptr_page(sixth_block);
+  const size_t sixth_bin = _mi_bin(mi_page_block_size(sixth_page));
+  void* const reused = mi_heap_malloc(sixth, 64);
+  require(reused != NULL);
+  push(_mi_ptr_page(reused) == sixth_page && !mi_page_is_abandoned(sixth_page));
+  push(sixth_page->theap == sixth->theaps && sixth->theaps != NULL && sixth->theaps->tld == theap->tld);
+  push((int64_t)sixth_page->used);
+  push((int64_t)mi_atomic_load_relaxed(&sixth->abandoned_count[sixth_bin]));
+  mi_thread_done();
+  return NULL;
+}
 
 static void* worker_main(void* arg) {
   mi_subproc_t* const subproc = (mi_subproc_t*)arg;
@@ -181,6 +223,13 @@ static void* worker_main(void* arg) {
   require(sixth != NULL);
   sixth_block = mi_heap_malloc(sixth, 64);
   require(sixth_block != NULL);
+  /* An OS-backed block (alignment beyond MI_PAGE_MAX_OVERALLOC_ALIGN) on
+     another Heap: its page joins that Heap's OS-abandoned list
+     (arena.c:1340-1356). */
+  seventh = mi_heap_new();
+  require(seventh != NULL);
+  seventh_block = mi_heap_malloc_aligned(seventh, 10 * MI_KiB + 1, 128 * MI_KiB);
+  require(seventh_block != NULL && mi_memid_is_os(_mi_ptr_page(seventh_block)->memid));
   mi_thread_done();
   return NULL;
 }
@@ -204,6 +253,16 @@ int main(void) {
   push(mi_page_heap(sixth_page) == sixth && sixth->theaps == NULL);
   push(mi_page_is_abandoned_mapped(sixth_page));
   push((int64_t)mi_atomic_load_relaxed(&sixth->abandoned_count[_mi_bin(mi_page_block_size(sixth_page))]));
+  mi_page_t* const seventh_page = _mi_ptr_page(seventh_block);
+  push(seventh->os_abandoned_pages == seventh_page && seventh_page->next == NULL && seventh_page->prev == NULL);
+  push(mi_page_is_abandoned(seventh_page) && !mi_page_is_abandoned_mapped(seventh_page));
+  /* Its only block's free unabandons and frees it (free.c:372-379). */
+  mi_free(seventh_block);
+  push(seventh->os_abandoned_pages == NULL);
+  require(pthread_create(&thread, NULL, &abandon_main, child) == 0);
+  require(pthread_join(thread, NULL) == 0);
+  require(pthread_create(&thread, NULL, &reclaim_main, child) == 0);
+  require(pthread_join(thread, NULL) == 0);
   /* mi_subproc_destroy force-destroys the non-main Heap with its abandoned
      page and live block (subproc.c:215-221). */
   mi_subproc_destroy(_mi_subproc_to_id(child));

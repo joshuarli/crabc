@@ -91,7 +91,9 @@ record moves to the main-Heap Theap, `theaps` statistics), a local free, and
 `mi_heap_destroy` with live pages, whose cached Theap is released by the next
 main-Heap allocation, `mi_heap_delete` moving live pages to the main Heap as
 abandoned pages, a thread finishing with a live block on a non-main Heap's
-page, and `mi_subproc_destroy` of that Heap with its abandoned page.
+page and with an OS-backed block on another, reclaim of abandoned pages on a
+free and on an allocation by later threads, and `mi_subproc_destroy` of that
+Heap with its abandoned page.
 Logs live under `x86_64/heap-lifecycle` in the allocator artifacts
 directory.
 

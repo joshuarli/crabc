@@ -3130,6 +3130,21 @@ pub(crate) unsafe fn abandon_owned_abandoned_page<M: MappedAbandonedPages + ?Siz
     unsafe { abandon_after_collect_inner(page, map, || Ok(()), true) }
 }
 
+/// [`abandon_owned_abandoned_page`] for a non-arena page, with the target
+/// Heap's OS-abandoned list push as the pre-unown publication
+/// (`arena.c:1340-1356`).
+///
+/// # Safety
+/// As for [`abandon_owned_abandoned_page`] and
+/// [`abandon_after_collect_with_before_unown`].
+pub(crate) unsafe fn abandon_owned_abandoned_unmappable_page<F: FnOnce() -> Result<(), AbandonError>>(
+    page: NonNull<Page>,
+    before_unown: F,
+) -> Result<AbandonResult, AbandonError> {
+    // SAFETY: forwarded.
+    unsafe { abandon_after_collect_inner(page, Some(&UNMAPPABLE_ABANDONED_PAGES), before_unown, true) }
+}
+
 unsafe fn abandon_after_collect_inner<
     M: MappedAbandonedPages + ?Sized,
     F: FnOnce() -> Result<(), AbandonError>,

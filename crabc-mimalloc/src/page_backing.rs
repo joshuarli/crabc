@@ -390,6 +390,15 @@ impl<'child> ChildMetadataArenaBacking<'child> {
 
 impl<'child> PageBacking<'child> for ChildMetadataArenaBacking<'child> {
     fn selected_arena(&self) -> Option<&ArenaView<'child>> { None }
+    fn reclaim_arenas(&self, requested: ArenaId, thread_sequence: usize) -> PageArenaSearch<'child> {
+        // `mi_forall_suitable_arenas` over the child's own arenas
+        // (`arena.c:725-776`), in the source rotated registry order.
+        let search = ArenaSearch { heap_sequence: 0, heap_count: 0,
+            thread_sequence, numa_node: -1, requested, allow_pinned: true };
+        // SAFETY: the pair retains the registered child and its published
+        // arenas for the engine operation.
+        PageArenaSearch::Registry(unsafe { self.pair.arena_backing().registry().suitable_arenas(search) })
+    }
     fn process(&self) -> Option<VmProcess<'child>> { Some(self.process()) }
     unsafe fn arena_for_memory(&self, memory: MemoryId) -> Option<ArenaView<'child>> {
         unsafe { ChildMetadataArenaBacking::arena_for_memory(self, memory) }

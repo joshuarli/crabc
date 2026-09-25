@@ -467,6 +467,7 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
         operation(&mut random)
     }
 
+    fn child_reclaim_heap(&self) -> Option<NonNull<Heap>> { Some(self.heap) }
     fn queue(&self, bin: usize) -> Option<&PageQueue> { self.theap().queue(bin) }
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
         unsafe { Theap::local_queue_mut_at(self.theap, bin) }

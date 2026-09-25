@@ -61,9 +61,7 @@
 //! frees such blocks, or blocks of another thread's page, from any thread.
 //!
 //! Not yet covered: nested children, deferred-free callbacks on the child
-//! allocation route, reclaiming an abandoned child page into the freeing or
-//! allocating thread, and abandoning an OS-backed child page (such a thread
-//! stays a member and keeps its child alive until process destruction). Live
+//! allocation route. Live
 //! child metadata blocks at destruction are released with the child arenas,
 //! as in source. The source `_mi_thread_locals_thread_done` call in
 //! `mi_subproc_destroy` releases the destroying thread's dynamic thread-local
@@ -513,9 +511,8 @@ pub(crate) enum ChildThreadDoneError {
     WrongThread,
     /// `child` is not the context that admitted the member.
     WrongChild,
-    /// A page could not be handed to the child main Heap: an OS-backed page
-    /// (whose abandoned list has no Rust owner yet) or a failed page
-    /// transition. The member's engine is terminal.
+    /// A page could not be handed to the child main Heap (a failed page
+    /// transition). The member's engine is terminal.
     PagesRemain,
     /// Page drain or release could not run; the member is unchanged.
     PageEngine(ChildMetadataPageEngineError),
@@ -1041,6 +1038,23 @@ pub(crate) unsafe fn native_child_thread_free_local(
     })
 }
 
+/// `mi_abandoned_page_try_reclaim` (`free.c:423-469`) of a claimed child page
+/// into the current thread, when it is a member of a child and has a Theap
+/// for the page's Heap; see `meta::ChildThreadOwner::reclaim_on_free`.
+/// The record lock is not taken: reclaim runs no nested allocation.
+pub(crate) fn native_child_reclaim_on_free(
+    candidate: crate::abandoned::ReclaimOnFreeCandidate<'_, crate::single_thread::ChildMappedAbandonedPage<'static>>,
+) -> crate::abandoned::ReclaimOnFreeOutcome {
+    // SAFETY: current-thread slot, no other reference live.
+    let Some(current) = (unsafe { current_child_member() }).as_mut() else {
+        return crate::abandoned::ReclaimOnFreeOutcome::Declined;
+    };
+    let binding = current.binding;
+    let owner: *mut crate::meta::ChildThreadOwner = current.member.owner_mut();
+    // SAFETY: the admitted thread; the owner is not otherwise borrowed.
+    unsafe { crate::meta::ChildThreadOwner::reclaim_on_free(owner, core::ptr::null_mut(), binding, candidate) }
+}
+
 /// Production `mi_heap_malloc(heap, size)` on the current child thread; see
 /// `types::heap_registry::lifecycle::child_heap_allocate`. `None` when the
 /// current thread is not a child member.
@@ -1081,6 +1095,9 @@ pub(crate) unsafe fn native_child_heap_allocate(
 pub(crate) unsafe fn free_child_block_nonlocal(
     binding: ProcessMainBackingBinding,
     allocation: crate::process_page_map::LiveAllocationPointer,
+    reclaim: impl FnOnce(
+        crate::abandoned::ReclaimOnFreeCandidate<'_, crate::single_thread::ChildMappedAbandonedPage<'static>>,
+    ) -> crate::abandoned::ReclaimOnFreeOutcome,
 ) -> Option<crate::single_thread::ChildNonlocalFreeResult> {
     use crate::single_thread::ChildNonlocalFreeResult;
     // SAFETY: the live block keeps its page and Heap alive.
@@ -1102,7 +1119,7 @@ pub(crate) unsafe fn free_child_block_nonlocal(
     };
     let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
     // SAFETY: forwarded; `backing` pairs this child's arenas with `page_map`.
-    Some(unsafe { crate::single_thread::free_child_page_block_nonlocal(allocation, page_map, &backing, heap) })
+    Some(unsafe { crate::single_thread::free_child_page_block_nonlocal(allocation, page_map, &backing, heap, reclaim) })
 }
 
 /// Production `mi_heap_new` on the current child thread; see
@@ -1659,7 +1676,7 @@ pub(crate) mod tests {
                 // SAFETY: as above; this thread is outside the child.
                 let allocation = unsafe { binding.page_map().lookup_live_allocation(block(address)) }
                     .unwrap().unwrap();
-                unsafe { free_child_block_nonlocal(binding, allocation) }.expect("a child page")
+                unsafe { free_child_block_nonlocal(binding, allocation, |_| crate::abandoned::ReclaimOnFreeOutcome::Declined) }.expect("a child page")
             };
             let (small_page, medium_page) = (page_of(small0), page_of(medium));
             let handoff_facts = fourth.test_created_child_facts(parent).unwrap();

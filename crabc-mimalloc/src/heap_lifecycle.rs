@@ -29,9 +29,14 @@
 //! and process destruction force-destroy non-main Heaps with their Theaps and
 //! pages ([`child_heap_force_destroy_for_subprocess_destroy`]).
 //!
-//! Not yet covered: exclusive arenas, OS-backed pages of a non-main Heap at
-//! thread finish, reclaiming abandoned pages into a Theap on free or
-//! allocation, and Heaps of the process main subprocess.
+//! Abandoned pages of child Heaps are reclaimed as in source: into the
+//! freeing thread's Theap for the page's Heap (`mi_abandoned_page_try_reclaim`,
+//! `ChildThreadOwner::reclaim_on_free`), and by an allocating Theap of the
+//! Heap before a fresh page (`mi_arenas_page_try_find_abandoned`). OS-backed
+//! pages use the Heap's OS-abandoned list.
+//!
+//! Not yet covered: exclusive arenas and Heaps of the process main
+//! subprocess.
 
 use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
@@ -565,6 +570,85 @@ mod tests {
         );
     }
 
+    /// An OS-backed page that a finished thread abandoned to a non-main Heap
+    /// moves with `mi_heap_delete` to the child main Heap's OS-abandoned
+    /// list (`arena.c:2502-2513,2562-2604`), and its block's later free
+    /// unabandons and unmaps it there.
+    #[test]
+    fn heap_delete_moves_an_abandoned_os_page_to_the_main_heap() {
+        with_owner_local_fixture(true, |attachment, mut heap_owner, pair| {
+            let (parent, registry, binding) = child_fixture_inputs(attachment, pair);
+            let keys = HeapKeySource {
+                registry: OwnedThreadLocalKeyRegistry::test_static_owner(),
+                subprocess: parent,
+                metadata: attachment.parent_metadata_allocator(),
+            };
+            // SAFETY: the registry holds main; this is the attached fixture thread.
+            let mut child = unsafe { new_child(registry, attachment, &mut heap_owner) }.expect("the child is created");
+            struct Shared<T>(T);
+            // SAFETY: each scoped worker is the only user until joined.
+            unsafe impl<T> Send for Shared<T> {}
+            let main = child.main_heap_pointer().unwrap();
+            let shared = Shared((&mut child, binding, keys));
+            let (heap, block) = std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    let shared = shared;
+                    let (child, binding, keys) = shared.0;
+                    // SAFETY: a fresh thread owns its pristine roots.
+                    let Ok(ChildThreadAddOutcome::Added(mut member)) = (unsafe { add_current_thread(child, binding) }) else {
+                        panic!("a fresh thread joins the child");
+                    };
+                    let heap = unsafe { child_heap_new(child, &mut member, binding, keys) }.expect("a Heap");
+                    let theap = unsafe { member.owner_mut().heap_theap(child, binding, heap) }.expect("a Theap");
+                    let owner: *mut ChildThreadOwner = member.owner_mut();
+                    let child_pointer: *mut ChildMainHeapContextOwner<'_> = &mut *child;
+                    let block = unsafe {
+                        ChildThreadOwner::with_heap_theap_page_engine(owner, child_pointer, binding, theap, |engine| {
+                            engine.allocate_aligned(10 * crate::config::KIB + 1, 128 * crate::config::KIB).unwrap()
+                        })
+                    }
+                    .expect("the Heap engine runs");
+                    unsafe { member.thread_done(child, binding) }.expect("the thread finishes with its OS page");
+                    Shared((heap, block))
+                })
+                .join()
+                .expect("the allocating thread completes")
+                .0
+            });
+            let page = unsafe { binding.page_map().lookup_live_allocation(block) }.unwrap().unwrap().page();
+            assert_eq!(unsafe { Heap::os_abandoned_head_at(heap) }, page.as_ptr());
+            let shared = Shared((&mut child, binding, heap));
+            std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    let shared = shared;
+                    let (child, binding, heap) = shared.0;
+                    // SAFETY: a fresh thread owns its pristine roots.
+                    let Ok(ChildThreadAddOutcome::Added(mut member)) = (unsafe { add_current_thread(child, binding) }) else {
+                        panic!("a fresh thread joins the child");
+                    };
+                    assert_eq!(unsafe { child_heap_delete(child, &mut member, binding, heap) },
+                        Ok(HeapReleaseOutcome::Released));
+                    unsafe { member.thread_done(child, binding) }.expect("the thread finishes");
+                })
+                .join()
+                .expect("the deleting thread completes");
+            });
+            assert_eq!(unsafe { Heap::os_abandoned_head_at(main) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref() }.heap(), main.as_ptr());
+            let allocation = unsafe { binding.page_map().lookup_live_allocation(block) }.unwrap().unwrap();
+            assert_eq!(
+                unsafe { crate::subproc::lifecycle::free_child_block_nonlocal(binding, allocation, |_| crate::abandoned::ReclaimOnFreeOutcome::Declined) },
+                Some(crate::single_thread::ChildNonlocalFreeResult::Released),
+            );
+            assert!(unsafe { Heap::os_abandoned_head_at(main) }.is_null());
+            // SAFETY: the child has no users or threads left.
+            unsafe { destroy_child(child, registry, binding, &mut [], attachment, &mut heap_owner) }
+                .expect("the child is destroyed");
+            heap_owner.finish(attachment).expect("the parent engine is quiescent");
+            attachment.finish_after_user_destructors().expect("the parent attachment completes");
+        });
+    }
+
     /// A failed OS unmap on a non-main Heap's Theap is retained on the
     /// thread for a raw retry, as the main-Heap Theap's is, rather than
     /// leaked: that Theap's engine stops at `RetryPending` and the retry
@@ -652,7 +736,7 @@ mod tests {
             struct Shared<T>(T);
             // SAFETY: the scoped worker is the only user of these until joined.
             unsafe impl<T> Send for Shared<T> {}
-            let mut outlived: Option<(NonNull<Heap>, NonNull<u8>)> = None;
+            let mut outlived: Option<(NonNull<Heap>, NonNull<u8>, NonNull<Heap>, NonNull<u8>)> = None;
             let shared = Shared((&mut child, binding, keys, &mut outlived));
             let mut trace = std::thread::scope(|scope| {
                 scope.spawn(move || {
@@ -812,7 +896,23 @@ mod tests {
                     let sixth = unsafe { child_heap_new(child, &mut member, binding, keys) }
                         .expect("the sixth Heap is created");
                     let sixth_block = allocate_in(child, &mut member, sixth, 64);
-                    *outlived = Some((sixth, sixth_block));
+                    // An OS-backed block on another Heap joins that Heap's
+                    // OS-abandoned list when this thread finishes.
+                    let seventh = unsafe { child_heap_new(child, &mut member, binding, keys) }
+                        .expect("the seventh Heap is created");
+                    let seventh_theap = unsafe { member.owner_mut().heap_theap(child, binding, seventh) }.expect("a Theap");
+                    let owner: *mut ChildThreadOwner = member.owner_mut();
+                    let child_pointer: *mut ChildMainHeapContextOwner<'_> = &mut *child;
+                    let seventh_block = unsafe {
+                        ChildThreadOwner::with_heap_theap_page_engine(owner, child_pointer, binding, seventh_theap, |engine| {
+                            let block = engine.allocate_aligned(10 * crate::config::KIB + 1, 128 * crate::config::KIB)
+                                .expect("an OS-backed block");
+                            assert!(unsafe { (*engine.page_for_block(block)).memid().kind().is_os() });
+                            block
+                        })
+                    }
+                    .expect("the Heap engine runs");
+                    *outlived = Some((sixth, sixth_block, seventh, seventh_block));
                     // SAFETY: every Heap image was freed through this thread.
                     unsafe { member.thread_done(child, binding) }.expect("the thread finishes");
                     trace
@@ -827,7 +927,7 @@ mod tests {
                 .expect("the child projects its image");
             trace.push(theaps.current);
             trace.push(theaps.total);
-            let (sixth, sixth_block) = outlived.expect("the worker left a Heap");
+            let (sixth, sixth_block, seventh, seventh_block) = outlived.expect("the worker left its Heaps");
             // SAFETY: the block is live and observed through the fixture PageMap.
             let sixth_page = unsafe { binding.page_map().lookup_live_allocation(sixth_block) }.unwrap().unwrap().page();
             trace.push(i64::from(unsafe {
@@ -841,6 +941,106 @@ mod tests {
             ));
             let bin = crate::size_class::bin(state.block_size).unwrap();
             trace.push(unsafe { sixth.as_ref() }.abandoned_count(bin).unwrap() as i64);
+
+            let seventh_page = unsafe { binding.page_map().lookup_live_allocation(seventh_block) }.unwrap().unwrap().page();
+            let (seventh_next, seventh_prev) = unsafe { crate::types::Page::test_list_links(seventh_page) };
+            trace.push(i64::from(
+                unsafe { Heap::os_abandoned_head_at(seventh) } == seventh_page.as_ptr()
+                    && seventh_next.is_null() && seventh_prev.is_null(),
+            ));
+            let state = unsafe { crate::types::Page::abandonment_state_at(seventh_page) };
+            trace.push(i64::from(
+                unsafe { state.xthread_id.as_ref() }.load(core::sync::atomic::Ordering::Relaxed)
+                    & !(crate::types::PAGE_FLAG_MASK as usize)
+                    == crate::types::THREAD_ID_ABANDONED,
+            ));
+            // This thread is outside the child, so its free never reclaims.
+            let allocation = unsafe { binding.page_map().lookup_live_allocation(seventh_block) }.unwrap().unwrap();
+            assert_eq!(
+                unsafe { crate::subproc::lifecycle::free_child_block_nonlocal(binding, allocation, |_| crate::abandoned::ReclaimOnFreeOutcome::Declined) },
+                Some(crate::single_thread::ChildNonlocalFreeResult::Released),
+            );
+            trace.push(i64::from(unsafe { Heap::os_abandoned_head_at(seventh) }.is_null()));
+
+            // Reclaim; see `abandon_main` and `reclaim_main` in the C oracle.
+            let child_ref = &mut child;
+            let handoff = std::thread::scope(|scope| {
+                let shared = Shared((&mut *child_ref, binding));
+                scope.spawn(move || {
+                    let shared = shared;
+                    let (child, binding) = shared.0;
+                    // SAFETY: a fresh thread owns its pristine roots.
+                    let Ok(ChildThreadAddOutcome::Added(mut member)) = (unsafe { add_current_thread(child, binding) }) else {
+                        panic!("a fresh thread joins the child");
+                    };
+                    // SAFETY: the admitted thread runs its own engine.
+                    let blocks = unsafe {
+                        member.with_page_engine(binding, |_image, engine| {
+                            [engine.allocate(64, false).unwrap(), engine.allocate(64, false).unwrap()]
+                                .map(|block| block.as_ptr().addr())
+                        })
+                    }
+                    .expect("the thread allocates");
+                    unsafe { member.thread_done(child, binding) }.expect("the thread finishes");
+                    blocks
+                })
+                .join()
+                .expect("the abandoning thread completes")
+            });
+            let reclaim_trace = std::thread::scope(|scope| {
+                let shared = Shared((&mut *child_ref, binding, sixth, sixth_block, handoff));
+                scope.spawn(move || {
+                    let shared = shared;
+                    let (child, binding, sixth, sixth_block, handoff) = shared.0;
+                    let mut trace: Vec<i64> = Vec::new();
+                    // SAFETY: a fresh thread owns its pristine roots.
+                    let Ok(ChildThreadAddOutcome::Added(mut member)) = (unsafe { add_current_thread(child, binding) }) else {
+                        panic!("a fresh thread joins the child");
+                    };
+                    let main = child.main_heap_pointer().unwrap();
+                    let theap = member.theap_pointer().unwrap();
+                    let block = |address: usize| NonNull::new(address as *mut u8).unwrap();
+                    let page_of = |block: NonNull<u8>| {
+                        unsafe { binding.page_map().lookup_live_allocation(block) }.unwrap().unwrap().page()
+                    };
+                    let thread_of = |page: NonNull<crate::types::Page>| {
+                        let state = unsafe { crate::types::Page::abandonment_state_at(page) };
+                        unsafe { state.xthread_id.as_ref() }.load(core::sync::atomic::Ordering::Relaxed)
+                            & !(crate::types::PAGE_FLAG_MASK as usize)
+                    };
+                    let used = |page: NonNull<crate::types::Page>| unsafe {
+                        *crate::types::Page::abandonment_state_at(page).used.as_ptr()
+                    } as i64;
+                    let page = page_of(block(handoff[1]));
+                    let bin = crate::size_class::bin(unsafe { page.as_ref() }.block_size()).unwrap();
+                    trace.push(unsafe { main.as_ref() }.abandoned_count(bin).unwrap() as i64);
+                    unsafe { child_thread_free(child, &mut member, binding, block(handoff[0])) }.expect("the free runs");
+                    trace.push(i64::from(
+                        thread_of(page) > crate::types::THREAD_ID_ABANDONED_MAPPED
+                            && unsafe { page.as_ref() }.theap() == theap.as_ptr()
+                            && thread_of(page) == member.thread().get(),
+                    ));
+                    trace.push(used(page));
+                    trace.push(unsafe { main.as_ref() }.abandoned_count(bin).unwrap() as i64);
+                    trace.push(unsafe { theap.as_ref() }.page_count() as i64);
+                    let sixth_page = page_of(sixth_block);
+                    let sixth_bin = crate::size_class::bin(unsafe { sixth_page.as_ref() }.block_size()).unwrap();
+                    let reused = unsafe { child_heap_allocate(child, &mut member, binding, sixth, 64, false) }
+                        .expect("the Heap allocation runs").expect("the Heap allocates");
+                    trace.push(i64::from(page_of(reused) == sixth_page && thread_of(sixth_page) > crate::types::THREAD_ID_ABANDONED_MAPPED));
+                    let heap_theap = unsafe { sixth.as_ref() }.test_theaps_head();
+                    let (_, _, _, _, heap_theap_tld) = unsafe { crate::types::Theap::test_list_links(NonNull::new(heap_theap).unwrap()) };
+                    let (_, _, _, _, main_tld) = unsafe { crate::types::Theap::test_list_links(theap) };
+                    trace.push(i64::from(unsafe { sixth_page.as_ref() }.theap() == heap_theap && heap_theap_tld == main_tld));
+                    trace.push(used(sixth_page));
+                    trace.push(unsafe { sixth.as_ref() }.abandoned_count(sixth_bin).unwrap() as i64);
+                    unsafe { member.thread_done(child, binding) }.expect("the thread finishes");
+                    trace
+                })
+                .join()
+                .expect("the reclaiming thread completes")
+            });
+            trace.extend(reclaim_trace);
             // `mi_subproc_destroy` force-destroys the non-main Heap with its
             // abandoned page and live block.
             // SAFETY: the child has no users or threads left.

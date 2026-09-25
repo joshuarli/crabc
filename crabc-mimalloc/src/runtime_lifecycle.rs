@@ -11499,7 +11499,9 @@ fn native_free_pointer_first_nonlocal(
         };
         // SAFETY: forwarded exact-live-allocation contract; the live block
         // keeps its child alive.
-        return match unsafe { crate::subproc::lifecycle::free_child_block_nonlocal(binding, allocation) } {
+        return match unsafe { crate::subproc::lifecycle::free_child_block_nonlocal(
+            binding, allocation, crate::subproc::lifecycle::native_child_reclaim_on_free,
+        ) } {
             Some(ChildNonlocalFreeResult::Freed | ChildNonlocalFreeResult::Released) => NativePageFreeResult::Freed,
             _ => NativePageFreeResult::Retained,
         };
