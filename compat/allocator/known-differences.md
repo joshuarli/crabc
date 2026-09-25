@@ -2041,8 +2041,8 @@ transfer capability.
   `compat/allocator/m2_arena_lifecycle_x86_64.c` record each fresh
   reservation's advice for `allow_thp` 1/2/0 under eager and on-demand
   commit; `m2_arena_lifecycle_x86_64.py` maps only the `allow_thp=1` cells
-  to `MADV_NOHUGEPAGE` and requires every other field (6388) to equal pinned
-  C, which advises `MADV_HUGEPAGE` for the committed cell and nothing for the
+  to `MADV_NOHUGEPAGE` and requires every other field of the 6388 to equal
+  pinned C, which advises `MADV_HUGEPAGE` for the committed cell and nothing for the
   uncommitted one. `os::tests::arena_reservation_declines_thp_only_at_the_default_options`
   and
   `process_arena::tests::process_bound_regular_first_arena_declines_thp_at_the_default_options`
