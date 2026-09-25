@@ -43,8 +43,9 @@ and completion checks and leaves native reads unevaluated.
 
 The owning lane closes a gate by making its ledger command executable and
 registering its reader in `qualification_gates.py`; no case manifest pin
-changes. `consumer.rust-std-lto` and `performance.release` currently name
-their prose evidence as unmet in exactly this way.
+changes. Every chain gate's evidence is now an executable command with a
+registered reader; an unpublished or failing receipt is the named unmet
+condition.
 
 ## Evidence publication
 
@@ -56,9 +57,13 @@ path and byte hash. The gate rereads the receipt through the leaf reader on
 every evaluation, so replaced, stale-source or partial receipts fail. Current
 publications: `compat.abi-differential abi-evidence` (`abi-evidence.json`
 from `abi-differential-evidence assemble`), `compat.posix-process
-posix-native` (`native-execution.json` from `owned-posix-native`) and
+posix-native` (`native-execution.json` from `owned-posix-native`),
 `compat.loader-corpus loader-family` (`receipt.json` from
-`owned-loader-family`).
+`owned-loader-family`), `consumer.rust-std-lto rust-std-lto` (`receipt.json`
+from `consumer-rust-std-lto run`), `consumer.source-build lua-source-build`
+(`admission.json` from `lua-source-build-admission --output`, after both Lua
+lanes) and `performance.release performance-release` (`receipt.json` from
+`compat/x86_64/performance_release_gate.py evaluate`).
 
 `abi-evidence` binds one current-source set: the static preparation and
 product, the materialized dynamic product, the natively collected native ABI
@@ -87,8 +92,27 @@ P="--static-product .work/x86_64/abi/static/products/primary --dynamic-product $
   --output .work/x86_64/abi-differential/abi
 ./scripts/dev-x86_64.sh qualification-manifest --publish compat.abi-differential abi-evidence .work/x86_64/abi-differential/abi/abi-evidence.json
 ``` `compat.resolver-network` reads
-the published `compat/reports/resolver-network/x86_64/latest.json` and
-`consumer.source-build` the Lua admission's fixed reports.
+the published `compat/reports/resolver-network/x86_64/latest.json`.
+
+`lua-source-build` rereads only while a fresh admission of the current
+source, both latest Lua lane reports and their products is identical to the
+retained one:
+
+```sh
+./scripts/dev-x86_64.sh lua-static-source-build
+./scripts/dev-x86_64.sh lua-dynamic-source-build
+./scripts/dev-x86_64.sh lua-source-build-admission --output .work/x86_64/lua-admission/NAME
+./scripts/dev-x86_64.sh qualification-manifest --publish consumer.source-build lua-source-build .work/x86_64/lua-admission/NAME/admission.json
+```
+
+`performance-release` never measures. `performance_release_gate.py evaluate`
+reads the three-attempt runtime C collector through the `perf-c check`
+reader and rechecks every row against the plan's 0.90 CPU/PSS/`memory.peak`
+and 2R syscall rules, replays one `perf-native --mode full` report, and
+applies the allocator promotion table to at least three agreeing M9 qualified
+full reports read by `compat/allocator`'s own reader. Each input must carry an
+`uncontended_host` record. The receipt names every unmet condition; the
+publication reruns that evaluation and admits only a pass.
 
 ## Execution and receipts
 

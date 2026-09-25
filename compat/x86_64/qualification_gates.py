@@ -183,6 +183,17 @@ def _validate_lua_source_build(path: Path) -> Mapping[str, Any]:
     return _lua_source_build_admission().validate_receipt(ROOT, path)
 
 
+def _validate_performance_release(path: Path) -> Mapping[str, Any]:
+    return _import_compat("performance_release_gate").validate_receipt(ROOT, path)
+
+
+PERFORMANCE_RELEASE_COMMAND = (
+    "python3 compat/x86_64/performance_release_gate.py evaluate --runtime-c-collector COLLECTOR.json "
+    "--native-facade-report REPORT.json --rustybench-source DIR --rustix-source DIR "
+    "--allocator-report REPORT.json --allocator-report REPORT.json --allocator-report REPORT.json --output NEW_DIR"
+)
+
+
 RUST_STD_LTO_COMMAND = (
     "./scripts/dev-x86_64.sh consumer-rust-std-lto run --static-preparation PREP.json "
     "--dynamic-qualification QUAL.json --provider-vendor VENDOR --dependency-vendor VENDOR --output NEW_DIR"
@@ -220,6 +231,13 @@ PUBLICATIONS: dict[str, Publication] = {
             "./scripts/dev-x86_64.sh lua-source-build-admission --output NEW_DIR "
             "(after lua-static-source-build and lua-dynamic-source-build)",
             _validate_lua_source_build,
+        ),
+        Publication(
+            "performance-release",
+            "performance.release",
+            "receipt.json",
+            PERFORMANCE_RELEASE_COMMAND,
+            _validate_performance_release,
         ),
         Publication(
             "loader-family",
@@ -513,6 +531,13 @@ def _read_lua_source_build(evaluation: Evaluation) -> str:
     return "published Lua admission: static and dynamic lanes at " + record["admission"]["source_identity"]["revision"]
 
 
+def _read_performance_release(evaluation: Evaluation) -> str:
+    # The receipt reader re-evaluates every retained performance input and
+    # names each unmet condition; only a passing evaluation reaches here.
+    record = evaluation.published("performance.release", "performance-release")
+    return "published performance-release receipt: " + ", ".join(row["id"] for row in record["conditions"])
+
+
 def _read_parity_ledger(evaluation: Evaluation) -> str:
     del evaluation
     ledger = _import_compat("validate_parity_ledger")
@@ -583,6 +608,13 @@ READERS: dict[tuple[str, str], EvidenceReader] = {
             "publication",
             "lua-source-build",
             _read_lua_source_build,
+        ),
+        EvidenceReader(
+            "performance.release",
+            PERFORMANCE_RELEASE_COMMAND,
+            "publication",
+            "performance-release",
+            _read_performance_release,
         ),
         EvidenceReader(
             "capability.accounting",

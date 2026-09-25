@@ -21054,10 +21054,10 @@ depends_on = ["oracle.musl-toolchain", "capability.accounting", "consumer.rust-s
 category = "promotion-gate"
 description = "Qualified x86 native performance evidence wherever the retained AArch64 completion contract requires it."
 aarch64_gates = ["perf", "perf-native"]
-source_owners = ["compat/perf", "compat/perf/native", "docs/design/performance.md"]
+source_owners = ["compat/perf", "compat/perf/native", "compat/x86_64/performance_release_gate.py", "docs/design/performance.md"]
 x86_abi_prerequisites = ["Native x86 execution on controlled hardware", "same-source/same-input candidate and oracle lanes", "artifact hash provenance"]
 x86_header_prerequisites = ["Performance fixtures link through the selected owned x86 runtime rather than ambient host headers or CRT objects."]
-native_evidence = [{ state = "required", command = "Define qualified native x86 performance gates after correctness closure", scope = "Performance evidence cannot substitute for correctness or promotion gates." }]
+native_evidence = [{ state = "required", command = "python3 compat/x86_64/performance_release_gate.py evaluate --runtime-c-collector COLLECTOR.json --native-facade-report REPORT.json --rustybench-source DIR --rustix-source DIR --allocator-report REPORT.json --allocator-report REPORT.json --allocator-report REPORT.json --output NEW_DIR", scope = "Read-only gate over retained receipts; it never measures. Requires the three-attempt runtime C scorecard (`perf-c check` reader) to be release-qualified with every row within the plan's CPU/PSS/memory.peak 0.90 and 2R syscall rules, a complete `perf-native --mode full` report, and at least three agreeing allocator M9 qualified full reports within the allocator promotion table, each receipt carrying an uncontended-host record. Performance evidence cannot substitute for correctness or promotion gates." }]
 oracle = [{ kind = "performance", source = "Pinned musl 1.2.6 comparison lane and project performance contract", role = "Controlled comparison and decision evidence." }]
 capabilities = []
 status = "planned"
