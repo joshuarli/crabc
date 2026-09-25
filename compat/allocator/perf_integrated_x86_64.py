@@ -350,11 +350,12 @@ def run(arguments: argparse.Namespace) -> Path:
         seed = 0x494E_5445_4752
         report["rows"] = {}
         for product_index, kind in enumerate(("static", "dynamic")):
+            # Row names become scratch file names, so the link mode joins with "-" there.
             measured = engine.measure_rows(
-                [dict(row, name=f"{kind}/{row['name']}") for row in rows], programs["binaries"][kind], memory=False,
+                [dict(row, name=f"{kind}-{row['name']}") for row in rows], programs["binaries"][kind], memory=False,
                 mode=mode, cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch,
                 seed=seed + 7919 * product_index, host_evidence=host_evidence, peak_hook=True)
-            report["rows"].update(measured)
+            report["rows"].update({f"{kind}/{name.removeprefix(kind + '-')}": entry for name, entry in measured.items()})
             name = f"{kind}/{manifest['startup_row']['name']}"
             host_evidence["windows"].append(engine.contention_window(f"row:{name}", engine.CONTENTION_ROW_WINDOW_SECONDS))
             report["rows"][name] = measure_startup(
