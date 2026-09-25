@@ -94,6 +94,31 @@ static void arena_reserve(long reserve_kib, long eager, long allow_large, size_t
   restore_options();
 }
 
+/* `_mi_os_purge_ex` (`src/os.c:655-680`) on a committed OS range: the
+   result and the subprocess purge, reset, and committed accounting it
+   changed, for `purge_decommits`, `purge_delay`, and `allow_reset`. */
+static void os_purge(long decommits, long delay, int allow_reset) {
+  mi_subproc_t* subproc = _mi_subproc();
+  const size_t size = 4 * _mi_os_page_size();
+  mi_memid_t memid;
+  void* p = _mi_os_alloc(subproc, size, &memid);
+  if (p == NULL) { printf("purge.%ld.%ld.%d=unavailable\n", decommits, delay, allow_reset); return; }
+  mi_option_set(mi_option_purge_decommits, decommits);
+  mi_option_set(mi_option_purge_delay, delay);
+  const mi_stats_t before = subproc->stats;
+  const bool needs_recommit = _mi_os_purge_ex(subproc, p, size, allow_reset != 0, size, NULL, NULL);
+  const mi_stats_t after = subproc->stats;
+  printf("purge.%ld.%ld.%d=%d,%lld,%lld,%lld,%lld,%lld\n", decommits, delay, allow_reset,
+         needs_recommit ? 1 : 0,
+         (long long)(after.purge_calls.total - before.purge_calls.total),
+         (long long)(after.purged.total - before.purged.total),
+         (long long)(after.reset_calls.total - before.reset_calls.total),
+         (long long)(after.reset.total - before.reset.total),
+         (long long)(after.committed.current - before.committed.current));
+  restore_options();
+  _mi_os_free(subproc, p, size, memid);
+}
+
 int main(void) {
   memcpy(startup_options, mi_options, sizeof(startup_options));
   printf("CRABC_MI_M7_OPTION_EFFECTS_TRACE_BEGIN\n");
@@ -128,6 +153,10 @@ int main(void) {
   arena_reserve(65536, 2, 1, 40u << 20);
   arena_reserve(65536, 0, 1, 1);
   arena_reserve(1L << 40, 0, 0, 1);
+  static const long purges[][3] = {
+    { 1, 1000, 1 }, { 1, 1000, 0 }, { 0, 1000, 1 }, { 0, 1000, 0 }, { 1, -1, 1 }, { 0, -1, 1 }, { 1, 0, 1 },
+  };
+  for (size_t i = 0; i < sizeof(purges) / sizeof(purges[0]); i++) os_purge(purges[i][0], purges[i][1], (int)purges[i][2]);
   printf("CRABC_MI_M7_OPTION_EFFECTS_TRACE_END\n");
   return 0;
 }

@@ -6608,6 +6608,36 @@ pub unsafe fn native_runtime_live_client_page_test_audit(
     })
 }
 
+/// The source `mi_memkind_t` value of one exact live native client's page:
+/// arena-backed or OS-backed, as `_mi_arenas_page_alloc` selected it.
+///
+/// # Safety
+///
+/// As [`native_runtime_live_client_page_test_audit`]: `client` is an exact
+/// live native allocation sampled while its owner is quiescent.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_live_client_memory_kind_test_audit(client: core::ptr::NonNull<u8>) -> Option<u8> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the caller's exact-live-client proof, as for the page audit.
+    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    // SAFETY: the live client keeps its page and immutable memid.
+    Some(match unsafe { page.as_ref() }.memid().kind() {
+        MemoryKind::None => 0,
+        MemoryKind::External => 1,
+        MemoryKind::Static => 2,
+        MemoryKind::Os => 3,
+        MemoryKind::OsHuge => 4,
+        MemoryKind::OsRemap => 5,
+        MemoryKind::Arena => 6,
+        MemoryKind::Malloc => 7,
+    })
+}
+
 /// Reports whether one exact live native client belongs to the source-start
 /// regular parent retained by the current process binding.
 ///

@@ -90,6 +90,23 @@ ERROR_SITE_CASES = tuple(
         "aligned_large_alignment_offset", "aligned_overallocation_too_large", "malloc_ordinary",
     )
 )
+OPTION_PROFILES_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_option_profiles_oracle.c"
+OPTION_PROFILES_RUST_TEST = "native_option_profiles"
+OPTION_PROFILES_TRACE_BEGIN = "CRABC_MI_M7_OPTION_PROFILES_TRACE_BEGIN"
+OPTION_PROFILES_TRACE_END = "CRABC_MI_M7_OPTION_PROFILES_TRACE_END"
+# Environment images for descriptors read at process start or on a page
+# allocation route; each runs one C and one Rust process.
+OPTION_PROFILES = {
+    "default": {},
+    "disallow_arena_alloc": {"mimalloc_disallow_arena_alloc": "1"},
+    "disallow_os_alloc": {"mimalloc_disallow_os_alloc": "1"},
+    "disallow_both": {"mimalloc_disallow_arena_alloc": "1", "mimalloc_disallow_os_alloc": "1"},
+    "reserve_os_memory": {"mimalloc_reserve_os_memory": "65536"},
+    "arena_reserve": {"mimalloc_arena_reserve": "65536"},
+    "arena_reserve_lazy": {"mimalloc_arena_reserve": "65536", "mimalloc_arena_eager_commit": "0"},
+    "arena_reserve_eager": {"mimalloc_arena_reserve": "65536", "mimalloc_arena_eager_commit": "1"},
+}
+OPTION_PROFILE_CASES = ("small", "medium", "large", "huge")
 OPTION_EFFECTS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_option_effects_oracle.c"
 OPTION_EFFECTS_RUST_TEST = "diagnostic_output::tests::source_option_effects_trace_for_pinned_c_comparison"
 OPTION_EFFECTS_TRACE_BEGIN = "CRABC_MI_M7_OPTION_EFFECTS_TRACE_BEGIN"
@@ -98,7 +115,7 @@ OPTION_EFFECTS_TRACE_END = "CRABC_MI_M7_OPTION_EFFECTS_TRACE_END"
 # traces would otherwise compare equal.
 OPTION_EFFECT_FAMILIES = (
     "host", "arena_max_object_size", "arena_purge_delay", "minimal_purge_size",
-    "numa_node_count", "generic_collect", "arena_reserve",
+    "numa_node_count", "generic_collect", "arena_reserve", "purge",
 )
 RUST_TARGET = "x86_64-unknown-linux-musl"
 
@@ -474,6 +491,17 @@ def require_complete_error_sites_trace(trace: Mapping[str, str], description: st
                 raise harness.HarnessError(f"{description} lacks error_site.{case}.{suffix}")
 
 
+def require_complete_option_profile_trace(trace: Mapping[str, str], description: str) -> None:
+    """Reject a profile trace that omits a request record or the first arena."""
+
+    if "profile.first_arena" not in trace:
+        raise harness.HarnessError(f"{description} lacks profile.first_arena")
+    for case in OPTION_PROFILE_CASES:
+        for suffix in ("null", "memkind"):
+            if f"profile.{case}.{suffix}" not in trace:
+                raise harness.HarnessError(f"{description} lacks profile.{case}.{suffix}")
+
+
 def compare_options_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, str]) -> None:
     missing = sorted(set(c_trace) - set(rust_trace))
     extra = sorted(set(rust_trace) - set(c_trace))
@@ -608,6 +636,23 @@ def run_error_sites_differential(offline: bool) -> dict[str, Any]:
     )
 
 
+def run_option_profiles_differential(offline: bool) -> dict[str, Any]:
+    compared = 0
+    profiles: dict[str, Any] = {}
+    for profile, environment in OPTION_PROFILES.items():
+        report = run_trace_differential(
+            offline, subject=f"option-profile-{profile}", oracle=OPTION_PROFILES_ORACLE,
+            test=OPTION_PROFILES_RUST_TEST, begin=OPTION_PROFILES_TRACE_BEGIN, end=OPTION_PROFILES_TRACE_END,
+            require_complete=require_complete_option_profile_trace,
+            report_name=f"option-profile-{profile}.json", integration_test=True, environment=environment,
+        )
+        compared += report["compared_key_count"]
+        profiles[profile] = {"environment": environment, "trace": report["trace"]}
+    summary = {"compared_key_count": compared, "profiles": profiles, "status": "passed"}
+    harness.write_json(ARTIFACTS / "option-profiles.json", summary)
+    return summary
+
+
 def run_option_effects_differential(offline: bool) -> dict[str, Any]:
     return run_trace_differential(
         offline, subject="option-effects", oracle=OPTION_EFFECTS_ORACLE, test=OPTION_EFFECTS_RUST_TEST,
@@ -637,6 +682,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust options/environment differential")
     mode.add_argument("--option-effects-differential", action="store_true",
         help="run the pinned-C/Rust option-effects differential")
+    mode.add_argument("--option-profiles-differential", action="store_true",
+        help="run the pinned-C/Rust per-environment option-profile differential")
     mode.add_argument("--error-sites-differential", action="store_true",
         help="run the pinned-C/Rust `_mi_error_message` site differential")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
@@ -644,6 +691,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.options_differential:
         report = run_options_differential(arguments.offline)
         print(f"M7 options/environment differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.option_profiles_differential:
+        report = run_option_profiles_differential(arguments.offline)
+        print(f"M7 option-profile differential passed: {report['compared_key_count']} keys "
+              f"in {len(report['profiles'])} profiles")
         return 0
     if arguments.error_sites_differential:
         report = run_error_sites_differential(arguments.offline)

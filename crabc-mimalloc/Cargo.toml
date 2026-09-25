@@ -273,3 +273,10 @@ path = "tests/native_error_sites.rs"
 # Rust half of the M7 `_mi_error_message` site differential. The last-report
 # audit is absent from the production allocator and libc friend surface.
 required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_option_profiles"
+path = "tests/native_option_profiles.rs"
+# Rust half of the M7 option-profile differential; its page-kind audit is
+# absent from the production allocator and libc friend surface.
+required-features = ["native-runtime-test-audit"]

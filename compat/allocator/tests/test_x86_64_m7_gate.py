@@ -46,6 +46,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:diagnostic-output-owner",
             "differential:error-reporting-sites",
             "differential:option-effects",
+            "differential:option-profiles",
             "differential:options-environment",
             "differential:reclaim-options",
         ])

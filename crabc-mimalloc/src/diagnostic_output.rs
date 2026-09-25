@@ -4418,6 +4418,8 @@ mod tests {
         // policy; no output callback is registered, so a lazy retry would
         // only reach the delayed buffer.
         let policy = unsafe { crate::os::VmPolicy::from_process_options(owner) };
+        // The C probe runs after `_mi_auto_process_init` cleared preloading.
+        policy.finish_preloading();
         (owner, policy)
     }
 
@@ -4505,6 +4507,37 @@ mod tests {
                 }
                 None => std::println!("arena_reserve.{reserve}.{eager}.{large}.{request}={arena_count},none"),
             }
+        }
+        // `_mi_os_purge_ex` on a committed OS range.
+        for (decommits, delay, allow_reset) in
+            [(1, 1_000, true), (1, 1_000, false), (0, 1_000, true), (0, 1_000, false), (1, -1, true), (0, -1, true), (1, 0, true)]
+        {
+            let (owner, policy) = option_effects_policy();
+            let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+            let process = crate::os::VmProcess::new(&policy, subprocess);
+            let size = 4 * config.page_size().bytes();
+            let mut mapping = crate::os::Mapping::map_for_process(
+                process, config, size, 1, crate::os::MapAccess::Committed, false, None,
+            )
+            .expect("the purge fixture maps one committed OS range");
+            set(owner, SourceOption::PurgeDecommits, decommits);
+            set(owner, SourceOption::PurgeDelay, delay);
+            let before = subprocess.vm_statistics().snapshot();
+            let needs_recommit = mapping
+                .purge_for_process(process, 0, size, allow_reset, size)
+                .expect("the purge fixture range is live");
+            let after = subprocess.vm_statistics().snapshot();
+            std::println!(
+                "purge.{decommits}.{delay}.{}={},{},{},{},{},{}",
+                u8::from(allow_reset),
+                u8::from(needs_recommit),
+                after.purge_calls - before.purge_calls,
+                after.purged - before.purged,
+                after.reset_calls - before.reset_calls,
+                after.reset - before.reset,
+                after.committed_current - before.committed_current,
+            );
+            let _ = mapping.unmap_for_process(process, size, false);
         }
         std::println!("CRABC_MI_M7_OPTION_EFFECTS_TRACE_END");
     }
