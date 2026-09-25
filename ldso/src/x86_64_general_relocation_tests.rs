@@ -832,3 +832,90 @@ fn batched_referenced_record_check_matches_the_per_span_scan() {
         }
     }
 }
+
+// The batched preflight (per-span containment plus one sorted pass per table)
+// must accept exactly the write sets the per-span `checked_write_span` scan
+// accepts, over generated sorted disjoint span sets and object layouts that
+// place, omit, null or overflow the relocation, symbol, string, program
+// header, VERSYM and hash tables.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn batched_write_set_checks_match_the_per_span_scan() {
+    let mut image = MappedImage::new();
+    for index in [1, 2, 3] { image.symbol(index, b"s", 1, 1, 0, 1); }
+    image.rela(R_64, 1, 0);
+    image.rela(R_64, 3, 0);
+    let base = image.object(true);
+    let at = |offset: usize| unsafe { base.base as *const u8 }.wrapping_add(offset);
+    let mut layouts = std::vec::Vec::new();
+    layouts.push(base);
+    let mut versioned = base;
+    versioned.versym = at(0x2c0);
+    versioned.symcount = 4;
+    layouts.push(versioned);
+    let mut hashed = versioned;
+    hashed.symbol_lookup = SymbolLookupTable::Sysv {
+        bucket_count: 2, buckets: at(0x2e8).cast(), chains: at(0x2f0).cast(), symbol_count: 4,
+    };
+    layouts.push(hashed);
+    let mut relr = base;
+    relr.relr = at(0x3c0);
+    relr.relrsz = 16;
+    relr.jmprel = at(0x3a0);
+    relr.pltrelsz = 0;
+    layouts.push(relr);
+    let mut null_table = base;
+    null_table.relr = core::ptr::null();
+    null_table.relrsz = 8;
+    layouts.push(null_table);
+    let mut overflowing = base;
+    overflowing.symcount = usize::MAX / 8;
+    layouts.push(overflowing);
+    let mut empty = base;
+    empty.symtab = core::ptr::null();
+    empty.symcount = 0;
+    empty.strsz = 0;
+    empty.rela = core::ptr::null();
+    empty.relasz = 0;
+    empty.phnum = 0;
+    layouts.push(empty);
+
+    let old = |object: &Object, spans: &[(WriteSpan, bool)]| -> bool {
+        spans.iter().all(|(span, word)| unsafe {
+            checked_write_span(object, span.start, span.length, *word, None, ReferencedRecords::Deferred)
+        }.is_some())
+            && unsafe { referenced_records_overlap_spans(object, &spans.iter().map(|item| item.0).collect::<std::vec::Vec<_>>()) }
+                == Some(false)
+    };
+    let new = |object: &Object, spans: &[(WriteSpan, bool)]| -> bool {
+        let mut writable = WritableLoadCache::default();
+        spans.iter().all(|(span, word)| unsafe { admitted_span(object, &mut writable, span.start, span.length, *word) }.is_some())
+            && {
+                let set: std::vec::Vec<_> = spans.iter().map(|item| item.0).collect();
+                let tables = unsafe { forbidden_tables_overlap_spans(object, &set) };
+                let records = unsafe { referenced_records_overlap_spans(object, &set) };
+                tables == Some(false) && records == Some(false)
+            }
+    };
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut next = |bound: u64| { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed % bound };
+    let mut accepted = 0;
+    let mut rejected = 0;
+    for object in &layouts {
+        for _ in 0..4000 {
+            let mut spans = std::vec::Vec::new();
+            let mut cursor = next(0x80);
+            for _ in 0..(1 + next(5)) {
+                let length = [0u64, 1, 8, 8, 16, 24, 40][next(7) as usize];
+                let word = length == 8 && next(4) != 0;
+                if cursor + length > MappedImage::BYTES as u64 + 16 { break; }
+                spans.push((WriteSpan { start: cursor, length }, word));
+                cursor += length.max(1) + next(0x60);
+            }
+            let (old, new) = (old(object, &spans), new(object, &spans));
+            assert_eq!(new, old, "spans {:?}", spans.iter().map(|(span, word)| (span.start, span.length, *word)).collect::<std::vec::Vec<_>>());
+            if old { accepted += 1; } else { rejected += 1; }
+        }
+    }
+    assert!(accepted > 500 && rejected > 500, "sweep must exercise both outcomes: {accepted}/{rejected}");
+}

@@ -96,3 +96,44 @@ fn debugger_add_guard_restores_consistent_on_every_transaction_exit() {
     }
     assert_eq!(unsafe { (*RENDEZVOUS.0.get()).state }, RT_CONSISTENT);
 }
+
+// Relocation preflight checks the debugger slots against the admitted write
+// set it builds: a RELATIVE write into either published slot rejects the
+// whole graph before any write, and one beside the slot does not.
+#[test]
+fn relocation_into_a_debugger_slot_rejects_the_graph_before_any_write() {
+    use super::super::x86_64_initial_graph_state::{InitialGraphState, ObjectAdmission};
+    let graph = || {
+        let mut graph = InitialGraphState::new(ObjectIdentity { device: 1, inode: 0 });
+        assert!(matches!(graph.admit_mapped(ObjectIdentity { device: 1, inode: 1 }), Ok(ObjectAdmission::New { .. })));
+        graph.attach_needed(0, 1).unwrap();
+        graph.finish_discovery(1).unwrap();
+        graph.finish_discovery(0).unwrap();
+        graph
+    };
+    for (image_index, slot, target, rejected) in [(1usize, 0x500u64, 0x500u64, true), (1, 0x500, 0x508, false),
+        (0, 0x408, 0x408, true), (0, 0x408, 0x410, false)] {
+        let main = Image::new();
+        let libc = Image::new();
+        let images = [&main, &libc];
+        // One RELATIVE record at 0x600 writing `target` in the chosen image.
+        images[image_index].word(0x600, target);
+        images[image_index].word(0x608, R_X86_64_RELATIVE as u64);
+        images[image_index].word(0x610, 0x40);
+        let objects = [main.object(false), libc.object(true)];
+        let debugger = unsafe { PreparedInitialDebugger::prepare(&objects) }.unwrap();
+        let mut relocated = objects;
+        relocated[image_index].rela = unsafe { images[image_index].0.add(0x600) };
+        relocated[image_index].relasz = 24;
+        // The unit graph has no canonical-libc startup import to validate.
+        relocated[1].canonical_libc_identity = None;
+        let before = unsafe { read_u64(images[image_index].0.add(target as usize)) };
+        let result = unsafe {
+            super::super::x86_64_general_relocation::relocate_initial_graph_with_debugger(&graph(), &relocated, &debugger)
+        };
+        assert_eq!(result.is_none(), rejected, "slot {slot:#x} target {target:#x}");
+        if rejected {
+            assert_eq!(unsafe { read_u64(images[image_index].0.add(target as usize)) }, before);
+        }
+    }
+}

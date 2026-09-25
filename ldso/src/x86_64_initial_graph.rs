@@ -3042,7 +3042,19 @@ unsafe fn preflight_rela_table(
 unsafe fn preflight_relr_table(
     object: &Object,
     targets: &mut [u64],
+    target_count: usize,
+) -> Option<usize> {
+    unsafe { decode_relr_table(object, targets, target_count, |target| unsafe { preflight_relr_target(object, target) }) }
+}
+
+/// Decode `object`'s RELR table into `targets`, applying `check` to each
+/// target before recording it (as [`preflight_relr_table`] does with
+/// [`preflight_relr_target`]).
+unsafe fn decode_relr_table(
+    object: &Object,
+    targets: &mut [u64],
     mut target_count: usize,
+    mut check: impl FnMut(u64) -> Option<()>,
 ) -> Option<usize> {
     if object.relrsz == 0 {
         return Some(target_count);
@@ -3057,7 +3069,7 @@ unsafe fn preflight_relr_table(
     for index in 0..(object.relrsz / ELF64_RELR_SIZE) {
         let encoded = read_u64(object.relr.add(index * ELF64_RELR_SIZE));
         if encoded & 1 == 0 {
-            preflight_relr_target(object, encoded)?;
+            check(encoded)?;
             target_count = record_relocation_target(targets, target_count, encoded)?;
             next_virtual_address = Some(encoded.checked_add(ELF64_RELR_SIZE as u64)?);
             continue;
@@ -3070,7 +3082,7 @@ unsafe fn preflight_relr_table(
                 continue;
             }
             let target = start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?;
-            preflight_relr_target(object, target)?;
+            check(target)?;
             target_count = record_relocation_target(targets, target_count, target)?;
         }
         next_virtual_address = Some(
@@ -4792,6 +4804,36 @@ unsafe fn virtual_range_in_writable_load(phdr: *const u8, phnum: usize, address:
     false
 }
 
+/// [`virtual_range_in_writable_load`] for many ranges of one object, caching
+/// the last matching segment. A cached segment was reached by a full scan
+/// without meeting an overflowing writable load before it, so any range it
+/// contains gets the same `true` the full scan would return; every miss runs
+/// the full scan.
+#[cfg(crabc_general_initial_graph)]
+#[derive(Clone, Copy, Default)]
+pub(super) struct WritableLoadCache { hit: Option<(u64, u64)> }
+
+#[cfg(crabc_general_initial_graph)]
+impl WritableLoadCache {
+    pub(super) unsafe fn contains(&mut self, phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
+        let Some(end) = address.checked_add(byte_len) else { return false; };
+        if let Some((start, load_end)) = self.hit {
+            if address >= start && end <= load_end { return true; }
+        }
+        for index in 0..phnum {
+            let header = unsafe { phdr.add(index * 56) };
+            if unsafe { read_u32(header) } != PT_LOAD || unsafe { read_u32(header.add(4)) } & PF_W == 0 { continue; }
+            let start = unsafe { read_u64(header.add(16)) };
+            let Some(load_end) = start.checked_add(unsafe { read_u64(header.add(40)) }) else { return false; };
+            if address >= start && end <= load_end {
+                self.hit = Some((start, load_end));
+                return true;
+            }
+        }
+        false
+    }
+}
+
 unsafe fn virtual_range_in_executable_load(phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
     let Some(end) = address.checked_add(byte_len) else { return false; };
     for index in 0..phnum {
@@ -4844,21 +4886,30 @@ unsafe fn decode_sysv_hash(
     }
     let buckets = unsafe { table.add(8).cast::<u32>() };
     let chains = unsafe { buckets.add(bucket_count) };
-    for index in 0..bucket_count {
-        let value = unsafe { read_u32(buckets.add(index).cast()) } as usize;
-        if value >= symbol_count && value != 0 { return None; }
-    }
-    for index in 0..symbol_count {
-        let value = unsafe { read_u32(chains.add(index).cast()) } as usize;
-        if value >= symbol_count && value != 0 { return None; }
+    // The ELF hash words are 4-byte aligned in any linker output; read them
+    // as slices then (tight, vectorizable scans), else word by word.
+    let word = |pointer: *const u32, index: usize| unsafe { read_u32(pointer.add(index).cast()) } as usize;
+    let aligned = buckets as usize % core::mem::align_of::<u32>() == 0;
+    let in_range = |value: u32| (value as usize) < symbol_count || value == 0;
+    if aligned {
+        // SAFETY: the readable file-backed range above covers both arrays.
+        let (bucket_words, chain_words) = unsafe {
+            (core::slice::from_raw_parts(buckets, bucket_count), core::slice::from_raw_parts(chains, symbol_count))
+        };
+        if !bucket_words.iter().all(|&value| in_range(value)) || !chain_words.iter().all(|&value| in_range(value)) {
+            return None;
+        }
+    } else {
+        if !(0..bucket_count).all(|index| in_range(word(buckets, index) as u32)) { return None; }
+        if !(0..symbol_count).all(|index| in_range(word(chains, index) as u32)) { return None; }
     }
     // A valid SysV chain terminates at index zero. Bound every bucket walk so
     // a cycle cannot turn a later name lookup into unbounded loader work.
     for bucket in 0..bucket_count {
-        let mut index = unsafe { read_u32(buckets.add(bucket).cast()) } as usize;
+        let mut index = word(buckets, bucket);
         for _ in 0..symbol_count {
             if index == 0 { break; }
-            index = unsafe { read_u32(chains.add(index).cast()) } as usize;
+            index = word(chains, index);
         }
         if index != 0 { return None; }
     }

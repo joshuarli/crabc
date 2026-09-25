@@ -721,10 +721,21 @@ unsafe fn preflight_object(scope: &SymbolScope<'_>, objects: &[Object], owner: u
 }
 
 unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], owner: usize, lazy: bool) -> Option<()> {
+    unsafe { preflight_object_guarded(scope, objects, owner, lazy, None) }
+}
+
+/// [`preflight_object_binding`], additionally rejecting a write set that
+/// `destination_guard` reports as overlapping protected loader slots; it
+/// sees the object's final sorted, admitted spans (virtual start, length).
+unsafe fn preflight_object_guarded(
+    scope: &SymbolScope<'_>, objects: &[Object], owner: usize, lazy: bool,
+    destination_guard: Option<&dyn Fn(&Object, &[WriteSpan]) -> Option<bool>>,
+) -> Option<()> {
     let object = &objects[owner];
     preflight_relocation_table_layout(object)?;
     let mut scratch = unsafe { RelocationScratch::new(object) }?;
     let (spans, relr_targets) = unsafe { scratch.slices() };
+    let mut writable = WritableLoadCache::default();
     let mut count = 0;
     for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
         if bytes == 0 { continue; }
@@ -754,23 +765,47 @@ unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], 
                 unsafe { word_resolution(scope, objects, owner, kind, symbol, addend, lazy) }?;
                 8
             };
-            *spans.get_mut(count)? = unsafe {
-                checked_write_span(object, offset, length, kind != R_COPY, (symbol != 0).then_some(symbol),
-                    ReferencedRecords::Deferred)
-            }?;
+            *spans.get_mut(count)? = unsafe { admitted_span(object, &mut writable, offset, length, kind != R_COPY) }?;
             count += 1;
         }
     }
-    let relr_count = unsafe { preflight_relr_table(object, relr_targets, 0) }?;
-    for &offset in &relr_targets[..relr_count] {
-        *spans.get_mut(count)? = unsafe {
-            checked_write_span(object, offset, 8, true, None, ReferencedRecords::Deferred)
-        }?;
-        count += 1;
-    }
-    // Linkers emit relocations in ascending offset order, so the sort is
-    // usually already done; checking first skips its n log n work.
+    // RELR targets need the same containment before their addend is read;
+    // their table checks join every other span's below.
+    let relr_count = unsafe { decode_relr_table(object, relr_targets, 0, |target| {
+        let span = unsafe { admitted_span(object, &mut writable, target, 8, true) }?;
+        let address = runtime_address(object.base, span.start)?;
+        // Packed RELR uses the preexisting pointer word as its addend; check
+        // that arithmetic before any write, as preflight_relr_target does.
+        let _ = unsafe { read_u64(address as *const u8) }.checked_add(object.base)?;
+        Some(())
+    }) }?;
+    // Linkers emit each table in ascending offset order, so the RELA spans and
+    // the RELR targets are usually two sorted runs: merge them from the back
+    // in linear time. Anything else falls back to one sort.
+    let total = count.checked_add(relr_count)?;
+    if spans.len() < total { return None; }
+    let relr = &relr_targets[..relr_count];
     if !spans[..count].is_sorted_by_key(|span| span.start) {
+        spans[..count].sort_unstable_by_key(|span| span.start);
+    }
+    if relr.is_sorted() {
+        let (mut left, mut right) = (count, relr_count);
+        for slot in (0..total).rev() {
+            let take_left = right == 0 || (left != 0 && spans[left - 1].start > relr[right - 1]);
+            spans[slot] = if take_left {
+                left -= 1;
+                spans[left]
+            } else {
+                right -= 1;
+                WriteSpan { start: relr[right], length: 8 }
+            };
+        }
+        count = total;
+    } else {
+        for &offset in relr {
+            spans[count] = WriteSpan { start: offset, length: 8 };
+            count += 1;
+        }
         spans[..count].sort_unstable_by_key(|span| span.start);
     }
     let mut end = 0;
@@ -779,9 +814,117 @@ unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], 
         if span.start < end { return None; }
         end = span.start.checked_add(span.length)?;
     }
+    if unsafe { forbidden_tables_overlap_spans(object, &spans[..count]) }? { return None; }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if unsafe { referenced_records_overlap_spans(object, &spans[..count]) }? { return None; }
+    if let Some(guard) = destination_guard {
+        if guard(object, &spans[..count])? { return None; }
+    }
     Some(())
+}
+
+/// The per-span half of [`checked_write_span`]: word alignment, containment
+/// in one writable PT_LOAD, and a representable runtime address. Table
+/// overlap is checked once for the whole set by
+/// [`forbidden_tables_overlap_spans`], and the span's own symbol/VERSYM
+/// record by [`referenced_records_overlap_spans`].
+unsafe fn admitted_span(
+    object: &Object, writable: &mut WritableLoadCache, start: u64, length: u64, word: bool,
+) -> Option<WriteSpan> {
+    if (word && start & 7 != 0) || !unsafe { writable.contains(object.phdr, object.phnum, start, length) } {
+        return None;
+    }
+    runtime_address(object.base, start)?;
+    Some(WriteSpan { start, length })
+}
+
+/// Whether any of `spans` (sorted by start, nonzero spans pairwise disjoint,
+/// runtime addresses admitted) overlaps `[record, record + length)` in
+/// exactly `ranges_overlap`'s sense, including a zero-length span strictly
+/// inside the record; `None` when `record + length` overflows. Binary search
+/// finds the candidates instead of scanning every span.
+unsafe fn spans_overlap_range(object: &Object, spans: &[WriteSpan], record: u64, length: u64) -> Option<bool> {
+    let span_address = |span: &WriteSpan| runtime_address(object.base, span.start);
+    // Index of the first span whose runtime start is at or after `address`.
+    let first_at_or_after = |address: u64| -> Option<usize> {
+        let (mut low, mut high) = (0, spans.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if span_address(&spans[middle])? < address { low = middle + 1; } else { high = middle; }
+        }
+        Some(low)
+    };
+    let from_record = first_at_or_after(record)?;
+    let after_record = first_at_or_after(record.checked_add(length)?)?;
+    // A span starting inside the record overlaps it, except an empty span
+    // exactly at the record start.
+    for span in &spans[from_record..after_record] {
+        if span_address(span)? > record || span.length != 0 { return Some(true); }
+    }
+    // Of the spans starting before the record, only the last nonempty one
+    // can reach into it.
+    for span in spans[..from_record].iter().rev() {
+        if span.length == 0 { continue; }
+        return ranges_overlap(span_address(span)?, span.length, record, length);
+    }
+    Some(false)
+}
+
+/// The per-object half of [`checked_write_span`]'s table checks for one
+/// complete, sorted, disjoint write set: every span must avoid each ELF table
+/// that relocation or later application rereads (and, with the installed
+/// runtime, the symbol/VERSYM/hash metadata of [`overlaps_relocation_metadata`]).
+/// Each table is tested once against the sorted spans rather than every span
+/// against every table. The outcome equals running those per-span checks on
+/// every span: a null table with a nonzero size, an overflowing table or span
+/// extent, or any overlap rejects a nonempty set; an empty set is accepted.
+unsafe fn forbidden_tables_overlap_spans(object: &Object, spans: &[WriteSpan]) -> Option<bool> {
+    if spans.is_empty() { return Some(false); }
+    let mut tables: [(*const u8, Option<usize>); 9] = [
+        (object.rela, Some(object.relasz)), (object.jmprel, Some(object.pltrelsz)),
+        (object.relr, Some(object.relrsz)), (object.symtab, object.symcount.checked_mul(24)),
+        (object.strtab, Some(object.strsz)), (object.phdr, object.phnum.checked_mul(56)),
+        (core::ptr::null(), Some(0)), (core::ptr::null(), Some(0)), (core::ptr::null(), Some(0)),
+    ];
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    {
+        // `overlaps_relocation_metadata`'s tables; the symbol table repeats.
+        if !object.versym.is_null() { tables[6] = (object.versym, object.symcount.checked_mul(2)); }
+        match object.symbol_lookup {
+            SymbolLookupTable::Sysv { bucket_count, buckets, symbol_count, .. } => {
+                if !(buckets.is_null() && bucket_count == 0 && symbol_count == 0) {
+                    let table = (buckets as usize).checked_sub(8)? as *const u8;
+                    let words = bucket_count.checked_add(symbol_count)?.checked_add(2)?;
+                    tables[7] = (table, words.checked_mul(4));
+                }
+            }
+            SymbolLookupTable::Gnu { bucket_count, symbol_offset, bloom_count, bloom, symbol_count, .. } => {
+                let table = (bloom as usize).checked_sub(16)? as *const u8;
+                let bytes = 16usize
+                    .checked_add(bloom_count.checked_mul(8)?)?
+                    .checked_add(bucket_count.checked_mul(4)?)?
+                    .checked_add(symbol_count.saturating_sub(symbol_offset).checked_mul(4)?)?;
+                tables[7] = (table, Some(bytes));
+            }
+        }
+    }
+    let mut any_table = false;
+    for (table, bytes) in tables {
+        let bytes = bytes?;
+        if bytes == 0 { continue; }
+        if table.is_null() { return None; }
+        any_table = true;
+        if unsafe { spans_overlap_range(object, spans, table as u64, u64::try_from(bytes).ok()?) }? {
+            return Some(true);
+        }
+    }
+    // Any table check would have rejected a span whose runtime extent overflows.
+    if any_table {
+        for span in spans {
+            runtime_address(object.base, span.start)?.checked_add(span.length)?;
+        }
+    }
+    Some(false)
 }
 
 /// The deferred half of [`overlaps_relocation_metadata`] for one object's
@@ -793,33 +936,7 @@ unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], 
 /// span strictly inside a record.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn referenced_records_overlap_spans(object: &Object, spans: &[WriteSpan]) -> Option<bool> {
-    // Span runtime addresses were admitted by `checked_write_span`.
-    let span_address = |span: &WriteSpan| runtime_address(object.base, span.start);
-    // Index of the first span whose runtime start is at or after `address`.
-    let first_at_or_after = |address: u64| -> Option<usize> {
-        let (mut low, mut high) = (0, spans.len());
-        while low < high {
-            let middle = low + (high - low) / 2;
-            if span_address(&spans[middle])? < address { low = middle + 1; } else { high = middle; }
-        }
-        Some(low)
-    };
-    let overlaps = |record: u64, length: u64| -> Option<bool> {
-        let from_record = first_at_or_after(record)?;
-        let after_record = first_at_or_after(record.checked_add(length)?)?;
-        // A span starting inside the record overlaps it, except an empty
-        // span exactly at the record start.
-        for span in &spans[from_record..after_record] {
-            if span_address(span)? > record || span.length != 0 { return Some(true); }
-        }
-        // Of the spans starting before the record, only the last nonempty
-        // one can reach into it.
-        for span in spans[..from_record].iter().rev() {
-            if span.length == 0 { continue; }
-            return ranges_overlap(span_address(span)?, span.length, record, length);
-        }
-        Some(false)
-    };
+    let overlaps = |record: u64, length: u64| unsafe { spans_overlap_range(object, spans, record, length) };
     for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
         if bytes == 0 { continue; }
         if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
@@ -887,11 +1004,24 @@ unsafe fn relocate_initial_graph_inner(
     let initial_scope = InitialSymbolScope::from_graph(graph)?;
     let scope = initial_scope.view();
     for owner in 0..scope.indices.len() {
-        unsafe { preflight_object(&scope, objects, owner) }?;
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         if let Some(debugger) = debugger {
-            unsafe { preflight_debugger_destinations(&scope, objects, owner, debugger) }?;
+            // The loader's two initial publication slots must not overlap any
+            // admitted RELA/RELR write (a crafted COPY cannot overwrite
+            // DT_DEBUG). They are checked against the same admitted write set
+            // preflight just built, instead of re-deriving it.
+            let guard = |object: &Object, spans: &[WriteSpan]| -> Option<bool> {
+                for span in spans {
+                    if debugger.overlaps(runtime_address(object.base, span.start)?, span.length)? {
+                        return Some(true);
+                    }
+                }
+                Some(false)
+            };
+            unsafe { preflight_object_guarded(&scope, objects, owner, false, Some(&guard)) }?;
+            continue;
         }
+        unsafe { preflight_object(&scope, objects, owner) }?;
     }
     // Libraries first, main last, matching musl. All copies form the final
     // phase so their source data includes ordinary symbol/relative fixups.
@@ -946,38 +1076,6 @@ pub(super) unsafe fn debugger_pointer_slot(object: &Object) -> Option<*mut usize
     result
 }
 
-/// The loader's two initial publication slots must not overlap any admitted
-/// RELA/RELR write. In particular, a crafted COPY cannot overwrite DT_DEBUG.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-unsafe fn preflight_debugger_destinations(
-    scope: &SymbolScope<'_>, objects: &[Object], owner: usize,
-    debugger: &super::x86_64_debugger::PreparedInitialDebugger,
-) -> Option<()> {
-    let object = &objects[owner];
-    for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
-        for index in 0..bytes / ELF64_RELA_SIZE {
-            let entry = unsafe { table.add(index * ELF64_RELA_SIZE) };
-            let offset = unsafe { read_u64(entry) };
-            let info = unsafe { read_u64(entry.add(8)) };
-            if info as u32 == R_NONE { continue; }
-            let length = if info as u32 == R_COPY {
-                unsafe { copy_relocation(scope, objects, owner, offset,
-                    (info >> 32) as usize, read_i64(entry.add(16))) }?.length
-            } else { 8 };
-            if debugger.overlaps(runtime_address(object.base, offset)?, length)? { return None; }
-        }
-    }
-    // Only RELR targets need decoding scratch; an object without a RELR
-    // table has none to check and needs no scratch mapping.
-    if object.relrsz == 0 { return Some(()); }
-    let mut scratch = unsafe { RelocationScratch::new(object) }?;
-    let (_, targets) = unsafe { scratch.slices() };
-    let count = unsafe { preflight_relr_table(object, targets, 0) }?;
-    for &offset in &targets[..count] {
-        if debugger.overlaps(runtime_address(object.base, offset)?, 8)? { return None; }
-    }
-    Some(())
-}
 
 /// The owned note and the one private handoff relocation are independent
 /// proofs of CRT ownership. A note without the exact relocation (or that
