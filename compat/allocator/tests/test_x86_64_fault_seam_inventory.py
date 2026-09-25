@@ -161,6 +161,7 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
         "fault_component_fragment": INVENTORY.fault_component_fragment_receipt(),
         "format": INVENTORY.FORMAT,
         "os_publication_receipt": _valid_os_publication_report(),
+        "metadata_publication_receipt": _valid_metadata_publication_report(),
         "huge_branch_receipt": {
             "c_build": c_build,
             "c_compiled_source_closure": {
@@ -248,6 +249,67 @@ def _valid_os_publication_report() -> dict[str, object]:
             "cwd": str(INVENTORY.ROOT), "status": 0, "stdout": stream + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n", "stderr": ""},
         "rust_source_files": INVENTORY._rust_trace_source_files(),
     }
+
+
+def _metadata_publication_deltas(value: int = -786432) -> str:
+    return "\n".join((
+        INVENTORY.METADATA_PUBLICATION_DELTAS_BEGIN,
+        *(f"{key}={value}" for key in INVENTORY.METADATA_PUBLICATION_DELTA_KEYS),
+        INVENTORY.METADATA_PUBLICATION_DELTAS_END, "",
+    ))
+
+
+def _valid_metadata_publication_report() -> dict[str, object]:
+    runner = INVENTORY._load_runner()
+    source = Path("/evidence/mimalloc-3.5.0")
+    binary = Path("/evidence/metadata-publication")
+    rust_binary = runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET / runner.X86_64_RUST_TARGET / "debug/deps/crabc_mimalloc-aaaaaaaa"
+    stream = _trace(
+        INVENTORY.METADATA_PUBLICATION_BEGIN, INVENTORY.METADATA_PUBLICATION_END,
+        INVENTORY.METADATA_PUBLICATION_KEYS,
+    ) + _metadata_publication_deltas()
+    pin = runner.load_pin()
+    return {
+        "schema": INVENTORY.SCHEMA, "format": INVENTORY.FORMAT,
+        "profile": "metadata-page-publication", "status": "passed",
+        "boundary": copy.deepcopy(INVENTORY.METADATA_PUBLICATION_BOUNDARY),
+        "upstream": {"archive_sha256": pin["sha256"], "revision": pin["revision"]},
+        "source_state_before": _clean_source_state(), "source_state_after": _clean_source_state(),
+        "c_build": {"command": INVENTORY._metadata_publication_c_command(runner, "musl-gcc", source, binary),
+            "cwd": str(source), "status": 0, "stdout": "", "stderr": ""},
+        "c_run": {"command": [str(binary)], "cwd": str(source), "status": 0, "stdout": stream, "stderr": ""},
+        "c_source_files": list(INVENTORY.PINNED_C_SOURCE_FILES),
+        "fixture": INVENTORY._local_file_record(INVENTORY.FIXTURE),
+        "rust_build": {"command": runner._m2_x86_64_vm_rust_build_command(), "cwd": str(INVENTORY.ROOT),
+            "status": 0, "stdout": "", "stderr": ""},
+        "rust_run": {"command": [str(rust_binary), INVENTORY.METADATA_PUBLICATION_TARGET, "--exact", "--test-threads=1", "--nocapture"],
+            "cwd": str(INVENTORY.ROOT), "status": 0, "stdout": stream + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n", "stderr": ""},
+        "rust_source_files": INVENTORY._metadata_publication_rust_source_files(),
+    }
+
+
+class MetadataPublicationReceiverTests(unittest.TestCase):
+    def test_receiver_requires_both_exact_streams(self) -> None:
+        report = _valid_metadata_publication_report()
+        self.assertEqual(INVENTORY.validate_metadata_publication_report(report), report)
+        for language in ("c_run", "rust_run"):
+            rejected = copy.deepcopy(report)
+            rejected[language]["stdout"] = rejected[language]["stdout"].replace(
+                "metadata_publication.2.live_owner_intact=1", "metadata_publication.2.live_owner_intact=0"
+            )
+            with self.subTest(language=language), self.assertRaises((ValueError, INVENTORY.EvidenceError)):
+                INVENTORY.validate_metadata_publication_report(rejected)
+
+    def test_receiver_rejects_a_committed_accounting_difference(self) -> None:
+        """The generic-retry divergence: C claims six fresh pages, a skipped
+        first search only four, so their committed deltas differ."""
+
+        report = _valid_metadata_publication_report()
+        report["rust_run"]["stdout"] = report["rust_run"]["stdout"].replace(
+            _metadata_publication_deltas(), _metadata_publication_deltas(-524288)
+        )
+        with self.assertRaisesRegex(ValueError, "committed accounting differs"):
+            INVENTORY.validate_metadata_publication_report(report)
 
 
 class OsPublicationReceiverTests(unittest.TestCase):
@@ -508,12 +570,10 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 "os-huge-branch-fault-owners",
                 "page-map-completed-dependency",
                 "os-aligned-page-publication",
+                "metadata-page-publication",
             ],
         )
-        self.assertEqual(
-            [receiver.identifier for receiver in INVENTORY.STOPPED_RECEIVERS],
-            ["metadata-map-commit-publication"],
-        )
+        self.assertEqual(list(INVENTORY.STOPPED_RECEIVERS), [])
 
     def test_partial_m2_fragment_names_the_same_fixed_inventory(self) -> None:
         component = INVENTORY.load_fragment()["component"]
@@ -534,6 +594,11 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 "id": INVENTORY.OS_PUBLICATION_CHECK_ID,
                 "kind": "c-rust-fault-seam-inventory",
                 "target": INVENTORY.OS_PUBLICATION_TARGET,
+                "expected_passed_test_count": 1,
+            }, {
+                "id": INVENTORY.METADATA_PUBLICATION_CHECK_ID,
+                "kind": "c-rust-fault-seam-inventory",
+                "target": INVENTORY.METADATA_PUBLICATION_TARGET,
                 "expected_passed_test_count": 1,
             }],
         )
@@ -653,6 +718,13 @@ class FaultInventoryShapeTests(unittest.TestCase):
             report = _valid_report(runner, profile)
             report.pop("os_publication_receipt", None)
             with self.assertRaisesRegex(ValueError, "OS publication"):
+                INVENTORY.validate_report(report)
+
+    def test_canonical_report_cannot_admit_metadata_rows_without_metadata_receiver(self) -> None:
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            report.pop("metadata_publication_receipt", None)
+            with self.assertRaisesRegex(ValueError, "metadata publication"):
                 INVENTORY.validate_report(report)
 
     def test_report_names_the_bounded_private_receiver_without_admitting_general_parity(self) -> None:
