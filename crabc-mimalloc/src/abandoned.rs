@@ -3538,10 +3538,15 @@ fn unown<M: MappedAbandonedPages + ?Sized>(
     page: NonNull<Page>,
     map: Option<&M>,
 ) -> Result<AbandonResult, AbandonError> {
-    unown_with(page, map, || {
-        #[cfg(test)]
-        test_publish_owner_exit_remote_free_before_unown(page);
-    })
+    unown_with(
+        page,
+        map,
+        || {
+            #[cfg(test)]
+            test_publish_owner_exit_remote_free_before_unown(page);
+        },
+        || {},
+    )
 }
 
 #[cfg(test)]
@@ -3596,17 +3601,25 @@ fn test_publish_owner_exit_remote_free_before_unown(page: NonNull<Page>) {
     );
 }
 
-/// Source `mi_abandoned_page_unown` loop with its sole interleaving point
-/// factored for a deterministic protocol regression. The production caller
-/// supplies no hook; it exists only so the test can publish exactly between
-/// the empty-head observation and the weak CAS.
-fn unown_with<M: MappedAbandonedPages + ?Sized, F>(
+/// Source `mi_abandoned_page_unown` loop with its two interleaving points
+/// factored for deterministic protocol regressions. The production caller
+/// supplies no-op hooks; they exist only so a test can publish exactly
+/// between the empty-head observation and the weak CAS, or act as another
+/// thread that claims the page right after the release CAS.
+///
+/// Pinned `mi_abandoned_page_unown` (`arena.c:631-651`) never touches the page
+/// after its successful release CAS: the page may be claimed, reassociated,
+/// reabandoned, or freed by another thread at once. The mapped/unmapped
+/// result is therefore read while this caller still holds the owner bit.
+fn unown_with<M: MappedAbandonedPages + ?Sized, F, G>(
     page: NonNull<Page>,
     map: Option<&M>,
     before_release_cas: F,
+    after_release: G,
 ) -> Result<AbandonResult, AbandonError>
 where
     F: FnOnce(),
+    G: FnOnce(),
 {
     // SAFETY: callers preserve page lifetime; this produces raw field pointers
     // only and the low owner bit below authorizes ordinary-state access.
@@ -3615,14 +3628,20 @@ where
         return Err(AbandonError::NotAbandoned);
     }
     let xthread_free = unsafe { state.xthread_free.as_ref() };
+    // The owner bit makes the abandoned identity stable until the release
+    // CAS; nothing in the loop below changes it before a release.
+    let released = if source_thread_identity(&state) == THREAD_ID_ABANDONED_MAPPED {
+        AbandonResult::UnownedMapped
+    } else {
+        AbandonResult::UnownedUnmapped
+    };
     let mut before_release_cas = Some(before_release_cas);
     loop {
         match remote_free::try_unown_abandoned_head(xthread_free, &mut before_release_cas) {
-            AbandonedOwnerHeadTransition::Released => return Ok(if source_thread_identity(&state) == THREAD_ID_ABANDONED_MAPPED {
-                AbandonResult::UnownedMapped
-            } else {
-                AbandonResult::UnownedUnmapped
-            }),
+            AbandonedOwnerHeadTransition::Released => {
+                after_release();
+                return Ok(released);
+            }
             AbandonedOwnerHeadTransition::RemotePublished(_) => {
                 // SAFETY: this caller still holds the owner bit and the
                 // abandoned-page lifetime proof. Pinned
@@ -5928,7 +5947,7 @@ mod tests {
             })
         );
         assert!(!map.is_published(17));
-        assert_eq!(page.abandoned_test_thread_id(), thread_id.get());
+        assert_eq!(unsafe { page_raw.as_ref() }.abandoned_test_thread_id(), thread_id.get());
         assert_eq!(page.remote_free_test_head(), 1);
         assert_eq!(page.remote_free_test_used(), 2);
     }
@@ -6476,6 +6495,45 @@ mod tests {
         assert!(!map.is_published(17));
     }
 
+    /// Pinned `mi_abandoned_page_unown` never reads the page after its
+    /// release CAS, because another thread may claim it at once. Here an
+    /// adopter claims the just-released mapped page and reassociates it
+    /// before the releasing call returns; the release must still report the
+    /// mapped identity it held, not the adopter's live one.
+    #[test]
+    fn unown_reports_the_mapped_identity_held_before_a_racing_adoption() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let mut page = mapped_page(&mut arena, 4);
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+
+        // A free claims the mapped page's owner bit, then gives it back.
+        let state = unsafe { Page::abandonment_atomic_state_at(page_raw) };
+        assert_eq!(
+            remote_free::claim_abandoned_owner(unsafe { state.xthread_free.as_ref() }),
+            AbandonedOwnerClaim::ClaimedUnowned,
+        );
+
+        let thread_id = LiveThreadId::new(16).unwrap();
+        let mut target_heap = Heap::bootstrap_empty();
+        let mut target_tld = ThreadLocalData::detached();
+        let mut target_theap = Theap::empty();
+        let target = bind_adopting_theap(&mut target_heap, &mut target_tld, &mut target_theap, thread_id);
+        let mut adopted = None;
+        let released = unown_with(page_raw, Some(&map), || {}, || {
+            adopted = Some(unsafe {
+                try_adopt_with(&map, 0, target, thread_id, |_| Some(page_raw), || {}, || {})
+            });
+        });
+        assert_eq!(released, Ok(AbandonResult::UnownedMapped));
+        let adopted = adopted.expect("the adopter ran after the release CAS").unwrap();
+        assert_eq!(adopted.expect("the released mapped page is adoptable").page(), page_raw);
+        assert_eq!(unsafe { page_raw.as_ref() }.abandoned_test_thread_id(), thread_id.get());
+    }
+
     #[test]
     fn adoption_preserves_false_collection_order_across_two_remote_publications() {
         let mut storage = BitmapStorage::uninit();
@@ -6571,7 +6629,7 @@ mod tests {
                 unown_with(page.pointer(), Some(map), || {
                     owner_observed_empty.wait();
                     producer_published.wait();
-                }),
+                }, || {}),
                 Ok(AbandonResult::UnownedMapped)
             );
         });
