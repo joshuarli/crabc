@@ -17761,6 +17761,25 @@ def check_contracts(contracts: Mapping[Path, Mapping[str, Any]]) -> None:
             )
 
 
+# Every port-map row classifies its intentional difference. `algorithmic`
+# changes what the allocator computes, the data structures or order of its
+# state transitions, or a result observable to a valid program, on a path the
+# port implements; AGENTS.md requires differential and performance evidence
+# for it. `boundary` is a scope or bounded-ownership note, a representation or
+# platform mapping with preserved semantics, an integration owner, or a
+# fail-closed response where C asserts or has no valid state. `none` means the
+# row states no difference.
+DIFFERENCE_KINDS = ("none", "algorithmic", "boundary")
+
+
+def validate_difference_kind(record: Mapping[str, Any], label: str) -> None:
+    kind = record.get("difference_kind")
+    if kind not in DIFFERENCE_KINDS:
+        raise HarnessError(f"port map {label} has invalid difference_kind {kind!r}; expected one of {DIFFERENCE_KINDS}")
+    if (kind == "none") != (not str(record.get("intentional_difference", "")).strip()):
+        raise HarnessError(f"port map {label} difference_kind {kind!r} contradicts its intentional_difference")
+
+
 def load_port_map(path: Path = PORT_MAP) -> dict[str, Any]:
     try:
         with path.open("rb") as stream:
@@ -17789,6 +17808,7 @@ def load_port_map(path: Path = PORT_MAP) -> dict[str, Any]:
         for key in ("source_region", "rust_module", "rust_item", "intentional_difference"):
             if not isinstance(unit.get(key), str):
                 raise HarnessError(f"port map unit {upstream} has invalid {key}")
+        validate_difference_kind(unit, f"unit {upstream}")
         tests = unit.get("tests")
         if not isinstance(tests, list) or not all(isinstance(test, str) for test in tests):
             raise HarnessError(f"port map unit {upstream} has invalid tests")
@@ -17822,6 +17842,7 @@ def load_port_map(path: Path = PORT_MAP) -> dict[str, Any]:
         for key_name in ("source_region", "rust_module", "rust_item", "intentional_difference"):
             if not isinstance(item.get(key_name), str):
                 raise HarnessError(f"port map item {upstream}:{name} has invalid {key_name}")
+        validate_difference_kind(item, f"item {upstream}:{name}")
         tests = item.get("tests")
         if not isinstance(tests, list) or not all(isinstance(test, str) for test in tests):
             raise HarnessError(f"port map item {upstream}:{name} has invalid tests")
