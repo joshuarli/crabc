@@ -106,7 +106,11 @@ class ArgumentTests(unittest.TestCase):
         base = ["run", "--provider-vendor", "p", "--dependency-vendor", "d", "--output", "o"]
         GATE.parse_arguments([*base, "--static-preparation", "s", "--dynamic-qualification", "q"])
         GATE.parse_arguments([*base, "--development-static-sysroot", "s", "--development-dynamic-sysroot", "q"])
+        GATE.parse_arguments([*base, "--allocator-evidence", "native-shadow",
+                              "--development-static-sysroot", "s", "--development-dynamic-sysroot", "q"])
         for extra in (["--static-preparation", "s"],
+                      ["--allocator-evidence", "native-shadow", "--static-preparation", "s",
+                       "--dynamic-qualification", "q"],
                       ["--static-preparation", "s", "--dynamic-qualification", "q", "--development-static-sysroot", "x"],
                       []):
             with self.subTest(extra=extra), self.assertRaises(SystemExit), \

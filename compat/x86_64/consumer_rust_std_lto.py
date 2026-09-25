@@ -27,7 +27,11 @@ Products come from the same current-source cohort the POSIX family matrix
 admits (``owned-posix-static-products`` plus a passing
 ``materialized-dynamic-sysroot`` qualification). ``--development-*``
 products exercise the same path for iteration and never produce a
-qualifying receipt. ``validate_receipt`` is the gate's reader.
+qualifying receipt. ``--allocator-evidence native-shadow`` admits a
+development pair only when both products record the native-shadow allocator
+backend (the Rust mimalloc port): its complete passing run is allocator
+promotion evidence and exits successfully, but its receipt is still not a
+qualifying consumer receipt. ``validate_receipt`` is the gate's reader.
 """
 
 from __future__ import annotations
@@ -67,6 +71,9 @@ FROZEN_GATES = ("rust-std", "rust-std-dependent", "lto", "lto-native-facade")
 CONSUMER_PRODUCT = "primary"
 UNWIND_PRODUCTS = ("primary", "extracted")
 DEVELOPMENT_PRODUCT = "development"
+NATIVE_SHADOW_PRODUCT = "native-shadow"
+ALLOCATOR_EVIDENCE_PASS_MARKER = (
+    "x86 consumer.rust-std-lto: native-shadow allocator evidence PASS (not a qualifying receipt)")
 PASS_MARKER = "x86 consumer.rust-std-lto: PASS (rust-std, rust-std-dependent, lto, lto-native-facade, unwind; installed/extracted owned products)"
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 MUSL_LIB = Path("/opt/musl-1.2.6/lib")
@@ -286,6 +293,13 @@ def cohort_products(static_preparation: Path, dynamic_qualification: Path) -> tu
     }
     evidence, products = family.input_products(ROOT, request)
     return {"request": request, "evidence": evidence}, products
+
+
+def product_allocator_backend(root: Path, mode: str) -> object:
+    """The allocator backend a product's builder recorded for its libc."""
+
+    record = root / ("share/crabc/manifest.json" if mode == "static" else "share/crabc/libc-shared.provenance.json")
+    return json.loads(record.read_text(encoding="utf-8")).get("allocator_backend")
 
 
 def product_pair(label: str, static_root: Path, dynamic_root: Path) -> dict[str, Any]:
@@ -943,9 +957,15 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         consumer_label, unwind_labels = CONSUMER_PRODUCT, UNWIND_PRODUCTS
     else:
         cohort = None
-        products = {DEVELOPMENT_PRODUCT: product_pair(DEVELOPMENT_PRODUCT, arguments.development_static_sysroot,
-                                                      arguments.development_dynamic_sysroot)}
-        consumer_label, unwind_labels = DEVELOPMENT_PRODUCT, (DEVELOPMENT_PRODUCT,)
+        label = NATIVE_SHADOW_PRODUCT if arguments.allocator_evidence else DEVELOPMENT_PRODUCT
+        products = {label: product_pair(label, arguments.development_static_sysroot,
+                                        arguments.development_dynamic_sysroot)}
+        if arguments.allocator_evidence:
+            for mode in ("static", "dynamic"):
+                backend = product_allocator_backend(Path(products[label][mode]["root"]), mode)
+                require(backend == arguments.allocator_evidence,
+                        f"allocator evidence {mode} product records allocator backend {backend!r}")
+        consumer_label, unwind_labels = label, (label,)
     toolchain = toolchain_identity(retained)
 
     # One fresh provider for every frozen consumer, built from the same
@@ -1010,7 +1030,7 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
             unmet.append("product cohort changed during consumer execution")
     if qualification.source_digest() != source_before:
         unmet.append("source changed during consumer execution")
-    if cohort is None:
+    if cohort is None and not arguments.allocator_evidence:
         unmet.append("development products are not a current-source installed/extracted cohort")
     report: dict[str, Any] = {
         "schema": SCHEMA,
@@ -1031,6 +1051,7 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         "unmet_conditions": unmet,
         "passed": not unmet,
         "qualifying": cohort is not None,
+        "allocator_evidence": arguments.allocator_evidence,
         "retained_files": dict(sorted(retained.files.items())),
     }
     path = output / "receipt.json"
@@ -1093,6 +1114,9 @@ def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     gate.add_argument("--provider-vendor", type=Path, required=True)
     gate.add_argument("--dependency-vendor", type=Path, required=True)
     gate.add_argument("--output", type=Path, required=True)
+    gate.add_argument("--allocator-evidence", choices=("native-shadow",),
+                      help="with --development-* sysroots recording this allocator backend: a complete passing "
+                           "run is allocator evidence, never a qualifying receipt")
     gate.add_argument("--select", action="append", choices=SECTIONS,
                       help="development only: run just these sections; the receipt cannot pass")
     validate = commands.add_parser("validate", help="reread one retained gate receipt")
@@ -1103,6 +1127,8 @@ def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
         development = (arguments.development_static_sysroot, arguments.development_dynamic_sysroot)
         if not ((all(cohort) and not any(development)) or (all(development) and not any(cohort))):
             parser.error("select either --static-preparation/--dynamic-qualification or both --development-* sysroots")
+        if arguments.allocator_evidence and not all(development):
+            parser.error("--allocator-evidence takes the --development-* sysroots")
     return arguments
 
 
@@ -1125,6 +1151,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"receipt: {path}")
     if report["passed"] and report["qualifying"]:
         print(PASS_MARKER)
+        return 0
+    if report["passed"] and report["allocator_evidence"]:
+        print(ALLOCATOR_EVIDENCE_PASS_MARKER)
         return 0
     print(f"x86 consumer.rust-std-lto: FAIL ({len(report['unmet_conditions'])} unmet)")
     return 1
