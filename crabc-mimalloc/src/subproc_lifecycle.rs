@@ -870,6 +870,37 @@ pub(crate) fn current_thread_is_child_member() -> bool {
     unsafe { (*CURRENT_CHILD_MEMBER.get()).is_some() }
 }
 
+/// The child the current thread belongs to (`mi_subproc_current` for a
+/// member), or `None` for a thread of the process main subprocess.
+pub(crate) fn current_child_id() -> Option<NativeSubprocessId> {
+    // SAFETY: a short read of the current thread's own slot.
+    unsafe { (*CURRENT_CHILD_MEMBER.get()).as_ref().map(|member| member.id) }
+}
+
+/// The main Heap of the current thread's child (`mi_heap_main` for a
+/// member), or `None` when the thread is not a member or the child is gone.
+pub(crate) fn current_child_main_heap() -> Option<core::ptr::NonNull<crate::types::Heap>> {
+    let id = current_child_id()?;
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+    // SAFETY: a member's child stays live while the member does.
+    unsafe { id.with_owner(|owner| owner.as_ref().and_then(|child| child.main_heap_pointer())) }.ok().flatten()
+}
+
+impl NativeSubprocessId {
+    /// The opaque `mi_subproc_id_t` pointer of this child.
+    pub(crate) fn as_ptr(self) -> *mut core::ffi::c_void {
+        self.0.as_ptr().cast()
+    }
+
+    /// The id a C caller passes back.
+    ///
+    /// # Safety
+    /// `pointer` is a value [`Self::as_ptr`] returned for a live child.
+    pub(crate) unsafe fn from_ptr(pointer: core::ptr::NonNull<core::ffi::c_void>) -> Self {
+        Self(pointer.cast())
+    }
+}
+
 /// Result of [`native_subproc_add_current_thread`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeChildThreadAdd {

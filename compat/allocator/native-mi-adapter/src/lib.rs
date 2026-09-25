@@ -1265,3 +1265,80 @@ pub unsafe extern "C" fn mi_heap_collect(heap: HeapPointer, force: bool) {
     // SAFETY: the C caller passes a live Heap.
     unsafe { heaps::heap_collect(heap, force) }
 }
+
+// ---------------------------------------------------------------------------
+// M6 (continued): subprocesses
+// ---------------------------------------------------------------------------
+
+/// `mi_subproc_id_t`: a struct holding one pointer, passed by value.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SubprocId {
+    id: *mut c_void,
+}
+
+#[no_mangle]
+pub extern "C" fn mi_subproc_main() -> SubprocId {
+    bind_thread();
+    SubprocId { id: heaps::subproc_main() }
+}
+
+#[no_mangle]
+pub extern "C" fn mi_subproc_current() -> SubprocId {
+    bind_thread();
+    SubprocId { id: heaps::subproc_current() }
+}
+
+#[no_mangle]
+pub extern "C" fn mi_subproc_new() -> SubprocId {
+    bind_thread();
+    SubprocId { id: heaps::subproc_new() }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_subproc_destroy(subproc: SubprocId) {
+    bind_thread();
+    // SAFETY: the C caller passes a live id; a child that threads still
+    // belong to is left alive rather than destroyed under them.
+    let _ = unsafe { heaps::subproc_destroy(subproc.id) };
+}
+
+/// Pinned `mi_subproc_add_current_thread`, for a thread that has made no
+/// allocation: the thread registers with the runtime without attaching to
+/// the process main subprocess, and on admission its key marks it attached
+/// so the key destructor finishes it in the child.
+#[no_mangle]
+pub unsafe extern "C" fn mi_subproc_add_current_thread(subproc: SubprocId) {
+    if PROCESS.load(Ordering::Acquire) != PROCESS_READY {
+        return;
+    }
+    let key = THREAD_KEY.load(Ordering::Acquire) as PthreadKey;
+    // SAFETY: the key exists once the process is ready.
+    let bound = !unsafe { pthread_getspecific(key) }.is_null();
+    if !bound {
+        // SAFETY: this musl thread's allocator TLS stays mapped until its key
+        // destructor finishes it.
+        let _ = unsafe {
+            register_current_native_allocator_worker_descriptor(current_native_allocator_thread_descriptor())
+        };
+    }
+    // SAFETY: the C caller's contract: a live id, on a thread that has not
+    // allocated yet.
+    let added = unsafe { heaps::subproc_add_current_thread(subproc.id) };
+    if !bound && added == heaps::SubprocAddCurrentThread::Added {
+        // SAFETY: the key exists; the marker is not a pointer.
+        unsafe { pthread_setspecific(key, THREAD_ATTACHED as *const c_void) };
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_subproc_visit_heaps(
+    subproc: SubprocId,
+    visitor: Option<heaps::HeapVisitor>,
+    argument: *mut c_void,
+) -> bool {
+    bind_thread();
+    let Some(visitor) = visitor else { return false };
+    // SAFETY: the C caller's visitor contract.
+    unsafe { heaps::subproc_visit_heaps(subproc.id, visitor, argument) }
+}

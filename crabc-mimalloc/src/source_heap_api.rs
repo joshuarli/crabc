@@ -43,6 +43,9 @@ use crate::types::Heap;
 
 /// `mi_heap_main()`: the calling thread's subprocess main Heap.
 pub fn heap_main() -> *mut c_void {
+    if crate::subproc::lifecycle::current_thread_is_child_member() {
+        return crate::subproc::lifecycle::current_child_main_heap().map_or(null_mut(), |heap| heap.as_ptr().cast());
+    }
     MainSubprocess::global().ready_main_heap_pointer().cast()
 }
 
@@ -646,4 +649,133 @@ pub unsafe fn heap_collect(heap: *mut c_void, force: bool) {
         Some(Target::NonMain(heap)) => unsafe { main_heaps::native_heap_collect(heap, force) },
         None => {}
     }
+}
+
+// ---------------------------------------------------------------------------
+// Subprocesses (`subproc.c:113-133,158-313`)
+// ---------------------------------------------------------------------------
+
+use crate::subproc::lifecycle::{NativeChildThreadAdd, NativeSubprocessId};
+
+/// A Heap visitor (`mi_heap_visit_fun`).
+pub type HeapVisitor = unsafe extern "C" fn(heap: *mut c_void, argument: *mut c_void) -> bool;
+
+/// The outcome of `mi_subproc_add_current_thread`, for the embedding boundary
+/// that binds threads to the runtime.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubprocAddCurrentThread {
+    /// The thread now belongs to the child and allocates from it.
+    Added,
+    /// Nothing changed (the thread was already initialized, or the id is
+    /// null or the main subprocess).
+    Unchanged,
+    /// Admission failed; the thread is unchanged.
+    Failed,
+}
+
+fn main_id() -> *mut c_void {
+    MainSubprocess::global().identity().as_ptr().cast()
+}
+
+/// `mi_subproc_main()`.
+pub fn subproc_main() -> *mut c_void {
+    main_id()
+}
+
+/// `mi_subproc_current()`.
+pub fn subproc_current() -> *mut c_void {
+    crate::subproc::lifecycle::current_child_id().map_or_else(main_id, NativeSubprocessId::as_ptr)
+}
+
+/// `mi_subproc_new()`: null when the child cannot be created.
+pub fn subproc_new() -> *mut c_void {
+    crate::subproc::lifecycle::native_subproc_new().map_or(null_mut(), NativeSubprocessId::as_ptr)
+}
+
+/// `mi_subproc_destroy(id)`: the main subprocess and null are ignored.
+/// `false` when the child could not be destroyed: a thread still belongs to
+/// it (source destroys it under that thread), or a later step retained it.
+///
+/// # Safety
+/// `id` is null, the main id, or a live child id from [`subproc_new`]; no
+/// block of the child is used again.
+pub unsafe fn subproc_destroy(id: *mut c_void) -> bool {
+    let Some(pointer) = NonNull::new(id) else { return true };
+    if pointer.as_ptr() == main_id() {
+        return true;
+    }
+    // SAFETY: forwarded live-id contract.
+    unsafe { crate::subproc::lifecycle::native_subproc_destroy(NativeSubprocessId::from_ptr(pointer)) }.is_ok()
+}
+
+/// The source warning of a thread that already belongs to another
+/// subprocess (`subproc.c:292-294`).
+fn warn_other_subprocess(other: *mut c_void) {
+    let mut text = [0u8; 128];
+    let prefix = b"unable to add thread to the subprocess as it was already in another subprocess (at 0x";
+    let mut length = prefix.len();
+    text[..length].copy_from_slice(prefix);
+    // `%p` as `_mi_vsnprintf` renders it: uppercase, 8, 12, or 16 digits.
+    let address = other.addr();
+    let digits = if address <= u32::MAX as usize { 8 } else if address >> 16 <= u32::MAX as usize { 12 } else { 16 };
+    for index in (0..digits).rev() {
+        text[length] = b"0123456789ABCDEF"[(address >> (index * 4)) & 0xf];
+        length += 1;
+    }
+    text[length] = b')';
+    text[length + 1] = b'\n';
+    let Ok(message) = core::ffi::CStr::from_bytes_until_nul(&text[..length + 3]) else { return };
+    if let Some(binding) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs()
+        .map(|(binding, _)| binding)
+    {
+        binding.process().policy().source_warning(SourceFormattedMessage::from_source_formatted(message));
+    }
+}
+
+/// `mi_subproc_add_current_thread(id)`.
+///
+/// # Safety
+/// `id` is null, the main id, or a live child id; the calling thread has
+/// registered with the runtime but made no allocation, and owns its
+/// thread roots until it finishes.
+pub unsafe fn subproc_add_current_thread(id: *mut c_void) -> SubprocAddCurrentThread {
+    let Some(pointer) = NonNull::new(id) else { return SubprocAddCurrentThread::Unchanged };
+    if pointer.as_ptr() == main_id() {
+        // A thread of the main subprocess is initialized on its first
+        // operation; a child member is already initialized elsewhere.
+        if let Some(child) = crate::subproc::lifecycle::current_child_id() {
+            warn_other_subprocess(child.as_ptr());
+        }
+        return SubprocAddCurrentThread::Unchanged;
+    }
+    // SAFETY: forwarded live-id and current-thread contracts.
+    match unsafe { crate::subproc::lifecycle::native_subproc_add_current_thread(NativeSubprocessId::from_ptr(pointer)) } {
+        Ok(NativeChildThreadAdd::Added) => SubprocAddCurrentThread::Added,
+        Ok(NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess }) => {
+            if in_other_subprocess {
+                warn_other_subprocess(subproc_current());
+            }
+            SubprocAddCurrentThread::Unchanged
+        }
+        _ => SubprocAddCurrentThread::Failed,
+    }
+}
+
+/// `mi_subproc_visit_heaps(id, visitor, argument)`: visits the subprocess's
+/// Heaps in list order until the visitor returns `false`.
+///
+/// # Safety
+/// `id` is null, the main id, or a live child id; `visitor` is a valid C
+/// function that does not operate on that subprocess's Heap list.
+pub unsafe fn subproc_visit_heaps(id: *mut c_void, visitor: HeapVisitor, argument: *mut c_void) -> bool {
+    let Some(pointer) = NonNull::new(id) else { return false };
+    // SAFETY: the visitor's C contract.
+    let mut visit = |heap: NonNull<Heap>| unsafe { visitor(heap.as_ptr().cast(), argument) };
+    if pointer.as_ptr() == main_id() {
+        return MainSubprocess::global().identity().heap_list().visit_heaps(&mut visit).unwrap_or(false);
+    }
+    // SAFETY: forwarded live-id contract.
+    unsafe { crate::subproc::lifecycle::native_subproc_visit_heaps(NativeSubprocessId::from_ptr(pointer), visit) }
+        .unwrap_or(false)
 }

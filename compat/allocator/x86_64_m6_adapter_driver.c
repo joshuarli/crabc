@@ -406,6 +406,105 @@ static void thread_section(void) {
   printf("thread.destroy.heaps=%lld\n", (long long)(after.heaps.current - before.heaps.current));
 }
 
+
+static int visit_count;
+static int visit_limit;
+
+static bool count_heap(mi_heap_t* heap, void* argument) {
+  (void)heap;
+  visit_count++;
+  if (argument != NULL) *(int*)argument += 1;
+  return visit_limit == 0 || visit_count < visit_limit;
+}
+
+static int visit(mi_subproc_id_t subproc, int limit, bool* result) {
+  visit_count = 0;
+  visit_limit = limit;
+  int counted = 0;
+  bool ok = mi_subproc_visit_heaps(subproc, &count_heap, &counted);
+  if (result != NULL) *result = ok;
+  return counted;
+}
+
+static mi_subproc_id_t child;
+static int child_facts[12];
+
+static void* child_worker(void* argument) {
+  (void)argument;
+  mi_subproc_add_current_thread(child);
+  child_facts[0] = mi_subproc_current()._mi_subproc_id == child._mi_subproc_id;
+  child_facts[1] = mi_heap_main() != NULL;
+  void* p = mi_malloc(100);
+  child_facts[2] = p != NULL;
+  mi_free(p);
+  mi_heap_t* h = mi_heap_new();
+  child_facts[3] = h != NULL && h != mi_heap_main();
+  void* q = mi_heap_malloc(h, 64);
+  child_facts[4] = q != NULL;
+  bool ok;
+  child_facts[5] = visit(child, 0, &ok);
+  child_facts[6] = ok;
+  child_facts[7] = visit(child, 1, &ok);
+  child_facts[8] = ok;
+  /* A second add to the same child changes nothing. */
+  mi_subproc_add_current_thread(child);
+  child_facts[9] = mi_subproc_current()._mi_subproc_id == child._mi_subproc_id;
+  mi_free(q);
+  mi_heap_delete(h);
+  child_facts[10] = visit(child, 0, NULL);
+  return NULL;
+}
+
+static void subproc_section(void) {
+  mi_subproc_id_t main_id = mi_subproc_main();
+  printf("subproc.main=%d,%d\n", main_id._mi_subproc_id != NULL ? 1 : 0,
+         mi_subproc_current()._mi_subproc_id == main_id._mi_subproc_id ? 1 : 0);
+  mi_heap_t* h = mi_heap_new();
+  bool ok;
+  int all = visit(main_id, 0, &ok);
+  printf("subproc.main.visit=%d,%d\n", all, ok ? 1 : 0);
+  int first = visit(main_id, 1, &ok);
+  printf("subproc.main.visit_stop=%d,%d\n", first, ok ? 1 : 0);
+  mi_heap_delete(h);
+  printf("subproc.main.visit_after=%d\n", visit(main_id, 0, NULL));
+  /* The initial thread is already initialized in the main subprocess. */
+  mi_subproc_add_current_thread(main_id);
+  print_messages("subproc.add_main.messages");
+  mi_subproc_destroy(main_id);
+  printf("subproc.main.destroy_ignored=%d\n", mi_subproc_current()._mi_subproc_id == main_id._mi_subproc_id ? 1 : 0);
+
+  mi_stats_t before = stats_now();
+  child = mi_subproc_new();
+  printf("subproc.new=%d,%d\n", child._mi_subproc_id != NULL ? 1 : 0,
+         child._mi_subproc_id != main_id._mi_subproc_id ? 1 : 0);
+  printf("subproc.child.visit=%d\n", visit(child, 0, NULL));
+  /* Adding the already-initialized initial thread warns with an address. */
+  mi_subproc_add_current_thread(child);
+  /* Mask the other subprocess's address in the warning body. */
+  for (size_t i = 0; i < message_count && i < MAX_MESSAGES; i++) {
+    char* at = strstr(messages[i], "(at 0x");
+    if (at != NULL) {
+      char* end = strchr(at, ')');
+      if (end != NULL) memmove(at + 4, end, strlen(end) + 1);
+    }
+  }
+  print_messages("subproc.add_other.messages");
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, child_worker, NULL) != 0 || pthread_join(thread, NULL) != 0) {
+    printf("subproc.child.run=0\n");
+    return;
+  }
+  printf("subproc.child.run=1\n");
+  printf("subproc.child.facts=");
+  for (int i = 0; i < 11; i++) printf("%s%d", i == 0 ? "" : ",", child_facts[i]);
+  printf("\n");
+  mi_subproc_destroy(child);
+  mi_stats_t after = stats_now();
+  printf("subproc.child.destroyed.threads=%lld\n", (long long)(after.threads.total - before.threads.total));
+  printf("subproc.child.destroyed.heaps=%lld\n", (long long)(after.heaps.current - before.heaps.current));
+  print_messages("subproc.messages");
+}
+
 int main(void) {
   /* Unbuffered, so a failing side's trace ends at its failing step. */
   setvbuf(stdout, NULL, _IONBF, 0);
@@ -423,6 +522,7 @@ int main(void) {
   realloc_section();
   delete_section();
   thread_section();
+  subproc_section();
   print_messages("final.messages");
   printf("CRABC_MI_M6_ADAPTER_TRACE_END\n");
   return 0;

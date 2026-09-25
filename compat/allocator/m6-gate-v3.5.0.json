@@ -44,7 +44,7 @@
     },
     "differential:public-heap-adapter": {
       "runner": "compat/allocator/x86_64_m6_adapter.py",
-      "scope": "Shared-driver pinned-C/native-adapter traces of the exported M6 entries: mi_reserve_os_memory and mi_reserve_os_memory_ex (committed, lazily committed, too-small, exclusive, failing, and over-limit reservations with their statistics and errno), mi_heap_new, mi_heap_main, the mi_heap_malloc/zalloc/calloc/mallocn/small and aligned[_at] allocation entries with their failure errors and messages, the mi_heap_realloc family (in-place reuse only within the block's own Heap, including from another thread), mi_realloc of a Heap block, mi_heap_strdup/strndup/realpath, mi_heap_alloc_new[_n], mi_heap_collect with its deferred-free callback and page release, main-Heap delete/destroy warnings, test-api.c heap-os1/heap-os2/heap-many with page and Heap statistics, and a second thread allocating from a shared Heap, deleting its own, and finishing before the Heap is destroyed."
+      "scope": "Shared-driver pinned-C/native-adapter traces of the exported M6 entries: mi_reserve_os_memory and mi_reserve_os_memory_ex (committed, lazily committed, too-small, exclusive, failing, and over-limit reservations with their statistics and errno), mi_heap_new, mi_heap_main, the mi_heap_malloc/zalloc/calloc/mallocn/small and aligned[_at] allocation entries with their failure errors and messages, the mi_heap_realloc family (in-place reuse only within the block's own Heap, including from another thread), mi_realloc of a Heap block, mi_heap_strdup/strndup/realpath, mi_heap_alloc_new[_n], mi_heap_collect with its deferred-free callback and page release, main-Heap delete/destroy warnings, test-api.c heap-os1/heap-os2/heap-many with page and Heap statistics, and a second thread allocating from a shared Heap, deleting its own, and finishing before the Heap is destroyed, and the subprocess entries: main and current ids, Heap visitation with an early stop, main-id add/destroy being ignored, the other-subprocess warning, a child whose thread allocates, creates, visits, and deletes a Heap and finishes, and destruction of that child with its statistics merged."
     },
     "differential:public-theap": {
       "runner": null,
@@ -321,12 +321,13 @@
       "acceptance": "Subprocesses follow src/subproc.c: parent-metadata creation with child main Heap and metadata Theap, registry membership, thread admission refusal for threads already in another subprocess, Heap visitation under the Heap-list lock, statistics merge on destruction, and `mi_subproc_destroy` destroying non-main Heaps, the child main Heap, and the child arenas in source order while refusing the process main subprocess.",
       "evidence": [
         "differential:subprocess-lifecycle",
+        "differential:public-heap-adapter",
         "differential:arena-destroy",
         "upstream:test-stress-subprocs",
         "unit:subprocess"
       ],
       "blocked_by": [
-        "Crate-private `subproc::lifecycle` composes `mi_subproc_new`, `mi_subproc_visit_heaps`, and `mi_subproc_destroy` for root children of the process main subprocess only when the child has no non-main Heap and no thread; live metadata pages go with the child arenas as in source. Crate-private production entry points (`native_subproc_new`, `native_subproc_add_current_thread`, `native_subproc_visit_heaps`, `native_subproc_destroy`) share one child across threads; the native runtime allocate, free, realloc, and thread-exit entries route an admitted thread through its own child Theap; and process destruction destroys every child before main (`_mi_subprocs_unsafe_destroy_all`), under any threads that still belong to it. A finishing child thread hands its live pages to the child main Heap and any thread may free their blocks, but a free by a thread of the same child never reclaims such a page, allocation never reuses abandoned pages, OS-backed child pages cannot be abandoned, `mi_subproc_destroy` refuses a child with threads, and nested children, subprocess statistics entries, and public C symbols do not exist."
+        "mi_subproc_main, mi_subproc_current, mi_subproc_new, mi_subproc_destroy, mi_subproc_add_current_thread, and mi_subproc_visit_heaps are exported for root children of the process main subprocess; mi_subproc_destroy refuses a child that threads still belong to (source destroys it under them), a child thread's non-main Heaps allocate only through plain mi_heap_malloc, nested children do not exist, and the subprocess statistics entries have no public entry."
       ]
     },
     {
