@@ -340,7 +340,7 @@ expected = {
     "crypt": "T", "crypt_r": "W", "__crypt_r": "T", "__crypt_sha256": "T",
     "__crypt_sha512": "T", "__crypt_md5": "T", "__crypt_blowfish": "T",
 }
-owners: set[str] = set()
+owners: dict[str, str] = {}
 for name, binding in expected.items():
     matches = []
     for line in symbols:
@@ -350,9 +350,11 @@ for name, binding in expected.items():
             matches.append((":".join(prefix[:2]), fields[-2]))
     if len(matches) != 1 or matches[0][1] != binding:
         raise SystemExit(f"owned crypt runtime: static provider binding drifted for {name}")
-    owners.add(matches[0][0])
-if len(owners) != 1:
-    raise SystemExit("owned crypt runtime: static crypt aliases have different object owners")
+    owners[name] = matches[0][0]
+# musl's weak_alias(__crypt_r, crypt_r) lives in __crypt_r's object; the other
+# providers may have their own members, as musl's crypt*.o objects do.
+if owners["crypt_r"] != owners["__crypt_r"]:
+    raise SystemExit("owned crypt runtime: static crypt_r alias and __crypt_r have different object owners")
 if any("__crabc_x86_crypt" in line for line in symbols):
     raise SystemExit("owned crypt runtime: static archive leaked a test-only crypt export")
 PY_STATIC_SYMBOLS

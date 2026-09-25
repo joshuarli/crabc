@@ -133,37 +133,44 @@ impl Drop for Cancellation {
     }
 }
 
-/// Open a shared-memory namespace file with musl's fixed descriptor flags.
-/// # Safety
-/// `name` must be a readable NUL-terminated C string for this call. The caller
-/// owns the resulting descriptor and any effects requested by flags/mode.
-#[no_mangle]
-pub unsafe extern "C" fn shm_open(name: *const c_char, flags: c_int, mode: c_uint) -> c_int {
-    let mut path = [0_u8; NAME_MAX + 10];
-    if !unsafe { map_name(name, &mut path) } { return -1; }
-    let Some(cancellation) = (unsafe { Cancellation::disable() }) else { return -1; };
-    let result = unsafe { open_file(path.as_ptr(), flags | SHM_FLAGS, mode) };
-    drop(cancellation);
-    result
-}
+// Musl's `src/mman/shm_open.c` object.
+static_archive_member! { shm_open_source {
+    /// Open a shared-memory namespace file with musl's fixed descriptor flags.
+    /// # Safety
+    /// `name` must be a readable NUL-terminated C string for this call. The caller
+    /// owns the resulting descriptor and any effects requested by flags/mode.
+    #[no_mangle]
+    pub unsafe extern "C" fn shm_open(name: *const c_char, flags: c_int, mode: c_uint) -> c_int {
+        let mut path = [0_u8; NAME_MAX + 10];
+        if !unsafe { map_name(name, &mut path) } { return -1; }
+        let Some(cancellation) = (unsafe { Cancellation::disable() }) else { return -1; };
+        let result = unsafe { open_file(path.as_ptr(), flags | SHM_FLAGS, mode) };
+        drop(cancellation);
+        result
+    }
 
-/// Unlink the shared namespace name without invalidating live mappings/fds.
-/// # Safety
-/// `name` must be a readable NUL-terminated C string for this call.
-#[no_mangle]
-pub unsafe extern "C" fn shm_unlink(name: *const c_char) -> c_int {
-    let mut path = [0_u8; NAME_MAX + 10];
-    if !unsafe { map_name(name, &mut path) } { return -1; }
-    unsafe { unlink_file(path.as_ptr()) }
-}
+    /// Unlink the shared namespace name without invalidating live mappings/fds.
+    /// # Safety
+    /// `name` must be a readable NUL-terminated C string for this call.
+    #[no_mangle]
+    pub unsafe extern "C" fn shm_unlink(name: *const c_char) -> c_int {
+        let mut path = [0_u8; NAME_MAX + 10];
+        if !unsafe { map_name(name, &mut path) } { return -1; }
+        unsafe { unlink_file(path.as_ptr()) }
+    }
+}}
 
-/// Named semaphore names use exactly the shared-memory namespace.
-/// # Safety
-/// `name` must be a readable NUL-terminated C string for this call.
-#[no_mangle]
-pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
-    unsafe { shm_unlink(name) }
-}
+
+// Musl's `src/thread/sem_unlink.c` object.
+static_archive_member! { sem_unlink_source {
+    /// Named semaphore names use exactly the shared-memory namespace.
+    /// # Safety
+    /// `name` must be a readable NUL-terminated C string for this call.
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
+        unsafe { shm_unlink(name) }
+    }
+}}
 
 // sem_open without O_CREAT has exactly two C arguments. Only O_CREAT admits
 // the promoted mode_t/unsigned values in edx/ecx; no dummy Rust parameters are
@@ -333,30 +340,33 @@ unsafe fn open_named_semaphore(name: *const c_char, flags: c_int, creation: Opti
     }
 }
 
-/// Release one successful sem_open reference; only the final close unmaps.
-/// # Safety
-/// `semaphore` must be a live named-semaphore handle from sem_open with an
-/// unmatched open reference in this process. The final close requires that
-/// no caller still accesses or waits on this process's mapping.
-#[no_mangle]
-pub unsafe extern "C" fn sem_close(semaphore: *mut c_void) -> c_int {
-    unsafe { lock() };
-    let table = TABLE.load(Ordering::Relaxed);
-    if !table.is_null() {
-        for index in 0..SEM_NSEMS_MAX {
-            let entry = unsafe { &mut *table.add(index) };
-            if entry.semaphore == semaphore {
-                entry.references -= 1;
-                if entry.references != 0 { unsafe { unlock() }; return 0; }
-                entry.semaphore = core::ptr::null_mut();
-                entry.inode = 0;
-                unsafe { unlock(); unmap_semaphore(semaphore); }
-                return 0;
+// Musl's `src/thread/sem_open.c` object.
+static_archive_member! { sem_open_source {
+    /// Release one successful sem_open reference; only the final close unmaps.
+    /// # Safety
+    /// `semaphore` must be a live named-semaphore handle from sem_open with an
+    /// unmatched open reference in this process. The final close requires that
+    /// no caller still accesses or waits on this process's mapping.
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_close(semaphore: *mut c_void) -> c_int {
+        unsafe { lock() };
+        let table = TABLE.load(Ordering::Relaxed);
+        if !table.is_null() {
+            for index in 0..SEM_NSEMS_MAX {
+                let entry = unsafe { &mut *table.add(index) };
+                if entry.semaphore == semaphore {
+                    entry.references -= 1;
+                    if entry.references != 0 { unsafe { unlock() }; return 0; }
+                    entry.semaphore = core::ptr::null_mut();
+                    entry.inode = 0;
+                    unsafe { unlock(); unmap_semaphore(semaphore); }
+                    return 0;
+                }
             }
         }
+        // An unmatched handle is outside sem_close's contract; do not dereference
+        // past the table if one nevertheless reaches this ABI boundary.
+        unsafe { unlock(); fail(EINVAL); }
+        -1
     }
-    // An unmatched handle is outside sem_close's contract; do not dereference
-    // past the table if one nevertheless reaches this ABI boundary.
-    unsafe { unlock(); fail(EINVAL); }
-    -1
-}
+}}

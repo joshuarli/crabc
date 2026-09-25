@@ -47,20 +47,29 @@ fn first_set_u64(value: u64) -> c_int {
     }
 }
 
-/// Return the one-based least-significant set-bit position in a C `int`.
-#[no_mangle]
-pub extern "C" fn ffs(value: c_int) -> c_int {
-    first_set_u32(value as u32)
-}
+// Musl's `src/misc/ffs.c` object.
+static_archive_member! { ffs_source {
+    /// Return the one-based least-significant set-bit position in a C `int`.
+    #[no_mangle]
+    pub extern "C" fn ffs(value: c_int) -> c_int {
+        first_set_u32(value as u32)
+    }
+}}
 
-/// Return the one-based least-significant set-bit position in a C `long`.
-#[no_mangle]
-pub extern "C" fn ffsl(value: c_long) -> c_int {
-    first_set_u64(value as u64)
-}
+// Musl's `src/misc/ffsl.c` object.
+static_archive_member! { ffsl_source {
+    /// Return the one-based least-significant set-bit position in a C `long`.
+    #[no_mangle]
+    pub extern "C" fn ffsl(value: c_long) -> c_int {
+        first_set_u64(value as u64)
+    }
+}}
 
-/// Return the one-based least-significant set-bit position in C `long long`.
-#[no_mangle]
-pub extern "C" fn ffsll(value: c_longlong) -> c_int {
-    first_set_u64(value as u64)
-}
+// Musl's `src/misc/ffsll.c` object.
+static_archive_member! { ffsll_source {
+    /// Return the one-based least-significant set-bit position in C `long long`.
+    #[no_mangle]
+    pub extern "C" fn ffsll(value: c_longlong) -> c_int {
+        first_set_u64(value as u64)
+    }
+}}

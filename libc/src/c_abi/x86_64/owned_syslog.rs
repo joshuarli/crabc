@@ -356,82 +356,118 @@ unsafe fn write_message(priority: c_int, message: *const c_char, args: VaList) {
     }
 }
 
-/// Replace or query the process-global priority mask.
-///
-/// # Safety
-/// The caller uses the installed Linux/x86-64 C ABI. This entry dereferences
-/// no caller storage and has no cancellation/TLS transition; its private lock
-/// and atomic mask publication make concurrent replacement/query calls safe.
-/// It does not extend the cancellation-bearing logger entries to foreign
-/// tasks.
-#[no_mangle]
-pub unsafe extern "C" fn setlogmask(maskpri: c_int) -> c_int {
-    unsafe { lock() };
-    let old = LOG_MASK.load(Ordering::Relaxed);
-    if maskpri != 0 {
-        LOG_MASK.store(maskpri, Ordering::Relaxed);
-    }
-    unsafe { unlock() };
-    old
-}
-
-/// Close the current `/dev/log` descriptor while retaining all logger settings.
-///
-/// # Safety
-/// The current task is the initialized owned main task or a live selected
-/// worker created by this runtime's `pthread_create`, and it is not in a
-/// fork/lifecycle transition. A foreign task has no owned cancellation slot;
-/// this defensive boundary returns before touching logger state for it.
-#[no_mangle]
-pub unsafe extern "C" fn closelog() {
-    let Ok(cancellation) = (unsafe { disable_cancellation() }) else {
-        return;
-    };
-    unsafe { lock() };
-    let _ = descriptor_io::close(unsafe { LOG_FD });
-    unsafe { LOG_FD = -1 };
-    unsafe { unlock() };
-    unsafe { restore_cancellation(cancellation) };
-}
-
-/// Copy one bounded identifier and configure the process-global logger.
-///
-/// # Safety
-/// The current task is the initialized owned main task or a live selected
-/// worker created by this runtime's `pthread_create`, and it is not in a
-/// fork/lifecycle transition. A foreign task has no owned cancellation slot;
-/// this defensive boundary returns before touching logger state for it.
-///
-/// When non-null, `ident` must make 31 readable bytes available or terminate
-/// sooner.  The identifier is copied immediately; callers retain no storage
-/// lifetime obligation after this call returns.
-#[no_mangle]
-pub unsafe extern "C" fn openlog(ident: *const c_char, options: c_int, facility: c_int) {
-    let Ok(cancellation) = (unsafe { disable_cancellation() }) else {
-        return;
-    };
-    unsafe { lock() };
-    if !ident.is_null() {
-        let destination = core::ptr::addr_of_mut!(LOG_IDENT).cast::<c_char>();
-        let mut length = 0usize;
-        while length < IDENT_CAPACITY - 1 && unsafe { ident.add(length).read() } != 0 {
-            unsafe { destination.add(length).write(ident.add(length).read()) };
-            length += 1;
+// Musl's `src/misc/syslog.c` object.
+static_archive_member! { syslog_source {
+    /// Replace or query the process-global priority mask.
+    ///
+    /// # Safety
+    /// The caller uses the installed Linux/x86-64 C ABI. This entry dereferences
+    /// no caller storage and has no cancellation/TLS transition; its private lock
+    /// and atomic mask publication make concurrent replacement/query calls safe.
+    /// It does not extend the cancellation-bearing logger entries to foreign
+    /// tasks.
+    #[no_mangle]
+    pub unsafe extern "C" fn setlogmask(maskpri: c_int) -> c_int {
+        unsafe { lock() };
+        let old = LOG_MASK.load(Ordering::Relaxed);
+        if maskpri != 0 {
+            LOG_MASK.store(maskpri, Ordering::Relaxed);
         }
-        unsafe { destination.add(length).write(0) };
-    } else {
-        unsafe { core::ptr::addr_of_mut!(LOG_IDENT).cast::<c_char>().write(0) };
+        unsafe { unlock() };
+        old
     }
-    unsafe {
-        LOG_OPT = options;
-        LOG_FACILITY = facility;
-        if options & LOG_NDELAY != 0 && LOG_FD < 0 {
-            open_connection();
+
+    /// Close the current `/dev/log` descriptor while retaining all logger settings.
+    ///
+    /// # Safety
+    /// The current task is the initialized owned main task or a live selected
+    /// worker created by this runtime's `pthread_create`, and it is not in a
+    /// fork/lifecycle transition. A foreign task has no owned cancellation slot;
+    /// this defensive boundary returns before touching logger state for it.
+    #[no_mangle]
+    pub unsafe extern "C" fn closelog() {
+        let Ok(cancellation) = (unsafe { disable_cancellation() }) else {
+            return;
+        };
+        unsafe { lock() };
+        let _ = descriptor_io::close(unsafe { LOG_FD });
+        unsafe { LOG_FD = -1 };
+        unsafe { unlock() };
+        unsafe { restore_cancellation(cancellation) };
+    }
+
+    /// Copy one bounded identifier and configure the process-global logger.
+    ///
+    /// # Safety
+    /// The current task is the initialized owned main task or a live selected
+    /// worker created by this runtime's `pthread_create`, and it is not in a
+    /// fork/lifecycle transition. A foreign task has no owned cancellation slot;
+    /// this defensive boundary returns before touching logger state for it.
+    ///
+    /// When non-null, `ident` must make 31 readable bytes available or terminate
+    /// sooner.  The identifier is copied immediately; callers retain no storage
+    /// lifetime obligation after this call returns.
+    #[no_mangle]
+    pub unsafe extern "C" fn openlog(ident: *const c_char, options: c_int, facility: c_int) {
+        let Ok(cancellation) = (unsafe { disable_cancellation() }) else {
+            return;
+        };
+        unsafe { lock() };
+        if !ident.is_null() {
+            let destination = core::ptr::addr_of_mut!(LOG_IDENT).cast::<c_char>();
+            let mut length = 0usize;
+            while length < IDENT_CAPACITY - 1 && unsafe { ident.add(length).read() } != 0 {
+                unsafe { destination.add(length).write(ident.add(length).read()) };
+                length += 1;
+            }
+            unsafe { destination.add(length).write(0) };
+        } else {
+            unsafe { core::ptr::addr_of_mut!(LOG_IDENT).cast::<c_char>().write(0) };
         }
+        unsafe {
+            LOG_OPT = options;
+            LOG_FACILITY = facility;
+            if options & LOG_NDELAY != 0 && LOG_FD < 0 {
+                open_connection();
+            }
+        }
+        unsafe { unlock() };
+        unsafe { restore_cancellation(cancellation) };
     }
-    unsafe { unlock() };
-    unsafe { restore_cancellation(cancellation) };
-}
+
+    /// Weak public C spelling for musl's private `__vsyslog` body.
+    ///
+    /// # Safety
+    /// The current task is the initialized owned main task or a live selected
+    /// worker created by this runtime's `pthread_create`, and it is not in a
+    /// fork/lifecycle transition. A foreign task has no owned cancellation slot;
+    /// this defensive boundary returns before touching logger state for it.
+    ///
+    /// `message` is a readable NUL-terminated format string and `args` holds the
+    /// promoted values and storage required by every selected format conversion.
+    #[no_mangle]
+    #[linkage = "weak"]
+    pub unsafe extern "C" fn vsyslog(priority: c_int, message: *const c_char, args: VaList) {
+        unsafe { __vsyslog(priority, message, args) };
+    }
+
+    /// C-variadic front end for the owned syslog transaction.
+    ///
+    /// # Safety
+    /// The current task is the initialized owned main task or a live selected
+    /// worker created by this runtime's `pthread_create`, and it is not in a
+    /// fork/lifecycle transition. A foreign task has no owned cancellation slot;
+    /// this defensive boundary returns before touching logger state for it.
+    ///
+    /// `message` and every promoted variadic argument satisfy the selected
+    /// `vsnprintf` format contract.  `%m` observes the caller's saved errno.
+    #[no_mangle]
+    pub unsafe extern "C" fn syslog(priority: c_int, message: *const c_char, args: ...) {
+        unsafe { __vsyslog(priority, message, args) };
+    }
+}}
+
+
 
 /// Musl's private `__vsyslog` state/mask/cancellation transaction.
 unsafe fn __vsyslog(priority: c_int, message: *const c_char, args: VaList) {
@@ -449,33 +485,4 @@ unsafe fn __vsyslog(priority: c_int, message: *const c_char, args: VaList) {
     unsafe { restore_cancellation(cancellation) };
 }
 
-/// Weak public C spelling for musl's private `__vsyslog` body.
-///
-/// # Safety
-/// The current task is the initialized owned main task or a live selected
-/// worker created by this runtime's `pthread_create`, and it is not in a
-/// fork/lifecycle transition. A foreign task has no owned cancellation slot;
-/// this defensive boundary returns before touching logger state for it.
-///
-/// `message` is a readable NUL-terminated format string and `args` holds the
-/// promoted values and storage required by every selected format conversion.
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn vsyslog(priority: c_int, message: *const c_char, args: VaList) {
-    unsafe { __vsyslog(priority, message, args) };
-}
 
-/// C-variadic front end for the owned syslog transaction.
-///
-/// # Safety
-/// The current task is the initialized owned main task or a live selected
-/// worker created by this runtime's `pthread_create`, and it is not in a
-/// fork/lifecycle transition. A foreign task has no owned cancellation slot;
-/// this defensive boundary returns before touching logger state for it.
-///
-/// `message` and every promoted variadic argument satisfy the selected
-/// `vsnprintf` format contract.  `%m` observes the caller's saved errno.
-#[no_mangle]
-pub unsafe extern "C" fn syslog(priority: c_int, message: *const c_char, args: ...) {
-    unsafe { __vsyslog(priority, message, args) };
-}

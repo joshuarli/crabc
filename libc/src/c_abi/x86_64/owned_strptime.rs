@@ -217,16 +217,19 @@ unsafe fn parse(mut input: *const u8, mut format: *const u8, value: *mut Tm) -> 
     }
 }
 
-/// Parse C/POSIX/C.UTF-8 calendar text into the fields selected by `format`.
-///
-/// # Safety
-/// `input` and `format` are readable NUL-terminated strings, disjoint from the
-/// writable, aligned `Tm` storage. Fields read by directives (notably `%p`)
-/// must be initialized. `%Z` uses the timezone names initialized by `tzset`;
-/// callers must serialize timezone mutation with their use. The returned
-/// pointer borrows `input`; null reports failure and may leave partial fields.
-#[no_mangle]
-pub unsafe extern "C" fn strptime(input: *const c_char, format: *const c_char,
-    value: *mut Tm) -> *mut c_char {
-    unsafe { parse(input.cast(), format.cast(), value).cast_mut().cast() }
-}
+// Musl's `src/time/strptime.c` object.
+static_archive_member! { strptime_source {
+    /// Parse C/POSIX/C.UTF-8 calendar text into the fields selected by `format`.
+    ///
+    /// # Safety
+    /// `input` and `format` are readable NUL-terminated strings, disjoint from the
+    /// writable, aligned `Tm` storage. Fields read by directives (notably `%p`)
+    /// must be initialized. `%Z` uses the timezone names initialized by `tzset`;
+    /// callers must serialize timezone mutation with their use. The returned
+    /// pointer borrows `input`; null reports failure and may leave partial fields.
+    #[no_mangle]
+    pub unsafe extern "C" fn strptime(input: *const c_char, format: *const c_char,
+        value: *mut Tm) -> *mut c_char {
+        unsafe { parse(input.cast(), format.cast(), value).cast_mut().cast() }
+    }
+}}

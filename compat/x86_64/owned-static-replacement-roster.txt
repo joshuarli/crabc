@@ -118,3 +118,16 @@ getservbyport getservbyport_r getsockname getsockopt hstrerror htonl htons
 inet_addr inet_ntop inet_pton listen ntohl ntohs recv recvfrom recvmmsg
 recvmsg res_query res_querydomain send sendmmsg sendmsg sendto setsockopt
 shutdown sockatmark socket socketpair
+
+# Accounts, IPC, time, syslog, random and arithmetic
+abs adjtime adjtimex asctime clock clock_getres closelog crypt ctime ctime_r
+div drand48 endspent erand48 ffs ffsl ffsll fgetgrent fgetpwent fgetspent
+ftok getgrent getgrgid getgrgid_r getgrnam getgrnam_r getgrouplist getpwent
+getpwnam getpwuid getspent getspnam gettimeofday gmtime imaxabs imaxdiv
+initgroups initstate jrand48 labs lckpwdf lcong48 ldiv llabs lldiv localtime
+lrand48 mktime mq_close mq_getattr mq_notify mq_receive mq_send
+mq_timedreceive mq_timedsend mq_unlink mrand48 msgctl msgget msgrcv msgsnd
+nrand48 openlog putgrent putpwent putspent random seed48 sem_close sem_unlink
+semctl semget semop semtimedop setgrent setlogmask setpwent setspent setstate
+settimeofday shmat shmctl shmdt shmget srand48 srandom stime strptime syslog
+time timegm times timespec_get ulckpwdf

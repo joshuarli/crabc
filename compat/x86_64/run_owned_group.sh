@@ -72,7 +72,9 @@ names = {
 records = {}
 for line in Path(sys.argv[1]).read_text().splitlines():
     fields = line.split()
-    if len(fields) == 8 and fields[7] in names:
+    # An archive member that calls one of these carries an undefined
+    # reference; only definitions are provider rows.
+    if len(fields) == 8 and fields[7] in names and fields[6] != "UND":
         records.setdefault(fields[7], []).append(fields)
 
 assert set(records) == names, records

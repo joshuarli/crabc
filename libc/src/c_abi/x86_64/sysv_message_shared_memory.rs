@@ -43,250 +43,277 @@ const fn ipc_command(command: c_int) -> c_int {
     (command & !IPC_TIME64) | IPC_64
 }
 
-/// Derive a System V IPC key from one pathname and low-byte project id.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the duration
-/// of the metadata lookup. The filesystem lookup, access checks, and C errno
-/// state belong to the caller and Linux.
-#[no_mangle]
-pub unsafe extern "C" fn ftok(path: *const c_char, project_id: c_int) -> c_int {
-    // SAFETY: the public C caller owns the pathname contract and the helper
-    // preserves the existing x86 `stat` errno result on failure.
-    let (device, inode) = match unsafe { stat_compat::stat_device_and_inode(path) } {
-        Some(words) => words,
-        None => return -1,
-    };
+// Musl's `src/ipc/ftok.c` object.
+static_archive_member! { ftok_source {
+    /// Derive a System V IPC key from one pathname and low-byte project id.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the duration
+    /// of the metadata lookup. The filesystem lookup, access checks, and C errno
+    /// state belong to the caller and Linux.
+    #[no_mangle]
+    pub unsafe extern "C" fn ftok(path: *const c_char, project_id: c_int) -> c_int {
+        // SAFETY: the public C caller owns the pathname contract and the helper
+        // preserves the existing x86 `stat` errno result on failure.
+        let (device, inode) = match unsafe { stat_compat::stat_device_and_inode(path) } {
+            Some(words) => words,
+            None => return -1,
+        };
 
-    // Match musl's unsigned masking exactly. A set high project-id byte is a
-    // successful negative `key_t`, not a C error result.
-    ((inode & 0xffff)
-        | ((device & 0xff) << 16)
-        | (((project_id as u32 as u64) & 0xff) << 24)) as c_int
-}
-
-/// Create or obtain one System V message queue through Linux `msgget(2)`.
-///
-/// `key` and `flags` are forwarded unchanged; the caller owns namespace,
-/// permission, creation-race, and eventual `IPC_RMID` policy.
-#[no_mangle]
-pub extern "C" fn msgget(key: c_int, flags: c_int) -> c_int {
-    // SAFETY: the two scalar C words map directly to Linux x86-64 msgget=68.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_MSGGET,
-            i64::from(key),
-            i64::from(flags),
-        )
-    };
-    c_status(result)
-}
-
-/// Send one message through Linux `msgsnd(2)`.
-///
-/// # Safety
-///
-/// `message` must designate a readable System V message record whose leading
-/// `long` type word and following `length` data bytes remain accessible for
-/// Linux. Blocking and signal policy are caller-owned. The owned runtime
-/// checks cancellation before Linux observes the message.
-#[no_mangle]
-pub unsafe extern "C" fn msgsnd(
-    queue_id: c_int,
-    message: *const c_void,
-    length: usize,
-    flags: c_int,
-) -> c_int {
-    // SAFETY: the caller owns the full kernel message-buffer contract. The
-    // raw helper moves C's fourth word to Linux x86-64 r10.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_MSGSND,
-            i64::from(queue_id),
-            message as usize as i64,
-            length as i64,
-            i64::from(flags),
-            0,
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_MSGSND,
-            i64::from(queue_id),
-            message as usize as i64,
-            length as i64,
-            i64::from(flags),
-        )
-    };
-    c_status(result)
-}
-
-/// Receive one message through Linux `msgrcv(2)`.
-///
-/// # Safety
-///
-/// `message` must designate writable System V message-record storage for a
-/// leading `long` type plus up to `length` data bytes. The caller owns queue
-/// lifetime, selector semantics, blocking, and signal policy. The owned
-/// runtime checks cancellation before Linux consumes a queued message.
-#[no_mangle]
-pub unsafe extern "C" fn msgrcv(
-    queue_id: c_int,
-    message: *mut c_void,
-    length: usize,
-    message_type: c_long,
-    flags: c_int,
-) -> isize {
-    // SAFETY: the caller supplies the full writable message-record contract.
-    // The raw helper places type and flags in Linux x86-64 r10/r8.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_MSGRCV,
-            i64::from(queue_id),
-            message as usize as i64,
-            length as i64,
-            message_type as i64,
-            i64::from(flags),
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_MSGRCV,
-            i64::from(queue_id),
-            message as usize as i64,
-            length as i64,
-            message_type as i64,
-            i64::from(flags),
-        )
-    };
-    c_ssize_status(result)
-}
-
-/// Control one System V message queue through Linux `msgctl(2)`.
-///
-/// # Safety
-///
-/// For commands that consume it, `buffer` must designate the exact writable
-/// or readable x86 `struct msqid_ds` storage required by Linux for the
-/// duration of the call. Commands that do not consume it may use null. The
-/// caller owns queue lifetime, permissions, and namespace policy.
-#[no_mangle]
-pub unsafe extern "C" fn msgctl(
-    queue_id: c_int,
-    command: c_int,
-    buffer: *mut c_void,
-) -> c_int {
-    let command = ipc_command(command);
-    // SAFETY: the caller supplies any command-specific buffer contract; x86
-    // msgctl=71 takes its three words in rdi/rsi/rdx.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_MSGCTL,
-            i64::from(queue_id),
-            i64::from(command),
-            buffer as usize as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Create or obtain one System V shared-memory segment through `shmget(2)`.
-///
-/// `key` and `flags` are forwarded unchanged. Match musl's only local range
-/// rewrite: x86 LP64 sizes above `PTRDIFF_MAX` become `SIZE_MAX` before Linux
-/// sees them; Linux owns the resulting validation and errno state.
-#[no_mangle]
-pub extern "C" fn shmget(key: c_int, mut size: usize, flags: c_int) -> c_int {
-    if size > isize::MAX as usize {
-        size = usize::MAX;
+        // Match musl's unsigned masking exactly. A set high project-id byte is a
+        // successful negative `key_t`, not a C error result.
+        ((inode & 0xffff)
+            | ((device & 0xff) << 16)
+            | (((project_id as u32 as u64) & 0xff) << 24)) as c_int
     }
-    // SAFETY: the three scalar C words map directly to Linux x86-64 shmget=29.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_SHMGET,
-            i64::from(key),
-            size as i64,
-            i64::from(flags),
-        )
-    };
-    c_status(result)
-}
+}}
 
-/// Attach one System V shared-memory segment through Linux `shmat(2)`.
-///
-/// # Safety
-///
-/// `address` is a caller-owned optional placement hint and must satisfy the
-/// selected Linux `shmat` address/flag contract. On any Linux error this
-/// returns exactly `(void *)-1` after publishing errno; null is not an error
-/// sentinel for this API.
-#[no_mangle]
-pub unsafe extern "C" fn shmat(
-    segment_id: c_int,
-    address: *const c_void,
-    flags: c_int,
-) -> *mut c_void {
-    // SAFETY: the caller owns the kernel address/flag contract. The pointer
-    // translator recognizes only Linux's -4095..=-1 error range and thereby
-    // preserves the required MAP_FAILED all-ones sentinel.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_SHMAT,
-            i64::from(segment_id),
-            address as usize as i64,
-            i64::from(flags),
-        )
-    };
-    c_pointer_status(result)
-}
+// Musl's `src/ipc/msgget.c` object.
+static_archive_member! { msgget_source {
+    /// Create or obtain one System V message queue through Linux `msgget(2)`.
+    ///
+    /// `key` and `flags` are forwarded unchanged; the caller owns namespace,
+    /// permission, creation-race, and eventual `IPC_RMID` policy.
+    #[no_mangle]
+    pub extern "C" fn msgget(key: c_int, flags: c_int) -> c_int {
+        // SAFETY: the two scalar C words map directly to Linux x86-64 msgget=68.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_MSGGET,
+                i64::from(key),
+                i64::from(flags),
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Detach one previously attached System V shared-memory mapping.
-///
-/// # Safety
-///
-/// `address` must be an attachment pointer owned by the caller according to
-/// Linux `shmdt(2)`; all mapping lifetime and concurrency policy remain with
-/// the caller.
-#[no_mangle]
-pub unsafe extern "C" fn shmdt(address: *const c_void) -> c_int {
-    // SAFETY: the caller owns the attachment-pointer contract for shmdt=67.
-    let result = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_SHMDT, address as usize as i64)
-    };
-    c_status(result)
-}
+// Musl's `src/ipc/msgsnd.c` object.
+static_archive_member! { msgsnd_source {
+    /// Send one message through Linux `msgsnd(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `message` must designate a readable System V message record whose leading
+    /// `long` type word and following `length` data bytes remain accessible for
+    /// Linux. Blocking and signal policy are caller-owned. The owned runtime
+    /// checks cancellation before Linux observes the message.
+    #[no_mangle]
+    pub unsafe extern "C" fn msgsnd(
+        queue_id: c_int,
+        message: *const c_void,
+        length: usize,
+        flags: c_int,
+    ) -> c_int {
+        // SAFETY: the caller owns the full kernel message-buffer contract. The
+        // raw helper moves C's fourth word to Linux x86-64 r10.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_MSGSND,
+                i64::from(queue_id),
+                message as usize as i64,
+                length as i64,
+                i64::from(flags),
+                0,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_MSGSND,
+                i64::from(queue_id),
+                message as usize as i64,
+                length as i64,
+                i64::from(flags),
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Control one System V shared-memory segment through Linux `shmctl(2)`.
-///
-/// # Safety
-///
-/// For commands that consume it, `buffer` must designate the exact writable
-/// or readable x86 `struct shmid_ds` storage required by Linux for the call.
-/// Commands that do not consume it may use null. Segment lifetime,
-/// permissions, and namespace policy remain caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn shmctl(
-    segment_id: c_int,
-    command: c_int,
-    buffer: *mut c_void,
-) -> c_int {
-    let command = ipc_command(command);
-    // SAFETY: the caller supplies any command-specific buffer contract; x86
-    // shmctl=31 takes its three words in rdi/rsi/rdx.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_SHMCTL,
-            i64::from(segment_id),
-            i64::from(command),
-            buffer as usize as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/ipc/msgrcv.c` object.
+static_archive_member! { msgrcv_source {
+    /// Receive one message through Linux `msgrcv(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `message` must designate writable System V message-record storage for a
+    /// leading `long` type plus up to `length` data bytes. The caller owns queue
+    /// lifetime, selector semantics, blocking, and signal policy. The owned
+    /// runtime checks cancellation before Linux consumes a queued message.
+    #[no_mangle]
+    pub unsafe extern "C" fn msgrcv(
+        queue_id: c_int,
+        message: *mut c_void,
+        length: usize,
+        message_type: c_long,
+        flags: c_int,
+    ) -> isize {
+        // SAFETY: the caller supplies the full writable message-record contract.
+        // The raw helper places type and flags in Linux x86-64 r10/r8.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_MSGRCV,
+                i64::from(queue_id),
+                message as usize as i64,
+                length as i64,
+                message_type as i64,
+                i64::from(flags),
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_MSGRCV,
+                i64::from(queue_id),
+                message as usize as i64,
+                length as i64,
+                message_type as i64,
+                i64::from(flags),
+            )
+        };
+        c_ssize_status(result)
+    }
+}}
+
+// Musl's `src/ipc/msgctl.c` object.
+static_archive_member! { msgctl_source {
+    /// Control one System V message queue through Linux `msgctl(2)`.
+    ///
+    /// # Safety
+    ///
+    /// For commands that consume it, `buffer` must designate the exact writable
+    /// or readable x86 `struct msqid_ds` storage required by Linux for the
+    /// duration of the call. Commands that do not consume it may use null. The
+    /// caller owns queue lifetime, permissions, and namespace policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn msgctl(
+        queue_id: c_int,
+        command: c_int,
+        buffer: *mut c_void,
+    ) -> c_int {
+        let command = ipc_command(command);
+        // SAFETY: the caller supplies any command-specific buffer contract; x86
+        // msgctl=71 takes its three words in rdi/rsi/rdx.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_MSGCTL,
+                i64::from(queue_id),
+                i64::from(command),
+                buffer as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/ipc/shmget.c` object.
+static_archive_member! { shmget_source {
+    /// Create or obtain one System V shared-memory segment through `shmget(2)`.
+    ///
+    /// `key` and `flags` are forwarded unchanged. Match musl's only local range
+    /// rewrite: x86 LP64 sizes above `PTRDIFF_MAX` become `SIZE_MAX` before Linux
+    /// sees them; Linux owns the resulting validation and errno state.
+    #[no_mangle]
+    pub extern "C" fn shmget(key: c_int, mut size: usize, flags: c_int) -> c_int {
+        if size > isize::MAX as usize {
+            size = usize::MAX;
+        }
+        // SAFETY: the three scalar C words map directly to Linux x86-64 shmget=29.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SHMGET,
+                i64::from(key),
+                size as i64,
+                i64::from(flags),
+            )
+        };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/ipc/shmat.c` object.
+static_archive_member! { shmat_source {
+    /// Attach one System V shared-memory segment through Linux `shmat(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `address` is a caller-owned optional placement hint and must satisfy the
+    /// selected Linux `shmat` address/flag contract. On any Linux error this
+    /// returns exactly `(void *)-1` after publishing errno; null is not an error
+    /// sentinel for this API.
+    #[no_mangle]
+    pub unsafe extern "C" fn shmat(
+        segment_id: c_int,
+        address: *const c_void,
+        flags: c_int,
+    ) -> *mut c_void {
+        // SAFETY: the caller owns the kernel address/flag contract. The pointer
+        // translator recognizes only Linux's -4095..=-1 error range and thereby
+        // preserves the required MAP_FAILED all-ones sentinel.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SHMAT,
+                i64::from(segment_id),
+                address as usize as i64,
+                i64::from(flags),
+            )
+        };
+        c_pointer_status(result)
+    }
+}}
+
+// Musl's `src/ipc/shmdt.c` object.
+static_archive_member! { shmdt_source {
+    /// Detach one previously attached System V shared-memory mapping.
+    ///
+    /// # Safety
+    ///
+    /// `address` must be an attachment pointer owned by the caller according to
+    /// Linux `shmdt(2)`; all mapping lifetime and concurrency policy remain with
+    /// the caller.
+    #[no_mangle]
+    pub unsafe extern "C" fn shmdt(address: *const c_void) -> c_int {
+        // SAFETY: the caller owns the attachment-pointer contract for shmdt=67.
+        let result = unsafe {
+            raw_syscall::syscall1(raw_syscall::SYS_SHMDT, address as usize as i64)
+        };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/ipc/shmctl.c` object.
+static_archive_member! { shmctl_source {
+    /// Control one System V shared-memory segment through Linux `shmctl(2)`.
+    ///
+    /// # Safety
+    ///
+    /// For commands that consume it, `buffer` must designate the exact writable
+    /// or readable x86 `struct shmid_ds` storage required by Linux for the call.
+    /// Commands that do not consume it may use null. Segment lifetime,
+    /// permissions, and namespace policy remain caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn shmctl(
+        segment_id: c_int,
+        command: c_int,
+        buffer: *mut c_void,
+    ) -> c_int {
+        let command = ipc_command(command);
+        // SAFETY: the caller supplies any command-specific buffer contract; x86
+        // shmctl=31 takes its three words in rdi/rsi/rdx.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SHMCTL,
+                i64::from(segment_id),
+                i64::from(command),
+                buffer as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}

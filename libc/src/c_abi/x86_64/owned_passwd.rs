@@ -180,111 +180,132 @@ unsafe fn lookup_reentrant(name: *const c_char, uid: u32, record: *mut Passwd,
     }
 }
 
-/// Look up the first local record with a matching byte-string name.
-/// # Safety
-/// `name` is readable through NUL. `record`, `result`, and `buffer` (for
-/// `capacity` bytes) are writable and mutually nonoverlapping. The name does
-/// not overlap writable arguments. Inspect record pointers only on success
-/// with a non-null result; their lifetime is the caller's buffer lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn getpwnam_r(name: *const c_char, record: *mut Passwd,
-    buffer: *mut c_char, capacity: usize, result: *mut *mut Passwd) -> c_int {
-    unsafe { lookup_reentrant(name, 0, record, buffer, capacity, result) }
-}
-
-/// Look up the first local record with a matching uid.
-/// # Safety
-/// The writable argument, non-overlap and returned-pointer obligations are
-/// the same as getpwnam_r; no name argument is required.
-#[no_mangle]
-pub unsafe extern "C" fn getpwuid_r(uid: u32, record: *mut Passwd,
-    buffer: *mut c_char, capacity: usize, result: *mut *mut Passwd) -> c_int {
-    unsafe { lookup_reentrant(ptr::null(), uid, record, buffer, capacity, result) }
-}
-
-/// Close the enumeration cursor, retaining shared record allocation.
-/// # Safety
-/// Serialize this call with setpwent/endpwent/getpwent/getpwnam/getpwuid and
-/// every use of their borrowed records. The next getpwent opens a fresh FILE.
-#[no_mangle]
-pub unsafe extern "C" fn setpwent() {
-    unsafe {
-        if !ENUMERATION.is_null() { stdio::fclose(ENUMERATION); }
-        ENUMERATION = ptr::null_mut();
+// Musl's `src/passwd/getpw_r.c` object.
+static_archive_member! { getpw_r_source {
+    /// Look up the first local record with a matching byte-string name.
+    /// # Safety
+    /// `name` is readable through NUL. `record`, `result`, and `buffer` (for
+    /// `capacity` bytes) are writable and mutually nonoverlapping. The name does
+    /// not overlap writable arguments. Inspect record pointers only on success
+    /// with a non-null result; their lifetime is the caller's buffer lifetime.
+    #[no_mangle]
+    pub unsafe extern "C" fn getpwnam_r(name: *const c_char, record: *mut Passwd,
+        buffer: *mut c_char, capacity: usize, result: *mut *mut Passwd) -> c_int {
+        unsafe { lookup_reentrant(name, 0, record, buffer, capacity, result) }
     }
-}
-core::arch::global_asm!(".weak endpwent", ".set endpwent, setpwent");
 
-/// Read the next valid local passwd record, opening the cursor lazily.
-/// # Safety
-/// Serialize all shared-record APIs and use of their borrowed records as
-/// documented for setpwent. Any subsequent shared-record lookup may replace
-/// or free returned storage, including an unsuccessful lookup or EOF.
-#[no_mangle]
-pub unsafe extern "C" fn getpwent() -> *mut Passwd {
-    unsafe {
-        if ENUMERATION.is_null() { ENUMERATION = stdio::fopen(c"/etc/passwd".as_ptr(), c"rbe".as_ptr()); }
-        if ENUMERATION.is_null() { return ptr::null_mut(); }
-        let mut result = ptr::null_mut();
-        next_record(ENUMERATION, &raw mut SHARED_RECORD, &raw mut SHARED_LINE,
-            &raw mut SHARED_CAPACITY, &mut result);
-        result
+    /// Look up the first local record with a matching uid.
+    /// # Safety
+    /// The writable argument, non-overlap and returned-pointer obligations are
+    /// the same as getpwnam_r; no name argument is required.
+    #[no_mangle]
+    pub unsafe extern "C" fn getpwuid_r(uid: u32, record: *mut Passwd,
+        buffer: *mut c_char, capacity: usize, result: *mut *mut Passwd) -> c_int {
+        unsafe { lookup_reentrant(ptr::null(), uid, record, buffer, capacity, result) }
     }
-}
+}}
 
-/// Look up a name using the shared record without moving enumeration's FILE.
-/// # Safety
-/// `name` is readable through NUL and does not alias shared record storage.
-/// Shared-call serialization and result lifetime obligations are getpwent's.
-#[no_mangle]
-pub unsafe extern "C" fn getpwnam(name: *const c_char) -> *mut Passwd {
-    unsafe {
-        let mut result = ptr::null_mut();
-        lookup(name, 0, &raw mut SHARED_RECORD, &raw mut SHARED_LINE,
-            &raw mut SHARED_CAPACITY, &mut result);
-        result
-    }
-}
 
-/// Look up a uid using the shared record without moving enumeration's FILE.
-/// # Safety
-/// Shared-call serialization and result lifetime obligations are getpwent's.
-#[no_mangle]
-pub unsafe extern "C" fn getpwuid(uid: u32) -> *mut Passwd {
-    unsafe {
-        let mut result = ptr::null_mut();
-        lookup(ptr::null(), uid, &raw mut SHARED_RECORD, &raw mut SHARED_LINE,
-            &raw mut SHARED_CAPACITY, &mut result);
-        result
-    }
-}
+// Musl's `src/passwd/getpwent.c` object.
+static_archive_member! { getpwent_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak endpwent",
+        ".set endpwent, setpwent",
+    );
 
-/// Parse a caller-owned FILE using fgetpwent's separate shared record.
-/// # Safety
-/// `stream` is a live FILE, retained throughout the call. Serialize fgetpwent
-/// calls and all uses of their borrowed results. The next fgetpwent call can
-/// replace or free the record's storage, including on EOF or error.
-#[no_mangle]
-pub unsafe extern "C" fn fgetpwent(stream: *mut StandardStream) -> *mut Passwd {
-    unsafe {
-        let mut capacity = 0;
-        let mut result = ptr::null_mut();
-        next_record(stream, &raw mut STREAM_RECORD, &raw mut STREAM_LINE,
-            &mut capacity, &mut result);
-        result
+    /// Close the enumeration cursor, retaining shared record allocation.
+    /// # Safety
+    /// Serialize this call with setpwent/endpwent/getpwent/getpwnam/getpwuid and
+    /// every use of their borrowed records. The next getpwent opens a fresh FILE.
+    #[no_mangle]
+    pub unsafe extern "C" fn setpwent() {
+        unsafe {
+            if !ENUMERATION.is_null() { stdio::fclose(ENUMERATION); }
+            ENUMERATION = ptr::null_mut();
+        }
     }
-}
 
-/// Write seven passwd fields with musl's literal fprintf formatting.
-/// # Safety
-/// `record` and its five NUL-terminated strings are readable and stable for
-/// the call. `stream` is a live writable FILE. Formatting neither validates
-/// nor escapes embedded delimiters or newlines in the fields.
-#[no_mangle]
-pub unsafe extern "C" fn putpwent(record: *const Passwd, stream: *mut StandardStream) -> c_int {
-    unsafe {
-        if super::stdio_format_scan::fprintf(stream, c"%s:%s:%u:%u:%s:%s:%s\n".as_ptr(),
-            (*record).name, (*record).password, (*record).uid, (*record).gid,
-            (*record).gecos, (*record).directory, (*record).shell) < 0 { -1 } else { 0 }
+    /// Read the next valid local passwd record, opening the cursor lazily.
+    /// # Safety
+    /// Serialize all shared-record APIs and use of their borrowed records as
+    /// documented for setpwent. Any subsequent shared-record lookup may replace
+    /// or free returned storage, including an unsuccessful lookup or EOF.
+    #[no_mangle]
+    pub unsafe extern "C" fn getpwent() -> *mut Passwd {
+        unsafe {
+            if ENUMERATION.is_null() { ENUMERATION = stdio::fopen(c"/etc/passwd".as_ptr(), c"rbe".as_ptr()); }
+            if ENUMERATION.is_null() { return ptr::null_mut(); }
+            let mut result = ptr::null_mut();
+            next_record(ENUMERATION, &raw mut SHARED_RECORD, &raw mut SHARED_LINE,
+                &raw mut SHARED_CAPACITY, &mut result);
+            result
+        }
     }
-}
+
+    /// Look up a name using the shared record without moving enumeration's FILE.
+    /// # Safety
+    /// `name` is readable through NUL and does not alias shared record storage.
+    /// Shared-call serialization and result lifetime obligations are getpwent's.
+    #[no_mangle]
+    pub unsafe extern "C" fn getpwnam(name: *const c_char) -> *mut Passwd {
+        unsafe {
+            let mut result = ptr::null_mut();
+            lookup(name, 0, &raw mut SHARED_RECORD, &raw mut SHARED_LINE,
+                &raw mut SHARED_CAPACITY, &mut result);
+            result
+        }
+    }
+
+    /// Look up a uid using the shared record without moving enumeration's FILE.
+    /// # Safety
+    /// Shared-call serialization and result lifetime obligations are getpwent's.
+    #[no_mangle]
+    pub unsafe extern "C" fn getpwuid(uid: u32) -> *mut Passwd {
+        unsafe {
+            let mut result = ptr::null_mut();
+            lookup(ptr::null(), uid, &raw mut SHARED_RECORD, &raw mut SHARED_LINE,
+                &raw mut SHARED_CAPACITY, &mut result);
+            result
+        }
+    }
+}}
+
+
+
+
+// Musl's `src/passwd/fgetpwent.c` object.
+static_archive_member! { fgetpwent_source {
+    /// Parse a caller-owned FILE using fgetpwent's separate shared record.
+    /// # Safety
+    /// `stream` is a live FILE, retained throughout the call. Serialize fgetpwent
+    /// calls and all uses of their borrowed results. The next fgetpwent call can
+    /// replace or free the record's storage, including on EOF or error.
+    #[no_mangle]
+    pub unsafe extern "C" fn fgetpwent(stream: *mut StandardStream) -> *mut Passwd {
+        unsafe {
+            let mut capacity = 0;
+            let mut result = ptr::null_mut();
+            next_record(stream, &raw mut STREAM_RECORD, &raw mut STREAM_LINE,
+                &mut capacity, &mut result);
+            result
+        }
+    }
+}}
+
+// Musl's `src/passwd/putpwent.c` object.
+static_archive_member! { putpwent_source {
+    /// Write seven passwd fields with musl's literal fprintf formatting.
+    /// # Safety
+    /// `record` and its five NUL-terminated strings are readable and stable for
+    /// the call. `stream` is a live writable FILE. Formatting neither validates
+    /// nor escapes embedded delimiters or newlines in the fields.
+    #[no_mangle]
+    pub unsafe extern "C" fn putpwent(record: *const Passwd, stream: *mut StandardStream) -> c_int {
+        unsafe {
+            if crate::x86_64_static_c_abi::stdio_format_scan::fprintf(stream, c"%s:%s:%u:%u:%s:%s:%s\n".as_ptr(),
+                (*record).name, (*record).password, (*record).uid, (*record).gid,
+                (*record).gecos, (*record).directory, (*record).shell) < 0 { -1 } else { 0 }
+        }
+    }
+}}

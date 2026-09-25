@@ -59,92 +59,113 @@ unsafe fn global_parameters() -> *const u16 {
     unsafe { global_state().add(3).cast_const() }
 }
 
-/// Advance caller-owned rand48 state and return its nonnegative 31-bit value.
-///
-/// # Safety
-/// `state` must point to three valid writable `unsigned short` words.
-#[no_mangle]
-pub unsafe extern "C" fn nrand48(state: *mut u16) -> c_long {
-    unsafe { (step(state, global_parameters()) >> 17) as c_long }
-}
-
-/// Advance the private global rand48 state and return its nonnegative value.
-#[no_mangle]
-pub unsafe extern "C" fn lrand48() -> c_long {
-    unsafe { (step(global_state(), global_parameters()) >> 17) as c_long }
-}
-
-/// Advance caller-owned rand48 state and return its signed 32-bit value.
-///
-/// # Safety
-/// `state` must point to three valid writable `unsigned short` words.
-#[no_mangle]
-pub unsafe extern "C" fn jrand48(state: *mut u16) -> c_long {
-    unsafe { (step(state, global_parameters()) >> 16) as u32 as i32 as c_long }
-}
-
-/// Advance the private global rand48 state and return its signed value.
-#[no_mangle]
-pub unsafe extern "C" fn mrand48() -> c_long {
-    unsafe { (step(global_state(), global_parameters()) >> 16) as u32 as i32 as c_long }
-}
-
-/// Set the private rand48 state from musl's historical signed-long seed form.
-#[no_mangle]
-pub unsafe extern "C" fn srand48(seed: c_long) {
-    unsafe {
-        let state = global_state();
-        core::ptr::write_unaligned(state, 0x330e);
-        core::ptr::write_unaligned(state.add(1), seed as u16);
-        core::ptr::write_unaligned(state.add(2), (seed >> 16) as u16);
+// Musl's `src/prng/lrand48.c` object.
+static_archive_member! { lrand48_source {
+    /// Advance caller-owned rand48 state and return its nonnegative 31-bit value.
+    ///
+    /// # Safety
+    /// `state` must point to three valid writable `unsigned short` words.
+    #[no_mangle]
+    pub unsafe extern "C" fn nrand48(state: *mut u16) -> c_long {
+        unsafe { (step(state, global_parameters()) >> 17) as c_long }
     }
-}
 
-/// Replace the private state and return the prior state through musl's one
-/// shared three-word result buffer.
-///
-/// # Safety
-/// `state` must point to three valid readable `unsigned short` words.
-#[no_mangle]
-pub unsafe extern "C" fn seed48(state: *mut u16) -> *mut u16 {
-    unsafe {
-        let seed = global_state();
-        let old = old_state();
-        for index in 0..3 {
-            core::ptr::write_unaligned(old.add(index), core::ptr::read_unaligned(seed.add(index)));
-        }
-        for index in 0..3 {
-            core::ptr::write_unaligned(seed.add(index), core::ptr::read_unaligned(state.add(index)));
-        }
-        old
+    /// Advance the private global rand48 state and return its nonnegative value.
+    #[no_mangle]
+    pub unsafe extern "C" fn lrand48() -> c_long {
+        unsafe { (step(global_state(), global_parameters()) >> 17) as c_long }
     }
-}
+}}
 
-/// Advance caller-owned rand48 state and return the exact musl binary64 value.
-///
-/// # Safety
-/// `state` must point to three valid writable `unsigned short` words.
-#[no_mangle]
-pub unsafe extern "C" fn erand48(state: *mut u16) -> f64 {
-    unsafe { f64::from_bits(0x3ff0_0000_0000_0000 | (step(state, global_parameters()) << 4)) - 1.0 }
-}
 
-/// Advance the private global rand48 state and return the exact binary64 value.
-#[no_mangle]
-pub unsafe extern "C" fn drand48() -> f64 {
-    unsafe { f64::from_bits(0x3ff0_0000_0000_0000 | (step(global_state(), global_parameters()) << 4)) - 1.0 }
-}
+// Musl's `src/prng/mrand48.c` object.
+static_archive_member! { mrand48_source {
+    /// Advance caller-owned rand48 state and return its signed 32-bit value.
+    ///
+    /// # Safety
+    /// `state` must point to three valid writable `unsigned short` words.
+    #[no_mangle]
+    pub unsafe extern "C" fn jrand48(state: *mut u16) -> c_long {
+        unsafe { (step(state, global_parameters()) >> 16) as u32 as i32 as c_long }
+    }
 
-/// Replace both private state and LCG parameters from seven caller-owned words.
-///
-/// # Safety
-/// `parameters` must point to seven valid readable `unsigned short` words.
-#[no_mangle]
-pub unsafe extern "C" fn lcong48(parameters: *mut u16) {
-    unsafe {
-        let seed = global_state();
-        for index in 0..7 {
-            core::ptr::write_unaligned(seed.add(index), core::ptr::read_unaligned(parameters.add(index)));
+    /// Advance the private global rand48 state and return its signed value.
+    #[no_mangle]
+    pub unsafe extern "C" fn mrand48() -> c_long {
+        unsafe { (step(global_state(), global_parameters()) >> 16) as u32 as i32 as c_long }
+    }
+}}
+
+
+// Musl's `src/prng/srand48.c` object.
+static_archive_member! { srand48_source {
+    /// Set the private rand48 state from musl's historical signed-long seed form.
+    #[no_mangle]
+    pub unsafe extern "C" fn srand48(seed: c_long) {
+        unsafe {
+            let state = global_state();
+            core::ptr::write_unaligned(state, 0x330e);
+            core::ptr::write_unaligned(state.add(1), seed as u16);
+            core::ptr::write_unaligned(state.add(2), (seed >> 16) as u16);
         }
     }
-}
+}}
+
+// Musl's `src/prng/seed48.c` object.
+static_archive_member! { seed48_source {
+    /// Replace the private state and return the prior state through musl's one
+    /// shared three-word result buffer.
+    ///
+    /// # Safety
+    /// `state` must point to three valid readable `unsigned short` words.
+    #[no_mangle]
+    pub unsafe extern "C" fn seed48(state: *mut u16) -> *mut u16 {
+        unsafe {
+            let seed = global_state();
+            let old = old_state();
+            for index in 0..3 {
+                core::ptr::write_unaligned(old.add(index), core::ptr::read_unaligned(seed.add(index)));
+            }
+            for index in 0..3 {
+                core::ptr::write_unaligned(seed.add(index), core::ptr::read_unaligned(state.add(index)));
+            }
+            old
+        }
+    }
+}}
+
+// Musl's `src/prng/drand48.c` object.
+static_archive_member! { drand48_source {
+    /// Advance caller-owned rand48 state and return the exact musl binary64 value.
+    ///
+    /// # Safety
+    /// `state` must point to three valid writable `unsigned short` words.
+    #[no_mangle]
+    pub unsafe extern "C" fn erand48(state: *mut u16) -> f64 {
+        unsafe { f64::from_bits(0x3ff0_0000_0000_0000 | (step(state, global_parameters()) << 4)) - 1.0 }
+    }
+
+    /// Advance the private global rand48 state and return the exact binary64 value.
+    #[no_mangle]
+    pub unsafe extern "C" fn drand48() -> f64 {
+        unsafe { f64::from_bits(0x3ff0_0000_0000_0000 | (step(global_state(), global_parameters()) << 4)) - 1.0 }
+    }
+}}
+
+
+// Musl's `src/prng/lcong48.c` object.
+static_archive_member! { lcong48_source {
+    /// Replace both private state and LCG parameters from seven caller-owned words.
+    ///
+    /// # Safety
+    /// `parameters` must point to seven valid readable `unsigned short` words.
+    #[no_mangle]
+    pub unsafe extern "C" fn lcong48(parameters: *mut u16) {
+        unsafe {
+            let seed = global_state();
+            for index in 0..7 {
+                core::ptr::write_unaligned(seed.add(index), core::ptr::read_unaligned(parameters.add(index)));
+            }
+        }
+    }
+}}

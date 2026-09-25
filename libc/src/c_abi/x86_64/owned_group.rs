@@ -384,301 +384,325 @@ unsafe fn lookup_reentrant(
     }
 }
 
-/// Look up one local group record by byte-string name.
-///
-/// # Safety
-/// `name` is readable through NUL. `record`, `result`, and `buffer` for
-/// `capacity` bytes are writable, mutually non-overlapping C storage. The
-/// returned record is usable only when `*result` equals `record`; its pointers
-/// borrow `buffer` for the caller-selected lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn getgrnam_r(
-    name: *const c_char,
-    record: *mut Group,
-    buffer: *mut c_char,
-    capacity: usize,
-    result: *mut *mut Group,
-) -> c_int {
-    unsafe { lookup_reentrant(name, 0, record, buffer, capacity, result) }
-}
-
-/// Look up one local group record by Linux `gid_t`.
-///
-/// # Safety
-/// The writable storage and returned-record requirements are the same as
-/// `getgrnam_r`; no name string is read for this form.
-#[no_mangle]
-pub unsafe extern "C" fn getgrgid_r(
-    gid: u32,
-    record: *mut Group,
-    buffer: *mut c_char,
-    capacity: usize,
-    result: *mut *mut Group,
-) -> c_int {
-    unsafe { lookup_reentrant(ptr::null(), gid, record, buffer, capacity, result) }
-}
-
-/// Close the process-global enumeration stream without freeing borrowed data.
-///
-/// # Safety
-/// Serialize this call with `getgrent`, shared lookups, and use of all results
-/// backed by this module's process-global record.
-#[no_mangle]
-pub unsafe extern "C" fn setgrent() {
-    unsafe {
-        if !ENUMERATION.is_null() {
-            stdio::fclose(ENUMERATION);
-        }
-        ENUMERATION = ptr::null_mut();
+// Musl's `src/passwd/getgr_r.c` object.
+static_archive_member! { getgr_r_source {
+    /// Look up one local group record by byte-string name.
+    ///
+    /// # Safety
+    /// `name` is readable through NUL. `record`, `result`, and `buffer` for
+    /// `capacity` bytes are writable, mutually non-overlapping C storage. The
+    /// returned record is usable only when `*result` equals `record`; its pointers
+    /// borrow `buffer` for the caller-selected lifetime.
+    #[no_mangle]
+    pub unsafe extern "C" fn getgrnam_r(
+        name: *const c_char,
+        record: *mut Group,
+        buffer: *mut c_char,
+        capacity: usize,
+        result: *mut *mut Group,
+    ) -> c_int {
+        unsafe { lookup_reentrant(name, 0, record, buffer, capacity, result) }
     }
-}
+
+    /// Look up one local group record by Linux `gid_t`.
+    ///
+    /// # Safety
+    /// The writable storage and returned-record requirements are the same as
+    /// `getgrnam_r`; no name string is read for this form.
+    #[no_mangle]
+    pub unsafe extern "C" fn getgrgid_r(
+        gid: u32,
+        record: *mut Group,
+        buffer: *mut c_char,
+        capacity: usize,
+        result: *mut *mut Group,
+    ) -> c_int {
+        unsafe { lookup_reentrant(ptr::null(), gid, record, buffer, capacity, result) }
+    }
+}}
+
+
+// Musl's `src/passwd/getgrent.c` object.
+static_archive_member! { getgrent_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak endgrent",
+        ".set endgrent, setgrent",
+    );
+
+    /// Close the process-global enumeration stream without freeing borrowed data.
+    ///
+    /// # Safety
+    /// Serialize this call with `getgrent`, shared lookups, and use of all results
+    /// backed by this module's process-global record.
+    #[no_mangle]
+    pub unsafe extern "C" fn setgrent() {
+        unsafe {
+            if !ENUMERATION.is_null() {
+                stdio::fclose(ENUMERATION);
+            }
+            ENUMERATION = ptr::null_mut();
+        }
+    }
+
+    /// Return the next valid conventional local group record.
+    ///
+    /// # Safety
+    /// Serialize calls and all use of the borrowed process-global result. The
+    /// stream and line storage are inherited across `fork` through the existing
+    /// owned stdio fork transaction, as with musl's global cursor.
+    #[no_mangle]
+    pub unsafe extern "C" fn getgrent() -> *mut Group {
+        unsafe {
+            if ENUMERATION.is_null() {
+                ENUMERATION = stdio::fopen(c"/etc/group".as_ptr(), c"rbe".as_ptr());
+            }
+            if ENUMERATION.is_null() {
+                return ptr::null_mut();
+            }
+            let mut capacity = 0usize;
+            let mut member_count = 0usize;
+            let mut result = ptr::null_mut();
+            next_record(
+                ENUMERATION,
+                &raw mut SHARED_RECORD,
+                &raw mut SHARED_LINE,
+                &mut capacity,
+                &raw mut SHARED_MEMBERS,
+                &mut member_count,
+                &mut result,
+            );
+            result
+        }
+    }
+
+    /// Look up a name through the local `/etc/group` provider.
+    ///
+    /// # Safety
+    /// `name` is readable through NUL. The result shares the global group record;
+    /// serialize it with every other non-reentrant group operation and use it only
+    /// until a later such call replaces or frees its backing storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn getgrnam(name: *const c_char) -> *mut Group {
+        unsafe {
+            let mut capacity = 0usize;
+            let mut member_count = 0usize;
+            let mut result = ptr::null_mut();
+            lookup(
+                name,
+                0,
+                &raw mut SHARED_RECORD,
+                &raw mut SHARED_LINE,
+                &mut capacity,
+                &raw mut SHARED_MEMBERS,
+                &mut member_count,
+                &mut result,
+            );
+            result
+        }
+    }
+
+    /// Look up a Linux `gid_t` through the local `/etc/group` provider.
+    ///
+    /// # Safety
+    /// The result has the same shared-storage and serialization requirements as
+    /// `getgrnam`.
+    #[no_mangle]
+    pub unsafe extern "C" fn getgrgid(gid: u32) -> *mut Group {
+        unsafe {
+            let mut capacity = 0usize;
+            let mut member_count = 0usize;
+            let mut result = ptr::null_mut();
+            lookup(
+                ptr::null(),
+                gid,
+                &raw mut SHARED_RECORD,
+                &raw mut SHARED_LINE,
+                &mut capacity,
+                &raw mut SHARED_MEMBERS,
+                &mut member_count,
+                &mut result,
+            );
+            result
+        }
+    }
+}}
 
 // `getgrent.c` exposes endgrent as a same-address weak alias of setgrent.
-core::arch::global_asm!(".weak endgrent", ".set endgrent, setgrent");
 
-/// Return the next valid conventional local group record.
-///
-/// # Safety
-/// Serialize calls and all use of the borrowed process-global result. The
-/// stream and line storage are inherited across `fork` through the existing
-/// owned stdio fork transaction, as with musl's global cursor.
-#[no_mangle]
-pub unsafe extern "C" fn getgrent() -> *mut Group {
-    unsafe {
-        if ENUMERATION.is_null() {
-            ENUMERATION = stdio::fopen(c"/etc/group".as_ptr(), c"rbe".as_ptr());
+
+
+
+// Musl's `src/passwd/fgetgrent.c` object.
+static_archive_member! { fgetgrent_source {
+    /// Parse the next valid group record from a caller-owned owned-runtime FILE.
+    ///
+    /// # Safety
+    /// `stream` must be a live `FILE` supplied by the owned stdio engine and must
+    /// remain live for the call. Serialize `fgetgrent` calls and use the returned
+    /// borrowed global record only until the next `fgetgrent` call.
+    #[no_mangle]
+    pub unsafe extern "C" fn fgetgrent(stream: *mut StandardStream) -> *mut Group {
+        unsafe {
+            let mut capacity = 0usize;
+            let mut member_count = 0usize;
+            let mut result = ptr::null_mut();
+            next_record(
+                stream,
+                &raw mut STREAM_RECORD,
+                &raw mut STREAM_LINE,
+                &mut capacity,
+                &raw mut STREAM_MEMBERS,
+                &mut member_count,
+                &mut result,
+            );
+            result
         }
-        if ENUMERATION.is_null() {
-            return ptr::null_mut();
-        }
-        let mut capacity = 0usize;
-        let mut member_count = 0usize;
-        let mut result = ptr::null_mut();
-        next_record(
-            ENUMERATION,
-            &raw mut SHARED_RECORD,
-            &raw mut SHARED_LINE,
-            &mut capacity,
-            &raw mut SHARED_MEMBERS,
-            &mut member_count,
-            &mut result,
-        );
-        result
     }
-}
+}}
 
-/// Look up a name through the local `/etc/group` provider.
-///
-/// # Safety
-/// `name` is readable through NUL. The result shares the global group record;
-/// serialize it with every other non-reentrant group operation and use it only
-/// until a later such call replaces or frees its backing storage.
-#[no_mangle]
-pub unsafe extern "C" fn getgrnam(name: *const c_char) -> *mut Group {
-    unsafe {
-        let mut capacity = 0usize;
-        let mut member_count = 0usize;
-        let mut result = ptr::null_mut();
-        lookup(
-            name,
-            0,
-            &raw mut SHARED_RECORD,
-            &raw mut SHARED_LINE,
-            &mut capacity,
-            &raw mut SHARED_MEMBERS,
-            &mut member_count,
-            &mut result,
-        );
-        result
-    }
-}
-
-/// Look up a Linux `gid_t` through the local `/etc/group` provider.
-///
-/// # Safety
-/// The result has the same shared-storage and serialization requirements as
-/// `getgrnam`.
-#[no_mangle]
-pub unsafe extern "C" fn getgrgid(gid: u32) -> *mut Group {
-    unsafe {
-        let mut capacity = 0usize;
-        let mut member_count = 0usize;
-        let mut result = ptr::null_mut();
-        lookup(
-            ptr::null(),
-            gid,
-            &raw mut SHARED_RECORD,
-            &raw mut SHARED_LINE,
-            &mut capacity,
-            &raw mut SHARED_MEMBERS,
-            &mut member_count,
-            &mut result,
-        );
-        result
-    }
-}
-
-/// Parse the next valid group record from a caller-owned owned-runtime FILE.
-///
-/// # Safety
-/// `stream` must be a live `FILE` supplied by the owned stdio engine and must
-/// remain live for the call. Serialize `fgetgrent` calls and use the returned
-/// borrowed global record only until the next `fgetgrent` call.
-#[no_mangle]
-pub unsafe extern "C" fn fgetgrent(stream: *mut StandardStream) -> *mut Group {
-    unsafe {
-        let mut capacity = 0usize;
-        let mut member_count = 0usize;
-        let mut result = ptr::null_mut();
-        next_record(
-            stream,
-            &raw mut STREAM_RECORD,
-            &raw mut STREAM_LINE,
-            &mut capacity,
-            &raw mut STREAM_MEMBERS,
-            &mut member_count,
-            &mut result,
-        );
-        result
-    }
-}
-
-/// Write one group record in musl's literal colon/comma/newline form.
-///
-/// # Safety
-/// `record` and its NUL-terminated name/password/member strings are readable
-/// and stable for the call. `stream` is a live writable owned FILE. Embedded
-/// separators and newlines are not validated or escaped, matching musl.
-#[no_mangle]
-pub unsafe extern "C" fn putgrent(record: *const Group, stream: *mut StandardStream) -> c_int {
-    unsafe {
-        stdio::flockfile(stream);
-        let mut written = stdio_format_scan::fprintf(
-            stream,
-            c"%s:%s:%u:".as_ptr(),
-            (*record).gr_name,
-            (*record).gr_passwd,
-            (*record).gr_gid,
-        );
-        if written >= 0 && !(*record).gr_mem.is_null() {
-            let mut index = 0usize;
-            while !(*(*record).gr_mem.add(index)).is_null() {
-                written = stdio_format_scan::fprintf(
-                    stream,
-                    c"%s%s".as_ptr(),
-                    if index == 0 {
-                        c"".as_ptr()
-                    } else {
-                        c",".as_ptr()
-                    },
-                    *(*record).gr_mem.add(index),
-                );
-                if written < 0 {
-                    break;
+// Musl's `src/passwd/putgrent.c` object.
+static_archive_member! { putgrent_source {
+    /// Write one group record in musl's literal colon/comma/newline form.
+    ///
+    /// # Safety
+    /// `record` and its NUL-terminated name/password/member strings are readable
+    /// and stable for the call. `stream` is a live writable owned FILE. Embedded
+    /// separators and newlines are not validated or escaped, matching musl.
+    #[no_mangle]
+    pub unsafe extern "C" fn putgrent(record: *const Group, stream: *mut StandardStream) -> c_int {
+        unsafe {
+            stdio::flockfile(stream);
+            let mut written = stdio_format_scan::fprintf(
+                stream,
+                c"%s:%s:%u:".as_ptr(),
+                (*record).gr_name,
+                (*record).gr_passwd,
+                (*record).gr_gid,
+            );
+            if written >= 0 && !(*record).gr_mem.is_null() {
+                let mut index = 0usize;
+                while !(*(*record).gr_mem.add(index)).is_null() {
+                    written = stdio_format_scan::fprintf(
+                        stream,
+                        c"%s%s".as_ptr(),
+                        if index == 0 {
+                            c"".as_ptr()
+                        } else {
+                            c",".as_ptr()
+                        },
+                        *(*record).gr_mem.add(index),
+                    );
+                    if written < 0 {
+                        break;
+                    }
+                    index += 1;
                 }
-                index += 1;
             }
+            if written >= 0 {
+                written = stdio::fputc(b'\n' as c_int, stream);
+            }
+            stdio::funlockfile(stream);
+            if written < 0 { -1 } else { 0 }
         }
-        if written >= 0 {
-            written = stdio::fputc(b'\n' as c_int, stream);
-        }
-        stdio::funlockfile(stream);
-        if written < 0 { -1 } else { 0 }
     }
-}
+}}
 
-/// Return primary and local supplementary group IDs for one byte-string user.
-///
-/// This is the local-file part of musl's `getgrouplist.c`: group IDs are kept
-/// in file order and deliberately not deduplicated. A too-small output array
-/// returns `-1`, updates `*count`, and leaves errno alone, as musl does.
-///
-/// # Safety
-/// `user` is a readable NUL-terminated string; `count` is writable; and when
-/// its initial positive value permits writes, `groups` names that many writable
-/// `gid_t` words. The caller owns output and must provide non-overlapping C
-/// storage for the duration of the call.
-#[no_mangle]
-pub unsafe extern "C" fn getgrouplist(
-    user: *const c_char,
-    gid: u32,
-    mut groups: *mut u32,
-    count: *mut c_int,
-) -> c_int {
-    unsafe {
-        let limit = *count;
-        let mut discovered: isize = 1;
-        let mut result = -1;
-        let mut stream = ptr::null_mut();
-        let mut line = ptr::null_mut();
-        let mut line_capacity = 0usize;
-        let mut members = ptr::null_mut();
-        let mut member_count = 0usize;
-        let mut record = EMPTY_GROUP;
-        let mut parsed = ptr::null_mut();
+// Musl's `src/passwd/getgrouplist.c` object.
+static_archive_member! { getgrouplist_source {
+    /// Return primary and local supplementary group IDs for one byte-string user.
+    ///
+    /// This is the local-file part of musl's `getgrouplist.c`: group IDs are kept
+    /// in file order and deliberately not deduplicated. A too-small output array
+    /// returns `-1`, updates `*count`, and leaves errno alone, as musl does.
+    ///
+    /// # Safety
+    /// `user` is a readable NUL-terminated string; `count` is writable; and when
+    /// its initial positive value permits writes, `groups` names that many writable
+    /// `gid_t` words. The caller owns output and must provide non-overlapping C
+    /// storage for the duration of the call.
+    #[no_mangle]
+    pub unsafe extern "C" fn getgrouplist(
+        user: *const c_char,
+        gid: u32,
+        mut groups: *mut u32,
+        count: *mut c_int,
+    ) -> c_int {
+        unsafe {
+            let limit = *count;
+            let mut discovered: isize = 1;
+            let mut result = -1;
+            let mut stream = ptr::null_mut();
+            let mut line = ptr::null_mut();
+            let mut line_capacity = 0usize;
+            let mut members = ptr::null_mut();
+            let mut member_count = 0usize;
+            let mut record = EMPTY_GROUP;
+            let mut parsed = ptr::null_mut();
 
-        if limit >= 1 {
-            *groups = gid;
-            groups = groups.add(1);
-        }
-
-        stream = stdio::fopen(c"/etc/group".as_ptr(), c"rbe".as_ptr());
-        if stream.is_null() {
-            // Keep getgrouplist.c's local-file rule after omitting its earlier
-            // nscd query: a missing path or nondirectory still yields the
-            // primary gid/count and leaves fopen's errno observable. Other
-            // local open failures remain errors.
-            let error = errno::get_errno();
-            if error != ENOENT && error != ENOTDIR {
-                cleanup_local_group_scan(&mut stream, line, members);
-                return -1;
+            if limit >= 1 {
+                *groups = gid;
+                groups = groups.add(1);
             }
-        } else {
-            loop {
-                let error = next_record(
-                    stream,
-                    &mut record,
-                    &mut line,
-                    &mut line_capacity,
-                    &mut members,
-                    &mut member_count,
-                    &mut parsed,
-                );
-                if error != 0 {
-                    errno::set_errno(error);
+
+            stream = stdio::fopen(c"/etc/group".as_ptr(), c"rbe".as_ptr());
+            if stream.is_null() {
+                // Keep getgrouplist.c's local-file rule after omitting its earlier
+                // nscd query: a missing path or nondirectory still yields the
+                // primary gid/count and leaves fopen's errno observable. Other
+                // local open failures remain errors.
+                let error = errno::get_errno();
+                if error != ENOENT && error != ENOTDIR {
                     cleanup_local_group_scan(&mut stream, line, members);
                     return -1;
                 }
-                if parsed.is_null() {
-                    break;
-                }
-                let mut index = 0usize;
-                while !(*record.gr_mem.add(index)).is_null()
-                    && !equal(user, *record.gr_mem.add(index))
-                {
-                    index += 1;
-                }
-                if (*record.gr_mem.add(index)).is_null() {
-                    continue;
-                }
-                discovered += 1;
-                if discovered <= limit as isize {
-                    *groups = record.gr_gid;
-                    groups = groups.add(1);
+            } else {
+                loop {
+                    let error = next_record(
+                        stream,
+                        &mut record,
+                        &mut line,
+                        &mut line_capacity,
+                        &mut members,
+                        &mut member_count,
+                        &mut parsed,
+                    );
+                    if error != 0 {
+                        errno::set_errno(error);
+                        cleanup_local_group_scan(&mut stream, line, members);
+                        return -1;
+                    }
+                    if parsed.is_null() {
+                        break;
+                    }
+                    let mut index = 0usize;
+                    while !(*record.gr_mem.add(index)).is_null()
+                        && !equal(user, *record.gr_mem.add(index))
+                    {
+                        index += 1;
+                    }
+                    if (*record.gr_mem.add(index)).is_null() {
+                        continue;
+                    }
+                    discovered += 1;
+                    if discovered <= limit as isize {
+                        *groups = record.gr_gid;
+                        groups = groups.add(1);
+                    }
                 }
             }
-        }
 
-        result = if discovered > limit as isize {
-            -1
-        } else {
-            discovered as c_int
-        };
-        *count = discovered as c_int;
-        cleanup_local_group_scan(&mut stream, line, members);
-        result
+            result = if discovered > limit as isize {
+                -1
+            } else {
+                discovered as c_int
+            };
+            *count = discovered as c_int;
+            cleanup_local_group_scan(&mut stream, line, members);
+            result
+        }
     }
-}
+}}
 
 // Keep source cleanup explicit around local-file exits. Rust's control flow
 // avoids duplicating the source cleanup label while preserving close/free order
@@ -698,42 +722,45 @@ unsafe fn cleanup_local_group_scan(
     }
 }
 
-/// Set the calling task's supplementary group list from local `/etc/group`.
-///
-/// # Safety
-/// `user` is readable through NUL. A successful call changes Linux credentials
-/// through the selected `setgroups` syscall boundary; callers must supply the
-/// authority, all-thread coordination, and recovery policy required for that
-/// process-sensitive transition.
-#[no_mangle]
-pub unsafe extern "C" fn initgroups(user: *const c_char, gid: u32) -> c_int {
-    unsafe {
-        let mut stack = [0u32; 32];
-        let mut groups = stack.as_mut_ptr();
-        let mut count = stack.len() as c_int;
-        let mut previous_count = count;
+// Musl's `src/misc/initgroups.c` object.
+static_archive_member! { initgroups_source {
+    /// Set the calling task's supplementary group list from local `/etc/group`.
+    ///
+    /// # Safety
+    /// `user` is readable through NUL. A successful call changes Linux credentials
+    /// through the selected `setgroups` syscall boundary; callers must supply the
+    /// authority, all-thread coordination, and recovery policy required for that
+    /// process-sensitive transition.
+    #[no_mangle]
+    pub unsafe extern "C" fn initgroups(user: *const c_char, gid: u32) -> c_int {
+        unsafe {
+            let mut stack = [0u32; 32];
+            let mut groups = stack.as_mut_ptr();
+            let mut count = stack.len() as c_int;
+            let mut previous_count = count;
 
-        while getgrouplist(user, gid, groups, &mut count) < 0 {
+            while getgrouplist(user, gid, groups, &mut count) < 0 {
+                if groups != stack.as_mut_ptr() {
+                    free(groups.cast());
+                }
+                if count <= previous_count {
+                    return -1;
+                }
+                if count < previous_count + (previous_count >> 1) {
+                    count = previous_count + (previous_count >> 1);
+                }
+                groups = calloc(count as usize, core::mem::size_of::<u32>()).cast();
+                if groups.is_null() {
+                    return -1;
+                }
+                previous_count = count;
+            }
+
+            let status = crate::x86_64_static_c_abi::credentials::setgroups(count as usize, groups);
             if groups != stack.as_mut_ptr() {
                 free(groups.cast());
             }
-            if count <= previous_count {
-                return -1;
-            }
-            if count < previous_count + (previous_count >> 1) {
-                count = previous_count + (previous_count >> 1);
-            }
-            groups = calloc(count as usize, core::mem::size_of::<u32>()).cast();
-            if groups.is_null() {
-                return -1;
-            }
-            previous_count = count;
+            status
         }
-
-        let status = super::credentials::setgroups(count as usize, groups);
-        if groups != stack.as_mut_ptr() {
-            free(groups.cast());
-        }
-        status
     }
-}
+}}

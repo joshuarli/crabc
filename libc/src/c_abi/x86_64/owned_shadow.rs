@@ -249,291 +249,312 @@ unsafe extern "C" fn close_stream(argument: *mut c_void) {
     }
 }
 
-/// Do nothing, exactly as musl `src/passwd/getspent.c::setspent`.
-///
-/// # Safety
-/// This function owns no state and dereferences no caller data. It does not
-/// reset a shadow cursor because this selected source has no cursor.
-#[no_mangle]
-pub unsafe extern "C" fn setspent() {}
+// Musl's `src/passwd/getspent.c` object.
+static_archive_member! { getspent_source {
+    /// Do nothing, exactly as musl `src/passwd/getspent.c::setspent`.
+    ///
+    /// # Safety
+    /// This function owns no state and dereferences no caller data. It does not
+    /// reset a shadow cursor because this selected source has no cursor.
+    #[no_mangle]
+    pub unsafe extern "C" fn setspent() {}
 
-/// Do nothing, exactly as musl `src/passwd/getspent.c::endspent`.
-///
-/// # Safety
-/// This function owns no state and dereferences no caller data.
-#[no_mangle]
-pub unsafe extern "C" fn endspent() {}
+    /// Do nothing, exactly as musl `src/passwd/getspent.c::endspent`.
+    ///
+    /// # Safety
+    /// This function owns no state and dereferences no caller data.
+    #[no_mangle]
+    pub unsafe extern "C" fn endspent() {}
 
-/// Return null, exactly as musl `getspent.c`.
-///
-/// # Safety
-/// This source compatibility entry has no caller pointers and does not read a
-/// shadow file. Use [`getspnam`] or [`getspnam_r`] for the selected lookup.
-#[no_mangle]
-pub unsafe extern "C" fn getspent() -> *mut Shadow {
-    ptr::null_mut()
-}
-
-/// Parse exactly one caller-owned FILE line into fgetspent's shared record.
-///
-/// # Safety
-/// `stream` is a live readable owned FILE for this call. Callers serialize
-/// `fgetspent` and every use of its result; a later call can reallocate the
-/// shared line and overwrite the record. The stream remains caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn fgetspent(stream: *mut StandardStream) -> *mut Shadow {
-    unsafe {
-        let mut size = 0usize;
-        let mut result = ptr::null_mut();
-        let mut cancellation_state = 0;
-        pthread_cancel::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &mut cancellation_state);
-        if stdio::getline(&raw mut FGETSPENT_LINE, &mut size, stream) >= 0
-            && parse_spent(FGETSPENT_LINE, &raw mut FGETSPENT_RECORD) >= 0
-        {
-            result = &raw mut FGETSPENT_RECORD;
-        }
-        pthread_cancel::pthread_setcancelstate(cancellation_state, ptr::null_mut());
-        result
+    /// Return null, exactly as musl `getspent.c`.
+    ///
+    /// # Safety
+    /// This source compatibility entry has no caller pointers and does not read a
+    /// shadow file. Use [`getspnam`] or [`getspnam_r`] for the selected lookup.
+    #[no_mangle]
+    pub unsafe extern "C" fn getspent() -> *mut Shadow {
+        ptr::null_mut()
     }
-}
+}}
 
-/// Look up one local shadow record in caller-owned record and byte storage.
-///
-/// # Safety
-/// `name` is readable through NUL. `record`, `buffer` for `size` bytes, and
-/// `result` are writable, aligned, and mutually non-overlapping. `result`
-/// must be valid even on input errors because musl stores null into it before
-/// validation. On success, strings in `record` borrow `buffer`; do not use
-/// partial record writes when this function returns a nonzero value or a null
-/// result. The caller owns file-resolution races and serializes mutations of
-/// the conventional files it selects.
-#[no_mangle]
-pub unsafe extern "C" fn getspnam_r(
-    name: *const c_char,
-    record: *mut Shadow,
-    buffer: *mut c_char,
-    size: usize,
-    result: *mut *mut Shadow,
-) -> c_int {
-    unsafe {
-        let original_errno = errno::get_errno();
-        let name_length = c_strlen(name);
-        *result = ptr::null_mut();
 
-        // Keep the source's validation order and errno/output behavior.
-        if *name == b'.' as c_char || c_strchr(name.cast_mut(), b'/' as c_char) != ptr::null_mut()
-            || name_length == 0
-        {
-            errno::set_errno(EINVAL);
-            return EINVAL;
-        }
-        if size < name_length.wrapping_add(100) {
-            errno::set_errno(ERANGE);
-            return ERANGE;
-        }
 
-        let mut path = [0 as c_char; TCB_PATH_CAPACITY];
-        let required_path_bytes = TCB_PREFIX
-            .len()
-            .wrapping_add(name_length)
-            .wrapping_add(TCB_SUFFIX.len());
-        if required_path_bytes >= path.len() {
-            errno::set_errno(EINVAL);
-            return EINVAL;
-        }
-        for (index, byte) in TCB_PREFIX.iter().enumerate() {
-            path[index] = *byte as c_char;
-        }
-        for index in 0..name_length {
-            path[TCB_PREFIX.len() + index] = *name.add(index);
-        }
-        for (index, byte) in TCB_SUFFIX.iter().enumerate() {
-            path[TCB_PREFIX.len() + name_length + index] = *byte as c_char;
-        }
-
-        let descriptor = descriptor_entry::open(
-            path.as_ptr(),
-            O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
-            0,
-        );
-        let stream: *mut StandardStream;
-        if descriptor >= 0 {
-            // The source preloads EINVAL for a non-regular descriptor and
-            // returns the errno left by fstat/fdopen/close in this branch.
-            errno::set_errno(EINVAL);
-            let regular = match stat_compat::fstat_mode(descriptor) {
-                Ok(mode) => mode & S_IFMT == S_IFREG,
-                Err(error) => {
-                    errno::set_errno(error);
-                    false
-                }
-            };
-            stream = if regular {
-                stdio::__fdopen(descriptor, READ_BINARY_MODE.as_ptr().cast())
-            } else {
-                ptr::null_mut()
-            };
-            if stream.is_null() {
-                let mut cancellation_state = 0;
-                pthread_cancel::pthread_setcancelstate(
-                    PTHREAD_CANCEL_DISABLE,
-                    &mut cancellation_state,
-                );
-                let _ = descriptor_io::close(descriptor);
-                pthread_cancel::pthread_setcancelstate(cancellation_state, ptr::null_mut());
-                return errno::get_errno();
-            }
-        } else {
-            let open_error = errno::get_errno();
-            if open_error != ENOENT && open_error != ENOTDIR {
-                return open_error;
-            }
-            stream = stdio::fopen(SHADOW_PATH.as_ptr().cast(), READ_BINARY_CLOEXEC_MODE.as_ptr().cast());
-            if stream.is_null() {
-                let fallback_error = errno::get_errno();
-                if fallback_error != ENOENT && fallback_error != ENOTDIR {
-                    return fallback_error;
-                }
-                return 0;
-            }
-        }
-
-        // This is pthread_cleanup_push(cleanup, stream) around musl's fgets
-        // loop. The raw node stays valid until the explicit pop or selected
-        // pthread retirement; no Rust destructor or borrowed stream reference
-        // crosses that cancellation boundary.
-        let mut cleanup = MaybeUninit::<pthread_cancel::CleanupNode>::uninit();
-        pthread_cancel::_pthread_cleanup_push(
-            cleanup.as_mut_ptr(),
-            Some(close_stream),
-            stream.cast(),
-        );
-
-        let mut return_value = 0;
-        let mut skip = false;
-        loop {
-            if stdio::fgets(buffer, size as c_int, stream).is_null() {
-                break;
-            }
-            let line_length = c_strlen(buffer);
-            // `while (fgets(...) && (k=strlen(buf))>0)` exits on an embedded
-            // initial NUL rather than treating it as an invalid line to skip.
-            if line_length == 0 {
-                break;
-            }
-            if skip || !name_prefix_matches(name, buffer, name_length)
-                || *buffer.add(name_length) != b':' as c_char
+// Musl's `src/passwd/fgetspent.c` object.
+static_archive_member! { fgetspent_source {
+    /// Parse exactly one caller-owned FILE line into fgetspent's shared record.
+    ///
+    /// # Safety
+    /// `stream` is a live readable owned FILE for this call. Callers serialize
+    /// `fgetspent` and every use of its result; a later call can reallocate the
+    /// shared line and overwrite the record. The stream remains caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn fgetspent(stream: *mut StandardStream) -> *mut Shadow {
+        unsafe {
+            let mut size = 0usize;
+            let mut result = ptr::null_mut();
+            let mut cancellation_state = 0;
+            pthread_cancel::pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &mut cancellation_state);
+            if stdio::getline(&raw mut FGETSPENT_LINE, &mut size, stream) >= 0
+                && parse_spent(FGETSPENT_LINE, &raw mut FGETSPENT_RECORD) >= 0
             {
-                skip = *buffer.add(line_length - 1) != b'\n' as c_char;
-                continue;
+                result = &raw mut FGETSPENT_RECORD;
             }
-            if *buffer.add(line_length - 1) != b'\n' as c_char {
-                return_value = ERANGE;
+            pthread_cancel::pthread_setcancelstate(cancellation_state, ptr::null_mut());
+            result
+        }
+    }
+}}
+
+// Musl's `src/passwd/getspnam_r.c` object.
+static_archive_member! { getspnam_r_source {
+    /// Look up one local shadow record in caller-owned record and byte storage.
+    ///
+    /// # Safety
+    /// `name` is readable through NUL. `record`, `buffer` for `size` bytes, and
+    /// `result` are writable, aligned, and mutually non-overlapping. `result`
+    /// must be valid even on input errors because musl stores null into it before
+    /// validation. On success, strings in `record` borrow `buffer`; do not use
+    /// partial record writes when this function returns a nonzero value or a null
+    /// result. The caller owns file-resolution races and serializes mutations of
+    /// the conventional files it selects.
+    #[no_mangle]
+    pub unsafe extern "C" fn getspnam_r(
+        name: *const c_char,
+        record: *mut Shadow,
+        buffer: *mut c_char,
+        size: usize,
+        result: *mut *mut Shadow,
+    ) -> c_int {
+        unsafe {
+            let original_errno = errno::get_errno();
+            let name_length = c_strlen(name);
+            *result = ptr::null_mut();
+
+            // Keep the source's validation order and errno/output behavior.
+            if *name == b'.' as c_char || c_strchr(name.cast_mut(), b'/' as c_char) != ptr::null_mut()
+                || name_length == 0
+            {
+                errno::set_errno(EINVAL);
+                return EINVAL;
+            }
+            if size < name_length.wrapping_add(100) {
+                errno::set_errno(ERANGE);
+                return ERANGE;
+            }
+
+            let mut path = [0 as c_char; TCB_PATH_CAPACITY];
+            let required_path_bytes = TCB_PREFIX
+                .len()
+                .wrapping_add(name_length)
+                .wrapping_add(TCB_SUFFIX.len());
+            if required_path_bytes >= path.len() {
+                errno::set_errno(EINVAL);
+                return EINVAL;
+            }
+            for (index, byte) in TCB_PREFIX.iter().enumerate() {
+                path[index] = *byte as c_char;
+            }
+            for index in 0..name_length {
+                path[TCB_PREFIX.len() + index] = *name.add(index);
+            }
+            for (index, byte) in TCB_SUFFIX.iter().enumerate() {
+                path[TCB_PREFIX.len() + name_length + index] = *byte as c_char;
+            }
+
+            let descriptor = descriptor_entry::open(
+                path.as_ptr(),
+                O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
+                0,
+            );
+            let stream: *mut StandardStream;
+            if descriptor >= 0 {
+                // The source preloads EINVAL for a non-regular descriptor and
+                // returns the errno left by fstat/fdopen/close in this branch.
+                errno::set_errno(EINVAL);
+                let regular = match stat_compat::fstat_mode(descriptor) {
+                    Ok(mode) => mode & S_IFMT == S_IFREG,
+                    Err(error) => {
+                        errno::set_errno(error);
+                        false
+                    }
+                };
+                stream = if regular {
+                    stdio::__fdopen(descriptor, READ_BINARY_MODE.as_ptr().cast())
+                } else {
+                    ptr::null_mut()
+                };
+                if stream.is_null() {
+                    let mut cancellation_state = 0;
+                    pthread_cancel::pthread_setcancelstate(
+                        PTHREAD_CANCEL_DISABLE,
+                        &mut cancellation_state,
+                    );
+                    let _ = descriptor_io::close(descriptor);
+                    pthread_cancel::pthread_setcancelstate(cancellation_state, ptr::null_mut());
+                    return errno::get_errno();
+                }
+            } else {
+                let open_error = errno::get_errno();
+                if open_error != ENOENT && open_error != ENOTDIR {
+                    return open_error;
+                }
+                stream = stdio::fopen(SHADOW_PATH.as_ptr().cast(), READ_BINARY_CLOEXEC_MODE.as_ptr().cast());
+                if stream.is_null() {
+                    let fallback_error = errno::get_errno();
+                    if fallback_error != ENOENT && fallback_error != ENOTDIR {
+                        return fallback_error;
+                    }
+                    return 0;
+                }
+            }
+
+            // This is pthread_cleanup_push(cleanup, stream) around musl's fgets
+            // loop. The raw node stays valid until the explicit pop or selected
+            // pthread retirement; no Rust destructor or borrowed stream reference
+            // crosses that cancellation boundary.
+            let mut cleanup = MaybeUninit::<pthread_cancel::CleanupNode>::uninit();
+            pthread_cancel::_pthread_cleanup_push(
+                cleanup.as_mut_ptr(),
+                Some(close_stream),
+                stream.cast(),
+            );
+
+            let mut return_value = 0;
+            let mut skip = false;
+            loop {
+                if stdio::fgets(buffer, size as c_int, stream).is_null() {
+                    break;
+                }
+                let line_length = c_strlen(buffer);
+                // `while (fgets(...) && (k=strlen(buf))>0)` exits on an embedded
+                // initial NUL rather than treating it as an invalid line to skip.
+                if line_length == 0 {
+                    break;
+                }
+                if skip || !name_prefix_matches(name, buffer, name_length)
+                    || *buffer.add(name_length) != b':' as c_char
+                {
+                    skip = *buffer.add(line_length - 1) != b'\n' as c_char;
+                    continue;
+                }
+                if *buffer.add(line_length - 1) != b'\n' as c_char {
+                    return_value = ERANGE;
+                    break;
+                }
+                if parse_spent(buffer, record) < 0 {
+                    continue;
+                }
+                *result = record;
                 break;
             }
-            if parse_spent(buffer, record) < 0 {
-                continue;
-            }
-            *result = record;
-            break;
-        }
 
-        // Source uses pthread_cleanup_pop(1), so the ordinary path closes the
-        // file through the same callback used by selected deferred retirement.
-        pthread_cancel::_pthread_cleanup_pop(cleanup.as_mut_ptr(), 1);
-        errno::set_errno(if return_value != 0 {
+            // Source uses pthread_cleanup_pop(1), so the ordinary path closes the
+            // file through the same callback used by selected deferred retirement.
+            pthread_cancel::_pthread_cleanup_pop(cleanup.as_mut_ptr(), 1);
+            errno::set_errno(if return_value != 0 {
+                return_value
+            } else {
+                original_errno
+            });
             return_value
-        } else {
-            original_errno
-        });
-        return_value
-    }
-}
-
-/// Look up one local shadow record in getspnam's shared 256-byte line.
-///
-/// # Safety
-/// `name` is readable through NUL. Callers serialize this function and all
-/// access to its borrowed shared result; any later call can overwrite it.
-#[no_mangle]
-pub unsafe extern "C" fn getspnam(name: *const c_char) -> *mut Shadow {
-    unsafe {
-        // getspnam.c saves this before its one-time ordinary-malloc call.
-        // Successful allocation is not permitted to change the caller's
-        // observable errno on a successful or absent lookup.
-        let original_errno = errno::get_errno();
-        if GETSPNAM_LINE.is_null() {
-            GETSPNAM_LINE = shadow_cabi_malloc(LINE_LIM).cast();
-        }
-        if GETSPNAM_LINE.is_null() {
-            return ptr::null_mut();
-        }
-        let mut result = ptr::null_mut();
-        let error = getspnam_r(
-            name,
-            &raw mut GETSPNAM_RECORD,
-            GETSPNAM_LINE,
-            LINE_LIM,
-            &mut result,
-        );
-        errno::set_errno(if error != 0 { error } else { original_errno });
-        result
-    }
-}
-
-/// Write one shadow record with musl's literal precision-based empty `-1` form.
-///
-/// # Safety
-/// `record` points to one readable `struct spwd`; non-null string fields are
-/// readable through NUL. `stream` is a live writable owned FILE. Fields are
-/// emitted literally without escaping or validation.
-#[no_mangle]
-pub unsafe extern "C" fn putspent(record: *const Shadow, stream: *mut StandardStream) -> c_int {
-    unsafe {
-        let source = &*record;
-        let string = |value: *mut c_char| {
-            if value.is_null() { c"".as_ptr() } else { value as *const c_char }
-        };
-        let signed_precision = |value: c_long| if value == -1 { 0 } else { -1 };
-        let signed_value = |value: c_long| if value == -1 { 0 } else { value };
-        let flag_precision = |value: c_ulong| if value == c_ulong::MAX { 0 } else { -1 };
-        let flag_value = |value: c_ulong| if value == c_ulong::MAX { 0 } else { value };
-        if stdio_format_scan::fprintf(
-            stream,
-            c"%s:%s:%.*ld:%.*ld:%.*ld:%.*ld:%.*ld:%.*ld:%.*lu\n".as_ptr(),
-            string(source.name),
-            string(source.password),
-            signed_precision(source.last_change), signed_value(source.last_change),
-            signed_precision(source.minimum), signed_value(source.minimum),
-            signed_precision(source.maximum), signed_value(source.maximum),
-            signed_precision(source.warning), signed_value(source.warning),
-            signed_precision(source.inactive), signed_value(source.inactive),
-            signed_precision(source.expire), signed_value(source.expire),
-            flag_precision(source.flag), flag_value(source.flag),
-        ) < 0 {
-            -1
-        } else {
-            0
         }
     }
-}
+}}
 
-/// Return success without acquiring a password lock, as musl `lckpwdf.c` does.
-///
-/// # Safety
-/// This source-compatible no-op neither dereferences caller data nor owns a
-/// file descriptor or lock state.
-#[no_mangle]
-pub unsafe extern "C" fn lckpwdf() -> c_int {
-    0
-}
+// Musl's `src/passwd/getspnam.c` object.
+static_archive_member! { getspnam_source {
+    /// Look up one local shadow record in getspnam's shared 256-byte line.
+    ///
+    /// # Safety
+    /// `name` is readable through NUL. Callers serialize this function and all
+    /// access to its borrowed shared result; any later call can overwrite it.
+    #[no_mangle]
+    pub unsafe extern "C" fn getspnam(name: *const c_char) -> *mut Shadow {
+        unsafe {
+            // getspnam.c saves this before its one-time ordinary-malloc call.
+            // Successful allocation is not permitted to change the caller's
+            // observable errno on a successful or absent lookup.
+            let original_errno = errno::get_errno();
+            if GETSPNAM_LINE.is_null() {
+                GETSPNAM_LINE = shadow_cabi_malloc(LINE_LIM).cast();
+            }
+            if GETSPNAM_LINE.is_null() {
+                return ptr::null_mut();
+            }
+            let mut result = ptr::null_mut();
+            let error = getspnam_r(
+                name,
+                &raw mut GETSPNAM_RECORD,
+                GETSPNAM_LINE,
+                LINE_LIM,
+                &mut result,
+            );
+            errno::set_errno(if error != 0 { error } else { original_errno });
+            result
+        }
+    }
+}}
 
-/// Return success without releasing a password lock, as musl `lckpwdf.c` does.
-///
-/// # Safety
-/// This source-compatible no-op neither dereferences caller data nor owns a
-/// file descriptor or lock state.
-#[no_mangle]
-pub unsafe extern "C" fn ulckpwdf() -> c_int {
-    0
-}
+// Musl's `src/passwd/putspent.c` object.
+static_archive_member! { putspent_source {
+    /// Write one shadow record with musl's literal precision-based empty `-1` form.
+    ///
+    /// # Safety
+    /// `record` points to one readable `struct spwd`; non-null string fields are
+    /// readable through NUL. `stream` is a live writable owned FILE. Fields are
+    /// emitted literally without escaping or validation.
+    #[no_mangle]
+    pub unsafe extern "C" fn putspent(record: *const Shadow, stream: *mut StandardStream) -> c_int {
+        unsafe {
+            let source = &*record;
+            let string = |value: *mut c_char| {
+                if value.is_null() { c"".as_ptr() } else { value as *const c_char }
+            };
+            let signed_precision = |value: c_long| if value == -1 { 0 } else { -1 };
+            let signed_value = |value: c_long| if value == -1 { 0 } else { value };
+            let flag_precision = |value: c_ulong| if value == c_ulong::MAX { 0 } else { -1 };
+            let flag_value = |value: c_ulong| if value == c_ulong::MAX { 0 } else { value };
+            if stdio_format_scan::fprintf(
+                stream,
+                c"%s:%s:%.*ld:%.*ld:%.*ld:%.*ld:%.*ld:%.*ld:%.*lu\n".as_ptr(),
+                string(source.name),
+                string(source.password),
+                signed_precision(source.last_change), signed_value(source.last_change),
+                signed_precision(source.minimum), signed_value(source.minimum),
+                signed_precision(source.maximum), signed_value(source.maximum),
+                signed_precision(source.warning), signed_value(source.warning),
+                signed_precision(source.inactive), signed_value(source.inactive),
+                signed_precision(source.expire), signed_value(source.expire),
+                flag_precision(source.flag), flag_value(source.flag),
+            ) < 0 {
+                -1
+            } else {
+                0
+            }
+        }
+    }
+}}
+
+// Musl's `src/passwd/lckpwdf.c` object.
+static_archive_member! { lckpwdf_source {
+    /// Return success without acquiring a password lock, as musl `lckpwdf.c` does.
+    ///
+    /// # Safety
+    /// This source-compatible no-op neither dereferences caller data nor owns a
+    /// file descriptor or lock state.
+    #[no_mangle]
+    pub unsafe extern "C" fn lckpwdf() -> c_int {
+        0
+    }
+
+    /// Return success without releasing a password lock, as musl `lckpwdf.c` does.
+    ///
+    /// # Safety
+    /// This source-compatible no-op neither dereferences caller data nor owns a
+    /// file descriptor or lock state.
+    #[no_mangle]
+    pub unsafe extern "C" fn ulckpwdf() -> c_int {
+        0
+    }
+}}
+

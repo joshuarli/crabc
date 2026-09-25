@@ -276,77 +276,89 @@ unsafe fn write_sha(
     output
 }
 
-/// Private ABI helper for the deliberately unsupported MD5-crypt format.
-///
-/// # Safety
-///
-/// When non-null, `output` must designate writable storage for the `"*\\0"`
-/// unsupported marker. The key and setting pointers are not dereferenced.
-#[no_mangle]
-pub unsafe extern "C" fn __crypt_md5(
-    _key: *const c_char,
-    _setting: *const c_char,
-    output: *mut c_char,
-) -> *mut c_char {
-    unsupported(output)
-}
+// Musl's `src/crypt/crypt_md5.c` object.
+static_archive_member! { crypt_md5_source {
+    /// Private ABI helper for the deliberately unsupported MD5-crypt format.
+    ///
+    /// # Safety
+    ///
+    /// When non-null, `output` must designate writable storage for the `"*\\0"`
+    /// unsupported marker. The key and setting pointers are not dereferenced.
+    #[no_mangle]
+    pub unsafe extern "C" fn __crypt_md5(
+        _key: *const c_char,
+        _setting: *const c_char,
+        output: *mut c_char,
+    ) -> *mut c_char {
+        unsupported(output)
+    }
+}}
 
-/// Private ABI helper for RustCrypto-backed SHA-256-crypt.
-///
-/// # Safety
-///
-/// Each non-null input pointer must designate a readable NUL-terminated C
-/// string for the call. When non-null, `output` must designate writable
-/// storage for the selected result and its terminator; this bounded adapter
-/// writes fewer than 256 bytes on success. Input and output storage may
-/// overlap: accepted inputs are copied before any output write. A null key
-/// selects the empty key. A null setting returns the non-null output pointer
-/// without modifying its storage.
-#[no_mangle]
-pub unsafe extern "C" fn __crypt_sha256(
-    key: *const c_char,
-    setting: *const c_char,
-    output: *mut c_char,
-) -> *mut c_char {
-    // SAFETY: this has the public helper's C pointer obligations.
-    unsafe { write_sha(key, setting, output) }
-}
+// Musl's `src/crypt/crypt_sha256.c` object.
+static_archive_member! { crypt_sha256_source {
+    /// Private ABI helper for RustCrypto-backed SHA-256-crypt.
+    ///
+    /// # Safety
+    ///
+    /// Each non-null input pointer must designate a readable NUL-terminated C
+    /// string for the call. When non-null, `output` must designate writable
+    /// storage for the selected result and its terminator; this bounded adapter
+    /// writes fewer than 256 bytes on success. Input and output storage may
+    /// overlap: accepted inputs are copied before any output write. A null key
+    /// selects the empty key. A null setting returns the non-null output pointer
+    /// without modifying its storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn __crypt_sha256(
+        key: *const c_char,
+        setting: *const c_char,
+        output: *mut c_char,
+    ) -> *mut c_char {
+        // SAFETY: this has the public helper's C pointer obligations.
+        unsafe { write_sha(key, setting, output) }
+    }
+}}
 
-/// Private ABI helper for RustCrypto-backed SHA-512-crypt.
-///
-/// # Safety
-///
-/// Each non-null input pointer must designate a readable NUL-terminated C
-/// string for the call. When non-null, `output` must designate writable
-/// storage for the selected result and its terminator; this bounded adapter
-/// writes fewer than 256 bytes on success. Input and output storage may
-/// overlap: accepted inputs are copied before any output write. A null key
-/// selects the empty key. A null setting returns the non-null output pointer
-/// without modifying its storage.
-#[no_mangle]
-pub unsafe extern "C" fn __crypt_sha512(
-    key: *const c_char,
-    setting: *const c_char,
-    output: *mut c_char,
-) -> *mut c_char {
-    // SAFETY: this has the public helper's C pointer obligations.
-    unsafe { write_sha(key, setting, output) }
-}
+// Musl's `src/crypt/crypt_sha512.c` object.
+static_archive_member! { crypt_sha512_source {
+    /// Private ABI helper for RustCrypto-backed SHA-512-crypt.
+    ///
+    /// # Safety
+    ///
+    /// Each non-null input pointer must designate a readable NUL-terminated C
+    /// string for the call. When non-null, `output` must designate writable
+    /// storage for the selected result and its terminator; this bounded adapter
+    /// writes fewer than 256 bytes on success. Input and output storage may
+    /// overlap: accepted inputs are copied before any output write. A null key
+    /// selects the empty key. A null setting returns the non-null output pointer
+    /// without modifying its storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn __crypt_sha512(
+        key: *const c_char,
+        setting: *const c_char,
+        output: *mut c_char,
+    ) -> *mut c_char {
+        // SAFETY: this has the public helper's C pointer obligations.
+        unsafe { write_sha(key, setting, output) }
+    }
+}}
 
-/// Private ABI helper for the deliberately unsupported bcrypt formats.
-///
-/// # Safety
-///
-/// When non-null, `output` must designate writable storage for the `"*\\0"`
-/// unsupported marker. The key and setting pointers are not dereferenced.
-#[no_mangle]
-pub unsafe extern "C" fn __crypt_blowfish(
-    _key: *const c_char,
-    _setting: *const c_char,
-    output: *mut c_char,
-) -> *mut c_char {
-    unsupported(output)
-}
+// Musl's `src/crypt/crypt_blowfish.c` object.
+static_archive_member! { crypt_blowfish_source {
+    /// Private ABI helper for the deliberately unsupported bcrypt formats.
+    ///
+    /// # Safety
+    ///
+    /// When non-null, `output` must designate writable storage for the `"*\\0"`
+    /// unsupported marker. The key and setting pointers are not dereferenced.
+    #[no_mangle]
+    pub unsafe extern "C" fn __crypt_blowfish(
+        _key: *const c_char,
+        _setting: *const c_char,
+        output: *mut c_char,
+    ) -> *mut c_char {
+        unsupported(output)
+    }
+}}
 
 /// Dispatch the bounded SHA-crypt profile through caller-owned `crypt_data`.
 ///
@@ -386,57 +398,64 @@ unsafe fn crypt_r_dispatch(
     }
 }
 
-/// Dispatch the bounded SHA-crypt profile through caller-owned `crypt_data`.
-#[no_mangle]
-pub unsafe extern "C" fn __crypt_r(
-    key: *const c_char,
-    setting: *const c_char,
-    data: *mut c_void,
-) -> *mut c_char {
-    // SAFETY: this preserves the private helper's C pointer contract.
-    unsafe { crypt_r_dispatch(key, setting, data) }
-}
+// Musl's `src/crypt/crypt_r.c` object.
+static_archive_member! { crypt_r_source {
+    /// Dispatch the bounded SHA-crypt profile through caller-owned `crypt_data`.
+    #[no_mangle]
+    pub unsafe extern "C" fn __crypt_r(
+        key: *const c_char,
+        setting: *const c_char,
+        data: *mut c_void,
+    ) -> *mut c_char {
+        // SAFETY: this preserves the private helper's C pointer contract.
+        unsafe { crypt_r_dispatch(key, setting, data) }
+    }
+
+    /// Reentrant caller-buffered form of [`crypt`].
+    ///
+    /// # Safety
+    ///
+    /// `data` must point to a writable, aligned 260-byte C `struct crypt_data`
+    /// for the duration of this call. Each non-null input pointer must designate a
+    /// readable NUL-terminated C string for the call. The record may supply either
+    /// input through its `__buf`; accepted inputs are copied before it is written.
+    /// The caller must exclusively own the record for the entire call. A null key
+    /// selects the empty key; a null setting writes the unsupported `"*\\0"`
+    /// marker. A null `data` returns null without writing.
+    #[no_mangle]
+    #[linkage = "weak"]
+    pub unsafe extern "C" fn crypt_r(
+        key: *const c_char,
+        setting: *const c_char,
+        data: *mut c_void,
+    ) -> *mut c_char {
+        // SAFETY: this preserves the public C ABI pointer contract.
+        unsafe { __crypt_r(key, setting, data) }
+    }
+}}
 
 static mut CRYPT_DATA: CryptData = CryptData {
     initialized: 0,
     buffer: [0; CRYPT_OUTPUT_MAX],
 };
 
-/// Hash through a process-shared 260-byte `struct crypt_data` and return its
-/// 256-byte `__buf` result region.
-///
-/// # Safety
-///
-/// Each non-null input pointer must designate a readable NUL-terminated C
-/// string for the call. The returned pointer is process-shared and is
-/// overwritten by the next `crypt` call. Callers must externally serialize
-/// all concurrent `crypt` calls; this result record has no internal lock. A
-/// null key selects the empty key and a null setting returns the unsupported
-/// `"*"` marker in that shared result region.
-#[no_mangle]
-pub unsafe extern "C" fn crypt(key: *const c_char, setting: *const c_char) -> *mut c_char {
-    // SAFETY: the static record has the C header's exact representation.
-    unsafe { __crypt_r(key, setting, core::ptr::addr_of_mut!(CRYPT_DATA).cast::<c_void>()) }
-}
+// Musl's `src/crypt/crypt.c` object.
+static_archive_member! { crypt_source {
+    /// Hash through a process-shared 260-byte `struct crypt_data` and return its
+    /// 256-byte `__buf` result region.
+    ///
+    /// # Safety
+    ///
+    /// Each non-null input pointer must designate a readable NUL-terminated C
+    /// string for the call. The returned pointer is process-shared and is
+    /// overwritten by the next `crypt` call. Callers must externally serialize
+    /// all concurrent `crypt` calls; this result record has no internal lock. A
+    /// null key selects the empty key and a null setting returns the unsupported
+    /// `"*"` marker in that shared result region.
+    #[no_mangle]
+    pub unsafe extern "C" fn crypt(key: *const c_char, setting: *const c_char) -> *mut c_char {
+        // SAFETY: the static record has the C header's exact representation.
+        unsafe { __crypt_r(key, setting, core::ptr::addr_of_mut!(CRYPT_DATA).cast::<c_void>()) }
+    }
+}}
 
-/// Reentrant caller-buffered form of [`crypt`].
-///
-/// # Safety
-///
-/// `data` must point to a writable, aligned 260-byte C `struct crypt_data`
-/// for the duration of this call. Each non-null input pointer must designate a
-/// readable NUL-terminated C string for the call. The record may supply either
-/// input through its `__buf`; accepted inputs are copied before it is written.
-/// The caller must exclusively own the record for the entire call. A null key
-/// selects the empty key; a null setting writes the unsupported `"*\\0"`
-/// marker. A null `data` returns null without writing.
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn crypt_r(
-    key: *const c_char,
-    setting: *const c_char,
-    data: *mut c_void,
-) -> *mut c_char {
-    // SAFETY: this preserves the public C ABI pointer contract.
-    unsafe { __crypt_r(key, setting, data) }
-}

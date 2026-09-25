@@ -201,102 +201,108 @@ unsafe fn seed_state(seed: u32) {
     unsafe { store_word(x, 0, first | 1) };
 }
 
-/// Seed the process-global legacy BSD random state.
-#[no_mangle]
-pub extern "C" fn srandom(seed: c_uint) {
-    let _lock = RandomLock::acquire();
-    unsafe {
-        ensure_default_storage();
-        seed_state(seed);
-    }
-}
-
-/// Switch to a caller-owned BSD random state image and seed it.
-///
-/// # Safety
-///
-/// For a size of at least eight, `state` must remain writable for `size` bytes
-/// and retained until the active state changes again; no external task may
-/// read or mutate that backing without synchronizing with all calls to this family. It
-/// may be unaligned as a defined Rust-port extension, not as a claim about
-/// musl's aligned `uint32_t *` C access. Sizes below eight return null before
-/// observing `state` and leave both errno and the active state unchanged.
-#[no_mangle]
-pub unsafe extern "C" fn initstate(seed: c_uint, state: *mut c_char, size: usize) -> *mut c_char {
-    if size < 8 {
-        return core::ptr::null_mut();
-    }
-    let _lock = RandomLock::acquire();
-    unsafe {
-        ensure_default_storage();
-        let previous = save_state();
-        RANDOM_N = if size < 32 {
-            0
-        } else if size < 64 {
-            7
-        } else if size < 128 {
-            15
-        } else if size < 256 {
-            31
-        } else {
-            63
-        };
-        RANDOM_X = state.cast::<u8>().add(core::mem::size_of::<u32>());
-        seed_state(seed);
-        save_state();
-        previous.cast::<c_char>()
-    }
-}
-
-/// Switch to a caller-owned BSD random state image.
-///
-/// # Safety
-///
-/// `state` must be a live, writable image previously initialized by this BSD
-/// random family, with the backing capacity required by its packed n/i/j
-/// header. It stays retained after selection until a later switch, and no
-/// external task reads or mutates either selected buffer without synchronizing with all
-/// calls to this family. The active previous state remains writable through
-/// this call. Unaligned images are a defined Rust-port extension only.
-#[no_mangle]
-pub unsafe extern "C" fn setstate(state: *mut c_char) -> *mut c_char {
-    let _lock = RandomLock::acquire();
-    unsafe {
-        ensure_default_storage();
-        let previous = save_state();
-        load_state(state.cast::<u8>());
-        previous.cast::<c_char>()
-    }
-}
-
-/// Advance the process-global legacy BSD random state.
-#[no_mangle]
-pub extern "C" fn random() -> c_long {
-    let _lock = RandomLock::acquire();
-    unsafe {
-        ensure_default_storage();
-        let n = RANDOM_N;
-        let x = RANDOM_X;
-        if n == 0 {
-            let value = lcg31(load_word(x, 0));
-            store_word(x, 0, value);
-            return value as c_long;
+// Musl's `src/prng/random.c` object.
+static_archive_member! { random_source {
+    /// Seed the process-global legacy BSD random state.
+    #[no_mangle]
+    pub extern "C" fn srandom(seed: c_uint) {
+        let _lock = RandomLock::acquire();
+        unsafe {
+            ensure_default_storage();
+            seed_state(seed);
         }
-        let index_i = RANDOM_I as usize;
-        let index_j = RANDOM_J as usize;
-        let value = load_word(x, index_i).wrapping_add(load_word(x, index_j));
-        store_word(x, index_i, value);
-        RANDOM_I += 1;
-        if RANDOM_I == n {
-            RANDOM_I = 0;
-        }
-        RANDOM_J += 1;
-        if RANDOM_J == n {
-            RANDOM_J = 0;
-        }
-        (value >> 1) as c_long
     }
-}
+
+    /// Switch to a caller-owned BSD random state image and seed it.
+    ///
+    /// # Safety
+    ///
+    /// For a size of at least eight, `state` must remain writable for `size` bytes
+    /// and retained until the active state changes again; no external task may
+    /// read or mutate that backing without synchronizing with all calls to this family. It
+    /// may be unaligned as a defined Rust-port extension, not as a claim about
+    /// musl's aligned `uint32_t *` C access. Sizes below eight return null before
+    /// observing `state` and leave both errno and the active state unchanged.
+    #[no_mangle]
+    pub unsafe extern "C" fn initstate(seed: c_uint, state: *mut c_char, size: usize) -> *mut c_char {
+        if size < 8 {
+            return core::ptr::null_mut();
+        }
+        let _lock = RandomLock::acquire();
+        unsafe {
+            ensure_default_storage();
+            let previous = save_state();
+            RANDOM_N = if size < 32 {
+                0
+            } else if size < 64 {
+                7
+            } else if size < 128 {
+                15
+            } else if size < 256 {
+                31
+            } else {
+                63
+            };
+            RANDOM_X = state.cast::<u8>().add(core::mem::size_of::<u32>());
+            seed_state(seed);
+            save_state();
+            previous.cast::<c_char>()
+        }
+    }
+
+    /// Switch to a caller-owned BSD random state image.
+    ///
+    /// # Safety
+    ///
+    /// `state` must be a live, writable image previously initialized by this BSD
+    /// random family, with the backing capacity required by its packed n/i/j
+    /// header. It stays retained after selection until a later switch, and no
+    /// external task reads or mutates either selected buffer without synchronizing with all
+    /// calls to this family. The active previous state remains writable through
+    /// this call. Unaligned images are a defined Rust-port extension only.
+    #[no_mangle]
+    pub unsafe extern "C" fn setstate(state: *mut c_char) -> *mut c_char {
+        let _lock = RandomLock::acquire();
+        unsafe {
+            ensure_default_storage();
+            let previous = save_state();
+            load_state(state.cast::<u8>());
+            previous.cast::<c_char>()
+        }
+    }
+
+    /// Advance the process-global legacy BSD random state.
+    #[no_mangle]
+    pub extern "C" fn random() -> c_long {
+        let _lock = RandomLock::acquire();
+        unsafe {
+            ensure_default_storage();
+            let n = RANDOM_N;
+            let x = RANDOM_X;
+            if n == 0 {
+                let value = lcg31(load_word(x, 0));
+                store_word(x, 0, value);
+                return value as c_long;
+            }
+            let index_i = RANDOM_I as usize;
+            let index_j = RANDOM_J as usize;
+            let value = load_word(x, index_i).wrapping_add(load_word(x, index_j));
+            store_word(x, index_i, value);
+            RANDOM_I += 1;
+            if RANDOM_I == n {
+                RANDOM_I = 0;
+            }
+            RANDOM_J += 1;
+            if RANDOM_J == n {
+                RANDOM_J = 0;
+            }
+            (value >> 1) as c_long
+        }
+    }
+}}
+
+
+
 
 /// Acquire musl `fork.c`'s random lock position before raw fork.
 ///

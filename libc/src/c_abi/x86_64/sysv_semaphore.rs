@@ -126,90 +126,99 @@ semctl:
     word = sym semctl_word,
 );
 
-/// Create one System V semaphore set through Linux `semget(2)`.
-///
-/// `key`, `semaphore_count`, and `flags` are passed to Linux unchanged after
-/// musl's `unsigned short` count bound. The caller owns IPC key, permissions,
-/// creation/race policy, and eventual `IPC_RMID` lifecycle.
-#[no_mangle]
-pub extern "C" fn semget(key: c_int, semaphore_count: c_int, flags: c_int) -> c_int {
-    if semaphore_count > SEM_COUNT_MAX {
-        // SAFETY: this C ABI leaf owns publication to the calling initial-TLS
-        // errno slot for its locally rejected musl-compatible argument.
-        unsafe { errno::set_errno(EINVAL) };
-        return -1;
+// Musl's `src/ipc/semget.c` object.
+static_archive_member! { semget_source {
+    /// Create one System V semaphore set through Linux `semget(2)`.
+    ///
+    /// `key`, `semaphore_count`, and `flags` are passed to Linux unchanged after
+    /// musl's `unsigned short` count bound. The caller owns IPC key, permissions,
+    /// creation/race policy, and eventual `IPC_RMID` lifecycle.
+    #[no_mangle]
+    pub extern "C" fn semget(key: c_int, semaphore_count: c_int, flags: c_int) -> c_int {
+        if semaphore_count > SEM_COUNT_MAX {
+            // SAFETY: this C ABI leaf owns publication to the calling initial-TLS
+            // errno slot for its locally rejected musl-compatible argument.
+            unsafe { errno::set_errno(EINVAL) };
+            return -1;
+        }
+
+        // SAFETY: the three C scalar words map directly to Linux x86-64
+        // semget=64; Linux owns all remaining key/count/permission validation.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SEMGET,
+                i64::from(key),
+                i64::from(semaphore_count),
+                i64::from(flags),
+            )
+        };
+        c_status(result)
     }
+}}
 
-    // SAFETY: the three C scalar words map directly to Linux x86-64
-    // semget=64; Linux owns all remaining key/count/permission validation.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_SEMGET,
-            i64::from(key),
-            i64::from(semaphore_count),
-            i64::from(flags),
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/ipc/semop.c` object.
+static_archive_member! { semop_source {
+    /// Apply one or more semaphore operations through Linux `semop(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `operations` must designate `operation_count` writable x86
+    /// `struct sembuf` records for the kernel's duration. The caller owns the
+    /// semaphore-set lifetime, blocking and signal policy, and any `SEM_UNDO`
+    /// process-exit semantics. This direct static leaf intentionally has no musl
+    /// pthread cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn semop(
+        semaphore_id: c_int,
+        operations: *mut c_void,
+        operation_count: usize,
+    ) -> c_int {
+        // SAFETY: the caller supplies the complete Linux semaphore-operation
+        // buffer contract; x86 arguments occupy rdi/rsi/rdx.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SEMOP,
+                i64::from(semaphore_id),
+                operations as usize as i64,
+                operation_count as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Apply one or more semaphore operations through Linux `semop(2)`.
-///
-/// # Safety
-///
-/// `operations` must designate `operation_count` writable x86
-/// `struct sembuf` records for the kernel's duration. The caller owns the
-/// semaphore-set lifetime, blocking and signal policy, and any `SEM_UNDO`
-/// process-exit semantics. This direct static leaf intentionally has no musl
-/// pthread cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn semop(
-    semaphore_id: c_int,
-    operations: *mut c_void,
-    operation_count: usize,
-) -> c_int {
-    // SAFETY: the caller supplies the complete Linux semaphore-operation
-    // buffer contract; x86 arguments occupy rdi/rsi/rdx.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_SEMOP,
-            i64::from(semaphore_id),
-            operations as usize as i64,
-            operation_count as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Apply timed semaphore operations through Linux `semtimedop(2)`.
-///
-/// # Safety
-///
-/// `operations` has the same requirements as [`semop`]. `timeout` must be
-/// null or point to a readable x86 16-byte, align-eight `struct timespec` for
-/// the syscall's duration. The timeout is relative; caller-owned storage and
-/// Linux's timeout/error policy are forwarded directly. This leaf omits
-/// musl's pthread cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn semtimedop(
-    semaphore_id: c_int,
-    operations: *mut c_void,
-    operation_count: usize,
-    timeout: *const c_void,
-) -> c_int {
-    // SAFETY: the caller supplies both kernel-visible records; x86 syscall
-    // argument four is explicitly moved to r10 by this raw helper.
-    let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_SEMTIMEDOP,
-            i64::from(semaphore_id),
-            operations as usize as i64,
-            operation_count as i64,
-            timeout as usize as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/ipc/semtimedop.c` object.
+static_archive_member! { semtimedop_source {
+    /// Apply timed semaphore operations through Linux `semtimedop(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `operations` has the same requirements as [`semop`]. `timeout` must be
+    /// null or point to a readable x86 16-byte, align-eight `struct timespec` for
+    /// the syscall's duration. The timeout is relative; caller-owned storage and
+    /// Linux's timeout/error policy are forwarded directly. This leaf omits
+    /// musl's pthread cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn semtimedop(
+        semaphore_id: c_int,
+        operations: *mut c_void,
+        operation_count: usize,
+        timeout: *const c_void,
+    ) -> c_int {
+        // SAFETY: the caller supplies both kernel-visible records; x86 syscall
+        // argument four is explicitly moved to r10 by this raw helper.
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_SEMTIMEDOP,
+                i64::from(semaphore_id),
+                operations as usize as i64,
+                operation_count as i64,
+                timeout as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
 
 /// Forward one no-vararg SysV `semctl` command with an explicit zero union.
 ///

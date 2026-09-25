@@ -61,19 +61,25 @@ fn divide_intmax(numerator: c_long, denominator: c_long) -> ImaxDivResult {
     }
 }
 
-/// Return the C `intmax_t` absolute value for its defined input domain.
-#[no_mangle]
-pub extern "C" fn imaxabs(value: c_long) -> c_long {
-    if value < 0 {
-        value.wrapping_neg()
-    } else {
-        value
+// Musl's `src/stdlib/imaxabs.c` object.
+static_archive_member! { imaxabs_source {
+    /// Return the C `intmax_t` absolute value for its defined input domain.
+    #[no_mangle]
+    pub extern "C" fn imaxabs(value: c_long) -> c_long {
+        if value < 0 {
+            value.wrapping_neg()
+        } else {
+            value
+        }
     }
-}
+}}
 
-/// Return C `imaxdiv_t` quotient and remainder for the defined division
-/// domain.
-#[no_mangle]
-pub extern "C" fn imaxdiv(numerator: c_long, denominator: c_long) -> ImaxDivResult {
-    divide_intmax(numerator, denominator)
-}
+// Musl's `src/stdlib/imaxdiv.c` object.
+static_archive_member! { imaxdiv_source {
+    /// Return C `imaxdiv_t` quotient and remainder for the defined division
+    /// domain.
+    #[no_mangle]
+    pub extern "C" fn imaxdiv(numerator: c_long, denominator: c_long) -> ImaxDivResult {
+        divide_intmax(numerator, denominator)
+    }
+}}

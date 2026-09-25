@@ -125,53 +125,71 @@ fn divide_long_long(
     }
 }
 
-/// Return the C `int` absolute value for its defined input domain.
-#[no_mangle]
-pub extern "C" fn abs(value: c_int) -> c_int {
-    if value < 0 {
-        value.wrapping_neg()
-    } else {
-        value
+// Musl's `src/stdlib/abs.c` object.
+static_archive_member! { abs_source {
+    /// Return the C `int` absolute value for its defined input domain.
+    #[no_mangle]
+    pub extern "C" fn abs(value: c_int) -> c_int {
+        if value < 0 {
+            value.wrapping_neg()
+        } else {
+            value
+        }
     }
-}
+}}
 
-/// Return the C `long` absolute value for its defined input domain.
-#[no_mangle]
-pub extern "C" fn labs(value: c_long) -> c_long {
-    if value < 0 {
-        value.wrapping_neg()
-    } else {
-        value
+// Musl's `src/stdlib/labs.c` object.
+static_archive_member! { labs_source {
+    /// Return the C `long` absolute value for its defined input domain.
+    #[no_mangle]
+    pub extern "C" fn labs(value: c_long) -> c_long {
+        if value < 0 {
+            value.wrapping_neg()
+        } else {
+            value
+        }
     }
-}
+}}
 
-/// Return the C `long long` absolute value for its defined input domain.
-#[no_mangle]
-pub extern "C" fn llabs(value: c_longlong) -> c_longlong {
-    if value < 0 {
-        value.wrapping_neg()
-    } else {
-        value
+// Musl's `src/stdlib/llabs.c` object.
+static_archive_member! { llabs_source {
+    /// Return the C `long long` absolute value for its defined input domain.
+    #[no_mangle]
+    pub extern "C" fn llabs(value: c_longlong) -> c_longlong {
+        if value < 0 {
+            value.wrapping_neg()
+        } else {
+            value
+        }
     }
-}
+}}
 
-/// Return C `div_t` quotient and remainder for the defined division domain.
-#[no_mangle]
-pub extern "C" fn div(numerator: c_int, denominator: c_int) -> DivResult {
-    divide_int(numerator, denominator)
-}
+// Musl's `src/stdlib/div.c` object.
+static_archive_member! { div_source {
+    /// Return C `div_t` quotient and remainder for the defined division domain.
+    #[no_mangle]
+    pub extern "C" fn div(numerator: c_int, denominator: c_int) -> DivResult {
+        divide_int(numerator, denominator)
+    }
+}}
 
-/// Return C `ldiv_t` quotient and remainder for the defined division domain.
-#[no_mangle]
-pub extern "C" fn ldiv(numerator: c_long, denominator: c_long) -> LongDivResult {
-    divide_long(numerator, denominator)
-}
+// Musl's `src/stdlib/ldiv.c` object.
+static_archive_member! { ldiv_source {
+    /// Return C `ldiv_t` quotient and remainder for the defined division domain.
+    #[no_mangle]
+    pub extern "C" fn ldiv(numerator: c_long, denominator: c_long) -> LongDivResult {
+        divide_long(numerator, denominator)
+    }
+}}
 
-/// Return C `lldiv_t` quotient and remainder for the defined division domain.
-#[no_mangle]
-pub extern "C" fn lldiv(
-    numerator: c_longlong,
-    denominator: c_longlong,
-) -> LongLongDivResult {
-    divide_long_long(numerator, denominator)
-}
+// Musl's `src/stdlib/lldiv.c` object.
+static_archive_member! { lldiv_source {
+    /// Return C `lldiv_t` quotient and remainder for the defined division domain.
+    #[no_mangle]
+    pub extern "C" fn lldiv(
+        numerator: c_longlong,
+        denominator: c_longlong,
+    ) -> LongLongDivResult {
+        divide_long_long(numerator, denominator)
+    }
+}}

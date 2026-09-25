@@ -297,26 +297,29 @@ pub(super) fn secs_to_utc_tm(seconds: i64) -> Option<Tm> {
     Some(output)
 }
 
-/// Normalize one caller-owned UTC `struct tm` and return its Unix seconds.
-///
-/// # Safety
-///
-/// `value` must designate initialized, writable 56-byte Linux/x86-64
-/// `struct tm` storage for the duration of the call. C supplies no null or
-/// partially initialized fallback. On a representability failure the complete
-/// caller record is left untouched and initial-TLS errno becomes
-/// `EOVERFLOW`; a successful `-1` result remains a valid pre-epoch instant.
-#[no_mangle]
-pub unsafe extern "C" fn timegm(value: *mut Tm) -> c_long {
-    // SAFETY: the C caller supplies initialized exact `struct tm` storage.
-    let input = unsafe { value.read() };
-    let seconds = tm_to_secs(&input);
-    let Some(normalized) = secs_to_utc_tm(seconds) else {
-        // SAFETY: this C error boundary owns the selected initial-TLS errno.
-        unsafe { set_errno(EOVERFLOW) };
-        return -1;
-    };
-    // SAFETY: the C caller supplied writable exact `struct tm` storage.
-    unsafe { value.write(normalized) };
-    seconds
-}
+// Musl's `src/time/timegm.c` object.
+static_archive_member! { timegm_source {
+    /// Normalize one caller-owned UTC `struct tm` and return its Unix seconds.
+    ///
+    /// # Safety
+    ///
+    /// `value` must designate initialized, writable 56-byte Linux/x86-64
+    /// `struct tm` storage for the duration of the call. C supplies no null or
+    /// partially initialized fallback. On a representability failure the complete
+    /// caller record is left untouched and initial-TLS errno becomes
+    /// `EOVERFLOW`; a successful `-1` result remains a valid pre-epoch instant.
+    #[no_mangle]
+    pub unsafe extern "C" fn timegm(value: *mut Tm) -> c_long {
+        // SAFETY: the C caller supplies initialized exact `struct tm` storage.
+        let input = unsafe { value.read() };
+        let seconds = tm_to_secs(&input);
+        let Some(normalized) = secs_to_utc_tm(seconds) else {
+            // SAFETY: this C error boundary owns the selected initial-TLS errno.
+            unsafe { set_errno(EOVERFLOW) };
+            return -1;
+        };
+        // SAFETY: the C caller supplied writable exact `struct tm` storage.
+        unsafe { value.write(normalized) };
+        seconds
+    }
+}}

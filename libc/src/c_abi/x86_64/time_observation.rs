@@ -70,116 +70,131 @@ unsafe fn clock_status(clock_id: c_int, output: *mut Timespec) -> c_int {
     c_status(unsafe { super::clock_gettime::clock_gettime_raw(clock_id, output.cast()) })
 }
 
-/// Return CPU time consumed by the calling process in microseconds.
-///
-/// A failed underlying query returns `-1` after publishing the raw Linux
-/// error in the selected initial-TLS `errno` slot.
-#[no_mangle]
-pub extern "C" fn clock() -> c_long {
-    let mut value = Timespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    // SAFETY: `value` is writable exact timespec storage for this call.
-    if unsafe { clock_status(CLOCK_PROCESS_CPUTIME_ID, &mut value) } != 0 {
-        return -1;
+// Musl's `src/time/clock.c` object.
+static_archive_member! { clock_source {
+    /// Return CPU time consumed by the calling process in microseconds.
+    ///
+    /// A failed underlying query returns `-1` after publishing the raw Linux
+    /// error in the selected initial-TLS `errno` slot.
+    #[no_mangle]
+    pub extern "C" fn clock() -> c_long {
+        let mut value = Timespec {
+            seconds: 0,
+            nanoseconds: 0,
+        };
+        // SAFETY: `value` is writable exact timespec storage for this call.
+        if unsafe { clock_status(CLOCK_PROCESS_CPUTIME_ID, &mut value) } != 0 {
+            return -1;
+        }
+        value
+            .seconds
+            .wrapping_mul(CLOCKS_PER_SEC)
+            .wrapping_add(value.nanoseconds / (NANOSECONDS_PER_SECOND / CLOCKS_PER_SEC))
     }
-    value
-        .seconds
-        .wrapping_mul(CLOCKS_PER_SEC)
-        .wrapping_add(value.nanoseconds / (NANOSECONDS_PER_SECOND / CLOCKS_PER_SEC))
-}
+}}
 
-/// Return the realtime clock's whole-second value and optionally store it.
-///
-/// # Safety
-///
-/// When non-null, `output` must point to writable LP64 `time_t` storage. The
-/// caller owns its lifetime. This direct static leaf does not select calendar,
-/// timezone, or vDSO runtime state.
-#[no_mangle]
-pub unsafe extern "C" fn time(output: *mut c_long) -> c_long {
-    let mut value = Timespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    // SAFETY: `value` is writable exact timespec storage for this call.
-    if unsafe { clock_status(CLOCK_REALTIME, &mut value) } != 0 {
-        return -1;
+// Musl's `src/time/time.c` object.
+static_archive_member! { time_source {
+    /// Return the realtime clock's whole-second value and optionally store it.
+    ///
+    /// # Safety
+    ///
+    /// When non-null, `output` must point to writable LP64 `time_t` storage. The
+    /// caller owns its lifetime. This direct static leaf does not select calendar,
+    /// timezone, or vDSO runtime state.
+    #[no_mangle]
+    pub unsafe extern "C" fn time(output: *mut c_long) -> c_long {
+        let mut value = Timespec {
+            seconds: 0,
+            nanoseconds: 0,
+        };
+        // SAFETY: `value` is writable exact timespec storage for this call.
+        if unsafe { clock_status(CLOCK_REALTIME, &mut value) } != 0 {
+            return -1;
+        }
+        if !output.is_null() {
+            // SAFETY: the caller supplied writable `time_t` storage.
+            unsafe { output.write(value.seconds) };
+        }
+        value.seconds
     }
-    if !output.is_null() {
-        // SAFETY: the caller supplied writable `time_t` storage.
-        unsafe { output.write(value.seconds) };
-    }
-    value.seconds
-}
+}}
 
-/// Read realtime into one C11 `timespec_get` output record.
-///
-/// # Safety
-///
-/// When `base` is `TIME_UTC`, `output` must point to writable 16-byte x86
-/// `struct timespec` storage for the call. Unsupported bases return zero
-/// without inspecting the output pointer, matching musl's C11 boundary.
-#[no_mangle]
-pub unsafe extern "C" fn timespec_get(output: *mut c_void, base: c_int) -> c_int {
-    if base != TIME_UTC {
-        return 0;
+// Musl's `src/time/timespec_get.c` object.
+static_archive_member! { timespec_get_source {
+    /// Read realtime into one C11 `timespec_get` output record.
+    ///
+    /// # Safety
+    ///
+    /// When `base` is `TIME_UTC`, `output` must point to writable 16-byte x86
+    /// `struct timespec` storage for the call. Unsupported bases return zero
+    /// without inspecting the output pointer, matching musl's C11 boundary.
+    #[no_mangle]
+    pub unsafe extern "C" fn timespec_get(output: *mut c_void, base: c_int) -> c_int {
+        if base != TIME_UTC {
+            return 0;
+        }
+        // SAFETY: the caller owns the C11 output-record contract for TIME_UTC.
+        if unsafe { clock_status(CLOCK_REALTIME, output.cast::<Timespec>()) } == 0 {
+            TIME_UTC
+        } else {
+            0
+        }
     }
-    // SAFETY: the caller owns the C11 output-record contract for TIME_UTC.
-    if unsafe { clock_status(CLOCK_REALTIME, output.cast::<Timespec>()) } == 0 {
-        TIME_UTC
-    } else {
+}}
+
+// Musl's `src/time/clock_getres.c` object.
+static_archive_member! { clock_getres_source {
+    /// Query the resolution of one Linux clock.
+    ///
+    /// # Safety
+    ///
+    /// `output` must be null only where Linux permits it, or otherwise designate
+    /// writable 16-byte x86 `struct timespec` storage for the call. The caller
+    /// owns the clock-ID and output lifetime contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn clock_getres(clock_id: c_int, output: *mut c_void) -> c_int {
+        // SAFETY: the caller owns the raw clock ID and optional output contract.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_CLOCK_GETRES,
+                i64::from(clock_id),
+                output as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/time/gettimeofday.c` object.
+static_archive_member! { gettimeofday_source {
+    /// Store Linux realtime wall-clock parts while ignoring obsolete timezone
+    /// output.
+    ///
+    /// # Safety
+    ///
+    /// `output` must be null only where Linux permits it, or otherwise point to
+    /// writable 16-byte x86 `struct timeval` storage for the call. The second C
+    /// argument is deliberately ignored: this selected profile has no obsolete
+    /// timezone state or output contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn gettimeofday(output: *mut c_void, _timezone: *mut c_void) -> c_int {
+        // Musl `src/time/gettimeofday.c`: a null timeval succeeds without a read.
+        if output.is_null() {
+            return 0;
+        }
+        let mut value = Timespec { seconds: 0, nanoseconds: 0 };
+        // SAFETY: `value` is writable exact timespec storage for this call.
+        if unsafe { clock_status(CLOCK_REALTIME, &mut value) } != 0 {
+            return -1;
+        }
+        // SAFETY: the caller supplied writable x86 `struct timeval` storage.
+        unsafe {
+            output.cast::<Timeval>().write(Timeval {
+                seconds: value.seconds,
+                microseconds: value.nanoseconds / 1000,
+            });
+        }
         0
     }
-}
-
-/// Query the resolution of one Linux clock.
-///
-/// # Safety
-///
-/// `output` must be null only where Linux permits it, or otherwise designate
-/// writable 16-byte x86 `struct timespec` storage for the call. The caller
-/// owns the clock-ID and output lifetime contract.
-#[no_mangle]
-pub unsafe extern "C" fn clock_getres(clock_id: c_int, output: *mut c_void) -> c_int {
-    // SAFETY: the caller owns the raw clock ID and optional output contract.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_CLOCK_GETRES,
-            i64::from(clock_id),
-            output as usize as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Store Linux realtime wall-clock parts while ignoring obsolete timezone
-/// output.
-///
-/// # Safety
-///
-/// `output` must be null only where Linux permits it, or otherwise point to
-/// writable 16-byte x86 `struct timeval` storage for the call. The second C
-/// argument is deliberately ignored: this selected profile has no obsolete
-/// timezone state or output contract.
-#[no_mangle]
-pub unsafe extern "C" fn gettimeofday(output: *mut c_void, _timezone: *mut c_void) -> c_int {
-    // Musl `src/time/gettimeofday.c`: a null timeval succeeds without a read.
-    if output.is_null() {
-        return 0;
-    }
-    let mut value = Timespec { seconds: 0, nanoseconds: 0 };
-    // SAFETY: `value` is writable exact timespec storage for this call.
-    if unsafe { clock_status(CLOCK_REALTIME, &mut value) } != 0 {
-        return -1;
-    }
-    // SAFETY: the caller supplied writable x86 `struct timeval` storage.
-    unsafe {
-        output.cast::<Timeval>().write(Timeval {
-            seconds: value.seconds,
-            microseconds: value.nanoseconds / 1000,
-        });
-    }
-    0
-}
+}}
