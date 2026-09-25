@@ -269,13 +269,41 @@ def run_startup_sample(
     pid = engine.spawn(launcher, arguments, cpus=cpus, stdout_path=stdout_path, stderr_path=stderr_path)
     launcher_process, stdout = engine.finish_process(pid, started, timeout, stdout_path, stderr_path)
     batches = engine.parse_timed_output(stdout, expected_batches=startup["batches"])
-    workload, *parameters = startup["program_arguments"]
-    memory_row = {"workload": workload, "params": {key: int(value) for key, value in
-                                                   (item.split("=", 1) for item in parameters)}}
-    memory = engine.run_timed_sample(program, memory_row, batch_divisor=1, cpus=cpus, timeout=timeout,
-                                     scratch=scratch, sample_name=f"{sample_name}-memory")
+    memory = run_memory_launch(program, startup["program_arguments"], cpus=cpus, timeout=timeout,
+                               scratch=scratch, sample_name=f"{sample_name}-memory")
     return {"arguments": arguments, "cpus": list(cpus), "batches": batches, "launcher_process": launcher_process,
             "process": memory["process"], "peak_state": memory["peak_state"]}
+
+
+def run_memory_launch(
+    program: Any, arguments: Sequence[str], *, cpus: Sequence[int], timeout: float, scratch: Path, sample_name: str,
+) -> dict[str, Any]:
+    """One traced launch of the startup program for its exit peak RSS and peak-state PSS.
+
+    Its own one-operation batch is not a measurement (a single call can read
+    as zero thread CPU time), so only the terminal `ok` is required here.
+    """
+
+    ready_read, ready_write = engine.os.pipe()
+    control_read, control_write = engine.os.pipe()
+    stdout_path, stderr_path = scratch / f"{sample_name}.stdout", scratch / f"{sample_name}.stderr"
+    probe = engine.PeakProbe(ready_read, control_write)
+    try:
+        started = engine.time.monotonic_ns()
+        pid = engine.spawn(program, [*arguments, f"ready_fd={ready_write}", f"control_fd={control_read}"], cpus=cpus,
+                           stdout_path=stdout_path, stderr_path=stderr_path, trace_exit=True,
+                           pass_fds=(ready_write, control_read))
+        engine.os.close(ready_write)
+        engine.os.close(control_read)
+        ready_write = control_read = -1
+        process, stdout = engine.finish_process(pid, started, timeout, stdout_path, stderr_path, traced=True, peak=probe)
+    finally:
+        for descriptor in (ready_read, ready_write, control_read, control_write):
+            if descriptor >= 0:
+                engine.os.close(descriptor)
+    if not stdout.endswith("ok\n") or process["exit_memory"] is None or probe.snapshot is None:
+        raise HarnessError("startup memory launch lacks its ok record, exit snapshot or READY_PEAK pause")
+    return {"process": process, "peak_state": probe.snapshot}
 
 
 def measure_startup(
