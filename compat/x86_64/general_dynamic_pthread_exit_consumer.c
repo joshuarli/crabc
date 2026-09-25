@@ -1,10 +1,12 @@
 #define _GNU_SOURCE
+#include <errno.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 void pthread_exit_expect(int);
@@ -73,8 +75,15 @@ static void *worker(void *opaque)
         require(pthread_cancel(initial_thread) == 0);
     if (join_initial) {
         /* POSIX lets any thread join the joinable initial thread; the join
-         * returns its pthread_exit value once it has terminated. */
+         * returns its pthread_exit value once it has terminated. While the
+         * initial thread is still blocked below, the GNU non-blocking and
+         * expired timed joins report it running and leave it joinable. */
         void *result = &count;
+        const struct timespec expired = {0, 0};
+        require(pthread_tryjoin_np(initial_thread, &result) == EBUSY && result == (void *)&count);
+        require(pthread_timedjoin_np(initial_thread, &result, &expired) == ETIMEDOUT
+                && result == (void *)&count);
+        require(write(channel[1], "J", 1) == 1);
         require(pthread_join(initial_thread, &result) == 0 && result == (void *)&initial);
     } else {
         /* The external parent writes only after /proc reports the initial
@@ -169,6 +178,10 @@ int main(int argc, char **argv)
         char byte;
         (void)read(channel[0], &byte, 1);
         _Exit(93);
+    }
+    if (join_initial) {
+        char byte;
+        require(read(channel[0], &byte, 1) == 1 && byte == 'J');
     }
     pthread_exit(join_initial ? (void *)&initial : NULL);
     pthread_cleanup_pop(0);

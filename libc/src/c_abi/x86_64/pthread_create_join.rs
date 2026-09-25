@@ -3862,6 +3862,15 @@ fn selected_worker_tryjoin_preflight(thread: *mut c_void) -> Result<(), c_int> {
     if thread.is_null() {
         return Err(EINVAL);
     }
+    if static_tls::is_initial_thread_pointer(thread.cast()) {
+        // Musl's initial thread stays `DT_JOINABLE` until its non-final exit
+        // publishes `DT_EXITED`; only then does tryjoin enter the join.
+        return if SELECTED_INITIAL_THREAD_RUNNING.load(Ordering::Acquire) != 0 {
+            Err(EBUSY)
+        } else {
+            Ok(())
+        };
+    }
     lock_selected_worker_registry();
     let result = selected_worker_by_thread_pointer_locked(thread as usize)
         .map(|control| {
