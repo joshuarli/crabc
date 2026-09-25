@@ -689,11 +689,13 @@ impl TestAllocatorContext {
             MapAccess::Committed,
         ) {
             Ok(mapping) => mapping,
-            Err(failure) => {
+            // A failed aligned trim leaks and still succeeds, so a failed
+            // arena map owns nothing.
+            Err(_) => {
                 return Err(TestContextInitFailure::cleanup_or_retain(
                     TestContextInitError::ArenaMapping,
                     Some(page_map),
-                    failure.into_mapping(),
+                    None,
                     None,
                 ));
             }
@@ -1104,37 +1106,24 @@ mod tests {
 
     #[cfg(not(miri))]
     #[test]
-    fn initialization_failure_retains_then_retries_the_aligned_map_and_page_map_owners() {
+    fn initialization_failure_retains_then_retries_the_arena_map_and_page_map_owners() {
         let page_size = PageSize::new(4 * KIB).expect("the selected native page size is valid");
-        let mut config = MemoryConfig::from_observations(page_size, 1024 * 1024, false, false);
-        config.test_force_full_aligned_map_trim();
-        let fault = crate::os::fault::install(crate::os::fault::Plan::at_pair(
-            crate::os::fault::Point::Unmap,
-            2,
+        let config = MemoryConfig::from_observations(page_size, 1024 * 1024, false, false);
+        let page_map = match PageMap::initialize(config, 0, true) {
+            Ok(page_map) => Box::new(page_map),
+            Err(_) => panic!("the isolated private PageMap initializes"),
+        };
+        let arena_mapping = Mapping::map_for_allocator(config, ARENA_MIN_SIZE, MapAccess::Committed)
+            .expect("the arena mapping maps");
+        let fault = crate::os::fault::install(crate::os::fault::Plan::at(
             crate::os::fault::Point::Unmap,
             1,
             crabc_core::Errno::NOMEM,
         ));
-        let page_map = match PageMap::initialize(config, 0, true) {
-            Ok(page_map) => Box::new(page_map),
-            Err(_) => panic!("the isolated private PageMap initializes before the injected trim"),
-        };
-        let aligned_failure = match Mapping::map_aligned_for_allocator(
-            config,
-            ARENA_MIN_SIZE,
-            ARENA_ALIGNMENT,
-            MapAccess::Committed,
-        ) {
-            Ok(mut mapping) => {
-                let _ = mapping.unmap();
-                panic!("the forced prefix cleanup must fail")
-            }
-            Err(failure) => failure,
-        };
         let failure = TestContextInitFailure::cleanup_or_retain(
             TestContextInitError::ArenaMapping,
             Some(page_map),
-            aligned_failure.into_mapping(),
+            Some(arena_mapping),
             None,
         );
         assert_eq!(failure.reason(), TestContextInitError::ArenaMapping);

@@ -2453,7 +2453,13 @@ def run_evidence(
         elif not runner._m2_x86_64_vm_test_program_is_bound(test_program):
             raise EvidenceError("fault inventory Rust test-program provenance changed")
         if vm_evidence is None:
-            vm = runner._run_m2_x86_64_vm_evidence(offline=offline, test_program=test_program)
+            arena_owned_check = next(
+                check for check in runner.M2_X86_64_ARENA_CHECKS
+                if check["id"] == "process-wide-arena-purge-c-rust-differential"
+            )
+            vm = runner._run_m2_x86_64_vm_evidence(
+                offline=offline, test_program=test_program, arena_owned_check=arena_owned_check,
+            )
         else:
             vm = _validate_reused_vm_receipt(vm_evidence)
     except runner.HarnessError as error:
