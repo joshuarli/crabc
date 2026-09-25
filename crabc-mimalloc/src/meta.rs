@@ -6082,7 +6082,7 @@ mod tests {
         let allocator = static_allocator();
         bind_process_fixture(allocator, false);
         let mut theap = allocator.zalloc(config(), size_of::<Theap>()).unwrap();
-        let mut tld = allocator.zalloc(config(), size_of::<ThreadLocalData>()).unwrap();
+        let mut tld = allocator.zalloc(config(), crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE).unwrap();
         assert!(!theap.can_transfer_source_retained_theap());
         assert!(!tld.can_transfer_source_retained_tld());
         assert!(theap.initialize_dynamic_theap_metadata().is_some());
@@ -7100,7 +7100,7 @@ mod tests {
         let thread = LiveThreadId::new(crate::os::thread_pointer_identity())
             .expect("the native test thread has a live identity");
         let sequence = ThreadSequence::from_previous_total_count(7);
-        let tld_size = size_of::<ThreadLocalData>();
+        let tld_size = crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE;
 
         let mut aligned = allocator
             .zalloc_aligned(config(), tld_size, 4096)
@@ -7145,7 +7145,7 @@ mod tests {
         let thread = LiveThreadId::new(crate::os::thread_pointer_identity())
             .expect("the native test thread has a live identity");
         let mut tld = allocator
-            .zalloc(config(), size_of::<ThreadLocalData>())
+            .zalloc(config(), crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE)
             .expect("the exact fresh TLD allocation succeeds");
         assert!(tld.initialize_thread_local_data_subprocess_attached_no_theap(
             thread,

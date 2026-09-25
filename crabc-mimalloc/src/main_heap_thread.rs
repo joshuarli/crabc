@@ -3411,7 +3411,7 @@ mod tests {
                 let worker = scope.spawn(move || {
                     assert_ne!(
                         size_of::<Theap>(),
-                        size_of::<crate::types::ThreadLocalData>(),
+                        crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE,
                         "the focused fault selects the second metadata allocation rather than TLD creation"
                     );
                     metadata
@@ -3536,7 +3536,7 @@ mod tests {
                     assert!(roots_are_pristine_for_later_main_attachment());
                     assert_ne!(
                         core::mem::size_of::<Theap>(),
-                        core::mem::size_of::<crate::types::ThreadLocalData>(),
+                        crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE,
                         "the selected fault must follow the successful later TLD allocation"
                     );
 
@@ -3695,7 +3695,7 @@ mod tests {
                                         .cast_mut()
                                         .cast()
                                     && allocation.size
-                                        == core::mem::size_of::<crate::types::ThreadLocalData>()
+                                        == crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE
                             })
                     };
                     let (theap_metadata_malloc, theap_initialized) = {
@@ -3878,13 +3878,13 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     assert_ne!(
-                        size_of::<crate::types::ThreadLocalData>(),
+                        crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE,
                         size_of::<Theap>(),
                         "the focused fault selects the first metadata allocation rather than Theap creation"
                     );
                     metadata
                         .get_ref()
-                        .test_fail_next_direct_zeroed_size(size_of::<crate::types::ThreadLocalData>());
+                        .test_fail_next_direct_zeroed_size(crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE);
 
                     assert!(matches!(
                         unsafe {
@@ -4003,7 +4003,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     assert_ne!(
-                        size_of::<crate::types::ThreadLocalData>(),
+                        crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE,
                         size_of::<Theap>(),
                         "the fault must select the preceding TLD metadata request"
                     );
@@ -4021,7 +4021,7 @@ mod tests {
 
                     metadata
                         .get_ref()
-                        .test_fail_next_direct_zeroed_size(size_of::<crate::types::ThreadLocalData>());
+                        .test_fail_next_direct_zeroed_size(crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE);
                     let rejected = unsafe {
                         MainHeapThreadAttachment::begin_with_test_metadata(
                             main_heap,
