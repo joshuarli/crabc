@@ -117,6 +117,10 @@ class ConditionTests(unittest.TestCase):
             self.assertIn("'unmet'", gate.report_passed(path))
             path.write_text(json.dumps({"status": "passed"}), encoding="utf-8")
             self.assertIsNone(gate.report_passed(path))
+            path.write_text(json.dumps({"milestone": {"status": "ready-for-native-evidence"}}), encoding="utf-8")
+            self.assertIn("ready-for-native-evidence", gate.report_passed(path))
+            path.write_text(json.dumps({"milestone": {"status": "complete"}}), encoding="utf-8")
+            self.assertIsNone(gate.report_passed(path))
 
     def test_the_gate_fails_closed_today(self) -> None:
         result = gate.evaluate(m0={"status": 0}, receipt=None, head={"head": "none", "clean": True})

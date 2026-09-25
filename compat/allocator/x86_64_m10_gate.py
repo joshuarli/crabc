@@ -193,7 +193,10 @@ def report_passed(path: Path) -> str | None:
         report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return f"unreadable report: {error}"
-    status = report.get("overall_status", report.get("status"))
+    # Gate reports carry overall_status; milestone reports carry milestone.status.
+    milestone = report.get("milestone")
+    status = report.get("overall_status", report.get("status",
+                        milestone.get("status") if isinstance(milestone, dict) else None))
     return None if status in {"passed", "complete"} else f"report status is {status!r}"
 
 
