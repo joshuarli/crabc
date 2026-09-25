@@ -47,11 +47,7 @@ use super::pthread_create_join;
 // forwarding wrappers.
 core::arch::global_asm!(
     ".hidden __pthread_setcancelstate",
-    ".weak pthread_setcancelstate",
-    ".set pthread_setcancelstate, __pthread_setcancelstate",
     ".hidden __pthread_testcancel",
-    ".weak pthread_testcancel",
-    ".set pthread_testcancel, __pthread_testcancel",
 );
 
 #[cfg(crabc_x86_owned_runtime)]
@@ -331,148 +327,176 @@ pub(super) fn disable_current_selected_pthread_cancellation_for_exit() {
     }
 }
 
-/// Request cancellation using the selected runtime's delivery protocol.
-/// # Safety
-/// `thread` is a live pthread handle from this runtime, not a stale/reaped
-/// handle or a C11/foreign task. Cancellation cleanup obligations belong to
-/// the target application; asynchronous targets must obey POSIX async safety.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_cancel(thread: *mut c_void) -> c_int {
-    #[cfg(crabc_x86_owned_runtime)]
-    { return unsafe { owned_syscall_cancel::request(thread) }; }
-    #[cfg(not(crabc_x86_owned_runtime))]
-    if pthread_create_join::request_selected_pthread_cancellation(thread) {
-        0
-    } else {
-        EINVAL
-    }
-}
-
-/// Change cancellation enablement for the current selected pthread task.
-/// # Safety
-/// `old_state`, when non-null, designates aligned writable C `int` storage.
-#[export_name = "__pthread_setcancelstate"]
-pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, old_state: *mut c_int) -> c_int {
-    let state = match state {
-        0 => PTHREAD_CANCEL_ENABLE,
-        1 => PTHREAD_CANCEL_DISABLE,
-        2 => PTHREAD_CANCEL_MASKED,
-        _ => return EINVAL,
-    };
-    let Some(slot) = current_pthread_slot() else {
-        return ENOTSUP;
-    };
-    let previous = slot.state.load(Ordering::Acquire);
-    if !old_state.is_null() {
-        // SAFETY: the C ABI requires writable aligned `int` storage when the
-        // optional old-state pointer is non-null.
-        unsafe { core::ptr::write(old_state, c_int::from(previous)) };
-    }
-    slot.state.store(state, Ordering::Release);
-    0
-}
-
-/// Select deferred/asynchronous owned delivery; legacy fixtures admit only
-/// deferred delivery and reject asynchronous requests without state changes.
-/// # Safety
-/// Non-null `old_type` designates aligned writable C `int` storage. A caller
-/// enabling asynchronous cancellation must obey POSIX async-cancel safety.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, old_type: *mut c_int) -> c_int {
-    #[cfg(crabc_x86_owned_runtime)]
-    {
-        if type_ != PTHREAD_CANCEL_DEFERRED && type_ != PTHREAD_CANCEL_ASYNCHRONOUS { return EINVAL; }
-        let Some(slot) = current_pthread_slot() else { return ENOTSUP; };
-        let previous = slot.asynchronous.load(Ordering::Acquire);
-        if !old_type.is_null() { unsafe { *old_type = previous as c_int; } }
-        slot.asynchronous.store(type_ as u8, Ordering::Release);
-        if type_ != 0 { test_current_selected_pthread_cancellation(); }
-        return 0;
-    }
-    #[cfg(not(crabc_x86_owned_runtime))]
-    match type_ {
-        PTHREAD_CANCEL_DEFERRED => {
-            if current_pthread_slot().is_none() {
-                return ENOTSUP;
-            }
-            if !old_type.is_null() {
-                // SAFETY: the C ABI requires writable aligned `int` storage
-                // when the optional old-type pointer is non-null.
-                unsafe { core::ptr::write(old_type, PTHREAD_CANCEL_DEFERRED) };
-            }
+// Musl's `src/thread/pthread_cancel.c` object.
+static_archive_member! { pthread_cancel_source {
+    /// Request cancellation using the selected runtime's delivery protocol.
+    /// # Safety
+    /// `thread` is a live pthread handle from this runtime, not a stale/reaped
+    /// handle or a C11/foreign task. Cancellation cleanup obligations belong to
+    /// the target application; asynchronous targets must obey POSIX async safety.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_cancel(thread: *mut c_void) -> c_int {
+        #[cfg(crabc_x86_owned_runtime)]
+        { return unsafe { owned_syscall_cancel::request(thread) }; }
+        #[cfg(not(crabc_x86_owned_runtime))]
+        if pthread_create_join::request_selected_pthread_cancellation(thread) {
             0
-        }
-        PTHREAD_CANCEL_ASYNCHRONOUS => ENOTSUP,
-        _ => EINVAL,
-    }
-}
-
-/// Deliver a pending request at the explicit selected deferred cancellation
-/// point. This does not return when it observes an enabled pending request.
-/// # Safety
-/// Any owned resource requiring cancellation cleanup has a registered cleanup
-/// handler or is otherwise safe to abandon at this cancellation point.
-#[export_name = "__pthread_testcancel"]
-pub unsafe extern "C" fn pthread_testcancel() {
-    test_current_selected_pthread_cancellation();
-}
-
-/// Push one caller-owned cleanup node onto the current selected pthread worker.
-///
-/// A null node or a caller outside the selected worker seam is ignored rather
-/// than inventing a foreign-TP cleanup registry. The macro's matching pop may
-/// still explicitly execute its callback when requested.
-#[no_mangle]
-pub unsafe extern "C" fn _pthread_cleanup_push(
-    cleanup: *mut CleanupNode,
-    function: Option<unsafe extern "C" fn(*mut c_void)>,
-    argument: *mut c_void,
-) {
-    if cleanup.is_null() {
-        return;
-    }
-    let Some(slot) = current_pthread_slot() else {
-        return;
-    };
-    // SAFETY: the cleanup macro owns writable stack storage for this node and
-    // keeps it live until its matching pop or selected thread termination.
-    unsafe {
-        (*cleanup).function = function;
-        (*cleanup).argument = argument;
-        (*cleanup).next = slot.cleanup_head.load(Ordering::Acquire) as *mut CleanupNode;
-        slot.cleanup_head.store(cleanup as usize, Ordering::Release);
-    }
-}
-
-/// Pop one caller-owned cleanup node and optionally execute it.
-///
-/// Selected workers detach through their private chain. For an unselected
-/// caller, a requested explicit execution still invokes the supplied callback;
-/// that preserves the macro's lexical `pthread_cleanup_pop(1)` action without
-/// constructing unowned cancellation state.
-#[no_mangle]
-pub unsafe extern "C" fn _pthread_cleanup_pop(cleanup: *mut CleanupNode, run: c_int) {
-    if cleanup.is_null() {
-        return;
-    }
-    if let Some(slot) = current_pthread_slot() {
-        // SAFETY: matching push/pop ownership is a C macro contract. Like
-        // musl's helper, this trusts the matching node and restores its next
-        // link without searching or validating an arbitrary chain.
-        unsafe {
-            slot.cleanup_head.store((*cleanup).next as usize, Ordering::Release);
+        } else {
+            EINVAL
         }
     }
-    if run != 0 {
-        // SAFETY: the macro-supplied node remains valid through this call, and
-        // its callback/argument ownership belongs to the C caller.
+}}
+
+// Musl's `src/thread/pthread_setcancelstate.c` object.
+static_archive_member! { pthread_setcancelstate_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_setcancelstate",
+        ".set pthread_setcancelstate, __pthread_setcancelstate",
+    );
+
+    /// Change cancellation enablement for the current selected pthread task.
+    /// # Safety
+    /// `old_state`, when non-null, designates aligned writable C `int` storage.
+    #[export_name = "__pthread_setcancelstate"]
+    pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, old_state: *mut c_int) -> c_int {
+        let state = match state {
+            0 => PTHREAD_CANCEL_ENABLE,
+            1 => PTHREAD_CANCEL_DISABLE,
+            2 => PTHREAD_CANCEL_MASKED,
+            _ => return EINVAL,
+        };
+        let Some(slot) = current_pthread_slot() else {
+            return ENOTSUP;
+        };
+        let previous = slot.state.load(Ordering::Acquire);
+        if !old_state.is_null() {
+            // SAFETY: the C ABI requires writable aligned `int` storage when the
+            // optional old-state pointer is non-null.
+            unsafe { core::ptr::write(old_state, c_int::from(previous)) };
+        }
+        slot.state.store(state, Ordering::Release);
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_setcanceltype.c` object.
+static_archive_member! { pthread_setcanceltype_source {
+    /// Select deferred/asynchronous owned delivery; legacy fixtures admit only
+    /// deferred delivery and reject asynchronous requests without state changes.
+    /// # Safety
+    /// Non-null `old_type` designates aligned writable C `int` storage. A caller
+    /// enabling asynchronous cancellation must obey POSIX async-cancel safety.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, old_type: *mut c_int) -> c_int {
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            if type_ != PTHREAD_CANCEL_DEFERRED && type_ != PTHREAD_CANCEL_ASYNCHRONOUS { return EINVAL; }
+            let Some(slot) = current_pthread_slot() else { return ENOTSUP; };
+            let previous = slot.asynchronous.load(Ordering::Acquire);
+            if !old_type.is_null() { unsafe { *old_type = previous as c_int; } }
+            slot.asynchronous.store(type_ as u8, Ordering::Release);
+            if type_ != 0 { test_current_selected_pthread_cancellation(); }
+            return 0;
+        }
+        #[cfg(not(crabc_x86_owned_runtime))]
+        match type_ {
+            PTHREAD_CANCEL_DEFERRED => {
+                if current_pthread_slot().is_none() {
+                    return ENOTSUP;
+                }
+                if !old_type.is_null() {
+                    // SAFETY: the C ABI requires writable aligned `int` storage
+                    // when the optional old-type pointer is non-null.
+                    unsafe { core::ptr::write(old_type, PTHREAD_CANCEL_DEFERRED) };
+                }
+                0
+            }
+            PTHREAD_CANCEL_ASYNCHRONOUS => ENOTSUP,
+            _ => EINVAL,
+        }
+    }
+}}
+
+// Musl's `src/thread/pthread_testcancel.c` object.
+static_archive_member! { pthread_testcancel_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_testcancel",
+        ".set pthread_testcancel, __pthread_testcancel",
+    );
+
+    /// Deliver a pending request at the explicit selected deferred cancellation
+    /// point. This does not return when it observes an enabled pending request.
+    /// # Safety
+    /// Any owned resource requiring cancellation cleanup has a registered cleanup
+    /// handler or is otherwise safe to abandon at this cancellation point.
+    #[export_name = "__pthread_testcancel"]
+    pub unsafe extern "C" fn pthread_testcancel() {
+        test_current_selected_pthread_cancellation();
+    }
+}}
+
+// Musl's `src/thread/pthread_cleanup_push.c` object.
+static_archive_member! { pthread_cleanup_push_source {
+    /// Push one caller-owned cleanup node onto the current selected pthread worker.
+    ///
+    /// A null node or a caller outside the selected worker seam is ignored rather
+    /// than inventing a foreign-TP cleanup registry. The macro's matching pop may
+    /// still explicitly execute its callback when requested.
+    #[no_mangle]
+    pub unsafe extern "C" fn _pthread_cleanup_push(
+        cleanup: *mut CleanupNode,
+        function: Option<unsafe extern "C" fn(*mut c_void)>,
+        argument: *mut c_void,
+    ) {
+        if cleanup.is_null() {
+            return;
+        }
+        let Some(slot) = current_pthread_slot() else {
+            return;
+        };
+        // SAFETY: the cleanup macro owns writable stack storage for this node and
+        // keeps it live until its matching pop or selected thread termination.
         unsafe {
-            if let Some(function) = (*cleanup).function {
-                function((*cleanup).argument);
+            (*cleanup).function = function;
+            (*cleanup).argument = argument;
+            (*cleanup).next = slot.cleanup_head.load(Ordering::Acquire) as *mut CleanupNode;
+            slot.cleanup_head.store(cleanup as usize, Ordering::Release);
+        }
+    }
+
+    /// Pop one caller-owned cleanup node and optionally execute it.
+    ///
+    /// Selected workers detach through their private chain. For an unselected
+    /// caller, a requested explicit execution still invokes the supplied callback;
+    /// that preserves the macro's lexical `pthread_cleanup_pop(1)` action without
+    /// constructing unowned cancellation state.
+    #[no_mangle]
+    pub unsafe extern "C" fn _pthread_cleanup_pop(cleanup: *mut CleanupNode, run: c_int) {
+        if cleanup.is_null() {
+            return;
+        }
+        if let Some(slot) = current_pthread_slot() {
+            // SAFETY: matching push/pop ownership is a C macro contract. Like
+            // musl's helper, this trusts the matching node and restores its next
+            // link without searching or validating an arbitrary chain.
+            unsafe {
+                slot.cleanup_head.store((*cleanup).next as usize, Ordering::Release);
+            }
+        }
+        if run != 0 {
+            // SAFETY: the macro-supplied node remains valid through this call, and
+            // its callback/argument ownership belongs to the C caller.
+            unsafe {
+                if let Some(function) = (*cleanup).function {
+                    function((*cleanup).argument);
+                }
             }
         }
     }
-}
+}}
+
 
 /// musl timer_create.c::cleanup_fromsig resets logical callback cancellation
 /// after TSD cleanup and blocking application/SIGTIMER signals. This current

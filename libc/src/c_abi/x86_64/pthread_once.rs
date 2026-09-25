@@ -39,8 +39,6 @@ use super::{atomic, pthread_cancel, raw_syscall};
 // weak public alias of the hidden provider.
 core::arch::global_asm!(
     ".hidden __pthread_once",
-    ".weak pthread_once",
-    ".set pthread_once, __pthread_once",
 );
 
 const ONCE_INITIAL: c_int = 0;
@@ -232,51 +230,63 @@ unsafe fn run_selected_once(control: *mut c_int, init_routine: OnceRoutine) -> c
     }
 }
 
-/// Run a selected POSIX pthread once initializer.
-///
-/// # Safety
-///
-/// `control` must designate a live, four-byte-aligned `pthread_once_t` with
-/// the selected zero initializer and must outlive every concurrent call.
-/// `init_routine` must be non-null and must not recursively enter the same
-/// control or cross fork/atfork transitions. Cancellation or exit of a
-/// selected pthread worker during initialization resets this control and
-/// allows a waiting selected caller to retry. This artifact does not promise
-/// cleanup for unselected threads. The control must not be destroyed or
-/// reused while active. The routine and all callers must follow the selected
-/// private once protocol.
-#[export_name = "__pthread_once"]
-pub unsafe extern "C" fn pthread_once(
-    control: *mut c_int,
-    init_routine: Option<OnceRoutine>,
-) -> c_int {
-    // SAFETY: a null function pointer violates the concrete C caller
-    // obligations above, just as it lies outside the selected musl route.
-    let init_routine = unsafe { init_routine.unwrap_unchecked() };
-    // SAFETY: the public C obligations above exactly establish the selected
-    // shared once state-machine and callback lifetime.
-    unsafe { run_selected_once(control, init_routine) }
-}
+// Musl's `src/thread/pthread_once.c` object.
+static_archive_member! { pthread_once_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_once",
+        ".set pthread_once, __pthread_once",
+    );
 
-/// Run a selected C11 once initializer through the private shared state
-/// machine rather than an interposable pthread C symbol.
-///
-/// # Safety
-///
-/// `flag` must designate a live, four-byte-aligned `once_flag` with
-/// `ONCE_FLAG_INIT` representation and must outlive every concurrent call.
-/// `function` must be non-null and must not recursively enter the same flag or
-/// cross fork/atfork transitions. Cancellation or exit of a selected pthread
-/// worker during initialization resets the flag and allows a waiting selected
-/// caller to retry. This artifact does not promise cleanup for unselected
-/// threads. The flag must not be destroyed or reused while active. The
-/// routine and all callers must follow the selected private once protocol.
-#[no_mangle]
-pub unsafe extern "C" fn call_once(flag: *mut c_int, function: Option<OnceRoutine>) {
-    // SAFETY: a null function pointer violates the concrete C caller
-    // obligations above, just as it lies outside the selected musl route.
-    let function = unsafe { function.unwrap_unchecked() };
-    // SAFETY: the public C obligations above establish the selected shared
-    // state-machine and callback lifetime without crossing a pthread C ABI.
-    let _ = unsafe { run_selected_once(flag, function) };
-}
+    /// Run a selected POSIX pthread once initializer.
+    ///
+    /// # Safety
+    ///
+    /// `control` must designate a live, four-byte-aligned `pthread_once_t` with
+    /// the selected zero initializer and must outlive every concurrent call.
+    /// `init_routine` must be non-null and must not recursively enter the same
+    /// control or cross fork/atfork transitions. Cancellation or exit of a
+    /// selected pthread worker during initialization resets this control and
+    /// allows a waiting selected caller to retry. This artifact does not promise
+    /// cleanup for unselected threads. The control must not be destroyed or
+    /// reused while active. The routine and all callers must follow the selected
+    /// private once protocol.
+    #[export_name = "__pthread_once"]
+    pub unsafe extern "C" fn pthread_once(
+        control: *mut c_int,
+        init_routine: Option<OnceRoutine>,
+    ) -> c_int {
+        // SAFETY: a null function pointer violates the concrete C caller
+        // obligations above, just as it lies outside the selected musl route.
+        let init_routine = unsafe { init_routine.unwrap_unchecked() };
+        // SAFETY: the public C obligations above exactly establish the selected
+        // shared once state-machine and callback lifetime.
+        unsafe { run_selected_once(control, init_routine) }
+    }
+}}
+
+// Musl's `src/thread/call_once.c` object.
+static_archive_member! { call_once_source {
+    /// Run a selected C11 once initializer through the private shared state
+    /// machine rather than an interposable pthread C symbol.
+    ///
+    /// # Safety
+    ///
+    /// `flag` must designate a live, four-byte-aligned `once_flag` with
+    /// `ONCE_FLAG_INIT` representation and must outlive every concurrent call.
+    /// `function` must be non-null and must not recursively enter the same flag or
+    /// cross fork/atfork transitions. Cancellation or exit of a selected pthread
+    /// worker during initialization resets the flag and allows a waiting selected
+    /// caller to retry. This artifact does not promise cleanup for unselected
+    /// threads. The flag must not be destroyed or reused while active. The
+    /// routine and all callers must follow the selected private once protocol.
+    #[no_mangle]
+    pub unsafe extern "C" fn call_once(flag: *mut c_int, function: Option<OnceRoutine>) {
+        // SAFETY: a null function pointer violates the concrete C caller
+        // obligations above, just as it lies outside the selected musl route.
+        let function = unsafe { function.unwrap_unchecked() };
+        // SAFETY: the public C obligations above establish the selected shared
+        // state-machine and callback lifetime without crossing a pthread C ABI.
+        let _ = unsafe { run_selected_once(flag, function) };
+    }
+}}

@@ -4238,7 +4238,7 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, once)
         once_exports = set(
             re.findall(
-                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                r'(?m)^\s*pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
                 once,
             )
         )
@@ -4413,7 +4413,7 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, tsd)
         tsd_exports = set(
             re.findall(
-                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                r'(?m)^\s*pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
                 tsd,
             )
         )
@@ -4746,7 +4746,7 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("!= ET_EXEC", et_exec_fallback)
         static_tls_exports = set(
             re.findall(
-                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                r'(?m)^\s*pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
                 static_tls,
             )
         )
@@ -5659,7 +5659,7 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, leaf)
         self.assertEqual(
             re.findall(
-                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                r'(?m)^\s*pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
                 leaf,
             ),
             ["dn_skipname"],
@@ -5795,7 +5795,7 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, leaf)
         self.assertEqual(
             re.findall(
-                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                r'(?m)^\s*pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
                 leaf,
             ),
             ["__dn_expand"],
@@ -6077,7 +6077,7 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, leaf)
         self.assertEqual(
             re.findall(
-                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                r'(?m)^\s*pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
                 leaf,
             ),
             ["ns_get16"],
@@ -6207,7 +6207,7 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, leaf)
         self.assertEqual(
             re.findall(
-                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                r'(?m)^\s*pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
                 leaf,
             ),
             ["ns_get32"],
@@ -6339,7 +6339,7 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, leaf)
         self.assertEqual(
             re.findall(
-                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                r'(?m)^\s*pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
                 leaf,
             ),
             ["ns_put16"],
@@ -13723,7 +13723,7 @@ esac
             self.assertIn(required, leaf)
         self.assertEqual(
             re.findall(
-                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                r'(?m)^\s*pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
                 leaf,
             ),
             ["ns_put32"],
@@ -13871,7 +13871,7 @@ esac
             self.assertIn(required, leaf)
         self.assertEqual(
             re.findall(
-                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', leaf
+                r'(?m)^\s*pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', leaf
             ),
             ["ns_skiprr"],
         )

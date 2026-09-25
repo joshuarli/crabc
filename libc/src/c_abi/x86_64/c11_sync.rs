@@ -104,241 +104,279 @@ const fn c11_status(result: c_int) -> c_int {
     }
 }
 
-/// Initialize one selected C11 mutex.
-///
-/// # Safety
-///
-/// `mutex` must designate writable, aligned `mtx_t` storage that is not
-/// concurrently accessed. The frozen route admits only `mtx_plain`; the owned
-/// route follows musl's recursive-bit mapping. The caller must not use the
-/// object after a non-success result and must later destroy it only after every
-/// selected operation has quiesced.
-#[no_mangle]
-pub unsafe extern "C" fn mtx_init(mutex: *mut c_void, kind: c_int) -> c_int {
-    #[cfg(crabc_x86_owned_runtime)]
-    {
-        let mutex_type = if kind & MTX_RECURSIVE != 0 {
-            MTX_RECURSIVE
-        } else {
-            MTX_PLAIN
-        };
-        // SAFETY: the C ABI obligations above establish a complete writable
-        // record for the owned C11 representation.
-        return c11_status(unsafe {
-            pthread_mutex::init_selected_owned_mutex(mutex, mutex_type)
-        });
-    }
-    #[cfg(not(crabc_x86_owned_runtime))]
-    {
-        if kind != MTX_PLAIN {
-            return THRD_ERROR;
+// Musl's `src/thread/mtx_init.c` object.
+static_archive_member! { mtx_init_source {
+    /// Initialize one selected C11 mutex.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate writable, aligned `mtx_t` storage that is not
+    /// concurrently accessed. The frozen route admits only `mtx_plain`; the owned
+    /// route follows musl's recursive-bit mapping. The caller must not use the
+    /// object after a non-success result and must later destroy it only after every
+    /// selected operation has quiesced.
+    #[no_mangle]
+    pub unsafe extern "C" fn mtx_init(mutex: *mut c_void, kind: c_int) -> c_int {
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            let mutex_type = if kind & MTX_RECURSIVE != 0 {
+                MTX_RECURSIVE
+            } else {
+                MTX_PLAIN
+            };
+            // SAFETY: the C ABI obligations above establish a complete writable
+            // record for the owned C11 representation.
+            return c11_status(unsafe {
+                pthread_mutex::init_selected_owned_mutex(mutex, mutex_type)
+            });
         }
-        // SAFETY: the C ABI obligations above establish a complete writable
-        // mutex-shaped object with the exact selected all-zero representation.
-        return c11_status(unsafe { pthread_mutex::init_selected_normal_mutex(mutex) });
+        #[cfg(not(crabc_x86_owned_runtime))]
+        {
+            if kind != MTX_PLAIN {
+                return THRD_ERROR;
+            }
+            // SAFETY: the C ABI obligations above establish a complete writable
+            // mutex-shaped object with the exact selected all-zero representation.
+            return c11_status(unsafe { pthread_mutex::init_selected_normal_mutex(mutex) });
+        }
     }
-}
+}}
 
-/// Destroy one selected plain C11 mutex after quiescence.
-///
-/// # Safety
-///
-/// `mutex` must designate a selected `mtx_t` initialized by [`mtx_init`],
-/// held by no thread, and no longer reachable by concurrent operations. C11
-/// destruction is void; an invalid/non-selected record is outside this
-/// selected C object-lifetime contract.
-#[no_mangle]
-pub unsafe extern "C" fn mtx_destroy(mutex: *mut c_void) {
-    #[cfg(crabc_x86_owned_runtime)]
-    {
-        // SAFETY: the C ABI obligations establish a quiescent owned record.
-        let _ = unsafe { pthread_mutex::destroy_selected_owned_mutex(mutex) };
-        return;
+// Musl's `src/thread/mtx_destroy.c` object.
+static_archive_member! { mtx_destroy_source {
+    /// Destroy one selected plain C11 mutex after quiescence.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate a selected `mtx_t` initialized by [`mtx_init`],
+    /// held by no thread, and no longer reachable by concurrent operations. C11
+    /// destruction is void; an invalid/non-selected record is outside this
+    /// selected C object-lifetime contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn mtx_destroy(mutex: *mut c_void) {
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            // SAFETY: the C ABI obligations establish a quiescent owned record.
+            let _ = unsafe { pthread_mutex::destroy_selected_owned_mutex(mutex) };
+            return;
+        }
+        #[cfg(not(crabc_x86_owned_runtime))]
+        // SAFETY: the C ABI obligations above establish the selected private
+        // record's quiescent destruction boundary. C11 has no error result here.
+        let _ = unsafe { pthread_mutex::destroy_selected_normal_mutex(mutex) };
     }
-    #[cfg(not(crabc_x86_owned_runtime))]
-    // SAFETY: the C ABI obligations above establish the selected private
-    // record's quiescent destruction boundary. C11 has no error result here.
-    let _ = unsafe { pthread_mutex::destroy_selected_normal_mutex(mutex) };
-}
+}}
 
-/// Lock one selected plain C11 mutex through the private futex engine.
-///
-/// # Safety
-///
-/// `mutex` must designate a live aligned selected `mtx_t`. The caller owns
-/// the object lifetime, protected-data discipline, and cancellation policy;
-/// this static route is not a cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn mtx_lock(mutex: *mut c_void) -> c_int {
-    #[cfg(crabc_x86_owned_runtime)]
-    {
-        // SAFETY: the owned C11 record uses the matching private mutex seam.
-        return c11_status(unsafe { pthread_mutex::lock_selected_owned_mutex(mutex) });
+// Musl's `src/thread/mtx_lock.c` object.
+static_archive_member! { mtx_lock_source {
+    /// Lock one selected plain C11 mutex through the private futex engine.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate a live aligned selected `mtx_t`. The caller owns
+    /// the object lifetime, protected-data discipline, and cancellation policy;
+    /// this static route is not a cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn mtx_lock(mutex: *mut c_void) -> c_int {
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            // SAFETY: the owned C11 record uses the matching private mutex seam.
+            return c11_status(unsafe { pthread_mutex::lock_selected_owned_mutex(mutex) });
+        }
+        #[cfg(not(crabc_x86_owned_runtime))]
+        // SAFETY: the C ABI obligations above establish the selected normal mutex
+        // state machine for this private sibling call.
+        c11_status(unsafe { pthread_mutex::lock_selected_normal_mutex(mutex) })
     }
-    #[cfg(not(crabc_x86_owned_runtime))]
-    // SAFETY: the C ABI obligations above establish the selected normal mutex
-    // state machine for this private sibling call.
-    c11_status(unsafe { pthread_mutex::lock_selected_normal_mutex(mutex) })
-}
+}}
 
-/// Try to lock one selected plain C11 mutex once.
-///
-/// # Safety
-///
-/// `mutex` must designate a live aligned selected `mtx_t`. Its type/storage
-/// must remain valid while all concurrent accesses use the selected private
-/// normal-mutex protocol.
-#[no_mangle]
-pub unsafe extern "C" fn mtx_trylock(mutex: *mut c_void) -> c_int {
-    #[cfg(crabc_x86_owned_runtime)]
-    {
-        // SAFETY: the owned C11 record uses the matching one-attempt seam.
-        return match unsafe { pthread_mutex::try_lock_selected_owned_mutex(mutex) } {
+// Musl's `src/thread/mtx_trylock.c` object.
+static_archive_member! { mtx_trylock_source {
+    /// Try to lock one selected plain C11 mutex once.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate a live aligned selected `mtx_t`. Its type/storage
+    /// must remain valid while all concurrent accesses use the selected private
+    /// normal-mutex protocol.
+    #[no_mangle]
+    pub unsafe extern "C" fn mtx_trylock(mutex: *mut c_void) -> c_int {
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            // SAFETY: the owned C11 record uses the matching one-attempt seam.
+            return match unsafe { pthread_mutex::try_lock_selected_owned_mutex(mutex) } {
+                0 => THRD_SUCCESS,
+                EBUSY => THRD_BUSY,
+                _ => THRD_ERROR,
+            };
+        }
+        #[cfg(not(crabc_x86_owned_runtime))]
+        // SAFETY: the C ABI obligations above establish a valid selected mutex
+        // record for the private one-attempt acquisition seam.
+        match unsafe { pthread_mutex::try_lock_selected_normal_mutex(mutex) } {
             0 => THRD_SUCCESS,
             EBUSY => THRD_BUSY,
             _ => THRD_ERROR,
-        };
+        }
     }
-    #[cfg(not(crabc_x86_owned_runtime))]
-    // SAFETY: the C ABI obligations above establish a valid selected mutex
-    // record for the private one-attempt acquisition seam.
-    match unsafe { pthread_mutex::try_lock_selected_normal_mutex(mutex) } {
-        0 => THRD_SUCCESS,
-        EBUSY => THRD_BUSY,
-        _ => THRD_ERROR,
-    }
-}
+}}
 
-/// Unlock one selected plain C11 mutex.
-///
-/// # Safety
-///
-/// `mutex` must designate a live aligned selected `mtx_t` held by the current
-/// thread. Unlocking a mutex not held by this thread is undefined by C11 and
-/// outside this selected boundary.
-#[no_mangle]
-pub unsafe extern "C" fn mtx_unlock(mutex: *mut c_void) -> c_int {
+// Musl's `src/thread/mtx_unlock.c` object.
+static_archive_member! { mtx_unlock_source {
+    /// Unlock one selected plain C11 mutex.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate a live aligned selected `mtx_t` held by the current
+    /// thread. Unlocking a mutex not held by this thread is undefined by C11 and
+    /// outside this selected boundary.
+    #[no_mangle]
+    pub unsafe extern "C" fn mtx_unlock(mutex: *mut c_void) -> c_int {
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            // SAFETY: C11 caller ownership establishes the selected release seam.
+            return unsafe { pthread_mutex::unlock_selected_owned_mutex(mutex) };
+        }
+        #[cfg(not(crabc_x86_owned_runtime))]
+        // Musl intentionally tail-calls its internal pthread unlock here: errors
+        // arise only from C11 undefined behavior. Preserve that direct result
+        // instead of broadly translating it through `c11_status`.
+        // SAFETY: the C ABI obligations above establish the selected ownership
+        // state required by the private normal-mutex release seam.
+        unsafe { pthread_mutex::unlock_selected_normal_mutex(mutex) }
+    }
+}}
+
+// Musl's `src/thread/mtx_timedlock.c` object.
+#[cfg(crabc_x86_owned_runtime)]
+static_archive_member! { mtx_timedlock_source {
+    /// Timed-lock one owned C11 mutex until an absolute realtime deadline.
+    ///
+    /// Musl maps only timeout to `thrd_timedout`; every other pthread result maps
+    /// to `thrd_error` and the private mutex seam does not publish C `errno`.
+    /// # Safety
+    /// `mutex` is a live owned C11 object and `deadline` names a readable aligned
+    /// native x86 timespec if contention requires waiting.
     #[cfg(crabc_x86_owned_runtime)]
-    {
-        // SAFETY: C11 caller ownership establishes the selected release seam.
-        return unsafe { pthread_mutex::unlock_selected_owned_mutex(mutex) };
+    #[no_mangle]
+    pub unsafe extern "C" fn mtx_timedlock(
+        mutex: *mut c_void,
+        deadline: *const c_void,
+    ) -> c_int {
+        match unsafe { pthread_mutex::timed_lock_selected_owned_mutex(mutex, deadline) } {
+            0 => THRD_SUCCESS,
+            ETIMEDOUT => THRD_TIMEDOUT,
+            _ => THRD_ERROR,
+        }
     }
-    #[cfg(not(crabc_x86_owned_runtime))]
-    // Musl intentionally tail-calls its internal pthread unlock here: errors
-    // arise only from C11 undefined behavior. Preserve that direct result
-    // instead of broadly translating it through `c11_status`.
-    // SAFETY: the C ABI obligations above establish the selected ownership
-    // state required by the private normal-mutex release seam.
-    unsafe { pthread_mutex::unlock_selected_normal_mutex(mutex) }
-}
+}}
 
-/// Timed-lock one owned C11 mutex until an absolute realtime deadline.
-///
-/// Musl maps only timeout to `thrd_timedout`; every other pthread result maps
-/// to `thrd_error` and the private mutex seam does not publish C `errno`.
-/// # Safety
-/// `mutex` is a live owned C11 object and `deadline` names a readable aligned
-/// native x86 timespec if contention requires waiting.
+// Musl's `src/thread/cnd_init.c` object.
+static_archive_member! { cnd_init_source {
+    /// Initialize one selected private C11 condition object.
+    ///
+    /// # Safety
+    ///
+    /// `condition` must designate writable, aligned `cnd_t` storage that is not
+    /// concurrently accessed. The caller must later destroy it only after every
+    /// enrolled waiter and signaler has returned.
+    #[no_mangle]
+    pub unsafe extern "C" fn cnd_init(condition: *mut c_void) -> c_int {
+        // SAFETY: the C ABI obligations above establish a complete writable
+        // condition-shaped object with the selected private all-zero layout.
+        c11_status(unsafe { pthread_cond::init_selected_private_cond(condition) })
+    }
+}}
+
+// Musl's `src/thread/cnd_destroy.c` object.
+static_archive_member! { cnd_destroy_source {
+    /// Destroy one selected private C11 condition object after quiescence.
+    ///
+    /// # Safety
+    ///
+    /// `condition` must designate a selected `cnd_t` initialized by [`cnd_init`]
+    /// with no remaining waiter, signaler, or concurrent user. C11 destruction is
+    /// void; a non-selected record is outside this selected lifetime contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn cnd_destroy(condition: *mut c_void) {
+        // SAFETY: the C ABI obligations above establish the selected private
+        // condition record's quiescent destruction boundary.
+        let _ = unsafe { pthread_cond::destroy_selected_private_cond(condition) };
+    }
+}}
+
+// Musl's `src/thread/cnd_wait.c` object.
+static_archive_member! { cnd_wait_source {
+    /// Atomically wait on one selected private C11 condition object.
+    ///
+    /// # Safety
+    ///
+    /// `condition` and `mutex` must designate live aligned selected `cnd_t` and
+    /// `mtx_t` records. The caller must hold the mutex on entry, guard and loop on
+    /// its predicate, retain both records until return, and destroy them only
+    /// after quiescence. This route is untimed and not a cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn cnd_wait(condition: *mut c_void, mutex: *mut c_void) -> c_int {
+        // SAFETY: the C ABI obligations above establish the selected private
+        // condition/mutex waiter-list and handoff protocol.
+        c11_status(unsafe { pthread_cond::wait_selected_private_cond(condition, mutex) })
+    }
+}}
+
+// Musl's `src/thread/cnd_signal.c` object.
+static_archive_member! { cnd_signal_source {
+    /// Signal one selected private C11 condition waiter, if any.
+    ///
+    /// # Safety
+    ///
+    /// `condition` must designate a live aligned selected `cnd_t`; the caller
+    /// owns the predicate/mutex discipline and every waiter/list object's
+    /// lifetime through the complete handoff protocol.
+    #[no_mangle]
+    pub unsafe extern "C" fn cnd_signal(condition: *mut c_void) -> c_int {
+        // SAFETY: the C ABI obligations above establish the selected private
+        // condition record for its signal/list/barrier protocol.
+        c11_status(unsafe { pthread_cond::signal_selected_private_cond(condition) })
+    }
+}}
+
+// Musl's `src/thread/cnd_broadcast.c` object.
+static_archive_member! { cnd_broadcast_source {
+    /// Signal every selected private C11 condition waiter.
+    ///
+    /// # Safety
+    ///
+    /// `condition` must designate a live aligned selected `cnd_t`; the caller
+    /// owns the predicate/mutex discipline and every waiter/list object's
+    /// lifetime through the complete broadcast handoff protocol.
+    #[no_mangle]
+    pub unsafe extern "C" fn cnd_broadcast(condition: *mut c_void) -> c_int {
+        // SAFETY: the C ABI obligations above establish the selected private
+        // condition record for its broadcast/list/barrier protocol.
+        c11_status(unsafe { pthread_cond::broadcast_selected_private_cond(condition) })
+    }
+}}
+
+// Musl's `src/thread/cnd_timedwait.c` object.
 #[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn mtx_timedlock(
-    mutex: *mut c_void,
-    deadline: *const c_void,
-) -> c_int {
-    match unsafe { pthread_mutex::timed_lock_selected_owned_mutex(mutex, deadline) } {
-        0 => THRD_SUCCESS,
-        ETIMEDOUT => THRD_TIMEDOUT,
-        _ => THRD_ERROR,
+static_archive_member! { cnd_timedwait_source {
+    /// Wait on an owned C11 condition until its realtime deadline expires.
+    ///
+    /// Musl `src/thread/cnd_timedwait.c` maps timeout to `thrd_timedout`, success
+    /// to `thrd_success`, and all other pthread results to `thrd_error`.
+    /// # Safety
+    /// The caller holds a live initialized C11 mutex and retains both aligned
+    /// object lifetimes and predicate discipline. `deadline` names a readable
+    /// aligned native timespec for the duration of the operation.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[no_mangle]
+    pub unsafe extern "C" fn cnd_timedwait(
+        condition: *mut c_void, mutex: *mut c_void, deadline: *const c_void,
+    ) -> c_int {
+        match unsafe { pthread_cond::timed_wait_selected_cond(condition, mutex, deadline) } {
+            0 => THRD_SUCCESS,
+            ETIMEDOUT => THRD_TIMEDOUT,
+            _ => THRD_ERROR,
+        }
     }
-}
-
-/// Initialize one selected private C11 condition object.
-///
-/// # Safety
-///
-/// `condition` must designate writable, aligned `cnd_t` storage that is not
-/// concurrently accessed. The caller must later destroy it only after every
-/// enrolled waiter and signaler has returned.
-#[no_mangle]
-pub unsafe extern "C" fn cnd_init(condition: *mut c_void) -> c_int {
-    // SAFETY: the C ABI obligations above establish a complete writable
-    // condition-shaped object with the selected private all-zero layout.
-    c11_status(unsafe { pthread_cond::init_selected_private_cond(condition) })
-}
-
-/// Destroy one selected private C11 condition object after quiescence.
-///
-/// # Safety
-///
-/// `condition` must designate a selected `cnd_t` initialized by [`cnd_init`]
-/// with no remaining waiter, signaler, or concurrent user. C11 destruction is
-/// void; a non-selected record is outside this selected lifetime contract.
-#[no_mangle]
-pub unsafe extern "C" fn cnd_destroy(condition: *mut c_void) {
-    // SAFETY: the C ABI obligations above establish the selected private
-    // condition record's quiescent destruction boundary.
-    let _ = unsafe { pthread_cond::destroy_selected_private_cond(condition) };
-}
-
-/// Atomically wait on one selected private C11 condition object.
-///
-/// # Safety
-///
-/// `condition` and `mutex` must designate live aligned selected `cnd_t` and
-/// `mtx_t` records. The caller must hold the mutex on entry, guard and loop on
-/// its predicate, retain both records until return, and destroy them only
-/// after quiescence. This route is untimed and not a cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn cnd_wait(condition: *mut c_void, mutex: *mut c_void) -> c_int {
-    // SAFETY: the C ABI obligations above establish the selected private
-    // condition/mutex waiter-list and handoff protocol.
-    c11_status(unsafe { pthread_cond::wait_selected_private_cond(condition, mutex) })
-}
-
-/// Signal one selected private C11 condition waiter, if any.
-///
-/// # Safety
-///
-/// `condition` must designate a live aligned selected `cnd_t`; the caller
-/// owns the predicate/mutex discipline and every waiter/list object's
-/// lifetime through the complete handoff protocol.
-#[no_mangle]
-pub unsafe extern "C" fn cnd_signal(condition: *mut c_void) -> c_int {
-    // SAFETY: the C ABI obligations above establish the selected private
-    // condition record for its signal/list/barrier protocol.
-    c11_status(unsafe { pthread_cond::signal_selected_private_cond(condition) })
-}
-
-/// Signal every selected private C11 condition waiter.
-///
-/// # Safety
-///
-/// `condition` must designate a live aligned selected `cnd_t`; the caller
-/// owns the predicate/mutex discipline and every waiter/list object's
-/// lifetime through the complete broadcast handoff protocol.
-#[no_mangle]
-pub unsafe extern "C" fn cnd_broadcast(condition: *mut c_void) -> c_int {
-    // SAFETY: the C ABI obligations above establish the selected private
-    // condition record for its broadcast/list/barrier protocol.
-    c11_status(unsafe { pthread_cond::broadcast_selected_private_cond(condition) })
-}
-
-/// Wait on an owned C11 condition until its realtime deadline expires.
-///
-/// Musl `src/thread/cnd_timedwait.c` maps timeout to `thrd_timedout`, success
-/// to `thrd_success`, and all other pthread results to `thrd_error`.
-/// # Safety
-/// The caller holds a live initialized C11 mutex and retains both aligned
-/// object lifetimes and predicate discipline. `deadline` names a readable
-/// aligned native timespec for the duration of the operation.
-#[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn cnd_timedwait(
-    condition: *mut c_void, mutex: *mut c_void, deadline: *const c_void,
-) -> c_int {
-    match unsafe { pthread_cond::timed_wait_selected_cond(condition, mutex, deadline) } {
-        0 => THRD_SUCCESS,
-        ETIMEDOUT => THRD_TIMEDOUT,
-        _ => THRD_ERROR,
-    }
-}
+}}

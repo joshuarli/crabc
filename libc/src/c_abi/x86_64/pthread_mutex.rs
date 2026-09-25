@@ -82,21 +82,13 @@ use super::{atomic, pthread_create_join, pthread_identity, pthread_vmlock, raw_s
 // Rust calls nonpreemptible without changing the mutex state machine.
 core::arch::global_asm!(
     ".hidden __pthread_mutex_trylock",
-    ".weak pthread_mutex_trylock",
-    ".set pthread_mutex_trylock, __pthread_mutex_trylock",
     ".hidden __pthread_mutex_lock",
-    ".weak pthread_mutex_lock",
-    ".set pthread_mutex_lock, __pthread_mutex_lock",
     ".hidden __pthread_mutex_unlock",
-    ".weak pthread_mutex_unlock",
-    ".set pthread_mutex_unlock, __pthread_mutex_unlock",
 );
 
 #[cfg(crabc_x86_owned_runtime)]
 core::arch::global_asm!(
     ".hidden __pthread_mutex_timedlock",
-    ".weak pthread_mutex_timedlock",
-    ".set pthread_mutex_timedlock, __pthread_mutex_timedlock",
 );
 
 const EPERM: c_int = 1;
@@ -1863,386 +1855,446 @@ pub(super) unsafe fn mark_current_selected_robust_mutexes_owner_dead() {
     unsafe { pthread_vmlock::unlock() };
 }
 
-/// Set or clear musl's robust attribute bit after its kernel capability probe.
-///
-/// # Safety
-///
-/// For a valid `robust` value, `attribute` must point to writable aligned
-/// public `pthread_mutexattr_t` storage. Invalid values return `EINVAL`
-/// before dereferencing it, matching musl.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_setrobust(
-    attribute: *mut c_void,
-    robust: c_int,
-) -> c_int {
-    if (robust as u32) > 1 {
-        return EINVAL;
-    }
-    if robust != 0 {
-        let status = unsafe { selected_robust_list_support() };
-        if status != 0 {
-            return status;
+// Musl's `src/thread/pthread_mutexattr_setrobust.c` object.
+static_archive_member! { pthread_mutexattr_setrobust_source {
+    /// Set or clear musl's robust attribute bit after its kernel capability probe.
+    ///
+    /// # Safety
+    ///
+    /// For a valid `robust` value, `attribute` must point to writable aligned
+    /// public `pthread_mutexattr_t` storage. Invalid values return `EINVAL`
+    /// before dereferencing it, matching musl.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_mutexattr_setrobust(
+        attribute: *mut c_void,
+        robust: c_int,
+    ) -> c_int {
+        if (robust as u32) > 1 {
+            return EINVAL;
         }
-        // SAFETY: a valid robust value admits the caller-owned record.
-        let mut record = unsafe { core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>()) };
-        record.attr |= MUTEXATTR_ROBUST_BIT;
-        unsafe { core::ptr::write(attribute.cast::<PublicPthreadMutexAttr>(), record) };
-    } else {
-        // SAFETY: source clears this one bit without a support probe.
-        let mut record = unsafe { core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>()) };
-        record.attr &= !MUTEXATTR_ROBUST_BIT;
-        unsafe { core::ptr::write(attribute.cast::<PublicPthreadMutexAttr>(), record) };
-    }
-    0
-}
-
-/// Set musl's raw process-sharing attribute bit.
-///
-/// # Safety
-///
-/// For a valid `pshared` value, `attribute` must point to writable aligned
-/// public `pthread_mutexattr_t` storage. Invalid values return `EINVAL`
-/// before dereferencing it, matching musl.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_setpshared(
-    attribute: *mut c_void,
-    pshared: c_int,
-) -> c_int {
-    if (pshared as u32) > 1 {
-        return EINVAL;
-    }
-    // SAFETY: a valid value admits the caller-owned raw record.
-    let mut record = unsafe { core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>()) };
-    record.attr &= !MUTEXATTR_PROCESS_SHARED_BIT;
-    record.attr |= (pshared as u32) << 7;
-    unsafe { core::ptr::write(attribute.cast::<PublicPthreadMutexAttr>(), record) };
-    0
-}
-
-/// Select musl's normal or priority-inheritance mutex protocol.
-///
-/// `PTHREAD_PRIO_INHERIT` first performs the cached Linux futex-PI probe from
-/// musl's `pthread_mutexattr_setprotocol.c`; it mutates the caller record only
-/// after that probe succeeds. `PTHREAD_PRIO_PROTECT` remains unavailable, as
-/// it is in the pinned source, and no priority-ceiling state is introduced.
-///
-/// # Safety
-///
-/// For `PTHREAD_PRIO_NONE`, and for a successful `PTHREAD_PRIO_INHERIT`
-/// probe, `attribute` must designate writable aligned public
-/// `pthread_mutexattr_t` storage. Invalid protocol values and
-/// `PTHREAD_PRIO_PROTECT` return before dereferencing it, exactly as musl.
-#[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_setprotocol(
-    attribute: *mut c_void,
-    protocol: c_int,
-) -> c_int {
-    match protocol {
-        0 => {
-            // SAFETY: the valid normal protocol admits the caller record.
-            let mut record = unsafe {
-                core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>())
-            };
-            record.attr &= !MUTEXATTR_PRIO_INHERIT_BIT;
-            unsafe { core::ptr::write(attribute.cast::<PublicPthreadMutexAttr>(), record) };
-            0
-        }
-        1 => {
-            let status = unsafe { selected_pi_futex_support() };
+        if robust != 0 {
+            let status = unsafe { selected_robust_list_support() };
             if status != 0 {
                 return status;
             }
-            // SAFETY: a successful supported protocol selection admits the
-            // caller-owned raw attribute record.
-            let mut record = unsafe {
-                core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>())
-            };
-            record.attr |= MUTEXATTR_PRIO_INHERIT_BIT;
+            // SAFETY: a valid robust value admits the caller-owned record.
+            let mut record = unsafe { core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>()) };
+            record.attr |= MUTEXATTR_ROBUST_BIT;
             unsafe { core::ptr::write(attribute.cast::<PublicPthreadMutexAttr>(), record) };
-            0
+        } else {
+            // SAFETY: source clears this one bit without a support probe.
+            let mut record = unsafe { core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>()) };
+            record.attr &= !MUTEXATTR_ROBUST_BIT;
+            unsafe { core::ptr::write(attribute.cast::<PublicPthreadMutexAttr>(), record) };
         }
-        2 => ENOTSUP,
-        _ => EINVAL,
+        0
     }
-}
+}}
 
-/// Return musl's direct unavailable priority-ceiling mutation status.
-///
-/// # Safety
-///
-/// The pinned source intentionally does not inspect any argument. This raw C
-/// boundary therefore establishes no mutex, output-slot, scheduler, or
-/// priority-protect ownership contract.
-#[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutex_setprioceiling(
-    _mutex: *mut c_void,
-    _ceiling: c_int,
-    _old_ceiling: *mut c_int,
-) -> c_int {
-    EINVAL
-}
-
-/// Mark one recovery owner as having made a selected robust mutex consistent.
-///
-/// # Safety
-///
-/// `mutex` must designate a live selected robust public mutex. Its caller
-/// retains the public object lifetime and must not call this after unlock.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutex_consistent(mutex: *mut c_void) -> c_int {
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    let selected_robust = unsafe { is_selected_robust_mutex(mutex) };
-    #[cfg(crabc_x86_owned_runtime)]
-    let selected_robust = selected_robust || unsafe { is_selected_robust_pi_mutex(mutex) };
-    if !selected_robust {
-        return EINVAL;
-    }
-    let Some((thread_id, _)) = current_selected_robust_owner() else {
-        return ENOTSUP;
-    };
-    let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
-    loop {
-        let old = unsafe { atomic::x86_64_load_acquire_i32(lock) };
-        let owner = old & MUTEX_OWNER_MASK;
-        if owner == 0 || old & MUTEX_OWNER_DIED_BIT == 0 {
+// Musl's `src/thread/pthread_mutexattr_setpshared.c` object.
+static_archive_member! { pthread_mutexattr_setpshared_source {
+    /// Set musl's raw process-sharing attribute bit.
+    ///
+    /// # Safety
+    ///
+    /// For a valid `pshared` value, `attribute` must point to writable aligned
+    /// public `pthread_mutexattr_t` storage. Invalid values return `EINVAL`
+    /// before dereferencing it, matching musl.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_mutexattr_setpshared(
+        attribute: *mut c_void,
+        pshared: c_int,
+    ) -> c_int {
+        if (pshared as u32) > 1 {
             return EINVAL;
         }
-        if owner != thread_id {
-            return EPERM;
+        // SAFETY: a valid value admits the caller-owned raw record.
+        let mut record = unsafe { core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>()) };
+        record.attr &= !MUTEXATTR_PROCESS_SHARED_BIT;
+        record.attr |= (pshared as u32) << 7;
+        unsafe { core::ptr::write(attribute.cast::<PublicPthreadMutexAttr>(), record) };
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_mutexattr_setprotocol.c` object.
+#[cfg(crabc_x86_owned_runtime)]
+static_archive_member! { pthread_mutexattr_setprotocol_source {
+    /// Select musl's normal or priority-inheritance mutex protocol.
+    ///
+    /// `PTHREAD_PRIO_INHERIT` first performs the cached Linux futex-PI probe from
+    /// musl's `pthread_mutexattr_setprotocol.c`; it mutates the caller record only
+    /// after that probe succeeds. `PTHREAD_PRIO_PROTECT` remains unavailable, as
+    /// it is in the pinned source, and no priority-ceiling state is introduced.
+    ///
+    /// # Safety
+    ///
+    /// For `PTHREAD_PRIO_NONE`, and for a successful `PTHREAD_PRIO_INHERIT`
+    /// probe, `attribute` must designate writable aligned public
+    /// `pthread_mutexattr_t` storage. Invalid protocol values and
+    /// `PTHREAD_PRIO_PROTECT` return before dereferencing it, exactly as musl.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_mutexattr_setprotocol(
+        attribute: *mut c_void,
+        protocol: c_int,
+    ) -> c_int {
+        match protocol {
+            0 => {
+                // SAFETY: the valid normal protocol admits the caller record.
+                let mut record = unsafe {
+                    core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>())
+                };
+                record.attr &= !MUTEXATTR_PRIO_INHERIT_BIT;
+                unsafe { core::ptr::write(attribute.cast::<PublicPthreadMutexAttr>(), record) };
+                0
+            }
+            1 => {
+                let status = unsafe { selected_pi_futex_support() };
+                if status != 0 {
+                    return status;
+                }
+                // SAFETY: a successful supported protocol selection admits the
+                // caller-owned raw attribute record.
+                let mut record = unsafe {
+                    core::ptr::read(attribute.cast::<PublicPthreadMutexAttr>())
+                };
+                record.attr |= MUTEXATTR_PRIO_INHERIT_BIT;
+                unsafe { core::ptr::write(attribute.cast::<PublicPthreadMutexAttr>(), record) };
+                0
+            }
+            2 => ENOTSUP,
+            _ => EINVAL,
         }
-        let desired = old & !MUTEX_OWNER_DIED_BIT;
-        if unsafe { atomic::x86_64_compare_exchange_acqrel_i32(lock, old, desired) } == old {
+    }
+}}
+
+// Musl's `src/thread/pthread_mutex_setprioceiling.c` object.
+#[cfg(crabc_x86_owned_runtime)]
+static_archive_member! { pthread_mutex_setprioceiling_source {
+    /// Return musl's direct unavailable priority-ceiling mutation status.
+    ///
+    /// # Safety
+    ///
+    /// The pinned source intentionally does not inspect any argument. This raw C
+    /// boundary therefore establishes no mutex, output-slot, scheduler, or
+    /// priority-protect ownership contract.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_mutex_setprioceiling(
+        _mutex: *mut c_void,
+        _ceiling: c_int,
+        _old_ceiling: *mut c_int,
+    ) -> c_int {
+        EINVAL
+    }
+}}
+
+// Musl's `src/thread/pthread_mutex_consistent.c` object.
+static_archive_member! { pthread_mutex_consistent_source {
+    /// Mark one recovery owner as having made a selected robust mutex consistent.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate a live selected robust public mutex. Its caller
+    /// retains the public object lifetime and must not call this after unlock.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_mutex_consistent(mutex: *mut c_void) -> c_int {
+        let mutex = mutex.cast::<PublicPthreadMutex>();
+        let selected_robust = unsafe { is_selected_robust_mutex(mutex) };
+        #[cfg(crabc_x86_owned_runtime)]
+        let selected_robust = selected_robust || unsafe { is_selected_robust_pi_mutex(mutex) };
+        if !selected_robust {
+            return EINVAL;
+        }
+        let Some((thread_id, _)) = current_selected_robust_owner() else {
+            return ENOTSUP;
+        };
+        let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
+        loop {
+            let old = unsafe { atomic::x86_64_load_acquire_i32(lock) };
+            let owner = old & MUTEX_OWNER_MASK;
+            if owner == 0 || old & MUTEX_OWNER_DIED_BIT == 0 {
+                return EINVAL;
+            }
+            if owner != thread_id {
+                return EPERM;
+            }
+            let desired = old & !MUTEX_OWNER_DIED_BIT;
+            if unsafe { atomic::x86_64_compare_exchange_acqrel_i32(lock, old, desired) } == old {
+                return 0;
+            }
+        }
+    }
+}}
+
+// Musl's `src/thread/pthread_mutex_init.c` object.
+static_archive_member! { pthread_mutex_init_source {
+    /// Initialize one selected mutex type.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must point to writable, aligned storage for one x86
+    /// `pthread_mutex_t` that is not concurrently accessed. A non-null `attr`
+    /// must designate an initialized public x86 attribute record whose type is
+    /// either normal or the selected robust/private-or-shared combination. Owned
+    /// products additionally admit recursive and error-checking type bits with
+    /// those same modifiers, plus `PTHREAD_PRIO_INHERIT` over Linux futex-PI.
+    /// `PTHREAD_PRIO_PROTECT` and every other raw attribute bit stay excluded.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_mutex_init(
+        mutex: *mut c_void,
+        attr: *const c_void,
+    ) -> c_int {
+        let mutex_type = if attr.is_null() {
+            0
+        } else {
+            // SAFETY: pthread_mutex_init requires a readable initialized record
+            // whenever `attr` is non-null; this selected slice consumes only its
+            // musl public attribute word.
+            unsafe { core::ptr::read(attr.cast::<PublicPthreadMutexAttr>()) }.attr as c_int
+        };
+        #[cfg(crabc_x86_owned_runtime)]
+        let admitted = mutex_type
+            & !(MUTEX_TYPE_MASK
+                | MUTEX_ROBUST_BIT
+                | MUTEX_PRIO_INHERIT_BIT
+                | MUTEX_PROCESS_SHARED_BIT)
+            == 0
+            && mutex_type & MUTEX_TYPE_MASK <= MUTEX_ERRORCHECK;
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let normal = mutex_type == 0;
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let admitted = normal
+            || (mutex_type & MUTEX_ROBUST_BIT != 0
+                && mutex_type & !MUTEX_SELECTED_ROBUST_BITS == 0);
+        if !admitted {
+            return ENOTSUP;
+        }
+        let mutex = mutex.cast::<PublicPthreadMutex>();
+        // SAFETY: musl first writes the complete zero representation, then stores
+        // the selected immutable type word before caller publication.
+        unsafe {
+            core::ptr::write_bytes(mutex, 0, 1);
+            core::ptr::write(mutex_word(mutex, MUTEX_TYPE_WORD), mutex_type);
+        }
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_mutex_destroy.c` object.
+static_archive_member! { pthread_mutex_destroy_source {
+    /// Destroy one selected normal or owner-tracked mutex.
+    ///
+    /// A valid normal mutex owns no heap or kernel resource. Locked, invalid, or
+    /// concurrently accessed objects remain outside this C boundary's contract,
+    /// as they are for POSIX mutex destruction.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate a complete aligned selected normal mutex that is no
+    /// longer used by any thread.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut c_void) -> c_int {
+        let mutex = mutex.cast::<PublicPthreadMutex>();
+        if unsafe { is_selected_normal_mutex(mutex) } {
             return 0;
         }
-    }
-}
-
-/// Initialize one selected mutex type.
-///
-/// # Safety
-///
-/// `mutex` must point to writable, aligned storage for one x86
-/// `pthread_mutex_t` that is not concurrently accessed. A non-null `attr`
-/// must designate an initialized public x86 attribute record whose type is
-/// either normal or the selected robust/private-or-shared combination. Owned
-/// products additionally admit recursive and error-checking type bits with
-/// those same modifiers, plus `PTHREAD_PRIO_INHERIT` over Linux futex-PI.
-/// `PTHREAD_PRIO_PROTECT` and every other raw attribute bit stay excluded.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutex_init(
-    mutex: *mut c_void,
-    attr: *const c_void,
-) -> c_int {
-    let mutex_type = if attr.is_null() {
-        0
-    } else {
-        // SAFETY: pthread_mutex_init requires a readable initialized record
-        // whenever `attr` is non-null; this selected slice consumes only its
-        // musl public attribute word.
-        unsafe { core::ptr::read(attr.cast::<PublicPthreadMutexAttr>()) }.attr as c_int
-    };
-    #[cfg(crabc_x86_owned_runtime)]
-    let admitted = mutex_type
-        & !(MUTEX_TYPE_MASK
-            | MUTEX_ROBUST_BIT
-            | MUTEX_PRIO_INHERIT_BIT
-            | MUTEX_PROCESS_SHARED_BIT)
-        == 0
-        && mutex_type & MUTEX_TYPE_MASK <= MUTEX_ERRORCHECK;
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let normal = mutex_type == 0;
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let admitted = normal
-        || (mutex_type & MUTEX_ROBUST_BIT != 0
-            && mutex_type & !MUTEX_SELECTED_ROBUST_BITS == 0);
-    if !admitted {
-        return ENOTSUP;
-    }
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    // SAFETY: musl first writes the complete zero representation, then stores
-    // the selected immutable type word before caller publication.
-    unsafe {
-        core::ptr::write_bytes(mutex, 0, 1);
-        core::ptr::write(mutex_word(mutex, MUTEX_TYPE_WORD), mutex_type);
-    }
-    0
-}
-
-/// Destroy one selected normal or owner-tracked mutex.
-///
-/// A valid normal mutex owns no heap or kernel resource. Locked, invalid, or
-/// concurrently accessed objects remain outside this C boundary's contract,
-/// as they are for POSIX mutex destruction.
-///
-/// # Safety
-///
-/// `mutex` must designate a complete aligned selected normal mutex that is no
-/// longer used by any thread.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut c_void) -> c_int {
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    if unsafe { is_selected_normal_mutex(mutex) } {
-        return 0;
-    }
-    #[cfg(crabc_x86_owned_runtime)]
-    if unsafe { is_selected_pi_mutex(mutex) } {
-        // PI has the same pshared kernel-visible pending interval as every
-        // other owner-tracked selected type.
+        #[cfg(crabc_x86_owned_runtime)]
+        if unsafe { is_selected_pi_mutex(mutex) } {
+            // PI has the same pshared kernel-visible pending interval as every
+            // other owner-tracked selected type.
+            if !mutex_is_private(unsafe { selected_mutex_type(mutex) }) {
+                unsafe { pthread_vmlock::wait() };
+            }
+            return 0;
+        }
+        #[cfg(crabc_x86_owned_runtime)]
+        if unsafe { is_selected_owned_owner_mutex(mutex) } {
+            // Source waits only when an owner-tracked process-shared type can be
+            // visible in the current task's pending robust-list slot.
+            if unsafe { selected_mutex_type(mutex) } > MUTEX_PROCESS_SHARED_BIT {
+                unsafe { pthread_vmlock::wait() };
+            }
+            return 0;
+        }
+        if !unsafe { is_selected_robust_mutex(mutex) } {
+            return ENOTSUP;
+        }
+        // Musl waits only for a process-shared nontrivial owner transition. The
+        // public caller still owns the POSIX quiescence/no-new-lock admission.
         if !mutex_is_private(unsafe { selected_mutex_type(mutex) }) {
             unsafe { pthread_vmlock::wait() };
         }
-        return 0;
+        0
     }
-    #[cfg(crabc_x86_owned_runtime)]
-    if unsafe { is_selected_owned_owner_mutex(mutex) } {
-        // Source waits only when an owner-tracked process-shared type can be
-        // visible in the current task's pending robust-list slot.
-        if unsafe { selected_mutex_type(mutex) } > MUTEX_PROCESS_SHARED_BIT {
-            unsafe { pthread_vmlock::wait() };
+}}
+
+// Musl's `src/thread/pthread_mutex_trylock.c` object.
+static_archive_member! { pthread_mutex_trylock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_mutex_trylock",
+        ".set pthread_mutex_trylock, __pthread_mutex_trylock",
+    );
+
+    /// Try once to acquire one selected normal or robust mutex.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate a live, aligned selected mutex. Its complete
+    /// lifetime and protected-data synchronization remain with the C caller.
+    #[export_name = "__pthread_mutex_trylock"]
+    pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut c_void) -> c_int {
+        let mutex = mutex.cast::<PublicPthreadMutex>();
+        if unsafe { is_selected_normal_mutex(mutex) } {
+            // SAFETY: the record was admitted as the existing normal route.
+            return unsafe { try_lock_selected_normal_mutex_record(mutex) };
         }
-        return 0;
+        #[cfg(crabc_x86_owned_runtime)]
+        if unsafe { is_selected_pi_mutex(mutex) } {
+            // SAFETY: the immutable PI type selects the kernel-assisted route.
+            return unsafe { try_lock_selected_pi_mutex_record(mutex) };
+        }
+        #[cfg(crabc_x86_owned_runtime)]
+        if unsafe { is_selected_owned_owner_mutex(mutex) } {
+            // SAFETY: the record has the selected owned owner/list type.
+            return unsafe { try_lock_selected_owned_owner_mutex_record(mutex) };
+        }
+        if unsafe { is_selected_robust_mutex(mutex) } {
+            // SAFETY: the record was admitted as the selected robust route.
+            return unsafe { try_lock_selected_robust_mutex_record(mutex) };
+        }
+        ENOTSUP
     }
-    if !unsafe { is_selected_robust_mutex(mutex) } {
-        return ENOTSUP;
-    }
-    // Musl waits only for a process-shared nontrivial owner transition. The
-    // public caller still owns the POSIX quiescence/no-new-lock admission.
-    if !mutex_is_private(unsafe { selected_mutex_type(mutex) }) {
-        unsafe { pthread_vmlock::wait() };
-    }
-    0
-}
+}}
 
-/// Try once to acquire one selected normal or robust mutex.
-///
-/// # Safety
-///
-/// `mutex` must designate a live, aligned selected mutex. Its complete
-/// lifetime and protected-data synchronization remain with the C caller.
-#[export_name = "__pthread_mutex_trylock"]
-pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut c_void) -> c_int {
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    if unsafe { is_selected_normal_mutex(mutex) } {
-        // SAFETY: the record was admitted as the existing normal route.
-        return unsafe { try_lock_selected_normal_mutex_record(mutex) };
-    }
-    #[cfg(crabc_x86_owned_runtime)]
-    if unsafe { is_selected_pi_mutex(mutex) } {
-        // SAFETY: the immutable PI type selects the kernel-assisted route.
-        return unsafe { try_lock_selected_pi_mutex_record(mutex) };
-    }
-    #[cfg(crabc_x86_owned_runtime)]
-    if unsafe { is_selected_owned_owner_mutex(mutex) } {
-        // SAFETY: the record has the selected owned owner/list type.
-        return unsafe { try_lock_selected_owned_owner_mutex_record(mutex) };
-    }
-    if unsafe { is_selected_robust_mutex(mutex) } {
-        // SAFETY: the record was admitted as the selected robust route.
-        return unsafe { try_lock_selected_robust_mutex_record(mutex) };
-    }
-    ENOTSUP
-}
+// Musl's `src/thread/pthread_mutex_lock.c` object.
+static_archive_member! { pthread_mutex_lock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_mutex_lock",
+        ".set pthread_mutex_lock, __pthread_mutex_lock",
+    );
 
-/// Acquire one selected normal or robust mutex through matching futexes.
-///
-/// # Safety
-///
-/// `mutex` must designate a live, aligned selected mutex. The caller owns the
-/// object lifetime, protected-data discipline, and all signal/cancellation
-/// policy; this direct static leaf is not a cancellation point.
-#[export_name = "__pthread_mutex_lock"]
-pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut c_void) -> c_int {
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    // SAFETY: the caller supplies a complete mutex whose type word is stable.
-    if unsafe { is_selected_normal_mutex(mutex) } {
-        // SAFETY: this record passed the existing normal selected-type check.
-        return unsafe { lock_selected_normal_mutex_record(mutex) };
+    /// Acquire one selected normal or robust mutex through matching futexes.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate a live, aligned selected mutex. The caller owns the
+    /// object lifetime, protected-data discipline, and all signal/cancellation
+    /// policy; this direct static leaf is not a cancellation point.
+    #[export_name = "__pthread_mutex_lock"]
+    pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut c_void) -> c_int {
+        let mutex = mutex.cast::<PublicPthreadMutex>();
+        // SAFETY: the caller supplies a complete mutex whose type word is stable.
+        if unsafe { is_selected_normal_mutex(mutex) } {
+            // SAFETY: this record passed the existing normal selected-type check.
+            return unsafe { lock_selected_normal_mutex_record(mutex) };
+        }
+        #[cfg(crabc_x86_owned_runtime)]
+        if unsafe { is_selected_pi_mutex(mutex) } {
+            // SAFETY: the immutable PI type selects the kernel-assisted route.
+            return unsafe { lock_selected_pi_mutex_record(mutex) };
+        }
+        #[cfg(crabc_x86_owned_runtime)]
+        if unsafe { is_selected_owned_owner_mutex(mutex) } {
+            // SAFETY: the record has the selected owned owner/list type.
+            return unsafe { lock_selected_owned_owner_mutex_record(mutex) };
+        }
+        if unsafe { is_selected_robust_mutex(mutex) } {
+            // SAFETY: this record passed the selected robust type check.
+            return unsafe { lock_selected_robust_mutex_record(mutex) };
+        }
+        ENOTSUP
     }
-    #[cfg(crabc_x86_owned_runtime)]
-    if unsafe { is_selected_pi_mutex(mutex) } {
-        // SAFETY: the immutable PI type selects the kernel-assisted route.
-        return unsafe { lock_selected_pi_mutex_record(mutex) };
-    }
-    #[cfg(crabc_x86_owned_runtime)]
-    if unsafe { is_selected_owned_owner_mutex(mutex) } {
-        // SAFETY: the record has the selected owned owner/list type.
-        return unsafe { lock_selected_owned_owner_mutex_record(mutex) };
-    }
-    if unsafe { is_selected_robust_mutex(mutex) } {
-        // SAFETY: this record passed the selected robust type check.
-        return unsafe { lock_selected_robust_mutex_record(mutex) };
-    }
-    ENOTSUP
-}
+}}
 
-/// Release one selected normal or robust mutex and wake one contender if needed.
-///
-/// # Safety
-///
-/// `mutex` must designate a live, aligned selected mutex held according to
-/// the caller's normal-mutex discipline. Unlocking a normal mutex from the
-/// wrong thread is outside POSIX and this selected contract.
-#[export_name = "__pthread_mutex_unlock"]
-pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut c_void) -> c_int {
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    // SAFETY: the caller supplies a complete mutex whose type word is stable.
-    if unsafe { is_selected_normal_mutex(mutex) } {
-        // SAFETY: this record passed the existing normal selected-type check.
-        return unsafe { unlock_selected_normal_mutex_record(mutex) };
-    }
-    #[cfg(crabc_x86_owned_runtime)]
-    if unsafe { is_selected_pi_mutex(mutex) } {
-        // SAFETY: the immutable PI type selects the kernel-assisted route.
-        return unsafe { unlock_selected_pi_mutex_record(mutex) };
-    }
-    #[cfg(crabc_x86_owned_runtime)]
-    if unsafe { is_selected_owned_owner_mutex(mutex) } {
-        // SAFETY: the record has the selected owned owner/list type.
-        return unsafe { unlock_selected_owned_owner_mutex_record(mutex) };
-    }
-    if unsafe { is_selected_robust_mutex(mutex) } {
-        // SAFETY: this record passed the selected robust type check.
-        return unsafe { unlock_selected_robust_mutex_record(mutex) };
-    }
-    ENOTSUP
-}
+// Musl's `src/thread/pthread_mutex_unlock.c` object.
+static_archive_member! { pthread_mutex_unlock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_mutex_unlock",
+        ".set pthread_mutex_unlock, __pthread_mutex_unlock",
+    );
 
-/// Acquire one owned selected mutex until an absolute realtime deadline.
-///
-/// This export belongs only to the expanded owned runtime. The frozen x86
-/// archive deliberately has no `pthread_mutex_timedlock` symbol.
-///
-/// # Safety
-///
-/// `mutex` is a live aligned selected object. If contention requires waiting,
-/// `absolute_timeout` must name a readable native x86 `struct timespec` for
-/// the operation. Its representation and lifetime remain C caller duties.
+    /// Release one selected normal or robust mutex and wake one contender if needed.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` must designate a live, aligned selected mutex held according to
+    /// the caller's normal-mutex discipline. Unlocking a normal mutex from the
+    /// wrong thread is outside POSIX and this selected contract.
+    #[export_name = "__pthread_mutex_unlock"]
+    pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut c_void) -> c_int {
+        let mutex = mutex.cast::<PublicPthreadMutex>();
+        // SAFETY: the caller supplies a complete mutex whose type word is stable.
+        if unsafe { is_selected_normal_mutex(mutex) } {
+            // SAFETY: this record passed the existing normal selected-type check.
+            return unsafe { unlock_selected_normal_mutex_record(mutex) };
+        }
+        #[cfg(crabc_x86_owned_runtime)]
+        if unsafe { is_selected_pi_mutex(mutex) } {
+            // SAFETY: the immutable PI type selects the kernel-assisted route.
+            return unsafe { unlock_selected_pi_mutex_record(mutex) };
+        }
+        #[cfg(crabc_x86_owned_runtime)]
+        if unsafe { is_selected_owned_owner_mutex(mutex) } {
+            // SAFETY: the record has the selected owned owner/list type.
+            return unsafe { unlock_selected_owned_owner_mutex_record(mutex) };
+        }
+        if unsafe { is_selected_robust_mutex(mutex) } {
+            // SAFETY: this record passed the selected robust type check.
+            return unsafe { unlock_selected_robust_mutex_record(mutex) };
+        }
+        ENOTSUP
+    }
+}}
+
+// Musl's `src/thread/pthread_mutex_timedlock.c` object.
 #[cfg(crabc_x86_owned_runtime)]
-#[export_name = "__pthread_mutex_timedlock"]
-pub unsafe extern "C" fn pthread_mutex_timedlock(
-    mutex: *mut c_void,
-    absolute_timeout: *const c_void,
-) -> c_int {
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    let absolute_timeout = absolute_timeout.cast::<RawTimespec>();
-    if unsafe { is_selected_normal_mutex(mutex) } {
-        // SAFETY: the admitted normal route owns its exact raw futex state.
-        return unsafe { timed_lock_selected_normal_mutex_record(mutex, absolute_timeout) };
+static_archive_member! { pthread_mutex_timedlock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_mutex_timedlock",
+        ".set pthread_mutex_timedlock, __pthread_mutex_timedlock",
+    );
+
+    /// Acquire one owned selected mutex until an absolute realtime deadline.
+    ///
+    /// This export belongs only to the expanded owned runtime. The frozen x86
+    /// archive deliberately has no `pthread_mutex_timedlock` symbol.
+    ///
+    /// # Safety
+    ///
+    /// `mutex` is a live aligned selected object. If contention requires waiting,
+    /// `absolute_timeout` must name a readable native x86 `struct timespec` for
+    /// the operation. Its representation and lifetime remain C caller duties.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[export_name = "__pthread_mutex_timedlock"]
+    pub unsafe extern "C" fn pthread_mutex_timedlock(
+        mutex: *mut c_void,
+        absolute_timeout: *const c_void,
+    ) -> c_int {
+        let mutex = mutex.cast::<PublicPthreadMutex>();
+        let absolute_timeout = absolute_timeout.cast::<RawTimespec>();
+        if unsafe { is_selected_normal_mutex(mutex) } {
+            // SAFETY: the admitted normal route owns its exact raw futex state.
+            return unsafe { timed_lock_selected_normal_mutex_record(mutex, absolute_timeout) };
+        }
+        if unsafe { is_selected_pi_mutex(mutex) } {
+            // SAFETY: the admitted PI route owns its raw kernel deadline path.
+            return unsafe { timed_lock_selected_pi_mutex_record(mutex, absolute_timeout) };
+        }
+        if unsafe { is_selected_owned_owner_mutex(mutex) } {
+            // SAFETY: the admitted owner route owns its list/futex transition.
+            return unsafe {
+                timed_lock_selected_owned_owner_mutex_record(mutex, absolute_timeout)
+            };
+        }
+        ENOTSUP
     }
-    if unsafe { is_selected_pi_mutex(mutex) } {
-        // SAFETY: the admitted PI route owns its raw kernel deadline path.
-        return unsafe { timed_lock_selected_pi_mutex_record(mutex, absolute_timeout) };
-    }
-    if unsafe { is_selected_owned_owner_mutex(mutex) } {
-        // SAFETY: the admitted owner route owns its list/futex transition.
-        return unsafe {
-            timed_lock_selected_owned_owner_mutex_record(mutex, absolute_timeout)
-        };
-    }
-    ENOTSUP
-}
+}}
 
 /// Initialize one C11-owned normal or recursive mutex without a public call.
 ///

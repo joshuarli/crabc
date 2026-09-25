@@ -48,54 +48,60 @@ const _: () = {
     assert!(offset_of!(PublicPthreadCondAttr, attr) == 0);
 };
 
-/// Replace only one public condition-attribute process-sharing record bit.
-///
-/// # Safety
-///
-/// For accepted `pshared` values, `attr` must designate writable, aligned
-/// public `pthread_condattr_t` storage. The caller owns its object-lifetime
-/// contract; this entry neither initializes nor consumes a condition
-/// attribute. As in musl, null or otherwise invalid object pointers are
-/// outside the C caller contract. Invalid `pshared` values return `EINVAL`
-/// before accessing the record and leave it unchanged.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_setpshared(attr: *mut c_void, pshared: c_int) -> c_int {
-    if (pshared as c_uint) > MAX_PSHARED {
-        return EINVAL;
+// Musl's `src/thread/pthread_condattr_setpshared.c` object.
+static_archive_member! { pthread_condattr_setpshared_source {
+    /// Replace only one public condition-attribute process-sharing record bit.
+    ///
+    /// # Safety
+    ///
+    /// For accepted `pshared` values, `attr` must designate writable, aligned
+    /// public `pthread_condattr_t` storage. The caller owns its object-lifetime
+    /// contract; this entry neither initializes nor consumes a condition
+    /// attribute. As in musl, null or otherwise invalid object pointers are
+    /// outside the C caller contract. Invalid `pshared` values return `EINVAL`
+    /// before accessing the record and leave it unchanged.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_condattr_setpshared(attr: *mut c_void, pshared: c_int) -> c_int {
+        if (pshared as c_uint) > MAX_PSHARED {
+            return EINVAL;
+        }
+
+        // SAFETY: the caller supplies one writable public attribute record.
+        let prior = unsafe { core::ptr::read(attr.cast::<PublicPthreadCondAttr>()) };
+        let selected_bit = if pshared == 0 { 0 } else { PROCESS_SHARED_BIT };
+        // SAFETY: the caller supplies the same writable public attribute record.
+        unsafe {
+            core::ptr::write(
+                attr.cast::<PublicPthreadCondAttr>(),
+                PublicPthreadCondAttr {
+                    attr: (prior.attr & CLOCK_RECORD_MASK) | selected_bit,
+                },
+            )
+        };
+        0
     }
+}}
 
-    // SAFETY: the caller supplies one writable public attribute record.
-    let prior = unsafe { core::ptr::read(attr.cast::<PublicPthreadCondAttr>()) };
-    let selected_bit = if pshared == 0 { 0 } else { PROCESS_SHARED_BIT };
-    // SAFETY: the caller supplies the same writable public attribute record.
-    unsafe {
-        core::ptr::write(
-            attr.cast::<PublicPthreadCondAttr>(),
-            PublicPthreadCondAttr {
-                attr: (prior.attr & CLOCK_RECORD_MASK) | selected_bit,
-            },
-        )
-    };
-    0
-}
-
-/// Read one public condition-attribute process-sharing record bit.
-///
-/// # Safety
-///
-/// `attr` must designate readable, aligned public `pthread_condattr_t`
-/// storage and `pshared` must designate writable `int` storage. As in musl,
-/// null and invalid object pointers are outside the C caller contract. This
-/// observes only bit 31 and does not establish a condition, a condition clock,
-/// or process-sharing operation.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_getpshared(
-    attr: *const c_void,
-    pshared: *mut c_int,
-) -> c_int {
-    // SAFETY: the caller supplies the readable record and writable C result
-    // slot described above.
-    let record = unsafe { core::ptr::read(attr.cast::<PublicPthreadCondAttr>()) };
-    unsafe { core::ptr::write(pshared, (record.attr >> 31) as c_int) };
-    0
-}
+// Musl's `src/thread/pthread_attr_get.c` object.
+static_archive_member! { pthread_attr_get_source {
+    /// Read one public condition-attribute process-sharing record bit.
+    ///
+    /// # Safety
+    ///
+    /// `attr` must designate readable, aligned public `pthread_condattr_t`
+    /// storage and `pshared` must designate writable `int` storage. As in musl,
+    /// null and invalid object pointers are outside the C caller contract. This
+    /// observes only bit 31 and does not establish a condition, a condition clock,
+    /// or process-sharing operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_condattr_getpshared(
+        attr: *const c_void,
+        pshared: *mut c_int,
+    ) -> c_int {
+        // SAFETY: the caller supplies the readable record and writable C result
+        // slot described above.
+        let record = unsafe { core::ptr::read(attr.cast::<PublicPthreadCondAttr>()) };
+        unsafe { core::ptr::write(pshared, (record.attr >> 31) as c_int) };
+        0
+    }
+}}

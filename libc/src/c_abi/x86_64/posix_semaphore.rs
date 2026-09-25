@@ -40,6 +40,7 @@ use core::{
 };
 
 use super::{atomic, errno, raw_syscall};
+use super::pthread_cancel;
 
 const EAGAIN: c_int = 11;
 const EINTR: c_int = 4;
@@ -224,71 +225,80 @@ unsafe fn futex_wake(value: *mut c_int, count: c_int, private_word: c_int) {
     };
 }
 
-/// Initialize one unnamed POSIX semaphore in caller-owned storage.
-///
-/// # Safety
-///
-/// `semaphore` must point to writable, aligned storage for a complete x86
-/// `sem_t` that is not concurrently accessed until initialization completes.
-#[no_mangle]
-pub unsafe extern "C" fn sem_init(
-    semaphore: *mut c_void,
-    pshared: c_int,
-    value: c_uint,
-) -> c_int {
-    if value > SEM_VALUE_MAX as c_uint {
-        // SAFETY: this C ABI owns publication of its defined EINVAL result.
-        unsafe { errno::set_errno(EINVAL) };
-        return -1;
-    }
+// Musl's `src/thread/sem_init.c` object.
+static_archive_member! { sem_init_source {
+    /// Initialize one unnamed POSIX semaphore in caller-owned storage.
+    ///
+    /// # Safety
+    ///
+    /// `semaphore` must point to writable, aligned storage for a complete x86
+    /// `sem_t` that is not concurrently accessed until initialization completes.
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_init(
+        semaphore: *mut c_void,
+        pshared: c_int,
+        value: c_uint,
+    ) -> c_int {
+        if value > SEM_VALUE_MAX as c_uint {
+            // SAFETY: this C ABI owns publication of its defined EINVAL result.
+            unsafe { errno::set_errno(EINVAL) };
+            return -1;
+        }
 
-    let semaphore = semaphore.cast::<PublicSemaphore>();
-    // SAFETY: the caller supplies complete, writable, non-concurrent public
-    // semaphore storage.  Musl initializes exactly these first three words.
-    unsafe {
-        semaphore_word(semaphore, SEM_VALUE_WORD).write(value as c_int);
-        semaphore_word(semaphore, SEM_WAITER_COUNT_WORD).write(0);
-        semaphore_word(semaphore, SEM_PRIVATE_WORD).write(if pshared == 0 {
-            FUTEX_PRIVATE_FLAG as c_int
-        } else {
-            0
-        });
-    }
-    0
-}
-
-/// Destroy one quiescent selected semaphore record.
-///
-/// # Safety
-///
-/// POSIX requires the caller to ensure that no thread or process is using the
-/// object.  The selected representation owns no allocation or kernel resource,
-/// so this musl-compatible boundary does not read or mutate its pointer.
-#[no_mangle]
-pub unsafe extern "C" fn sem_destroy(_semaphore: *mut c_void) -> c_int {
-    0
-}
-
-/// Attempt to take one semaphore unit without blocking.
-///
-/// # Safety
-///
-/// `semaphore` must point to a live, initialized, aligned selected `sem_t`.
-/// Every concurrent participant must use compatible atomic semaphore
-/// operations for the complete object lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn sem_trywait(semaphore: *mut c_void) -> c_int {
-    let semaphore = semaphore.cast::<PublicSemaphore>();
-    // SAFETY: the public C caller owns the initialized record and its
-    // concurrent-lifetime contract.
-    if unsafe { trywait_raw(semaphore) } {
+        let semaphore = semaphore.cast::<PublicSemaphore>();
+        // SAFETY: the caller supplies complete, writable, non-concurrent public
+        // semaphore storage.  Musl initializes exactly these first three words.
+        unsafe {
+            semaphore_word(semaphore, SEM_VALUE_WORD).write(value as c_int);
+            semaphore_word(semaphore, SEM_WAITER_COUNT_WORD).write(0);
+            semaphore_word(semaphore, SEM_PRIVATE_WORD).write(if pshared == 0 {
+                FUTEX_PRIVATE_FLAG as c_int
+            } else {
+                0
+            });
+        }
         0
-    } else {
-        // SAFETY: this is the defined POSIX empty-semaphore error result.
-        unsafe { errno::set_errno(EAGAIN) };
-        -1
     }
-}
+}}
+
+// Musl's `src/thread/sem_destroy.c` object.
+static_archive_member! { sem_destroy_source {
+    /// Destroy one quiescent selected semaphore record.
+    ///
+    /// # Safety
+    ///
+    /// POSIX requires the caller to ensure that no thread or process is using the
+    /// object.  The selected representation owns no allocation or kernel resource,
+    /// so this musl-compatible boundary does not read or mutate its pointer.
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_destroy(_semaphore: *mut c_void) -> c_int {
+        0
+    }
+}}
+
+// Musl's `src/thread/sem_trywait.c` object.
+static_archive_member! { sem_trywait_source {
+    /// Attempt to take one semaphore unit without blocking.
+    ///
+    /// # Safety
+    ///
+    /// `semaphore` must point to a live, initialized, aligned selected `sem_t`.
+    /// Every concurrent participant must use compatible atomic semaphore
+    /// operations for the complete object lifetime.
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_trywait(semaphore: *mut c_void) -> c_int {
+        let semaphore = semaphore.cast::<PublicSemaphore>();
+        // SAFETY: the public C caller owns the initialized record and its
+        // concurrent-lifetime contract.
+        if unsafe { trywait_raw(semaphore) } {
+            0
+        } else {
+            // SAFETY: this is the defined POSIX empty-semaphore error result.
+            unsafe { errno::set_errno(EAGAIN) };
+            -1
+        }
+    }
+}}
 
 /// Wait for and take one semaphore unit on the selected no-cancellation,
 /// signal-uninterrupted route.
@@ -447,127 +457,137 @@ pub unsafe extern "C" fn sem_wait(semaphore: *mut c_void) -> c_int {
     unsafe { sem_timedwait(semaphore, core::ptr::null()) }
 }
 
-/// Wait for one semaphore unit until an absolute CLOCK_REALTIME deadline.
-/// Cancellation is checked before token consumption. As in musl, a token
-/// available to either initial trywait bypasses deadline validation; an empty
-/// semaphore validates nanoseconds before checking whether the deadline passed.
-///
-/// # Safety
-/// `semaphore` points to a live initialized and aligned public `sem_t` whose
-/// storage remains valid through all concurrent operations and cleanup.
-/// `deadline` is null for an unbounded wait, or points to a readable aligned
-/// native x86-64 timespec that stays valid until this call finishes.
+// Musl's `src/thread/sem_timedwait.c` object.
 #[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn sem_timedwait(
-    semaphore: *mut c_void,
-    deadline: *const c_void,
-) -> c_int {
-    // No resource has been acquired at this first source cancellation point.
-    unsafe { super::pthread_cancel::pthread_testcancel() };
-    if unsafe { sem_trywait(semaphore) } == 0 {
-        return 0;
-    }
-    let public = semaphore.cast::<PublicSemaphore>();
-    let value = unsafe { semaphore_word(public, SEM_VALUE_WORD) };
-    let waiter_count = unsafe { semaphore_word(public, SEM_WAITER_COUNT_WORD) };
-    let mut spins = 100;
-    while spins > 0
-        && unsafe { atomic::x86_64_load_acquire_i32(value) } & SEM_VALUE_MAX == 0
-        && unsafe { atomic::x86_64_load_relaxed_i32(waiter_count) } == 0
-    {
-        core::hint::spin_loop();
-        spins -= 1;
-    }
-    while unsafe { sem_trywait(semaphore) } != 0 {
-        let private_word = unsafe { core::ptr::read(semaphore_word(public, SEM_PRIVATE_WORD)) };
-        unsafe { atomic::x86_64_fetch_add_acqrel_i32(waiter_count, 1) };
-        let _ = unsafe { atomic::x86_64_compare_exchange_acqrel_i32(value, 0, SEM_WAITER_BIT) };
-        let mut cleanup = core::mem::MaybeUninit::<super::pthread_cancel::CleanupNode>::uninit();
-        // The selected pthread path initializes every node field and retains
-        // this stack address until pop or exit. Outside that path push/pop(0)
-        // do not inspect the node; the explicit normal cleanup still runs.
-        unsafe {
-            super::pthread_cancel::_pthread_cleanup_push(
-                cleanup.as_mut_ptr(),
-                Some(cleanup_semaphore_waiter),
-                waiter_count.cast(),
-            );
+static_archive_member! { sem_timedwait_source {
+    /// Wait for one semaphore unit until an absolute CLOCK_REALTIME deadline.
+    /// Cancellation is checked before token consumption. As in musl, a token
+    /// available to either initial trywait bypasses deadline validation; an empty
+    /// semaphore validates nanoseconds before checking whether the deadline passed.
+    ///
+    /// # Safety
+    /// `semaphore` points to a live initialized and aligned public `sem_t` whose
+    /// storage remains valid through all concurrent operations and cleanup.
+    /// `deadline` is null for an unbounded wait, or points to a readable aligned
+    /// native x86-64 timespec that stays valid until this call finishes.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_timedwait(
+        semaphore: *mut c_void,
+        deadline: *const c_void,
+    ) -> c_int {
+        // No resource has been acquired at this first source cancellation point.
+        unsafe { pthread_cancel::pthread_testcancel() };
+        if unsafe { sem_trywait(semaphore) } == 0 {
+            return 0;
         }
-        let result = unsafe { semaphore_timedwait_result(value, private_word, deadline.cast()) };
-        unsafe {
-            super::pthread_cancel::_pthread_cleanup_pop(cleanup.as_mut_ptr(), 0);
-            cleanup_semaphore_waiter(waiter_count.cast());
-        }
-        if result != 0 {
-            unsafe { errno::set_errno(result) };
-            return -1;
-        }
-    }
-    0
-}
-
-/// Publish one semaphore unit and wake a waiter when its state requires it.
-///
-/// # Safety
-///
-/// `semaphore` must point to a live, initialized, aligned selected `sem_t`.
-/// Every concurrent participant must use compatible atomic semaphore
-/// operations for the complete object lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn sem_post(semaphore: *mut c_void) -> c_int {
-    let semaphore = semaphore.cast::<PublicSemaphore>();
-    let value = unsafe { semaphore_word(semaphore, SEM_VALUE_WORD) };
-    let waiter_count = unsafe { semaphore_word(semaphore, SEM_WAITER_COUNT_WORD) };
-    // SAFETY: selected initialization makes this immutable before publication.
-    let private_word = unsafe { core::ptr::read(semaphore_word(semaphore, SEM_PRIVATE_WORD)) };
-
-    loop {
-        // SAFETY: both words are aligned selected atomic fields in the public
-        // semaphore record, with the waiter count used only as an advisory hint.
-        let observed = unsafe { atomic::x86_64_load_acquire_i32(value) };
-        let waiters = unsafe { atomic::x86_64_load_relaxed_i32(waiter_count) };
-        if observed & SEM_VALUE_MAX == SEM_VALUE_MAX {
-            // SAFETY: this is the defined POSIX overflow result.
-            unsafe { errno::set_errno(EOVERFLOW) };
-            return -1;
-        }
-        let mut replacement = observed.wrapping_add(1);
-        if waiters <= 1 {
-            replacement &= !SEM_WAITER_BIT;
-        }
-        // SAFETY: the value word uses the same acquire/release CAS protocol
-        // as `sem_trywait` and `sem_wait`.
-        if unsafe {
-            atomic::x86_64_compare_exchange_acqrel_i32(value, observed, replacement)
-        } != observed
+        let public = semaphore.cast::<PublicSemaphore>();
+        let value = unsafe { semaphore_word(public, SEM_VALUE_WORD) };
+        let waiter_count = unsafe { semaphore_word(public, SEM_WAITER_COUNT_WORD) };
+        let mut spins = 100;
+        while spins > 0
+            && unsafe { atomic::x86_64_load_acquire_i32(value) } & SEM_VALUE_MAX == 0
+            && unsafe { atomic::x86_64_load_relaxed_i32(waiter_count) } == 0
         {
-            continue;
+            core::hint::spin_loop();
+            spins -= 1;
         }
-        if observed < 0 || waiters != 0 {
-            // SAFETY: publication completed above, and this is the paired
-            // wake over the still-live selected value word.
-            unsafe { futex_wake(value, if waiters > 1 { 1 } else { -1 }, private_word) };
+        while unsafe { sem_trywait(semaphore) } != 0 {
+            let private_word = unsafe { core::ptr::read(semaphore_word(public, SEM_PRIVATE_WORD)) };
+            unsafe { atomic::x86_64_fetch_add_acqrel_i32(waiter_count, 1) };
+            let _ = unsafe { atomic::x86_64_compare_exchange_acqrel_i32(value, 0, SEM_WAITER_BIT) };
+            let mut cleanup = core::mem::MaybeUninit::<pthread_cancel::CleanupNode>::uninit();
+            // The selected pthread path initializes every node field and retains
+            // this stack address until pop or exit. Outside that path push/pop(0)
+            // do not inspect the node; the explicit normal cleanup still runs.
+            unsafe {
+                pthread_cancel::_pthread_cleanup_push(
+                    cleanup.as_mut_ptr(),
+                    Some(cleanup_semaphore_waiter),
+                    waiter_count.cast(),
+                );
+            }
+            let result = unsafe { semaphore_timedwait_result(value, private_word, deadline.cast()) };
+            unsafe {
+                pthread_cancel::_pthread_cleanup_pop(cleanup.as_mut_ptr(), 0);
+                cleanup_semaphore_waiter(waiter_count.cast());
+            }
+            if result != 0 {
+                unsafe { errno::set_errno(result) };
+                return -1;
+            }
         }
-        return 0;
+        0
     }
-}
+}}
 
-/// Read the nonnegative observable counter value.
-///
-/// # Safety
-///
-/// `semaphore` must point to a live initialized selected `sem_t`, and `value`
-/// must point to writable aligned C `int` storage.  The result is a snapshot;
-/// concurrent post/wait activity may change it immediately afterward.
-#[no_mangle]
-pub unsafe extern "C" fn sem_getvalue(semaphore: *mut c_void, value: *mut c_int) -> c_int {
-    let semaphore = semaphore.cast::<PublicSemaphore>();
-    let value_word = unsafe { semaphore_word(semaphore, SEM_VALUE_WORD) };
-    // SAFETY: the caller supplies the live selected atomic word and writable
-    // result pointer; the lower 31 bits are musl's observable count.
-    unsafe {
-        value.write(atomic::x86_64_load_acquire_i32(value_word) & SEM_VALUE_MAX);
+// Musl's `src/thread/sem_post.c` object.
+static_archive_member! { sem_post_source {
+    /// Publish one semaphore unit and wake a waiter when its state requires it.
+    ///
+    /// # Safety
+    ///
+    /// `semaphore` must point to a live, initialized, aligned selected `sem_t`.
+    /// Every concurrent participant must use compatible atomic semaphore
+    /// operations for the complete object lifetime.
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_post(semaphore: *mut c_void) -> c_int {
+        let semaphore = semaphore.cast::<PublicSemaphore>();
+        let value = unsafe { semaphore_word(semaphore, SEM_VALUE_WORD) };
+        let waiter_count = unsafe { semaphore_word(semaphore, SEM_WAITER_COUNT_WORD) };
+        // SAFETY: selected initialization makes this immutable before publication.
+        let private_word = unsafe { core::ptr::read(semaphore_word(semaphore, SEM_PRIVATE_WORD)) };
+
+        loop {
+            // SAFETY: both words are aligned selected atomic fields in the public
+            // semaphore record, with the waiter count used only as an advisory hint.
+            let observed = unsafe { atomic::x86_64_load_acquire_i32(value) };
+            let waiters = unsafe { atomic::x86_64_load_relaxed_i32(waiter_count) };
+            if observed & SEM_VALUE_MAX == SEM_VALUE_MAX {
+                // SAFETY: this is the defined POSIX overflow result.
+                unsafe { errno::set_errno(EOVERFLOW) };
+                return -1;
+            }
+            let mut replacement = observed.wrapping_add(1);
+            if waiters <= 1 {
+                replacement &= !SEM_WAITER_BIT;
+            }
+            // SAFETY: the value word uses the same acquire/release CAS protocol
+            // as `sem_trywait` and `sem_wait`.
+            if unsafe {
+                atomic::x86_64_compare_exchange_acqrel_i32(value, observed, replacement)
+            } != observed
+            {
+                continue;
+            }
+            if observed < 0 || waiters != 0 {
+                // SAFETY: publication completed above, and this is the paired
+                // wake over the still-live selected value word.
+                unsafe { futex_wake(value, if waiters > 1 { 1 } else { -1 }, private_word) };
+            }
+            return 0;
+        }
     }
-    0
-}
+}}
+
+// Musl's `src/thread/sem_getvalue.c` object.
+static_archive_member! { sem_getvalue_source {
+    /// Read the nonnegative observable counter value.
+    ///
+    /// # Safety
+    ///
+    /// `semaphore` must point to a live initialized selected `sem_t`, and `value`
+    /// must point to writable aligned C `int` storage.  The result is a snapshot;
+    /// concurrent post/wait activity may change it immediately afterward.
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_getvalue(semaphore: *mut c_void, value: *mut c_int) -> c_int {
+        let semaphore = semaphore.cast::<PublicSemaphore>();
+        let value_word = unsafe { semaphore_word(semaphore, SEM_VALUE_WORD) };
+        // SAFETY: the caller supplies the live selected atomic word and writable
+        // result pointer; the lower 31 bits are musl's observable count.
+        unsafe {
+            value.write(atomic::x86_64_load_acquire_i32(value_word) & SEM_VALUE_MAX);
+        }
+        0
+    }
+}}

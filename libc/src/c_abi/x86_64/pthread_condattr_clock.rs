@@ -48,56 +48,62 @@ const _: () = {
     assert!(offset_of!(PublicPthreadCondAttr, attr) == 0);
 };
 
-/// Replace the public condition-attribute raw low clock-record bits.
-///
-/// # Safety
-///
-/// For accepted `clock` values, `attr` must designate writable, aligned public
-/// `pthread_condattr_t` storage. The caller owns its object-lifetime contract;
-/// this entry neither initializes nor consumes a condition attribute. As in
-/// musl, null or otherwise invalid object pointers are outside the C caller
-/// contract. Negative clocks and the two CPU-clock IDs return `EINVAL` before
-/// accessing the record and leave it unchanged.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_setclock(attr: *mut c_void, clock: c_int) -> c_int {
-    let raw_clock = clock as c_uint;
-    if clock < 0
-        || raw_clock.wrapping_sub(FIRST_REJECTED_CPU_CLOCK) < REJECTED_CPU_CLOCK_COUNT
-    {
-        return EINVAL;
+// Musl's `src/thread/pthread_condattr_setclock.c` object.
+static_archive_member! { pthread_condattr_setclock_source {
+    /// Replace the public condition-attribute raw low clock-record bits.
+    ///
+    /// # Safety
+    ///
+    /// For accepted `clock` values, `attr` must designate writable, aligned public
+    /// `pthread_condattr_t` storage. The caller owns its object-lifetime contract;
+    /// this entry neither initializes nor consumes a condition attribute. As in
+    /// musl, null or otherwise invalid object pointers are outside the C caller
+    /// contract. Negative clocks and the two CPU-clock IDs return `EINVAL` before
+    /// accessing the record and leave it unchanged.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_condattr_setclock(attr: *mut c_void, clock: c_int) -> c_int {
+        let raw_clock = clock as c_uint;
+        if clock < 0
+            || raw_clock.wrapping_sub(FIRST_REJECTED_CPU_CLOCK) < REJECTED_CPU_CLOCK_COUNT
+        {
+            return EINVAL;
+        }
+
+        // SAFETY: the caller supplies one writable public attribute record.
+        let prior = unsafe { core::ptr::read(attr.cast::<PublicPthreadCondAttr>()) };
+        // SAFETY: the caller supplies the same writable public attribute record.
+        unsafe {
+            core::ptr::write(
+                attr.cast::<PublicPthreadCondAttr>(),
+                PublicPthreadCondAttr {
+                    attr: (prior.attr & PROCESS_SHARED_BIT) | raw_clock,
+                },
+            )
+        };
+        0
     }
+}}
 
-    // SAFETY: the caller supplies one writable public attribute record.
-    let prior = unsafe { core::ptr::read(attr.cast::<PublicPthreadCondAttr>()) };
-    // SAFETY: the caller supplies the same writable public attribute record.
-    unsafe {
-        core::ptr::write(
-            attr.cast::<PublicPthreadCondAttr>(),
-            PublicPthreadCondAttr {
-                attr: (prior.attr & PROCESS_SHARED_BIT) | raw_clock,
-            },
-        )
-    };
-    0
-}
-
-/// Read the public condition-attribute raw low clock-record bits.
-///
-/// # Safety
-///
-/// `attr` must designate readable, aligned public `pthread_condattr_t`
-/// storage and `clock` must designate writable `clockid_t`/`int` storage. As
-/// in musl, null and invalid object pointers are outside the C caller contract.
-/// This observes only bits 0..30 and does not establish a condition, timed
-/// wait, or clock operation.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_getclock(
-    attr: *const c_void,
-    clock: *mut c_int,
-) -> c_int {
-    // SAFETY: the caller supplies the readable record and writable C result
-    // slot described above.
-    let record = unsafe { core::ptr::read(attr.cast::<PublicPthreadCondAttr>()) };
-    unsafe { core::ptr::write(clock, (record.attr & CLOCK_RECORD_MASK) as c_int) };
-    0
-}
+// Musl's `src/thread/pthread_attr_get.c` object.
+static_archive_member! { pthread_attr_get_source {
+    /// Read the public condition-attribute raw low clock-record bits.
+    ///
+    /// # Safety
+    ///
+    /// `attr` must designate readable, aligned public `pthread_condattr_t`
+    /// storage and `clock` must designate writable `clockid_t`/`int` storage. As
+    /// in musl, null and invalid object pointers are outside the C caller contract.
+    /// This observes only bits 0..30 and does not establish a condition, timed
+    /// wait, or clock operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_condattr_getclock(
+        attr: *const c_void,
+        clock: *mut c_int,
+    ) -> c_int {
+        // SAFETY: the caller supplies the readable record and writable C result
+        // slot described above.
+        let record = unsafe { core::ptr::read(attr.cast::<PublicPthreadCondAttr>()) };
+        unsafe { core::ptr::write(clock, (record.attr & CLOCK_RECORD_MASK) as c_int) };
+        0
+    }
+}}

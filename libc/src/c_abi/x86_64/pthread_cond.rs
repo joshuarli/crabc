@@ -617,47 +617,53 @@ pub(super) unsafe fn destroy_selected_private_cond(condition: *mut c_void) -> c_
     0
 }
 
-/// Initialize one selected all-zero private condition object.
-///
-/// # Safety
-///
-/// `condition` must point to writable, aligned storage for one x86
-/// `pthread_cond_t` that is not concurrently accessed. For owned products, a
-/// non-null `attr` designates an initialized readable condition attribute.
-/// The frozen archive admits only a null attribute.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_cond_init(
-    condition: *mut c_void,
-    attr: *const c_void,
-) -> c_int {
-    #[cfg(crabc_x86_owned_runtime)]
-    return unsafe { owned::init(condition, attr) };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    {
-        if !attr.is_null() { return ENOTSUP; }
-        unsafe { init_selected_private_cond(condition) }
+// Musl's `src/thread/pthread_cond_init.c` object.
+static_archive_member! { pthread_cond_init_source {
+    /// Initialize one selected all-zero private condition object.
+    ///
+    /// # Safety
+    ///
+    /// `condition` must point to writable, aligned storage for one x86
+    /// `pthread_cond_t` that is not concurrently accessed. For owned products, a
+    /// non-null `attr` designates an initialized readable condition attribute.
+    /// The frozen archive admits only a null attribute.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_cond_init(
+        condition: *mut c_void,
+        attr: *const c_void,
+    ) -> c_int {
+        #[cfg(crabc_x86_owned_runtime)]
+        return unsafe { owned::init(condition, attr) };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        {
+            if !attr.is_null() { return ENOTSUP; }
+            unsafe { init_selected_private_cond(condition) }
+        }
     }
-}
+}}
 
-/// Destroy one selected private condition object after quiescence.
-///
-/// Private conditions own no allocation or kernel resource. The owned shared
-/// representation retains musl's waiter-drain transition before storage reuse;
-/// the caller still owns the POSIX destruction/no-new-waiter discipline.
-///
-/// # Safety
-///
-/// `condition` must designate a complete aligned initialized condition whose
-/// lifetime and quiescence satisfy POSIX destruction requirements.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_cond_destroy(condition: *mut c_void) -> c_int {
-    // SAFETY: the C ABI obligations above exactly match the private selected
-    // destruction seam.
-    #[cfg(crabc_x86_owned_runtime)]
-    return unsafe { owned::destroy(condition) };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    unsafe { destroy_selected_private_cond(condition) }
-}
+// Musl's `src/thread/pthread_cond_destroy.c` object.
+static_archive_member! { pthread_cond_destroy_source {
+    /// Destroy one selected private condition object after quiescence.
+    ///
+    /// Private conditions own no allocation or kernel resource. The owned shared
+    /// representation retains musl's waiter-drain transition before storage reuse;
+    /// the caller still owns the POSIX destruction/no-new-waiter discipline.
+    ///
+    /// # Safety
+    ///
+    /// `condition` must designate a complete aligned initialized condition whose
+    /// lifetime and quiescence satisfy POSIX destruction requirements.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_cond_destroy(condition: *mut c_void) -> c_int {
+        // SAFETY: the C ABI obligations above exactly match the private selected
+        // destruction seam.
+        #[cfg(crabc_x86_owned_runtime)]
+        return unsafe { owned::destroy(condition) };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        unsafe { destroy_selected_private_cond(condition) }
+    }
+}}
 
 /// Atomically enroll and wait on one selected private condition object.
 ///
@@ -899,25 +905,28 @@ pub(super) unsafe fn timed_wait_selected_cond(
     unsafe { owned::wait(condition, mutex, deadline) }
 }
 
-/// Atomically enroll and wait through the selected private condition path.
-///
-/// # Safety
-///
-/// `condition` and `mutex` must designate live aligned selected public x86
-/// objects. The caller owns their lifetimes, predicate discipline, signal and
-/// cancellation policy, and quiescent destruction. Owned main/worker pthread
-/// tasks use the initialized private/shared condition and an admitted mutex;
-/// cancellation repairs enrollment and reacquires that mutex before cleanup.
-/// The frozen archive retains its normal/private worker-only route.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_cond_wait(
-    condition: *mut c_void,
-    mutex: *mut c_void,
-) -> c_int {
-    // SAFETY: the C ABI obligations above exactly match the private selected
-    // wait seam, including its raw C-shaped records.
-    unsafe { wait_selected_private_cond(condition, mutex) }
-}
+// Musl's `src/thread/pthread_cond_wait.c` object.
+static_archive_member! { pthread_cond_wait_source {
+    /// Atomically enroll and wait through the selected private condition path.
+    ///
+    /// # Safety
+    ///
+    /// `condition` and `mutex` must designate live aligned selected public x86
+    /// objects. The caller owns their lifetimes, predicate discipline, signal and
+    /// cancellation policy, and quiescent destruction. Owned main/worker pthread
+    /// tasks use the initialized private/shared condition and an admitted mutex;
+    /// cancellation repairs enrollment and reacquires that mutex before cleanup.
+    /// The frozen archive retains its normal/private worker-only route.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_cond_wait(
+        condition: *mut c_void,
+        mutex: *mut c_void,
+    ) -> c_int {
+        // SAFETY: the C ABI obligations above exactly match the private selected
+        // wait seam, including its raw C-shaped records.
+        unsafe { wait_selected_private_cond(condition, mutex) }
+    }
+}}
 
 /// Signal the oldest enrolled selected private condition waiter, if any,
 /// without crossing a public C ABI.
@@ -940,23 +949,26 @@ pub(super) unsafe fn signal_selected_private_cond(condition: *mut c_void) -> c_i
     unsafe { private_cond_signal(condition, 1) }
 }
 
-/// Signal the oldest enrolled selected private condition waiter, if any.
-///
-/// # Safety
-///
-/// `condition` must designate a live aligned initialized x86
-/// `pthread_cond_t`. The caller owns predicate/mutex discipline and object
-/// lifetime. Owned products honor its sharing field; the frozen archive
-/// retains its private-only admission.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_cond_signal(condition: *mut c_void) -> c_int {
-    // SAFETY: the C ABI obligations above exactly match the private selected
-    // signal seam.
-    #[cfg(crabc_x86_owned_runtime)]
-    return unsafe { owned::signal(condition, 1) };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    unsafe { signal_selected_private_cond(condition) }
-}
+// Musl's `src/thread/pthread_cond_signal.c` object.
+static_archive_member! { pthread_cond_signal_source {
+    /// Signal the oldest enrolled selected private condition waiter, if any.
+    ///
+    /// # Safety
+    ///
+    /// `condition` must designate a live aligned initialized x86
+    /// `pthread_cond_t`. The caller owns predicate/mutex discipline and object
+    /// lifetime. Owned products honor its sharing field; the frozen archive
+    /// retains its private-only admission.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_cond_signal(condition: *mut c_void) -> c_int {
+        // SAFETY: the C ABI obligations above exactly match the private selected
+        // signal seam.
+        #[cfg(crabc_x86_owned_runtime)]
+        return unsafe { owned::signal(condition, 1) };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        unsafe { signal_selected_private_cond(condition) }
+    }
+}}
 
 /// Signal every enrolled selected private condition waiter without crossing a
 /// public C ABI.
@@ -978,20 +990,23 @@ pub(super) unsafe fn broadcast_selected_private_cond(condition: *mut c_void) -> 
     unsafe { private_cond_signal(condition, -1) }
 }
 
-/// Signal every enrolled selected private condition waiter.
-///
-/// # Safety
-///
-/// `condition` must designate a live aligned initialized x86
-/// `pthread_cond_t`. The caller owns predicate/mutex discipline and object
-/// lifetime. Owned products honor its sharing field; the frozen archive
-/// retains its private-only admission.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_cond_broadcast(condition: *mut c_void) -> c_int {
-    // SAFETY: the C ABI obligations above exactly match the private selected
-    // broadcast seam.
-    #[cfg(crabc_x86_owned_runtime)]
-    return unsafe { owned::signal(condition, -1) };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    unsafe { broadcast_selected_private_cond(condition) }
-}
+// Musl's `src/thread/pthread_cond_broadcast.c` object.
+static_archive_member! { pthread_cond_broadcast_source {
+    /// Signal every enrolled selected private condition waiter.
+    ///
+    /// # Safety
+    ///
+    /// `condition` must designate a live aligned initialized x86
+    /// `pthread_cond_t`. The caller owns predicate/mutex discipline and object
+    /// lifetime. Owned products honor its sharing field; the frozen archive
+    /// retains its private-only admission.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_cond_broadcast(condition: *mut c_void) -> c_int {
+        // SAFETY: the C ABI obligations above exactly match the private selected
+        // broadcast seam.
+        #[cfg(crabc_x86_owned_runtime)]
+        return unsafe { owned::signal(condition, -1) };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        unsafe { broadcast_selected_private_cond(condition) }
+    }
+}}

@@ -84,68 +84,74 @@ unsafe fn name_fits_task_comm(name: *const c_char) -> bool {
     false
 }
 
-/// Set the calling selected pthread's Linux task name.
-///
-/// # Safety
-///
-/// `name` must point to a readable NUL-terminated C string or sixteen readable
-/// bytes. `thread` must be this selected task's current
-/// `pthread_self()` value. Any other handle is outside the selected musl
-/// differential and returns `ESRCH` before `name` is read.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_setname_np(thread: *mut c_void, name: *const c_char) -> c_int {
-    if !is_selected_current_self(thread) {
-        return ESRCH;
+// Musl's `src/thread/pthread_setname_np.c` object.
+static_archive_member! { pthread_setname_np_source {
+    /// Set the calling selected pthread's Linux task name.
+    ///
+    /// # Safety
+    ///
+    /// `name` must point to a readable NUL-terminated C string or sixteen readable
+    /// bytes. `thread` must be this selected task's current
+    /// `pthread_self()` value. Any other handle is outside the selected musl
+    /// differential and returns `ESRCH` before `name` is read.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_setname_np(thread: *mut c_void, name: *const c_char) -> c_int {
+        if !is_selected_current_self(thread) {
+            return ESRCH;
+        }
+        // SAFETY: the C caller owns the bounded source-string contract above.
+        if !unsafe { name_fits_task_comm(name) } {
+            return ERANGE;
+        }
+        // SAFETY: Linux/x86-64 prctl=157 receives option/pointer/zero words in
+        // rdi/rsi/rdx/r10/r8. The selected C string remains readable for the call.
+        pthread_status(unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_PRCTL,
+                PR_SET_NAME,
+                name as usize as i64,
+                0,
+                0,
+                0,
+            )
+        })
     }
-    // SAFETY: the C caller owns the bounded source-string contract above.
-    if !unsafe { name_fits_task_comm(name) } {
-        return ERANGE;
-    }
-    // SAFETY: Linux/x86-64 prctl=157 receives option/pointer/zero words in
-    // rdi/rsi/rdx/r10/r8. The selected C string remains readable for the call.
-    pthread_status(unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_PRCTL,
-            PR_SET_NAME,
-            name as usize as i64,
-            0,
-            0,
-            0,
-        )
-    })
-}
+}}
 
-/// Read the calling selected pthread's Linux task name.
-///
-/// # Safety
-///
-/// When `len >= 16`, `name` must point to at least sixteen writable bytes for
-/// Linux's complete task-comm result. `thread` must be this selected task's
-/// current `pthread_self()` value. Any other handle is outside the
-/// selected musl differential and returns `ESRCH` before `len` or `name` is
-/// observed.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_getname_np(
-    thread: *mut c_void,
-    name: *mut c_char,
-    len: usize,
-) -> c_int {
-    if !is_selected_current_self(thread) {
-        return ESRCH;
+// Musl's `src/thread/pthread_getname_np.c` object.
+static_archive_member! { pthread_getname_np_source {
+    /// Read the calling selected pthread's Linux task name.
+    ///
+    /// # Safety
+    ///
+    /// When `len >= 16`, `name` must point to at least sixteen writable bytes for
+    /// Linux's complete task-comm result. `thread` must be this selected task's
+    /// current `pthread_self()` value. Any other handle is outside the
+    /// selected musl differential and returns `ESRCH` before `len` or `name` is
+    /// observed.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_getname_np(
+        thread: *mut c_void,
+        name: *mut c_char,
+        len: usize,
+    ) -> c_int {
+        if !is_selected_current_self(thread) {
+            return ESRCH;
+        }
+        if len < TASK_COMM_LEN {
+            return ERANGE;
+        }
+        // SAFETY: Linux/x86-64 prctl=157 receives option/pointer/zero words in
+        // rdi/rsi/rdx/r10/r8. The C caller retains the 16-byte writable output.
+        pthread_status(unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_PRCTL,
+                PR_GET_NAME,
+                name as usize as i64,
+                0,
+                0,
+                0,
+            )
+        })
     }
-    if len < TASK_COMM_LEN {
-        return ERANGE;
-    }
-    // SAFETY: Linux/x86-64 prctl=157 receives option/pointer/zero words in
-    // rdi/rsi/rdx/r10/r8. The C caller retains the 16-byte writable output.
-    pthread_status(unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_PRCTL,
-            PR_GET_NAME,
-            name as usize as i64,
-            0,
-            0,
-            0,
-        )
-    })
-}
+}}

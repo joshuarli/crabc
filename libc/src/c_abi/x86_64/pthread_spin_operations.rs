@@ -48,64 +48,73 @@ fn spin_pause() {
     }
 }
 
-/// Acquire a caller-owned four-byte pthread spinlock.
-///
-/// # Safety
-///
-/// `spinlock` must point to live, writable, four-byte-aligned
-/// `pthread_spinlock_t` storage. The object must be initialized or
-/// statically zero-initialized, and all concurrent accesses must follow the
-/// pthread spinlock synchronization contract.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_spin_lock(spinlock: *mut c_int) -> c_int {
-    loop {
-        // The relaxed read mirrors musl's initial volatile observation and
-        // avoids an unnecessary locked transaction while the object is held.
-        // A successful CAS supplies the acquire operation that publishes the
-        // preceding owner's release store.
-        // SAFETY: forwarded from the exported function's caller contract.
-        if unsafe { atomic::x86_64_load_relaxed_i32(spinlock) } == 0 {
+// Musl's `src/thread/pthread_spin_lock.c` object.
+static_archive_member! { pthread_spin_lock_source {
+    /// Acquire a caller-owned four-byte pthread spinlock.
+    ///
+    /// # Safety
+    ///
+    /// `spinlock` must point to live, writable, four-byte-aligned
+    /// `pthread_spinlock_t` storage. The object must be initialized or
+    /// statically zero-initialized, and all concurrent accesses must follow the
+    /// pthread spinlock synchronization contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_spin_lock(spinlock: *mut c_int) -> c_int {
+        loop {
+            // The relaxed read mirrors musl's initial volatile observation and
+            // avoids an unnecessary locked transaction while the object is held.
+            // A successful CAS supplies the acquire operation that publishes the
+            // preceding owner's release store.
             // SAFETY: forwarded from the exported function's caller contract.
-            if unsafe {
-                atomic::x86_64_compare_exchange_acqrel_i32(spinlock, 0, EBUSY)
-            } == 0
-            {
-                return 0;
+            if unsafe { atomic::x86_64_load_relaxed_i32(spinlock) } == 0 {
+                // SAFETY: forwarded from the exported function's caller contract.
+                if unsafe {
+                    atomic::x86_64_compare_exchange_acqrel_i32(spinlock, 0, EBUSY)
+                } == 0
+                {
+                    return 0;
+                }
             }
+            spin_pause();
         }
-        spin_pause();
     }
-}
+}}
 
-/// Attempt to acquire a caller-owned four-byte pthread spinlock.
-///
-/// Returns zero on acquisition and the observed lock word (normally `EBUSY`)
-/// when the compare-and-exchange cannot acquire it, matching musl's direct
-/// `a_cas(s, 0, EBUSY)` result.
-///
-/// # Safety
-///
-/// `spinlock` must point to live, writable, four-byte-aligned
-/// `pthread_spinlock_t` storage. All concurrent accesses must be atomic and
-/// follow the pthread spinlock synchronization contract.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_spin_trylock(spinlock: *mut c_int) -> c_int {
-    // SAFETY: forwarded from the exported function's caller contract.
-    unsafe { atomic::x86_64_compare_exchange_acqrel_i32(spinlock, 0, EBUSY) }
-}
+// Musl's `src/thread/pthread_spin_trylock.c` object.
+static_archive_member! { pthread_spin_trylock_source {
+    /// Attempt to acquire a caller-owned four-byte pthread spinlock.
+    ///
+    /// Returns zero on acquisition and the observed lock word (normally `EBUSY`)
+    /// when the compare-and-exchange cannot acquire it, matching musl's direct
+    /// `a_cas(s, 0, EBUSY)` result.
+    ///
+    /// # Safety
+    ///
+    /// `spinlock` must point to live, writable, four-byte-aligned
+    /// `pthread_spinlock_t` storage. All concurrent accesses must be atomic and
+    /// follow the pthread spinlock synchronization contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_spin_trylock(spinlock: *mut c_int) -> c_int {
+        // SAFETY: forwarded from the exported function's caller contract.
+        unsafe { atomic::x86_64_compare_exchange_acqrel_i32(spinlock, 0, EBUSY) }
+    }
+}}
 
-/// Release a caller-owned four-byte pthread spinlock.
-///
-/// # Safety
-///
-/// `spinlock` must point to live, four-byte-aligned `pthread_spinlock_t`
-/// storage currently owned by the calling thread. All concurrent accesses
-/// must follow the pthread spinlock synchronization contract.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_spin_unlock(spinlock: *mut c_int) -> c_int {
-    // `AtomicI32::from_ptr` retains the raw-pointer boundary and a release
-    // store is sufficient for x86's TSO ordering, matching musl's a_store.
-    // SAFETY: forwarded from the exported function's caller contract.
-    unsafe { AtomicI32::from_ptr(spinlock) }.store(0, Ordering::Release);
-    0
-}
+// Musl's `src/thread/pthread_spin_unlock.c` object.
+static_archive_member! { pthread_spin_unlock_source {
+    /// Release a caller-owned four-byte pthread spinlock.
+    ///
+    /// # Safety
+    ///
+    /// `spinlock` must point to live, four-byte-aligned `pthread_spinlock_t`
+    /// storage currently owned by the calling thread. All concurrent accesses
+    /// must follow the pthread spinlock synchronization contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_spin_unlock(spinlock: *mut c_int) -> c_int {
+        // `AtomicI32::from_ptr` retains the raw-pointer boundary and a release
+        // store is sufficient for x86's TSO ordering, matching musl's a_store.
+        // SAFETY: forwarded from the exported function's caller contract.
+        unsafe { AtomicI32::from_ptr(spinlock) }.store(0, Ordering::Release);
+        0
+    }
+}}

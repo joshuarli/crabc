@@ -121,72 +121,78 @@ fn close(fd: i64) {
     let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd) };
 }
 
-/// Set a thread's Linux task name.
-///
-/// # Safety
-///
-/// `name` must be readable through its first NUL byte or its first sixteen
-/// bytes, and `thread` must be a live thread of this process.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_setname_np(thread: *mut c_void, name: *const c_char) -> c_int {
-    let mut length = 0;
-    // SAFETY: musl's `strnlen(name, 16)` reads the same bounded prefix.
-    while length < TASK_COMM_LEN && unsafe { name.add(length).read() } != 0 {
-        length += 1;
+// Musl's `src/thread/pthread_setname_np.c` object.
+static_archive_member! { pthread_setname_np_source {
+    /// Set a thread's Linux task name.
+    ///
+    /// # Safety
+    ///
+    /// `name` must be readable through its first NUL byte or its first sixteen
+    /// bytes, and `thread` must be a live thread of this process.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_setname_np(thread: *mut c_void, name: *const c_char) -> c_int {
+        let mut length = 0;
+        // SAFETY: musl's `strnlen(name, 16)` reads the same bounded prefix.
+        while length < TASK_COMM_LEN && unsafe { name.add(length).read() } != 0 {
+            length += 1;
+        }
+        if length > TASK_COMM_LEN - 1 {
+            return ERANGE;
+        }
+        if thread == pthread_identity::current_thread_pointer().cast() {
+            return unsafe { self_prctl(PR_SET_NAME, name.cast_mut()) };
+        }
+        let tid = match unsafe { target_tid(thread) } {
+            Ok(tid) => tid,
+            Err(error) => return error,
+        };
+        let fd = match open_comm(tid, O_WRONLY) {
+            Ok(fd) => fd,
+            Err(error) => return fail(error),
+        };
+        // SAFETY: `name` has `length` readable bytes, established above.
+        let written = unsafe { raw_syscall::syscall3(raw_syscall::SYS_WRITE, fd, name as usize as i64, length as i64) };
+        close(fd);
+        raw_error(written).map_or(0, fail)
     }
-    if length > TASK_COMM_LEN - 1 {
-        return ERANGE;
-    }
-    if thread == pthread_identity::current_thread_pointer().cast() {
-        return unsafe { self_prctl(PR_SET_NAME, name.cast_mut()) };
-    }
-    let tid = match unsafe { target_tid(thread) } {
-        Ok(tid) => tid,
-        Err(error) => return error,
-    };
-    let fd = match open_comm(tid, O_WRONLY) {
-        Ok(fd) => fd,
-        Err(error) => return fail(error),
-    };
-    // SAFETY: `name` has `length` readable bytes, established above.
-    let written = unsafe { raw_syscall::syscall3(raw_syscall::SYS_WRITE, fd, name as usize as i64, length as i64) };
-    close(fd);
-    raw_error(written).map_or(0, fail)
-}
+}}
 
-/// Read a thread's Linux task name.
-///
-/// # Safety
-///
-/// When `len >= 16`, `name` must designate `len` writable bytes, and `thread`
-/// must be a live thread of this process.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_getname_np(thread: *mut c_void, name: *mut c_char, len: usize) -> c_int {
-    if len < TASK_COMM_LEN {
-        return ERANGE;
+// Musl's `src/thread/pthread_getname_np.c` object.
+static_archive_member! { pthread_getname_np_source {
+    /// Read a thread's Linux task name.
+    ///
+    /// # Safety
+    ///
+    /// When `len >= 16`, `name` must designate `len` writable bytes, and `thread`
+    /// must be a live thread of this process.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_getname_np(thread: *mut c_void, name: *mut c_char, len: usize) -> c_int {
+        if len < TASK_COMM_LEN {
+            return ERANGE;
+        }
+        if thread == pthread_identity::current_thread_pointer().cast() {
+            return unsafe { self_prctl(PR_GET_NAME, name) };
+        }
+        let tid = match unsafe { target_tid(thread) } {
+            Ok(tid) => tid,
+            Err(error) => return error,
+        };
+        let fd = match open_comm(tid, O_RDONLY) {
+            Ok(fd) => fd,
+            Err(error) => return fail(error),
+        };
+        // SAFETY: the caller owns `len` writable bytes at `name`.
+        let read = unsafe { raw_syscall::syscall3(raw_syscall::SYS_READ, fd, name as usize as i64, len as i64) };
+        close(fd);
+        if let Some(error) = raw_error(read) {
+            return fail(error);
+        }
+        // Musl removes the kernel's trailing newline only after a successful read.
+        // SAFETY: a comm read returns at least the newline, so `read - 1` is
+        // inside the bytes just written.
+        if read > 0 {
+            unsafe { name.add(read as usize - 1).write(0) };
+        }
+        0
     }
-    if thread == pthread_identity::current_thread_pointer().cast() {
-        return unsafe { self_prctl(PR_GET_NAME, name) };
-    }
-    let tid = match unsafe { target_tid(thread) } {
-        Ok(tid) => tid,
-        Err(error) => return error,
-    };
-    let fd = match open_comm(tid, O_RDONLY) {
-        Ok(fd) => fd,
-        Err(error) => return fail(error),
-    };
-    // SAFETY: the caller owns `len` writable bytes at `name`.
-    let read = unsafe { raw_syscall::syscall3(raw_syscall::SYS_READ, fd, name as usize as i64, len as i64) };
-    close(fd);
-    if let Some(error) = raw_error(read) {
-        return fail(error);
-    }
-    // Musl removes the kernel's trailing newline only after a successful read.
-    // SAFETY: a comm read returns at least the newline, so `read - 1` is
-    // inside the bytes just written.
-    if read > 0 {
-        unsafe { name.add(read as usize - 1).write(0) };
-    }
-    0
-}
+}}

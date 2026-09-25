@@ -407,242 +407,323 @@ unsafe fn timed_write_lock(
     }
 }
 
-/// Initialize one public rwlock attribute record to musl's private default.
-///
-/// # Safety
-///
-/// `attribute` must designate writable, aligned x86 `pthread_rwlockattr_t`
-/// storage that is not concurrently accessed.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_rwlockattr_init(attribute: *mut c_void) -> c_int {
-    let attribute = attribute.cast::<PublicPthreadRwlockAttr>();
-    // SAFETY: the C caller provides one writable non-concurrent public attr
-    // record; all-zero is musl's exact default representation.
-    unsafe { core::ptr::write_bytes(attribute, 0, 1) };
-    0
-}
-
-/// Destroy one public rwlock attribute record.
-///
-/// Musl's attribute record owns no resource, so this intentionally neither
-/// reads the caller record nor changes C errno.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_rwlockattr_destroy(_attribute: *mut c_void) -> c_int {
-    0
-}
-
-/// Set the process-sharing mode of one rwlock attribute record.
-///
-/// # Safety
-///
-/// `attribute` must designate writable, aligned x86 rwlock-attribute storage
-/// that is not concurrently accessed.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_rwlockattr_setpshared(
-    attribute: *mut c_void,
-    process_shared: c_int,
-) -> c_int {
-    if (process_shared as c_uint) > 1 {
-        return EINVAL;
-    }
-    let attribute = attribute.cast::<PublicPthreadRwlockAttr>();
-    // SAFETY: the caller supplies the complete non-concurrent public record;
-    // word zero is musl's exact pshared storage.
-    unsafe { core::ptr::addr_of_mut!((*attribute).words).cast::<c_uint>().write(process_shared as c_uint) };
-    0
-}
-
-/// Read the process-sharing mode of one rwlock attribute record.
-///
-/// # Safety
-///
-/// `attribute` must point to a readable initialized x86 rwlock attribute and
-/// `process_shared` to writable `int` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_rwlockattr_getpshared(
-    attribute: *const c_void,
-    process_shared: *mut c_int,
-) -> c_int {
-    let attribute = attribute.cast::<PublicPthreadRwlockAttr>();
-    // SAFETY: both C pointers meet the public get-attribute contract.  Raw
-    // operations avoid creating references to caller storage.
-    let value = unsafe { core::ptr::addr_of!((*attribute).words).cast::<c_uint>().read() };
-    unsafe { process_shared.write(value as c_int) };
-    0
-}
-
-/// Initialize one rwlock to its all-zero private or requested shared state.
-///
-/// # Safety
-///
-/// `rwlock` must designate writable, aligned x86 `pthread_rwlock_t` storage
-/// that is not concurrently accessed.  A non-null `attribute` must designate
-/// a readable initialized x86 rwlock-attribute record.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_rwlock_init(
-    rwlock: *mut c_void,
-    attribute: *const c_void,
-) -> c_int {
-    let rwlock = rwlock.cast::<PublicPthreadRwlock>();
-    // SAFETY: the caller supplies one complete writable non-concurrent public
-    // rwlock record; zero is musl's exact initializer representation.
-    unsafe { core::ptr::write_bytes(rwlock, 0, 1) };
-    if !attribute.is_null() {
+// Musl's `src/thread/pthread_rwlockattr_init.c` object.
+static_archive_member! { pthread_rwlockattr_init_source {
+    /// Initialize one public rwlock attribute record to musl's private default.
+    ///
+    /// # Safety
+    ///
+    /// `attribute` must designate writable, aligned x86 `pthread_rwlockattr_t`
+    /// storage that is not concurrently accessed.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_rwlockattr_init(attribute: *mut c_void) -> c_int {
         let attribute = attribute.cast::<PublicPthreadRwlockAttr>();
-        // SAFETY: the public init contract admits the initialized attribute
-        // record.  `wrapping_mul` preserves musl's unsigned storage operation
-        // even for caller-manufactured invalid bytes.
-        let shared = unsafe {
-            core::ptr::addr_of!((*attribute).words)
-                .cast::<c_uint>()
-                .read()
-                .wrapping_mul(FUTEX_PRIVATE_FLAG as c_uint) as c_int
-        };
-        // SAFETY: word two belongs to the freshly zeroed non-concurrent
-        // rwlock.  It is immutable after successful initialization.
-        unsafe { rwlock_word(rwlock, RWLOCK_SHARED_WORD).write(shared) };
+        // SAFETY: the C caller provides one writable non-concurrent public attr
+        // record; all-zero is musl's exact default representation.
+        unsafe { core::ptr::write_bytes(attribute, 0, 1) };
+        0
     }
-    0
-}
+}}
 
-/// Destroy one rwlock whose caller has made quiescent.
-///
-/// Musl's rwlock record owns no resource, so this returns zero and does not
-/// inspect a potentially concurrent/invalid record.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_rwlock_destroy(_rwlock: *mut c_void) -> c_int {
-    0
-}
-
-/// Lock one rwlock for reading, waiting without a deadline as necessary.
-///
-/// # Safety
-///
-/// `rwlock` must designate a live x86 public rwlock whose lifetime and
-/// concurrent access obey the pthread object contract.
-#[no_mangle]
-pub unsafe extern "C" fn __pthread_rwlock_rdlock(rwlock: *mut c_void) -> c_int {
-    // SAFETY: the C caller supplies the admitted public rwlock object; a null
-    // deadline selects musl's ordinary untimed rwlock path.
-    unsafe { timed_read_lock(rwlock.cast::<PublicPthreadRwlock>(), core::ptr::null()) }
-}
-
-/// Try one reader acquisition without blocking.
-///
-/// # Safety
-///
-/// `rwlock` must designate a live x86 public rwlock whose lifetime and
-/// concurrent access obey the pthread object contract.
-#[no_mangle]
-pub unsafe extern "C" fn __pthread_rwlock_tryrdlock(rwlock: *mut c_void) -> c_int {
-    // SAFETY: the C caller supplies the admitted public rwlock object.
-    unsafe { try_read_lock(rwlock.cast::<PublicPthreadRwlock>()) }
-}
-
-/// Lock one rwlock for reading until its absolute realtime deadline.
-///
-/// # Safety
-///
-/// `rwlock` must designate a live x86 public rwlock and `absolute_timeout` a
-/// readable x86 `struct timespec` when the initial trylock cannot succeed.
-#[no_mangle]
-pub unsafe extern "C" fn __pthread_rwlock_timedrdlock(
-    rwlock: *mut c_void,
-    absolute_timeout: *const c_void,
-) -> c_int {
-    // SAFETY: the C caller supplies the raw rwlock and deadline contracts.
-    unsafe {
-        timed_read_lock(
-            rwlock.cast::<PublicPthreadRwlock>(),
-            absolute_timeout.cast::<RawTimespec>(),
-        )
+// Musl's `src/thread/pthread_rwlockattr_destroy.c` object.
+static_archive_member! { pthread_rwlockattr_destroy_source {
+    /// Destroy one public rwlock attribute record.
+    ///
+    /// Musl's attribute record owns no resource, so this intentionally neither
+    /// reads the caller record nor changes C errno.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_rwlockattr_destroy(_attribute: *mut c_void) -> c_int {
+        0
     }
-}
+}}
 
-/// Lock one rwlock for writing, waiting without a deadline as necessary.
-///
-/// # Safety
-///
-/// `rwlock` must designate a live x86 public rwlock whose lifetime and
-/// concurrent access obey the pthread object contract.
-#[no_mangle]
-pub unsafe extern "C" fn __pthread_rwlock_wrlock(rwlock: *mut c_void) -> c_int {
-    // SAFETY: the C caller supplies the admitted public rwlock object; a null
-    // deadline selects musl's ordinary untimed rwlock path.
-    unsafe { timed_write_lock(rwlock.cast::<PublicPthreadRwlock>(), core::ptr::null()) }
-}
-
-/// Try one writer acquisition without blocking.
-///
-/// # Safety
-///
-/// `rwlock` must designate a live x86 public rwlock whose lifetime and
-/// concurrent access obey the pthread object contract.
-#[no_mangle]
-pub unsafe extern "C" fn __pthread_rwlock_trywrlock(rwlock: *mut c_void) -> c_int {
-    // SAFETY: the C caller supplies the admitted public rwlock object.
-    unsafe { try_write_lock(rwlock.cast::<PublicPthreadRwlock>()) }
-}
-
-/// Lock one rwlock for writing until its absolute realtime deadline.
-///
-/// # Safety
-///
-/// `rwlock` must designate a live x86 public rwlock and `absolute_timeout` a
-/// readable x86 `struct timespec` when the initial trylock cannot succeed.
-#[no_mangle]
-pub unsafe extern "C" fn __pthread_rwlock_timedwrlock(
-    rwlock: *mut c_void,
-    absolute_timeout: *const c_void,
-) -> c_int {
-    // SAFETY: the C caller supplies the raw rwlock and deadline contracts.
-    unsafe {
-        timed_write_lock(
-            rwlock.cast::<PublicPthreadRwlock>(),
-            absolute_timeout.cast::<RawTimespec>(),
-        )
-    }
-}
-
-/// Release one reader or writer hold and wake eligible waiters.
-///
-/// # Safety
-///
-/// `rwlock` must designate a live x86 public rwlock held according to the
-/// caller's pthread ownership discipline.
-#[no_mangle]
-pub unsafe extern "C" fn __pthread_rwlock_unlock(rwlock: *mut c_void) -> c_int {
-    let rwlock = rwlock.cast::<PublicPthreadRwlock>();
-    let lock = unsafe { rwlock_word(rwlock, RWLOCK_LOCK_WORD) };
-    let waiters = unsafe { rwlock_word(rwlock, RWLOCK_WAITERS_WORD) };
-    let shared = unsafe { rwlock_word(rwlock, RWLOCK_SHARED_WORD) };
-    loop {
-        // SAFETY: all raw words belong to the live public rwlock and use the
-        // same atomic protocol for their whole concurrent lifetime.
-        let observed = unsafe { atomic::x86_64_load_acquire_i32(lock) };
-        let count = observed & RWLOCK_COUNT_MASK;
-        let waiter_hint = unsafe { atomic::x86_64_load_relaxed_i32(waiters) };
-        let replacement = if count == RWLOCK_WRITER || count == 1 {
-            0
-        } else {
-            observed.wrapping_sub(1)
-        };
-        // SAFETY: this is the sole release transition; a successful locked
-        // compare-exchange publishes the caller's preceding protected writes.
-        if unsafe { atomic::x86_64_compare_exchange_acqrel_i32(lock, observed, replacement) }
-            != observed
-        {
-            continue;
+// Musl's `src/thread/pthread_rwlockattr_setpshared.c` object.
+static_archive_member! { pthread_rwlockattr_setpshared_source {
+    /// Set the process-sharing mode of one rwlock attribute record.
+    ///
+    /// # Safety
+    ///
+    /// `attribute` must designate writable, aligned x86 rwlock-attribute storage
+    /// that is not concurrently accessed.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_rwlockattr_setpshared(
+        attribute: *mut c_void,
+        process_shared: c_int,
+    ) -> c_int {
+        if (process_shared as c_uint) > 1 {
+            return EINVAL;
         }
-        if replacement == 0 && (waiter_hint != 0 || observed < 0) {
-            // SAFETY: `_rw_shared` is immutable after init and the lock word
-            // remains live through the caller's required rwlock lifetime.
-            let private = futex_private_flag(unsafe { atomic::x86_64_load_relaxed_i32(shared) });
-            unsafe { futex_wake(lock, count, private) };
-        }
-        return 0;
+        let attribute = attribute.cast::<PublicPthreadRwlockAttr>();
+        // SAFETY: the caller supplies the complete non-concurrent public record;
+        // word zero is musl's exact pshared storage.
+        unsafe { core::ptr::addr_of_mut!((*attribute).words).cast::<c_uint>().write(process_shared as c_uint) };
+        0
     }
-}
+}}
+
+// Musl's `src/thread/pthread_attr_get.c` object.
+static_archive_member! { pthread_attr_get_source {
+    /// Read the process-sharing mode of one rwlock attribute record.
+    ///
+    /// # Safety
+    ///
+    /// `attribute` must point to a readable initialized x86 rwlock attribute and
+    /// `process_shared` to writable `int` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_rwlockattr_getpshared(
+        attribute: *const c_void,
+        process_shared: *mut c_int,
+    ) -> c_int {
+        let attribute = attribute.cast::<PublicPthreadRwlockAttr>();
+        // SAFETY: both C pointers meet the public get-attribute contract.  Raw
+        // operations avoid creating references to caller storage.
+        let value = unsafe { core::ptr::addr_of!((*attribute).words).cast::<c_uint>().read() };
+        unsafe { process_shared.write(value as c_int) };
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_rwlock_init.c` object.
+static_archive_member! { pthread_rwlock_init_source {
+    /// Initialize one rwlock to its all-zero private or requested shared state.
+    ///
+    /// # Safety
+    ///
+    /// `rwlock` must designate writable, aligned x86 `pthread_rwlock_t` storage
+    /// that is not concurrently accessed.  A non-null `attribute` must designate
+    /// a readable initialized x86 rwlock-attribute record.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_rwlock_init(
+        rwlock: *mut c_void,
+        attribute: *const c_void,
+    ) -> c_int {
+        let rwlock = rwlock.cast::<PublicPthreadRwlock>();
+        // SAFETY: the caller supplies one complete writable non-concurrent public
+        // rwlock record; zero is musl's exact initializer representation.
+        unsafe { core::ptr::write_bytes(rwlock, 0, 1) };
+        if !attribute.is_null() {
+            let attribute = attribute.cast::<PublicPthreadRwlockAttr>();
+            // SAFETY: the public init contract admits the initialized attribute
+            // record.  `wrapping_mul` preserves musl's unsigned storage operation
+            // even for caller-manufactured invalid bytes.
+            let shared = unsafe {
+                core::ptr::addr_of!((*attribute).words)
+                    .cast::<c_uint>()
+                    .read()
+                    .wrapping_mul(FUTEX_PRIVATE_FLAG as c_uint) as c_int
+            };
+            // SAFETY: word two belongs to the freshly zeroed non-concurrent
+            // rwlock.  It is immutable after successful initialization.
+            unsafe { rwlock_word(rwlock, RWLOCK_SHARED_WORD).write(shared) };
+        }
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_rwlock_destroy.c` object.
+static_archive_member! { pthread_rwlock_destroy_source {
+    /// Destroy one rwlock whose caller has made quiescent.
+    ///
+    /// Musl's rwlock record owns no resource, so this returns zero and does not
+    /// inspect a potentially concurrent/invalid record.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_rwlock_destroy(_rwlock: *mut c_void) -> c_int {
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_rwlock_rdlock.c` object.
+static_archive_member! { pthread_rwlock_rdlock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_rwlock_rdlock",
+        ".set pthread_rwlock_rdlock, __pthread_rwlock_rdlock",
+    );
+
+    /// Lock one rwlock for reading, waiting without a deadline as necessary.
+    ///
+    /// # Safety
+    ///
+    /// `rwlock` must designate a live x86 public rwlock whose lifetime and
+    /// concurrent access obey the pthread object contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn __pthread_rwlock_rdlock(rwlock: *mut c_void) -> c_int {
+        // SAFETY: the C caller supplies the admitted public rwlock object; a null
+        // deadline selects musl's ordinary untimed rwlock path.
+        unsafe { timed_read_lock(rwlock.cast::<PublicPthreadRwlock>(), core::ptr::null()) }
+    }
+}}
+
+// Musl's `src/thread/pthread_rwlock_tryrdlock.c` object.
+static_archive_member! { pthread_rwlock_tryrdlock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_rwlock_tryrdlock",
+        ".set pthread_rwlock_tryrdlock, __pthread_rwlock_tryrdlock",
+    );
+
+    /// Try one reader acquisition without blocking.
+    ///
+    /// # Safety
+    ///
+    /// `rwlock` must designate a live x86 public rwlock whose lifetime and
+    /// concurrent access obey the pthread object contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn __pthread_rwlock_tryrdlock(rwlock: *mut c_void) -> c_int {
+        // SAFETY: the C caller supplies the admitted public rwlock object.
+        unsafe { try_read_lock(rwlock.cast::<PublicPthreadRwlock>()) }
+    }
+}}
+
+// Musl's `src/thread/pthread_rwlock_timedrdlock.c` object.
+static_archive_member! { pthread_rwlock_timedrdlock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_rwlock_timedrdlock",
+        ".set pthread_rwlock_timedrdlock, __pthread_rwlock_timedrdlock",
+    );
+
+    /// Lock one rwlock for reading until its absolute realtime deadline.
+    ///
+    /// # Safety
+    ///
+    /// `rwlock` must designate a live x86 public rwlock and `absolute_timeout` a
+    /// readable x86 `struct timespec` when the initial trylock cannot succeed.
+    #[no_mangle]
+    pub unsafe extern "C" fn __pthread_rwlock_timedrdlock(
+        rwlock: *mut c_void,
+        absolute_timeout: *const c_void,
+    ) -> c_int {
+        // SAFETY: the C caller supplies the raw rwlock and deadline contracts.
+        unsafe {
+            timed_read_lock(
+                rwlock.cast::<PublicPthreadRwlock>(),
+                absolute_timeout.cast::<RawTimespec>(),
+            )
+        }
+    }
+}}
+
+// Musl's `src/thread/pthread_rwlock_wrlock.c` object.
+static_archive_member! { pthread_rwlock_wrlock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_rwlock_wrlock",
+        ".set pthread_rwlock_wrlock, __pthread_rwlock_wrlock",
+    );
+
+    /// Lock one rwlock for writing, waiting without a deadline as necessary.
+    ///
+    /// # Safety
+    ///
+    /// `rwlock` must designate a live x86 public rwlock whose lifetime and
+    /// concurrent access obey the pthread object contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn __pthread_rwlock_wrlock(rwlock: *mut c_void) -> c_int {
+        // SAFETY: the C caller supplies the admitted public rwlock object; a null
+        // deadline selects musl's ordinary untimed rwlock path.
+        unsafe { timed_write_lock(rwlock.cast::<PublicPthreadRwlock>(), core::ptr::null()) }
+    }
+}}
+
+// Musl's `src/thread/pthread_rwlock_trywrlock.c` object.
+static_archive_member! { pthread_rwlock_trywrlock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_rwlock_trywrlock",
+        ".set pthread_rwlock_trywrlock, __pthread_rwlock_trywrlock",
+    );
+
+    /// Try one writer acquisition without blocking.
+    ///
+    /// # Safety
+    ///
+    /// `rwlock` must designate a live x86 public rwlock whose lifetime and
+    /// concurrent access obey the pthread object contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn __pthread_rwlock_trywrlock(rwlock: *mut c_void) -> c_int {
+        // SAFETY: the C caller supplies the admitted public rwlock object.
+        unsafe { try_write_lock(rwlock.cast::<PublicPthreadRwlock>()) }
+    }
+}}
+
+// Musl's `src/thread/pthread_rwlock_timedwrlock.c` object.
+static_archive_member! { pthread_rwlock_timedwrlock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_rwlock_timedwrlock",
+        ".set pthread_rwlock_timedwrlock, __pthread_rwlock_timedwrlock",
+    );
+
+    /// Lock one rwlock for writing until its absolute realtime deadline.
+    ///
+    /// # Safety
+    ///
+    /// `rwlock` must designate a live x86 public rwlock and `absolute_timeout` a
+    /// readable x86 `struct timespec` when the initial trylock cannot succeed.
+    #[no_mangle]
+    pub unsafe extern "C" fn __pthread_rwlock_timedwrlock(
+        rwlock: *mut c_void,
+        absolute_timeout: *const c_void,
+    ) -> c_int {
+        // SAFETY: the C caller supplies the raw rwlock and deadline contracts.
+        unsafe {
+            timed_write_lock(
+                rwlock.cast::<PublicPthreadRwlock>(),
+                absolute_timeout.cast::<RawTimespec>(),
+            )
+        }
+    }
+}}
+
+// Musl's `src/thread/pthread_rwlock_unlock.c` object.
+static_archive_member! { pthread_rwlock_unlock_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_rwlock_unlock",
+        ".set pthread_rwlock_unlock, __pthread_rwlock_unlock",
+    );
+
+    /// Release one reader or writer hold and wake eligible waiters.
+    ///
+    /// # Safety
+    ///
+    /// `rwlock` must designate a live x86 public rwlock held according to the
+    /// caller's pthread ownership discipline.
+    #[no_mangle]
+    pub unsafe extern "C" fn __pthread_rwlock_unlock(rwlock: *mut c_void) -> c_int {
+        let rwlock = rwlock.cast::<PublicPthreadRwlock>();
+        let lock = unsafe { rwlock_word(rwlock, RWLOCK_LOCK_WORD) };
+        let waiters = unsafe { rwlock_word(rwlock, RWLOCK_WAITERS_WORD) };
+        let shared = unsafe { rwlock_word(rwlock, RWLOCK_SHARED_WORD) };
+        loop {
+            // SAFETY: all raw words belong to the live public rwlock and use the
+            // same atomic protocol for their whole concurrent lifetime.
+            let observed = unsafe { atomic::x86_64_load_acquire_i32(lock) };
+            let count = observed & RWLOCK_COUNT_MASK;
+            let waiter_hint = unsafe { atomic::x86_64_load_relaxed_i32(waiters) };
+            let replacement = if count == RWLOCK_WRITER || count == 1 {
+                0
+            } else {
+                observed.wrapping_sub(1)
+            };
+            // SAFETY: this is the sole release transition; a successful locked
+            // compare-exchange publishes the caller's preceding protected writes.
+            if unsafe { atomic::x86_64_compare_exchange_acqrel_i32(lock, observed, replacement) }
+                != observed
+            {
+                continue;
+            }
+            if replacement == 0 && (waiter_hint != 0 || observed < 0) {
+                // SAFETY: `_rw_shared` is immutable after init and the lock word
+                // remains live through the caller's required rwlock lifetime.
+                let private = futex_private_flag(unsafe { atomic::x86_64_load_relaxed_i32(shared) });
+                unsafe { futex_wake(lock, count, private) };
+            }
+            return 0;
+        }
+    }
+}}
 
 // Musl's seven public rwlock acquisition/release spellings are weak aliases
 // of hidden strong `__pthread_rwlock_*` definitions at the same address.  A
@@ -650,24 +731,10 @@ pub unsafe extern "C" fn __pthread_rwlock_unlock(rwlock: *mut c_void) -> c_int {
 // override contracts, so keep the alias graph in assembler.
 core::arch::global_asm!(
     ".hidden __pthread_rwlock_rdlock",
-    ".weak pthread_rwlock_rdlock",
-    ".set pthread_rwlock_rdlock, __pthread_rwlock_rdlock",
     ".hidden __pthread_rwlock_tryrdlock",
-    ".weak pthread_rwlock_tryrdlock",
-    ".set pthread_rwlock_tryrdlock, __pthread_rwlock_tryrdlock",
     ".hidden __pthread_rwlock_timedrdlock",
-    ".weak pthread_rwlock_timedrdlock",
-    ".set pthread_rwlock_timedrdlock, __pthread_rwlock_timedrdlock",
     ".hidden __pthread_rwlock_wrlock",
-    ".weak pthread_rwlock_wrlock",
-    ".set pthread_rwlock_wrlock, __pthread_rwlock_wrlock",
     ".hidden __pthread_rwlock_trywrlock",
-    ".weak pthread_rwlock_trywrlock",
-    ".set pthread_rwlock_trywrlock, __pthread_rwlock_trywrlock",
     ".hidden __pthread_rwlock_timedwrlock",
-    ".weak pthread_rwlock_timedwrlock",
-    ".set pthread_rwlock_timedwrlock, __pthread_rwlock_timedwrlock",
     ".hidden __pthread_rwlock_unlock",
-    ".weak pthread_rwlock_unlock",
-    ".set pthread_rwlock_unlock, __pthread_rwlock_unlock",
 );

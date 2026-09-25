@@ -64,129 +64,141 @@ const THRD_NOMEM: c_int = 3;
 const THRD_SLEEP_INTR: c_int = -1;
 const THRD_SLEEP_ERROR: c_int = -2;
 
-/// Create one bounded joinable C11 worker over the selected static TLS seam.
-///
-/// `thread` must designate writable `thrd_t` storage; `start` must be a valid
-/// C11 `int (*)(void *)` callback; and `argument` must remain valid until that
-/// callback stops reading it. The returned handle is the child's opaque
-/// Variant-II TP, just like `thrd_current` and the selected pthread handle.
-///
-/// # Safety
-///
-/// This C ABI cannot validate the output pointer, callback code, or argument
-/// lifetime. The callback must return normally or call this leaf's `thrd_exit`;
-/// no detached-at-create, cancellation, or general C11 lifecycle behavior is
-/// selected.
-#[no_mangle]
-pub unsafe extern "C" fn thrd_create(
-    thread: *mut *mut c_void,
-    start: Option<C11StartRoutine>,
-    argument: *mut c_void,
-) -> c_int {
-    let start = match start {
-        Some(start) => start,
-        None => return THRD_ERROR,
-    };
-    // SAFETY: the typed C11 callback and output/lifetime obligations are the
-    // public boundary contract above. The sibling owns all clone/TLS state.
-    match unsafe {
-        pthread_create_join::create_selected_worker(
-            thread,
-            SelectedWorkerStart::C11(start),
-            argument,
-        )
-    } {
-        0 => THRD_SUCCESS,
-        EAGAIN => THRD_NOMEM,
-        _ => THRD_ERROR,
-    }
-}
-
-/// Join one selected C11 worker and optionally write its exact signed result.
-///
-/// The result word is decoded only after the sibling has observed
-/// clear-child-tid, acquired the callback publication, withdrawn the exact TP
-/// registry entry, and released the worker's TLS/control mappings. A null
-/// `result` discards the callback value.
-///
-/// # Safety
-///
-/// `thread` must be one still-live handle produced by [`thrd_create`]. If
-/// non-null, `result` must be writable aligned `int` storage. The caller must
-/// not concurrently join the same handle.
-#[no_mangle]
-pub unsafe extern "C" fn thrd_join(thread: *mut c_void, result: *mut c_int) -> c_int {
-    // SAFETY: `thread` and optional result storage meet the C ABI obligations
-    // above; the shared join returns only after it owns/reclaims the worker.
-    let joined = match unsafe { pthread_create_join::join_selected_worker(thread) } {
-        Ok(joined) => joined,
-        Err(_) => return THRD_ERROR,
-    };
-    if joined.kind != pthread_create_join::SelectedWorkerResultKind::C11 {
-        // A pthread_exit call from a C11-mode callback is explicitly outside
-        // this selected C11 route. The shared worker already reclaimed safely,
-        // but this boundary must not decode that raw pointer as an `int`.
-        return THRD_ERROR;
-    }
-    if !result.is_null() {
-        // SAFETY: the caller supplied writable C `int` storage. The exact C11
-        // decoding does not reinterpret the encoded word as a pointer.
-        unsafe {
-            core::ptr::write(
-                result,
-                pthread_create_join::decode_c11_result(joined.encoded_result),
-            )
+// Musl's `src/thread/thrd_create.c` object.
+static_archive_member! { thrd_create_source {
+    /// Create one bounded joinable C11 worker over the selected static TLS seam.
+    ///
+    /// `thread` must designate writable `thrd_t` storage; `start` must be a valid
+    /// C11 `int (*)(void *)` callback; and `argument` must remain valid until that
+    /// callback stops reading it. The returned handle is the child's opaque
+    /// Variant-II TP, just like `thrd_current` and the selected pthread handle.
+    ///
+    /// # Safety
+    ///
+    /// This C ABI cannot validate the output pointer, callback code, or argument
+    /// lifetime. The callback must return normally or call this leaf's `thrd_exit`;
+    /// no detached-at-create, cancellation, or general C11 lifecycle behavior is
+    /// selected.
+    #[no_mangle]
+    pub unsafe extern "C" fn thrd_create(
+        thread: *mut *mut c_void,
+        start: Option<C11StartRoutine>,
+        argument: *mut c_void,
+    ) -> c_int {
+        let start = match start {
+            Some(start) => start,
+            None => return THRD_ERROR,
         };
+        // SAFETY: the typed C11 callback and output/lifetime obligations are the
+        // public boundary contract above. The sibling owns all clone/TLS state.
+        match unsafe {
+            pthread_create_join::create_selected_worker(
+                thread,
+                SelectedWorkerStart::C11(start),
+                argument,
+            )
+        } {
+            0 => THRD_SUCCESS,
+            EAGAIN => THRD_NOMEM,
+            _ => THRD_ERROR,
+        }
     }
-    THRD_SUCCESS
-}
+}}
 
-/// Sleep for one C11 relative realtime interval through the selected syscall seam.
-///
-/// The return is `0` after completion, `-1` only when Linux reports `EINTR`,
-/// and `-2` for every other failure. Like C11 and musl, this function reports
-/// through its return value rather than modifying C `errno`.
-///
-/// # Safety
-///
-/// `duration` must point to a readable, aligned x86-64 `struct timespec` for
-/// the syscall. `remaining` must be null or point to writable storage for the
-/// same record. The caller owns signal delivery and must keep both records
-/// alive until the syscall returns; this bounded route is not a cancellation
-/// point and provides no pthread/C11 cancellation cleanup semantics.
-#[no_mangle]
-pub unsafe extern "C" fn thrd_sleep(
-    duration: *const c_void,
-    remaining: *mut c_void,
-) -> c_int {
-    // SAFETY: the C ABI obligations above exactly supply the sibling's raw
-    // x86 timespec-pointer contract. Its direct result is zero or positive
-    // errno and it intentionally does not publish errno through TLS.
-    match unsafe {
-        super::clock_nanosleep::__clock_nanosleep(
-            super::clock_nanosleep::CLOCK_REALTIME,
-            0,
-            duration,
-            remaining,
-        )
-    } {
-        0 => THRD_SUCCESS,
-        EINTR => THRD_SLEEP_INTR,
-        _ => THRD_SLEEP_ERROR,
+// Musl's `src/thread/thrd_join.c` object.
+static_archive_member! { thrd_join_source {
+    /// Join one selected C11 worker and optionally write its exact signed result.
+    ///
+    /// The result word is decoded only after the sibling has observed
+    /// clear-child-tid, acquired the callback publication, withdrawn the exact TP
+    /// registry entry, and released the worker's TLS/control mappings. A null
+    /// `result` discards the callback value.
+    ///
+    /// # Safety
+    ///
+    /// `thread` must be one still-live handle produced by [`thrd_create`]. If
+    /// non-null, `result` must be writable aligned `int` storage. The caller must
+    /// not concurrently join the same handle.
+    #[no_mangle]
+    pub unsafe extern "C" fn thrd_join(thread: *mut c_void, result: *mut c_int) -> c_int {
+        // SAFETY: `thread` and optional result storage meet the C ABI obligations
+        // above; the shared join returns only after it owns/reclaims the worker.
+        let joined = match unsafe { pthread_create_join::join_selected_worker(thread) } {
+            Ok(joined) => joined,
+            Err(_) => return THRD_ERROR,
+        };
+        if joined.kind != pthread_create_join::SelectedWorkerResultKind::C11 {
+            // A pthread_exit call from a C11-mode callback is explicitly outside
+            // this selected C11 route. The shared worker already reclaimed safely,
+            // but this boundary must not decode that raw pointer as an `int`.
+            return THRD_ERROR;
+        }
+        if !result.is_null() {
+            // SAFETY: the caller supplied writable C `int` storage. The exact C11
+            // decoding does not reinterpret the encoded word as a pointer.
+            unsafe {
+                core::ptr::write(
+                    result,
+                    pthread_create_join::decode_c11_result(joined.encoded_result),
+                )
+            };
+        }
+        THRD_SUCCESS
     }
-}
+}}
 
-/// End the current selected C11 worker with its exact signed `int` result.
-///
-/// # Safety
-///
-/// This is valid only for a callback created through [`thrd_create`]. The
-/// callback must not access any object after this call; it never returns. A
-/// detached worker's result is deliberately discarded.
-#[no_mangle]
-#[inline(never)]
-pub unsafe extern "C" fn thrd_exit(result: c_int) -> ! {
-    // SAFETY: this converts a C11 `int` at the typed boundary, then takes the
-    // exact selected-worker publication/SYS_exit path shared with pthread_exit.
-    unsafe { pthread_create_join::exit_selected_c11_worker(result) }
-}
+// Musl's `src/thread/thrd_sleep.c` object.
+static_archive_member! { thrd_sleep_source {
+    /// Sleep for one C11 relative realtime interval through the selected syscall seam.
+    ///
+    /// The return is `0` after completion, `-1` only when Linux reports `EINTR`,
+    /// and `-2` for every other failure. Like C11 and musl, this function reports
+    /// through its return value rather than modifying C `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `duration` must point to a readable, aligned x86-64 `struct timespec` for
+    /// the syscall. `remaining` must be null or point to writable storage for the
+    /// same record. The caller owns signal delivery and must keep both records
+    /// alive until the syscall returns; this bounded route is not a cancellation
+    /// point and provides no pthread/C11 cancellation cleanup semantics.
+    #[no_mangle]
+    pub unsafe extern "C" fn thrd_sleep(
+        duration: *const c_void,
+        remaining: *mut c_void,
+    ) -> c_int {
+        // SAFETY: the C ABI obligations above exactly supply the sibling's raw
+        // x86 timespec-pointer contract. Its direct result is zero or positive
+        // errno and it intentionally does not publish errno through TLS.
+        match unsafe {
+            crate::x86_64_static_c_abi::clock_nanosleep::__clock_nanosleep(
+                crate::x86_64_static_c_abi::clock_nanosleep::CLOCK_REALTIME,
+                0,
+                duration,
+                remaining,
+            )
+        } {
+            0 => THRD_SUCCESS,
+            EINTR => THRD_SLEEP_INTR,
+            _ => THRD_SLEEP_ERROR,
+        }
+    }
+}}
+
+// Musl's `src/thread/thrd_exit.c` object.
+static_archive_member! { thrd_exit_source {
+    /// End the current selected C11 worker with its exact signed `int` result.
+    ///
+    /// # Safety
+    ///
+    /// This is valid only for a callback created through [`thrd_create`]. The
+    /// callback must not access any object after this call; it never returns. A
+    /// detached worker's result is deliberately discarded.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn thrd_exit(result: c_int) -> ! {
+        // SAFETY: this converts a C11 `int` at the typed boundary, then takes the
+        // exact selected-worker publication/SYS_exit path shared with pthread_exit.
+        unsafe { pthread_create_join::exit_selected_c11_worker(result) }
+    }
+}}

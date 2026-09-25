@@ -118,35 +118,40 @@ fn current_default_attributes() -> PublicPthreadAttr {
     PublicPthreadAttr::musl_default()
 }
 
-/// Snapshot the GNU default attributes (only stack and guard are nonzero).
-/// # Safety
-/// `attributes` must point to writable, aligned pthread_attr_t storage.
+// Musl's `src/thread/pthread_setattr_default_np.c` object.
 #[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn pthread_getattr_default_np(attributes: *mut c_void) -> c_int {
-    unsafe { attributes.cast::<PublicPthreadAttr>().write(current_default_attributes()) };
-    0
-}
+static_archive_member! { pthread_setattr_default_np_source {
+    /// Snapshot the GNU default attributes (only stack and guard are nonzero).
+    /// # Safety
+    /// `attributes` must point to writable, aligned pthread_attr_t storage.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_getattr_default_np(attributes: *mut c_void) -> c_int {
+        unsafe { attributes.cast::<PublicPthreadAttr>().write(current_default_attributes()) };
+        0
+    }
 
-/// Increase the GNU default stack/guard sizes, capped at 8 MiB/1 MiB.
-/// All other record bytes must be zero, as in musl 1.2.6
-/// src/thread/pthread_setattr_default_np.c (MIT).
-/// # Safety
-/// `attributes` must point to a readable, initialized, aligned pthread_attr_t.
-#[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn pthread_setattr_default_np(attributes: *const c_void) -> c_int {
-    let value = unsafe { attributes.cast::<PublicPthreadAttr>().read() };
-    if value.words[2..].iter().any(|word| *word != 0) { return EINVAL; }
-    let stack = value.stack_size().min(8 << 20) as u64;
-    let guard = value.guard_size().min(1 << 20) as u64;
-    let _ = DEFAULT_ATTRIBUTES.fetch_update(
-        core::sync::atomic::Ordering::AcqRel,
-        core::sync::atomic::Ordering::Acquire,
-        |old| Some(stack.max(old & 0xffff_ffff) | (guard.max(old >> 32) << 32)),
-    );
-    0
-}
+    /// Increase the GNU default stack/guard sizes, capped at 8 MiB/1 MiB.
+    /// All other record bytes must be zero, as in musl 1.2.6
+    /// src/thread/pthread_setattr_default_np.c (MIT).
+    /// # Safety
+    /// `attributes` must point to a readable, initialized, aligned pthread_attr_t.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_setattr_default_np(attributes: *const c_void) -> c_int {
+        let value = unsafe { attributes.cast::<PublicPthreadAttr>().read() };
+        if value.words[2..].iter().any(|word| *word != 0) { return EINVAL; }
+        let stack = value.stack_size().min(8 << 20) as u64;
+        let guard = value.guard_size().min(1 << 20) as u64;
+        let _ = DEFAULT_ATTRIBUTES.fetch_update(
+            core::sync::atomic::Ordering::AcqRel,
+            core::sync::atomic::Ordering::Acquire,
+            |old| Some(stack.max(old & 0xffff_ffff) | (guard.max(old >> 32) << 32)),
+        );
+        0
+    }
+}}
+
 
 /// Exact public `pthread_attr_t` storage on Linux/x86-64 LP64.
 #[derive(Clone, Copy)]
@@ -311,424 +316,468 @@ const fn valid_guard_size(size: usize) -> bool {
     size <= usize::MAX / 8
 }
 
-/// Initialize one exact musl-shaped pthread attribute record.
-///
-/// # Safety
-///
-/// `attributes` must designate writable, properly aligned `pthread_attr_t`
-/// storage. Null or otherwise invalid pointers are outside the C API contract.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_init(attributes: *mut c_void) -> c_int {
-    // SAFETY: the caller supplies the writable public object documented above;
-    // the representation assertions preserve its exact LP64 ABI.
-    unsafe {
-        core::ptr::write(
-            attributes.cast::<PublicPthreadAttr>(),
-            current_default_attributes(),
-        )
-    };
-    0
-}
-
-/// Destroy one pthread attribute record without modifying its storage.
-///
-/// # Safety
-///
-/// `attributes` must be an initialized `pthread_attr_t` according to the C
-/// API. Musl does not dereference it for this no-op operation.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_destroy(_attributes: *mut c_void) -> c_int {
-    0
-}
-
-/// Set the joinable or detached record bit.
-///
-/// # Safety
-///
-/// `attributes` must designate writable, initialized, properly aligned
-/// `pthread_attr_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setdetachstate(
-    attributes: *mut c_void,
-    state: c_int,
-) -> c_int {
-    if (state as u32) > PTHREAD_CREATE_DETACHED {
-        return EINVAL;
-    }
-    // SAFETY: the caller supplies a valid writable public record.
-    let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    value.set_detach_state(state);
-    // SAFETY: this writes the same caller-owned public record after the
-    // successful source-defined field update.
-    unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
-    0
-}
-
-/// Copy the stored detach-state integer.
-///
-/// # Safety
-///
-/// `attributes` must designate readable initialized `pthread_attr_t` storage,
-/// and `state` must designate writable `int` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getdetachstate(
-    attributes: *const c_void,
-    state: *mut c_int,
-) -> c_int {
-    // SAFETY: the caller supplies the readable record and writable result.
-    let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    unsafe { core::ptr::write(state, value.detach_state()) };
-    0
-}
-
-/// Store a valid stack size and clear any caller-stack address.
-///
-/// # Safety
-///
-/// `attributes` must designate writable, initialized, properly aligned
-/// `pthread_attr_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setstacksize(
-    attributes: *mut c_void,
-    size: usize,
-) -> c_int {
-    if !valid_stack_size(size) {
-        return EINVAL;
-    }
-    // SAFETY: the caller supplies a valid writable public record.
-    let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    value.set_stack_size(size);
-    unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
-    0
-}
-
-/// Copy the stored stack size.
-///
-/// # Safety
-///
-/// `attributes` must designate readable initialized `pthread_attr_t` storage,
-/// and `size` must designate writable `size_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getstacksize(
-    attributes: *const c_void,
-    size: *mut usize,
-) -> c_int {
-    // SAFETY: the caller supplies the readable record and writable result.
-    let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    unsafe { core::ptr::write(size, value.stack_size()) };
-    0
-}
-
-/// Store a caller stack using musl's one-past-top representation.
-///
-/// # Safety
-///
-/// `attributes` must designate writable, initialized, properly aligned
-/// `pthread_attr_t` storage. `address` and `size` are retained only as record
-/// metadata in this slice; no worker is created from them here.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setstack(
-    attributes: *mut c_void,
-    address: *mut c_void,
-    size: usize,
-) -> c_int {
-    if !valid_stack_size(size) {
-        return EINVAL;
-    }
-    // SAFETY: the caller supplies a valid writable public record.
-    let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    value.set_stack(address as usize, size);
-    unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
-    0
-}
-
-/// Recover a caller-stack base and size from the stored top representation.
-///
-/// # Safety
-///
-/// `attributes` must designate readable initialized `pthread_attr_t` storage;
-/// `address` and `size` must designate writable pointer and `size_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getstack(
-    attributes: *const c_void,
-    address: *mut *mut c_void,
-    size: *mut usize,
-) -> c_int {
-    // SAFETY: the caller supplies a readable public record.
-    let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    let stack_top = value.stack_top();
-    if stack_top == 0 {
-        // Musl leaves both outputs untouched on this error path.
-        return EINVAL;
-    }
-    let stack_size = value.stack_size();
-    // SAFETY: the caller supplies both writable output slots.
-    unsafe {
-        core::ptr::write(size, stack_size);
-        core::ptr::write(
-            address,
-            stack_top.wrapping_sub(stack_size) as *mut c_void,
-        );
-    }
-    0
-}
-
-/// Store a valid guard-size request.
-///
-/// # Safety
-///
-/// `attributes` must designate writable, initialized, properly aligned
-/// `pthread_attr_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setguardsize(
-    attributes: *mut c_void,
-    size: usize,
-) -> c_int {
-    if !valid_guard_size(size) {
-        return EINVAL;
-    }
-    // SAFETY: the caller supplies a valid writable public record.
-    let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    value.set_guard_size(size);
-    unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
-    0
-}
-
-/// Copy the stored guard-size request.
-///
-/// # Safety
-///
-/// `attributes` must designate readable initialized `pthread_attr_t` storage,
-/// and `size` must designate writable `size_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getguardsize(
-    attributes: *const c_void,
-    size: *mut usize,
-) -> c_int {
-    // SAFETY: the caller supplies the readable record and writable result.
-    let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    unsafe { core::ptr::write(size, value.guard_size()) };
-    0
-}
-
-/// Select musl's only supported system contention scope.
-///
-/// # Safety
-///
-/// `attributes` must be an initialized `pthread_attr_t` according to the C
-/// API. Musl does not dereference it for this scope-status operation.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setscope(
-    _attributes: *mut c_void,
-    scope: c_int,
-) -> c_int {
-    match scope {
-        PTHREAD_SCOPE_SYSTEM => 0,
-        PTHREAD_SCOPE_PROCESS => ENOTSUP,
-        _ => EINVAL,
-    }
-}
-
-/// Report musl's fixed system contention scope.
-///
-/// # Safety
-///
-/// `attributes` must be an initialized `pthread_attr_t` according to the C
-/// API, and `scope` must designate writable `int` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getscope(
-    _attributes: *const c_void,
-    scope: *mut c_int,
-) -> c_int {
-    // SAFETY: the caller supplies the writable result slot.
-    unsafe { core::ptr::write(scope, PTHREAD_SCOPE_SYSTEM) };
-    0
-}
-
-/// Store the inherited or explicit scheduling selector.
-///
-/// # Safety
-///
-/// `attributes` must designate writable, initialized, properly aligned
-/// `pthread_attr_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setinheritsched(
-    attributes: *mut c_void,
-    inherit: c_int,
-) -> c_int {
-    if (inherit as u32) > PTHREAD_EXPLICIT_SCHED {
-        return EINVAL;
-    }
-    // SAFETY: the caller supplies a valid writable public record.
-    let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    value.set_inherit_sched(inherit);
-    unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
-    0
-}
-
-/// Copy the stored scheduling-inheritance selector.
-///
-/// # Safety
-///
-/// `attributes` must designate readable initialized `pthread_attr_t` storage,
-/// and `inherit` must designate writable `int` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getinheritsched(
-    attributes: *const c_void,
-    inherit: *mut c_int,
-) -> c_int {
-    // SAFETY: the caller supplies the readable record and writable result.
-    let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    unsafe { core::ptr::write(inherit, value.inherit_sched()) };
-    0
-}
-
-/// Store a scheduler policy without prevalidating the raw integer.
-///
-/// # Safety
-///
-/// `attributes` must designate writable, initialized, properly aligned
-/// `pthread_attr_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setschedpolicy(
-    attributes: *mut c_void,
-    policy: c_int,
-) -> c_int {
-    // SAFETY: the caller supplies a valid writable public record.
-    let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    value.set_sched_policy(policy);
-    unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
-    0
-}
-
-/// Copy the stored raw scheduler policy.
-///
-/// # Safety
-///
-/// `attributes` must designate readable initialized `pthread_attr_t` storage,
-/// and `policy` must designate writable `int` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getschedpolicy(
-    attributes: *const c_void,
-    policy: *mut c_int,
-) -> c_int {
-    // SAFETY: the caller supplies the readable record and writable result.
-    let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    unsafe { core::ptr::write(policy, value.sched_policy()) };
-    0
-}
-
-/// Store only `struct sched_param::sched_priority`.
-///
-/// # Safety
-///
-/// `attributes` must designate writable initialized `pthread_attr_t` storage,
-/// and `parameters` must designate a readable `struct sched_param` whose
-/// first field is its C `int` scheduling priority.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setschedparam(
-    attributes: *mut c_void,
-    parameters: *const c_void,
-) -> c_int {
-    // SAFETY: the public sched_param ABI places its priority int first.
-    let priority = unsafe { core::ptr::read(parameters.cast::<c_int>()) };
-    // SAFETY: the caller supplies a valid writable public record.
-    let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    value.set_sched_priority(priority);
-    unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
-    0
-}
-
-/// Copy the stored priority into only `struct sched_param::sched_priority`.
-///
-/// # Safety
-///
-/// `attributes` must designate readable initialized `pthread_attr_t` storage,
-/// and `parameters` must designate writable `struct sched_param` storage.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getschedparam(
-    attributes: *const c_void,
-    parameters: *mut c_void,
-) -> c_int {
-    // SAFETY: the caller supplies the readable record and sched_param output.
-    let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
-    // SAFETY: the public sched_param ABI places its priority int first; musl
-    // leaves the rest of the caller's record untouched.
-    unsafe { core::ptr::write(parameters.cast::<c_int>(), value.sched_priority()) };
-    0
-}
-
-/// Observe the owned thread's usable stack, guard and current detach state.
-///
-/// Musl 1.2.6 `src/thread/pthread_getattr_np.c` starts with a zero public
-/// record and copies actual stack/guard metadata, not the creation request.
-/// Our TLS/control allocations are separate from the application stack; its
-/// reported bounds therefore exclude those mappings rather than inventing
-/// musl's coallocated-TLS overhead. Unknown or withdrawn owned handles return
-/// ESRCH without touching output or errno; musl leaves such handles undefined.
-///
-/// The original main stack has no fixed pthread allocation record. Preserve
-/// musl's page-rounded auxv anchor and `mremap` probe below it. A failed probe
-/// sets errno even though this API returns success; only ENOMEM continues the
-/// scan, and any other kernel result ends it with the accumulated size. No
-/// rlimit, /proc, or guessed-stack fallback is substituted for that contract.
-///
-/// # Safety
-/// `thread` must belong to this owned runtime and retain its pthread lifetime
-/// through this call. `attributes` must designate writable, aligned storage
-/// for one pthread_attr_t; prior initialization is not required. The returned
-/// stack coordinates do not extend the target's lifetime or permit access to
-/// its stack without separate application synchronization.
-#[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn pthread_getattr_np(
-    thread: *mut c_void,
-    attributes: *mut c_void,
-) -> c_int {
-    let Some(snapshot) = super::pthread_create_join::selected_thread_attributes(thread) else {
-        return ESRCH;
-    };
-    let mut value = PublicPthreadAttr { words: [0; ATTR_WORDS] };
-    value.set_detach_state(if snapshot.detached { 1 } else { 0 });
-    if let Some(stack) = snapshot.stack {
-        value.words[STACK_TOP_WORD_INDEX] = stack.top;
-        value.words[STACK_SIZE_WORD_INDEX] = stack.size;
-        value.words[GUARD_SIZE_WORD_INDEX] = stack.guard_size;
-    } else {
-        let Some(anchor) = super::auxv_observation::initial_stack_anchor() else {
-            return EINVAL;
+// Musl's `src/thread/pthread_attr_init.c` object.
+static_archive_member! { pthread_attr_init_source {
+    /// Initialize one exact musl-shaped pthread attribute record.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate writable, properly aligned `pthread_attr_t`
+    /// storage. Null or otherwise invalid pointers are outside the C API contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_init(attributes: *mut c_void) -> c_int {
+        // SAFETY: the caller supplies the writable public object documented above;
+        // the representation assertions preserve its exact LP64 ABI.
+        unsafe {
+            core::ptr::write(
+                attributes.cast::<PublicPthreadAttr>(),
+                current_default_attributes(),
+            )
         };
-        const PAGE_SIZE: usize = 4096;
-        const ENOMEM: i64 = 12;
-        let top = anchor.wrapping_add(anchor.wrapping_neg() & (PAGE_SIZE - 1));
-        let mut size = PAGE_SIZE;
-        loop {
-            // SAFETY: this is musl's address-space metadata probe, not a
-            // dereference. No MREMAP_MAYMOVE/FIXED flag or new address is
-            // supplied. Kernel errors retain the source errno side effect.
-            let result = unsafe {
-                super::raw_syscall::syscall5(
-                    super::raw_syscall::SYS_MREMAP,
-                    top.wrapping_sub(size).wrapping_sub(PAGE_SIZE) as i64,
-                    PAGE_SIZE as i64,
-                    (2 * PAGE_SIZE) as i64,
-                    0,
-                    0,
-                )
-            };
-            if (-4095..0).contains(&result) {
-                unsafe { super::errno::set_errno((-result) as c_int) };
-                if result == -ENOMEM {
-                    size = size.wrapping_add(PAGE_SIZE);
-                    continue;
-                }
-            }
-            break;
-        }
-        value.words[STACK_TOP_WORD_INDEX] = top;
-        value.words[STACK_SIZE_WORD_INDEX] = size;
+        0
     }
-    // SAFETY: the public caller owns exactly one writable output record.
-    unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
-    0
-}
+}}
+
+// Musl's `src/thread/pthread_attr_destroy.c` object.
+static_archive_member! { pthread_attr_destroy_source {
+    /// Destroy one pthread attribute record without modifying its storage.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must be an initialized `pthread_attr_t` according to the C
+    /// API. Musl does not dereference it for this no-op operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_destroy(_attributes: *mut c_void) -> c_int {
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_attr_setdetachstate.c` object.
+static_archive_member! { pthread_attr_setdetachstate_source {
+    /// Set the joinable or detached record bit.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate writable, initialized, properly aligned
+    /// `pthread_attr_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_setdetachstate(
+        attributes: *mut c_void,
+        state: c_int,
+    ) -> c_int {
+        if (state as u32) > PTHREAD_CREATE_DETACHED {
+            return EINVAL;
+        }
+        // SAFETY: the caller supplies a valid writable public record.
+        let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        value.set_detach_state(state);
+        // SAFETY: this writes the same caller-owned public record after the
+        // successful source-defined field update.
+        unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_attr_get.c` object.
+static_archive_member! { pthread_attr_get_source {
+    /// Copy the stored detach-state integer.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate readable initialized `pthread_attr_t` storage,
+    /// and `state` must designate writable `int` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_getdetachstate(
+        attributes: *const c_void,
+        state: *mut c_int,
+    ) -> c_int {
+        // SAFETY: the caller supplies the readable record and writable result.
+        let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        unsafe { core::ptr::write(state, value.detach_state()) };
+        0
+    }
+
+    /// Copy the stored stack size.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate readable initialized `pthread_attr_t` storage,
+    /// and `size` must designate writable `size_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_getstacksize(
+        attributes: *const c_void,
+        size: *mut usize,
+    ) -> c_int {
+        // SAFETY: the caller supplies the readable record and writable result.
+        let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        unsafe { core::ptr::write(size, value.stack_size()) };
+        0
+    }
+
+    /// Recover a caller-stack base and size from the stored top representation.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate readable initialized `pthread_attr_t` storage;
+    /// `address` and `size` must designate writable pointer and `size_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_getstack(
+        attributes: *const c_void,
+        address: *mut *mut c_void,
+        size: *mut usize,
+    ) -> c_int {
+        // SAFETY: the caller supplies a readable public record.
+        let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        let stack_top = value.stack_top();
+        if stack_top == 0 {
+            // Musl leaves both outputs untouched on this error path.
+            return EINVAL;
+        }
+        let stack_size = value.stack_size();
+        // SAFETY: the caller supplies both writable output slots.
+        unsafe {
+            core::ptr::write(size, stack_size);
+            core::ptr::write(
+                address,
+                stack_top.wrapping_sub(stack_size) as *mut c_void,
+            );
+        }
+        0
+    }
+
+    /// Copy the stored guard-size request.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate readable initialized `pthread_attr_t` storage,
+    /// and `size` must designate writable `size_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_getguardsize(
+        attributes: *const c_void,
+        size: *mut usize,
+    ) -> c_int {
+        // SAFETY: the caller supplies the readable record and writable result.
+        let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        unsafe { core::ptr::write(size, value.guard_size()) };
+        0
+    }
+
+    /// Report musl's fixed system contention scope.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must be an initialized `pthread_attr_t` according to the C
+    /// API, and `scope` must designate writable `int` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_getscope(
+        _attributes: *const c_void,
+        scope: *mut c_int,
+    ) -> c_int {
+        // SAFETY: the caller supplies the writable result slot.
+        unsafe { core::ptr::write(scope, PTHREAD_SCOPE_SYSTEM) };
+        0
+    }
+
+    /// Copy the stored scheduling-inheritance selector.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate readable initialized `pthread_attr_t` storage,
+    /// and `inherit` must designate writable `int` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_getinheritsched(
+        attributes: *const c_void,
+        inherit: *mut c_int,
+    ) -> c_int {
+        // SAFETY: the caller supplies the readable record and writable result.
+        let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        unsafe { core::ptr::write(inherit, value.inherit_sched()) };
+        0
+    }
+
+    /// Copy the stored raw scheduler policy.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate readable initialized `pthread_attr_t` storage,
+    /// and `policy` must designate writable `int` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_getschedpolicy(
+        attributes: *const c_void,
+        policy: *mut c_int,
+    ) -> c_int {
+        // SAFETY: the caller supplies the readable record and writable result.
+        let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        unsafe { core::ptr::write(policy, value.sched_policy()) };
+        0
+    }
+
+    /// Copy the stored priority into only `struct sched_param::sched_priority`.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate readable initialized `pthread_attr_t` storage,
+    /// and `parameters` must designate writable `struct sched_param` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_getschedparam(
+        attributes: *const c_void,
+        parameters: *mut c_void,
+    ) -> c_int {
+        // SAFETY: the caller supplies the readable record and sched_param output.
+        let value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        // SAFETY: the public sched_param ABI places its priority int first; musl
+        // leaves the rest of the caller's record untouched.
+        unsafe { core::ptr::write(parameters.cast::<c_int>(), value.sched_priority()) };
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_attr_setstacksize.c` object.
+static_archive_member! { pthread_attr_setstacksize_source {
+    /// Store a valid stack size and clear any caller-stack address.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate writable, initialized, properly aligned
+    /// `pthread_attr_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_setstacksize(
+        attributes: *mut c_void,
+        size: usize,
+    ) -> c_int {
+        if !valid_stack_size(size) {
+            return EINVAL;
+        }
+        // SAFETY: the caller supplies a valid writable public record.
+        let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        value.set_stack_size(size);
+        unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
+        0
+    }
+}}
+
+
+// Musl's `src/thread/pthread_attr_setstack.c` object.
+static_archive_member! { pthread_attr_setstack_source {
+    /// Store a caller stack using musl's one-past-top representation.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate writable, initialized, properly aligned
+    /// `pthread_attr_t` storage. `address` and `size` are retained only as record
+    /// metadata in this slice; no worker is created from them here.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_setstack(
+        attributes: *mut c_void,
+        address: *mut c_void,
+        size: usize,
+    ) -> c_int {
+        if !valid_stack_size(size) {
+            return EINVAL;
+        }
+        // SAFETY: the caller supplies a valid writable public record.
+        let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        value.set_stack(address as usize, size);
+        unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
+        0
+    }
+}}
+
+
+// Musl's `src/thread/pthread_attr_setguardsize.c` object.
+static_archive_member! { pthread_attr_setguardsize_source {
+    /// Store a valid guard-size request.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate writable, initialized, properly aligned
+    /// `pthread_attr_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_setguardsize(
+        attributes: *mut c_void,
+        size: usize,
+    ) -> c_int {
+        if !valid_guard_size(size) {
+            return EINVAL;
+        }
+        // SAFETY: the caller supplies a valid writable public record.
+        let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        value.set_guard_size(size);
+        unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
+        0
+    }
+}}
+
+
+// Musl's `src/thread/pthread_attr_setscope.c` object.
+static_archive_member! { pthread_attr_setscope_source {
+    /// Select musl's only supported system contention scope.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must be an initialized `pthread_attr_t` according to the C
+    /// API. Musl does not dereference it for this scope-status operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_setscope(
+        _attributes: *mut c_void,
+        scope: c_int,
+    ) -> c_int {
+        match scope {
+            PTHREAD_SCOPE_SYSTEM => 0,
+            PTHREAD_SCOPE_PROCESS => ENOTSUP,
+            _ => EINVAL,
+        }
+    }
+}}
+
+
+// Musl's `src/thread/pthread_attr_setinheritsched.c` object.
+static_archive_member! { pthread_attr_setinheritsched_source {
+    /// Store the inherited or explicit scheduling selector.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate writable, initialized, properly aligned
+    /// `pthread_attr_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_setinheritsched(
+        attributes: *mut c_void,
+        inherit: c_int,
+    ) -> c_int {
+        if (inherit as u32) > PTHREAD_EXPLICIT_SCHED {
+            return EINVAL;
+        }
+        // SAFETY: the caller supplies a valid writable public record.
+        let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        value.set_inherit_sched(inherit);
+        unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
+        0
+    }
+}}
+
+
+// Musl's `src/thread/pthread_attr_setschedpolicy.c` object.
+static_archive_member! { pthread_attr_setschedpolicy_source {
+    /// Store a scheduler policy without prevalidating the raw integer.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate writable, initialized, properly aligned
+    /// `pthread_attr_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_setschedpolicy(
+        attributes: *mut c_void,
+        policy: c_int,
+    ) -> c_int {
+        // SAFETY: the caller supplies a valid writable public record.
+        let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        value.set_sched_policy(policy);
+        unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
+        0
+    }
+}}
+
+
+// Musl's `src/thread/pthread_attr_setschedparam.c` object.
+static_archive_member! { pthread_attr_setschedparam_source {
+    /// Store only `struct sched_param::sched_priority`.
+    ///
+    /// # Safety
+    ///
+    /// `attributes` must designate writable initialized `pthread_attr_t` storage,
+    /// and `parameters` must designate a readable `struct sched_param` whose
+    /// first field is its C `int` scheduling priority.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_attr_setschedparam(
+        attributes: *mut c_void,
+        parameters: *const c_void,
+    ) -> c_int {
+        // SAFETY: the public sched_param ABI places its priority int first.
+        let priority = unsafe { core::ptr::read(parameters.cast::<c_int>()) };
+        // SAFETY: the caller supplies a valid writable public record.
+        let mut value = unsafe { core::ptr::read(attributes.cast::<PublicPthreadAttr>()) };
+        value.set_sched_priority(priority);
+        unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
+        0
+    }
+}}
+
+
+// Musl's `src/thread/pthread_getattr_np.c` object.
+#[cfg(crabc_x86_owned_runtime)]
+static_archive_member! { pthread_getattr_np_source {
+    /// Observe the owned thread's usable stack, guard and current detach state.
+    ///
+    /// Musl 1.2.6 `src/thread/pthread_getattr_np.c` starts with a zero public
+    /// record and copies actual stack/guard metadata, not the creation request.
+    /// Our TLS/control allocations are separate from the application stack; its
+    /// reported bounds therefore exclude those mappings rather than inventing
+    /// musl's coallocated-TLS overhead. Unknown or withdrawn owned handles return
+    /// ESRCH without touching output or errno; musl leaves such handles undefined.
+    ///
+    /// The original main stack has no fixed pthread allocation record. Preserve
+    /// musl's page-rounded auxv anchor and `mremap` probe below it. A failed probe
+    /// sets errno even though this API returns success; only ENOMEM continues the
+    /// scan, and any other kernel result ends it with the accumulated size. No
+    /// rlimit, /proc, or guessed-stack fallback is substituted for that contract.
+    ///
+    /// # Safety
+    /// `thread` must belong to this owned runtime and retain its pthread lifetime
+    /// through this call. `attributes` must designate writable, aligned storage
+    /// for one pthread_attr_t; prior initialization is not required. The returned
+    /// stack coordinates do not extend the target's lifetime or permit access to
+    /// its stack without separate application synchronization.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_getattr_np(
+        thread: *mut c_void,
+        attributes: *mut c_void,
+    ) -> c_int {
+        let Some(snapshot) = crate::x86_64_static_c_abi::pthread_create_join::selected_thread_attributes(thread) else {
+            return ESRCH;
+        };
+        let mut value = PublicPthreadAttr { words: [0; ATTR_WORDS] };
+        value.set_detach_state(if snapshot.detached { 1 } else { 0 });
+        if let Some(stack) = snapshot.stack {
+            value.words[STACK_TOP_WORD_INDEX] = stack.top;
+            value.words[STACK_SIZE_WORD_INDEX] = stack.size;
+            value.words[GUARD_SIZE_WORD_INDEX] = stack.guard_size;
+        } else {
+            let Some(anchor) = crate::x86_64_static_c_abi::auxv_observation::initial_stack_anchor() else {
+                return EINVAL;
+            };
+            const PAGE_SIZE: usize = 4096;
+            const ENOMEM: i64 = 12;
+            let top = anchor.wrapping_add(anchor.wrapping_neg() & (PAGE_SIZE - 1));
+            let mut size = PAGE_SIZE;
+            loop {
+                // SAFETY: this is musl's address-space metadata probe, not a
+                // dereference. No MREMAP_MAYMOVE/FIXED flag or new address is
+                // supplied. Kernel errors retain the source errno side effect.
+                let result = unsafe {
+                    crate::x86_64_static_c_abi::raw_syscall::syscall5(
+                        crate::x86_64_static_c_abi::raw_syscall::SYS_MREMAP,
+                        top.wrapping_sub(size).wrapping_sub(PAGE_SIZE) as i64,
+                        PAGE_SIZE as i64,
+                        (2 * PAGE_SIZE) as i64,
+                        0,
+                        0,
+                    )
+                };
+                if (-4095..0).contains(&result) {
+                    unsafe { crate::x86_64_static_c_abi::errno::set_errno((-result) as c_int) };
+                    if result == -ENOMEM {
+                        size = size.wrapping_add(PAGE_SIZE);
+                        continue;
+                    }
+                }
+                break;
+            }
+            value.words[STACK_TOP_WORD_INDEX] = top;
+            value.words[STACK_SIZE_WORD_INDEX] = size;
+        }
+        // SAFETY: the public caller owns exactly one writable output record.
+        unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
+        0
+    }
+}}

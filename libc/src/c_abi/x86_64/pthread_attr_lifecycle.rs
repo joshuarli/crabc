@@ -54,60 +54,72 @@ const _: () = {
     assert!(offset_of!(PublicPthreadCondAttr, attr) == 0);
 };
 
-/// Initialize one caller-owned mutex attribute record to musl's all-zero
-/// default representation.
-///
-/// # Safety
-///
-/// `attribute` must designate writable, aligned x86 `pthread_mutexattr_t`
-/// storage that is not concurrently accessed.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_init(attribute: *mut c_void) -> c_int {
-    // SAFETY: the caller provides exactly one writable public record described
-    // above; all-zero is musl's complete default representation.
-    unsafe {
-        core::ptr::write(
-            attribute.cast::<PublicPthreadMutexAttr>(),
-            PublicPthreadMutexAttr { attr: 0 },
-        )
-    };
-    0
-}
+// Musl's `src/thread/pthread_mutexattr_init.c` object.
+static_archive_member! { pthread_mutexattr_init_source {
+    /// Initialize one caller-owned mutex attribute record to musl's all-zero
+    /// default representation.
+    ///
+    /// # Safety
+    ///
+    /// `attribute` must designate writable, aligned x86 `pthread_mutexattr_t`
+    /// storage that is not concurrently accessed.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_mutexattr_init(attribute: *mut c_void) -> c_int {
+        // SAFETY: the caller provides exactly one writable public record described
+        // above; all-zero is musl's complete default representation.
+        unsafe {
+            core::ptr::write(
+                attribute.cast::<PublicPthreadMutexAttr>(),
+                PublicPthreadMutexAttr { attr: 0 },
+            )
+        };
+        0
+    }
+}}
 
-/// Destroy one mutex attribute record without observing it.
-///
-/// Musl's record owns no resource, so this intentionally neither dereferences
-/// the caller pointer nor changes C errno.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_destroy(_attribute: *mut c_void) -> c_int {
-    0
-}
+// Musl's `src/thread/pthread_mutexattr_destroy.c` object.
+static_archive_member! { pthread_mutexattr_destroy_source {
+    /// Destroy one mutex attribute record without observing it.
+    ///
+    /// Musl's record owns no resource, so this intentionally neither dereferences
+    /// the caller pointer nor changes C errno.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_mutexattr_destroy(_attribute: *mut c_void) -> c_int {
+        0
+    }
+}}
 
-/// Initialize one caller-owned condition attribute record to musl's all-zero
-/// default representation.
-///
-/// # Safety
-///
-/// `attribute` must designate writable, aligned x86 `pthread_condattr_t`
-/// storage that is not concurrently accessed.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_init(attribute: *mut c_void) -> c_int {
-    // SAFETY: the caller provides exactly one writable public record described
-    // above; all-zero is musl's complete default representation.
-    unsafe {
-        core::ptr::write(
-            attribute.cast::<PublicPthreadCondAttr>(),
-            PublicPthreadCondAttr { attr: 0 },
-        )
-    };
-    0
-}
+// Musl's `src/thread/pthread_condattr_init.c` object.
+static_archive_member! { pthread_condattr_init_source {
+    /// Initialize one caller-owned condition attribute record to musl's all-zero
+    /// default representation.
+    ///
+    /// # Safety
+    ///
+    /// `attribute` must designate writable, aligned x86 `pthread_condattr_t`
+    /// storage that is not concurrently accessed.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_condattr_init(attribute: *mut c_void) -> c_int {
+        // SAFETY: the caller provides exactly one writable public record described
+        // above; all-zero is musl's complete default representation.
+        unsafe {
+            core::ptr::write(
+                attribute.cast::<PublicPthreadCondAttr>(),
+                PublicPthreadCondAttr { attr: 0 },
+            )
+        };
+        0
+    }
+}}
 
-/// Destroy one condition attribute record without observing it.
-///
-/// Musl's record owns no resource, so this intentionally neither dereferences
-/// the caller pointer nor changes C errno.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_destroy(_attribute: *mut c_void) -> c_int {
-    0
-}
+// Musl's `src/thread/pthread_condattr_destroy.c` object.
+static_archive_member! { pthread_condattr_destroy_source {
+    /// Destroy one condition attribute record without observing it.
+    ///
+    /// Musl's record owns no resource, so this intentionally neither dereferences
+    /// the caller pointer nor changes C errno.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_condattr_destroy(_attribute: *mut c_void) -> c_int {
+        0
+    }
+}}

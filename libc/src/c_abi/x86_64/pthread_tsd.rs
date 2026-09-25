@@ -56,11 +56,7 @@ use super::{pthread_create_join, pthread_identity, static_tls};
 // linkage classes while Rust callers keep the direct item spellings below.
 core::arch::global_asm!(
     ".hidden __pthread_key_create",
-    ".weak pthread_key_create",
-    ".set pthread_key_create, __pthread_key_create",
     ".hidden __pthread_key_delete",
-    ".weak pthread_key_delete",
-    ".set pthread_key_delete, __pthread_key_delete",
     ".weak pthread_getspecific",
     ".set pthread_getspecific, __pthread_getspecific",
     ".weak tss_get",
@@ -267,107 +263,119 @@ fn current_selected_values() -> Option<*const SelectedTsdValues> {
     pthread_create_join::current_selected_worker_tsd_values()
 }
 
-/// Create one selected POSIX key without changing C `errno`.
-///
-/// # Safety
-///
-/// `key` must point to writable, aligned `pthread_key_t` storage. If present,
-/// `destructor` must remain valid whenever a selected worker with a non-null
-/// value for this key reaches its selected exit path.
-#[export_name = "__pthread_key_create"]
-pub unsafe extern "C" fn pthread_key_create(
-    key: *mut c_uint,
-    destructor: Option<TsdDestructor>,
-) -> c_int {
-    if key.is_null() {
-        return EINVAL;
-    }
-    // The key registry is private to the selected main/worker population.
-    // Do not let a raw foreign task allocate capacity that belongs to those
-    // value tables merely because key creation itself has no per-thread value.
-    if current_selected_values().is_none() {
-        return EINVAL;
-    }
+// Musl's `src/thread/pthread_key_create.c` object.
+static_archive_member! { pthread_key_create_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak pthread_key_create",
+        ".set pthread_key_create, __pthread_key_create",
+        ".weak pthread_key_delete",
+        ".set pthread_key_delete, __pthread_key_delete",
+    );
 
-    lock_selected_tsd();
-    #[cfg(all(crabc_owned_mimalloc_lifecycle, not(feature = "native-mimalloc-shadow")))]
-    if is_allocator_key_storage(key) && !key_is_allocated_locked(ALLOCATOR_KEY) {
-        SELECTED_TSD_KEYS[ALLOCATOR_KEY]
-            .destructor
-            .store(destructor.map_or(0, |function| function as usize), Ordering::Relaxed);
-        SELECTED_TSD_KEYS[ALLOCATOR_KEY]
-            .state
-            .store(KEY_ALLOCATED, Ordering::Release);
-        // SAFETY: the allocator's key word is writable global storage.
-        unsafe { core::ptr::write(key, ALLOCATOR_KEY as c_uint) };
-        unlock_selected_tsd();
-        return 0;
-    }
-    let start = SELECTED_TSD_NEXT_KEY.load(Ordering::Relaxed);
-    let mut index = start;
-    loop {
-        if !key_is_allocated_locked(index) {
-            SELECTED_TSD_KEYS[index]
+    /// Create one selected POSIX key without changing C `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `key` must point to writable, aligned `pthread_key_t` storage. If present,
+    /// `destructor` must remain valid whenever a selected worker with a non-null
+    /// value for this key reaches its selected exit path.
+    #[export_name = "__pthread_key_create"]
+    pub unsafe extern "C" fn pthread_key_create(
+        key: *mut c_uint,
+        destructor: Option<TsdDestructor>,
+    ) -> c_int {
+        if key.is_null() {
+            return EINVAL;
+        }
+        // The key registry is private to the selected main/worker population.
+        // Do not let a raw foreign task allocate capacity that belongs to those
+        // value tables merely because key creation itself has no per-thread value.
+        if current_selected_values().is_none() {
+            return EINVAL;
+        }
+
+        lock_selected_tsd();
+        #[cfg(all(crabc_owned_mimalloc_lifecycle, not(feature = "native-mimalloc-shadow")))]
+        if is_allocator_key_storage(key) && !key_is_allocated_locked(ALLOCATOR_KEY) {
+            SELECTED_TSD_KEYS[ALLOCATOR_KEY]
                 .destructor
                 .store(destructor.map_or(0, |function| function as usize), Ordering::Relaxed);
-            SELECTED_TSD_KEYS[index]
+            SELECTED_TSD_KEYS[ALLOCATOR_KEY]
                 .state
                 .store(KEY_ALLOCATED, Ordering::Release);
-            // Musl stores `next_key = j`: the next search starts at this
-            // key, so deleting it makes it the next key created.
-            SELECTED_TSD_NEXT_KEY.store(index, Ordering::Relaxed);
-            // SAFETY: the public C boundary requires writable key storage.
-            unsafe { core::ptr::write(key, index as c_uint) };
+            // SAFETY: the allocator's key word is writable global storage.
+            unsafe { core::ptr::write(key, ALLOCATOR_KEY as c_uint) };
             unlock_selected_tsd();
             return 0;
         }
-        index = (index + 1) % PTHREAD_KEYS_MAX;
-        if index == start {
-            unlock_selected_tsd();
-            return EAGAIN;
+        let start = SELECTED_TSD_NEXT_KEY.load(Ordering::Relaxed);
+        let mut index = start;
+        loop {
+            if !key_is_allocated_locked(index) {
+                SELECTED_TSD_KEYS[index]
+                    .destructor
+                    .store(destructor.map_or(0, |function| function as usize), Ordering::Relaxed);
+                SELECTED_TSD_KEYS[index]
+                    .state
+                    .store(KEY_ALLOCATED, Ordering::Release);
+                // Musl stores `next_key = j`: the next search starts at this
+                // key, so deleting it makes it the next key created.
+                SELECTED_TSD_NEXT_KEY.store(index, Ordering::Relaxed);
+                // SAFETY: the public C boundary requires writable key storage.
+                unsafe { core::ptr::write(key, index as c_uint) };
+                unlock_selected_tsd();
+                return 0;
+            }
+            index = (index + 1) % PTHREAD_KEYS_MAX;
+            if index == start {
+                unlock_selected_tsd();
+                return EAGAIN;
+            }
         }
     }
-}
 
-/// Delete one selected key and clear its main/selected-worker values.
-///
-/// No user destructor runs during deletion. This selected clearing is bounded
-/// to the process-main table and the live private worker registry; it is not
-/// musl's fork-safe all-thread-list deletion protocol.
-///
-/// # Safety
-///
-/// `key` must name an active key created through this selected artifact. The
-/// caller must not race a worker destructor that observes, deletes, or rearms
-/// this key; that broader musl interaction is deliberately outside the slice.
-#[export_name = "__pthread_key_delete"]
-pub unsafe extern "C" fn pthread_key_delete(key: c_uint) -> c_int {
-    let Some(index) = key_index(key) else {
-        return EINVAL;
-    };
-    // Deletion changes the global selected key registry and scans selected
-    // values, so it has the same selected-caller admission boundary as create.
-    if current_selected_values().is_none() {
-        return EINVAL;
-    }
+    /// Delete one selected key and clear its main/selected-worker values.
+    ///
+    /// No user destructor runs during deletion. This selected clearing is bounded
+    /// to the process-main table and the live private worker registry; it is not
+    /// musl's fork-safe all-thread-list deletion protocol.
+    ///
+    /// # Safety
+    ///
+    /// `key` must name an active key created through this selected artifact. The
+    /// caller must not race a worker destructor that observes, deletes, or rearms
+    /// this key; that broader musl interaction is deliberately outside the slice.
+    #[export_name = "__pthread_key_delete"]
+    pub unsafe extern "C" fn pthread_key_delete(key: c_uint) -> c_int {
+        let Some(index) = key_index(key) else {
+            return EINVAL;
+        };
+        // Deletion changes the global selected key registry and scans selected
+        // values, so it has the same selected-caller admission boundary as create.
+        if current_selected_values().is_none() {
+            return EINVAL;
+        }
 
-    lock_selected_tsd();
-    if !key_is_allocated_locked(index) {
+        lock_selected_tsd();
+        if !key_is_allocated_locked(index) {
+            unlock_selected_tsd();
+            return EINVAL;
+        }
+        // Clear the active marker first. A concurrent selected set/get that wins
+        // the lock afterwards fails closed instead of reviving a deleted key.
+        SELECTED_TSD_KEYS[index].state.store(KEY_FREE, Ordering::Release);
+        SELECTED_TSD_KEYS[index].destructor.store(0, Ordering::Release);
+        MAIN_SELECTED_TSD_VALUES.clear_key(index);
+        // This follows the fixed lock order TSD -> selected-worker registry.
+        // SAFETY: the sibling scans only registry-published mappings while its
+        // registry lock keeps each control record live.
+        pthread_create_join::clear_selected_worker_tsd_key(index);
         unlock_selected_tsd();
-        return EINVAL;
+        0
     }
-    // Clear the active marker first. A concurrent selected set/get that wins
-    // the lock afterwards fails closed instead of reviving a deleted key.
-    SELECTED_TSD_KEYS[index].state.store(KEY_FREE, Ordering::Release);
-    SELECTED_TSD_KEYS[index].destructor.store(0, Ordering::Release);
-    MAIN_SELECTED_TSD_VALUES.clear_key(index);
-    // This follows the fixed lock order TSD -> selected-worker registry.
-    // SAFETY: the sibling scans only registry-published mappings while its
-    // registry lock keeps each control record live.
-    pthread_create_join::clear_selected_worker_tsd_key(index);
-    unlock_selected_tsd();
-    0
-}
+}}
+
 
 /// Read one selected current-thread value.
 ///
@@ -409,41 +417,44 @@ pub unsafe extern "C" fn pthread_getspecific(key: c_uint) -> *mut c_void {
 #[linkage = "internal"]
 static KEEP_PTHREAD_GETSPECIFIC: unsafe extern "C" fn(c_uint) -> *mut c_void = pthread_getspecific;
 
-/// Store one selected current-thread value.
-///
-/// # Safety
-///
-/// `value` is opaque caller-owned storage. If it is non-null and the selected
-/// key has a destructor, it must remain valid until the selected destructor
-/// invocation or an explicit replacement/deletion clears it. `key` must be
-/// an active selected key for the current selected main or worker thread.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_setspecific(key: c_uint, value: *const c_void) -> c_int {
-    let Some(index) = key_index(key) else {
-        return EINVAL;
-    };
-    let Some(values) = current_selected_values() else {
-        return EINVAL;
-    };
+// Musl's `src/thread/pthread_setspecific.c` object.
+static_archive_member! { pthread_setspecific_source {
+    /// Store one selected current-thread value.
+    ///
+    /// # Safety
+    ///
+    /// `value` is opaque caller-owned storage. If it is non-null and the selected
+    /// key has a destructor, it must remain valid until the selected destructor
+    /// invocation or an explicit replacement/deletion clears it. `key` must be
+    /// an active selected key for the current selected main or worker thread.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_setspecific(key: c_uint, value: *const c_void) -> c_int {
+        let Some(index) = key_index(key) else {
+            return EINVAL;
+        };
+        let Some(values) = current_selected_values() else {
+            return EINVAL;
+        };
 
-    lock_selected_tsd();
-    let result = if key_is_allocated_locked(index) {
-        // SAFETY: current-selected resolution retains this executing worker's
-        // mapping, or returned the permanent process-main value table.
-        unsafe {
-            let previous = (*values).values[index].load(Ordering::Acquire);
-            if previous != value as usize {
-                (*values).values[index].store(value as usize, Ordering::Release);
-                (*values).used.store(1, Ordering::Release);
+        lock_selected_tsd();
+        let result = if key_is_allocated_locked(index) {
+            // SAFETY: current-selected resolution retains this executing worker's
+            // mapping, or returned the permanent process-main value table.
+            unsafe {
+                let previous = (*values).values[index].load(Ordering::Acquire);
+                if previous != value as usize {
+                    (*values).values[index].store(value as usize, Ordering::Release);
+                    (*values).used.store(1, Ordering::Release);
+                }
             }
-        }
-        0
-    } else {
-        EINVAL
-    };
-    unlock_selected_tsd();
-    result
-}
+            0
+        } else {
+            EINVAL
+        };
+        unlock_selected_tsd();
+        result
+    }
+}}
 
 /// Run the selected worker's private TSD destructor phase once.
 ///
@@ -590,51 +601,60 @@ pub(super) unsafe fn adopt_current_values_after_fork() -> bool {
     true
 }
 
-/// Create one selected C11 TSS key.
-///
-/// C11 collapses every pthread-style failure to `thrd_error`.
-///
-/// # Safety
-///
-/// `key` and `destructor` have the same writable-storage and lifetime
-/// obligations as [`pthread_key_create`].
-#[no_mangle]
-pub unsafe extern "C" fn tss_create(
-    key: *mut c_uint,
-    destructor: Option<TsdDestructor>,
-) -> c_int {
-    if unsafe { pthread_key_create(key, destructor) } == 0 {
-        THRD_SUCCESS
-    } else {
-        THRD_ERROR
+// Musl's `src/thread/tss_create.c` object.
+static_archive_member! { tss_create_source {
+    /// Create one selected C11 TSS key.
+    ///
+    /// C11 collapses every pthread-style failure to `thrd_error`.
+    ///
+    /// # Safety
+    ///
+    /// `key` and `destructor` have the same writable-storage and lifetime
+    /// obligations as [`pthread_key_create`].
+    #[no_mangle]
+    pub unsafe extern "C" fn tss_create(
+        key: *mut c_uint,
+        destructor: Option<TsdDestructor>,
+    ) -> c_int {
+        if unsafe { pthread_key_create(key, destructor) } == 0 {
+            THRD_SUCCESS
+        } else {
+            THRD_ERROR
+        }
     }
-}
+}}
 
-/// Delete one selected C11 TSS key.
-///
-/// # Safety
-///
-/// `key` has the same active-key and no-concurrent-destructor obligation as
-/// [`pthread_key_delete`].
-#[no_mangle]
-pub unsafe extern "C" fn tss_delete(key: c_uint) {
-    let _ = unsafe { pthread_key_delete(key) };
-}
-
-/// Store one selected C11 TSS value.
-///
-/// # Safety
-///
-/// `key` and `value` have the same selected-current-thread and value-lifetime
-/// obligations as [`pthread_setspecific`].
-#[no_mangle]
-pub unsafe extern "C" fn tss_set(key: c_uint, value: *mut c_void) -> c_int {
-    if unsafe { pthread_setspecific(key, value) } == 0 {
-        THRD_SUCCESS
-    } else {
-        THRD_ERROR
+// Musl's `src/thread/tss_delete.c` object.
+static_archive_member! { tss_delete_source {
+    /// Delete one selected C11 TSS key.
+    ///
+    /// # Safety
+    ///
+    /// `key` has the same active-key and no-concurrent-destructor obligation as
+    /// [`pthread_key_delete`].
+    #[no_mangle]
+    pub unsafe extern "C" fn tss_delete(key: c_uint) {
+        let _ = unsafe { pthread_key_delete(key) };
     }
-}
+}}
+
+// Musl's `src/thread/tss_set.c` object.
+static_archive_member! { tss_set_source {
+    /// Store one selected C11 TSS value.
+    ///
+    /// # Safety
+    ///
+    /// `key` and `value` have the same selected-current-thread and value-lifetime
+    /// obligations as [`pthread_setspecific`].
+    #[no_mangle]
+    pub unsafe extern "C" fn tss_set(key: c_uint, value: *mut c_void) -> c_int {
+        if unsafe { pthread_setspecific(key, value) } == 0 {
+            THRD_SUCCESS
+        } else {
+            THRD_ERROR
+        }
+    }
+}}
 
 /// Finish one timer notification's TSD phase, then reopen the same task's
 /// destructor iteration guard. Unlike actual pthread teardown this task will

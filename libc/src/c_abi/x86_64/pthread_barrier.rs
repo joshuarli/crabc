@@ -429,233 +429,248 @@ unsafe fn shared_barrier_wait(barrier: *mut PublicPthreadBarrier) -> c_int {
     result
 }
 
-/// Initialize one public barrier attribute to musl's private zero record.
-///
-/// # Safety
-///
-/// `attribute` must designate writable, aligned x86 `pthread_barrierattr_t`
-/// storage that is not concurrently accessed.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_barrierattr_init(attribute: *mut c_void) -> c_int {
-    // SAFETY: the C caller supplies one writable non-concurrent public record.
-    unsafe {
-        core::ptr::write(
-            attribute.cast::<PublicPthreadBarrierAttr>(),
-            PublicPthreadBarrierAttr { attr: 0 },
-        )
-    };
-    0
-}
-
-/// Destroy one public barrier attribute.
-///
-/// Musl owns no resource here, so this deliberately does not inspect or alter
-/// the caller record and never publishes through C errno.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_barrierattr_destroy(_attribute: *mut c_void) -> c_int {
-    0
-}
-
-/// Initialize one public barrier with musl's count-plus-attribute encoding.
-///
-/// # Safety
-///
-/// `barrier` must designate writable, aligned x86 `pthread_barrier_t` storage
-/// that is not concurrently accessed. A non-null `attribute` must designate a
-/// readable initialized public barrier attribute that does not overlap the
-/// restricted barrier object.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_barrier_init(
-    barrier: *mut c_void,
-    attribute: *const c_void,
-    count: c_uint,
-) -> c_int {
-    if count.wrapping_sub(1) > MAX_STORED_BARRIER_LIMIT {
-        return EINVAL;
-    }
-
-    let attribute_bits = if attribute.is_null() {
-        0
-    } else {
-        // SAFETY: the C initializer contract supplies one readable attr record.
-        unsafe { core::ptr::read(attribute.cast::<PublicPthreadBarrierAttr>()) }.attr
-    };
-    let barrier = barrier.cast::<PublicPthreadBarrier>();
-    // SAFETY: the caller supplies a complete non-concurrent public barrier;
-    // musl's initializer first writes the all-zero record.
-    unsafe {
-        core::ptr::write_bytes(
-            barrier.cast::<u8>(),
-            0,
-            size_of::<PublicPthreadBarrier>(),
-        )
-    };
-    // SAFETY: limit word two belongs to the freshly initialized public record.
-    unsafe {
-        core::ptr::write_unaligned(
-            barrier_word(barrier, BARRIER_LIMIT_WORD),
-            (count.wrapping_sub(1) | attribute_bits) as c_int,
-        )
-    };
-    0
-}
-
-/// Destroy a barrier after its source-defined quiescence protocol.
-///
-/// # Safety
-///
-/// `barrier` must designate a live initialized public barrier. Private
-/// barriers must already be quiescent. For process-shared barriers, callers
-/// retain musl's self-synchronized destruction contract: no new wait may race
-/// after destruction begins, while already-admitted waiters may drain.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_barrier_destroy(barrier: *mut c_void) -> c_int {
-    let barrier = barrier.cast::<PublicPthreadBarrier>();
-    // SAFETY: the C caller supplies a live initialized public record.
-    let limit = unsafe {
-        atomic::x86_64_load_acquire_i32(barrier_word(barrier, BARRIER_LIMIT_WORD))
-    };
-    if limit < 0 {
-        // SAFETY: both words belong to the live process-shared barrier record.
-        let lock = unsafe { barrier_word(barrier, BARRIER_LOCK_WORD) };
-        // SAFETY: concurrent lock observation uses the matching raw atomic.
-        if unsafe { atomic::x86_64_load_acquire_i32(lock) } != 0 {
-            // SAFETY: destruction marks the source lock before waiting.
-            unsafe { fetch_or_word(lock, SHARED_BARRIER_BIT) };
-            loop {
-                // SAFETY: lock remains live through source destruction wait.
-                let observed = unsafe { atomic::x86_64_load_acquire_i32(lock) };
-                if (observed & c_int::MAX) == 0 {
-                    break;
-                }
-                // SAFETY: shared destroy waits on its live lock with no hint.
-                unsafe { wait_while(lock, core::ptr::null_mut(), observed, false) };
-            }
-        }
-        // SAFETY: waits for all source shared-exit vmlock holders in this process.
-        unsafe { pthread_vmlock::wait() };
-    }
-    0
-}
-
-/// Wait at one initialized barrier round.
-///
-/// # Safety
-///
-/// `barrier` must designate a live initialized public barrier whose complete
-/// lifetime, participant count, and concurrent destroy discipline satisfy the
-/// pthread contract. All participating threads/processes must use this same
-/// selected barrier protocol for the object's lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
-    let barrier = barrier.cast::<PublicPthreadBarrier>();
-    // SAFETY: initialized limit word is live raw barrier storage.
-    let limit = unsafe {
-        atomic::x86_64_load_acquire_i32(barrier_word(barrier, BARRIER_LIMIT_WORD))
-    };
-
-    if limit == 0 {
-        return -1;
-    }
-    if limit < 0 {
-        // SAFETY: high-bit limit selects the source shared barrier algorithm.
-        return unsafe { shared_barrier_wait(barrier) };
-    }
-
-    // SAFETY: private path uses these three live public barrier words.
-    let lock = unsafe { barrier_word(barrier, BARRIER_LOCK_WORD) };
-    // SAFETY: private path uses these three live public barrier words.
-    let waiters = unsafe { barrier_word(barrier, BARRIER_WAITERS_WORD) };
-    loop {
-        // SAFETY: private admission lock is raw concurrent barrier storage.
-        if unsafe { atomic::x86_64_swap_acqrel_i32(lock, 1) } == 0 {
-            break;
-        }
-        // SAFETY: musl waits specifically for private lock state one.
-        unsafe { wait_while(lock, waiters, 1, true) };
-    }
-
-    // SAFETY: the held private lock protects the non-atomic `_b_inst` slot.
-    let instance = unsafe { core::ptr::read(barrier_instance_slot(barrier)) };
-    if instance.is_null() {
-        // A raw pointer escapes to the barrier while this owner blocks. Its
-        // stack slot therefore stays live until the followers' exit handoff
-        // wakes this function, exactly matching musl's stack instance.
-        let mut local_instance = PrivateBarrierInstance {
-            count: 0,
-            last: 0,
-            waiters: 0,
-            finished: 0,
+// Musl's `src/thread/pthread_barrierattr_init.c` object.
+static_archive_member! { pthread_barrierattr_init_source {
+    /// Initialize one public barrier attribute to musl's private zero record.
+    ///
+    /// # Safety
+    ///
+    /// `attribute` must designate writable, aligned x86 `pthread_barrierattr_t`
+    /// storage that is not concurrently accessed.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_barrierattr_init(attribute: *mut c_void) -> c_int {
+        // SAFETY: the C caller supplies one writable non-concurrent public record.
+        unsafe {
+            core::ptr::write(
+                attribute.cast::<PublicPthreadBarrierAttr>(),
+                PublicPthreadBarrierAttr { attr: 0 },
+            )
         };
-        let instance = core::ptr::addr_of_mut!(local_instance);
-        // SAFETY: held private lock exclusively owns the pointer slot.
-        unsafe { core::ptr::write(barrier_instance_slot(barrier), instance) };
-        // SAFETY: source publishes its stack instance before releasing lock.
-        unsafe { unlock_private_barrier(barrier) };
+        0
+    }
+}}
 
-        let finished = unsafe { instance_finished_word(instance) };
-        let mut spins = 200;
-        while spins != 0
-            // SAFETY: the live stack instance's finished word is atomic.
-            && unsafe { atomic::x86_64_load_acquire_i32(finished) } == 0
-        {
-            core::hint::spin_loop();
-            spins -= 1;
+// Musl's `src/thread/pthread_barrierattr_destroy.c` object.
+static_archive_member! { pthread_barrierattr_destroy_source {
+    /// Destroy one public barrier attribute.
+    ///
+    /// Musl owns no resource here, so this deliberately does not inspect or alter
+    /// the caller record and never publishes through C errno.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_barrierattr_destroy(_attribute: *mut c_void) -> c_int {
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_barrier_init.c` object.
+static_archive_member! { pthread_barrier_init_source {
+    /// Initialize one public barrier with musl's count-plus-attribute encoding.
+    ///
+    /// # Safety
+    ///
+    /// `barrier` must designate writable, aligned x86 `pthread_barrier_t` storage
+    /// that is not concurrently accessed. A non-null `attribute` must designate a
+    /// readable initialized public barrier attribute that does not overlap the
+    /// restricted barrier object.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_barrier_init(
+        barrier: *mut c_void,
+        attribute: *const c_void,
+        count: c_uint,
+    ) -> c_int {
+        if count.wrapping_sub(1) > MAX_STORED_BARRIER_LIMIT {
+            return EINVAL;
         }
-        // SAFETY: owner announces it is waiting for all follower exits.
-        unsafe { atomic::x86_64_fetch_add_acqrel_i32(finished, 1) };
-        while unsafe { atomic::x86_64_load_acquire_i32(finished) } == 1 {
-            // SAFETY: live owner stack word is a private raw futex word.
-            let _ = unsafe {
-                raw_syscall::syscall4(
-                    raw_syscall::SYS_FUTEX,
-                    finished as usize as i64,
-                    FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
-                    1,
-                    0,
-                )
+
+        let attribute_bits = if attribute.is_null() {
+            0
+        } else {
+            // SAFETY: the C initializer contract supplies one readable attr record.
+            unsafe { core::ptr::read(attribute.cast::<PublicPthreadBarrierAttr>()) }.attr
+        };
+        let barrier = barrier.cast::<PublicPthreadBarrier>();
+        // SAFETY: the caller supplies a complete non-concurrent public barrier;
+        // musl's initializer first writes the all-zero record.
+        unsafe {
+            core::ptr::write_bytes(
+                barrier.cast::<u8>(),
+                0,
+                size_of::<PublicPthreadBarrier>(),
+            )
+        };
+        // SAFETY: limit word two belongs to the freshly initialized public record.
+        unsafe {
+            core::ptr::write_unaligned(
+                barrier_word(barrier, BARRIER_LIMIT_WORD),
+                (count.wrapping_sub(1) | attribute_bits) as c_int,
+            )
+        };
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_barrier_destroy.c` object.
+static_archive_member! { pthread_barrier_destroy_source {
+    /// Destroy a barrier after its source-defined quiescence protocol.
+    ///
+    /// # Safety
+    ///
+    /// `barrier` must designate a live initialized public barrier. Private
+    /// barriers must already be quiescent. For process-shared barriers, callers
+    /// retain musl's self-synchronized destruction contract: no new wait may race
+    /// after destruction begins, while already-admitted waiters may drain.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_barrier_destroy(barrier: *mut c_void) -> c_int {
+        let barrier = barrier.cast::<PublicPthreadBarrier>();
+        // SAFETY: the C caller supplies a live initialized public record.
+        let limit = unsafe {
+            atomic::x86_64_load_acquire_i32(barrier_word(barrier, BARRIER_LIMIT_WORD))
+        };
+        if limit < 0 {
+            // SAFETY: both words belong to the live process-shared barrier record.
+            let lock = unsafe { barrier_word(barrier, BARRIER_LOCK_WORD) };
+            // SAFETY: concurrent lock observation uses the matching raw atomic.
+            if unsafe { atomic::x86_64_load_acquire_i32(lock) } != 0 {
+                // SAFETY: destruction marks the source lock before waiting.
+                unsafe { fetch_or_word(lock, SHARED_BARRIER_BIT) };
+                loop {
+                    // SAFETY: lock remains live through source destruction wait.
+                    let observed = unsafe { atomic::x86_64_load_acquire_i32(lock) };
+                    if (observed & c_int::MAX) == 0 {
+                        break;
+                    }
+                    // SAFETY: shared destroy waits on its live lock with no hint.
+                    unsafe { wait_while(lock, core::ptr::null_mut(), observed, false) };
+                }
+            }
+            // SAFETY: waits for all source shared-exit vmlock holders in this process.
+            unsafe { pthread_vmlock::wait() };
+        }
+        0
+    }
+}}
+
+// Musl's `src/thread/pthread_barrier_wait.c` object.
+static_archive_member! { pthread_barrier_wait_source {
+    /// Wait at one initialized barrier round.
+    ///
+    /// # Safety
+    ///
+    /// `barrier` must designate a live initialized public barrier whose complete
+    /// lifetime, participant count, and concurrent destroy discipline satisfy the
+    /// pthread contract. All participating threads/processes must use this same
+    /// selected barrier protocol for the object's lifetime.
+    #[no_mangle]
+    pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
+        let barrier = barrier.cast::<PublicPthreadBarrier>();
+        // SAFETY: initialized limit word is live raw barrier storage.
+        let limit = unsafe {
+            atomic::x86_64_load_acquire_i32(barrier_word(barrier, BARRIER_LIMIT_WORD))
+        };
+
+        if limit == 0 {
+            return -1;
+        }
+        if limit < 0 {
+            // SAFETY: high-bit limit selects the source shared barrier algorithm.
+            return unsafe { shared_barrier_wait(barrier) };
+        }
+
+        // SAFETY: private path uses these three live public barrier words.
+        let lock = unsafe { barrier_word(barrier, BARRIER_LOCK_WORD) };
+        // SAFETY: private path uses these three live public barrier words.
+        let waiters = unsafe { barrier_word(barrier, BARRIER_WAITERS_WORD) };
+        loop {
+            // SAFETY: private admission lock is raw concurrent barrier storage.
+            if unsafe { atomic::x86_64_swap_acqrel_i32(lock, 1) } == 0 {
+                break;
+            }
+            // SAFETY: musl waits specifically for private lock state one.
+            unsafe { wait_while(lock, waiters, 1, true) };
+        }
+
+        // SAFETY: the held private lock protects the non-atomic `_b_inst` slot.
+        let instance = unsafe { core::ptr::read(barrier_instance_slot(barrier)) };
+        if instance.is_null() {
+            // A raw pointer escapes to the barrier while this owner blocks. Its
+            // stack slot therefore stays live until the followers' exit handoff
+            // wakes this function, exactly matching musl's stack instance.
+            let mut local_instance = PrivateBarrierInstance {
+                count: 0,
+                last: 0,
+                waiters: 0,
+                finished: 0,
             };
+            let instance = core::ptr::addr_of_mut!(local_instance);
+            // SAFETY: held private lock exclusively owns the pointer slot.
+            unsafe { core::ptr::write(barrier_instance_slot(barrier), instance) };
+            // SAFETY: source publishes its stack instance before releasing lock.
+            unsafe { unlock_private_barrier(barrier) };
+
+            let finished = unsafe { instance_finished_word(instance) };
+            let mut spins = 200;
+            while spins != 0
+                // SAFETY: the live stack instance's finished word is atomic.
+                && unsafe { atomic::x86_64_load_acquire_i32(finished) } == 0
+            {
+                core::hint::spin_loop();
+                spins -= 1;
+            }
+            // SAFETY: owner announces it is waiting for all follower exits.
+            unsafe { atomic::x86_64_fetch_add_acqrel_i32(finished, 1) };
+            while unsafe { atomic::x86_64_load_acquire_i32(finished) } == 1 {
+                // SAFETY: live owner stack word is a private raw futex word.
+                let _ = unsafe {
+                    raw_syscall::syscall4(
+                        raw_syscall::SYS_FUTEX,
+                        finished as usize as i64,
+                        FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
+                        1,
+                        0,
+                    )
+                };
+            }
+            return -1;
         }
-        return -1;
-    }
 
-    // SAFETY: the held barrier lock protects selecting this published stack
-    // instance; all its post-publication fields use raw atomics below.
-    let count = unsafe { instance_count_word(instance) };
-    // SAFETY: the held barrier lock protects selecting this instance.
-    let last = unsafe { instance_last_word(instance) };
-    // SAFETY: the held barrier lock protects selecting this instance.
-    let instance_waiters = unsafe { instance_waiters_word(instance) };
-    // SAFETY: the held barrier lock protects selecting this instance.
-    let finished = unsafe { instance_finished_word(instance) };
-    // SAFETY: follower admission increments musl's stack instance count.
-    if unsafe { atomic::x86_64_fetch_add_acqrel_i32(count, 1) }.wrapping_add(1) == limit {
-        // SAFETY: last entrant clears the protected public instance pointer.
-        unsafe { core::ptr::write(barrier_instance_slot(barrier), core::ptr::null_mut()) };
-        // SAFETY: release new-round admission before waking this round.
-        unsafe { unlock_private_barrier(barrier) };
-        // SAFETY: publish last entrant state before waking followers.
-        unsafe { store_word(last, 1) };
-        // SAFETY: instance waiters hint remains live until owner release.
-        if unsafe { atomic::x86_64_load_relaxed_i32(instance_waiters) } != 0 {
-            // SAFETY: stack instance last word remains live through the wake.
-            unsafe { wake(last, -1, true) };
+        // SAFETY: the held barrier lock protects selecting this published stack
+        // instance; all its post-publication fields use raw atomics below.
+        let count = unsafe { instance_count_word(instance) };
+        // SAFETY: the held barrier lock protects selecting this instance.
+        let last = unsafe { instance_last_word(instance) };
+        // SAFETY: the held barrier lock protects selecting this instance.
+        let instance_waiters = unsafe { instance_waiters_word(instance) };
+        // SAFETY: the held barrier lock protects selecting this instance.
+        let finished = unsafe { instance_finished_word(instance) };
+        // SAFETY: follower admission increments musl's stack instance count.
+        if unsafe { atomic::x86_64_fetch_add_acqrel_i32(count, 1) }.wrapping_add(1) == limit {
+            // SAFETY: last entrant clears the protected public instance pointer.
+            unsafe { core::ptr::write(barrier_instance_slot(barrier), core::ptr::null_mut()) };
+            // SAFETY: release new-round admission before waking this round.
+            unsafe { unlock_private_barrier(barrier) };
+            // SAFETY: publish last entrant state before waking followers.
+            unsafe { store_word(last, 1) };
+            // SAFETY: instance waiters hint remains live until owner release.
+            if unsafe { atomic::x86_64_load_relaxed_i32(instance_waiters) } != 0 {
+                // SAFETY: stack instance last word remains live through the wake.
+                unsafe { wake(last, -1, true) };
+            }
+        } else {
+            // SAFETY: other entrants may now inspect the protected pointer slot.
+            unsafe { unlock_private_barrier(barrier) };
+            // SAFETY: live stack instance remains owned by its waiting source owner.
+            unsafe { wait_while(last, instance_waiters, 0, true) };
         }
-    } else {
-        // SAFETY: other entrants may now inspect the protected pointer slot.
-        unsafe { unlock_private_barrier(barrier) };
-        // SAFETY: live stack instance remains owned by its waiting source owner.
-        unsafe { wait_while(last, instance_waiters, 0, true) };
-    }
 
-    // SAFETY: each follower exits this source round exactly once.
-    if unsafe { atomic::x86_64_fetch_sub_acqrel_i32(count, 1) } == 1
-        // SAFETY: source increments finished only for the last follower.
-        && unsafe { atomic::x86_64_fetch_add_acqrel_i32(finished, 1) } != 0
-    {
-        // SAFETY: source wakes the stack instance owner after it announced wait.
-        unsafe { wake(finished, 1, true) };
-    }
+        // SAFETY: each follower exits this source round exactly once.
+        if unsafe { atomic::x86_64_fetch_sub_acqrel_i32(count, 1) } == 1
+            // SAFETY: source increments finished only for the last follower.
+            && unsafe { atomic::x86_64_fetch_add_acqrel_i32(finished, 1) } != 0
+        {
+            // SAFETY: source wakes the stack instance owner after it announced wait.
+            unsafe { wake(finished, 1, true) };
+        }
 
-    0
-}
+        0
+    }
+}}
