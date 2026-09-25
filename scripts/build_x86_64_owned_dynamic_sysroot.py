@@ -425,6 +425,8 @@ def select_allocator_members(members, allocator_member: str | None, allocator_ba
     """
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise common.BuildError("unknown dynamic allocator backend")
+    if allocator_backend == common.EVIDENCE_ALLOCATOR_BACKEND:
+        allocator_backend = "accepted-c"
     classified_allocator = (None if allocator_backend == "native-shadow"
                             and allocator_member not in members else allocator_member)
     selected, excluded = common.classify_libc_members(members, allocator_member=classified_allocator)
@@ -496,8 +498,10 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     rust_sysroot = common.pinned_rustc_sysroot(Path(rustup))
     lld = rust_sysroot / "lib/rustlib" / common.TARGET / "bin/gcc-ld/ld.lld"
     shared_dynamic_list = shared_libc_dynamic_list()
+    evidence_c = allocator_backend == common.EVIDENCE_ALLOCATOR_BACKEND
+    accepted_c = allocator_backend in common.C_ALLOCATOR_BACKENDS
     shared_mimalloc_hidden_exports = (shared_libc_mimalloc_hidden_exports(stage)
-        if allocator_backend == "accepted-c" else {"status": "not-selected-native-shadow"})
+        if accepted_c else {"status": "not-selected-native-shadow"})
     shared_compiler_helper_policy = shared_libc_compiler_helper_archive_policy()
     shared_errno_private_aliases = shared_libc_errno_private_aliases(stage)
     run = common.run
@@ -508,15 +512,16 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                # let the fixed C backend install a second hidden constructor.
                common.MIMALLOC_LIFECYCLE_C_FLAG,
                f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file)]
-    if allocator_backend == "accepted-c":
+    if accepted_c:
         environment.update({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",
                         "CFLAGS_x86_64_unknown_linux_musl": shlex.join(c_flags),
                         "CC_SHELL_ESCAPED_FLAGS": "1"})
     cargo = [rustup, "run", common.PINNED_TOOLCHAIN, "cargo"]
-    features = ["x86-owned-dynamic-runtime" if allocator_backend == "accepted-c" else "x86-owned-dynamic-native-shadow"]
+    features = ["x86-owned-dynamic-runtime" if accepted_c else "x86-owned-dynamic-native-shadow"]
     if lifecycle_test_audit:
         features.append("x86-owned-allocator-lifecycle-test-audit")
-    dependency_graph = common.allocator_dependency_graph(cargo, ",".join(features), allocator_backend, environment)
+    dependency_graph = common.allocator_dependency_graph(cargo, ",".join(features),
+                                                         "accepted-c" if accepted_c else allocator_backend, environment)
     libc_command = [*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features",
          "--features", ",".join(features), "--target", common.TARGET,
          "--target-dir", str(stage / "cargo"), "--", "--cfg", "crabc_owned_static_sysroot",
@@ -530,12 +535,12 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # static cfg remains for other shared source-owner visibility choices.
     run(libc_command, environment=environment)
     raw = stage / "cargo" / common.TARGET / "release/libc.a"
-    backend_archive = common.selected_allocator_archive(stage / "cargo", allocator_backend)
+    backend_archive = common.selected_allocator_archive(stage / "cargo", "accepted-c" if accepted_c else allocator_backend)
     allocator_lifecycle = (common.owned_mimalloc_lifecycle_profile(
         c_flags, libc_command, backend_archive, raw,
         llvm_ar=ar, llvm_nm=nm, llvm_objdump=objdump,
         stage=stage / "allocator-lifecycle-profile",
-    ) if allocator_backend == "accepted-c" else {
+    ) if accepted_c else {
         "initialization": "owned_dynamic_runtime::prepare-before-constructors",
         "process_done": "libc-fini-array-at-loader-graph-position-before-stdio-flush",
         "post_done_backing": "source-default-release-retained",
@@ -555,6 +560,25 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     objects = stage / "objects"
     objects.mkdir()
     run([ar, "x", str(raw), *selected], cwd=objects)
+    pinned_c_evidence = None
+    if evidence_c:
+        # Evidence only: the exact pinned v3.5.0 object replaces the accepted
+        # libmimalloc-sys member; its locally-bound export set follows the
+        # default-visibility rule the helper proves on the accepted member.
+        evidence_object, pinned_c_evidence = common.pinned_c_evidence_object(
+            stage, c_flags, backend_archive, llvm_ar=ar, environment=environment)
+        common.require_no_implicit_lifecycle(evidence_object, llvm_nm=nm, llvm_objdump=objdump)
+        (objects / member).unlink()
+        common.copy_artifact(evidence_object, objects / evidence_object.name)
+        selected = tuple(evidence_object.name if item == member else item for item in selected)
+        hidden = pinned_c_evidence["default_visibility_definitions"]
+        script = stage / "libc-mimalloc-hidden.exports"
+        script.write_text("{\n  local:\n" + "".join(f"    {name};\n" for name in hidden) + "};\n", encoding="utf-8")
+        shared_mimalloc_hidden_exports = {
+            "source": "pinned-c-evidence default-visibility definitions",
+            "member_count": len(hidden), "members": hidden,
+            "linker_script_sha256": common.sha256_file(script), "linker_policy": "exact-local-symbols",
+        }
     builtins = stage / "libcrabc-builtins.a"
     run([sys.executable, str(ROOT / "builtins/build_x86_64.py"), "--output", str(builtins),
          "--provenance", str(stage / "builtins.json"), "--verify-reproducible"])
@@ -569,7 +593,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # one weak alias needs LLD localization after its allocator object edge
     # has resolved.
     libc_shared_link_command = shared_libc_link_command(
-        lld, SHARED_LIBC_DYNAMIC_LIST, (stage / "libc-mimalloc-hidden.exports" if allocator_backend == "accepted-c" else None),
+        lld, SHARED_LIBC_DYNAMIC_LIST, (stage / "libc-mimalloc-hidden.exports" if accepted_c else None),
         stage / "libc-errno-private.exports", objects, selected, builtins, library
     )
     run(libc_shared_link_command)
@@ -668,13 +692,14 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                   "excluded_members": list(excluded),
                   "allocator_backend": allocator_backend,
                   "allocator_lifecycle_test_audit": lifecycle_test_audit,
-                  "accepted_allocator": (common.accepted_allocator_pin() if allocator_backend == "accepted-c" else None),
+                  "accepted_allocator": (common.accepted_allocator_pin() if accepted_c else None),
+                  "pinned_c_evidence": pinned_c_evidence,
                   "native_allocator": (_source_file_identity(ROOT / "crabc-mimalloc/UPSTREAM.md", "fixed native allocator provenance") if allocator_backend == "native-shadow" else None),
                   "dependency_graph": dependency_graph,
                   "excluded_c_allocator": None,
-                  "allocator_headers": (common.allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"])) if allocator_backend == "accepted-c" else None),
-                  "allocator_compiler": (common.executable_identity(Path("/usr/bin/gcc"), "pinned allocator C compiler") if allocator_backend == "accepted-c" else None),
-                  "allocator_flags": ([flag.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for flag in c_flags] if allocator_backend == "accepted-c" else []),
+                  "allocator_headers": (common.allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"])) if accepted_c else None),
+                  "allocator_compiler": (common.executable_identity(Path("/usr/bin/gcc"), "pinned allocator C compiler") if accepted_c else None),
+                  "allocator_flags": ([flag.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for flag in c_flags] if accepted_c else []),
                   "allocator_lifecycle_profile": allocator_lifecycle,
                   "libc_command": [arg.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for arg in libc_command],
                   "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_shared_link_command],
