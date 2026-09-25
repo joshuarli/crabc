@@ -16,13 +16,19 @@ compile_error!("the x86 setjmp leaf requires little-endian Linux/x86-64");
  * offset 72. Keep the whole transfer in one assembly unit: a Rust wrapper
  * would save and resume its own frame rather than the C caller's frame.
  */
-core::arch::global_asm!(
-    r#"
+// Each musl object below has its own static archive member, as in musl's
+// libc.a; a chunk that shares local labels with another stays with it.
+// Musl's `src/setjmp/setjmp.c` object.
+static_archive_member! { setjmp_source {
+    core::arch::global_asm!(
+        r#"
     .text
 
     .p2align 4
     .global setjmp
+    .text
     .global __setjmp
+    .text
     .global _setjmp
     .type setjmp,@function
     .type __setjmp,@function
@@ -45,9 +51,19 @@ _setjmp:
     .size setjmp, .-setjmp
     .size __setjmp, .-__setjmp
     .size _setjmp, .-_setjmp
+"#,
+    );
+}}
+
+// Musl's `src/setjmp/longjmp.c` object.
+static_archive_member! { longjmp_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global longjmp
+    .text
     .global _longjmp
     .type longjmp,@function
     .type _longjmp,@function
@@ -66,9 +82,19 @@ _longjmp:
     jmp qword ptr [rdi + 56]
     .size longjmp, .-longjmp
     .size _longjmp, .-_longjmp
+"#,
+    );
+}}
+
+// Musl's `src/signal/sigsetjmp.c` object.
+static_archive_member! { sigsetjmp_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global sigsetjmp
+    .text
     .global __sigsetjmp
     .type sigsetjmp,@function
     .type __sigsetjmp,@function
@@ -103,6 +129,15 @@ __sigsetjmp:
     syscall
     mov eax, r8d
     ret
+"#,
+    );
+}}
+
+// Musl's `src/signal/siglongjmp.c` object.
+static_archive_member! { siglongjmp_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global siglongjmp
@@ -113,5 +148,6 @@ siglongjmp:
     .size siglongjmp, .-siglongjmp
 
     .section .note.GNU-stack,"",@progbits
-"#
-);
+"#,
+    );
+}}

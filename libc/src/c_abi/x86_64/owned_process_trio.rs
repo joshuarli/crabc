@@ -42,8 +42,12 @@ unsafe extern "C" {
     fn close(fd: c_int) -> c_int;
 }
 
-core::arch::global_asm!(r#"
-.text
+// Each musl object below has its own static archive member, as in musl's
+// libc.a; a chunk that shares local labels with another stays with it.
+static_archive_member! { crabc_owned_clone_raw_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 .global __crabc_owned_clone_raw
 .hidden __crabc_owned_clone_raw
 .type __crabc_owned_clone_raw,@function
@@ -72,6 +76,15 @@ __crabc_owned_clone_raw:
     hlt
 1:  ret
 .size __crabc_owned_clone_raw, .-__crabc_owned_clone_raw
+"#,
+    );
+}}
+
+// Musl's `src/process/vfork.c` object.
+static_archive_member! { vfork_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 .global vfork
 .type vfork,@function
 vfork:
@@ -84,7 +97,9 @@ vfork:
 .size vfork, .-vfork
 .hidden __crabc_owned_vfork_result
 .section .note.GNU-stack,"",@progbits
-"#);
+"#,
+    );
+}}
 
 // vfork cannot have a Rust frame spanning syscall58: the child shares and
 // may overwrite the parent's stack. The source assembly removes its return

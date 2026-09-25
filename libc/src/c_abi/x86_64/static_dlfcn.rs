@@ -36,61 +36,82 @@ pub struct DlPhdrInfo {
     dlpi_tls_data: *mut c_void,
 }
 
-/// musl `stub_dlopen`: no loader exists, including for a null name.
-#[no_mangle]
-#[linkage = "weak"]
-pub extern "C" fn dlopen(_file: *const c_char, _mode: c_int) -> *mut c_void {
-    Diagnostic::new().bytes(b"Dynamic loading not supported").publish();
-    ptr::null_mut()
-}
+// Musl's `src/ldso/dlopen.c` object.
+static_archive_member! { dlopen_source {
+    /// musl `stub_dlopen`: no loader exists, including for a null name.
+    #[no_mangle]
+    #[linkage = "weak"]
+    pub extern "C" fn dlopen(_file: *const c_char, _mode: c_int) -> *mut c_void {
+        Diagnostic::new().bytes(b"Dynamic loading not supported").publish();
+        ptr::null_mut()
+    }
+}}
 
-/// musl `dlsym` -> `stub_dlsym`: `Symbol not found: %s` for every handle,
-/// including `RTLD_DEFAULT` and `RTLD_NEXT`.
-///
-/// # Safety
-/// `name` is null or a readable NUL-terminated C string.
-#[no_mangle]
-pub unsafe extern "C" fn dlsym(_handle: *mut c_void, name: *const c_char) -> *mut c_void {
-    unsafe { symbol_not_found(name) }.publish();
-    ptr::null_mut()
-}
+// Musl's `src/ldso/dlsym.c` object.
+static_archive_member! { dlsym_source {
+    /// musl `dlsym` -> `stub_dlsym`: `Symbol not found: %s` for every handle,
+    /// including `RTLD_DEFAULT` and `RTLD_NEXT`.
+    ///
+    /// # Safety
+    /// `name` is null or a readable NUL-terminated C string.
+    #[no_mangle]
+    pub unsafe extern "C" fn dlsym(_handle: *mut c_void, name: *const c_char) -> *mut c_void {
+        unsafe { symbol_not_found(name) }.publish();
+        ptr::null_mut()
+    }
+}}
 
-/// musl `dlclose` -> `stub_invalid_handle`: every handle is invalid.
-#[no_mangle]
-pub extern "C" fn dlclose(handle: *mut c_void) -> c_int {
-    invalid_handle(handle).publish();
-    1
-}
+// Musl's `src/ldso/dlclose.c` object.
+static_archive_member! { dlclose_source {
+    /// musl `dlclose` -> `stub_invalid_handle`: every handle is invalid.
+    #[no_mangle]
+    pub extern "C" fn dlclose(handle: *mut c_void) -> c_int {
+        invalid_handle(handle).publish();
+        1
+    }
+}}
 
-/// musl `dlerror`: consume this thread's pending message.
-#[no_mangle]
-pub extern "C" fn dlerror() -> *mut c_char { diagnostic::take() }
+// Musl's `src/ldso/dlerror.c` object.
+static_archive_member! { dlerror_source {
+    /// musl `dlerror`: consume this thread's pending message.
+    #[no_mangle]
+    pub extern "C" fn dlerror() -> *mut c_char { diagnostic::take() }
+}}
 
-/// musl `stub_dladdr`: no address belongs to a loaded image; `info` is
-/// untouched and no diagnostic is published.
-#[no_mangle]
-#[linkage = "weak"]
-pub extern "C" fn dladdr(_address: *const c_void, _info: *mut c_void) -> c_int { 0 }
+// Musl's `src/ldso/dladdr.c` object.
+static_archive_member! { dladdr_source {
+    /// musl `stub_dladdr`: no address belongs to a loaded image; `info` is
+    /// untouched and no diagnostic is published.
+    #[no_mangle]
+    #[linkage = "weak"]
+    pub extern "C" fn dladdr(_address: *const c_void, _info: *mut c_void) -> c_int { 0 }
+}}
 
-/// musl `dlinfo`: the invalid-handle check precedes the request, so every
-/// call fails without writing `result`.
-#[no_mangle]
-pub extern "C" fn dlinfo(handle: *mut c_void, _request: c_int, _result: *mut c_void) -> c_int {
-    invalid_handle(handle).publish();
-    -1
-}
+// Musl's `src/ldso/dlinfo.c` object.
+static_archive_member! { dlinfo_source {
+    /// musl `dlinfo`: the invalid-handle check precedes the request, so every
+    /// call fails without writing `result`.
+    #[no_mangle]
+    pub extern "C" fn dlinfo(handle: *mut c_void, _request: c_int, _result: *mut c_void) -> c_int {
+        invalid_handle(handle).publish();
+        -1
+    }
+}}
 
-/// musl `static_dl_iterate_phdr`: one callback for the executable.
-///
-/// # Safety
-/// `callback`, when present, obeys the C `dl_iterate_phdr` callback contract
-/// and `data` satisfies it. Musl calls a null callback; this entry returns 0.
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn dl_iterate_phdr(
-    callback: Option<unsafe extern "C" fn(*mut DlPhdrInfo, usize, *mut c_void) -> c_int>,
-    data: *mut c_void,
-) -> c_int {
-    let Some(callback) = callback else { return 0 };
-    unsafe { static_dl_iterate_phdr::iterate(callback, data) }
-}
+// Musl's `src/ldso/dl_iterate_phdr.c` object.
+static_archive_member! { dl_iterate_phdr_source {
+    /// musl `static_dl_iterate_phdr`: one callback for the executable.
+    ///
+    /// # Safety
+    /// `callback`, when present, obeys the C `dl_iterate_phdr` callback contract
+    /// and `data` satisfies it. Musl calls a null callback; this entry returns 0.
+    #[no_mangle]
+    #[linkage = "weak"]
+    pub unsafe extern "C" fn dl_iterate_phdr(
+        callback: Option<unsafe extern "C" fn(*mut DlPhdrInfo, usize, *mut c_void) -> c_int>,
+        data: *mut c_void,
+    ) -> c_int {
+        let Some(callback) = callback else { return 0 };
+        unsafe { static_dl_iterate_phdr::iterate(callback, data) }
+    }
+}}

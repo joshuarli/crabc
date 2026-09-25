@@ -249,14 +249,20 @@ static_archive_member! { getservbyport_source {
         unsafe { if getservbyport_r(port,protocol,ptr::addr_of_mut!(PORT_SERVICE),ptr::addr_of_mut!(PORT_SERVICE_BUFFER).cast(),32,&mut result) != 0 { ptr::null_mut() } else { result } }
     }
 }}
-// Musl's `src/network/herror.c` object.
-static_archive_member! { herror_source {
-    // musl deliberately provides no hosts/networks enumeration or network DB.
-    // These source bodies do not inspect arguments, files, errno or h_errno.
+// musl deliberately provides no hosts/networks enumeration or network DB.
+// These source bodies do not inspect arguments, files, errno or h_errno.
+// Musl's `src/network/ent.c` object.
+static_archive_member! { ent_source {
     #[no_mangle] pub extern "C" fn gethostent() -> *mut Hostent { ptr::null_mut() }
     #[no_mangle] pub extern "C" fn getnetent() -> *mut Netent { ptr::null_mut() }
+}}
+// Musl's `src/network/netname.c` object.
+static_archive_member! { netname_source {
     #[no_mangle] pub extern "C" fn getnetbyname(_: *const c_char) -> *mut Netent { ptr::null_mut() }
     #[no_mangle] pub extern "C" fn getnetbyaddr(_: u32,_: c_int) -> *mut Netent { ptr::null_mut() }
+}}
+// Musl's `src/network/herror.c` object.
+static_archive_member! { herror_source {
     /// # Safety
     /// A nonnull message must be NUL-terminated and readable during reporting.
     #[no_mangle]

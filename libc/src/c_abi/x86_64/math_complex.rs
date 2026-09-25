@@ -38,14 +38,13 @@
 )))]
 compile_error!("the x86 math/complex leaf requires little-endian Linux/x86-64");
 
-core::arch::global_asm!(
-    r#"
-    .text
+// Each musl object below has its own static archive member, as in musl's
+// libc.a; a chunk that shares local labels with another stays with it.
+// Musl's `src/math/__fpclassifyl.c` object.
+static_archive_member! { __fpclassifyl_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.__fpclassifyl,"ax",@progbits
-
-    /* musl src/math/__fpclassifyl.c for x87 extended precision. The argument
-       occupies 16 stack bytes after the return address: low 64-bit mantissa
-       at +8 and the little-endian sign/exponent word at +16. */
     .p2align 4
     .global __fpclassifyl
     .type __fpclassifyl,@function
@@ -91,6 +90,15 @@ __fpclassifyl:
     /* musl src/math/__fpclassifyf.c and __fpclassify.c. These are public
        external ABI entries, including for consumers that name the symbols
        directly rather than through the classification macros. */
+"#,
+    );
+}}
+
+// Musl's `src/math/__fpclassifyf.c` object.
+static_archive_member! { __fpclassifyf_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
     .p2align 4
     .global __fpclassifyf
     .type __fpclassifyf,@function
@@ -123,6 +131,15 @@ __fpclassifyf:
     xor eax, eax
     ret
     .size __fpclassifyf, .-__fpclassifyf
+"#,
+    );
+}}
+
+// Musl's `src/math/__fpclassify.c` object.
+static_archive_member! { __fpclassify_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
 
     .p2align 4
     .global __fpclassify
@@ -156,6 +173,15 @@ __fpclassify:
     xor eax, eax
     ret
     .size __fpclassify, .-__fpclassify
+"#,
+    );
+}}
+
+// Musl's `src/math/__signbitf.c` object.
+static_archive_member! { __signbitf_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
 
     /* musl src/math/__signbitf.c and __signbit.c. */
     .p2align 4
@@ -166,6 +192,15 @@ __signbitf:
     shr eax, 31
     ret
     .size __signbitf, .-__signbitf
+"#,
+    );
+}}
+
+// Musl's `src/math/__signbit.c` object.
+static_archive_member! { __signbit_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
 
     .p2align 4
     .global __signbit
@@ -176,6 +211,15 @@ __signbit:
     ret
     .size __signbit, .-__signbit
 
+    .section .text.__signbitl,"ax",@progbits
+"#,
+    );
+}}
+
+// Musl's `src/math/__signbitl.c` object.
+static_archive_member! { __signbitl_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.__signbitl,"ax",@progbits
     .p2align 4
     .global __signbitl
@@ -189,12 +233,30 @@ __signbitl:
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
     /* C99 real/imaginary accessor ABI: complex float is one SSE eightbyte;
        complex double is real in xmm0 and imaginary in xmm1. */
+"#,
+    );
+}}
+
+// Musl's `src/complex/crealf.c` object.
+static_archive_member! { crealf_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
     .p2align 4
     .global crealf
     .type crealf,@function
 crealf:
     ret
     .size crealf, .-crealf
+"#,
+    );
+}}
+
+// Musl's `src/complex/cimagf.c` object.
+static_archive_member! { cimagf_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
 
     .p2align 4
     .global cimagf
@@ -203,6 +265,15 @@ cimagf:
     shufps xmm0, xmm0, 0x55
     ret
     .size cimagf, .-cimagf
+"#,
+    );
+}}
+
+// Musl's `src/complex/creal.c` object.
+static_archive_member! { creal_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
 
     .p2align 4
     .global creal
@@ -210,6 +281,15 @@ cimagf:
 creal:
     ret
     .size creal, .-creal
+"#,
+    );
+}}
+
+// Musl's `src/complex/cimag.c` object.
+static_archive_member! { cimag_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
 
     .p2align 4
     .global cimag
@@ -222,6 +302,15 @@ cimag:
     /* A complex long double is passed in 32 stack bytes. Its real component
        starts at +8 and its imaginary component at +24; scalar long-double
        results return in st0. */
+"#,
+    );
+}}
+
+// Musl's `src/complex/creall.c` object.
+static_archive_member! { creall_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
     .p2align 4
     .global creall
     .type creall,@function
@@ -229,6 +318,15 @@ creall:
     fld tbyte ptr [rsp + 8]
     ret
     .size creall, .-creall
+"#,
+    );
+}}
+
+// Musl's `src/complex/cimagl.c` object.
+static_archive_member! { cimagl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
 
     .p2align 4
     .global cimagl
@@ -237,26 +335,61 @@ cimagl:
     fld tbyte ptr [rsp + 24]
     ret
     .size cimagl, .-cimagl
+"#,
+    );
+}}
+
+// Musl's `src/complex/conjf.c` object.
+static_archive_member! { conjf_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
 
     .p2align 4
     .global conjf
     .type conjf,@function
 conjf:
-    xorps xmm0, xmmword ptr [rip + .Lcrabc_x86_conjf_sign]
+    xorps xmm0, xmmword ptr [rip + .Lcrabc_x86_conjf_sign_conjf_source]
     ret
     .size conjf, .-conjf
+    .section .rodata
+    .p2align 4
+.Lcrabc_x86_conjf_sign_conjf_source:
+    .long 0, 0x80000000, 0, 0
+"#,
+    );
+}}
+
+// Musl's `src/complex/conj.c` object.
+static_archive_member! { conj_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
 
     .p2align 4
     .global conj
     .type conj,@function
 conj:
-    xorpd xmm1, xmmword ptr [rip + .Lcrabc_x86_conj_sign]
+    xorpd xmm1, xmmword ptr [rip + .Lcrabc_x86_conj_sign_conj_source]
     ret
     .size conj, .-conj
 
     /* COMPLEX_X87 returns its real component in st0 and its imaginary
        component in st1. Loading the negated imaginary first then the real
        creates that exact ordered pair without a Rust f80 representation. */
+    .section .rodata
+    .p2align 4
+.Lcrabc_x86_conj_sign_conj_source:
+    .quad 0x8000000000000000, 0
+"#,
+    );
+}}
+
+// Musl's `src/complex/conjl.c` object.
+static_archive_member! { conjl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
     .p2align 4
     .global conjl
     .type conjl,@function
@@ -277,4 +410,5 @@ conjl:
 
     .section .note.GNU-stack, "", @progbits
 "#,
-);
+    );
+}}

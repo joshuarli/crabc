@@ -41,9 +41,12 @@ compile_error!("the x87 extended-math leaf requires little-endian Linux/x86-64")
 // exp2l entry has its own text section: it is a real binary80 dependency of
 // `math_long_double_completion.rs`, and section GC must not retain unrelated
 // public x87 siblings merely because they share this Rust assembly input.
-core::arch::global_asm!(
-    r#"
-    .text
+// Each musl object below has its own static archive member, as in musl's
+// libc.a; a chunk that shares local labels with another stays with it.
+// Musl's `src/math/acosl.c` object.
+static_archive_member! { acosl_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
@@ -62,6 +65,16 @@ acosl:
     fpatan
     ret
     .size acosl, .-acosl
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/asinl.c` object.
+static_archive_member! { asinl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global asinl
@@ -77,6 +90,16 @@ asinl:
     fpatan
     ret
     .size asinl, .-asinl
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/atanl.c` object.
+static_archive_member! { atanl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global atanl
@@ -87,6 +110,16 @@ atanl:
     fpatan
     ret
     .size atanl, .-atanl
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/atan2l.c` object.
+static_archive_member! { atan2l_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global atan2l
@@ -100,6 +133,16 @@ atan2l:
 
     /* floorl.s also owns ceill and truncl. Its temporary control word uses
        the now-dead first input slot and is restored before return. */
+    .section .text.floorl,"ax",@progbits
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/floorl.c` object.
+static_archive_member! { floorl_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.floorl,"ax",@progbits
     .p2align 4
     .global floorl
@@ -119,6 +162,7 @@ floorl:
     .size floorl, .-floorl
 
     .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
     .p2align 4
     .global ceill
     .type ceill,@function
@@ -127,6 +171,7 @@ ceill:
     mov $0xb,%al
     jmp .Lcrabc_x87_round_with_control
     .size ceill, .-ceill
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global truncl
@@ -138,6 +183,16 @@ truncl:
     .size truncl, .-truncl
 
     /* musl exp2l.s owns both exp2l and expm1l. */
+    .section .text.expm1l,"ax",@progbits
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/exp2l.c` object.
+static_archive_member! { exp2l_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.expm1l,"ax",@progbits
     .p2align 4
     .global expm1l
@@ -171,6 +226,7 @@ expm1l:
     ret
     .size expm1l, .-expm1l
 
+    .section .text.exp2l,"ax",@progbits
     .section .text.exp2l,"ax",@progbits
     .p2align 4
     .global exp2l
@@ -237,6 +293,16 @@ exp2l:
     .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
     /* musl expl.s: exp(x) = 2^hi + 2^hi (2^lo - 1), where hi+lo
        retains the exact extended-precision log2(e)*x product. */
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/expl.c` object.
+static_archive_member! { expl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
     .p2align 4
     .global expl
     .type expl,@function
@@ -312,6 +378,16 @@ expl:
     addq $48, %rsp
     ret
     .size expl, .-expl
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/log10l.c` object.
+static_archive_member! { log10l_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global log10l
@@ -322,6 +398,16 @@ log10l:
     fyl2x
     ret
     .size log10l, .-log10l
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/log1pl.c` object.
+static_archive_member! { log1pl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global log1pl
@@ -341,6 +427,16 @@ log1pl:
     fyl2x
     ret
     .size log1pl, .-log1pl
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/log2l.c` object.
+static_archive_member! { log2l_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global log2l
@@ -351,6 +447,16 @@ log2l:
     fyl2x
     ret
     .size log2l, .-log2l
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/logl.c` object.
+static_archive_member! { logl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global logl
@@ -363,6 +469,16 @@ logl:
     .size logl, .-logl
 
     .section .text.fabsl,"ax",@progbits
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/fabsl.c` object.
+static_archive_member! { fabsl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.fabsl,"ax",@progbits
     .p2align 4
     .global fabsl
     .type fabsl,@function
@@ -372,6 +488,16 @@ fabsl:
     ret
     .size fabsl, .-fabsl
 
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/fmodl.c` object.
+static_archive_member! { fmodl_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
     .p2align 4
     .global fmodl
@@ -387,6 +513,16 @@ fmodl:
     fstp %st(1)
     ret
     .size fmodl, .-fmodl
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/lrintl.c` object.
+static_archive_member! { lrintl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global lrintl
@@ -397,6 +533,16 @@ lrintl:
     movq -8(%rsp),%rax
     ret
     .size lrintl, .-lrintl
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/llrintl.c` object.
+static_archive_member! { llrintl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global llrintl
@@ -407,6 +553,16 @@ llrintl:
     movq -8(%rsp),%rax
     ret
     .size llrintl, .-llrintl
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/remainderl.c` object.
+static_archive_member! { remainderl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global remainderl
@@ -422,6 +578,16 @@ remainderl:
     fstp %st(1)
     ret
     .size remainderl, .-remainderl
+"#,
+    options(att_syntax),
+    );
+}}
+
+// Musl's `src/math/remquol.c` object.
+static_archive_member! { remquol_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global remquol
@@ -459,4 +625,5 @@ remquol:
     .section .note.GNU-stack, "", @progbits
 "#,
     options(att_syntax),
-);
+    );
+}}

@@ -52,32 +52,38 @@ fn is_nanf(x: f32) -> bool {
     ((bits >> 23) & 0xff) == 0xff && (bits << 9) != 0
 }
 
-/// Return the non-negative difference of two binary64 values.
-///
-/// NaNs retain musl's left-to-right operand choice. For non-NaN operands,
-/// the selected subtraction is intentionally left to the x86 SSE environment.
-#[no_mangle]
-pub extern "C" fn fdim(x: f64, y: f64) -> f64 {
-    if is_nan(x) {
-        return x;
+// Musl's `src/math/fdim.c` object.
+static_archive_member! { fdim_source {
+    /// Return the non-negative difference of two binary64 values.
+    ///
+    /// NaNs retain musl's left-to-right operand choice. For non-NaN operands,
+    /// the selected subtraction is intentionally left to the x86 SSE environment.
+    #[no_mangle]
+    pub extern "C" fn fdim(x: f64, y: f64) -> f64 {
+        if is_nan(x) {
+            return x;
+        }
+        if is_nan(y) {
+            return y;
+        }
+        if x > y { x - y } else { 0.0 }
     }
-    if is_nan(y) {
-        return y;
-    }
-    if x > y { x - y } else { 0.0 }
-}
+}}
 
-/// Return the non-negative difference of two binary32 values.
-///
-/// The caller's MXCSR rounding and exception state govern the selected
-/// subtraction just as for [`fdim`].
-#[no_mangle]
-pub extern "C" fn fdimf(x: f32, y: f32) -> f32 {
-    if is_nanf(x) {
-        return x;
+// Musl's `src/math/fdimf.c` object.
+static_archive_member! { fdimf_source {
+    /// Return the non-negative difference of two binary32 values.
+    ///
+    /// The caller's MXCSR rounding and exception state govern the selected
+    /// subtraction just as for [`fdim`].
+    #[no_mangle]
+    pub extern "C" fn fdimf(x: f32, y: f32) -> f32 {
+        if is_nanf(x) {
+            return x;
+        }
+        if is_nanf(y) {
+            return y;
+        }
+        if x > y { x - y } else { 0.0 }
     }
-    if is_nanf(y) {
-        return y;
-    }
-    if x > y { x - y } else { 0.0 }
-}
+}}

@@ -40,49 +40,61 @@ fn is_nan_f32(bits: u32) -> bool {
     bits & F32_EXPONENT_MASK == F32_EXPONENT_MASK && bits & F32_FRACTION_MASK != 0
 }
 
-/// Returns the binary64 remainder with musl's sign, subnormal, and domain rule.
-#[no_mangle]
-pub extern "C" fn fmod(x: f64, y: f64) -> f64 {
-    let mut x_bits = x.to_bits();
-    let mut y_bits = y.to_bits();
-    let mut x_exponent = ((x_bits >> 52) & 0x7ff) as i32;
-    let mut y_exponent = ((y_bits >> 52) & 0x7ff) as i32;
-    let x_sign = x_bits >> 63;
+// Musl's `src/math/fmod.c` object.
+static_archive_member! { fmod_source {
+    /// Returns the binary64 remainder with musl's sign, subnormal, and domain rule.
+    #[no_mangle]
+    pub extern "C" fn fmod(x: f64, y: f64) -> f64 {
+        let mut x_bits = x.to_bits();
+        let mut y_bits = y.to_bits();
+        let mut x_exponent = ((x_bits >> 52) & 0x7ff) as i32;
+        let mut y_exponent = ((y_bits >> 52) & 0x7ff) as i32;
+        let x_sign = x_bits >> 63;
 
-    if y_bits << 1 == 0 || is_nan_f64(y_bits) || x_exponent == 0x7ff {
-        return (x * y) / (x * y);
-    }
-    if x_bits << 1 <= y_bits << 1 {
-        if x_bits << 1 == y_bits << 1 {
-            return 0.0 * x;
+        if y_bits << 1 == 0 || is_nan_f64(y_bits) || x_exponent == 0x7ff {
+            return (x * y) / (x * y);
         }
-        return x;
-    }
+        if x_bits << 1 <= y_bits << 1 {
+            if x_bits << 1 == y_bits << 1 {
+                return 0.0 * x;
+            }
+            return x;
+        }
 
-    if x_exponent == 0 {
-        let mut top = x_bits << 12;
-        while top >> 63 == 0 {
+        if x_exponent == 0 {
+            let mut top = x_bits << 12;
+            while top >> 63 == 0 {
+                x_exponent -= 1;
+                top <<= 1;
+            }
+            x_bits <<= (-x_exponent + 1) as u32;
+        } else {
+            x_bits &= u64::MAX >> 12;
+            x_bits |= 1_u64 << 52;
+        }
+        if y_exponent == 0 {
+            let mut top = y_bits << 12;
+            while top >> 63 == 0 {
+                y_exponent -= 1;
+                top <<= 1;
+            }
+            y_bits <<= (-y_exponent + 1) as u32;
+        } else {
+            y_bits &= u64::MAX >> 12;
+            y_bits |= 1_u64 << 52;
+        }
+
+        while x_exponent > y_exponent {
+            let reduced = x_bits.wrapping_sub(y_bits);
+            if reduced >> 63 == 0 {
+                if reduced == 0 {
+                    return 0.0 * x;
+                }
+                x_bits = reduced;
+            }
+            x_bits <<= 1;
             x_exponent -= 1;
-            top <<= 1;
         }
-        x_bits <<= (-x_exponent + 1) as u32;
-    } else {
-        x_bits &= u64::MAX >> 12;
-        x_bits |= 1_u64 << 52;
-    }
-    if y_exponent == 0 {
-        let mut top = y_bits << 12;
-        while top >> 63 == 0 {
-            y_exponent -= 1;
-            top <<= 1;
-        }
-        y_bits <<= (-y_exponent + 1) as u32;
-    } else {
-        y_bits &= u64::MAX >> 12;
-        y_bits |= 1_u64 << 52;
-    }
-
-    while x_exponent > y_exponent {
         let reduced = x_bits.wrapping_sub(y_bits);
         if reduced >> 63 == 0 {
             if reduced == 0 {
@@ -90,74 +102,77 @@ pub extern "C" fn fmod(x: f64, y: f64) -> f64 {
             }
             x_bits = reduced;
         }
-        x_bits <<= 1;
-        x_exponent -= 1;
-    }
-    let reduced = x_bits.wrapping_sub(y_bits);
-    if reduced >> 63 == 0 {
-        if reduced == 0 {
-            return 0.0 * x;
-        }
-        x_bits = reduced;
-    }
-    while x_bits >> 52 == 0 {
-        x_bits <<= 1;
-        x_exponent -= 1;
-    }
-
-    if x_exponent > 0 {
-        x_bits -= 1_u64 << 52;
-        x_bits |= (x_exponent as u64) << 52;
-    } else {
-        x_bits >>= (-x_exponent + 1) as u32;
-    }
-    x_bits |= x_sign << 63;
-    f64::from_bits(x_bits)
-}
-
-/// Returns the binary32 remainder with musl's sign, subnormal, and domain rule.
-#[no_mangle]
-pub extern "C" fn fmodf(x: f32, y: f32) -> f32 {
-    let mut x_bits = x.to_bits();
-    let mut y_bits = y.to_bits();
-    let mut x_exponent = ((x_bits >> 23) & 0xff) as i32;
-    let mut y_exponent = ((y_bits >> 23) & 0xff) as i32;
-    let x_sign = x_bits & 0x8000_0000;
-
-    if y_bits << 1 == 0 || is_nan_f32(y_bits) || x_exponent == 0xff {
-        return (x * y) / (x * y);
-    }
-    if x_bits << 1 <= y_bits << 1 {
-        if x_bits << 1 == y_bits << 1 {
-            return 0.0_f32 * x;
-        }
-        return x;
-    }
-
-    if x_exponent == 0 {
-        let mut top = x_bits << 9;
-        while top >> 31 == 0 {
+        while x_bits >> 52 == 0 {
+            x_bits <<= 1;
             x_exponent -= 1;
-            top <<= 1;
         }
-        x_bits <<= (-x_exponent + 1) as u32;
-    } else {
-        x_bits &= u32::MAX >> 9;
-        x_bits |= 1_u32 << 23;
-    }
-    if y_exponent == 0 {
-        let mut top = y_bits << 9;
-        while top >> 31 == 0 {
-            y_exponent -= 1;
-            top <<= 1;
-        }
-        y_bits <<= (-y_exponent + 1) as u32;
-    } else {
-        y_bits &= u32::MAX >> 9;
-        y_bits |= 1_u32 << 23;
-    }
 
-    while x_exponent > y_exponent {
+        if x_exponent > 0 {
+            x_bits -= 1_u64 << 52;
+            x_bits |= (x_exponent as u64) << 52;
+        } else {
+            x_bits >>= (-x_exponent + 1) as u32;
+        }
+        x_bits |= x_sign << 63;
+        f64::from_bits(x_bits)
+    }
+}}
+
+// Musl's `src/math/fmodf.c` object.
+static_archive_member! { fmodf_source {
+    /// Returns the binary32 remainder with musl's sign, subnormal, and domain rule.
+    #[no_mangle]
+    pub extern "C" fn fmodf(x: f32, y: f32) -> f32 {
+        let mut x_bits = x.to_bits();
+        let mut y_bits = y.to_bits();
+        let mut x_exponent = ((x_bits >> 23) & 0xff) as i32;
+        let mut y_exponent = ((y_bits >> 23) & 0xff) as i32;
+        let x_sign = x_bits & 0x8000_0000;
+
+        if y_bits << 1 == 0 || is_nan_f32(y_bits) || x_exponent == 0xff {
+            return (x * y) / (x * y);
+        }
+        if x_bits << 1 <= y_bits << 1 {
+            if x_bits << 1 == y_bits << 1 {
+                return 0.0_f32 * x;
+            }
+            return x;
+        }
+
+        if x_exponent == 0 {
+            let mut top = x_bits << 9;
+            while top >> 31 == 0 {
+                x_exponent -= 1;
+                top <<= 1;
+            }
+            x_bits <<= (-x_exponent + 1) as u32;
+        } else {
+            x_bits &= u32::MAX >> 9;
+            x_bits |= 1_u32 << 23;
+        }
+        if y_exponent == 0 {
+            let mut top = y_bits << 9;
+            while top >> 31 == 0 {
+                y_exponent -= 1;
+                top <<= 1;
+            }
+            y_bits <<= (-y_exponent + 1) as u32;
+        } else {
+            y_bits &= u32::MAX >> 9;
+            y_bits |= 1_u32 << 23;
+        }
+
+        while x_exponent > y_exponent {
+            let reduced = x_bits.wrapping_sub(y_bits);
+            if reduced >> 31 == 0 {
+                if reduced == 0 {
+                    return 0.0_f32 * x;
+                }
+                x_bits = reduced;
+            }
+            x_bits <<= 1;
+            x_exponent -= 1;
+        }
         let reduced = x_bits.wrapping_sub(y_bits);
         if reduced >> 31 == 0 {
             if reduced == 0 {
@@ -165,27 +180,18 @@ pub extern "C" fn fmodf(x: f32, y: f32) -> f32 {
             }
             x_bits = reduced;
         }
-        x_bits <<= 1;
-        x_exponent -= 1;
-    }
-    let reduced = x_bits.wrapping_sub(y_bits);
-    if reduced >> 31 == 0 {
-        if reduced == 0 {
-            return 0.0_f32 * x;
+        while x_bits >> 23 == 0 {
+            x_bits <<= 1;
+            x_exponent -= 1;
         }
-        x_bits = reduced;
-    }
-    while x_bits >> 23 == 0 {
-        x_bits <<= 1;
-        x_exponent -= 1;
-    }
 
-    if x_exponent > 0 {
-        x_bits -= 1_u32 << 23;
-        x_bits |= (x_exponent as u32) << 23;
-    } else {
-        x_bits >>= (-x_exponent + 1) as u32;
+        if x_exponent > 0 {
+            x_bits -= 1_u32 << 23;
+            x_bits |= (x_exponent as u32) << 23;
+        } else {
+            x_bits >>= (-x_exponent + 1) as u32;
+        }
+        x_bits |= x_sign;
+        f32::from_bits(x_bits)
     }
-    x_bits |= x_sign;
-    f32::from_bits(x_bits)
-}
+}}

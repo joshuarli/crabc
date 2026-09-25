@@ -43,42 +43,48 @@ fn force_eval_f32(value: f32) {
     unsafe { core::ptr::write_volatile(&mut sink, value + FORCE_EVAL_F32) };
 }
 
-/// Removes a binary64 fractional field toward zero with musl's inexact rule.
-#[no_mangle]
-pub extern "C" fn trunc(value: f64) -> f64 {
-    let bits = value.to_bits();
-    let mut exponent = ((bits >> 52) & 0x7ff) as i32 - 0x3ff + 12;
+// Musl's `src/math/trunc.c` object.
+static_archive_member! { trunc_source {
+    /// Removes a binary64 fractional field toward zero with musl's inexact rule.
+    #[no_mangle]
+    pub extern "C" fn trunc(value: f64) -> f64 {
+        let bits = value.to_bits();
+        let mut exponent = ((bits >> 52) & 0x7ff) as i32 - 0x3ff + 12;
 
-    if exponent >= 52 + 12 {
-        return value;
+        if exponent >= 52 + 12 {
+            return value;
+        }
+        if exponent < 12 {
+            exponent = 1;
+        }
+        let fractional_mask = u64::MAX >> exponent;
+        if bits & fractional_mask == 0 {
+            return value;
+        }
+        force_eval_f64(value);
+        f64::from_bits(bits & !fractional_mask)
     }
-    if exponent < 12 {
-        exponent = 1;
-    }
-    let fractional_mask = u64::MAX >> exponent;
-    if bits & fractional_mask == 0 {
-        return value;
-    }
-    force_eval_f64(value);
-    f64::from_bits(bits & !fractional_mask)
-}
+}}
 
-/// Removes a binary32 fractional field toward zero with musl's inexact rule.
-#[no_mangle]
-pub extern "C" fn truncf(value: f32) -> f32 {
-    let bits = value.to_bits();
-    let mut exponent = ((bits >> 23) & 0xff) as i32 - 0x7f + 9;
+// Musl's `src/math/truncf.c` object.
+static_archive_member! { truncf_source {
+    /// Removes a binary32 fractional field toward zero with musl's inexact rule.
+    #[no_mangle]
+    pub extern "C" fn truncf(value: f32) -> f32 {
+        let bits = value.to_bits();
+        let mut exponent = ((bits >> 23) & 0xff) as i32 - 0x7f + 9;
 
-    if exponent >= 23 + 9 {
-        return value;
+        if exponent >= 23 + 9 {
+            return value;
+        }
+        if exponent < 9 {
+            exponent = 1;
+        }
+        let fractional_mask = u32::MAX >> exponent;
+        if bits & fractional_mask == 0 {
+            return value;
+        }
+        force_eval_f32(value);
+        f32::from_bits(bits & !fractional_mask)
     }
-    if exponent < 9 {
-        exponent = 1;
-    }
-    let fractional_mask = u32::MAX >> exponent;
-    if bits & fractional_mask == 0 {
-        return value;
-    }
-    force_eval_f32(value);
-    f32::from_bits(bits & !fractional_mask)
-}
+}}

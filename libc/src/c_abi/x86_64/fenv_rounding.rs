@@ -27,8 +27,12 @@
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 fenv-sensitive rounding leaf requires little-endian Linux/x86-64");
 
-core::arch::global_asm!(
-    r#"
+// Each musl object below has its own static archive member, as in musl's
+// libc.a; a chunk that shares local labels with another stays with it.
+// Musl's `src/math/rint.c` object.
+static_archive_member! { rint_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.rint, "ax", @progbits
     .p2align 4
     .global rint
@@ -42,12 +46,12 @@ rint:
     jae .Lcrabc_x86_rint_return
     bt rax, 63
     jc .Lcrabc_x86_rint_negative
-    addsd xmm0, qword ptr [rip + .Lcrabc_x86_rint_to_int]
-    subsd xmm0, qword ptr [rip + .Lcrabc_x86_rint_to_int]
+    addsd xmm0, qword ptr [rip + .Lcrabc_x86_rint_to_int_rint_source]
+    subsd xmm0, qword ptr [rip + .Lcrabc_x86_rint_to_int_rint_source]
     jmp .Lcrabc_x86_rint_zero
 .Lcrabc_x86_rint_negative:
-    subsd xmm0, qword ptr [rip + .Lcrabc_x86_rint_to_int]
-    addsd xmm0, qword ptr [rip + .Lcrabc_x86_rint_to_int]
+    subsd xmm0, qword ptr [rip + .Lcrabc_x86_rint_to_int_rint_source]
+    addsd xmm0, qword ptr [rip + .Lcrabc_x86_rint_to_int_rint_source]
 .Lcrabc_x86_rint_zero:
     pxor xmm1, xmm1
     ucomisd xmm0, xmm1
@@ -59,6 +63,19 @@ rint:
     ret
     .size rint, .-rint
 
+    .section .text.rintf, "ax", @progbits
+    .section .rodata.fenv_rounding, "a", @progbits
+    .p2align 3
+.Lcrabc_x86_rint_to_int_rint_source:
+    .quad 0x4330000000000000
+"#,
+    );
+}}
+
+// Musl's `src/math/rintf.c` object.
+static_archive_member! { rintf_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.rintf, "ax", @progbits
     .p2align 4
     .global rintf
@@ -72,12 +89,12 @@ rintf:
     jae .Lcrabc_x86_rintf_return
     bt eax, 31
     jc .Lcrabc_x86_rintf_negative
-    addss xmm0, dword ptr [rip + .Lcrabc_x86_rintf_to_int]
-    subss xmm0, dword ptr [rip + .Lcrabc_x86_rintf_to_int]
+    addss xmm0, dword ptr [rip + .Lcrabc_x86_rintf_to_int_rintf_source]
+    subss xmm0, dword ptr [rip + .Lcrabc_x86_rintf_to_int_rintf_source]
     jmp .Lcrabc_x86_rintf_zero
 .Lcrabc_x86_rintf_negative:
-    subss xmm0, dword ptr [rip + .Lcrabc_x86_rintf_to_int]
-    addss xmm0, dword ptr [rip + .Lcrabc_x86_rintf_to_int]
+    subss xmm0, dword ptr [rip + .Lcrabc_x86_rintf_to_int_rintf_source]
+    addss xmm0, dword ptr [rip + .Lcrabc_x86_rintf_to_int_rintf_source]
 .Lcrabc_x86_rintf_zero:
     pxor xmm1, xmm1
     ucomiss xmm0, xmm1
@@ -93,6 +110,19 @@ rintf:
        signaling NaN and raises FE_INVALID for it and for unsupported binary80
        encodings, which the generic add/subtract sequence does not. */
     .section .text.rintl, "ax", @progbits
+    .section .rodata.fenv_rounding, "a", @progbits
+    .p2align 3
+.Lcrabc_x86_rintf_to_int_rintf_source:
+    .long 0x4b000000
+"#,
+    );
+}}
+
+// Musl's `src/math/rintl.c` object.
+static_archive_member! { rintl_source {
+    core::arch::global_asm!(
+        r#"
+    .section .text.rintl, "ax", @progbits
     .p2align 4
     .global rintl
     .type rintl,@function
@@ -105,6 +135,15 @@ rintl:
     /* Keep the fenv observation, arithmetic, and conditional flag clear in
        one assembly sequence. A compiler that does not model FENV_ACCESS may
        otherwise legally move the rint call after feclearexcept. */
+    .section .text.nearbyint, "ax", @progbits
+"#,
+    );
+}}
+
+// Musl's `src/math/nearbyint.c` object.
+static_archive_member! { nearbyint_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.nearbyint, "ax", @progbits
     .p2align 4
     .global nearbyint
@@ -132,6 +171,15 @@ nearbyint:
     ret
     .size nearbyint, .-nearbyint
 
+    .section .text.nearbyintf, "ax", @progbits
+"#,
+    );
+}}
+
+// Musl's `src/math/nearbyintf.c` object.
+static_archive_member! { nearbyintf_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.nearbyintf, "ax", @progbits
     .p2align 4
     .global nearbyintf
@@ -162,6 +210,15 @@ nearbyintf:
     /* nearbyintl needs the public binary80 stack ABI on both calls. Preserve
        the result across musl's selected feclearexcept leaf explicitly even
        though that leaf does not itself disturb st0. */
+    .section .text.nearbyintl, "ax", @progbits
+"#,
+    );
+}}
+
+// Musl's `src/math/nearbyintl.c` object.
+static_archive_member! { nearbyintl_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.nearbyintl, "ax", @progbits
     .p2align 4
     .global nearbyintl
@@ -200,4 +257,5 @@ nearbyintl:
 
     .section .note.GNU-stack, "", @progbits
 "#,
-);
+    );
+}}

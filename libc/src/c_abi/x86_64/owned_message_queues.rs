@@ -52,8 +52,9 @@ unsafe fn kernel_name(name: *const c_char) -> *const c_char {
 // mode_t and null or readable mq_attr pointer and owns creation effects.
 // Two-argument callers do not supply mode/attribute registers. The O_CREAT
 // branch alone admits the promoted mode_t and pointer varargs in edx/rcx.
-core::arch::global_asm!(
-    r#"
+static_archive_member! { mq_open_source {
+    core::arch::global_asm!(
+        r#"
     .section .text.mq_open,"ax",@progbits
     .p2align 4
     .global mq_open
@@ -65,10 +66,11 @@ mq_open:
     .size mq_open, .-mq_open
     .section .note.GNU-stack,"",@progbits
 "#,
-    o_create = const O_CREAT,
-    create = sym open_create,
-    existing = sym open_existing,
-);
+        o_create = const O_CREAT,
+        create = sym open_create,
+        existing = sym open_existing,
+    );
+}}
 
 #[inline(never)]
 unsafe extern "C" fn open_existing(name: *const c_char, flags: c_int) -> c_int {

@@ -131,3 +131,12 @@ nrand48 openlog putgrent putpwent putspent random seed48 sem_close sem_unlink
 semctl semget semop semtimedop setgrent setlogmask setpwent setspent setstate
 settimeofday shmat shmctl shmdt shmget srand48 srandom stime strptime syslog
 time timegm times timespec_get ulckpwdf
+
+# Hand-written assembly: math, fenv, setjmp; dlfcn, mq_open, sem_open, vfork, netdb stubs
+acosl asinl atan2l atanl cimag cimagf cimagl conj conjf conjl copysign
+copysignf creal crealf creall dlclose dlinfo dlsym expl fabs fabsf fabsl fdim
+fdimf fegetexceptflag feholdexcept fesetexceptflag fesetround feupdateenv
+floorl fmax fmaxf fmin fminf fmod fmodf fmodl gethostent getnetbyaddr
+getnetbyname getnetent herror llrintl log10l log1pl log2l logl lrintl mq_open
+nearbyint nearbyintf nearbyintl remainderl remquol rint rintf rintl sem_open
+siglongjmp sigsetjmp sqrt sqrtf sqrtl trunc truncf vfork

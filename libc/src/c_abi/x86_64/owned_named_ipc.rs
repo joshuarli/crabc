@@ -175,22 +175,6 @@ static_archive_member! { sem_unlink_source {
 // sem_open without O_CREAT has exactly two C arguments. Only O_CREAT admits
 // the promoted mode_t/unsigned values in edx/ecx; no dummy Rust parameters are
 // imposed on legal two-argument callers.
-core::arch::global_asm!(
-    r#"
-    .section .text.sem_open,"ax",@progbits
-    .p2align 4
-    .global sem_open
-    .type sem_open,@function
-sem_open:
-    test esi, 64
-    jnz {create}
-    jmp {existing}
-    .size sem_open, .-sem_open
-    .section .note.GNU-stack,"",@progbits
-"#,
-    create = sym open_create,
-    existing = sym open_existing,
-);
 
 #[derive(Clone, Copy)]
 struct Creation { mode: u32, value: u32 }
@@ -342,6 +326,25 @@ unsafe fn open_named_semaphore(name: *const c_char, flags: c_int, creation: Opti
 
 // Musl's `src/thread/sem_open.c` object.
 static_archive_member! { sem_open_source {
+    // The two-or-four-argument sem_open entry; musl's sem_open.c also defines
+    // sem_close.
+    core::arch::global_asm!(
+        r#"
+    .section .text.sem_open,"ax",@progbits
+    .p2align 4
+    .global sem_open
+    .type sem_open,@function
+sem_open:
+    test esi, 64
+    jnz {create}
+    jmp {existing}
+    .size sem_open, .-sem_open
+    .section .note.GNU-stack,"",@progbits
+"#,
+        create = sym open_create,
+        existing = sym open_existing,
+    );
+
     /// Release one successful sem_open reference; only the final close unmaps.
     /// # Safety
     /// `semaphore` must be a live named-semaphore handle from sem_open with an

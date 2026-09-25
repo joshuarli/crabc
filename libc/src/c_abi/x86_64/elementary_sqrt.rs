@@ -24,8 +24,12 @@
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 square-root leaf requires little-endian Linux/x86-64");
 
-core::arch::global_asm!(
-    r#"
+// Each musl object below has its own static archive member, as in musl's
+// libc.a; a chunk that shares local labels with another stays with it.
+// Musl's `src/math/sqrt.c` object.
+static_archive_member! { sqrt_source {
+    core::arch::global_asm!(
+        r#"
     .text
 
     .p2align 4
@@ -35,6 +39,15 @@ sqrt:
     sqrtsd xmm0, xmm0
     ret
     .size sqrt, .-sqrt
+"#,
+    );
+}}
+
+// Musl's `src/math/sqrtf.c` object.
+static_archive_member! { sqrtf_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global sqrtf
@@ -47,6 +60,15 @@ sqrtf:
     /* System V AMD64 classifies long double as X87. The argument therefore
        occupies 16 bytes of stack storage beginning at rsp+8; the binary80
        result returns in st0. */
+"#,
+    );
+}}
+
+// Musl's `src/math/sqrtl.c` object.
+static_archive_member! { sqrtl_source {
+    core::arch::global_asm!(
+        r#"
+    .text
     .p2align 4
     .global sqrtl
     .type sqrtl,@function
@@ -58,4 +80,5 @@ sqrtl:
 
     .section .note.GNU-stack, "", @progbits
 "#,
-);
+    );
+}}

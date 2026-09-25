@@ -30,8 +30,12 @@ compile_error!("the x86 binary32/binary64 extrema leaf requires little-endian Li
 // Integer classification precedes each UCOMIS instruction. In particular,
 // UCOMIS would signal invalid for an sNaN, while musl's `isnan` path merely
 // chooses an operand and returns it.
-core::arch::global_asm!(
-    r#"
+// Each musl object below has its own static archive member, as in musl's
+// libc.a; a chunk that shares local labels with another stays with it.
+// Musl's `src/math/fmax.c` object.
+static_archive_member! { fmax_source {
+    core::arch::global_asm!(
+        r#"
     .text
 
     .p2align 4
@@ -74,6 +78,15 @@ fmax:
     movapd xmm0, xmm1
     ret
     .size fmax, .-fmax
+"#,
+    );
+}}
+
+// Musl's `src/math/fmaxf.c` object.
+static_archive_member! { fmaxf_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global fmaxf
@@ -115,6 +128,15 @@ fmaxf:
     movaps xmm0, xmm1
     ret
     .size fmaxf, .-fmaxf
+"#,
+    );
+}}
+
+// Musl's `src/math/fmin.c` object.
+static_archive_member! { fmin_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global fmin
@@ -157,6 +179,15 @@ fmin:
 .Lcrabc_fmin_return_x:
     ret
     .size fmin, .-fmin
+"#,
+    );
+}}
+
+// Musl's `src/math/fminf.c` object.
+static_archive_member! { fminf_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global fminf
@@ -202,4 +233,5 @@ fminf:
 
     .section .note.GNU-stack, "", @progbits
 "#,
-);
+    );
+}}

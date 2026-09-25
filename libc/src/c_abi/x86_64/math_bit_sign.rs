@@ -22,35 +22,88 @@
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math bit-sign leaf requires little-endian Linux/x86-64");
 
-core::arch::global_asm!(
-    r#"
+// Each musl object below has its own static archive member, as in musl's
+// libc.a; a chunk that shares local labels with another stays with it.
+// Musl's `src/math/fabs.c` object.
+static_archive_member! { fabs_source {
+    core::arch::global_asm!(
+        r#"
     .text
 
     .p2align 4
     .global fabs
     .type fabs,@function
 fabs:
-    andpd xmm0, xmmword ptr [rip + .Lcrabc_x86_math_bit_sign_abs64]
+    andpd xmm0, xmmword ptr [rip + .Lcrabc_x86_math_bit_sign_abs64_fabs_source]
     ret
     .size fabs, .-fabs
+    .section .rodata
+    .p2align 4
+.Lcrabc_x86_math_bit_sign_abs64_fabs_source:
+    .quad 0x7fffffffffffffff
+    .quad 0xffffffffffffffff
+"#,
+    );
+}}
+
+// Musl's `src/math/fabsf.c` object.
+static_archive_member! { fabsf_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global fabsf
     .type fabsf,@function
 fabsf:
-    andps xmm0, xmmword ptr [rip + .Lcrabc_x86_math_bit_sign_abs32]
+    andps xmm0, xmmword ptr [rip + .Lcrabc_x86_math_bit_sign_abs32_fabsf_source]
     ret
     .size fabsf, .-fabsf
+    .section .rodata
+    .p2align 4
+.Lcrabc_x86_math_bit_sign_abs32_fabsf_source:
+    .long 0x7fffffff
+    .long 0xffffffff
+    .long 0xffffffff
+    .long 0xffffffff
+"#,
+    );
+}}
+
+// Musl's `src/math/copysign.c` object.
+static_archive_member! { copysign_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global copysign
     .type copysign,@function
 copysign:
-    andpd xmm0, xmmword ptr [rip + .Lcrabc_x86_math_bit_sign_abs64]
-    andpd xmm1, xmmword ptr [rip + .Lcrabc_x86_math_bit_sign_sign64]
+    andpd xmm0, xmmword ptr [rip + .Lcrabc_x86_math_bit_sign_abs64_copysign_source]
+    andpd xmm1, xmmword ptr [rip + .Lcrabc_x86_math_bit_sign_sign64_copysign_source]
     orpd xmm0, xmm1
     ret
     .size copysign, .-copysign
+    .section .rodata
+    .p2align 4
+.Lcrabc_x86_math_bit_sign_abs64_copysign_source:
+    .quad 0x7fffffffffffffff
+    .quad 0xffffffffffffffff
+    .section .rodata
+    .p2align 4
+.Lcrabc_x86_math_bit_sign_sign64_copysign_source:
+    .quad 0x8000000000000000
+    .quad 0x0000000000000000
+"#,
+    );
+}}
+
+// Musl's `src/math/copysignf.c` object.
+static_archive_member! { copysignf_source {
+    core::arch::global_asm!(
+        r#"
+    .text
 
     .p2align 4
     .global copysignf
@@ -83,4 +136,5 @@ copysignf:
 
     .section .note.GNU-stack, "", @progbits
 "#,
-);
+    );
+}}

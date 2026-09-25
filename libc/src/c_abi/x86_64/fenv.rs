@@ -69,8 +69,12 @@ const _: [(); 28] = [(); core::mem::offset_of!(Fenv, mxcsr)];
 // is observed/cleared where musl does so, while `feraiseexcept` records the
 // raised flags in MXCSR. Replacing this with the narrower Rust fenv vocabulary
 // would lose the public x86 denormal-operand bit and alter C behavior.
-core::arch::global_asm!(
-    r#"
+// Each musl object below has its own static archive member, as in musl's
+// libc.a; a chunk that shares local labels with another stays with it.
+// Musl's `src/fenv/fenv.c` object.
+static_archive_member! { fenv_source {
+    core::arch::global_asm!(
+        r#"
     .text
     .global feclearexcept
     .type feclearexcept,@function
@@ -94,6 +98,7 @@ feclearexcept:
     xor eax, eax
     ret
     .size feclearexcept, .-feclearexcept
+    .text
 
     .global feraiseexcept
     .type feraiseexcept,@function
@@ -105,6 +110,7 @@ feraiseexcept:
     xor eax, eax
     ret
     .size feraiseexcept, .-feraiseexcept
+    .text
 
     .global __fesetround
     .hidden __fesetround
@@ -125,6 +131,7 @@ __fesetround:
     pop rcx
     ret
     .size __fesetround, .-__fesetround
+    .text
 
     .global fegetround
     .type fegetround,@function
@@ -136,6 +143,7 @@ fegetround:
     and eax, 0xc00
     ret
     .size fegetround, .-fegetround
+    .text
 
     .global fegetenv
     .type fegetenv,@function
@@ -145,6 +153,7 @@ fegetenv:
     stmxcsr dword ptr [rdi + 28]
     ret
     .size fegetenv, .-fegetenv
+    .text
 
     .global fesetenv
     .type fesetenv,@function
@@ -166,6 +175,7 @@ fesetenv:
     add rsp, 40
     ret
     .size fesetenv, .-fesetenv
+    .text
 
     .global fetestexcept
     .type fetestexcept,@function
@@ -182,7 +192,8 @@ fetestexcept:
 
     .section .note.GNU-stack, "", @progbits
 "#,
-);
+    );
+}}
 
 unsafe extern "C" {
     fn feclearexcept(mask: c_int) -> c_int;
@@ -194,78 +205,96 @@ unsafe extern "C" {
     fn fetestexcept(mask: c_int) -> c_int;
 }
 
-/// Stores the selected current exception flags in C's `fexcept_t` record.
-#[no_mangle]
-pub unsafe extern "C" fn fegetexceptflag(flags: *mut Fexcept, mask: c_int) -> c_int {
-    // SAFETY: C's API requires writable `fexcept_t` storage. The direct
-    // assembly helper owns no pointer and returns only scalar flag bits.
-    unsafe {
-        *flags = fetestexcept(mask) as Fexcept;
-    }
-    0
-}
-
-/// Saves the complete x86 C environment and clears its pending exceptions.
-#[no_mangle]
-pub unsafe extern "C" fn feholdexcept(environment: *mut Fenv) -> c_int {
-    // SAFETY: C's API requires writable `fenv_t` storage. These fixed musl
-    // helpers use that same exact x87/MXCSR layout.
-    unsafe {
-        fegetenv(environment);
-        feclearexcept(FE_ALL_EXCEPT);
-    }
-    0
-}
-
-/// Replaces selected exception flags without changing unselected flags.
-#[no_mangle]
-pub unsafe extern "C" fn fesetexceptflag(flags: *const Fexcept, mask: c_int) -> c_int {
-    // SAFETY: C's API requires readable `fexcept_t` storage. The two helpers
-    // preserve the fixed musl clear-then-raise ordering.
-    unsafe {
-        let selected = *flags as c_int;
-        feclearexcept(!selected & mask);
-        feraiseexcept(selected & mask);
-    }
-    0
-}
-
-/// Validates and installs one of the four C rounding modes.
-#[no_mangle]
-pub unsafe extern "C" fn fesetround(rounding: c_int) -> c_int {
-    match rounding {
-        FE_TONEAREST | FE_DOWNWARD | FE_UPWARD | FE_TOWARDZERO => {
-            // SAFETY: The match admits exactly the fixed x86 rounding
-            // encodings consumed by the hidden assembly helper.
-            unsafe { __fesetround(rounding) }
+// Musl's `src/fenv/fegetexceptflag.c` object.
+static_archive_member! { fegetexceptflag_source {
+    /// Stores the selected current exception flags in C's `fexcept_t` record.
+    #[no_mangle]
+    pub unsafe extern "C" fn fegetexceptflag(flags: *mut Fexcept, mask: c_int) -> c_int {
+        // SAFETY: C's API requires writable `fexcept_t` storage. The direct
+        // assembly helper owns no pointer and returns only scalar flag bits.
+        unsafe {
+            *flags = fetestexcept(mask) as Fexcept;
         }
-        _ => -1,
+        0
     }
-}
+}}
 
-/// Restores an environment and re-raises flags that were pending beforehand.
-#[no_mangle]
-pub unsafe extern "C" fn feupdateenv(environment: *const Fenv) -> c_int {
-    // SAFETY: C's API requires readable `fenv_t` storage. The scalar flags are
-    // captured before the restore exactly as in musl's generic wrapper.
-    unsafe {
-        let exceptions = fetestexcept(FE_ALL_EXCEPT);
-        fesetenv(environment);
-        feraiseexcept(exceptions);
+// Musl's `src/fenv/feholdexcept.c` object.
+static_archive_member! { feholdexcept_source {
+    /// Saves the complete x86 C environment and clears its pending exceptions.
+    #[no_mangle]
+    pub unsafe extern "C" fn feholdexcept(environment: *mut Fenv) -> c_int {
+        // SAFETY: C's API requires writable `fenv_t` storage. These fixed musl
+        // helpers use that same exact x87/MXCSR layout.
+        unsafe {
+            fegetenv(environment);
+            feclearexcept(FE_ALL_EXCEPT);
+        }
+        0
     }
-    0
-}
+}}
 
-/// Returns C99's `FLT_ROUNDS` classification for the current x86 environment.
-#[no_mangle]
-pub extern "C" fn __flt_rounds() -> c_int {
-    // SAFETY: The fixed no-argument assembly helper observes only the calling
-    // thread's MXCSR rounding field.
-    match unsafe { fegetround() } {
-        FE_TOWARDZERO => 0,
-        FE_TONEAREST => 1,
-        FE_UPWARD => 2,
-        FE_DOWNWARD => 3,
-        _ => -1,
+// Musl's `src/fenv/fesetexceptflag.c` object.
+static_archive_member! { fesetexceptflag_source {
+    /// Replaces selected exception flags without changing unselected flags.
+    #[no_mangle]
+    pub unsafe extern "C" fn fesetexceptflag(flags: *const Fexcept, mask: c_int) -> c_int {
+        // SAFETY: C's API requires readable `fexcept_t` storage. The two helpers
+        // preserve the fixed musl clear-then-raise ordering.
+        unsafe {
+            let selected = *flags as c_int;
+            feclearexcept(!selected & mask);
+            feraiseexcept(selected & mask);
+        }
+        0
     }
-}
+}}
+
+// Musl's `src/fenv/fesetround.c` object.
+static_archive_member! { fesetround_source {
+    /// Validates and installs one of the four C rounding modes.
+    #[no_mangle]
+    pub unsafe extern "C" fn fesetround(rounding: c_int) -> c_int {
+        match rounding {
+            FE_TONEAREST | FE_DOWNWARD | FE_UPWARD | FE_TOWARDZERO => {
+                // SAFETY: The match admits exactly the fixed x86 rounding
+                // encodings consumed by the hidden assembly helper.
+                unsafe { __fesetround(rounding) }
+            }
+            _ => -1,
+        }
+    }
+}}
+
+// Musl's `src/fenv/feupdateenv.c` object.
+static_archive_member! { feupdateenv_source {
+    /// Restores an environment and re-raises flags that were pending beforehand.
+    #[no_mangle]
+    pub unsafe extern "C" fn feupdateenv(environment: *const Fenv) -> c_int {
+        // SAFETY: C's API requires readable `fenv_t` storage. The scalar flags are
+        // captured before the restore exactly as in musl's generic wrapper.
+        unsafe {
+            let exceptions = fetestexcept(FE_ALL_EXCEPT);
+            fesetenv(environment);
+            feraiseexcept(exceptions);
+        }
+        0
+    }
+}}
+
+// Musl's `src/fenv/__flt_rounds.c` object.
+static_archive_member! { __flt_rounds_source {
+    /// Returns C99's `FLT_ROUNDS` classification for the current x86 environment.
+    #[no_mangle]
+    pub extern "C" fn __flt_rounds() -> c_int {
+        // SAFETY: The fixed no-argument assembly helper observes only the calling
+        // thread's MXCSR rounding field.
+        match unsafe { fegetround() } {
+            FE_TOWARDZERO => 0,
+            FE_TONEAREST => 1,
+            FE_UPWARD => 2,
+            FE_DOWNWARD => 3,
+            _ => -1,
+        }
+    }
+}}
