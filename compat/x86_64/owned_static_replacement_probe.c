@@ -494,7 +494,8 @@ static int run_string_clients(void)
 }
 #endif
 
-#if defined(CRABC_REPLACE_PRINTF) || defined(CRABC_REPLACE_VSNPRINTF) || defined(CRABC_REPLACE_SCANF)
+#if defined(CRABC_REPLACE_PRINTF) || defined(CRABC_REPLACE_VSNPRINTF) || defined(CRABC_REPLACE_SCANF) \
+    || defined(CRABC_REPLACE_MATH)
 static unsigned long replacement_calls;
 
 static void report_replacement(const char *operation, unsigned long mark)
@@ -705,6 +706,40 @@ static int run_scanf_clients(void)
 }
 #endif
 
+#ifdef CRABC_REPLACE_MATH
+#include <complex.h>
+#include <math.h>
+/*
+ * Counting `hypot` and `log1p`. Musl's cabs calls hypot, and its acosh calls
+ * log1p for arguments below two.
+ */
+double hypot(double x, double y)
+{
+    replacement_calls++;
+    return sqrt(x * x + y * y);
+}
+
+double log1p(double x)
+{
+    replacement_calls++;
+    return log(1 + x);
+}
+
+static int run_math_clients(void)
+{
+    unsigned long mark;
+    volatile double real = 3, imaginary = 4, argument = 1.5;
+
+    mark = replacement_calls;
+    emit_flag("cabs", "value", cabs(real + imaginary * I) == 5);
+    report_replacement("cabs", mark);
+    mark = replacement_calls;
+    emit_flag("acosh", "finite", isfinite(acosh(argument)));
+    report_replacement("acosh", mark);
+    return 0;
+}
+#endif
+
 int main(void)
 {
 #ifdef CRABC_REPLACE_MALLOC
@@ -725,6 +760,10 @@ int main(void)
 #endif
 #ifdef CRABC_REPLACE_SCANF
     int status = run_scanf_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_MATH
+    int status = run_math_clients();
     if (status) return status;
 #endif
     emit("owned-static-replacement-ok\n");

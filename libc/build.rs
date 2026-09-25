@@ -128,6 +128,50 @@ fn split_musl_objects() {
                 }
             }
         }
+        // Musl's sources call these public functions by name, so an
+        // application's replacement reaches them. The generators give each
+        // translation private copies (`<prefix>elementary_NAME`,
+        // `<prefix>provider_NAME`) so the combined object stands alone; the
+        // partition calls the public symbol instead, as musl's objects do.
+        const PUBLIC_MATH_CALLS: &[&str] = &[
+            "atan", "atan2", "atan2f", "atanf", "copysign", "copysignf", "copysignl", "cos", "cosf",
+            "cosh", "coshf", "exp", "exp2", "exp2f", "expf", "expm1", "expm1f", "fabs", "fabsf",
+            "floor", "floorf", "hypot", "hypotf", "hypotl", "log", "log1p", "log1pf", "logf", "modf",
+            "modff", "pow", "powl", "rint", "rintf", "round", "roundf", "roundl", "scalbn", "sin",
+            "sinf", "sinh", "sinhf", "sinl", "sqrt", "sqrtf", "tan", "tanf",
+        ];
+        let route_public = |line: &str| -> String {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with(".type") || trimmed.starts_with(".size") || trimmed.starts_with(".globl")
+                || trimmed.starts_with(".global") || trimmed.starts_with(".hidden") || trimmed.starts_with(".local")
+                || trimmed.ends_with(':')
+            {
+                return line.to_owned();
+            }
+            let mut routed = String::with_capacity(line.len());
+            let mut token = String::new();
+            let flush = |token: &mut String, routed: &mut String| {
+                let public = token.strip_prefix("crabc_x86_").and_then(|rest| {
+                    PUBLIC_MATH_CALLS.iter().copied().find(|name| {
+                        ["_elementary_", "_provider_"].iter().any(|kind| {
+                            rest.strip_suffix(name).is_some_and(|head| head.ends_with(kind))
+                        })
+                    })
+                });
+                routed.push_str(public.unwrap_or(token));
+                token.clear();
+            };
+            for character in line.chars() {
+                if character.is_ascii() && is_symbol_byte(character as u8) {
+                    token.push(character);
+                } else {
+                    flush(&mut token, &mut routed);
+                    routed.push(character);
+                }
+            }
+            flush(&mut token, &mut routed);
+            routed
+        };
         let mut rust = String::new();
         let directory = output_root.join(&stem);
         std::fs::create_dir_all(&directory).expect("musl object directory");
@@ -146,7 +190,7 @@ fn split_musl_objects() {
                 match directive_symbol(line, &[".local"]) {
                     Some(name) if shared.contains(&name) => {}
                     _ => {
-                        object.push_str(line);
+                        object.push_str(&route_public(line));
                         object.push('\n');
                     }
                 }

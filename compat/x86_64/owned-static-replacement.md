@@ -40,7 +40,12 @@ partitions each at those markers, and `musl_object_assembly!` assembles one
 module per musl object in the installed static build, so each math function
 has the member musl gives it; a symbol the generator made local but another
 object references becomes a hidden global of its defining object. Other
-builds assemble the checked translation unchanged.
+builds assemble the checked translation unchanged. The generators also give
+each translation private copies of the public functions its sources call
+(`..._elementary_NAME`, `..._provider_NAME`); the partition calls the public
+symbol instead, as musl's objects do. The `MATH` role defines counting
+`hypot` and `log1p` and requires musl's result: `cabs` reaches `hypot` and
+`acosh` reaches `log1p`.
 
 ## String role
 
