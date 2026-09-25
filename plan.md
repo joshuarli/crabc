@@ -59,7 +59,14 @@ are not transferable passes for a different revision.
   promotion pass; the default stays `accepted-c`. The loader's fail-closed
   load-time validation keeps startup near 1.5× musl user instructions after
   preflight rework; the per-row 0.90× CPU gate on startup rows is not
-  reachable without relaxing a fail-closed guarantee (a user decision). The M9 report path measures
+  reachable without relaxing a fail-closed guarantee (a user decision).
+  Startup PSS is 0.86× musl (52 of 114 perf-c rows pass PSS); allocator rows
+  stay 6.5–8× because the host's THP `always` mode backs mimalloc's arena
+  with huge pages on first touch (a user decision on the qualification host
+  THP mode or the product's `allow_thp` default). `memory.peak` ≤ 0.90
+  cannot pass where musl charges one 256 KiB cgroup batch.
+  `./scripts/dev-x86_64.sh qualification-candidate --work DIR` runs the whole
+  chain as one restartable command on a clean candidate revision. The M9 report path measures
   throughput, p99 and peak RSS/PSS for all 38 rows but no report qualifies
   (contended host, `powersave` governor). The 114-row runtime scorecard runs
   end to end; startup is 32 whole-process syscalls against musl's 11 and ~2×
