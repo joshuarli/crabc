@@ -501,6 +501,13 @@ pub(super) unsafe fn run_selected_worker_tsd_destructors(values: *const Selected
             break;
         }
         for index in 0..TSD_SLOTS {
+            // Only this thread stores nonzero values into its own table;
+            // key deletion from another thread only clears them. A slot that
+            // reads zero therefore stays zero, and clearing it under the lock
+            // would neither change it nor select a destructor.
+            if values.values[index].load(Ordering::Acquire) == 0 {
+                continue;
+            }
             lock_selected_tsd();
             // Musl clears every value while scanning, including values whose
             // key has no destructor or was deleted during a prior callback.

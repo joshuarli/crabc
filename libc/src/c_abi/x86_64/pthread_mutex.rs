@@ -800,13 +800,26 @@ pub(super) unsafe fn try_lock_selected_normal_mutex(mutex: *mut c_void) -> c_int
 /// and the condition-variable leaf after it has atomically enrolled a waiter.
 /// It intentionally accepts the concrete record instead of a C pointer so
 /// the public boundary remains the one place that decodes the object type.
+///
+/// As in musl's `pthread_mutex_lock`, only the single uncontended
+/// compare-exchange is inlined into the caller; the spin and futex state
+/// machine stays out of line.
+#[inline(always)]
 unsafe fn lock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) -> c_int {
     // SAFETY: the caller admits the selected record and all lock-word access
-    // below uses the same aligned atomic protocol.
+    // uses the same aligned atomic protocol.
     if unsafe { try_lock_selected_normal_mutex_record(mutex) } == 0 {
         return 0;
     }
+    // SAFETY: the same admitted record continues into the contended route.
+    unsafe { lock_contended_normal_mutex_record(mutex) }
+}
 
+/// Spin, mark a waiter, and futex-wait until an admitted normal mutex is
+/// acquired after its first compare-exchange failed.
+#[cold]
+#[inline(never)]
+unsafe fn lock_contended_normal_mutex_record(mutex: *mut PublicPthreadMutex) -> c_int {
     let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
     let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
     // Retain musl's small uncontended-before-wait spin window. It is only a
@@ -952,6 +965,7 @@ pub(super) unsafe fn lock_selected_normal_mutex(mutex: *mut c_void) -> c_int {
 }
 
 /// Release an already-admitted normal mutex using its sharing attribute.
+#[inline(always)]
 unsafe fn unlock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) -> c_int {
     let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
     let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
@@ -964,11 +978,21 @@ unsafe fn unlock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) ->
     // wake. It is the release edge for the caller's protected data.
     let previous = unsafe { atomic::x86_64_swap_acqrel_i32(lock, 0) };
     if previous < 0 || waiter_hint > 0 {
-        // SAFETY: the public lock word remains live for the C caller's mutex
+        // SAFETY: the admitted record remains live for the C caller's mutex
         // lifetime; this wake has no C errno result.
-        unsafe { futex_wake(lock, mutex_is_private(selected_mutex_type(mutex))) };
+        unsafe { wake_normal_mutex_waiter(mutex) };
     }
     0
+}
+
+/// Wake one contender of a just-released normal mutex.
+#[cold]
+#[inline(never)]
+unsafe fn wake_normal_mutex_waiter(mutex: *mut PublicPthreadMutex) {
+    let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
+    // SAFETY: the public lock word remains live for the C caller's mutex
+    // lifetime; this wake has no C errno result.
+    unsafe { futex_wake(lock, mutex_is_private(selected_mutex_type(mutex))) };
 }
 
 /// Release one selected normal/private mutex without crossing a public C ABI.
