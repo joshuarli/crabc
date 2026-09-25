@@ -2618,17 +2618,42 @@ unsafe fn initial_tls_runtime_v1_registry(
 unsafe fn install_initial_tls(
     objects: &[Object],
 ) -> Option<InstalledInitialTls> {
-    let installed = unsafe { materialize_initial_tls(objects, 0) }?;
+    let builtin = BUILTIN_INITIAL_TLS.0.get().cast::<u8>();
+    let installed = unsafe { materialize_tls_in(objects, 0, Some((builtin, BUILTIN_INITIAL_TLS_BYTES))) }?;
     if syscall2(SYS_ARCH_PRCTL, ARCH_SET_FS, installed.thread_pointer as i64) < 0 {
-        let _ = syscall2(SYS_MUNMAP, installed.mapping as i64, installed.mapping_byte_len as i64);
+        if installed.mapping != builtin {
+            let _ = syscall2(SYS_MUNMAP, installed.mapping as i64, installed.mapping_byte_len as i64);
+        }
         return None;
     }
     Some(installed)
 }
 
+/// Loader `.bss` for the one initial thread's TLS block, as musl's
+/// `builtin_tls`: a startup whose TLS/TCB/DTV fits needs no TLS mapping. The
+/// initial block is process-lifetime storage, never unmapped.
+const BUILTIN_INITIAL_TLS_BYTES: usize = 2 * PAGE as usize;
+#[repr(C, align(4096))]
+struct BuiltinInitialTls(core::cell::UnsafeCell<[u8; BUILTIN_INITIAL_TLS_BYTES]>);
+// SAFETY: only the single-threaded initial install uses it, once.
+unsafe impl Sync for BuiltinInitialTls {}
+static BUILTIN_INITIAL_TLS: BuiltinInitialTls =
+    BuiltinInitialTls(core::cell::UnsafeCell::new([0; BUILTIN_INITIAL_TLS_BYTES]));
+
 /// Materialize a checked initial module layout without changing the caller's
 /// FS. Startup and worker construction use this same template/DTV owner.
+#[cfg_attr(not(feature = "x86_64-owned-dynamic-runtime"), allow(dead_code))]
 unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -> Option<InstalledInitialTls> {
+    unsafe { materialize_tls_in(objects, ownership_prefix, None) }
+}
+
+/// [`materialize_initial_tls`], placing the block in `builtin` (zeroed,
+/// page-aligned, `(pointer, bytes)`) when it fits, else in a fresh mapping.
+unsafe fn materialize_tls_in(
+    objects: &[Object],
+    ownership_prefix: usize,
+    builtin: Option<(*mut u8, usize)>,
+) -> Option<InstalledInitialTls> {
     let mut total_tls_size = 0usize;
     let mut tp_alignment = core::mem::align_of::<usize>();
     let mut module_count = 0usize;
@@ -2673,15 +2698,19 @@ unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -
         // `align_down` may discard almost one complete TP-alignment unit.
         .checked_add(tp_alignment)?;
     let mapping_size = align_up_usize(raw_mapping_size, PAGE as usize)?;
-    let mapping = syscall6(
-        SYS_MMAP,
-        0,
-        mapping_size as i64,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS,
-        -1,
-        0,
-    );
+    let builtin = builtin.filter(|&(_, bytes)| mapping_size <= bytes);
+    let mapping = match builtin {
+        Some((pointer, _)) => pointer as i64,
+        None => syscall6(
+            SYS_MMAP,
+            0,
+            mapping_size as i64,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0,
+        ),
+    };
     if is_linux_error(mapping) {
         return None;
     }
@@ -2692,7 +2721,9 @@ unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -
     let tls_start = thread_pointer.checked_sub(total_tls_size)?;
     let dtv_end = thread_pointer.checked_add(reserved_after_tp)?;
     if tls_start < block.checked_add(ownership_prefix)? || dtv_end > mapping_end {
-        let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
+        if builtin.is_none() {
+            let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
+        }
         return None;
     }
 
@@ -2719,7 +2750,9 @@ unsafe fn materialize_initial_tls(objects: &[Object], ownership_prefix: usize) -
             continue;
         }
         if object.tls_module_id == 0 || object.tls_module_id >= dtv_words {
-            let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
+            if builtin.is_none() {
+                let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
+            }
             return None;
         }
         let destination = thread_pointer.checked_sub(object.tls_offset_below_tp)? as *mut u8;

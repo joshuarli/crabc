@@ -50,12 +50,26 @@ struct Pool {
     // Unused tail of the current chunk.
     cursor: *mut u8,
     remaining: usize,
+    // Whether the loader's static first chunk has been handed out.
+    static_chunk_used: bool,
 }
+
+/// The first chunk is loader `.bss`, as musl's loader starts from its own
+/// static memory: the kernel already maps it zero-filled with the loader, so
+/// a startup that fits in it needs no pool mapping at all. Untouched pages
+/// cost nothing.
+#[repr(C, align(4096))]
+struct StaticChunk(UnsafeCell<[u8; CHUNK_BYTES]>);
+// SAFETY: the chunk is handed out once, under `AllocationGuard`, and each
+// block of it is then owned exclusively like any mapped chunk's block.
+unsafe impl Sync for StaticChunk {}
+static STATIC_CHUNK: StaticChunk = StaticChunk(UnsafeCell::new([0; CHUNK_BYTES]));
 struct PoolCell(UnsafeCell<Pool>);
 // SAFETY: every access holds `AllocationGuard`.
 unsafe impl Sync for PoolCell {}
 static POOL: PoolCell = PoolCell(UnsafeCell::new(Pool {
     free: [core::ptr::null_mut(); CLASS_COUNT], cursor: core::ptr::null_mut(), remaining: 0,
+    static_chunk_used: false,
 }));
 
 /// Class index and size for a pooled request, or `None` for its own mapping.
@@ -92,7 +106,12 @@ pub(super) fn allocate(bytes: usize, align: usize) -> Option<*mut u8> {
         // and unused) for a fresh one.
         let mut padding = (pool.cursor as usize).wrapping_neg() % size;
         if pool.cursor.is_null() || pool.remaining < size + padding {
-            pool.cursor = map(CHUNK_BYTES)?;
+            pool.cursor = if pool.static_chunk_used {
+                map(CHUNK_BYTES)?
+            } else {
+                pool.static_chunk_used = true;
+                STATIC_CHUNK.0.get().cast::<u8>()
+            };
             pool.remaining = CHUNK_BYTES;
             padding = (pool.cursor as usize).wrapping_neg() % size;
         }

@@ -576,7 +576,10 @@ unsafe fn select_canonical_initial_libc(
         }
         for (alias_index, suffix) in CANONICAL_LIBC_ALIAS_SUFFIXES.into_iter().enumerate() {
             aliases[root_index * CANONICAL_LIBC_ALIAS_SUFFIXES.len() + alias_index] =
-                unsafe { canonical_libc_alias_identity(prefix, suffix) }.ok()?;
+                match opened_alias_identity(graph, objects, prefix, suffix) {
+                    Some(identity) => Some(identity),
+                    None => unsafe { canonical_libc_alias_identity(prefix, suffix) }.ok()?,
+                };
         }
     }
     let selected = canonical_initial_libc_from_aliases(graph, &aliases)?;
@@ -592,6 +595,28 @@ unsafe fn select_canonical_initial_libc(
     }
     object.canonical_libc_identity = Some(selected.identity);
     Some(selected)
+}
+
+/// The identity of a graph library this transaction opened by exactly the
+/// alias path `prefix`+`suffix`: its descriptor's fstat already named the
+/// file that path resolved to, so no second stat is needed. Any other alias
+/// is still resolved by [`canonical_libc_alias_identity`].
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+fn opened_alias_identity(
+    graph: &InitialGraphState,
+    objects: &ObjectTable,
+    prefix: &[u8],
+    suffix: &[u8],
+) -> Option<ObjectIdentity> {
+    (1..graph.object_count()).find_map(|index| {
+        let object = objects.get(index)?;
+        if object.role != ObjectRole::Library { return None; }
+        // SAFETY: the graph object owns its search name for the transaction.
+        let name = unsafe { object.search_name.bytes() };
+        (name.len() == prefix.len() + suffix.len() && name.starts_with(prefix) && name.ends_with(suffix))
+            .then(|| graph.identity(index))
+            .flatten()
+    })
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
