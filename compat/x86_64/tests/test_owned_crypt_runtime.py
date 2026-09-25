@@ -171,6 +171,7 @@ class OwnedCryptRuntimeTests(unittest.TestCase):
             )
             compiler.chmod(0o755)
             (product / "share" / "crabc" / "crabc_cc_static.py").write_text(
+                "HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n"
                 "def compiler():\n"
                 f"    return {str(compiler)!r}\n"
                 "def clean_environment():\n"

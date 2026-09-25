@@ -22,6 +22,7 @@ REQUIRED_SCENARIOS = ("sets", "actions-masks", "queue-delivery", "suspend-delive
                       "alternate-stack", "alternate-minimum", "signalfd", "waits")
 import crabc_cc_static as compiler_contract
 import owned_dynamic_qualification as qualification
+import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as product_evidence
 
 
@@ -70,7 +71,7 @@ def compile_workload(product, work):
                  "-c", source, "-o", output]
     command(arguments, work / "compile")
     dependency_command = [compiler_contract.compiler(), "-nostdinc", "-isystem", str(product / "usr/include"),
-                          "-std=c11", "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-fPIE", "-M", str(source)]
+                          "-std=c11", *translation_contract.hosted_translation_flags(product), "-fPIE", "-M", str(source)]
     with dependencies.open("wb") as stream:
         subprocess.run(dependency_command, check=True, stdout=stream, cwd=ROOT, env=compiler_contract.clean_environment())
     # The driver supplies -nostdinc and its installed include directory. Reject

@@ -340,8 +340,11 @@ for profile in c11-base c11-gnu c11-file-offset-bits-64 c11-largefile-source c11
     capture_fopen64_header_profile reference "$profile" "$ORACLE_CC" /opt/musl-1.2.6/include
     capture_fopen64_header_profile installed "$profile" "$COMPILER" "$DYNAMIC_PRODUCT/usr/include"
 done
+# The installed driver's own hosted translation flags (never restated here).
+mapfile -t HOSTED_TRANSLATION < <(python3 -B "$ROOT/compat/x86_64/installed_compiler_translation.py" "$DYNAMIC_PRODUCT")
+[ "${#HOSTED_TRANSLATION[@]}" -gt 0 ] || fail 'installed product has no hosted translation flags'
 capture header-trace "$COMPILER" -nostdinc -isystem "$DYNAMIC_PRODUCT/usr/include" -D_LARGEFILE64_SOURCE=1 \
-    -ffreestanding -fno-builtin -fno-stack-protector -std=c11 -fPIE -E -H "$PROBE"
+    "${HOSTED_TRANSLATION[@]}" -std=c11 -fPIE -E -H "$PROBE"
 for header in errno.h fcntl.h locale.h stdio.h unistd.h wchar.h features.h bits/alltypes.h; do
     grep -Fq "$DYNAMIC_PRODUCT/usr/include/$header" "$WORK/header-trace.stderr" ||
         fail "installed header trace omitted $header"

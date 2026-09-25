@@ -47,6 +47,8 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
         self.runner = self.write("compat/x86_64/run_owned_locale.sh", b"runner\n")
         self.reader = self.write("compat/x86_64/owned_locale_component_receipt.py", b"reader\n")
         self.dynamic = self.mkdir(".work/x86_64/dynamic")
+        # The readers derive hosted translation flags from the product helper.
+        self.write(".work/x86_64/dynamic/share/crabc/crabc_cc_static.py", b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n")
         self.static = self.mkdir(".work/x86_64/static")
         self.workload = self.write_elf(".work/x86_64/owned-locale-products.fixture/workload.o", etype=1)
         self.oracle = self.write(".work/x86_64/owned-locale-products.fixture/oracle", b"oracle\n")

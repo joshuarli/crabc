@@ -152,8 +152,7 @@ clean_environment = compiler_contract.clean_environment()
 audit_environment = {**clean_environment, "TMPDIR": str(work)}
 
 prefix = [
-    "-nostdinc", "-isystem", str(headers), "-ffreestanding", "-fno-builtin",
-    "-fstack-protector-strong",
+    "-nostdinc", "-isystem", str(headers), *compiler_contract.HOSTED_TRANSLATION_FLAGS,
 ]
 caller_flags = ["-std=c11", "-fno-builtin", "-fno-stack-protector"]
 translation = {
@@ -278,8 +277,7 @@ if Path(compiler_contract.__file__).resolve() != helper.resolve():
 compiler = Path(compiler_contract.compiler())
 clean_environment = compiler_contract.clean_environment()
 prefix = [
-    "-nostdinc", "-isystem", str(headers), "-ffreestanding", "-fno-builtin",
-    "-fstack-protector-strong",
+    "-nostdinc", "-isystem", str(headers), *compiler_contract.HOSTED_TRANSLATION_FLAGS,
 ]
 caller_flags = ["-std=c11", "-fno-builtin", "-fno-stack-protector"]
 expected_translation = {

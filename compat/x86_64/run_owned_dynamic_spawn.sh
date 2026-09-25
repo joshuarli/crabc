@@ -152,7 +152,7 @@ macro = '-DCRABC_SPAWN_EXECUTABLE="/consumer"'
 actual_command = [str(driver), '--dynamic-pie', '-std=c11', '-fno-builtin', macro,
                   '-c', str(source_path), '-o', str(workload)]
 dependency_audit_command = [str(compiler), '-nostdinc', '-isystem', str(headers_root),
-    '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', '-std=c11',
+    *compiler_contract.HOSTED_TRANSLATION_FLAGS, '-std=c11',
     '-fno-builtin', macro, '-fPIE', '-M', str(source_path)]
 if record['actual_command'] != actual_command:
     raise SystemExit('spawn actual compile command drifted')
@@ -237,7 +237,7 @@ with (work / 'compile.stdout').open('xb') as stdout, (work / 'compile.stderr').o
 # This is a dependency-only replay of the installed dynamic driver's source
 # translation: the emitted workload object above remains the only link input.
 dependency_audit_command = [str(compiler), '-nostdinc', '-isystem', str(headers_root),
-    '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', '-std=c11',
+    *compiler_contract.HOSTED_TRANSLATION_FLAGS, '-std=c11',
     '-fno-builtin', macro, '-fPIE', '-M', str(source_path)]
 dependency_file = work / 'workload.d'
 with dependency_file.open('xb') as output:

@@ -26,6 +26,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import owned_crypt_runtime_evidence as copies
+import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as products
 
 
@@ -608,8 +609,8 @@ def validate_commands(
     include = dynamic / "usr/include"
     _validate_fopen64_header_controls(work, retained, tools, dynamic, fopen64_c, fopen64_cxx)
     compiler = str(tools["compiler"]["path"])
-    require_argv(retained["header-trace"], [compiler, "-nostdinc", "-isystem", str(include), "-D_LARGEFILE64_SOURCE=1", "-ffreestanding", "-fno-builtin",
-                                             "-fno-stack-protector", "-std=c11", "-fPIE", "-E", "-H", str(probe)], "header trace")
+    require_argv(retained["header-trace"], [compiler, "-nostdinc", "-isystem", str(include), "-D_LARGEFILE64_SOURCE=1",
+                                             *translation_contract.hosted_translation_flags(dynamic), "-std=c11", "-fPIE", "-E", "-H", str(probe)], "header trace")
     header_stdout = retained["header-trace"]["stdout"]
     header_stderr = retained["header-trace"]["stderr"]
     assert isinstance(header_stdout, Path) and isinstance(header_stderr, Path)

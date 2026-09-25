@@ -173,7 +173,7 @@ for language, standard, source, object_path in (
     ("c++", "c++17", cxx_source.resolve(strict=True), work / "cxx-addresses.o"),
 ):
     command = [compiler_contract.compiler(), "-nostdinc", "-isystem", str(headers), "-x", language,
-               f"-std={standard}", "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-fPIE", "-M", str(source)]
+               f"-std={standard}", *compiler_contract.HOSTED_TRANSLATION_FLAGS, "-fPIE", "-M", str(source)]
     dependency_file = work / f"{language}.d"
     with dependency_file.open("xb") as output:
         subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output, check=True, env=compiler_contract.clean_environment())

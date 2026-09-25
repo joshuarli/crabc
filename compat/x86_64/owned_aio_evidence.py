@@ -25,6 +25,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import owned_crypt_runtime_evidence as copies
+import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as products
 import owned_dynamic_qualification as qualification
 import run_qualification_manifest as native_qualification
@@ -579,7 +580,7 @@ def _candidate_expected(consumer: str, arguments: str) -> bytes:
 
 def _validate_header(root: Path, work: Path, dynamic: Path, tools: Mapping[str, Any]) -> dict[str, Any]:
     expected = [tools["compiler"]["path"], "-nostdinc", "-isystem", _mounted(root, dynamic / "usr/include"),
-                "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-fPIE", "-std=c11", "-D_GNU_SOURCE",
+                *translation_contract.hosted_translation_flags(dynamic), "-fPIE", "-std=c11", "-D_GNU_SOURCE",
                 "-E", "-H", _mounted(root, root / PROBES["workload"])]
     record = _command(root, work, "installed-header-trace", expected, {b"0\n"})
     trace = _local(root, record["stderr"]["path"], "installed header trace", directory=False).read_text(encoding="utf-8")

@@ -236,6 +236,8 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         compiler = Path("/sealed/fixed-image-gcc")
         work.mkdir(parents=True, exist_ok=True)
         self.addCleanup(lambda: shutil.rmtree(work.parent, ignore_errors=True))
+        (dynamic / "share/crabc").mkdir(parents=True, exist_ok=True)
+        (dynamic / "share/crabc/crabc_cc_static.py").write_text("HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n", encoding="utf-8")
         trace = "".join(f". {dynamic / 'usr/include' / header}\n"
                         for header in evidence.INSTALLED_HEADERS)
         for role, relative, define in contract.OBJECT_ROLES:
@@ -283,7 +285,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         compiler = dynamic / "bin/fixed-image-gcc"
         compiler.write_bytes(b"fixed image compiler")
         (dynamic / "share/crabc/crabc_cc_static.py").write_text(
-            f"def compiler():\n    return {str(compiler)!r}\n", encoding="utf-8"
+            f"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\ndef compiler():\n    return {str(compiler)!r}\n", encoding="utf-8"
         )
 
         trace = "".join(f". {dynamic / 'usr/include' / header}\n"

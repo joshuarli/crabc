@@ -20,6 +20,7 @@ import tomllib
 
 import owned_posix_family_execution as family
 import owned_posix_native_observations as native
+import installed_compiler_translation as translation_contract
 import owned_posix_native_dispositions as dispositions
 import owned_crypt_runtime_evidence as copies
 import owned_dynamic_receipt as receipt_contract
@@ -306,8 +307,8 @@ def abi_oracle_command(root, work):
 
 def vector_commands(reader, compiler):
     source, obj = reader.leaf / 'vectors/observer.c', reader.leaf / 'vectors/workload.o'
-    prefix = ['-nostdinc','-isystem',reader.recorded(reader.product/'usr/include'),'-ffreestanding',
-              '-fno-builtin','-fstack-protector-strong']
+    prefix = ['-nostdinc','-isystem',reader.recorded(reader.product/'usr/include'),
+              *translation_contract.hosted_translation_flags(reader.product)]
     return {'compile': [reader.recorded(reader.product/'bin/crabc-cc-dynamic'),'--dynamic-pie',*VECTOR_FLAGS,
                         '-c',reader.recorded(source),'-o',reader.recorded(obj)],
             'dependencies': [compiler,*prefix,*VECTOR_FLAGS,'-fPIE','-M',reader.recorded(source)],
@@ -416,7 +417,7 @@ def collect_abi_compile(reader, tools):
         'driver': reader.binding(product/'bin/crabc-cc-dynamic'), 'installed_helper': reader.binding(product/'share/crabc/crabc_cc_static.py'),
         'compiler': tools['compiler'], 'clean_environment': ENVIRONMENT}, 'crypt installed compiler inputs')
     source = root/ABI_SOURCE
-    prefix = ['-nostdinc','-isystem',reader.recorded(product/'usr/include'),'-ffreestanding','-fno-builtin','-fstack-protector-strong']
+    prefix = ['-nostdinc','-isystem',reader.recorded(product/'usr/include'),*translation_contract.hosted_translation_flags(product)]
     same(prep['translation'], {'driver_mode':'--dynamic-pie','effective_codegen_flag':'-fPIE','caller_flags':ABI_FLAGS,
         'driver_compile_prefix':prefix, 'actual_compile_command':[reader.recorded(product/'bin/crabc-cc-dynamic'),'--dynamic-pie',
             *ABI_FLAGS,'-c',reader.recorded(source),'-o',reader.recorded(work/'workload.o')],

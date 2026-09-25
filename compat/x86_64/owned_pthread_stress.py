@@ -197,8 +197,9 @@ def audit_link(product, workload, executable, receipt, linkage):
 def header_audit(product, work, source=None):
     source = SOURCE if source is None else source
     compiler = compiler_contract.compiler()
-    base = [compiler, "-nostdinc", "-isystem", str(product / "usr/include"), "-ffreestanding",
-            "-fno-builtin", "-fstack-protector-strong", *FLAGS, "-fPIE"]
+    # The installed driver's own hosted translation flags, not a restatement.
+    base = [compiler, "-nostdinc", "-isystem", str(product / "usr/include"),
+            *compiler_contract.HOSTED_TRANSLATION_FLAGS, *FLAGS, "-fPIE"]
     commands = {"dependencies": [*base, "-M", str(source)], "preprocessor": [*base, "-E", str(source)]}
     environment = compiler_contract.clean_environment()
     outputs = {name: subprocess.check_output(argv, cwd=ROOT, env=environment) for name, argv in commands.items()}

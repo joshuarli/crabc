@@ -24,6 +24,7 @@ import tomllib
 from typing import Any, Iterable, Sequence
 
 import owned_dynamic_receipt as receipt_contract
+import installed_compiler_translation as translation_contract
 
 sys.dont_write_bytecode = True
 
@@ -634,6 +635,20 @@ def installed_compiler_contract(product: Path) -> tuple[Path, dict[str, str], di
     return compiler, dict(environment), artifact(compiler, "installed selected compiler")
 
 
+def installed_translation_flags(product: Path) -> tuple[str, ...]:
+    """Return the hosted translation flags of this exact product's helper.
+
+    The installed driver prepends ``HOSTED_TRANSLATION_FLAGS`` from its copied
+    ``crabc_cc_static.py``. Header traces and the options preprocessor reuse
+    that tuple so they describe the driver's own language mode.
+    """
+
+    try:
+        return translation_contract.hosted_translation_flags(product)
+    except translation_contract.TranslationFlagsError as error:
+        raise EvidenceError(str(error)) from error
+
+
 def driver_support(product: Path) -> dict[str, Any]:
     """Record whether installed driver bytes expose every required source edge."""
 
@@ -681,6 +696,7 @@ def allowed_header_paths(paths: Iterable[str], *, product: Path, prepared: Path,
 
 def generate_options_header(
     *, compiler: Path, environment: dict[str, str], include: Path, source: Path, output: Path, trace: Path,
+    translation: Sequence[str],
 ) -> dict[str, Any]:
     """Reproduce the upstream options.h preprocessing transform with declared headers."""
 
@@ -690,8 +706,7 @@ def generate_options_header(
     physical(output.parent, "generated options output parent", directory=True)
     if output.exists() or trace.exists():
         fail("generated options evidence path already exists")
-    command = [str(compiler), "-nostdinc", "-isystem", str(include), "-ffreestanding", "-fno-builtin",
-               "-fstack-protector-strong", "-std=c99", "-D_POSIX_C_SOURCE=200809L", "-D_FILE_OFFSET_BITS=64", "-E", "-H", "-"]
+    command = [str(compiler), "-nostdinc", "-isystem", str(include), *translation, "-std=c99", "-D_POSIX_C_SOURCE=200809L", "-D_FILE_OFFSET_BITS=64", "-E", "-H", "-"]
     prepared = source.read_bytes()
     record = run_capture(command, cwd=output.parent, environment=environment,
                          stdout=output.with_suffix(".preprocessed"), stderr=trace, stdin=prepared)
@@ -737,11 +752,12 @@ def compile_command(
 
 def header_command(
     compiler: Path, product: Path, source: Path, *, shared_object: bool, quote_dirs: Sequence[Path], kind: str,
+    translation: Sequence[str],
 ) -> list[str]:
     command = [str(compiler), "-nostdinc"]
     for directory in quote_dirs:
         command.extend(("-iquote", str(directory)))
-    command.extend(("-isystem", str(product / "usr/include"), "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
+    command.extend(("-isystem", str(product / "usr/include"), *translation,
                     *unit_flags(kind), "-fPIC" if shared_object else "-fPIE", "-E", "-H", str(source)))
     return command
 
@@ -763,7 +779,8 @@ def compile_candidate(
     evidence.parent.mkdir(parents=True, exist_ok=True)
     trace = evidence.with_suffix(".headers.stderr")
     trace_stdout = evidence.with_suffix(".headers.stdout")
-    header = run_capture(header_command(compiler, product, source, shared_object=shared_object, quote_dirs=quote_dirs, kind=unit["kind"]),
+    header = run_capture(header_command(compiler, product, source, shared_object=shared_object, quote_dirs=quote_dirs, kind=unit["kind"],
+                                        translation=installed_translation_flags(product)),
                          cwd=evidence.parent, environment=environment, stdout=trace_stdout, stderr=trace)
     paths = header_trace_paths(trace)
     header_ok, foreign_headers = allowed_header_paths(paths, product=product, prepared=prepared, generated=generated)
@@ -1095,7 +1112,8 @@ def fixed_control_fixture(
     output = work / f"{fixture_name}-launcher.o"
     trace = work / f"{fixture_name}-launcher.headers.stderr"
     header = run_capture(
-        header_command(compiler, product, source, shared_object=False, quote_dirs=(), kind="runtime"),
+        header_command(compiler, product, source, shared_object=False, quote_dirs=(), kind="runtime",
+                       translation=installed_translation_flags(product)),
         cwd=work, environment=compiler_environment,
         stdout=work / f"{fixture_name}-launcher.headers.stdout", stderr=trace,
     )
@@ -2315,6 +2333,7 @@ def run_campaign(product_input: Path, evidence: Path) -> dict[str, Any]:
             compiler=compiler, environment=compiler_environment, include=product / "usr/include",
             source=prepared / "src/common/options.h.in", output=evidence / "generated/candidate/options.h",
             trace=evidence / "generated/candidate/options.headers.stderr",
+            translation=installed_translation_flags(product),
         )
         records = compile_all_units(
             units=units, product=product, compiler=compiler, environment=compiler_environment,

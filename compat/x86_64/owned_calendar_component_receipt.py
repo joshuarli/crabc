@@ -26,6 +26,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import owned_posix_family_execution as family
+import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as products
 import core_image
 
@@ -389,7 +390,7 @@ def command_plan(root: Path, work: Path, static_product: Path, dynamic_product: 
     for role, source, defines, _comparison in ROLE_SPECS:
         source_path = root / source
         plan[f"header-{role}"] = [tool("compiler"), "-nostdinc", "-isystem", m(dynamic_product / "usr/include"),
-                                   "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-std=c11", "-fPIE",
+                                   *translation_contract.hosted_translation_flags(dynamic_product), "-std=c11", "-fPIE",
                                    "-E", "-H", *defines, m(source_path)]
         plan[f"compile-{role}"] = [tool("dynamic_driver"), "--dynamic-pie", "-std=c11", "-D_GNU_SOURCE", "-pthread",
                                     "-fno-builtin", "-fno-stack-protector", *defines, "-c", m(source_path), "-o", m(objects[role])]

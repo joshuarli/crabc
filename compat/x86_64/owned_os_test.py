@@ -25,7 +25,7 @@ import sys
 import tempfile
 import time
 import uuid
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 import owned_os_test_aio_suspend_source as aio_suspend_source
 
@@ -544,15 +544,31 @@ def target_plan(arguments: list[str], product: Path) -> dict[str, Any]:
     raise AdapterError("os-test adapter only admits one source compile or one object link")
 
 
-def compiler_command(compiler: str, product: Path, source: Path, output: Path, flags: Iterable[str], mode: str) -> list[str]:
+def translation_flags(static: Any) -> tuple[str, ...]:
+    """Return the installed helper's own hosted translation flags.
+
+    The replay below must reproduce the driver's object byte for byte, so it
+    takes the flags from the installed ``crabc_cc_static.py`` the driver
+    imports rather than restating them.
+    """
+
+    flags = getattr(static, "HOSTED_TRANSLATION_FLAGS", None)
+    if type(flags) is not tuple or not all(type(flag) is str for flag in flags):
+        raise AdapterError("installed compiler helper has no hosted translation flags")
+    return flags
+
+
+def compiler_command(compiler: str, product: Path, source: Path, output: Path, flags: Iterable[str], mode: str,
+                     translation: Sequence[str]) -> list[str]:
     if mode not in {"pie", "shared"}:
         raise AdapterError(f"unknown compilation mode: {mode}")
-    return [compiler, "-nostdinc", "-isystem", str(product / PRODUCT_INCLUDE), "-ffreestanding", "-fno-builtin",
-            "-fstack-protector-strong", *flags, "-fPIC" if mode == "shared" else "-fPIE", "-c", str(source), "-o", str(output)]
+    return [compiler, "-nostdinc", "-isystem", str(product / PRODUCT_INCLUDE), *translation,
+            *flags, "-fPIC" if mode == "shared" else "-fPIE", "-c", str(source), "-o", str(output)]
 
 
-def dependency_command(compiler: str, product: Path, source: Path, flags: Iterable[str], mode: str) -> list[str]:
-    compile = compiler_command(compiler, product, source, Path("/dev/null"), flags, mode)
+def dependency_command(compiler: str, product: Path, source: Path, flags: Iterable[str], mode: str,
+                       translation: Sequence[str]) -> list[str]:
+    compile = compiler_command(compiler, product, source, Path("/dev/null"), flags, mode, translation)
     # Drop exactly ``-c SOURCE -o OUTPUT``.  Leaving the first source makes
     # GCC emit a second target rule, which is not a header dependency.
     return [*compile[:-4], "-M", str(source)]
@@ -619,11 +635,12 @@ def adapter(arguments: list[str]) -> int:
         static = load_module("owned_os_test_installed_static", product / "share/crabc/crabc_cc_static.py")
         compiler = static.compiler()
         environment = static.clean_environment()
+        translation = translation_flags(static)
         base["plan"] = json_safe(plan)
         base["compiler"] = {"path": compiler, "sha256": sha256(Path(compiler))}
         event_id = append_event(evidence_root, {**base, "state": "started"})
         if plan["kind"] == "preprocess":
-            command = [*compiler_command(compiler, product, plan["source"], Path("/dev/null"), plan["flags"], "pie")[:-4],
+            command = [*compiler_command(compiler, product, plan["source"], Path("/dev/null"), plan["flags"], "pie", translation)[:-4],
                        "-E", *(["-dM"] if plan["macro_dump"] else []), str(plan["source"]), "-o", str(plan["output"])]
             status, stdout, stderr = run_capture(command, environment)
             final = {**base, "event_id": event_id, "state": "finished", "command": command, "status": status,
@@ -633,7 +650,7 @@ def adapter(arguments: list[str]) -> int:
                 retained = evidence_root / "preprocessed" / f"{event_id}{output.suffix}"
                 final["output"] = {"source_path": str(output), "sha256": sha256(output),
                                    "retained": retain_file(output, retained)}
-            dependencies = dependency_command(compiler, product, plan["source"], plan["flags"], "pie")
+            dependencies = dependency_command(compiler, product, plan["source"], plan["flags"], "pie", translation)
             dependency_status, dependency_stdout, dependency_stderr = run_capture(dependencies, environment)
             final["dependencies"] = {"command": dependencies, "status": dependency_status,
                                        "stdout": stream_snapshot(dependency_stdout), "stderr": stream_snapshot(dependency_stderr),
@@ -665,9 +682,9 @@ def adapter(arguments: list[str]) -> int:
         if status == 0:
             object_path = object_path.resolve(strict=True)
             direct = object_root / f"{event_id}.direct.o"
-            replay = compiler_command(compiler, product, source, direct, plan["flags"], plan["mode"])
+            replay = compiler_command(compiler, product, source, direct, plan["flags"], plan["mode"], translation)
             replay_status, replay_stdout, replay_stderr = run_capture(replay, environment)
-            dependencies = dependency_command(compiler, product, source, plan["flags"], plan["mode"])
+            dependencies = dependency_command(compiler, product, source, plan["flags"], plan["mode"], translation)
             dependency_status, dependency_stdout, dependency_stderr = run_capture(dependencies, environment)
             final["object"] = {"path": str(object_path.absolute()), "sha256": sha256(object_path),
                                "retained": retain_file(object_path, object_root / f"{event_id}.driver.o")}

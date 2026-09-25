@@ -101,7 +101,8 @@ class IoCancellationEvidenceTests(unittest.TestCase):
         driver.write_text("fixture driver\n")
         (metadata / "manifest.json").write_text("{}\n")
         (metadata / "crabc_cc_static.py").write_text(
-            f"def compiler(): return {str(Path(sys.executable).resolve())!r}\n")
+            f"def compiler(): return {str(Path(sys.executable).resolve())!r}\n"
+            "HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n")
         workload = self.root / ".work/workload.o"
         workload.write_bytes(b"one fixture object")
         record = self.root / ".work/compile.json"

@@ -279,9 +279,12 @@ PY
 
 capture_tools "$WORK/tools-before.json"
 capture_seal source-product-before
+# The installed driver's own hosted translation flags (never restated here).
+mapfile -t HOSTED_TRANSLATION < <(python3 -B "$ROOT/compat/x86_64/installed_compiler_translation.py" "$DYNAMIC_PRODUCT")
+[ "${#HOSTED_TRANSLATION[@]}" -gt 0 ] || fail 'installed product has no hosted translation flags'
 readonly COMPILER="$(resolve_compiler)"
 capture header-trace "$COMPILER" -nostdinc -isystem "$DYNAMIC_PRODUCT/usr/include" \
-    -ffreestanding -fno-builtin -std=c11 -fPIE -E -H "$PROBE"
+    "${HOSTED_TRANSLATION[@]}" -std=c11 -fPIE -E -H "$PROBE"
 for header in locale.h regex.h stddef.h stdio.h stdlib.h string.h features.h bits/alltypes.h; do
     grep -Fq "$DYNAMIC_PRODUCT/usr/include/$header" "$WORK/header-trace.stderr" ||
         fail "installed header trace omitted $header"

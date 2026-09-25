@@ -18,6 +18,7 @@ import re
 import sys
 
 import owned_math_fenv_all_entry_contract as contract
+import installed_compiler_translation as translation_contract
 
 SCHEMA = "crabc.x86_64-owned-math-fenv-all-entry-provider-evidence/v1"
 ALIAS_GROUPS = (
@@ -174,7 +175,7 @@ def header_argv(root: Path, dynamic_product: Path, compiler: Path,
     return [
         *COMPILER_ENVIRONMENT, str(compiler),
         "-nostdinc", "-isystem", str(dynamic_product / "usr/include"),
-        "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
+        *translation_contract.hosted_translation_flags(dynamic_product),
         *flags, "-frounding-math", "-fPIE", "-E", "-H", str(root / relative),
     ]
 

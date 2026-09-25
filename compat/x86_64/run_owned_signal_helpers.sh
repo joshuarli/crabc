@@ -98,7 +98,7 @@ with (work / 'compile.stdout').open('wb') as stdout, (work / 'compile.stderr').o
 # Preprocessing repeats the installed driver's actual header/code-generation
 # policy; it never creates a replacement object for any consumer.
 command = [compiler_contract.compiler(), '-nostdinc', '-isystem', str(product / 'usr/include'),
-           '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', '-std=c11', '-fno-builtin', '-fPIE', '-M', str(source)]
+           *compiler_contract.HOSTED_TRANSLATION_FLAGS, '-std=c11', '-fno-builtin', '-fPIE', '-M', str(source)]
 with (work / 'workload.d').open('wb') as stdout:
     subprocess.run(command, check=True, stdout=stdout, env=compiler_contract.clean_environment())
 paths = (work / 'workload.d').read_text().replace('\\\n', ' ').split(':', 1)[1].split()

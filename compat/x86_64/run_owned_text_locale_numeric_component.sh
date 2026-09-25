@@ -243,11 +243,14 @@ capture tools-before python3 -B "$RECEIPT" tools --root "$ROOT" --static "$STATI
     --dynamic "$DYNAMIC_PRODUCT" --output "$WORK/tools-before.json"
 readonly COMPILER="$(resolve_tool compiler)"
 readonly LINKER="$(resolve_tool linker)"
+# The installed driver's own hosted translation flags (never restated here).
+mapfile -t HOSTED_TRANSLATION < <(python3 -B "$ROOT/compat/x86_64/installed_compiler_translation.py" "$DYNAMIC_PRODUCT")
+[ "${#HOSTED_TRANSLATION[@]}" -gt 0 ] || fail 'installed product has no hosted translation flags'
 
 for entry in "${ROLE_SOURCES[@]}"; do
     IFS='|' read -r role relative define <<<"$entry"
     header_arguments=(env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC "$COMPILER"
-        -nostdinc -isystem "$DYNAMIC_PRODUCT/usr/include" -ffreestanding -fno-builtin -fstack-protector-strong
+        -nostdinc -isystem "$DYNAMIC_PRODUCT/usr/include" "${HOSTED_TRANSLATION[@]}"
         -std=c11 -D_GNU_SOURCE -fno-builtin -frounding-math -fno-stack-protector)
     if [ -n "$define" ]; then
         IFS=';' read -r -a define_values <<<"$define"

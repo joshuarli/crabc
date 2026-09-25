@@ -196,7 +196,7 @@ def _installed_compiler_contract(installed: Path) -> tuple[Any, Path, Path]:
         'run([shared.compiler(), "-nostdinc",',
         '*(item for directory in quote_include_dirs for item in ("-iquote", str(directory))),',
         '"-isystem", str(root / "usr/include"),',
-        '"-ffreestanding", "-fno-builtin", "-fstack-protector-strong",',
+        '*shared.HOSTED_TRANSLATION_FLAGS,',
         '*invocation.compiler_flags, *(["-frounding-math"] if rounding_math else []),',
         '"-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",',
     )
@@ -244,12 +244,15 @@ def capture_installed_header_translation(
     try:
         selected_compiler = contract.compiler()
         environment = contract.clean_environment()
+        translation_flags = contract.HOSTED_TRANSLATION_FLAGS
     except (AttributeError, OSError, RuntimeError) as error:
         raise WorkloadBindingError(
             "owned syslog installed compiler contract is incomplete"
         ) from error
     if type(selected_compiler) is not str or not selected_compiler:
         _fail("owned syslog installed compiler contract selected no compiler")
+    if type(translation_flags) is not tuple or not all(type(flag) is str for flag in translation_flags):
+        _fail("owned syslog installed translation flags drifted")
     if type(environment) is not dict or not all(
         type(key) is str and type(value) is str for key, value in environment.items()
     ):
@@ -268,9 +271,7 @@ def capture_installed_header_translation(
         ),
         "-isystem",
         str(installed_root / "usr/include"),
-        "-ffreestanding",
-        "-fno-builtin",
-        "-fstack-protector-strong",
+        *translation_flags,
         *caller_flags,
         *(["-frounding-math"] if rounding_math else []),
         "-fPIE",

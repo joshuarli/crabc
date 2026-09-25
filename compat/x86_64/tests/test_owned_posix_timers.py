@@ -61,7 +61,8 @@ class OwnedPosixTimersTests(unittest.TestCase):
             manifest.parent.mkdir(parents=True)
             manifest.write_text("{}\n", encoding="utf-8")
             helper = manifest.parent / "crabc_cc_static.py"
-            helper.write_text("raise RuntimeError('host replay must not import me')\n", encoding="utf-8")
+            helper.write_text("raise RuntimeError('host replay must not import me')\n"
+                              "HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n", encoding="utf-8")
             driver = product / "bin/crabc-cc-dynamic"
             driver.parent.mkdir(parents=True)
             driver.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -137,7 +138,7 @@ class OwnedPosixTimersTests(unittest.TestCase):
         manifest = product / "share/crabc/manifest.json"
         manifest.parent.mkdir(parents=True)
         manifest.write_text("{}\n", encoding="utf-8")
-        (manifest.parent / "crabc_cc_static.py").write_text("# installed compiler policy\n", encoding="utf-8")
+        (manifest.parent / "crabc_cc_static.py").write_text("# installed compiler policy\nHOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n", encoding="utf-8")
         trace = temporary / "timer.headers"
         trace.write_text(f". {header}\n", encoding="utf-8")
         audit = temporary / "timer.compile-audit.json"
@@ -220,7 +221,7 @@ class OwnedPosixTimersTests(unittest.TestCase):
             self.assertEqual(
                 command,
                 ["/usr/bin/gcc", "-nostdinc", "-isystem", str(product / "usr/include"),
-                 "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-std=c11",
+                 "-fstack-protector-strong", "-std=c11",
                  "-fPIE", "-M", "-H", str(source)],
             )
             self.assertEqual(record["compiler"]["path"], str(Path("/usr/bin/gcc").resolve()))

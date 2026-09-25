@@ -133,7 +133,7 @@ product, work, source = map(Path, sys.argv[1:])
 sys.path.insert(0, str(product / 'share/crabc'))
 import crabc_cc_static as compiler_contract
 dependency_command = [compiler_contract.compiler(), '-nostdinc', '-isystem', str(product / 'usr/include'),
-    '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', '-fPIE', '-M', str(source)]
+    '-std=c11', *compiler_contract.HOSTED_TRANSLATION_FLAGS, '-fPIE', '-M', str(source)]
 with (work / 'workload.d').open('wb') as output:
     subprocess.run(dependency_command, stdout=output, check=True, env=compiler_contract.clean_environment())
 dependencies = (work / 'workload.d').read_text().replace('\\\n', ' ').split(':', 1)[1].split()

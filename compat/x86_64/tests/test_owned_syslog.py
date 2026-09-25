@@ -236,6 +236,7 @@ class OwnedSyslogTests(unittest.TestCase):
             ).read_text(encoding="utf-8")
             driver.write_text(dynamic_driver, encoding="utf-8")
             helper.write_text(
+                "HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n"
                 "def compiler():\n    return '/bin/true'\n"
                 "def clean_environment():\n    return {}\n",
                 encoding="utf-8",
@@ -263,8 +264,6 @@ class OwnedSyslogTests(unittest.TestCase):
                     "-nostdinc",
                     "-isystem",
                     str(installed / "usr/include"),
-                    "-ffreestanding",
-                    "-fno-builtin",
                     "-fstack-protector-strong",
                     "-std=c11",
                     "-fno-builtin",

@@ -87,7 +87,8 @@ this stress component needs no additional mount authority or procfs witness.
 
 The installed dynamic driver compiles the prepared source exactly once with
 `-std=c11 -O2 -D_POSIX_C_SOURCE=200809L -fno-builtin`. The driver supplies its
-installed headers, freestanding translation, strong stack protection, and PIE
+installed headers, its hosted translation flags (`HOSTED_TRANSLATION_FLAGS` in
+the installed `crabc_cc_static.py`, which the header audit reuses), and PIE
 code generation. The retained object is linked unchanged to pinned musl 1.2.6,
 both optional static modes, and dynamic PIE/non-PIE. Each dynamic binary runs
 through both kernel interpreter entry and direct loader entry. With both

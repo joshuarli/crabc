@@ -232,6 +232,16 @@ debug information linkable without stripping it. Explicit compressed forms
 such as `-gz`, `-gz=zlib`, and `-gz=zstd` fail before translation. `-g0`
 retains GCC's ordinary no-debug behavior and receives no injected flag.
 
+Both drivers translate applications as hosted C in the pinned musl oracle
+compiler's default mode: `HOSTED_TRANSLATION_FLAGS` in `crabc_cc_static.py`
+(`-fstack-protector-strong`) precedes the caller's admitted flags, so
+`__STDC_HOSTED__` is 1 and GCC may rewrite builtin calls such as
+`printf("...\n")` into `puts`. The products own `__stack_chk_fail` and the
+`%fs:0x28` canary. Runners and receipt readers that replay or audit that
+translation read the tuple through `installed_compiler_translation.py`, which
+parses the product helper without importing it. `run_owned_driver_pthread.sh`
+compares this language mode with the oracle in all four executable modes.
+
 The exact `-pthread` option passes through the shared helper to every C
 translation, preserving GCC's `_REENTRANT` contract. It is also admitted on
 object-only links: the installed libc already owns pthread definitions, so

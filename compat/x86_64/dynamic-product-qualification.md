@@ -88,8 +88,8 @@ PATH search, worker spawn, denied syscalls, descriptor exhaustion and rollback.
 the one installed-driver object. The compile receipt binds the source, installed
 dynamic driver, installed shared compiler helper, helper-selected compiler,
 clean environment, and exact `/consumer` compile command. Its dependency-only
-audit repeats the installed dynamic driver's C11/freestanding/stack-protector
-and PIE translation flags through that helper, records every installed header
+audit repeats the installed dynamic driver's C11, hosted translation
+(`HOSTED_TRANSLATION_FLAGS`), and PIE flags through that helper, records every installed header
 hash, and requires the spawn, signal, process, descriptor, resource, and
 pthread source headers. The object, compile inputs, dependency output, and
 installed headers are checked before and after every oracle, static, and

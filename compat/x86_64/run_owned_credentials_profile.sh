@@ -111,8 +111,10 @@ readonly installed="$provided_dynamic"
 # with the driver's `-nostdinc` and installed include root only to retain a
 # header trace. The actual application object below still comes from the
 # installed driver, which supplies the identical target-header boundary.
-/usr/bin/gcc -nostdinc -isystem "$installed/usr/include" -ffreestanding \
-    -fno-builtin -fstack-protector-strong -std=c11 -fPIE -E -H "$PROBE" \
+mapfile -t hosted_translation < <(python3 -B "$ROOT/compat/x86_64/installed_compiler_translation.py" "$installed")
+[ "${#hosted_translation[@]}" -gt 0 ]
+/usr/bin/gcc -nostdinc -isystem "$installed/usr/include" "${hosted_translation[@]}" \
+    -std=c11 -fPIE -E -H "$PROBE" \
     >/dev/null 2>"$work/header-trace"
 for header in errno.h grp.h pthread.h sched.h signal.h stddef.h stdint.h stdio.h sys/syscall.h sys/types.h sys/wait.h unistd.h; do
     grep -Fq "$installed/usr/include/$header" "$work/header-trace" || {

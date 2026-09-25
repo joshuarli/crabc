@@ -20,6 +20,7 @@ import shlex
 import tomllib
 
 import owned_dynamic_receipt as receipt_contract
+import installed_compiler_translation as translation_contract
 import owned_differential_evidence as differential
 import owned_signal_process_evidence as signals
 import owned_pthread_stress_source as stress_source
@@ -851,7 +852,8 @@ def _libc_control_launcher(reader, fixture, *, contract, product, compiler, envi
     _command_streams(reader, translation['record'], command=contract.compile_command(
         mapped(product), mapped(source), mapped(obj), shared_object=False, quote_dirs=(), kind='runtime'))
     _command_streams(reader, header['record'], command=contract.header_command(
-        Path(compiler['path']), mapped(product), mapped(source), shared_object=False, quote_dirs=(), kind='runtime'))
+        Path(compiler['path']), mapped(product), mapped(source), shared_object=False, quote_dirs=(), kind='runtime',
+        translation=contract.installed_translation_flags(product)))
     for value in (translation, header):
         same(value['record']['environment'], environment, 'libc-test control fixture compiler environment')
     reader.bind(header['trace'], reader.local(header['record']['stderr']['path']), 'libc-test control fixture header trace')
@@ -920,7 +922,7 @@ def _libc_test(reader):
     reader.bind(options['input'], leaf / 'source-prepared/src/common/options.h.in', 'libc-test generated options template')
     reader.bind(options['output'], leaf / 'generated/candidate/options.h', 'libc-test generated options header')
     _command_streams(reader, options['record'], command=[product['compiler']['path'], '-nostdinc', '-isystem',
-        reader.recorded(copied_product / 'usr/include'), '-ffreestanding', '-fno-builtin', '-fstack-protector-strong',
+        reader.recorded(copied_product / 'usr/include'), *contract.installed_translation_flags(copied_product),
         '-std=c99', '-D_POSIX_C_SOURCE=200809L', '-D_FILE_OFFSET_BITS=64', '-E', '-H', '-'])
     same(options['record']['environment'], product['compiler_environment'], 'libc-test options compiler environment')
     reader.bind(options['trace'], reader.local(options['record']['stderr']['path']), 'libc-test generated options trace')
@@ -973,7 +975,8 @@ def _libc_test(reader):
         compile_streams = _command_streams(reader, translation['record'], command=command)
         same(translation['record']['environment'], product['compiler_environment'], 'libc-test installed compiler environment')
         header_command = contract.header_command(Path(product['compiler']['path']), mapped(copied_product), mapped(source),
-            shared_object=kind == 'dso', quote_dirs=list(map(mapped, quote_dirs)), kind=kind)
+            shared_object=kind == 'dso', quote_dirs=list(map(mapped, quote_dirs)), kind=kind,
+            translation=contract.installed_translation_flags(copied_product))
         _command_streams(reader, header['record'], command=header_command)
         same(header['record']['environment'], product['compiler_environment'], 'libc-test installed header compiler environment')
         reader.bind(header['trace'], reader.local(header['record']['stderr']['path']), 'libc-test header trace')
@@ -1210,7 +1213,7 @@ def _os_event_graph(reader, suite, expected, result, source_files, contract):
             expected_output = str(Path(source).with_suffix('.dM' if plan['macro_dump'] else '.i'))
             same(plan['output'], expected_output, 'os-test namespace output role')
             command = [*contract.compiler_command(event['compiler']['path'], Path(reader.recorded(product)), Path(source),
-                       Path('/dev/null'), plan['flags'], 'pie')[:-4], '-E', *(['-dM'] if plan['macro_dump'] else []), source, '-o', expected_output]
+                       Path('/dev/null'), plan['flags'], 'pie', translation_contract.hosted_translation_flags(product))[:-4], '-E', *(['-dM'] if plan['macro_dump'] else []), source, '-o', expected_output]
             same(event['command'], command, 'os-test namespace compiler invocation')
             if event['status'] == 0:
                 output = leaf / 'evidence' / suite / 'preprocessed' / (event_id + Path(expected_output).suffix)
@@ -1246,7 +1249,8 @@ def _os_event_graph(reader, suite, expected, result, source_files, contract):
                      [0, True, reader.recorded(direct), digest(direct)], 'os-test independent object replay')
                 require(read_bytes(retained) == read_bytes(direct), 'os-test driver/replay object bytes differ')
                 same(replay['command'], contract.compiler_command(event['compiler']['path'], Path(reader.recorded(product)), Path(source),
-                     Path(reader.recorded(direct)), plan['flags'], plan['mode']), 'os-test direct object compiler invocation')
+                     Path(reader.recorded(direct)), plan['flags'], plan['mode'], translation_contract.hosted_translation_flags(product)),
+                     'os-test direct object compiler invocation')
                 for stream in ('stdout', 'stderr'):
                     _os_snapshot(replay[stream])
                 key = reader.recorded(object_path)
@@ -1265,7 +1269,8 @@ def _os_event_graph(reader, suite, expected, result, source_files, contract):
             if event['status'] == 0:
                 same(dependencies['status'], 0, 'os-test successful source header closure')
             same(dependencies['command'], contract.dependency_command(event['compiler']['path'], Path(reader.recorded(product)),
-                 Path(source), plan['flags'], 'pie' if kind == 'preprocess' else plan['mode']), 'os-test header dependency invocation')
+                 Path(source), plan['flags'], 'pie' if kind == 'preprocess' else plan['mode'],
+                 translation_contract.hosted_translation_flags(product)), 'os-test header dependency invocation')
             raw = _os_snapshot(dependencies['stdout'])
             _os_snapshot(dependencies['stderr'])
             if kind == 'preprocess':

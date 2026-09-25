@@ -136,7 +136,7 @@ class OwnedSignalProcessTests(unittest.TestCase):
             compiler = work / "compiler"
             header = product / "usr/include/signal.h"
             for path, contents in (
-                (manifest, b"{}\n"), (driver, b"driver\n"), (helper, b"helper\n"),
+                (manifest, b"{}\n"), (driver, b"driver\n"), (helper, b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n"),
                 (compiler, b"compiler\n"), (header, b"header\n"), (source, b"source\n"),
             ):
                 path.parent.mkdir(parents=True, exist_ok=True)

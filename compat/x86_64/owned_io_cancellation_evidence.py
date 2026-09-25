@@ -20,6 +20,7 @@ import subprocess
 import sys
 
 from owned_posix_product_evidence import ProductEvidenceError, validate_link
+import installed_compiler_translation as translation_contract
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCAL_WITNESS = "compat/x86_64/owned_cancellation_proc_witness.h"
@@ -129,7 +130,7 @@ def dependency_command(product: Path, source: Path, compiler: str) -> list[str]:
     # protector setting is overridden by this existing fixture's explicit
     # fno-stack-protector, and the selected mode remains PIE, not shared PIC.
     return [compiler, "-nostdinc", "-isystem", str(product / "usr/include"),
-            "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
+            *translation_contract.hosted_translation_flags(product),
             *COMPILE_FLAGS, "-fPIE", "-M", "-H", str(source)]
 
 

@@ -210,6 +210,9 @@ class OwnedLibcTestGraphTests(unittest.TestCase):
         common = prepared / "src/common"
         common.mkdir()
         product = self.root / "product"
+        helper = product / "share/crabc/crabc_cc_static.py"
+        helper.parent.mkdir(parents=True)
+        helper.write_text("HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n")
         generated = self.root / "generated"
         evidence = self.root / "units/example.translation"
         output = self.root / "objects/example.o"

@@ -351,7 +351,7 @@ import crabc_cc_static as compiler_contract
 
 dependency_command = [
     compiler_contract.compiler(), '-nostdinc', '-isystem', str(headers),
-    '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong',
+    '-std=c11', *compiler_contract.HOSTED_TRANSLATION_FLAGS,
     '-fPIE', '-M', str(source_path),
 ]
 dependency_file = work / 'workload.d'

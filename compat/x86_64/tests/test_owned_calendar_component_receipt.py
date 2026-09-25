@@ -47,6 +47,8 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
         self.work.mkdir(parents=True)
         self.static = self.mkdir(".work/x86_64/static")
         self.dynamic = self.mkdir(".work/x86_64/dynamic")
+        # The readers derive hosted translation flags from the product helper.
+        self.write(".work/x86_64/dynamic/share/crabc/crabc_cc_static.py", b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n")
         self.mkdir(".work/x86_64/dynamic/runtime")
         self.write(".work/x86_64/dynamic/runtime/mode-bound", b"dynamic payload\n", mode=0o755)
         self.copy_sources()

@@ -29,6 +29,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import owned_crypt_runtime_evidence as copies
+import installed_compiler_translation as translation_contract
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as products
 
@@ -251,7 +252,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
                                             "PATH=/usr/bin:/bin", tool(reader), *arguments]
     plan = {
         "header-trace": [tool("compiler"), "-nostdinc", "-isystem", m(dynamic / "usr/include"),
-                         "-ffreestanding", "-fno-builtin", "-std=c11", "-fPIE", "-E", "-H", m(probe)],
+                         *translation_contract.hosted_translation_flags(dynamic), "-std=c11", "-fPIE", "-E", "-H", m(probe)],
         "compile": [tool("dynamic_driver"), "--dynamic-pie", "-std=c11", "-fno-builtin",
                     "-c", m(probe), "-o", m(workload)],
         "object-imports": symbols("nm", "-g", "--undefined-only", "--format=posix", m(workload)),

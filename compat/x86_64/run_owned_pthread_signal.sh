@@ -134,7 +134,7 @@ import crabc_cc_static as compiler_contract
 
 dependency_command = [
     compiler_contract.compiler(), '-nostdinc', '-isystem', str(product / 'usr/include'),
-    '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', '-fPIE',
+    '-std=c11', *compiler_contract.HOSTED_TRANSLATION_FLAGS, '-fPIE',
     '-M', str(source),
 ]
 with (work / 'workload.d').open('wb') as output:

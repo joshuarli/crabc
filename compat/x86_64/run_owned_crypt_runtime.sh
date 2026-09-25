@@ -210,8 +210,7 @@ caller_flags = [
     "-fno-builtin", "-fno-stack-protector",
 ]
 prefix = [
-    "-nostdinc", "-isystem", str(headers), "-ffreestanding", "-fno-builtin",
-    "-fstack-protector-strong",
+    "-nostdinc", "-isystem", str(headers), *compiler_contract.HOSTED_TRANSLATION_FLAGS,
 ]
 actual_compile = [
     str(driver), "--dynamic-pie", *caller_flags, "-c", str(source), "-o", str(object_path),

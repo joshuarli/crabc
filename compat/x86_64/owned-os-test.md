@@ -136,8 +136,8 @@ fixture regression, not a substitute for a fresh ten-suite campaign.
 `namespace` is the bounded exception to target translation: os-test asks for
 preprocessor output and a host-side analyzer, neither of which is a target
 runtime program. The adapter uses the same installed compiler contract as a
-PIE target compilation, including `-nostdinc`, installed headers,
-freestanding/builtin policy, stack protection, and PIE mode, for `-E` and
+PIE target compilation, including `-nostdinc`, installed headers, the
+installed helper's `HOSTED_TRANSLATION_FLAGS`, and PIE mode, for `-E` and
 `-dM`. It retains successful preprocessed output and its installed-header
 dependency closure before Make removes intermediates. The pinned host compiler
 is used only for os-test's `CC_FOR_BUILD` analyzer. Both command classes and

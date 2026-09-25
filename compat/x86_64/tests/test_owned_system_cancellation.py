@@ -45,6 +45,8 @@ class OwnedSystemCancellationTests(unittest.TestCase):
         helper.write_text(
             "from pathlib import Path\n"
             "\n"
+            "HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n"
+            "\n"
             "def compiler():\n"
             "    return str(Path(__file__).resolve().parents[2] / 'compiler')\n"
             "\n"
@@ -73,10 +75,7 @@ class OwnedSystemCancellationTests(unittest.TestCase):
 
         clean_environment = {"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
         caller_flags = ["-std=c11", "-fno-builtin", "-fno-stack-protector"]
-        prefix = [
-            "-nostdinc", "-isystem", str(headers), "-ffreestanding", "-fno-builtin",
-            "-fstack-protector-strong",
-        ]
+        prefix = ["-nostdinc", "-isystem", str(headers), "-fstack-protector-strong"]
         roles = (
             ("consumer", probe, (probe, witness)),
             ("child", child, (child,)),

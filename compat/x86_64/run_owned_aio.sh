@@ -350,16 +350,17 @@ record_raw oracle-submit-cancel "$WORK/oracle-submit-cancel.stdout" "$WORK/oracl
 grep -Fxq 'submit-handoff-cancellation=observed' "$WORK/oracle-submit-cancel.stdout" ||
 	fail "pinned musl did not reproduce submit handoff cancellation"
 
+# The installed driver's own hosted translation flags (never restated here).
+mapfile -t HOSTED_TRANSLATION < <(python3 -B "$ROOT/compat/x86_64/installed_compiler_translation.py" "$dynamic_product")
+[ "${#HOSTED_TRANSLATION[@]}" -gt 0 ] || fail 'installed product has no hosted translation flags'
 header_status=0
 compiler_path="$(python3 -B "$EVIDENCE" tool-path --dynamic "$dynamic_product" --name compiler)"
 env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
-	"$compiler_path" -nostdinc -isystem "$dynamic_product/usr/include" -ffreestanding -fno-builtin \
-	-fstack-protector-strong -fPIE -std=c11 -D_GNU_SOURCE -E -H "$PROBE" \
+	"$compiler_path" -nostdinc -isystem "$dynamic_product/usr/include" "${HOSTED_TRANSLATION[@]}" -fPIE -std=c11 -D_GNU_SOURCE -E -H "$PROBE" \
 	>"$WORK/installed-header-trace.stdout" 2>"$WORK/installed-header-trace.stderr" || header_status=$?
 printf '%s\n' "$header_status" >"$WORK/installed-header-trace.status"
 record_raw installed-header-trace "$WORK/installed-header-trace.stdout" "$WORK/installed-header-trace.status" "$ROOT" \
-	"$compiler_path" -nostdinc -isystem "$dynamic_product/usr/include" -ffreestanding -fno-builtin \
-	-fstack-protector-strong -fPIE -std=c11 -D_GNU_SOURCE -E -H "$PROBE"
+	"$compiler_path" -nostdinc -isystem "$dynamic_product/usr/include" "${HOSTED_TRANSLATION[@]}" -fPIE -std=c11 -D_GNU_SOURCE -E -H "$PROBE"
 [ "$header_status" -eq 0 ] || fail 'installed-header trace failed'
 run_compile workload "$PROBE" "$WORK/workload.o"
 run_compile behavior "$BEHAVIOR_PROBE" "$WORK/behavior-workload.o"

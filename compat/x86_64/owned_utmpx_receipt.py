@@ -28,6 +28,7 @@ from typing import Any, Mapping
 # This module is the host's trusted reader.  It must never import retained
 # receipt source: that would turn a tampered source snapshot into host code.
 import owned_posix_product_evidence as retained_link_reader
+import installed_compiler_translation as translation_contract
 import owned_dynamic_qualification as dynamic_materialization
 from loader_debug_abi_evidence import Elf
 from owned_static_link_authority import (
@@ -153,7 +154,7 @@ INLINE_STDIN = {
     "sealed-link-pie": ("b08d052e5837a11b54f3347c61a58d263750a90c84276c206ef55e2d94a08d16", 574),
     "sealed-link-non-pie": ("b08d052e5837a11b54f3347c61a58d263750a90c84276c206ef55e2d94a08d16", 574),
     "link-identities": ("6b291da4a1ed17cb9465db0c9bef3120963279a5bb459fcce6746794b1b82d37", 1566),
-    "dependency-audit": ("2266a49263f0c111b9d8093af245241c4bf550d2581c92ed6bcb06d4ef46b366", 2427),
+    "dependency-audit": ("72949f4ac63e142a92517f499f295e79b4f19c4b6ffa3ab49f69dbd4058744f7", 2410),
 }
 # The established static runner loops over ``static`` and ``static-pie`` and
 # writes ``$mode-symbols.txt``.  Command role labels include the product family
@@ -990,10 +991,11 @@ def validate_compile_bytes(workspace: Path, dynamic_product: Path, tools: Mappin
             "installed-driver compile identities differ")
     command = record["dependency_audit_command"]
     headers = SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/dynamic/usr/include"
-    require(type(command) is list and all(type(item) is str for item in command) and len(command) == 11,
+    translation = list(translation_contract.hosted_translation_flags(dynamic_product))
+    require(type(command) is list and all(type(item) is str for item in command),
             "installed-driver dependency command differs")
-    require(command[1:] == ["-nostdinc", "-isystem", headers, "-std=c11", "-ffreestanding", "-fno-builtin",
-                            "-fstack-protector-strong", "-fPIE", "-M", SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_probe.c"],
+    require(command[1:] == ["-nostdinc", "-isystem", headers, "-std=c11", *translation,
+                            "-fPIE", "-M", SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_probe.c"],
             "installed-driver dependency command arguments differ")
     programs = tools.get("programs") if type(tools) is dict else None
     require(type(programs) is dict and command[0] in programs, "dependency compiler was not retained as a tool")

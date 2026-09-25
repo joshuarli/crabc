@@ -26,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import installed_compiler_translation as translation_contract
 from owned_posix_product_evidence import (
     ProductEvidenceError,
     _validate_dynamic_product,
@@ -210,7 +211,7 @@ def driver_compile_command(driver: Path, source: Path, object_path: Path) -> lis
 def dependency_command(compiler: Path, product: Path, source: Path) -> list[str]:
     return [
         str(compiler), "-nostdinc", "-isystem", str(product / "usr" / "include"),
-        "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-std=c11", "-fPIE",
+        *translation_contract.hosted_translation_flags(product), "-std=c11", "-fPIE",
         "-M", "-H", str(source),
     ]
 

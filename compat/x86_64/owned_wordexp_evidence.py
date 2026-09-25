@@ -28,6 +28,7 @@ if str(HERE) not in sys.path:
 
 import owned_crypt_runtime_evidence as copies
 import owned_dynamic_qualification as qualification
+import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as products
 import run_qualification_manifest as native_qualification
 
@@ -1158,7 +1159,7 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
         static_driver = static / "bin/crabc-cc" if static else None
         oracle_compiler = Path(tools_before["oracle-compiler"]["path"])
         header_trace = _run(work, "installed-header-trace", [tools_before["compiler"]["path"], "-nostdinc", "-isystem",
-                            str(dynamic / "usr/include"), "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
+                            str(dynamic / "usr/include"), *translation_contract.hosted_translation_flags(dynamic),
                             "-fPIE", "-std=c11", "-D_GNU_SOURCE", "-E", "-H", str(ROOT / PROBE)],
                             environment=evidence_environment(work))
         header_trace_path = _local_mounted(ROOT, header_trace["stderr"]["path"], "installed header trace stderr")
@@ -1574,7 +1575,7 @@ def validate_report(root: Path, report_path: Path, expected_native_inputs: objec
         fail("wordexp workload path differs")
     header = _exact_dict(report["header_trace"], {"command", "trace"}, "wordexp header trace")
     expected_header = [tools["compiler"]["path"], "-nostdinc", "-isystem", _mounted(root, dynamic / "usr/include"),
-                       "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-fPIE", "-std=c11",
+                       *translation_contract.hosted_translation_flags(dynamic), "-fPIE", "-std=c11",
                        "-D_GNU_SOURCE", "-E", "-H", _mounted(root, root / PROBE)]
     command_environment = _mounted_environment(root, work)
     header_command = _command_record(root, work, "installed-header-trace", header["command"], expected_header, command_environment,

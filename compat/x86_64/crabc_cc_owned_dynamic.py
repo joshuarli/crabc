@@ -785,7 +785,7 @@ def execute(root: Path, arguments: list[str]) -> None:
             run([shared.compiler(), "-nostdinc",
                  *(item for directory in quote_include_dirs for item in ("-iquote", str(directory))),
                  "-isystem", str(root / "usr/include"),
-                 "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
+                 *shared.HOSTED_TRANSLATION_FLAGS,
                  *invocation.compiler_flags, *(["-frounding-math"] if rounding_math else []),
                  *(["-MD", "-MF", str(dependency_output)] if dependency_output is not None else []),
                  "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",

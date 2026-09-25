@@ -306,7 +306,7 @@ sys.path.insert(0, str(product / 'share/crabc'))
 import crabc_cc_static as compiler_contract
 
 command = [compiler_contract.compiler(), '-nostdinc', '-isystem', str(headers),
-    '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', '-fPIE', '-M', str(source_path)]
+    '-std=c11', *compiler_contract.HOSTED_TRANSLATION_FLAGS, '-fPIE', '-M', str(source_path)]
 with dependency_file.open('xb') as output:
     subprocess.run(command, check=True, env=compiler_contract.clean_environment(),
                    stdin=subprocess.DEVNULL, stdout=output)

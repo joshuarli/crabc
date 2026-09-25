@@ -49,7 +49,8 @@ so its recorded `-H` closure is empty. The application audit requires a
 nonempty installed-header closure. Both roles reject relative, unrecognized,
 or out-of-root trace entries. The dependency-only preprocessing repeats the
 installed dynamic driver's selected compiler, clean environment,
-`-nostdinc`/installed `-isystem` root, freestanding and stack-protector flags,
+`-nostdinc`/installed `-isystem` root, the installed helper's hosted
+translation flags,
 and the role's PIE or PIC mode; it admits no compiler-builtin or ambient header
 root.
 

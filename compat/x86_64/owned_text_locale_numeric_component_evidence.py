@@ -19,6 +19,7 @@ import subprocess
 import sys
 
 import owned_text_locale_numeric_component_contract as contract
+import installed_compiler_translation as translation_contract
 
 
 SCHEMA = "crabc.x86_64-owned-text-locale-numeric-provider-evidence/v1"
@@ -138,8 +139,8 @@ def header_argv(root: Path, dynamic_product: Path, compiler: Path,
     flags.extend(f"-D{item}" for item in define_flags(define))
     return [
         *COMPILER_ENVIRONMENT, _recorded_path(root, compiler, source_mount), "-nostdinc", "-isystem",
-        _recorded_path(root, dynamic_product / "usr/include", source_mount), "-ffreestanding", "-fno-builtin",
-        "-fstack-protector-strong", *flags, "-fPIE", "-E", "-H",
+        _recorded_path(root, dynamic_product / "usr/include", source_mount),
+        *translation_contract.hosted_translation_flags(dynamic_product), *flags, "-fPIE", "-E", "-H",
         _recorded_path(root, root / relative, source_mount),
     ]
 

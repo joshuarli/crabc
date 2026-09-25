@@ -16,6 +16,7 @@ import sys
 
 import owned_crypt_profile as sealed
 import owned_dynamic_receipt as receipt_contract
+import installed_compiler_translation as translation_contract
 import owned_crypt_runtime_evidence as copies
 import owned_posix_family_execution as family
 import owned_posix_native_observations as native
@@ -141,7 +142,7 @@ def _command(root, work, label, command):
 
 def _dependency_command(reader, tools):
     prefix = ['-nostdinc', '-isystem', reader.recorded(reader.product / 'usr/include'),
-              '-ffreestanding', '-fno-builtin', '-fno-stack-protector']
+              *translation_contract.hosted_translation_flags(reader.product)]
     return [tools['compiler']['path'], *prefix, '-std=c11', '-D_GNU_SOURCE', '-fPIE', '-M',
             reader.recorded(reader.root / C_SOURCE)]
 

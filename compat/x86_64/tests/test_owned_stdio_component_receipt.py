@@ -124,6 +124,7 @@ class ReceiptFixture:
         self.tool.chmod(0o755)
         helper = self.dynamic / "share/crabc/crabc_cc_static.py"
         helper.write_text(
+            "HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n"
             "def compiler():\n"
             f"    return {str(self.tool)!r}\n\n"
             "def linker(root):\n"
@@ -201,7 +202,7 @@ class ReceiptFixture:
         header_prefix = str(self.dynamic / "usr/include")
         header_trace = b"".join((f". {header_prefix}/{name}\n".encode() for name in receipt.REQUIRED_HEADERS))
         header_source = (f'# 0 "{self.probe}"\nstatic void *fopen64_macro_entry = fopen;\nint main(int argc, char **argv) {{ return 0; }}\n').encode()
-        self.command("header-trace", [str(self.tool), "-nostdinc", "-isystem", header_prefix, "-D_LARGEFILE64_SOURCE=1", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-std=c11", "-fPIE", "-E", "-H", str(self.probe)], stdout=header_source, stderr=header_trace)
+        self.command("header-trace", [str(self.tool), "-nostdinc", "-isystem", header_prefix, "-D_LARGEFILE64_SOURCE=1", "-fstack-protector-strong", "-std=c11", "-fPIE", "-E", "-H", str(self.probe)], stdout=header_source, stderr=header_trace)
         self.command("compile", [str(self.dynamic_driver), "--dynamic-pie", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-D_LARGEFILE64_SOURCE=1", "-fno-builtin", "-fno-stack-protector", "-c", str(self.probe), "-o", str(self.object)])
         self._write_fopen64_header_controls()
         self.command("oracle-link", [str(self.tool), "-std=c11", "-static", "-fno-pie", "-no-pie", str(self.object), "-o", str(self.oracle)])

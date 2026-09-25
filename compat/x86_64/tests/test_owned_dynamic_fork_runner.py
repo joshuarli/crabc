@@ -96,7 +96,9 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
             manifest.parent.mkdir(parents=True)
             manifest.write_text('{}\n', encoding='utf-8')
             helper = manifest.parent / 'crabc_cc_static.py'
-            helper.write_text("raise RuntimeError('host replay must not import me')\n", encoding='utf-8')
+            # Replay parses the literal translation tuple; importing would raise.
+            helper.write_text("raise RuntimeError('host replay must not import me')\n"
+                              "HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n", encoding='utf-8')
             driver = product / 'bin/crabc-cc-dynamic'
             driver.parent.mkdir(parents=True)
             driver.write_text('#!/bin/sh\n', encoding='utf-8')
@@ -148,12 +150,12 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
                     },
                     'dependency_audit_command': [
                         str(replay.tool_path('compiler')), '-nostdinc', '-isystem', replay.recorded(product / 'usr/include'),
-                        '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', codegen,
+                        '-std=c11', '-fstack-protector-strong', codegen,
                         *(f'-D{item}' for item in defines), '-M', replay.recorded(source),
                     ],
                     'preprocessor_command': [
                         str(replay.tool_path('compiler')), '-nostdinc', '-isystem', replay.recorded(product / 'usr/include'),
-                        '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', codegen,
+                        '-std=c11', '-fstack-protector-strong', codegen,
                         *(f'-D{item}' for item in defines), '-E', '-P', replay.recorded(source),
                     ],
                 }
@@ -186,7 +188,8 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
         )
         files: dict[str, str] = {}
         for index, relative in enumerate(required):
-            payload = f"owned dynamic payload {index}\n".encode()
+            payload = (b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n"
+                       if relative == "share/crabc/crabc_cc_static.py" else f"owned dynamic payload {index}\n".encode())
             target = product / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)

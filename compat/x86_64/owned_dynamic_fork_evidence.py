@@ -25,6 +25,7 @@ import tomllib
 from typing import Any
 
 import owned_dynamic_receipt as receipt_contract
+import installed_compiler_translation as translation_contract
 import native_abi_inventory as inventory
 import owned_posix_product_evidence as product_evidence
 
@@ -229,7 +230,16 @@ def compiler_contract(product: Path):
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
-    return {"helper": helper, "compiler": module.compiler, "clean_environment": module.clean_environment}
+    return {"helper": helper, "compiler": module.compiler, "clean_environment": module.clean_environment,
+            "translation": hosted_translation_flags(product)}
+
+
+def hosted_translation_flags(product: Path) -> tuple[str, ...]:
+    """The product helper's translation flags, parsed without importing it."""
+    try:
+        return translation_contract.hosted_translation_flags(product)
+    except translation_contract.TranslationFlagsError as error:
+        raise EvidenceError(str(error)) from error
 
 
 def artifact_identity(path: Path, description: str) -> dict[str, str]:
@@ -309,8 +319,8 @@ def unit_record(
     headers = physical(product / "usr/include", "installed headers", directory=True)
     compiler = str(selected_compiler(contract))
     environment = contract["clean_environment"]()
-    base = [compiler, "-nostdinc", "-isystem", str(headers), "-std=c11", "-ffreestanding",
-            "-fno-builtin", "-fstack-protector-strong", codegen, *(f"-D{item}" for item in defines)]
+    base = [compiler, "-nostdinc", "-isystem", str(headers), "-std=c11", *contract["translation"],
+            codegen, *(f"-D{item}" for item in defines)]
     dependencies_path = work / "dependencies" / f"{identifier}.d"
     preprocessed_path = work / "preprocessed" / f"{identifier}.i"
     run([*base, "-M", str(source)], output=dependencies_path, environment=environment)
@@ -554,6 +564,7 @@ def audit_compile(product: Path, work: Path, manifest: Path, *, replay: Retained
     # product-supplied Python or invokes the compiler.
     contract = compiler_contract(product) if replay is None else {
         "helper": physical(product / "share/crabc/crabc_cc_static.py", "dynamic compiler helper"),
+        "translation": hosted_translation_flags(product),
     }
     require_identity(record["compiler_helper"], contract["helper"], "compile helper", replay=replay)
     if replay is None:
@@ -605,9 +616,8 @@ def audit_compile(product: Path, work: Path, manifest: Path, *, replay: Retained
             fail("installed driver compile command or prescribed flags drifted")
         # The exact installed-driver compiler contract and role flags are
         # recomputed here, rather than trusting the recorded command fields.
-        expected_base = [compiler, "-nostdinc", "-isystem", recorded(headers, replay), "-std=c11", "-ffreestanding",
-                         "-fno-builtin", "-fstack-protector-strong", codegen,
-                         *(f"-D{item}" for item in defines)]
+        expected_base = [compiler, "-nostdinc", "-isystem", recorded(headers, replay), "-std=c11",
+                         *contract["translation"], codegen, *(f"-D{item}" for item in defines)]
         expected_dependency_command = [*expected_base, "-M", recorded(source, replay)]
         expected_preprocessor_command = [*expected_base, "-E", "-P", recorded(source, replay)]
         if unit["dependency_audit_command"] != expected_dependency_command:

@@ -1054,6 +1054,16 @@ def linker(root: Path) -> str:
     return str(bundled.resolve())
 
 
+# Installed drivers translate applications as hosted C in the pinned musl
+# oracle compiler's default mode: `__STDC_HOSTED__` is 1, GCC builtins may
+# rewrite calls (for example `printf("...\n")` into `puts`), and the GCC
+# default `-fstack-protector-strong` guards local arrays through the
+# `%fs:0x28` canary and `__stack_chk_fail`, both owned by the products. The
+# protector is spelled explicitly so the contract does not depend on how the
+# host GCC was configured. Callers may still append admitted `-fno-` flags.
+HOSTED_TRANSLATION_FLAGS = ("-fstack-protector-strong",)
+
+
 def compile_source(root: Path, mode: StaticMode, source: Path, output: Path, flags: Sequence[str]) -> None:
     run_checked(
         [
@@ -1061,9 +1071,7 @@ def compile_source(root: Path, mode: StaticMode, source: Path, output: Path, fla
             "-nostdinc",
             "-isystem",
             str(root / "usr" / "include"),
-            "-ffreestanding",
-            "-fno-builtin",
-            "-fno-stack-protector",
+            *HOSTED_TRANSLATION_FLAGS,
             *flags,
             # Place the mode last so an admitted optimization/debug flag cannot
             # alter the selected ET_EXEC versus static-PIE code-generation mode.

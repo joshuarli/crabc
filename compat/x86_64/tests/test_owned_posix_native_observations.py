@@ -37,7 +37,7 @@ class NativeObservationsTests(unittest.TestCase):
         self.put(self.product / 'share/crabc/manifest.json', {'schema': 1,
             'format': 'crabc-x86-64-owned-dynamic-sysroot-v1', 'target': 'x86_64-unknown-linux-musl'})
         self.put(self.product / 'bin/crabc-cc-dynamic', b'driver')
-        self.put(self.product / 'share/crabc/crabc_cc_static.py', b'helper')
+        self.put(self.product / 'share/crabc/crabc_cc_static.py', b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n")
 
     def put(self, path, value):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -409,7 +409,8 @@ class NativeObservationsTests(unittest.TestCase):
                 for stream, data in (('stdout', raw), ('stderr', b'')):
                     self.put(self.leaf / 'evidence' / suite / 'events' / (identity + '.dependencies.' + stream), data)
             return {'command': contract.dependency_command(compiler['path'], Path(self.recorded(product)), Path(source), plan['flags'],
-                                                           'pie' if plan['kind'] == 'preprocess' else plan['mode']),
+                                                           'pie' if plan['kind'] == 'preprocess' else plan['mode'],
+                                                           ('-fstack-protector-strong',)),
                     'status': 0, 'stdout': contract.stream_snapshot(raw), 'stderr': contract.stream_snapshot(b''),
                     'headers': {self.recorded(path): self.binding(path)['sha256'] for path in (cwd / source, product / 'usr/include/stdio.h')}}
         def link(suite, source, object_path, retained, shared, compile_event=None):
@@ -507,7 +508,7 @@ class NativeObservationsTests(unittest.TestCase):
                         plan = base['plan']
                         retained = self.put(self.leaf / 'evidence' / suite / 'preprocessed' / (identity + Path(target).suffix), b'preprocessed\n')
                         event = {**base, 'event_id': identity, 'state': 'finished', 'status': 0, **streams(suite, identity),
-                                 'command': [*contract.compiler_command(compiler['path'], Path(self.recorded(product)), Path(source), Path('/dev/null'), plan['flags'], 'pie')[:-4],
+                                 'command': [*contract.compiler_command(compiler['path'], Path(self.recorded(product)), Path(source), Path('/dev/null'), plan['flags'], 'pie', ('-fstack-protector-strong',))[:-4],
                                              '-E', *(['-dM'] if macro else []), source, '-o', target],
                                  'output': {'source_path': self.recorded(dynamic / suite / target), 'retained': self.recorded(retained), 'sha256': self.binding(retained)['sha256']},
                                  'dependencies': dependencies(suite, identity, source, plan)}
@@ -531,7 +532,7 @@ class NativeObservationsTests(unittest.TestCase):
                                          '-o', self.recorded(object_path) if shared else plan['output'], *plan['flags']],
                              'object': {'path': self.recorded(object_path), 'retained': self.recorded(retained), 'sha256': self.binding(retained)['sha256']},
                              'replay': {'status': 0, 'byte_equal': True, 'object': self.recorded(direct), 'object_sha256': self.binding(direct)['sha256'],
-                                        'command': contract.compiler_command(compiler['path'], Path(self.recorded(product)), Path(source), Path(self.recorded(direct)), plan['flags'], plan['mode']),
+                                        'command': contract.compiler_command(compiler['path'], Path(self.recorded(product)), Path(source), Path(self.recorded(direct)), plan['flags'], plan['mode'], ('-fstack-protector-strong',)),
                                         'stdout': contract.stream_snapshot(b''), 'stderr': contract.stream_snapshot(b'')},
                              'dependencies': dependencies(suite, identity, source, plan)}
                     self.put(self.leaf / 'evidence' / suite / 'events' / (identity + '.json'), event)
@@ -949,7 +950,7 @@ class NativeObservationsTests(unittest.TestCase):
                     **({'TMPDIR': self.recorded(self.leaf / 'tmp')} if '-c' in command or command[0] == '/usr/bin/gcc' else {})},
                     'exit_status': 0, **streams}
         options = command_record(['/usr/bin/gcc', '-nostdinc', '-isystem', self.recorded(copied_product / 'usr/include'),
-            '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', '-std=c99', '-D_POSIX_C_SOURCE=200809L',
+            '-fstack-protector-strong', '-std=c99', '-D_POSIX_C_SOURCE=200809L',
             '-D_FILE_OFFSET_BITS=64', '-E', '-H', '-'], 'generated/candidate/options', b'optiongroups_unistd_end\nFIXTURE 1\n')
         generated = self.put(self.leaf / 'generated/candidate/options.h', b'#define FIXTURE 1\n')
         report['source_preparation']['options'] = {'status': 'passed', 'input': self.binding(prepared / 'src/common/options.h.in'),
@@ -1006,7 +1007,8 @@ class NativeObservationsTests(unittest.TestCase):
             fixture_source = self.put(fixture_work / (name + '-launcher.c'), source_bytes)
             fixture_object = self.put(fixture_work / (name + '-launcher.o'), (name + ' canonical fixture object').encode())
             fixture_header = command_record(contract.header_command(Path('/usr/bin/gcc'), mapped(copied_product), mapped(fixture_source),
-                shared_object=False, quote_dirs=(), kind='runtime'), 'external-' + name + '/' + name + '-launcher.headers')
+                shared_object=False, quote_dirs=(), kind='runtime', translation=('-fstack-protector-strong',)),
+                'external-' + name + '/' + name + '-launcher.headers')
             fixture = {'status': 'passed', 'source': self.binding(fixture_source),
                      'control': {'busybox': {'path': '/bin/busybox', 'sha256': 'd' * 64},
                                  'loader': {'path': '/opt/musl-1.2.6/lib/libc.so', 'sha256': oracle_files['loader']['sha256']},
@@ -1032,7 +1034,8 @@ class NativeObservationsTests(unittest.TestCase):
             command = contract.compile_command(mapped(copied_product), mapped(source), mapped(obj), shared_object=kind == 'dso',
                                                quote_dirs=list(map(mapped, quote_dirs)), kind=kind)
             header_command = contract.header_command(Path('/usr/bin/gcc'), mapped(copied_product), mapped(source),
-                shared_object=kind == 'dso', quote_dirs=list(map(mapped, quote_dirs)), kind=kind)
+                shared_object=kind == 'dso', quote_dirs=list(map(mapped, quote_dirs)), kind=kind,
+                translation=('-fstack-protector-strong',))
             header = command_record(header_command, 'units/' + name + '.headers')
             unit = {**definition, 'source': self.binding(source), 'status': 'passed', 'quote_include_dirs': list(map(str, map(mapped, quote_dirs))),
                     'candidate_translation': {'status': 'passed', 'object': self.binding(obj), 'record': command_record(command, 'units/' + name + '.compile')},

@@ -27,6 +27,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_posix_product_evidence as product_evidence
+import installed_compiler_translation as translation_contract
 
 
 CASES = ("foundational", "string-memory", "allocator", "fd-filesystem", "stdio-fdopen")
@@ -295,9 +296,11 @@ def run_to_files(command: list[str], stdout: Path, stderr: Path, environment: di
 
 
 def compile_prefix(headers: Path) -> list[str]:
+    # ``headers`` is the installed product's usr/include; the driver's hosted
+    # translation flags come from that same product's helper.
     return [
-        "-nostdinc", "-isystem", str(headers), "-ffreestanding", "-fno-builtin",
-        "-fstack-protector-strong",
+        "-nostdinc", "-isystem", str(headers),
+        *translation_contract.hosted_translation_flags(headers.parent.parent),
     ]
 
 

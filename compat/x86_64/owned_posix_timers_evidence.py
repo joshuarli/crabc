@@ -24,6 +24,7 @@ import sys
 from typing import Any, Sequence
 
 import owned_dynamic_receipt as receipt_contract
+import installed_compiler_translation as translation_contract
 from owned_dynamic_fork_evidence import RetainedRuntimeInputs, recorded
 import owned_posix_product_evidence as product_evidence
 from owned_posix_product_evidence import (
@@ -190,7 +191,7 @@ def _dependency_command(role: str, compiler: str, product: Path, source: Path, *
     if mode_flag is None:
         _fail("compile role must be application or timer-tls-dso")
     return [compiler, "-nostdinc", "-isystem", recorded(product / "usr/include", replay),
-            "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-std=c11",
+            *translation_contract.hosted_translation_flags(product), "-std=c11",
             mode_flag, "-M", "-H", recorded(source, replay)]
 
 

@@ -46,6 +46,8 @@ class OwnedRegexComponentReceiptTests(unittest.TestCase):
         self.runner = self.write("compat/x86_64/run_owned_regex.sh", b"runner\n")
         self.reader = self.write("compat/x86_64/owned_regex_component_receipt.py", b"reader\n")
         self.dynamic = self.mkdir(".work/x86_64/dynamic")
+        # The reader derives hosted translation flags from the product helper.
+        self.write(".work/x86_64/dynamic/share/crabc/crabc_cc_static.py", b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n")
         self.static = self.mkdir(".work/x86_64/static")
         self.workload = self.write_elf(".work/x86_64/owned-regex-products.fixture/workload.o", etype=1)
         self.oracle = self.write(".work/x86_64/owned-regex-products.fixture/oracle", b"oracle\n")
