@@ -2044,21 +2044,11 @@ impl Mapping {
         default_random: OsRandom<'_>,
     ) -> Result<Self> {
         validate_mapping_length(config.page_size(), length)?;
-        let try_alignment = if try_alignment == 0 { 1 } else { try_alignment };
-        let try_alignment = if config.large_page_size() > 0
-            && length >= 8 * config.large_page_size()
-            && try_alignment.is_power_of_two()
-            && try_alignment < config.large_page_size()
-        {
-            config.large_page_size()
-        } else {
-            try_alignment
-        };
         Self::map_unix_policy(
             policy,
             config,
             length,
-            try_alignment,
+            source_prim_try_alignment(config, length, try_alignment),
             access,
             matches!(access, MapAccess::Committed) && allow_large,
             false,
@@ -2091,6 +2081,16 @@ impl Mapping {
             allow_large,
             default_random,
         );
+        if let (Err(error), Ok(())) = (&mapping, validate_mapping_length(config.page_size(), length)) {
+            // `src/os.c:319-322`: every failed primitive attempt warns with
+            // the adjusted alignment and large-page request before its
+            // `mmap_calls` event. The source hint address is null on this
+            // route.
+            let committed = matches!(access, MapAccess::Committed);
+            process.policy.source_warning(SourceFormattedMessage::os_alloc_failure(
+                *error, 0, length, source_prim_try_alignment(config, length, try_alignment),
+                committed, committed && allow_large));
+        }
         let stats = process.subprocess.vm_statistics();
         stats.mmap_call();
         if mapping.is_ok() {
@@ -4686,6 +4686,22 @@ fn contained_unowned_page_range(
     let offset = start.checked_sub(start_address).ok_or(Errno::INVAL)?;
     let range_length = end.checked_sub(start).ok_or(Errno::INVAL)?;
     Ok(Some((address.wrapping_add(offset), range_length)))
+}
+
+/// `mi_os_prim_alloc_at`'s try-alignment adjustment (`src/os.c:308-315`):
+/// zero becomes one, and a large request without a hint whose power-of-two
+/// alignment is below the large OS page size is aligned to that page size.
+pub(crate) fn source_prim_try_alignment(config: MemoryConfig, length: usize, try_alignment: usize) -> usize {
+    let try_alignment = if try_alignment == 0 { 1 } else { try_alignment };
+    if config.large_page_size() > 0
+        && length >= 8 * config.large_page_size()
+        && try_alignment.is_power_of_two()
+        && try_alignment < config.large_page_size()
+    {
+        config.large_page_size()
+    } else {
+        try_alignment
+    }
 }
 
 #[inline]

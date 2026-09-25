@@ -510,6 +510,11 @@ M2_X86_64_ARENA_CHECKS = (
         "id": "arena-destruction-c-rust-differential",
         "kind": "c-rust-arena-destruction-differential",
         "target": "arena::owned::tests::destroy_all_retires_regular_external_and_huge_owners_with_exact_retries",
+    },    {
+        "expected_passed_test_count": 1,
+        "id": "arena-reservation-warnings-c-rust-differential",
+        "kind": "c-rust-reservation-warnings-differential",
+        "target": "arena::owned::tests::emit_m2_reservation_warnings_c_rust_trace",
     },
 )
 M2_X86_64_RECURSION_CHECKS = (
@@ -12882,6 +12887,50 @@ def _m2_x86_64_arena_destruction_check_record(
     }
 
 
+def _m2_x86_64_reservation_warnings_producer() -> Any:
+    """Load the pinned C/Rust failed-reservation warning producer."""
+
+    path = ALLOCATOR_ROOT / "m2_reservation_warnings_x86_64.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_reservation_warnings", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 reservation warning producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _run_m2_x86_64_reservation_warnings_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the reservation warning producer against the aggregate's binary."""
+
+    return _m2_x86_64_reservation_warnings_producer().run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+    )
+
+
+def _m2_x86_64_reservation_warnings_check_record(
+    check: Mapping[str, Any], evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Record the executed failed-reservation warning differential."""
+
+    if (
+        evidence.get("status") != "passed"
+        or evidence.get("comparison", {}).get("status") != "matched"
+        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+    ):
+        raise HarnessError("native x86 M2 reservation warning receipt is invalid")
+    return {
+        "comparison_status": "matched",
+        "component": "arenas",
+        "command": list(evidence["rust_command"]),
+        "evidence_scope": "pinned-c-rust-failed-reservation-os-allocation-and-manage-warnings",
+        "id": check["id"],
+        "passed_test_count": evidence["rust_passed_test_count"],
+        "target": check["target"],
+    }
+
+
 def _m2_x86_64_metadata_ownership_producer() -> Any:
     """Load the pinned C/Rust metadata ownership producer."""
 
@@ -13211,6 +13260,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
                     "c-rust-arena-destruction-differential",
+                    "c-rust-reservation-warnings-differential",
                     "c-rust-recursive-output-differential",
                     "c-rust-runtime-thp-source-environment-admission",
                     "c-rust-initialization-tld-source-matrix",
@@ -13306,6 +13356,11 @@ def validate_x86_64_m2_memory_substrate_contract(
                     _m2_x86_64_recursion_producer().TARGET
                 ):
                     raise HarnessError("native x86 M2 recursive-output evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-reservation-warnings-differential":
+                if component_id != "arenas" or raw_check.get("target") != (
+                    _m2_x86_64_reservation_warnings_producer().TARGET
+                ):
+                    raise HarnessError("native x86 M2 reservation warning evidence target is absent")
             elif raw_check.get("kind") == "c-rust-arena-destruction-differential":
                 if component_id != "arenas" or raw_check.get("target") != (
                     _m2_x86_64_arena_destruction_producer().TARGET
@@ -14971,6 +15026,17 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
             arena_destruction_check,
             _run_m2_x86_64_arena_destruction_evidence(
                 offline=offline, test_program=test_program, check=arena_destruction_check
+            ),
+        )
+    )
+    _, reservation_warnings_check = _m2_x86_64_check_by_id(
+        summary, "arena-reservation-warnings-c-rust-differential"
+    )
+    arena_owned_checks.append(
+        _m2_x86_64_reservation_warnings_check_record(
+            reservation_warnings_check,
+            _run_m2_x86_64_reservation_warnings_evidence(
+                offline=offline, test_program=test_program, check=reservation_warnings_check
             ),
         )
     )

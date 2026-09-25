@@ -716,6 +716,63 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// `"unable to allocate OS memory (error: %d (0x%x), addr: %p, size:
+    /// 0x%zx bytes, align: 0x%zx, commit: %d, allow large: %d)\n"` from
+    /// `mi_os_prim_alloc_at` (`src/os.c:319-322`). `try_alignment` and
+    /// `allow_large` are the values after that function's own adjustments.
+    pub(crate) fn os_alloc_failure(
+        errno: Errno, hint: usize, size: usize, try_alignment: usize, commit: bool, allow_large: bool,
+    ) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length, b"unable to allocate OS memory (error: ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b"), addr: ");
+        append_source_pointer(&mut bytes, &mut length, hint);
+        append_mbind_bytes(&mut bytes, &mut length, b", size: 0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" bytes, align: 0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, try_alignment as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b", commit: ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, u64::from(commit));
+        append_mbind_bytes(&mut bytes, &mut length, b", allow large: ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, u64::from(allow_large));
+        append_mbind_bytes(&mut bytes, &mut length, b")\n");
+        Self { bytes, length }
+    }
+
+    /// `"after alignment, the size of the arena becomes too small (memory at
+    /// %p with size %zu)\n"` from `mi_manage_os_memory_ex2`
+    /// (`src/arena.c:1805-1808`).
+    pub(crate) fn arena_too_small_after_alignment(address: usize, size: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length,
+            b"after alignment, the size of the arena becomes too small (memory at ");
+        append_source_pointer(&mut bytes, &mut length, address);
+        append_mbind_bytes(&mut bytes, &mut length, b" with size ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, size as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b")\n");
+        Self { bytes, length }
+    }
+
+    /// `"cannot use OS memory since it is not large enough (size %zu KiB,
+    /// minimum required is %zu KiB)"` from `mi_manage_os_memory_ex2`
+    /// (`src/arena.c:1816-1819`); the source literal has no final newline.
+    pub(crate) fn arena_not_large_enough(size_kib: usize, minimum_kib: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length,
+            b"cannot use OS memory since it is not large enough (size ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, size_kib as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" KiB, minimum required is ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, minimum_kib as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" KiB)");
+        Self { bytes, length }
+    }
+
     pub(crate) fn huge_noncontiguous(page: usize, address: usize) -> Self {
         let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
         let mut length = 0;

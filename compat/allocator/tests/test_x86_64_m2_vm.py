@@ -849,6 +849,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 _m2_x86_64_recursion_check_record=mock.Mock(
                     return_value={"id": "recursive-diagnostic-output-c-rust-differential"}
                 ),
+                _run_m2_x86_64_reservation_warnings_evidence=mock.Mock(return_value={}),
+                _m2_x86_64_reservation_warnings_check_record=mock.Mock(
+                    return_value={"id": "arena-reservation-warnings-c-rust-differential"}
+                ),
                 _m2_x86_64_arena_destruction_check_record=mock.Mock(
                     return_value={"id": "arena-destruction-c-rust-differential"}
                 ),

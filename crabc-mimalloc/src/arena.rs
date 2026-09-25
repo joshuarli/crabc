@@ -1005,6 +1005,27 @@ impl ExternalArenaPlan {
         })
     }
 
+    /// The warning pinned `mi_manage_os_memory_ex2` prints when it rejects
+    /// this region (`src/arena.c:1800-1820`): a nonnull start whose aligned
+    /// remainder is below one arena alignment, or a whole-chunk span below
+    /// `MI_ARENA_MIN_SIZE`. `None` for an accepted region or a null start,
+    /// which the source rejects silently.
+    pub(crate) fn source_rejection_warning(address: usize, size: usize)
+        -> Option<crate::diagnostic_output::SourceFormattedMessage> {
+        use crate::diagnostic_output::SourceFormattedMessage;
+        if address == 0 || Self::from_address(address, size).is_some() {
+            return None;
+        }
+        let aligned_address = invariants::align_up(address, ARENA_ALIGNMENT)?;
+        let prefix_bytes = aligned_address - address;
+        if prefix_bytes != 0 && (prefix_bytes >= size || size - prefix_bytes < ARENA_ALIGNMENT) {
+            return Some(SourceFormattedMessage::arena_too_small_after_alignment(address, size));
+        }
+        let usable_size = size - prefix_bytes;
+        Some(SourceFormattedMessage::arena_not_large_enough(
+            usable_size / crate::config::KIB, ARENA_MIN_SIZE / crate::config::KIB))
+    }
+
     #[inline]
     pub(crate) const fn prefix_bytes(self) -> usize { self.prefix_bytes }
     #[inline]

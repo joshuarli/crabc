@@ -847,6 +847,9 @@ impl ProcessArenaBacking {
             || managed_size != size
             || ExternalArenaPlan::from_address(start as usize, size).is_none()
         {
+            if let Some(warning) = ExternalArenaPlan::source_rejection_warning(start as usize, size) {
+                process.policy().source_warning(warning);
+            }
             return Err(ProcessExternalArenaInstallFailure::Returned {
                 error: ManageArenaError::InvalidRegion,
                 lease,
@@ -1005,6 +1008,14 @@ impl ProcessArenaBacking {
             ArenaBacking::External(lease) => memory.kind() == MemoryKind::External
                 && lease.base() == start && lease.size() == size,
         };
+        if exact && valid_kind && managed_size <= size {
+            // `mi_manage_os_memory_ex2` warns before rejecting a region that
+            // cannot hold one aligned minimum arena.
+            if let Some(warning) = ExternalArenaPlan::source_rejection_warning(start as usize, managed_size) {
+                process.policy().source_warning(warning);
+                return Err(fail(ManageArenaError::InvalidRegion, allocation));
+            }
+        }
         if !exact || !valid_kind || managed_size < ARENA_MIN_SIZE
             || managed_size > size || (start as usize) % ARENA_ALIGNMENT != 0 {
             return Err(fail(ManageArenaError::InvalidRegion, allocation));
@@ -4639,6 +4650,54 @@ mod tests {
         }
 
         trace.marker(23);
+    }
+
+    /// Rust half of the M2 failed-reservation warning differential
+    /// (`compat/allocator/m2_reservation_warnings_x86_64.c`): the same three
+    /// `mi_reserve_os_memory_ex2` failures under `show_errors`, printing each
+    /// return code and its TID-normalized output fragments as hex.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_reservation_warnings_c_rust_trace() {
+        static CAPTURE: std::sync::Mutex<std::vec::Vec<std::vec::Vec<u8>>> =
+            std::sync::Mutex::new(std::vec::Vec::new());
+        unsafe extern "C" fn capture(message: *const core::ffi::c_char) {
+            // SAFETY: the output owner passes a non-null NUL-terminated fragment.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes().to_vec();
+            if !bytes.is_empty() { CAPTURE.lock().unwrap().push(bytes); }
+        }
+        fn print_case(name: &str, rc: i32) {
+            let thread = std::format!("0x{:02X}", crate::os::thread_pointer_identity());
+            let fragments: std::vec::Vec<std::string::String> = CAPTURE.lock().unwrap().drain(..)
+                .map(|fragment| {
+                    let text = std::string::String::from_utf8(fragment).expect("source messages are ASCII");
+                    text.replace(&thread, "0xTID").bytes().map(|byte| std::format!("{byte:02x}")).collect()
+                })
+                .collect();
+            std::println!("m2.reservation_warnings.{name}.rc={rc}");
+            std::println!("m2.reservation_warnings.{name}.messages={}", fragments.join(":"));
+        }
+        fn reserve(size: usize, commit: bool, allow_large: bool) -> i32 {
+            match crate::subproc::main_heaps::native_reserve_os_memory(size, commit, allow_large, false) {
+                Ok(_) => 0,
+                Err(_) => crabc_core::Errno::NOMEM.raw(),
+            }
+        }
+        crate::test_process::run_in_fresh_process(
+            "arena::owned::tests::emit_m2_reservation_warnings_c_rust_trace",
+            || {
+                // The fresh child strips inherited source options; this one
+                // is its own fixture input, set before startup reads it.
+                std::env::set_var("mimalloc_show_errors", "1");
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(capture)
+                }));
+                CAPTURE.lock().unwrap().clear();
+                print_case("unmappable_committed", reserve(1 << 62, true, false));
+                print_case("unmappable_reserved", reserve(1 << 62, false, true));
+                print_case("too_small", reserve(100, true, false));
+            },
+        );
     }
 }
 
