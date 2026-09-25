@@ -183,6 +183,33 @@ def _validate_lua_source_build(path: Path) -> Mapping[str, Any]:
     return _lua_source_build_admission().validate_receipt(ROOT, path)
 
 
+def _validate_resolver_network(path: Path) -> Mapping[str, Any]:
+    """Validate the public report whose retained producer copy is ``path``.
+
+    The resolver-network runner retains ``state_root/report.json`` and
+    publishes identical bytes below `compat/reports/resolver-network/x86_64`.
+    Publication selects the retained copy (standalone ``latest.json`` or a
+    family run's ``family-NAME.json`` alike); the leaf reader then replays
+    the public report and requires those bytes to match.
+    """
+    reader = _import_compat("resolver_network_component_receipt")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise EvidenceUnmet(f"resolver-network retained report is unreadable: {error}") from error
+    public = document.get("published_report") if isinstance(document, dict) else None
+    mount = reader.SOURCE_MOUNT.rstrip("/") + "/"
+    unmet_unless(isinstance(public, str) and public.startswith(mount),
+                 "resolver-network retained report names no published report")
+    report = reader.validate_report(ROOT, ROOT / public[len(mount):])
+    state = report.get("state_root")
+    unmet_unless(isinstance(state, str) and state.startswith(mount)
+                 and ROOT / state[len(mount):] / "report.json" == path,
+                 "resolver-network publication is not the published report's retained copy")
+    unmet_unless(report.get("passed") is True, "resolver-network report did not pass")
+    return report
+
+
 def _validate_performance_release(path: Path) -> Mapping[str, Any]:
     return _import_compat("performance_release_gate").validate_receipt(ROOT, path)
 
@@ -238,6 +265,14 @@ PUBLICATIONS: dict[str, Publication] = {
             "receipt.json",
             PERFORMANCE_RELEASE_COMMAND,
             _validate_performance_release,
+        ),
+        Publication(
+            "resolver-network",
+            "compat.resolver-network",
+            "report.json",
+            "./scripts/dev-x86_64.sh owned-resolver-network (or the network step of owned-resolver-family); "
+            "select the retained STATE_ROOT/report.json",
+            _validate_resolver_network,
         ),
         Publication(
             "loader-family",
@@ -402,19 +437,9 @@ def _read_posix_process(evaluation: Evaluation) -> str:
     return "published native aggregate: " + ", ".join(POSIX_PROCESS_COMPONENTS)
 
 
-RESOLVER_NETWORK_REPORT = ROOT / "compat" / "reports" / "resolver-network" / "x86_64" / "latest.json"
-
-
 def _read_resolver_network(evaluation: Evaluation) -> str:
-    del evaluation
-    unmet_unless(
-        RESOLVER_NETWORK_REPORT.is_file() and not RESOLVER_NETWORK_REPORT.is_symlink(),
-        f"no passing resolver-network report at {repository_relative(RESOLVER_NETWORK_REPORT)}; "
-        "produce it with `./scripts/dev-x86_64.sh owned-resolver-network`",
-    )
-    report = _import_compat("resolver_network_component_receipt").validate_report(ROOT, RESOLVER_NETWORK_REPORT)
-    unmet_unless(report.get("passed") is True, "resolver-network report did not pass")
-    return "resolver-network physical receipt: two arms, twelve candidate modes"
+    evaluation.published("compat.resolver-network", "resolver-network")
+    return "published resolver-network physical receipt: two arms, twelve candidate modes"
 
 
 LOADER_CORPUS_ROWS = {
@@ -573,8 +598,8 @@ READERS: dict[tuple[str, str], EvidenceReader] = {
         EvidenceReader(
             "compat.resolver-network",
             "./scripts/dev-x86_64.sh owned-resolver-network",
-            "report",
-            repository_relative(RESOLVER_NETWORK_REPORT),
+            "publication",
+            "resolver-network",
             _read_resolver_network,
         ),
         *(

@@ -58,6 +58,9 @@ every evaluation, so replaced, stale-source or partial receipts fail. Current
 publications: `compat.abi-differential abi-evidence` (`abi-evidence.json`
 from `abi-differential-evidence assemble`), `compat.posix-process
 posix-native` (`native-execution.json` from `owned-posix-native`),
+`compat.resolver-network resolver-network` (the retained
+`STATE_ROOT/report.json` copy of a published resolver-network report, from
+`owned-resolver-network` or the network step of `owned-resolver-family`),
 `compat.loader-corpus loader-family` (`receipt.json` from
 `owned-loader-family`), `consumer.rust-std-lto rust-std-lto` (`receipt.json`
 from `consumer-rust-std-lto run`), `consumer.source-build lua-source-build`
@@ -98,8 +101,11 @@ R="--native-abi-inventory .work/x86_64/native-abi-inventory/abi/report.json \
   --companions .work/x86_64/abi-differential/companions/companions.json \
   --output .work/x86_64/abi-differential/abi
 ./scripts/dev-x86_64.sh qualification-manifest --publish compat.abi-differential abi-evidence .work/x86_64/abi-differential/abi/abi-evidence.json
-``` `compat.resolver-network` reads
-the published `compat/reports/resolver-network/x86_64/latest.json`.
+```
+
+`resolver-network` publication replays the public report that the selected
+retained copy names and requires identical bytes, so a stale `latest.json`
+from an older producer schema or revision is never read implicitly.
 
 `lua-source-build` rereads only while a fresh admission of the current
 source, both latest Lua lane reports and their products is identical to the
@@ -170,3 +176,38 @@ orphan adopted through the subreaper boundary, including `setsid` and
 double-fork escapees. The prefix fixes `non_promoting: true`,
 `promotion_ready: false` and zero completed gates; it cannot satisfy or
 replace any chain gate.
+
+## One-command candidate run
+
+`./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/NAME
+[--inputs FILE] [--through STEP] [--dry-run]` is the unattended final
+qualification of one clean candidate checkout
+([`qualification_candidate.py`](qualification_candidate.py)). It builds the
+cohort once (`owned-posix-static-products`, `materialized-dynamic-sysroot`),
+runs every family aggregate in dependency order (the POSIX admission sequence
+above, pthread/TLS, the text family's per-pair producers and assembly,
+resolver, c-abi-compat, the loader inventories and family, crt and the two
+sysroot families), runs every gate producer and publishes its receipt, runs
+this chain, then the parity-ledger validator, and writes `NAME/summary.json`.
+
+Receipt paths are fixed by `--work`. A family row that names a `receipt`
+(the candidate's transition rows) must name the path this run produces; a
+different path is a preflight blocker, and a row without one is reported
+unattached. `--inputs` names the pre-seeded inputs the native container
+cannot fetch or must not measure under contention:
+`{"rust_std_lto": {"provider_vendor", "dependency_vendor"},
+"performance_release": {"runtime_c_collector", "native_facade_report",
+"rustybench_source", "rustix_source", "allocator_reports": [...]}}`. The
+pinned OS-test/libc-test source checkouts and the package corpus input must
+also be seeded.
+
+The run is bound to the clean source identity recorded in
+`NAME/candidate.json`. A restart on the same revision skips each step whose
+recorded outputs still hash identically and resumes at the first incomplete
+one; a failed attempt's step directory and fresh outputs are renamed
+`*.failed-N`. A different revision, a changed completed output, or a failed
+step stops the run with the summary naming the step and every step not run.
+`--through STEP` runs a prefix (for staged preflights; never reported
+complete) and `--dry-run` resolves every command with placeholders for
+not-yet-produced outputs and lists the preflight blockers without running
+anything.

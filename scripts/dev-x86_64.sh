@@ -191,6 +191,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   qualification-manifest [--through GATE|--status|--publish GATE PUBLICATION RECEIPT|--validate-receipt PATH|--private-admission]  execute the ordered qualification chain (or a prefix) into a source-bound receipt, report gate conditions, or select gate evidence in the native container
   campaign-promotion-check  run the final promotion gate when it is ready
   campaign-all  run the complete native x86 campaign gate sequence
+  qualification-candidate --work DIR [--inputs FILE] [--through STEP] [--dry-run]  build one cohort, run every family aggregate and gate producer, publish and check receipts, run the chain; restartable on the same revision
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
   headers-layouts-aggregate  run finite non-promoting header accounting evidence
   image  build the pinned Linux/amd64 core-evidence image
@@ -7165,6 +7166,12 @@ case "$command" in
     campaign-all)
         [ "$#" -eq 0 ] || fail "campaign-all takes no arguments"
         python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" all
+        ;;
+    qualification-candidate)
+        # Host coordinator: each step is itself a dispatcher command that
+        # checks the native host and owns its container.
+        python3 -B "$ROOT_DIR/compat/x86_64/qualification_candidate.py" "$@"
+        exit
         ;;
     perf-c)
         # Argument parsing and source-mount translation happen after the

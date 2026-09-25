@@ -241,6 +241,45 @@ class PublicationTests(unittest.TestCase):
             gates.publish(gates.CHAIN[0], "fixture", ".work/x86_64/link/receipt.json")
 
 
+class ResolverNetworkPublicationTests(unittest.TestCase):
+    """The resolver gate selects a retained producer copy, not a fixed report path."""
+
+    def setUp(self):
+        scratch = ROOT / ".work/x86_64/tmp/qualification-gate-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.state = self.root / ".work/x86_64/family/network"
+        self.state.mkdir(parents=True)
+        self.retained = self.state / "report.json"
+        self.public = "/workspace/compat/reports/resolver-network/x86_64/family-run.json"
+        self.document = {"published_report": self.public, "state_root": "/workspace/.work/x86_64/family/network",
+                         "passed": True}
+        self.retained.write_text(json.dumps(self.document), encoding="utf-8")
+        patcher = patch.object(gates, "ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.reader = gates._import_compat("resolver_network_component_receipt")
+
+    def test_the_published_report_is_replayed_and_must_retain_this_copy(self):
+        with patch.object(self.reader, "validate_report", return_value=self.document) as validate:
+            self.assertEqual(gates._validate_resolver_network(self.retained), self.document)
+        validate.assert_called_once_with(self.root, self.root / "compat/reports/resolver-network/x86_64/family-run.json")
+
+        for changed, message in (
+            ({"state_root": "/workspace/.work/x86_64/other"}, "retained copy"),
+            ({"passed": False}, "did not pass"),
+        ):
+            with self.subTest(message=message), patch.object(
+                    self.reader, "validate_report", return_value={**self.document, **changed}):
+                with self.assertRaisesRegex(gates.EvidenceUnmet, message):
+                    gates._validate_resolver_network(self.retained)
+        self.retained.write_text(json.dumps({"state_root": "x"}), encoding="utf-8")
+        with self.assertRaisesRegex(gates.EvidenceUnmet, "names no published report"):
+            gates._validate_resolver_network(self.retained)
+
+
 class CheckedInGateRegistryTests(unittest.TestCase):
     def test_every_registered_reader_names_a_current_ledger_command_of_its_gate(self):
         families = gates.load_families()
