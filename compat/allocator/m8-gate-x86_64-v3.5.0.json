@@ -65,12 +65,16 @@
       "scope": "The selected real-program corpus (frozen Alpine package workloads) runs every tier through the native-shadow dynamic product."
     },
     "consumer:rust-std-lto": {
-      "command": null,
-      "scope": "The `consumer.rust-std-lto` gate (`scripts/dev-x86_64.sh consumer-rust-std-lto run`) links Rust std, std-dependent, LTO, and unwind fixtures against native-shadow static and dynamic products and passes."
+      "command": ["scripts/dev-x86_64.sh", "consumer-rust-std-lto", "run", "--allocator-evidence", "native-shadow", "--development-static-sysroot", "{static_sysroot}", "--development-dynamic-sysroot", "{dynamic_sysroot}", "--provider-vendor", "/workspace/.work/x86_64/rust-std-unwinder-provider-vendor", "--dependency-vendor", "/workspace/.work/x86_64/rust-std-fixture-vendor", "--output", "{dynamic_sysroot}.rust-std-lto"],
+      "scope": "The `consumer.rust-std-lto` gate links the frozen Rust std, std-dependent, LTO, and native-facade fixtures, the installed-product unwind matrix with its cross-DSO lanes, and the provider regressions against the native-shadow static and dynamic products, and passes as allocator evidence (never a qualifying consumer receipt). It reads the checkout's prepared provider vendor and the fixture vendor from `consumer-rust-std-lto-vendor /workspace/.work/x86_64/rust-std-fixture-vendor`."
     },
-    "consumer:lua": {
-      "command": null,
-      "scope": "The `consumer.source-build` Lua lanes (`lua-static-source-build`, `lua-dynamic-source-build`, `lua-source-build-admission`) build and qualify pinned Lua on native-shadow products and pass."
+    "consumer:lua-static": {
+      "command": ["scripts/dev-x86_64.sh", "lua-static-source-build", "--allocator-backend", "native-shadow"],
+      "scope": "Builds a native-shadow static sysroot and qualifies pinned Lua's source and bytecode graph through it as ET_EXEC and static-PIE; the private report never replaces the accepted-C latest report."
+    },
+    "consumer:lua-dynamic": {
+      "command": ["scripts/dev-x86_64.sh", "lua-dynamic-source-build", "--allocator-backend", "native-shadow"],
+      "scope": "Builds, packages, and extracts a native-shadow dynamic sysroot and qualifies pinned Lua through both the installed and the extracted roots with identical artifacts; the private report never replaces the accepted-C latest report."
     }
   },
   "gates": [
@@ -122,17 +126,15 @@
       "acceptance": "Rust std, its dependent fixture, LTO, and unwind consumers pass on native-shadow products.",
       "evidence": ["consumer:rust-std-lto"],
       "blocked_by": [
-        "`consumer-rust-std-lto run` qualifies only the accepted-C products from the ordered qualification chain; its `--development-*-sysroot` inputs produce a receipt that cannot pass, so no passing run on native-shadow products exists."
+        "The static product's `libc.a` carries a `c.core-*` ThinLTO member that defines `core::panicking::*`, `core::fmt::*`, and `core::option::*` globally (accepted-C products since the one-member-per-module split as well), so the unwind matrix's static full Rust cleanup link fails with duplicate symbols against the application's own libcore."
       ]
     },
     {
       "id": "m8.lua",
       "required": true,
       "acceptance": "Pinned Lua builds and passes its source-build qualification on native-shadow products.",
-      "evidence": ["consumer:lua"],
-      "blocked_by": [
-        "`lua-static-source-build` and `lua-dynamic-source-build` take no product argument and build accepted-C sysroots; neither can select the native-shadow backend."
-      ]
+      "evidence": ["consumer:lua-static", "consumer:lua-dynamic"],
+      "blocked_by": []
     },
     {
       "id": "m8.corpus",

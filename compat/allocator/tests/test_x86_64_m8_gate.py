@@ -36,13 +36,11 @@ class M8GateContractTests(unittest.TestCase):
     def test_checked_in_contract_names_every_m8_row(self) -> None:
         summary = self.validate()
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
-        # Rust std and Lua have no native-shadow run yet and stay unmet.
-        for gate_id in ("m8.rust-std", "m8.lua"):
-            self.assertIn(gate_id, summary["blocked_gate_ids"])
         self.assertIn(summary["products"]["evidence"], summary["runnable_evidence"])
 
     def test_missing_evidence_cannot_be_unblocked_by_editing_the_contract(self) -> None:
         unblocked = copy.deepcopy(self.contract)
+        unblocked["evidence"]["consumer:lua-static"]["command"] = None
         self.gate_record(unblocked, "m8.lua")["blocked_by"] = []
         with self.assertRaisesRegex(harness.HarnessError, "missing evidence without a blocker"):
             self.validate(unblocked)
