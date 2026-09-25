@@ -21,6 +21,8 @@
 use core::ffi::{c_char, c_int, c_ulong, c_void};
 use core::ptr::{NonNull, null_mut};
 
+use crabc_mimalloc::source_heap_api;
+
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, NativeProcessStartupFacts, RuntimeStderrOutput,
     ThreadAttachResult,
@@ -180,5 +182,106 @@ pub unsafe extern "C" fn crabc_allocator_engine_usable_size(block: *const c_void
         Some(size) => size,
         // SAFETY: musl's abort never returns.
         None => unsafe { abort() },
+    }
+}
+
+/// Opaque first-class Heap handle of `engine-api.h` (pinned `mi_heap_t*`).
+#[repr(C)]
+pub struct crabc_allocator_engine_heap {
+    _opaque: [u8; 0],
+}
+
+/// Opaque child-subprocess handle of `engine-api.h` (pinned
+/// `mi_subproc_id_t`).
+#[repr(C)]
+pub struct crabc_allocator_engine_subproc {
+    _opaque: [u8; 0],
+}
+
+/// `mi_heap_new` through crabc-mimalloc's source Heap entry; null when the
+/// Heap cannot be created.
+#[unsafe(no_mangle)]
+pub extern "C" fn crabc_allocator_engine_heap_new() -> *mut crabc_allocator_engine_heap {
+    source_heap_api::heap_new().cast()
+}
+
+/// `mi_heap_malloc`.
+///
+/// # Safety
+///
+/// `heap` is null or a live Heap from `heap_new` on the calling thread's
+/// subprocess.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn crabc_allocator_engine_heap_malloc(
+    heap: *mut crabc_allocator_engine_heap,
+    size: usize,
+) -> *mut c_void {
+    // SAFETY: forwarded live-Heap contract.
+    unsafe { source_heap_api::heap_malloc(heap.cast(), size) }
+        .value
+        .map_or(null_mut(), |block| block.as_ptr().cast())
+}
+
+/// `mi_heap_destroy`: frees every live block of the Heap. A release the
+/// source would complete but the engine cannot fail-stops, as the libc
+/// adapter does for any native refusal.
+///
+/// # Safety
+///
+/// `heap` is null or a live Heap that no other thread uses during the call;
+/// none of its blocks is used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn crabc_allocator_engine_heap_destroy(heap: *mut crabc_allocator_engine_heap) {
+    // SAFETY: forwarded live-Heap and no-reuse contract.
+    if !unsafe { source_heap_api::heap_release(heap.cast(), true) } {
+        // SAFETY: musl's abort never returns.
+        unsafe { abort() }
+    }
+}
+
+/// `mi_subproc_new`; null when the child cannot be created.
+#[unsafe(no_mangle)]
+pub extern "C" fn crabc_allocator_engine_subproc_new() -> *mut crabc_allocator_engine_subproc {
+    source_heap_api::subproc_new().cast()
+}
+
+/// Called by a fresh thread instead of `thread_init`: registers the thread's
+/// descriptor with the runtime, then `mi_subproc_add_current_thread`. The
+/// thread still calls `thread_done`.
+///
+/// # Safety
+///
+/// `subproc` is a live child from `subproc_new`, and the calling thread has
+/// made no allocation; musl keeps its TLS mapping live until it has returned
+/// from `thread_done` and exited.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn crabc_allocator_engine_subproc_add_current_thread(
+    subproc: *mut crabc_allocator_engine_subproc,
+) -> c_int {
+    let descriptor = current_native_allocator_thread_descriptor();
+    // SAFETY: this thread's own TLS record; see `thread_init`.
+    if !unsafe { register_current_native_allocator_worker_descriptor(descriptor) } {
+        return -1;
+    }
+    // SAFETY: forwarded live-child and fresh-thread contract.
+    match unsafe { source_heap_api::subproc_add_current_thread(subproc.cast()) } {
+        source_heap_api::SubprocAddCurrentThread::Added => 0,
+        source_heap_api::SubprocAddCurrentThread::Unchanged
+        | source_heap_api::SubprocAddCurrentThread::Failed => -1,
+    }
+}
+
+/// `mi_subproc_destroy`, after every member thread has finished.
+///
+/// # Safety
+///
+/// `subproc` is a live child from `subproc_new` with no member thread left;
+/// none of its blocks is used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn crabc_allocator_engine_subproc_destroy(subproc: *mut crabc_allocator_engine_subproc) {
+    // SAFETY: forwarded live-child and no-reuse contract.
+    if !unsafe { source_heap_api::subproc_destroy(subproc.cast()) } {
+        // SAFETY: musl's abort never returns.
+        unsafe { abort() }
     }
 }

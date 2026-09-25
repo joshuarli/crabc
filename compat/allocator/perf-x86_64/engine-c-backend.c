@@ -2,10 +2,13 @@
  * SPDX-License-Identifier: MIT
  *
  * Pinned mimalloc v3.5.0 implementation of the private engine performance
- * boundary (`engine-api.h`).  Each entry is the source's own public operation
- * that its `MI_OVERRIDE` C ABI selects (`src/alloc-override.c`): `malloc` is
- * `mi_malloc`, `calloc` is `mi_calloc`, and so on.  The runner compiles this
- * unit and the pinned sources separately from the fixture, never with LTO.
+ * boundary (`engine-api.h`).  Each entry is a public operation of the pinned
+ * source.  `malloc` and `calloc` request the C ABI's 16-byte fundamental
+ * alignment (`mi_malloc_aligned(size, 16)`, `mi_calloc_aligned`), the entry
+ * crabc-libc's native adapter uses for them because the pinned small bins
+ * (24, 40, 56 ... bytes) do not all guarantee it; `realloc` is `mi_realloc`,
+ * as the adapter's `native_reallocate` is.  The runner compiles this unit
+ * and the pinned sources separately from the fixture, never with LTO.
  */
 #include "engine-api.h"
 
@@ -31,7 +34,7 @@ int crabc_allocator_engine_thread_done(void)
 
 void *crabc_allocator_engine_malloc(size_t size)
 {
-  return mi_malloc(size);
+  return mi_malloc_aligned(size, 16);
 }
 
 void crabc_allocator_engine_free(void *block)
@@ -41,7 +44,7 @@ void crabc_allocator_engine_free(void *block)
 
 void *crabc_allocator_engine_calloc(size_t count, size_t size)
 {
-  return mi_calloc(count, size);
+  return mi_calloc_aligned(count, size, 16);
 }
 
 void *crabc_allocator_engine_realloc(void *block, size_t size)

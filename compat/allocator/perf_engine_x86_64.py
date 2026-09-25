@@ -1075,12 +1075,14 @@ def build_lanes(manifest: Mapping[str, Any], source: Path, build: Path, *, compi
         "binaries": {"pinned_c": c_binary, "rust_engine": rust_binary},
         "records": {
             "pinned_c": {
+                "allocation_entries": manifest["lanes"]["pinned_c"]["allocation_entries"],
                 "build_commands": c_records,
                 "executable": audit_static_executable(readelf, c_binary),
                 "link_map": artifact_record(c_map),
                 "size_attribution_bytes": link_map_attribution(c_map, c_lane_owner),
             },
             "rust_engine": {
+                "allocation_entries": manifest["lanes"]["rust_engine"]["allocation_entries"],
                 "cargo": cargo_records,
                 "rustc": rustc_records,
                 "native_static_libraries": native_libraries,

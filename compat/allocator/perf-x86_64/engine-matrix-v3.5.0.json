@@ -9,7 +9,7 @@
   "lanes": {
     "pinned_c": {
       "backend": "compat/allocator/perf-x86_64/engine-c-backend.c",
-      "meaning": "Pinned mimalloc v3.5.0 source in its upstream CMake Release static-library configuration for musl, through its public mi_* operations (the functions its MI_OVERRIDE C ABI selects).",
+      "meaning": "Pinned mimalloc v3.5.0 source in its upstream CMake Release static-library configuration for musl, through its public mi_* operations; malloc and calloc use the same 16-byte-aligned entry crabc-libc's malloc and calloc use (allocation_entries).",
       "source_configuration_flags": [
         "-O3",
         "-DNDEBUG",
@@ -22,11 +22,13 @@
         "-fno-builtin-malloc",
         "-ftls-model=initial-exec"
       ],
+      "allocation_entries": {"malloc": "mi_malloc_aligned(size, 16)", "calloc": "mi_calloc_aligned(count, size, 16)", "realloc": "mi_realloc", "aligned": "mi_malloc_aligned(size, alignment)", "free": "mi_free"},
       "tls_model_note": "Upstream CMake selects local-dynamic for its MI_LIBC_MUSL static library and initial-exec otherwise; both lanes use initial-exec here, and the static non-PIE executable link relaxes either model to local-exec."
     },
     "rust_engine": {
       "backend": "compat/allocator/perf-x86_64/engine-rust-backend.rs",
       "meaning": "crabc-mimalloc persistent per-thread source owners through the hidden __crabc_runtime entry points that crabc-libc's native-mimalloc-shadow selection calls (malloc = native_allocate_aligned(size, 16, false)).",
+      "allocation_entries": {"malloc": "native_allocate_aligned(size, 16, false)", "calloc": "native_allocate_aligned(count * size, 16, true)", "realloc": "native_reallocate", "aligned": "native_allocate_aligned(size, alignment, false)", "free": "native_free"},
       "rustc_flags": [
         "-Copt-level=3",
         "-Clto=fat",
