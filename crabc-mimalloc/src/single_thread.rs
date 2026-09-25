@@ -38186,8 +38186,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// `pages_reclaim_on_alloc`, and reassociates and false-collects it
     /// (`try_adopt_retained_with_after_claim`, `_mi_theap_page_reclaim`); the
     /// page joins the end of its queue and is extended when it has no free
-    /// block. A page that cannot then be extended is not reabandoned (the
-    /// child has no such route yet); the engine fails instead.
+    /// block; one whose extension cannot commit is abandoned again
+    /// (`reabandon_child_reclaimed_page`) and the allocation retries.
     fn reclaim_child_mapped_regular_before_fresh(
         &mut self,
         heap: NonNull<Heap>,
@@ -38248,14 +38248,62 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             if unsafe { page.as_ref() }.capacity() >= unsafe { page.as_ref() }.reserved() {
                 return Err(GenericPathError::Lifecycle);
             }
-            self.extend_page_before_allocation(page)?;
-            return if unsafe { page.as_ref() }.free_list_head().is_null() {
-                Err(GenericPathError::Lifecycle)
-            } else {
-                Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page))
+            return match self.extend_page_before_allocation(page) {
+                Ok(()) if !unsafe { page.as_ref() }.free_list_head().is_null() => {
+                    Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page))
+                }
+                Ok(()) => Err(GenericPathError::Lifecycle),
+                // `page.c:322-327`: a reclaimed page that cannot commit its
+                // extension is abandoned again and the fresh-page attempt
+                // returns null, after which the generic path retries.
+                Err(GenericPathError::PageCommit(_)) => {
+                    self.reabandon_child_reclaimed_page(bin, page, &map)?;
+                    Ok(MappedRegularReclaimBeforeFresh::RetryAfterReabandon)
+                }
+                Err(error) => Err(error),
             };
         }
         Ok(MappedRegularReclaimBeforeFresh::NoCandidate)
+    }
+
+    /// `_mi_page_abandon(page, pq)` (`page.c:291-304`) of a just-reclaimed
+    /// child page whose extension could not commit: false collection, then a
+    /// page that became all free is released, otherwise it leaves the queue
+    /// and is abandoned again with `map` (`_mi_arenas_page_abandon`, counting
+    /// `pages_abandoned`). The child production profile commits pages whole
+    /// (it has no on-demand page commit), so only a commit failure of an
+    /// on-demand page reaches this.
+    fn reabandon_child_reclaimed_page<M: abandoned::MappedAbandonedPages>(
+        &mut self,
+        bin: usize,
+        page: NonNull<Page>,
+        map: &M,
+    ) -> Result<(), GenericPathError> {
+        self.page_free_collect_false(page).map_err(GenericPathError::Collection)?;
+        if unsafe { page.as_ref() }.used() == 0 {
+            return self.release_page(bin, page.as_ptr()).then_some(()).ok_or(GenericPathError::Lifecycle);
+        }
+        let queue = self.session.queue_mut(bin).ok_or(GenericPathError::Lifecycle)? as *mut _;
+        // SAFETY: the page was tail-enqueued above and this engine owns the
+        // queue until the abandonment below detaches it.
+        unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        self.update_direct_cache(bin);
+        if !self.session.note_page_removed() {
+            return Err(GenericPathError::Lifecycle);
+        }
+        // SAFETY: source order is false collection, queue detach, then
+        // abandoned identity/map publication and low-bit unown.
+        match unsafe {
+            abandoned::abandon_after_collect_with_before_unown(page, Some(map), || {
+                self.session.theap().record_page_abandoned();
+                Ok(())
+            })
+        } {
+            Ok(AbandonResult::UnownedMapped | AbandonResult::UnownedUnmapped) => Ok(()),
+            Ok(AbandonResult::Empty) if self.release_queue_detached_abandoned_arena_page(page) => Ok(()),
+            Ok(AbandonResult::Empty) => Err(GenericPathError::Lifecycle),
+            Err(error) => Err(GenericPathError::Collection(PageCollectError::Abandon(error))),
+        }
     }
 
     /// Completes the selected static-main source sequence while the temporary
