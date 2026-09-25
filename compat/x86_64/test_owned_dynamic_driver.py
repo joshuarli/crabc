@@ -1260,7 +1260,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
             Path("/private/mimalloc-hidden.exports"), Path("/private/errno-private.exports"),
-            Path("/private/objects"),
+            Path("/private/libc-hot.order"), Path("/private/objects"),
             ("one.o", "two.o"), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
         self.assertEqual(command, [
@@ -1270,6 +1270,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             "--version-script=/private/errno-private.exports",
             "--exclude-libs=libcrabc-builtins.a",
             "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+            "-z", "pack-relative-relocs",
+            "--symbol-ordering-file=/private/libc-hot.order", "--no-warn-symbol-ordering",
             "/private/objects/one.o", "/private/objects/two.o", "/private/libcrabc-builtins.a",
             "-o", "/private/usr/lib/libc.so",
         ])
@@ -1282,7 +1284,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
             Path("/private/mimalloc-hidden.exports"), Path("/private/errno-private.exports"),
-            Path("/private/objects"),
+            Path("/private/libc-hot.order"), Path("/private/objects"),
             ("one.o",), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
         self.assertIn("--exclude-libs=libcrabc-builtins.a", command)

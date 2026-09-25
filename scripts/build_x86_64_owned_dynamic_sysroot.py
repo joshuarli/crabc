@@ -49,6 +49,10 @@ SHARED_LIBC_ERRNO_PRIVATE_ALIASES = ROOT / "libc/src/c_abi/x86_64/owned_errno_pr
 # upstream `mimalloc.h` declarations and 252 non-header implementation names;
 # it is not a prefix rule and does not select a different object or backend.
 SHARED_LIBC_MIMALLOC_HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
+# Layout-only input for the same shared link: the functions startup and the
+# native C performance rows execute are placed together so a process maps
+# few 64 KiB fault-around windows of libc text. See the file's header.
+SHARED_LIBC_SYMBOL_ORDER = ROOT / "libc/src/c_abi/x86_64/owned_dynamic_hot.order"
 COMPILER_HELPER_CONTRACT = ROOT / "builtins/x86_64-helper-contract.toml"
 SHARED_LIBC_COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
 SHARED_LIBC_COMPILER_HELPER_MEMBER = "crabc-builtins.o"
@@ -131,7 +135,7 @@ def _source_file_identity(path: Path, description: str) -> dict[str, object]:
 def _normalized_loader_argument(argument: str, stage: Path) -> str:
     """Replace build-local prefixes without changing an arbitrary argument."""
 
-    for option in ("--dynamic-list=", "--version-script="):
+    for option in ("--dynamic-list=", "--version-script=", "--symbol-ordering-file="):
         if argument.startswith(option):
             return option + _normalized_loader_argument(argument.removeprefix(option), stage)
     for physical, replacement in ((stage.resolve(), "$BUILD"), (ROOT.resolve(), "$SOURCE")):
@@ -273,11 +277,51 @@ def shared_libc_errno_private_aliases(stage: Path) -> dict[str, object]:
     }
 
 
+def shared_libc_symbol_order(nm: str, inputs: list[Path], stage: Path) -> dict[str, object]:
+    """Resolve the hot-text order to this link's actual symbol spellings.
+
+    Entries name C symbols or hash-free demangled Rust paths, so crate
+    disambiguators may change without editing the list. An entry that no
+    longer names a defined symbol costs only layout; it is recorded, not fatal.
+    """
+
+    identity = _source_file_identity(SHARED_LIBC_SYMBOL_ORDER, "native libc hot text order")
+    try:
+        text = SHARED_LIBC_SYMBOL_ORDER.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise common.BuildError("native libc hot text order cannot be read") from error
+    entries = [line for line in text.splitlines() if line and not line.startswith("#")]
+    if len(set(entries)) != len(entries) or any(line != line.strip() for line in entries):
+        raise common.BuildError("native libc hot text order repeats or pads an entry")
+    spellings: dict[str, list[str]] = {}
+    for path in inputs:
+        listing = [common.run([nm, "--defined-only", *demangle, "--format=just-symbols", str(path)])
+                   .decode().splitlines() for demangle in ([], ["--demangle"])]
+        if len(listing[0]) != len(listing[1]):
+            raise common.BuildError(f"demangled symbol listing does not align: {path}")
+        for raw, readable in zip(*listing):
+            if raw and not raw.endswith(":") and raw not in spellings.setdefault(readable, []):
+                spellings[readable].append(raw)
+    resolved = [raw for entry in entries for raw in spellings.get(entry, [])]
+    unresolved = [entry for entry in entries if entry not in spellings]
+    script = stage / "libc-hot.order"
+    script.write_text("".join(f"{name}\n" for name in resolved), encoding="utf-8")
+    script.chmod(0o600)
+    return {
+        "source": identity,
+        "entry_count": len(entries),
+        "resolved_symbol_count": len(resolved),
+        "unresolved_entries": unresolved,
+        "ordering_file_sha256": common.sha256_file(script),
+    }
+
+
 def shared_libc_link_command(
     lld: Path,
     dynamic_list: Path,
     mimalloc_hidden_exports: Path | None,
     errno_private_aliases: Path,
+    symbol_order: Path,
     objects: Path,
     selected: tuple[str, ...],
     builtins: Path,
@@ -295,6 +339,10 @@ def shared_libc_link_command(
         f"--version-script={errno_private_aliases}",
         "--exclude-libs=" + SHARED_LIBC_COMPILER_HELPER_ARCHIVE,
         "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+        # Packed DT_RELR relative relocations: 849 RELA records (21 KiB the
+        # loader reads at every start) become a 264-byte bitmap stream.
+        "-z", "pack-relative-relocs",
+        f"--symbol-ordering-file={symbol_order}", "--no-warn-symbol-ordering",
         *(str(objects / item) for item in selected), str(builtins), "-o", str(library / "libc.so"),
     ]
 
@@ -592,9 +640,11 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # separate: mimalloc names are fixed-C private metadata, while errno's
     # one weak alias needs LLD localization after its allocator object edge
     # has resolved.
+    shared_symbol_order = shared_libc_symbol_order(
+        nm, [*(objects / item for item in selected), builtins], stage)
     libc_shared_link_command = shared_libc_link_command(
         lld, SHARED_LIBC_DYNAMIC_LIST, (stage / "libc-mimalloc-hidden.exports" if accepted_c else None),
-        stage / "libc-errno-private.exports", objects, selected, builtins, library
+        stage / "libc-errno-private.exports", stage / "libc-hot.order", objects, selected, builtins, library
     )
     run(libc_shared_link_command)
     # The sealed dynamic product gives its one shared-library link role an
@@ -645,7 +695,11 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     loader_env = common.deterministic_environment()
     loader_env["CARGO_BUILD_JOBS"] = "2"
     loader_env["RUSTFLAGS"] = "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
-    loader_command = [*cargo, "build", "--locked", "-p", "crabc-ldso", "--release", "--target", common.TARGET,
+    # Every process touches nearly all interpreter text, so it is optimized
+    # for size: opt-level s cuts it from 135 to 81 KiB (54 KiB of PSS per
+    # process) for about 2% more fork+exec CPU and 8% slower dlsym.
+    loader_command = [*cargo, "build", "--locked", "-p", "crabc-ldso", "--release",
+                      "--config", 'profile.release.opt-level="s"', "--target", common.TARGET,
                       "--target-dir", str(stage / "loader"), "--no-default-features", "--features",
                       LOADER_FEATURE]
     run(loader_command, environment=loader_env)
@@ -707,6 +761,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                   "shared_mimalloc_hidden_exports": shared_mimalloc_hidden_exports,
                   "shared_compiler_helper_archive": shared_compiler_helper_policy,
                   "shared_errno_private_aliases": shared_errno_private_aliases,
+                  "shared_symbol_order": shared_symbol_order,
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
     payload_files = {path.relative_to(output).as_posix(): common.sha256_file(path)
