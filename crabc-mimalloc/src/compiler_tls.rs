@@ -240,6 +240,9 @@ pub(crate) fn dynamic_backing_peek() -> Option<NonNull<DynamicThreadLocalBacking
 /// reclamation; this operation itself is allocation-free.
 #[inline(always)]
 pub(crate) fn install_dynamic_backing(backing: NonNull<DynamicThreadLocalBacking>) {
+    // A root store may change the Theap the local fast paths would reach.
+    #[cfg(target_arch = "x86_64")]
+    crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { DYNAMIC_BACKING_ROOT = backing.as_ptr() };
 }
@@ -250,6 +253,9 @@ pub(crate) fn install_dynamic_backing(backing: NonNull<DynamicThreadLocalBacking
 /// root checks keep seeing this image between them.
 #[inline(always)]
 pub(crate) fn install_empty_dynamic_backing() {
+    // A root store may change the Theap the local fast paths would reach.
+    #[cfg(target_arch = "x86_64")]
+    crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { DYNAMIC_BACKING_ROOT = empty_dynamic_backing_ptr() };
 }
@@ -259,6 +265,9 @@ pub(crate) fn install_empty_dynamic_backing() {
 /// fast/default/cached/helper roots untouched; their lifecycle is separate.
 #[inline(always)]
 pub(crate) fn clear_dynamic_backing() {
+    // A root store may change the Theap the local fast paths would reach.
+    #[cfg(target_arch = "x86_64")]
+    crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { DYNAMIC_BACKING_ROOT = core::ptr::null_mut() };
 }
@@ -273,6 +282,9 @@ pub(crate) fn fast_slot_peek() -> Option<NonNull<()>> {
 /// Sets mimalloc's dedicated fast dynamic slot without allocating.
 #[inline(always)]
 pub(crate) fn set_fast_slot(value: Option<NonNull<()>>) {
+    // A root store may change the Theap the local fast paths would reach.
+    #[cfg(target_arch = "x86_64")]
+    crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { FAST_SLOT_ROOT = value.map_or(core::ptr::null_mut(), NonNull::as_ptr) };
 }
@@ -292,6 +304,9 @@ pub(crate) fn default_theap() -> NonNull<Theap> {
 /// order before calling it and retain the theap through reset.
 #[inline(always)]
 pub(crate) fn set_default_theap(theap: NonNull<Theap>) {
+    // A root store may change the Theap the local fast paths would reach.
+    #[cfg(target_arch = "x86_64")]
+    crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { DEFAULT_THEAP_ROOT = theap.as_ptr() };
 }
@@ -310,6 +325,9 @@ pub(crate) fn cached_theap() -> NonNull<Theap> {
 /// transition; no generic caller may use this store as a refcount API.
 #[inline(always)]
 pub(crate) fn set_cached_theap(theap: NonNull<Theap>) {
+    // A root store may change the Theap the local fast paths would reach.
+    #[cfg(target_arch = "x86_64")]
+    crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { CACHED_THEAP_ROOT = theap.as_ptr() };
 }
@@ -457,6 +475,8 @@ pub(crate) fn reset_for_thread_teardown() {
         clear_dynamic_backing();
     }
 
+    #[cfg(target_arch = "x86_64")]
+    crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes all five source pointer roots,
     // including the otherwise-unused helper root. The immutable process image
     // remains live forever.

@@ -8354,11 +8354,11 @@ impl NativeInitialPersistentThreadOwner {
     /// deferred-free callback in flight.
     #[cfg(target_arch = "x86_64")]
     #[inline]
-    fn local_fast_path_theap(&self) -> Option<core::ptr::NonNull<crate::types::Theap>> {
+    fn local_fast_owner(&self) -> Option<crate::local_fast_path::LocalFastOwner> {
         if self.deferred_free_callback_active.load(Ordering::Acquire) != 0 {
             return None;
         }
-        self.allocator.local_fast_path_theap()
+        self.allocator.local_fast_owner()
     }
 
     /// Prepares this direct initial source owner for the prepared raw-fork
@@ -8950,7 +8950,7 @@ fn current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate(
         "the pinned initial-owner fork preparation runs only under the held zero-admission gate"
     );
     #[cfg(target_arch = "x86_64")]
-    set_initial_owner_fast_theap(None);
+    crate::local_fast_path::withdraw();
     current_thread_native_initial_persistent_owner_cell()
         .with_owner(|owner| owner.get_mut().prepare_quiescent_for_held_fork_gate())
         .unwrap_or(false)
@@ -8992,7 +8992,7 @@ fn with_pointer_associated_initial_persistent_owner<R>(
         let owner = owner.get_mut();
         let result = operation(owner);
         #[cfg(target_arch = "x86_64")]
-        set_initial_owner_fast_theap(owner.local_fast_path_theap());
+        crate::local_fast_path::publish(owner.local_fast_owner());
         result
     }) {
         Ok(result) => Ok(result),
@@ -9161,68 +9161,45 @@ fn fail_stop_with_current_thread_native_owner() -> ! {
     crabc_core::process::exit_immediately(134)
 }
 
-/// The initial owner's static main Theap while its last operation left it
-/// usable by the native local fast paths, or null. Only the initial owner's
-/// operations, which all end through `with_pointer_associated_initial_persistent_owner`,
-/// publish it; its other direct cell projections (fork preparation,
-/// reclaim-on-free) clear it first.
-#[cfg(target_arch = "x86_64")]
-#[thread_local]
-static mut INITIAL_OWNER_FAST_THEAP: *mut crate::types::Theap = core::ptr::null_mut();
-
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-fn set_initial_owner_fast_theap(theap: Option<core::ptr::NonNull<crate::types::Theap>>) {
-    // SAFETY: current-thread compiler TLS scalar write.
-    unsafe { INITIAL_OWNER_FAST_THEAP = theap.map_or(core::ptr::null_mut(), core::ptr::NonNull::as_ptr) };
-}
-
-/// Returns the current thread's Theap when the native local fast paths
-/// (`crate::local_fast_path`) may use it for this admitted operation.
+/// Returns the current thread's published fast-path owner when the native
+/// local fast paths (`crate::local_fast_path`) may use it for this admitted
+/// operation.
 ///
-/// Beyond the published owner-local Theap (non-null only between two healthy
-/// owner-local operations; see `main_heap_thread::owner_local_fast_theap`)
-/// this requires what every complete owner-local operation also requires:
-/// the process is active and not past logical process-done, the thread is
-/// not a child-subprocess member, its later owner is installed and attached,
-/// its compiler-TLS owner cell is not borrowed (so no owner operation is
-/// suspended beneath this one), and the fast and default TLS roots still
-/// select exactly that Theap, as pinned `_mi_theap_default()` does. It is
-/// read-only and allocation-free.
+/// The publication itself proves the owner's per-thread state (see
+/// `local_fast_path::LocalFastOwner`). This adds the checks whose writers are
+/// not publication transitions: the thread's lifecycle bytes, which select
+/// the same owner the complete allocation would (an installed initial owner
+/// on the initial allocation thread, else an attached later owner), and the
+/// process-wide activity and process-done state. It is read-only and
+/// allocation-free.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-fn native_local_fast_theap() -> Option<core::ptr::NonNull<crate::types::Theap>> {
+fn native_local_fast_owner() -> Option<crate::local_fast_path::LocalFastOwner> {
+    let owner = crate::local_fast_path::published()?;
     let presence = current_thread_native_owner_presence();
-    // Mirror the complete allocation's owner selection: an installed initial
-    // owner first, then an attached later owner.
-    let theap = if presence.initial_installed {
-        // SAFETY: current-thread compiler TLS scalar read.
-        let theap = core::ptr::NonNull::new(unsafe { INITIAL_OWNER_FAST_THEAP })?;
-        if !RUNTIME_PROCESS.is_on_initial_allocation_thread()
-            || !current_thread_native_initial_persistent_owner_cell().is_active()
-        {
-            return None;
-        }
-        theap
+    let owner_selected = if presence.initial_installed {
+        RUNTIME_PROCESS.is_on_initial_allocation_thread()
     } else {
-        let theap = crate::main_heap_thread::owner_local_fast_theap()?;
-        if !presence.later_installed
-            || presence.state != ThreadLifecycleState::Attached
-            || !current_thread_native_persistent_owner_cell().is_active()
-        {
-            return None;
-        }
-        theap
+        presence.later_installed && presence.state == ThreadLifecycleState::Attached
     };
-    if crate::compiler_tls::fast_slot_peek() != Some(theap.cast())
-        || crate::compiler_tls::default_theap() != theap
-        || crate::subproc::lifecycle::current_thread_is_child_member()
+    if !owner_selected
         || !RUNTIME_PROCESS.is_active()
         || RUNTIME_PROCESS.logical_process_done_is_complete()
     {
         return None;
     }
-    Some(theap)
+    Some(owner)
+}
+
+/// Audit-only: a completed local fast-path operation of a later owner is an
+/// owner-local operation on its retained engine, as the complete path's
+/// `NativePersistentThreadOwner::with_local_allocator` records it.
+#[cfg(all(target_arch = "x86_64", feature = "native-runtime-test-audit"))]
+#[inline]
+fn note_local_fast_operation() {
+    if !current_thread_native_owner_presence().initial_installed {
+        NATIVE_OWNER_LOCAL_OPERATION_COUNT.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 #[inline]
@@ -10776,7 +10753,7 @@ fn native_allocate_shaped(
     // than the request at offset zero, which the aligned precheck below
     // always passes; so it may precede both.
     #[cfg(target_arch = "x86_64")]
-    if let Some(theap) = native_local_fast_theap() {
+    if let Some(owner) = native_local_fast_owner() {
         let alignment = match shape {
             NativeAllocationShape::Ordinary => Some(None),
             NativeAllocationShape::Aligned { alignment, offset: 0 } => Some(Some(alignment)),
@@ -10785,7 +10762,9 @@ fn native_allocate_shaped(
         if let Some(alignment) = alignment {
             // SAFETY: the gate holds for this admitted operation; the fast
             // path itself declines any alignment that is not a power of two.
-            if let Some(block) = unsafe { crate::local_fast_path::allocate(theap, request, alignment, zero) } {
+            if let Some(block) = unsafe { crate::local_fast_path::allocate(owner.theap, request, alignment, zero) } {
+                #[cfg(feature = "native-runtime-test-audit")]
+                note_local_fast_operation();
                 return NativePageAllocationResult::Allocated(block);
             }
         }
@@ -11637,6 +11616,38 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return NativePageFreeResult::Retained;
     };
+    #[cfg(target_arch = "x86_64")]
+    if let Some(owner) = native_local_fast_owner() {
+        // Pinned `mi_free` reaches the page by `_mi_ptr_page` with no
+        // readiness check; an active process's PageMap is published and
+        // immutable, and the owner publication names it.
+        // SAFETY: `native_free` accepts only an exact current native
+        // allocation, which keeps its PageMap registration and page live.
+        let page = unsafe { owner.page_map.as_ref().checked_lookup(block.as_ptr()) };
+        if let (Some(page), Some(current)) = (core::ptr::NonNull::new(page), current_thread_identity()) {
+            // SAFETY: the gate holds for this admitted operation; `page`
+            // is `block`'s registered page and the caller consumes it.
+            if unsafe { crate::local_fast_path::free(owner.theap, page, block, current.get()) } {
+                #[cfg(feature = "native-runtime-test-audit")]
+                note_local_fast_operation();
+                return NativePageFreeResult::Freed;
+            }
+        }
+    }
+    // SAFETY: forwarded exact-live-allocation contract.
+    unsafe { native_free_pointer_first(block) }
+}
+
+/// The pointer-first remainder of [`native_free`] after its admission and
+/// local fast-path steps, kept out of line so the fast path does not pay
+/// this path's frame.
+///
+/// # Safety
+///
+/// Same exact-live-allocation contract as [`native_free`], under its
+/// admitted operation.
+#[inline(never)]
+unsafe fn native_free_pointer_first(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
     let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
         // The pointer contract could not obtain its one process-published
         // PageMap witness. No caller-local fallback can establish a source
@@ -11644,37 +11655,6 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         RUNTIME_PROCESS.retain_page_owner();
         return NativePageFreeResult::Retained;
     };
-    #[cfg(target_arch = "x86_64")]
-    if let Some(theap) = native_local_fast_theap() {
-        // SAFETY: `native_free` accepts only an exact current native
-        // allocation, which keeps its PageMap registration and page live.
-        if let Ok(Some(page)) = unsafe { page_map.lookup_page_for_live_client(block) } {
-            if let Some(current) = current_thread_identity() {
-                // SAFETY: the gate holds for this admitted operation; `page`
-                // is `block`'s registered page and the caller consumes it.
-                if unsafe { crate::local_fast_path::free(theap, page, block, current.get()) } {
-                    return NativePageFreeResult::Freed;
-                }
-            }
-        }
-    }
-    // SAFETY: forwarded exact-live-allocation contract.
-    unsafe { native_free_pointer_first(block, page_map) }
-}
-
-/// The pointer-first remainder of [`native_free`] after its admission,
-/// PageMap witness, and local fast-path steps, kept out of line so the fast
-/// path does not pay this path's frame.
-///
-/// # Safety
-///
-/// Same exact-live-allocation contract as [`native_free`], under its
-/// admitted operation.
-#[inline(never)]
-unsafe fn native_free_pointer_first(
-    block: core::ptr::NonNull<u8>,
-    page_map: crate::process_page_map::ProcessPageMapRoot,
-) -> NativePageFreeResult {
     // SAFETY: `native_free` accepts only an exact current native allocation.
     // Its source lifetime keeps the selected registration and page metadata
     // stable until one branch below consumes the observation. The lookup
@@ -11973,7 +11953,7 @@ fn native_free_reclaim_on_free_into_current_thread(
             return ReclaimOnFreeOutcome::Declined;
         }
         #[cfg(target_arch = "x86_64")]
-        set_initial_owner_fast_theap(None);
+        crate::local_fast_path::withdraw();
         return current_thread_native_initial_persistent_owner_cell()
             .with_owner(|owner| {
                 let owner = owner.get_mut();

@@ -10270,15 +10270,13 @@ impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, Own
             session: core::ptr::addr_of_mut!(self.session),
         };
         let result = operation(self);
-        // Offer this Theap to the native local fast paths only when the
-        // operation left every engine gate open; the unbind guard's
-        // `Borrowed -> Idle` transition publishes it.
-        let fast_theap = if self.is_collection_poisoned() || self.pending_os_release.is_some() {
-            None
-        } else {
-            self.session.local_fast_path_theap()
-        };
-        crate::main_heap_thread::stage_owner_local_fast_theap(fast_theap);
+        // Offer this engine to the native local fast paths only when the
+        // operation left every engine and attachment gate open; the unbind
+        // guard's `Borrowed -> Idle` transition publishes it.
+        #[cfg(target_arch = "x86_64")]
+        crate::main_heap_thread::stage_owner_local_fast_owner(
+            self.local_fast_owner().filter(|_| self.session.local_fast_path_theap().is_some()),
+        );
         Ok(result)
     }
 
@@ -40466,18 +40464,22 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 .is_static_main_mapped_regular_claim_terminal()
     }
 
-    /// This engine's Theap when the native local fast paths
-    /// (`crate::local_fast_path`) may use it until the next engine
+    /// This engine's Theap and PageMap when the native local fast paths
+    /// (`crate::local_fast_path`) may use them until the next engine
     /// operation: no retained collection poison, no ordinary-operation
     /// refusal, and no pending OS release. Only a permanently bound session
     /// (the initial owner's static main session) may be asked between
     /// operations; owner-local engines stage theirs while bound.
+    #[cfg(target_arch = "x86_64")]
     #[inline]
-    pub(crate) fn local_fast_path_theap(&self) -> Option<NonNull<crate::types::Theap>> {
+    pub(crate) fn local_fast_owner(&self) -> Option<crate::local_fast_path::LocalFastOwner> {
         if self.is_collection_poisoned() || self.pending_os_release.is_some() {
             return None;
         }
-        Some(NonNull::from(self.session.theap()))
+        Some(crate::local_fast_path::LocalFastOwner {
+            theap: NonNull::from(self.session.theap()),
+            page_map: NonNull::from(self.page_map),
+        })
     }
 
     #[inline]

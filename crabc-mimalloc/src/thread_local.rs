@@ -617,6 +617,19 @@ struct PersistentCompilerTlsOwnerTransition<'cell, T> {
 }
 
 impl<T> PersistentCompilerTlsOwnerCell<T> {
+    /// Moves the cell to `state`. Leaving `Active` withdraws the thread's
+    /// local fast-path publication (`crate::local_fast_path::LocalFastOwner`),
+    /// which is valid only while no owner operation borrows or retires a
+    /// persistent owner.
+    #[inline(always)]
+    fn set_state(&self, state: PersistentCompilerTlsOwnerState) {
+        #[cfg(target_arch = "x86_64")]
+        if state != PersistentCompilerTlsOwnerState::Active {
+            crate::local_fast_path::withdraw();
+        }
+        self.state.set(state);
+    }
+
     /// Creates one vacant inline owner cell for a runtime compiler-TLS record.
     #[inline]
     pub(crate) const fn new() -> Self {
@@ -683,7 +696,7 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
                 Ok(())
             }
             Err(error) => {
-                cell.state.set(PersistentCompilerTlsOwnerState::Retained);
+                cell.set_state(PersistentCompilerTlsOwnerState::Retained);
                 transition.disarm();
                 Err(PersistentCompilerTlsOwnerInitializeError::Owner(error))
             }
@@ -715,7 +728,7 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
             state => return Err(Self::access_error_for_state(state)),
         }
         cell.ensure_current_thread()?;
-        cell.state.set(PersistentCompilerTlsOwnerState::Borrowed);
+        cell.set_state(PersistentCompilerTlsOwnerState::Borrowed);
         let mut transition = PersistentCompilerTlsOwnerTransition::new(
             cell,
             PersistentCompilerTlsOwnerState::Retained,
@@ -761,7 +774,7 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         }
         cell.ensure_current_thread()
             .map_err(PersistentCompilerTlsOwnerTeardownError::State)?;
-        cell.state.set(PersistentCompilerTlsOwnerState::Exiting);
+        cell.set_state(PersistentCompilerTlsOwnerState::Exiting);
         let mut transition = PersistentCompilerTlsOwnerTransition::new(
             cell,
             PersistentCompilerTlsOwnerState::Retained,
@@ -783,11 +796,11 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
                 // address exactly once; `Exiting` forbids every later access
                 // until the drop has completed.
                 unsafe { core::ptr::drop_in_place(cell.owner_pointer()) };
-                cell.state.set(PersistentCompilerTlsOwnerState::TornDown);
+                cell.set_state(PersistentCompilerTlsOwnerState::TornDown);
                 Ok(())
             }
             Err(error) => {
-                cell.state.set(PersistentCompilerTlsOwnerState::Retained);
+                cell.set_state(PersistentCompilerTlsOwnerState::Retained);
                 transition.disarm();
                 Err(PersistentCompilerTlsOwnerTeardownError::Owner(error))
             }
@@ -895,7 +908,7 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
             return Err(PersistentCompilerTlsOwnerTeardownError::State(
                 Self::access_error_for_state(cell.state.get())));
         }
-        cell.state.set(PersistentCompilerTlsOwnerState::Exiting);
+        cell.set_state(PersistentCompilerTlsOwnerState::Exiting);
         let mut transition = PersistentCompilerTlsOwnerTransition::new(
             cell, PersistentCompilerTlsOwnerState::Retained);
         // SAFETY: either permanent terminal admission or the sole-child
@@ -908,11 +921,11 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
                 // SAFETY: successful transfer proves this is only an inert
                 // shell. The payload ceases to be initialized exactly once.
                 unsafe { core::ptr::drop_in_place(cell.owner_pointer()) };
-                cell.state.set(PersistentCompilerTlsOwnerState::TornDown);
+                cell.set_state(PersistentCompilerTlsOwnerState::TornDown);
                 Ok(())
             }
             Err(error) => {
-                cell.state.set(PersistentCompilerTlsOwnerState::Retained);
+                cell.set_state(PersistentCompilerTlsOwnerState::Retained);
                 transition.disarm();
                 Err(PersistentCompilerTlsOwnerTeardownError::Owner(error))
             }
@@ -943,7 +956,7 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
             return Err(Self::access_error_for_state(cell.state.get()));
         }
         cell.ensure_current_thread()?;
-        cell.state.set(PersistentCompilerTlsOwnerState::Exiting);
+        cell.set_state(PersistentCompilerTlsOwnerState::Exiting);
         // No source state or Rust wrapper may be dropped here. The concrete
         // owner remains initialized in the departing TLS allocation, but its
         // terminal cell state prevents every later projection or destructor.
@@ -977,7 +990,7 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
                 if cell.thread.get().is_some() {
                     return Err(PersistentCompilerTlsOwnerError::TornDown);
                 }
-                cell.state.set(PersistentCompilerTlsOwnerState::Vacant);
+                cell.set_state(PersistentCompilerTlsOwnerState::Vacant);
                 Ok(())
             }
             state => Err(Self::access_error_for_state(state)),
@@ -1105,7 +1118,7 @@ impl<'cell, T> PersistentCompilerTlsOwnerTransition<'cell, T> {
 impl<T> Drop for PersistentCompilerTlsOwnerTransition<'_, T> {
     fn drop(&mut self) {
         if self.armed {
-            self.cell.state.set(self.unwind_state);
+            self.cell.set_state(self.unwind_state);
         }
     }
 }

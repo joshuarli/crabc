@@ -39,6 +39,65 @@ use crate::single_thread::{RETIRE_CYCLES, RETIRE_MAX_PAGES};
 use crate::types::{Block, EMPTY_PAGE, Page, Theap};
 use crate::{invariants, size_class};
 
+/// The one per-thread publication the fast paths read: the owner's Theap
+/// and its process PageMap, valid until the next owner transition.
+///
+/// It is written only by [`publish`], after an owner operation that left
+/// its engine healthy (see `PageAllocatorEngine::local_fast_owner`) while the
+/// thread's fast and default TLS roots name that Theap and the thread is not
+/// a child-subprocess member. Every transition that could invalidate it
+/// clears it through [`withdraw`] first: a persistent owner cell leaving
+/// `Active` (a new borrow, teardown, retention), an owner-local engine state
+/// other than `Borrowed -> Idle`, a store to any fast/default/cached/dynamic
+/// TLS root, child-subprocess admission, fork preparation, and
+/// reclaim-on-free. Process-wide state (activity, process-done) and the
+/// thread's lifecycle bytes are still checked per operation by the runtime.
+#[derive(Clone, Copy)]
+pub(crate) struct LocalFastOwner {
+    pub(crate) theap: NonNull<Theap>,
+    /// The engine's process PageMap, which lives for the process.
+    pub(crate) page_map: NonNull<crate::page_map::PageMap>,
+}
+
+#[thread_local]
+static mut PUBLISHED_THEAP: *mut Theap = core::ptr::null_mut();
+#[thread_local]
+static mut PUBLISHED_PAGE_MAP: *const crate::page_map::PageMap = core::ptr::null();
+
+/// Publishes `owner` for the current thread's fast paths, or withdraws the
+/// publication when `owner` is `None` or the TLS roots do not select it.
+#[inline]
+pub(crate) fn publish(owner: Option<LocalFastOwner>) {
+    let owner = owner.filter(|owner| {
+        crate::compiler_tls::fast_slot_peek() == Some(owner.theap.cast())
+            && crate::compiler_tls::default_theap() == owner.theap
+            && !crate::subproc::lifecycle::current_thread_is_child_member()
+    });
+    // SAFETY: current-thread compiler TLS scalar writes.
+    unsafe {
+        PUBLISHED_THEAP = owner.map_or(core::ptr::null_mut(), |owner| owner.theap.as_ptr());
+        PUBLISHED_PAGE_MAP = owner.map_or(core::ptr::null(), |owner| owner.page_map.as_ptr());
+    }
+}
+
+/// Clears the current thread's publication (see [`LocalFastOwner`]).
+#[inline(always)]
+pub(crate) fn withdraw() {
+    // SAFETY: current-thread compiler TLS scalar write.
+    unsafe { PUBLISHED_THEAP = core::ptr::null_mut() };
+}
+
+/// The current thread's publication, if any.
+#[inline(always)]
+pub(crate) fn published() -> Option<LocalFastOwner> {
+    // SAFETY: current-thread compiler TLS scalar reads; `publish` writes the
+    // page map whenever it writes a non-null Theap.
+    unsafe {
+        let theap = NonNull::new(PUBLISHED_THEAP)?;
+        Some(LocalFastOwner { theap, page_map: NonNull::new_unchecked(PUBLISHED_PAGE_MAP.cast_mut()) })
+    }
+}
+
 /// Source `alloc-aligned.c:mi_malloc_is_naturally_aligned` for requests up
 /// to `SMALL_SIZE_MAX`, where `mi_good_size` is the bin size.
 #[inline]
@@ -68,10 +127,9 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
 ///
 /// # Safety
 ///
-/// `theap` must be the current thread's published owner-local fast Theap
-/// (`main_heap_thread::owner_local_fast_theap`) with the runtime gates of
-/// `runtime_lifecycle::native_local_fast_theap` checked in this same native
-/// operation, so this thread exclusively owns the Theap's ordinary fields and
+/// `theap` must come from the current thread's publication ([`published`])
+/// with the runtime gates of `runtime_lifecycle::native_local_fast_owner`
+/// checked in this same native operation, so this thread exclusively owns the Theap's ordinary fields and
 /// every ordinary page field of its queued pages. An `alignment` that is not
 /// a power of two is declined.
 #[inline]

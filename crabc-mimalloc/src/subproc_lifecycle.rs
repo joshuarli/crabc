@@ -914,6 +914,10 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
     Ok(match outcome {
         Ok(ChildThreadAddOutcome::Added(member)) => {
             // SAFETY: current-thread slot, checked empty above.
+            // A child member allocates from its own Theap; the main owner's
+            // local fast-path publication no longer applies.
+            #[cfg(target_arch = "x86_64")]
+            crate::local_fast_path::withdraw();
             *unsafe { current_child_member() } = Some(CurrentChildMember { id, binding, member });
             NativeChildThreadAdd::Added
         }

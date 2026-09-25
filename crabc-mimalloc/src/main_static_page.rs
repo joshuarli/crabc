@@ -2945,14 +2945,15 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         )
     }
 
-    /// The active engine's Theap when the native local fast paths may use it
-    /// (see `PageAllocatorEngine::local_fast_path_theap`); `None` in every
-    /// non-active state.
+    /// The active engine's fast-path owner when the native local fast paths
+    /// may use it (see `PageAllocatorEngine::local_fast_owner`); `None` in
+    /// every non-active state.
+    #[cfg(target_arch = "x86_64")]
     #[inline]
-    pub(crate) fn local_fast_path_theap(&self) -> Option<NonNull<crate::types::Theap>> {
+    pub(crate) fn local_fast_owner(&self) -> Option<crate::local_fast_path::LocalFastOwner> {
         match &self.state {
             MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
-                active.engine.local_fast_path_theap()
+                active.engine.local_fast_owner()
             }
             _ => None,
         }

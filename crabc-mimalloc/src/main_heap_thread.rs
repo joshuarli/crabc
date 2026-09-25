@@ -125,39 +125,38 @@ fn owner_local_page_engine_state() -> MainHeapThreadOwnerLocalPageEngineState {
     unsafe { OWNER_LOCAL_PAGE_ENGINE_STATE }
 }
 
-/// The attached Theap whose persistent owner-local engine the native local
-/// fast paths (`crate::local_fast_path`) may use, or null.
+/// The fast-path owner recorded by the currently bound owner-local
+/// operation (see `crate::local_fast_path::LocalFastOwner`).
 ///
 /// Pinned `mi_malloc`/`mi_free` reach the thread's default Theap and its
 /// pages directly. The Rust owner-local engine additionally keeps poison,
 /// pending-release, callback, and attachment state that can make that Theap
-/// unavailable. This word is therefore non-null only between two fully
-/// validated owner-local operations: the last operation's bound session
-/// stages its Theap after it finished healthy (see
-/// [`stage_owner_local_fast_theap`]), and the `Borrowed -> Idle` transition
-/// that ends that session publishes it. Every other engine-state transition
-/// (a new borrow, drain, finish, terminal latch) clears it, so it can never
-/// name a Theap whose engine is borrowed, draining, or terminal.
+/// unavailable, so the fast paths may use it only between two fully
+/// validated owner-local operations: the operation's bound session stages it
+/// after finishing healthy ([`stage_owner_local_fast_owner`]), and only the
+/// `Borrowed -> Idle` transition that ends that session publishes it. Every
+/// other engine-state transition (a new borrow, drain, finish, terminal
+/// latch) withdraws the publication.
+#[cfg(target_arch = "x86_64")]
 #[thread_local]
-static mut OWNER_LOCAL_FAST_THEAP: *mut Theap = core::ptr::null_mut();
-
-/// The candidate recorded by the currently bound owner-local operation.
-#[thread_local]
-static mut OWNER_LOCAL_FAST_THEAP_STAGED: *mut Theap = core::ptr::null_mut();
+static mut OWNER_LOCAL_FAST_STAGED: Option<crate::local_fast_path::LocalFastOwner> = None;
 
 #[inline]
 fn set_owner_local_page_engine_state(state: MainHeapThreadOwnerLocalPageEngineState) {
     // SAFETY: the current thread alone reads and writes these compiler-TLS
     // words; no reference to them escapes.
     unsafe {
-        OWNER_LOCAL_FAST_THEAP = if state == MainHeapThreadOwnerLocalPageEngineState::Idle
-            && OWNER_LOCAL_PAGE_ENGINE_STATE == MainHeapThreadOwnerLocalPageEngineState::Borrowed
+        #[cfg(target_arch = "x86_64")]
         {
-            OWNER_LOCAL_FAST_THEAP_STAGED
-        } else {
-            core::ptr::null_mut()
-        };
-        OWNER_LOCAL_FAST_THEAP_STAGED = core::ptr::null_mut();
+            let staged = OWNER_LOCAL_FAST_STAGED.take();
+            if state == MainHeapThreadOwnerLocalPageEngineState::Idle
+                && OWNER_LOCAL_PAGE_ENGINE_STATE == MainHeapThreadOwnerLocalPageEngineState::Borrowed
+            {
+                crate::local_fast_path::publish(staged);
+            } else {
+                crate::local_fast_path::withdraw();
+            }
+        }
         OWNER_LOCAL_PAGE_ENGINE_STATE = state;
     }
 }
@@ -165,21 +164,14 @@ fn set_owner_local_page_engine_state(state: MainHeapThreadOwnerLocalPageEngineSt
 /// Records whether the currently bound owner-local operation left its engine
 /// usable by the local fast paths. Only the `Borrowed -> Idle` transition
 /// that ends this binding may publish the candidate.
+#[cfg(target_arch = "x86_64")]
 #[inline]
-pub(crate) fn stage_owner_local_fast_theap(theap: Option<NonNull<Theap>>) {
+pub(crate) fn stage_owner_local_fast_owner(owner: Option<crate::local_fast_path::LocalFastOwner>) {
     if owner_local_page_engine_state() != MainHeapThreadOwnerLocalPageEngineState::Borrowed {
         return;
     }
-    // SAFETY: current-thread compiler TLS; see `OWNER_LOCAL_FAST_THEAP`.
-    unsafe { OWNER_LOCAL_FAST_THEAP_STAGED = theap.map_or(core::ptr::null_mut(), NonNull::as_ptr) };
-}
-
-/// Returns the published fast-path Theap (see `OWNER_LOCAL_FAST_THEAP`).
-/// Callers must still check the outer runtime owner and TLS roots.
-#[inline(always)]
-pub(crate) fn owner_local_fast_theap() -> Option<NonNull<Theap>> {
-    // SAFETY: current-thread compiler TLS scalar read.
-    NonNull::new(unsafe { OWNER_LOCAL_FAST_THEAP })
+    // SAFETY: current-thread compiler TLS; see `OWNER_LOCAL_FAST_STAGED`.
+    unsafe { OWNER_LOCAL_FAST_STAGED = owner };
 }
 
 /// One source-boundary failure while attaching or retiring a later thread's
