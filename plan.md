@@ -53,7 +53,13 @@ are not transferable passes for a different revision.
   (`owned-c-abi-compat-family`); its two allocator capabilities admit only on
   the native-default candidate. libc-test and OS-test leave only the finite
   profile dispositions. Qualified performance runs are blocked by the host's
-  `powersave` CPU governor as well as load. The M9 report path measures
+  `powersave` CPU governor as well as load. Allocator M10 readiness exists:
+  `--allocator-backend native` production products pass the C-mimalloc
+  absence audit and `allocator-m10 --check` fails closed until M0–M9 and
+  promotion pass; the default stays `accepted-c`. The loader's fail-closed
+  load-time validation keeps startup near 1.5× musl user instructions after
+  preflight rework; the per-row 0.90× CPU gate on startup rows is not
+  reachable without relaxing a fail-closed guarantee (a user decision). The M9 report path measures
   throughput, p99 and peak RSS/PSS for all 38 rows but no report qualifies
   (contended host, `powersave` governor). The 114-row runtime scorecard runs
   end to end; startup is 32 whole-process syscalls against musl's 11 and ~2×
