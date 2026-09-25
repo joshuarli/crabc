@@ -935,6 +935,11 @@ struct Object {
     canonical_libc_identity: Option<ObjectIdentity>,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: Option<usize>,
+    // The readable file-backed PT_LOAD (virtual start, file end) that a full
+    // program-header scan found holding the first dynsym record. Direct
+    // record reads inside it skip rescanning; see `direct_symbol`.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    symtab_file_load: Option<(u64, u64)>,
     // The installed runtime reads DT_NEEDED name offsets from `dynamic`
     // through `needed_name_offset`, so an object has no DT_NEEDED bound.
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
@@ -1008,6 +1013,8 @@ const EMPTY_OBJECT: Object = Object {
     canonical_libc_identity: None,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: None,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    symtab_file_load: None,
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     needed: [0; MAX_NEEDED],
     needed_count: 0,
@@ -1913,6 +1920,8 @@ unsafe fn parse_mapped(
     // have no export buckets while relocations still name undefined imports;
     // later direct indexed access validates exactly the named record.
     if !virtual_range_in_readable_file_load(phdr, phnum, symtab_address, 24) { return None; }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    { object.symtab_file_load = readable_file_load_segment(phdr, phnum, symtab_address, 24); }
     object.symtab = runtime_address(base, symtab_address)? as *const u8;
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     {
@@ -4792,6 +4801,23 @@ unsafe fn virtual_range_in_readable_file_load(
     false
 }
 
+/// The segment [`virtual_range_in_readable_file_load`] finds holding
+/// `[address, address + byte_len)`, as (virtual start, file end). A full
+/// scan reached it without meeting an overflowing readable load before it,
+/// so any range inside it also gets `true` from that scan.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn readable_file_load_segment(phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> Option<(u64, u64)> {
+    let end = address.checked_add(byte_len)?;
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        if read_u32(header) != PT_LOAD || read_u32(header.add(4)) & PF_R == 0 { continue; }
+        let start = read_u64(header.add(16));
+        let file_end = start.checked_add(read_u64(header.add(32)))?;
+        if address >= start && end <= file_end { return Some((start, file_end)); }
+    }
+    None
+}
+
 unsafe fn virtual_range_in_writable_load(phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
     let Some(end) = address.checked_add(byte_len) else { return false; };
     for index in 0..phnum {
@@ -4997,7 +5023,10 @@ unsafe fn direct_symbol(object: &Object, index: usize) -> Option<*const u8> {
     let byte_offset = index.checked_mul(24)?;
     let virtual_base = (object.symtab as u64).checked_sub(object.base)?;
     let virtual_address = virtual_base.checked_add(u64::try_from(byte_offset).ok()?)?;
-    if !unsafe { virtual_range_in_readable_file_load(object.phdr, object.phnum, virtual_address, 24) } {
+    let in_known_load = object.symtab_file_load.is_some_and(|(start, file_end)| {
+        virtual_address >= start && virtual_address.checked_add(24).is_some_and(|end| end <= file_end)
+    });
+    if !in_known_load && !unsafe { virtual_range_in_readable_file_load(object.phdr, object.phnum, virtual_address, 24) } {
         return None;
     }
     Some(unsafe { object.symtab.add(byte_offset) })

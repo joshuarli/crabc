@@ -752,9 +752,10 @@ unsafe fn preflight_object_guarded(
             // word-relocation admissions. A COPY relocation would otherwise
             // bypass that gate through generic symbol lookup. R_NONE above
             // remains inert and has no import semantics.
-            if symbol != 0
+            // Only COPY needs the name here; any other symbolic relocation
+            // reads (and fails on) the same name in word_resolution below.
+            if kind == R_COPY && symbol != 0
                 && is_private_runtime_symbol(unsafe { symbol_name(object, symbol) }?)
-                && kind == R_COPY
             {
                 return None;
             }
