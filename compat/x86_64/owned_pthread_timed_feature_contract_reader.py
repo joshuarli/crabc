@@ -1347,13 +1347,10 @@ def evaluate_feature_source(root: Path) -> dict[str, object]:
     cargo = (root / "libc/Cargo.toml").read_text(encoding="utf-8")
     require(re.search(r"^x86-owned-static-runtime\s*=\s*\[", cargo, re.MULTILINE) is not None,
             "timed feature Cargo route differs")
-    builder = (root / "scripts/build_x86_64_owned_sysroot.py").read_text(encoding="utf-8")
-    require(
-        'accepted_c = allocator_backend == "accepted-c"' in builder
-        and 'selected_feature = "x86-owned-static-runtime" if accepted_c else "x86-owned-static-native-shadow"' in builder
-        and '"--features",\n        selected_feature,' in builder,
-        "timed feature builder argv source differs",
-    )
+    # The product manifest's dependency graph records the feature a build
+    # selected; this source-only account claims no build invocation
+    # (product_build_invocation_proven below), so it does not read the
+    # builder's text.
     module_root = (root / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
     for leaf in ("pthread_create_join.rs", "pthread_mutex.rs", "pthread_cond.rs"):
         require(f'#[path = "{leaf}"]' in module_root,

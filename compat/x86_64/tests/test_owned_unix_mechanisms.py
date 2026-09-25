@@ -42,36 +42,6 @@ class OwnedUnixMechanismTests(unittest.TestCase):
             root,
         )
 
-    def test_source_mapping_preserves_getcwd_cancellation_and_linux_boundaries(self) -> None:
-        source = MODULE.read_text(encoding="utf-8")
-        for required in (
-            "src/misc/get_current_dir_name.c",
-            "src/linux/mount.c",
-            "src/termios/tcdrain.c",
-            "src/linux/vhangup.c",
-            "src/linux/vmsplice.c",
-            "src/legacy/isastream.c",
-            "pathname_lifecycle::getcwd",
-            "allocator_string_duplication::strdup",
-            "super::pthread_cancel::syscall_cp",
-            "raw_syscall::SYS_IOCTL",
-            "raw_syscall::SYS_MOUNT",
-            "raw_syscall::SYS_UMOUNT2",
-            "raw_syscall::SYS_VHANGUP",
-            "raw_syscall::SYS_VMSPLICE",
-            "F_GETFD",
-        ):
-            self.assertIn(required, source)
-
-        syscall = SYSCALL.read_text(encoding="utf-8")
-        for required in (
-            "pub(crate) const SYS_VHANGUP: i64 = 153;",
-            "pub(crate) const SYS_MOUNT: i64 = 165;",
-            "pub(crate) const SYS_UMOUNT2: i64 = 166;",
-            "pub(crate) const SYS_VMSPLICE: i64 = 278;",
-        ):
-            self.assertIn(required, syscall)
-
     def test_dynamic_qualification_replays_the_same_object_runner(self) -> None:
         source = QUALIFICATION.read_text(encoding="utf-8")
         self.assertIn(

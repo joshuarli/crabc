@@ -79,32 +79,6 @@ class LocaleAliasContractTests(unittest.TestCase):
             (False, False, False),
         )
 
-    def test_source_pairs_public_weak_symbols_with_their_actual_internal_bodies(self) -> None:
-        contract = self.load_contract()
-        source = "\n".join(path.read_text(encoding="utf-8") for path in SOURCES.values())
-        for public, internal in contract["visible_aliases"].items():
-            with self.subTest(public=public):
-                # Per-member source blocks may wrap the two directives.
-                self.assertRegex(source, rf'"\.weak {re.escape(public)}",\s*"\.set {re.escape(public)}, {re.escape(internal)}"')
-                self.assertTrue(
-                    f'#[export_name = "{internal}"]' in source
-                    or f'{public}, "{internal}"' in source,
-                    f"{public} lacks its internal implementation export",
-                )
-        for public, internal in contract["hidden_aliases"].items():
-            with self.subTest(public=public):
-                self.assertIn(f'".hidden {internal}"', source)
-                self.assertIn(f'".weak {public}",', source)
-                self.assertIn(f'".set {public}, {internal}"', source)
-                self.assertIn(f'#[export_name = "{internal}"]', source)
-        timezone = SOURCES["timezone"].read_text(encoding="utf-8")
-        objects = SOURCES["objects"].read_text(encoding="utf-8")
-        self.assertRegex(objects, r'"\.weak __freelocale",\s*"\.set __freelocale, freelocale"')
-        self.assertRegex(objects, r'#\[no_mangle\]\s*pub unsafe extern "C" fn freelocale')
-        self.assertRegex(timezone, r'#\[linkage = "weak"\]\s*pub extern "C" fn tzset\(\)')
-        self.assertIn("fn refresh_tzset()", timezone)
-        self.assertNotIn('export_name = "__tzset"', timezone)
-
     def test_internal_locale_time_calls_do_not_reenter_public_override_symbols(self) -> None:
         calendar = SOURCES["calendar"].read_text(encoding="utf-8")
         strftime = SOURCES["strftime"].read_text(encoding="utf-8")

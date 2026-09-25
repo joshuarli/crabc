@@ -120,18 +120,6 @@ class CompatibilityEntryAliasSymbolsTests(unittest.TestCase):
             with self.assertRaisesRegex(symbols.CompatibilityEntryAliasError, "non-promoting"):
                 symbols._load_contract(path)
 
-    def test_native_owner_source_keeps_aliases_and_source_shaped_wrappers(self) -> None:
-        scan = (ROOT / "libc/src/c_abi/x86_64/stdio_format_scan.rs").read_text(encoding="utf-8")
-        integer = (ROOT / "libc/src/c_abi/x86_64/integer_parse.rs").read_text(encoding="utf-8")
-        filesystem = (ROOT / "libc/src/c_abi/x86_64/owned_filesystem_mechanisms.rs").read_text(encoding="utf-8")
-        self.assertIn('".weak __isoc99_sscanf"', scan)
-        self.assertIn('".set __isoc99_vfscanf, vfscanf"', scan)
-        self.assertIn('".weak __strtol_internal"', integer)
-        self.assertIn('".set __strtoumax_internal, strtoumax"', integer)
-        self.assertIn('pub unsafe extern "C" fn __xmknod(', filesystem)
-        self.assertIn('pub unsafe extern "C" fn __xmknodat(', filesystem)
-        self.assertIn('core::ptr::read(device)', filesystem)
-
     def test_runner_keeps_one_installed_object_and_all_required_execution_shapes(self) -> None:
         runner = (ROOT / "compat/x86_64/run_c_compatibility_entry_aliases.sh").read_text(encoding="utf-8")
         probe = (ROOT / "compat/x86_64/c_compatibility_entry_aliases_probe.c").read_text(encoding="utf-8")

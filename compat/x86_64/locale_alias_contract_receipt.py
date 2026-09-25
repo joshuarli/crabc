@@ -548,27 +548,14 @@ def _contract(root: Path) -> dict[str, Any]:
 def validate_source_contract(root: Path) -> dict[str, object]:
     """Bind source-owned aliases without inventing static feature placement."""
 
+    # The public/internal alias pairs, their weak/hidden bindings and the
+    # reverse freelocale alias are proven on the installed products' ELF
+    # symbol tables (locale_alias_contract_symbols.py), not by source text.
     contract = _contract(root)
     texts = {path: (root / path).read_text(encoding="utf-8") for path in IMPLEMENTATION_SOURCES}
-    combined = "\n".join(texts.values())
-    for group in (contract["visible_aliases"], contract["hidden_aliases"]):
-        assert isinstance(group, Mapping)
-        for public, internal in group.items():
-            if f'.weak {public}' not in combined or f'.set {public}, {internal}' not in combined:
-                _fail(f"source weak alias declaration changed: {public}")
-            if (f'#[export_name = "{internal}"]' not in combined
-                    and '#[export_name = $internal]' not in combined
-                    and f'{public}, "{internal}"' not in combined):
-                _fail(f"source internal body export changed: {internal}")
-    for public, internal in contract["hidden_aliases"].items():
-        if f'".hidden {internal}"' not in combined:
-            _fail(f"source hidden time alias declaration changed: {internal}")
-    objects = texts["libc/src/c_abi/x86_64/locale_objects.rs"]
     timezone = texts["libc/src/c_abi/x86_64/owned_timezone.rs"]
     static_c_abi = texts["libc/src/c_abi/x86_64/static_c_abi.rs"]
     oracle_wrapper = (root / "docker/x86_64-musl-oracle-gcc").read_text(encoding="utf-8")
-    if re.search(r'"\.weak __freelocale",\s*"\.set __freelocale, freelocale"', objects) is None:
-        _fail("source reverse freelocale declaration changed")
     if '#[linkage = "weak"]\npub extern "C" fn tzset()' not in timezone:
         _fail("source public tzset declaration changed")
     if 'fn refresh_tzset()' not in timezone or 'export_name = "__tzset"' in timezone:

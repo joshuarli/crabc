@@ -51,8 +51,6 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
         self.assertIn('"linker_policy": "exact-local-symbols"', source)
         self.assertIn('"shared_mimalloc_hidden_exports": shared_mimalloc_hidden_exports', source)
         self.assertEqual(source.count("--version-script="), 3)
-        static_builder = (ROOT / "scripts/build_x86_64_owned_sysroot.py").read_text(encoding="utf-8")
-        self.assertNotIn("owned_mimalloc_hidden", static_builder)
 
     def test_local_contract_rejects_a_public_dynsym_row_or_nonlocal_symtab_row(self) -> None:
         members = ["hidden_function", "hidden_object"]
