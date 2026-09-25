@@ -8,8 +8,9 @@ It builds four installed products with their own builders:
 
 * ``scripts/build_x86_64_owned_sysroot.py`` (static) and
   ``scripts/build_x86_64_owned_dynamic_sysroot.py`` (dynamic),
-* each with ``--allocator-backend accepted-c`` (lane ``pinned_c``) and
-  ``--allocator-backend native-shadow`` (lane ``rust_engine``).
+* each with ``--allocator-backend pinned-c-evidence`` (lane ``pinned_c``:
+  the accepted C wrapper over exact pinned mimalloc v3.5.0, an evidence-only
+  product) and ``--allocator-backend native-shadow`` (lane ``rust_engine``).
 
 The engine fixture and ``perf-x86_64/integrated-libc-backend.c`` (every
 operation is the public libc entry point) are compiled once per link mode by
@@ -24,9 +25,8 @@ startup-plus-first-allocation row timed by a harness launcher. The report
 records the engine's uncontended-host evidence.
 
 ``validate_integrated_report`` rereads a report and names every unmet
-condition, including one this runner cannot remove: the installed C backend
-is the accepted ``libmimalloc-sys`` bundle, whose mimalloc version is read
-from its source header and compared with the pinned v3.5.0.
+condition. The C reference must be the evidence product whose recorded
+``MI_MALLOC_VERSION`` is 30500 and whose upstream identity is the pin.
 """
 
 from __future__ import annotations
@@ -59,8 +59,8 @@ SEALED_PATHS = (
     "compat/allocator/perf_engine_x86_64.py", "compat/allocator/perf_x86_64.py",
     "compat/allocator/perf_integrated_x86_64.py",
 )
-CARGO_REGISTRY = ROOT / ".work/x86_64/cargo/registry/src"
-C_HEADER_KEY = "libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc.h"
+REFERENCE_BACKEND = "pinned-c-evidence"
+REFERENCE_MI_MALLOC_VERSION = 30500
 
 
 def _load_engine():
@@ -93,8 +93,8 @@ def load_manifest(path: Path = MANIFEST) -> dict[str, Any]:
         raise HarnessError("integrated matrix schema changed")
     if set(manifest.get("products", {})) != {"static", "dynamic"}:
         raise HarnessError("integrated matrix must name the static and dynamic products")
-    if manifest.get("backends") != {"pinned_c": "accepted-c", "rust_engine": "native-shadow"}:
-        raise HarnessError("integrated matrix must compare accepted-c with native-shadow")
+    if manifest.get("backends") != {"pinned_c": REFERENCE_BACKEND, "rust_engine": "native-shadow"}:
+        raise HarnessError(f"integrated matrix must compare {REFERENCE_BACKEND} with native-shadow")
     engine_rows = {row["name"]: row for row in engine.load_manifest()["rows"]}
     names = manifest.get("engine_rows")
     if not isinstance(names, list) or not names or len(set(names)) != len(names):
@@ -188,29 +188,25 @@ def build_products(manifest: Mapping[str, Any], work: Path, *, reuse: bool) -> d
     return products
 
 
-def accepted_c_upstream(products: Mapping[str, Mapping[str, Path]]) -> dict[str, Any]:
-    """The accepted C backend's mimalloc version, from the header its product recorded."""
+def c_reference(products: Mapping[str, Mapping[str, Path]]) -> dict[str, Any]:
+    """The evidence product's pinned mimalloc object record, identical for both link modes."""
 
-    digests = set()
+    records = []
     for kind in products:
-        text = json.dumps(json.loads(next((products[kind]["pinned_c"] / "share/crabc").glob("libc-*.provenance.json"))
-                                     .read_text(encoding="utf-8")))
-        match = re.search(re.escape(C_HEADER_KEY) + r'": "([0-9a-f]{64})"', text)
-        if match is None:
-            raise HarnessError(f"{kind} accepted-c product does not record {C_HEADER_KEY}")
-        digests.add(match.group(1))
-    if len(digests) != 1:
-        raise HarnessError("static and dynamic accepted-c products record different mimalloc headers")
-    digest = digests.pop()
-    for header in CARGO_REGISTRY.glob("*/libmimalloc-sys-*/c_src/mimalloc/v3/include/mimalloc.h"):
-        if engine.sha256_file(header) == digest:
-            version = re.search(r"(?m)^#define MI_MALLOC_VERSION (\d+)", header.read_text(encoding="utf-8"))
-            if version is None:
-                break
-            number = int(version.group(1))
-            return {"header_sha256": digest, "package": header.parents[4].name,
-                    "mi_malloc_version": number, "version": f"{number // 10000}.{number // 100 % 100}.{number % 100}"}
-    raise HarnessError("the accepted-c product's mimalloc header is not in the checkout's Cargo registry")
+        root = products[kind]["pinned_c"] / "share/crabc"
+        shared = root / "libc-shared.provenance.json"
+        if shared.is_file():
+            record = json.loads(shared.read_text(encoding="utf-8")).get("pinned_c_evidence")
+        else:
+            record = json.loads((root / "libc-static.provenance.json").read_text(encoding="utf-8")).get(
+                "allocator_backend", {}).get("pinned_c_evidence")
+        if not isinstance(record, Mapping):
+            raise HarnessError(f"{kind} C reference product records no pinned-c-evidence object")
+        records.append({key: record.get(key) for key in ("upstream", "mi_malloc_version", "member_sha256",
+                                                          "flag_reconstruction")})
+    if any(record != records[0] for record in records):
+        raise HarnessError("static and dynamic C reference products carry different pinned mimalloc objects")
+    return {"backend": REFERENCE_BACKEND, **records[0]}
 
 
 def build_programs(manifest: Mapping[str, Any], products: Mapping[str, Mapping[str, Path]], work: Path) -> dict[str, Any]:
@@ -341,7 +337,7 @@ def run(arguments: argparse.Namespace) -> Path:
     report["products"] = {kind: {lane: {"path": engine.shared.relative(path),
                                         "manifest": engine.file_record(path / "share/crabc/manifest.json")}
                                  for lane, path in lanes.items()} for kind, lanes in products.items()}
-    report["accepted_c_upstream"] = accepted_c_upstream(products)
+    report["c_reference"] = c_reference(products)
     programs = build_programs(manifest, products, work)
     report["programs"] = programs["records"]
     with tempfile.TemporaryDirectory(prefix="crabc-integrated-perf-", dir=work) as temporary:
@@ -393,11 +389,15 @@ def integrated_unmet(report: Mapping[str, Any], manifest: Mapping[str, Any] | No
     if report.get("native_execution_provenance", {}).get("execution_mode") != "native":
         unmet.append("report lacks native x86-64 execution provenance")
     unmet.extend(source_seal_unmet(report.get("provenance", {}).get("seal", {})))
-    upstream = report.get("accepted_c_upstream", {})
+    reference = report.get("c_reference", {})
     pin = engine.shared.load_pin()
-    if upstream.get("version") != pin["version"]:
-        unmet.append(f"the installed C backend is {upstream.get('package')} bundling mimalloc "
-                     f"{upstream.get('version')}, not the exact v{pin['version']} the promotion table compares against")
+    upstream = reference.get("upstream") or {}
+    if (reference.get("backend") != REFERENCE_BACKEND or reference.get("mi_malloc_version") != REFERENCE_MI_MALLOC_VERSION
+            or {key: upstream.get(key) for key in ("version", "revision")} != {key: pin[key] for key in ("version", "revision")}
+            or upstream.get("archive_sha256") != pin["sha256"]):
+        unmet.append(f"the C reference is {reference.get('backend')} with MI_MALLOC_VERSION "
+                     f"{reference.get('mi_malloc_version')} and upstream {upstream.get('version')}, not the "
+                     f"{REFERENCE_BACKEND} product over exact v{pin['version']} ({REFERENCE_MI_MALLOC_VERSION})")
     mode = engine.load_manifest()["modes"]["full"]
     rows = {row["name"]: row for row in engine_rows(manifest)}
     for name in row_names(manifest):

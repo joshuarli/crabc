@@ -3,7 +3,7 @@
  *
  * The engine fixture's opaque backend over the installed product's public
  * C allocator: every operation is the libc entry point an ordinary program
- * calls.  Which allocator answers (the accepted C backend or the native
+ * calls.  Which allocator answers (pinned C mimalloc v3.5.0 or the native
  * Rust shadow) is decided only by the installed product the program links.
  */
 #define _GNU_SOURCE

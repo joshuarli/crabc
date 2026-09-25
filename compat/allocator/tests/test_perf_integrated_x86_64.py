@@ -23,11 +23,12 @@ import perf_integrated_x86_64 as integrated  # noqa: E402
 from test_perf_engine_x86_64 import idle_host, timed_sample  # noqa: E402
 
 engine = integrated.engine
+PIN = engine.shared.load_pin()
 # The real seal comparison, before any test replaces it.
 SEAL = integrated.source_seal_unmet
 
 
-def synthetic_integrated(version: str = "3.3.2") -> dict:
+def synthetic_integrated(mi_malloc_version: int = 30500, backend: str = "pinned-c-evidence") -> dict:
     manifest = integrated.load_manifest()
     samples = engine.load_manifest()["modes"]["full"]["samples"]
     rows = {row["name"]: row for row in integrated.engine_rows(manifest)}
@@ -36,7 +37,9 @@ def synthetic_integrated(version: str = "3.3.2") -> dict:
         "products_reused": False,
         "native_execution_provenance": {"execution_mode": "native", "host_architecture": "x86_64"},
         "provenance": {"seal": {"objects": {}, "dirty_paths": []}},
-        "accepted_c_upstream": {"package": "libmimalloc-sys-0.1.49", "version": version},
+        "c_reference": {"backend": backend, "mi_malloc_version": mi_malloc_version,
+                        "upstream": {"version": PIN["version"], "revision": PIN["revision"],
+                                     "archive_sha256": PIN["sha256"]}},
         "rows": {},
         "uncontended_host": engine.uncontended_host_record(idle_host([0, 1, 2, 3])),
     }
@@ -60,11 +63,14 @@ class IntegratedReaderTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.report = synthetic_integrated()
 
-    def test_the_accepted_c_bundle_version_is_the_one_remaining_reason(self) -> None:
-        self.assertEqual(integrated.integrated_unmet(self.report), [
-            "the installed C backend is libmimalloc-sys-0.1.49 bundling mimalloc 3.3.2, not the exact v3.5.0 "
-            "the promotion table compares against"])
-        self.assertEqual(integrated.integrated_unmet(synthetic_integrated("3.5.0")), [])
+    def test_a_complete_report_over_the_pinned_reference_qualifies(self) -> None:
+        self.assertEqual(integrated.integrated_unmet(self.report), [])
+
+    def test_the_c_reference_must_be_the_pinned_evidence_product(self) -> None:
+        for report in (synthetic_integrated(30302), synthetic_integrated(backend="accepted-c")):
+            unmet = integrated.integrated_unmet(report)
+            self.assertEqual(len(unmet), 1, unmet)
+            self.assertIn("not the pinned-c-evidence product over exact v3.5.0 (30500)", unmet[0])
 
     def test_covers_both_link_modes_and_the_startup_row(self) -> None:
         names = integrated.row_names(integrated.load_manifest())
@@ -76,7 +82,7 @@ class IntegratedReaderTests(unittest.TestCase):
                          {"throughput_lower_95", "p99_upper_95", "peak_rss_upper_95", "peak_pss_upper_95"})
 
     def test_names_missing_tampered_pss_less_and_reused_rows(self) -> None:
-        report = copy.deepcopy(synthetic_integrated("3.5.0"))
+        report = copy.deepcopy(synthetic_integrated())
         del report["rows"]["static/churn_8k"]
         for sample in report["rows"]["dynamic/alloc_free_64"]["lanes"]["rust_engine"]["samples"]:
             for batch in sample["batches"]:
@@ -89,7 +95,7 @@ class IntegratedReaderTests(unittest.TestCase):
             self.assertTrue(any(expected in item for item in unmet), (expected, unmet))
 
     def test_a_contended_host_is_named(self) -> None:
-        report = synthetic_integrated("3.5.0")
+        report = synthetic_integrated()
         evidence = idle_host([0])
         evidence["frequency_start"]["cpus"]["0"]["scaling_governor"] = "powersave"
         report["uncontended_host"] = engine.uncontended_host_record(evidence)
@@ -108,6 +114,8 @@ class IntegratedReaderTests(unittest.TestCase):
             path.write_text("[", encoding="utf-8")
             self.assertIn("unreadable", integrated.inspect_integrated_report(integrated.ROOT, path)["unmet"][0])
             path.write_text(json.dumps(self.report), encoding="utf-8")
+            self.assertEqual(set(integrated.validate_integrated_report(integrated.ROOT, path)), {"metrics"})
+            path.write_text(json.dumps(synthetic_integrated(30302)), encoding="utf-8")
             with self.assertRaisesRegex(engine.HarnessError, "not a qualified integrated report"):
                 integrated.validate_integrated_report(integrated.ROOT, path)
 
