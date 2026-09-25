@@ -77,15 +77,33 @@ are not transferable passes for a different revision.
      reconstruct against the current source seal, so a family transition
      only holds on the one clean candidate revision that names its receipt
      and regenerates it; the final transition is a single candidate on which
-     the whole chain runs. Until then, run complete preflights on one frozen
-     revision to surface every failure: `materialized-dynamic-sysroot` first
-     passed at `4ddc94ebe` (lane `dynamic-product`), which is now preflighting
-     `libc.posix-runtime` (`owned-posix-native-execution.md`),
-     `libc.pthread-tls`, `libc.text-math-locale-stdio`, `libc.resolver`, the
-     loader and sysroot families, and the consumer gates on that cohort.
-  2. Keep 16 lanes running (`.work/tmp/lane-agents.txt` holds the map and
-     backlog). Merge a lane's `[[family.verified_slice]]` change only after
-     rerunning its cited commands in the frozen checkout.
+     the whole chain runs (`qualification-candidate --work DIR`). The frozen
+     preflight at `4ddc94ebe` (lane `dynamic-product`, evidence under
+     `.work/worktrees/lane-dynamic-product/.work/logs/pf/`) passed the
+     dynamic qualification, POSIX family matrix and companions, pthread-tls,
+     all 30 text producers and assemble, the loader family, consumer std/LTO
+     and Lua admission. It failed `owned-posix-native` (OS-test: the old 600 s
+     limit, fixed on main by `0f7359528`, and one `aio/aio_cancel` difference
+     where pinned musl's `cleanup()` ordering makes the oracle print
+     `EINPROGRESS`; this needs a finite OS-test disposition),
+     `owned-resolver-family` (cross-member hidden TLS in the static link
+     authority, fixed on main by the abi-closure commits), and the static and
+     combined sysroots (the 33rd `atexit` expectation, fixed on main by
+     `7fbcc1b5d`). Next: add the `aio_cancel` oracle disposition, make the
+     text family row executable with its admission receipt, then run
+     `qualification-candidate --through posix-admission` on a clean checkout.
+  2. Lanes are wound down (user direction, 2026-09-25); `.work/tmp/lane-agents.txt`
+     holds the last map. Unmerged: `lane/abi-closure` `f1c7ddc56` (WIP
+     companion-reader refresh, tested but not proven on a cohort). Known
+     open items from the last lane reports: `libc-foundation` fails to compile
+     (`foundation.rs` includes `memory.rs` without `static_archive_member!`);
+     the static `libc.a` carries a `c.core-*` member exporting `core::*`
+     globals that collide with an application's libcore (blocks
+     `m8.rust-std`); libc ignores `destroy_on_exit` at automatic exit;
+     `materialized-dynamic-sysroot` still has load-sensitive deadlines (aio
+     fresh-signal and behavior, credentials `threads`, message-queues,
+     signal-handler-fork `raise-race`). Merge a `[[family.verified_slice]]`
+     change only after rerunning its cited commands in a frozen checkout.
   3. Remaining low-churn repository-file pins (`compat/x86_64/core_image.py`
      now names the core image once): owned `.list` digests in the
      dynamic sysroot builder and the mimalloc visibility, errno-alias and
