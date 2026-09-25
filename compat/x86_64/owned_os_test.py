@@ -37,6 +37,11 @@ DEFAULT_SUITES = (
     "include", "namespace", "basic", "io", "limits", "malloc", "process", "pty", "signal", "stdio",
 )
 MUSL_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
+# One whole-suite Make bound, used only as a hang guard: os-test's run.sh has no
+# per-case limit. The owned side compiles each case twice, scans dependencies
+# and seals every link, so `basic` alone takes ~1100 s at a host load average
+# near 60; a 600 s bound timed it out with ~260 outcomes unwritten.
+SUITE_TIMEOUT_SECONDS = 3600.0
 MUSL_INCLUDE = "/opt/musl-1.2.6/include"
 SCHEMA = "crabc.x86_64-owned-os-test/v1"
 ADAPTER_SCHEMA = "crabc.x86_64-owned-os-test-adapter/v1"
@@ -1488,7 +1493,7 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
     parser.add_argument("--source-root", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--evidence", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--runtime-root", type=Path, help=argparse.SUPPRESS)
-    parser.add_argument("--timeout", type=float, default=600.0)
+    parser.add_argument("--timeout", type=float, default=SUITE_TIMEOUT_SECONDS)
     parser.add_argument("--header-jobs", type=int, default=8,
                         help="bounded parallel jobs for compile-only include and namespace suites (default: 8)")
     parser.add_argument("--os-test-root", type=Path,

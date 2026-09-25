@@ -377,7 +377,7 @@ class NativeObservationsTests(unittest.TestCase):
             'sides': {},
         }
         report = {'schema': 'crabc.x86_64-owned-os-test/v1', 'passed': True, 'profile': list(native.OS_TEST_SUITES),
-                  'timeout_seconds': 600.0, 'work': self.recorded(self.leaf),
+                  'timeout_seconds': contract.SUITE_TIMEOUT_SECONDS, 'work': self.recorded(self.leaf),
                   'product': {**product_identity(self.product), 'payload_roster': product_roster},
                   'source': {'revision': native.OS_TEST_REVISION, 'tree': tree,
                              'gnu_makefile_sha256': self.binding(stage / 'GNUmakefile')['sha256'],
@@ -548,7 +548,7 @@ class NativeObservationsTests(unittest.TestCase):
                 command = (contract.musl_make_command(suite, Path(self.recorded(root)), 8) if side == 'musl' else
                            contract.make_command(suite, Path(self.recorded(root)), Path(self.recorded(self.root / 'compat/x86_64/owned_os_test.py')),
                            Path(self.recorded(product)), Path(self.recorded(self.leaf / 'evidence' / suite)), Path(self.recorded(runtime)), 8))
-                record = contract.make_record(self.leaf, suite, side, command, 600.0, 0, b'make output\n', b'')
+                record = contract.make_record(self.leaf, suite, side, command, contract.SUITE_TIMEOUT_SECONDS, 0, b'make output\n', b'')
                 row[side] = {**(record if side == 'musl' else {'make': record}), 'outcomes': outcomes, 'outcome_count': len(expected), 'passed': True}
             integrity = {'passed': True, 'difference': {'missing': [], 'unexpected': [], 'changed': []}}
             for phase in ('before', 'after'):

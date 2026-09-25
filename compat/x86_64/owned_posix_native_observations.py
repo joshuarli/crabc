@@ -1627,7 +1627,7 @@ def _os_test(reader):
     profiled = reader.profile_companions is not None
     dispositions = []
     same([report['schema'], report['passed'], report['profile'], report['timeout_seconds'], report['work']],
-         ['crabc.x86_64-owned-os-test/v1', not profiled, list(OS_TEST_SUITES), 600.0, reader.recorded(leaf)], 'complete os-test campaign')
+         ['crabc.x86_64-owned-os-test/v1', not profiled, list(OS_TEST_SUITES), contract.SUITE_TIMEOUT_SECONDS, reader.recorded(leaf)], 'complete os-test campaign')
     require([suite['suite'] for suite in report['suites']] == list(OS_TEST_SUITES), 'os-test full suite roster differs')
     stage, files = _os_source(reader, report)
     prepared_basic_files = _os_aio_suspend_preparation(reader, report, stage, files)
@@ -1660,7 +1660,7 @@ def _os_test(reader):
             result = suite[side]
             same([result['passed'], result['outcome_count']], [True, len(expected)], 'os-test side result')
             require(set(result['outcomes']) == set(expected), 'os-test side omitted or added a source outcome')
-            commands[name][side] = _os_make(reader, name, side, result if side == 'musl' else result['make'], 600.0, contract)
+            commands[name][side] = _os_make(reader, name, side, result if side == 'musl' else result['make'], contract.SUITE_TIMEOUT_SECONDS, contract)
             root = leaf / ('musl' if side == 'musl' else 'suites') / name
             outcomes = root / 'out/linux' / name
             actual = {path.relative_to(outcomes).as_posix() for path in outcomes.rglob('*.out')}
@@ -1729,4 +1729,4 @@ def _os_test(reader):
                        'dispositions': dispositions},
         source_tree={'revision': OS_TEST_REVISION, 'tree': OS_TEST_TREE, 'files': files},
         source_preparation=reader.identity(reader.root / 'compat/x86_64/owned_os_test_aio_suspend_source.py', source=True),
-        oracle_inputs=oracle, limits={'suite_timeout_seconds': 600.0, 'header_jobs': 8})
+        oracle_inputs=oracle, limits={'suite_timeout_seconds': contract.SUITE_TIMEOUT_SECONDS, 'header_jobs': 8})
