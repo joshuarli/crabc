@@ -321,6 +321,9 @@ const R_X86_64_TLSDESC: u32 = 36;
 const SYS_WRITE: i64 = 1;
 const SYS_CLOSE: i64 = 3;
 const SYS_FSTAT: i64 = 5;
+const SYS_PREAD64: i64 = 17;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+const SYS_NEWFSTATAT: i64 = 262;
 const SYS_MMAP: i64 = 9;
 const SYS_MPROTECT: i64 = 10;
 const SYS_MUNMAP: i64 = 11;
@@ -2233,24 +2236,48 @@ unsafe fn file_size_from_fd(fd: i64) -> Option<u64> {
     u64::try_from(read_i64(stat.as_ptr().add(X86_64_STAT_SIZE_OFFSET))).ok()
 }
 
+/// One Linux x86-64 `struct stat` snapshot of an opened or named file.
+///
+/// Loading reads it once per descriptor: the graph identity and the mapper's
+/// directory/size checks share the same `fstat` rather than each issuing one.
+struct FileStatus([u8; X86_64_STAT_BYTE_LEN]);
+
+impl FileStatus {
+    /// `fstat(fd)`, or the Linux errno.
+    unsafe fn of_fd(fd: i64) -> Result<Self, i32> {
+        let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
+        syscall_error(syscall2(SYS_FSTAT, fd, stat.as_mut_ptr() as i64))?;
+        Ok(Self(stat))
+    }
+
+    /// `stat(path)` (following symlinks, as `open` does), or the Linux errno.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    unsafe fn of_path(path: *const u8) -> Result<Self, i32> {
+        let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
+        syscall_error(syscall4(SYS_NEWFSTATAT, AT_FDCWD, path as i64, stat.as_mut_ptr() as i64, 0))?;
+        Ok(Self(stat))
+    }
+
+    #[cfg(crabc_general_initial_graph)]
+    fn identity(&self) -> Option<ObjectIdentity> {
+        let identity = ObjectIdentity {
+            // Linux x86-64's selected 144-byte `struct stat` places `st_dev`
+            // and `st_ino` at offsets zero and eight.  The graph stores both
+            // rather than a pathname so aliases and repeated SONAME edges
+            // deduplicate by the opened file, not by one search spelling.
+            device: unsafe { read_u64(self.0.as_ptr()) },
+            inode: unsafe { read_u64(self.0.as_ptr().add(8)) },
+        };
+        (identity.device != 0 || identity.inode != 0).then_some(identity)
+    }
+
+    fn mode(&self) -> u32 { unsafe { read_u32(self.0.as_ptr().add(X86_64_STAT_MODE_OFFSET)) } }
+    fn size(&self) -> i64 { unsafe { read_i64(self.0.as_ptr().add(X86_64_STAT_SIZE_OFFSET)) } }
+}
+
 #[cfg(crabc_general_initial_graph)]
 unsafe fn file_identity_from_fd(fd: i64) -> Option<ObjectIdentity> {
-    let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
-    if syscall2(SYS_FSTAT, fd, stat.as_mut_ptr() as i64) < 0 {
-        return None;
-    }
-    let identity = ObjectIdentity {
-        // Linux x86-64's selected 144-byte `struct stat` places `st_dev` and
-        // `st_ino` at offsets zero and eight.  The graph stores both rather
-        // than a pathname so aliases and repeated SONAME edges deduplicate by
-        // the opened file, not by one search spelling.
-        device: read_u64(stat.as_ptr()),
-        inode: read_u64(stat.as_ptr().add(8)),
-    };
-    if identity.device == 0 && identity.inode == 0 {
-        return None;
-    }
-    Some(identity)
+    unsafe { FileStatus::of_fd(fd) }.ok()?.identity()
 }
 
 struct MappingLease {
@@ -2307,23 +2334,36 @@ unsafe fn map_elf_reporting_error(
     general_initial_graph: bool,
     role: ObjectRole,
 ) -> Result<Object, i32> {
-    let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
-    syscall_error(syscall2(SYS_FSTAT, fd, stat.as_mut_ptr() as i64))?;
-    if read_u32(stat.as_ptr().add(X86_64_STAT_MODE_OFFSET)) & S_IFMT == S_IFDIR {
+    let status = FileStatus::of_fd(fd)?;
+    map_elf_with_status(fd, &status, allow_bounded_runtime_legacy_tags, general_initial_graph, role)
+}
+
+/// [`map_elf_reporting_error`] for a descriptor whose `fstat` the caller
+/// already holds (`status` must describe `fd`).
+unsafe fn map_elf_with_status(
+    fd: i64,
+    status: &FileStatus,
+    allow_bounded_runtime_legacy_tags: bool,
+    general_initial_graph: bool,
+    role: ObjectRole,
+) -> Result<Object, i32> {
+    if status.mode() & S_IFMT == S_IFDIR {
         return Err(EISDIR);
     }
-    let file_byte_len = u64::try_from(read_i64(stat.as_ptr().add(X86_64_STAT_SIZE_OFFSET)))
-        .map_err(|_| ENOEXEC)?;
+    let file_byte_len = u64::try_from(status.size()).map_err(|_| ENOEXEC)?;
     if file_byte_len < 64 {
         return Err(ENOEXEC);
     }
     let header_map_len = file_byte_len.min(PAGE);
-    let first = syscall_error(syscall6(SYS_MMAP, 0, header_map_len as i64, PROT_READ, MAP_PRIVATE, fd, 0))?;
-    let header_mapping = MappingLease {
-        address: first,
-        byte_len: header_map_len,
-    };
-    let header = first as *const u8;
+    // Read the first page as musl's map_library reads its header buffer: one
+    // pread, not a temporary mapping and its unmap. A short read means the
+    // file changed under the fstat and is rejected like a truncated image.
+    let mut header_bytes = [0u8; PAGE as usize];
+    let read = syscall_error(syscall4(SYS_PREAD64, fd, header_bytes.as_mut_ptr() as i64, header_map_len as i64, 0))?;
+    if read as u64 != header_map_len {
+        return Err(ENOEXEC);
+    }
+    let header = header_bytes.as_ptr();
     let elf_type = read_u16(header.add(16));
     let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
         && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
@@ -2399,7 +2439,7 @@ unsafe fn map_elf_reporting_error(
                 SYS_MMAP,
                 base.checked_add(page_vaddr).ok_or(ENOEXEC)? as i64,
                 map_len as i64,
-                PROT_READ | PROT_WRITE,
+                load_protection(p),
                 MAP_PRIVATE | MAP_FIXED,
                 fd,
                 page_offset as i64,
@@ -2434,7 +2474,6 @@ unsafe fn map_elf_reporting_error(
     let runtime_phdr = runtime_phdr.ok_or(ENOEXEC)?;
     let entry = base.checked_add(read_u64(header.add(24))).ok_or(ENOEXEC)?;
     drop(phdr_mapping);
-    drop(header_mapping);
     let mut object = parse_mapped(
         base,
         runtime_phdr,
@@ -3556,18 +3595,58 @@ unsafe fn resolve_tls_symbol(
     None
 }
 
+/// The final protection of one PT_LOAD program header.
+unsafe fn segment_protection(header: *const u8) -> i64 {
+    let flags = read_u32(header.add(4));
+    let mut protection = 0;
+    if flags & PF_R != 0 { protection |= PROT_READ; }
+    if flags & PF_W != 0 { protection |= PROT_WRITE; }
+    if flags & PF_X != 0 { protection |= PROT_EXEC; }
+    protection
+}
+
+/// The protection a transaction maps one PT_LOAD's file pages with.
+///
+/// Relocation writes only reach writable segments (every write span is
+/// checked against a PF_W load, and DT_TEXTREL is rejected), so a segment is
+/// mapped with its final protection directly, as musl's map_library does.
+/// The one exception is a non-writable segment with memsz > filesz: the
+/// mapper zero-fills its tail in the last file page, so it stays writable
+/// until [`protect_segments`].
+unsafe fn load_protection(header: *const u8) -> i64 {
+    let protection = segment_protection(header);
+    if protection & PROT_WRITE == 0 && read_u64(header.add(40)) > read_u64(header.add(32)) {
+        PROT_READ | PROT_WRITE
+    } else {
+        protection
+    }
+}
+
 unsafe fn protect_segments(object: &Object) -> Option<()> {
     if object.map_provenance != ObjectMapProvenance::Transaction { return Some(()); }
+    // Usually every page already has its final protection: file pages were
+    // mapped with it, and reservation pages past them are read-write, which
+    // is final for a read-write segment. Otherwise protect every segment in
+    // program-header order, exactly as before, so a page shared by adjacent
+    // segments still ends with the later segment's protection.
+    let mut already_final = true;
     for index in 0..object.phnum {
         let p = object.phdr.add(index * 56);
         if read_u32(p) != PT_LOAD { continue; }
-        let flags = read_u32(p.add(4));
+        let vaddr = read_u64(p.add(16));
+        let file_end = align_up(vaddr.checked_add(read_u64(p.add(32)))?);
+        let end = align_up(vaddr.checked_add(read_u64(p.add(40)))?);
+        let protection = segment_protection(p);
+        already_final &= load_protection(p) == protection
+            && (end <= file_end || protection == PROT_READ | PROT_WRITE);
+    }
+    if already_final { return Some(()); }
+    for index in 0..object.phnum {
+        let p = object.phdr.add(index * 56);
+        if read_u32(p) != PT_LOAD { continue; }
         let start = object.base + align_down(read_u64(p.add(16)));
         let end = object.base + align_up(read_u64(p.add(16)).checked_add(read_u64(p.add(40)))?);
-        let mut protection = 0;
-        if flags & PF_R != 0 { protection |= PROT_READ; }
-        if flags & PF_W != 0 { protection |= PROT_WRITE; }
-        if flags & PF_X != 0 { protection |= PROT_EXEC; }
+        let protection = segment_protection(p);
         if end > start && syscall3(SYS_MPROTECT, start as i64, (end - start) as i64, protection) < 0 { return None; }
     }
     Some(())

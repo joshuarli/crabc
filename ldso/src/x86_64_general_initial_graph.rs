@@ -603,16 +603,16 @@ unsafe fn canonical_libc_alias_identity(
     let mut path = super::x86_64_runtime_memory::LoaderBuffer::new(length.checked_add(1).ok_or(())?, 0u8).ok_or(())?;
     path.as_mut_slice()[..prefix.len()].copy_from_slice(prefix);
     path.as_mut_slice()[prefix.len()..length].copy_from_slice(suffix);
-    let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_slice().as_ptr() as i64, 0x80000, 0) };
-    if fd == -2 {
-        return Ok(None);
+    // One stat names the same file an open would (symlinks followed, the
+    // same search permissions) without the open/fstat/close round trip. Only
+    // an identity already in the graph grants authority, and such a file is
+    // readable by construction; an unreadable alias outside the graph is
+    // ignored like an absent one. Any other failure still fails closed.
+    match unsafe { FileStatus::of_path(path.as_slice().as_ptr()) } {
+        Ok(status) => status.identity().map(Some).ok_or(()),
+        Err(2) => Ok(None), // ENOENT
+        Err(_) => Err(()),
     }
-    if fd < 0 {
-        return Err(());
-    }
-    let identity = unsafe { file_identity_from_fd(fd) }.ok_or(());
-    unsafe { syscall1(SYS_CLOSE, fd) };
-    identity.map(Some)
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -730,16 +730,15 @@ unsafe fn load_initial_library(
         Ok(opened) => opened,
         Err(_) => return Ok(None),
     };
-    let identity = match file_identity_from_fd(fd) {
-        Some(identity) => identity,
-        None => { syscall1(SYS_CLOSE, fd); return Ok(None); }
-    };
+    let Some((status, identity)) = FileStatus::of_fd(fd).ok()
+        .and_then(|status| status.identity().map(|identity| (status, identity)))
+    else { syscall1(SYS_CLOSE, fd); return Ok(None); };
     if let Some(index) = graph.find(identity) {
         syscall1(SYS_CLOSE, fd);
         objects[index].search_short_name |= short_name;
         return Ok(Some(index));
     }
-    let object = map_elf(fd, false, true);
+    let object = map_elf_with_status(fd, &status, false, true, ObjectRole::Library).ok();
     syscall1(SYS_CLOSE, fd);
     let Some(mut object) = object else { return Ok(None); };
     let index = match graph.admit_mapped(identity) {

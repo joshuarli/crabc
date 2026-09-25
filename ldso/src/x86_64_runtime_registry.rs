@@ -684,14 +684,16 @@ unsafe fn load_one(
         if !existing.is_null() { return Ok(existing); }
     }
     let (fd, path) = unsafe { open_runtime_file(parent, name) }?;
-    let identity = unsafe { file_identity_from_fd(fd) };
-    let Some(identity) = identity else {
-        // Report fstat's errno as musl load_library does; a zero identity
-        // has no musl analogue and is rejected as a non-loadable image.
-        let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
-        let status = unsafe { syscall2(SYS_FSTAT, fd, stat.as_mut_ptr() as i64) };
+    // Report fstat's errno as musl load_library does; a zero identity has no
+    // musl analogue and is rejected as a non-loadable image. The same status
+    // then serves the mapper, so the descriptor is stat'ed once.
+    let status = match unsafe { FileStatus::of_fd(fd) } {
+        Ok(status) => status,
+        Err(error) => { unsafe { syscall1(SYS_CLOSE, fd); } return Err(error); }
+    };
+    let Some(identity) = status.identity() else {
         unsafe { syscall1(SYS_CLOSE, fd); }
-        return Err(if is_linux_error(status) { (-status) as i32 } else { ENOEXEC });
+        return Err(ENOEXEC);
     };
     let existing = unsafe { find_identity(registry, new, identity) };
     if !existing.is_null() {
@@ -700,7 +702,7 @@ unsafe fn load_one(
         return Ok(existing);
     }
     if no_load { unsafe { syscall1(SYS_CLOSE, fd); } return Err(ERROR_NOLOAD); }
-    let mapped = unsafe { map_elf_reporting_error(fd, false, true, ObjectRole::Library) };
+    let mapped = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) };
     unsafe { syscall1(SYS_CLOSE, fd); }
     let mut object = mapped?;
     object.search_name = path.view();
