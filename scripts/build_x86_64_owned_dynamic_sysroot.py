@@ -55,6 +55,8 @@ SHARED_LIBC_MIMALLOC_HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_
 SHARED_LIBC_SYMBOL_ORDER = ROOT / "libc/src/c_abi/x86_64/owned_dynamic_hot.order"
 # Both runtime images discard their unused unwind tables, as musl's do.
 RUNTIME_DISCARD_UNWIND_SCRIPT = ROOT / "libc/src/c_abi/x86_64/owned_discard_unwind.ld"
+# The interpreter keeps its small .bss statics on one page before the pool chunk.
+LOADER_BSS_LAYOUT_SCRIPT = ROOT / "ldso/x86_64-owned-bss-layout.ld"
 COMPILER_HELPER_CONTRACT = ROOT / "builtins/x86_64-helper-contract.toml"
 SHARED_LIBC_COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
 SHARED_LIBC_COMPILER_HELPER_MEMBER = "crabc-builtins.o"
@@ -520,6 +522,7 @@ def loader_provenance(
         _source_file_identity(ROOT / ".cargo/config.toml", "workspace Cargo configuration"),
         _source_file_identity(ROOT / "ldso/Cargo.toml", "loader Cargo configuration"),
         _source_file_identity(RUNTIME_DISCARD_UNWIND_SCRIPT, "runtime unwind-table discard script"),
+        _source_file_identity(LOADER_BSS_LAYOUT_SCRIPT, "loader .bss layout script"),
     ]
     installed = {
         "path": LOADER_ARTIFACT,
@@ -777,7 +780,8 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     loader_env = common.deterministic_environment()
     loader_env["CARGO_BUILD_JOBS"] = "2"
     loader_env["RUSTFLAGS"] = ("-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
-                              f" -C link-arg=-Wl,-T,{RUNTIME_DISCARD_UNWIND_SCRIPT}")
+                              f" -C link-arg=-Wl,-T,{RUNTIME_DISCARD_UNWIND_SCRIPT}"
+                              f" -C link-arg=-Wl,-T,{LOADER_BSS_LAYOUT_SCRIPT}")
     # Every process touches nearly all interpreter text, so it is optimized
     # for size: opt-level s cuts it from 135 to 81 KiB (54 KiB of PSS per
     # process) for about 2% more fork+exec CPU and 8% slower dlsym.
