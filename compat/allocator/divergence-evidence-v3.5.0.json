@@ -64,6 +64,24 @@
         ],
         "known_difference": "CRABC-MI-OS-ON-DEMAND-ARENA-REFUSAL"
       }
+    },
+    "src/prim/unix/prim.c:arena-reservation-thp-advice": {
+      "differential": {
+        "command": [
+          "python3",
+          "compat/allocator/m2_arena_lifecycle_x86_64.py"
+        ],
+        "scope": "scenario 23 of the arena lifecycle trace: each fresh reservation's THP advice for allow_thp 1/2/0 under eager and on-demand commit, equal to pinned C except the recorded MADV_NOHUGEPAGE at allow_thp=1, with every other lifecycle field equal"
+      },
+      "performance": {
+        "integrated_rows": [
+          "static/startup_first_alloc",
+          "dynamic/startup_first_alloc",
+          "static/churn_8k",
+          "dynamic/churn_8k"
+        ],
+        "scope": "first-allocation residency and page-fault cost of the arena opt-out against pinned C"
+      }
     }
   }
 }

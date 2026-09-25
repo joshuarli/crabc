@@ -144,6 +144,7 @@ const MAP_HUGE_1GB: u32 = 30 << MAP_HUGE_SHIFT;
 const MADV_DONTNEED: u32 = 4;
 const MADV_FREE: u32 = 8;
 const MADV_HUGEPAGE: u32 = 14;
+pub(crate) const MADV_NOHUGEPAGE: u32 = 15;
 const PR_SET_THP_DISABLE: i32 = 41;
 const PR_GET_THP_DISABLE: i32 = 42;
 const MPOL_PREFERRED: i32 = 1;
@@ -1378,6 +1379,17 @@ impl VmPolicy {
     #[inline]
     fn allow_thp(&self) -> bool { self.option_enabled(VmOption::AllowThp) }
 
+    /// Whether an arena reservation declines huge pages ([`ThpAdvice::Arena`]).
+    ///
+    /// Only the default `allow_thp=1` without `allow_large_os_pages` does:
+    /// `allow_thp=0` already disables THP for the process, and `allow_thp=2`
+    /// or large OS pages request huge pages explicitly, so each keeps the
+    /// source advice.
+    #[inline]
+    fn arena_declines_thp(&self) -> bool {
+        self.option_value(VmOption::AllowThp) == 1 && !self.allow_large_os_pages()
+    }
+
     /// Returns the resolved source `purge_decommits` choice for this process.
     #[inline]
     pub(crate) fn purge_decommits(&self) -> bool {
@@ -1720,6 +1732,21 @@ fn write_decimal_node_index(
     digits
 }
 
+/// The transparent-huge-page advice a regular source mapping receives.
+///
+/// Every source caller takes [`Self::Source`]: pinned `unix_mmap` advises
+/// `MADV_HUGEPAGE` when large pages are allowed and the mapping can use them.
+/// An arena reservation takes [`Self::Arena`]: at the default options (see
+/// [`VmPolicy::arena_declines_thp`]) it is advised `MADV_NOHUGEPAGE` instead,
+/// so its pages become resident at small-page granularity as they are first
+/// touched, as a musl heap's do, even when the host's THP mode is `always`.
+/// This is the recorded divergence in `compat/allocator/known-differences.md`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThpAdvice {
+    Source,
+    Arena,
+}
+
 /// The initial protection requested for a private anonymous mapping.
 ///
 /// This maps directly onto `_mi_prim_alloc`'s `commit` boolean after the
@@ -2042,6 +2069,7 @@ impl Mapping {
         access: MapAccess,
         allow_large: bool,
         default_random: OsRandom<'_>,
+        thp: ThpAdvice,
     ) -> Result<Self> {
         validate_mapping_length(config.page_size(), length)?;
         Self::map_unix_policy(
@@ -2054,6 +2082,7 @@ impl Mapping {
             false,
             None,
             default_random,
+            thp,
             #[cfg(target_arch = "x86_64")]
             None,
         )
@@ -2072,6 +2101,22 @@ impl Mapping {
         allow_large: bool,
         default_random: OsRandom<'_>,
     ) -> Result<Self> {
+        Self::map_for_process_advised(process, config, length, try_alignment, access, allow_large,
+            default_random, ThpAdvice::Source)
+    }
+
+    /// [`Self::map_for_process`] with the caller's [`ThpAdvice`].
+    #[allow(clippy::too_many_arguments)]
+    fn map_for_process_advised(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        length: usize,
+        try_alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        default_random: OsRandom<'_>,
+        thp: ThpAdvice,
+    ) -> Result<Self> {
         let mapping = Self::map_for_allocator_with_policy(
             process.policy,
             config,
@@ -2080,6 +2125,7 @@ impl Mapping {
             access,
             allow_large,
             default_random,
+            thp,
         );
         if let (Err(error), Ok(())) = (&mapping, validate_mapping_length(config.page_size(), length)) {
             // `src/os.c:319-322`: every failed primitive attempt warns with
@@ -2117,6 +2163,7 @@ impl Mapping {
     /// The failed direct candidate or trimmed prefix/suffix is therefore
     /// leaked exactly as pinned C leaks it, and the aligned middle is still
     /// returned as a success. Only a failed overmap has no result.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn map_aligned_for_process(
         process: VmProcess<'_>,
         config: MemoryConfig,
@@ -2125,6 +2172,7 @@ impl Mapping {
         access: MapAccess,
         allow_large: bool,
         mut default_random: OsRandom<'_>,
+        thp: ThpAdvice,
     ) -> core::result::Result<Self, AlignedMappingFailure> {
         let page_size = config.page_size().bytes();
         if alignment < page_size || !alignment.is_power_of_two() {
@@ -2141,7 +2189,7 @@ impl Mapping {
         let force_full_trim_for_test = false;
         let committed = matches!(access, MapAccess::Committed);
 
-        let direct = Self::map_for_process(
+        let direct = Self::map_for_process_advised(
             process,
             config,
             length,
@@ -2149,6 +2197,7 @@ impl Mapping {
             access,
             allow_large,
             default_random.as_deref_mut(),
+            thp,
         );
         let direct_address = match &direct {
             Ok(direct) => direct.address.addr(),
@@ -2175,7 +2224,7 @@ impl Mapping {
         };
         let over_length = length.checked_add(alignment_headroom)
             .ok_or(AlignedMappingFailure::new(Errno::NOMEM))?;
-        let mut over = Self::map_for_process(
+        let mut over = Self::map_for_process_advised(
             process,
             config,
             over_length,
@@ -2183,6 +2232,7 @@ impl Mapping {
             access,
             allow_large,
             default_random.as_deref_mut(),
+            thp,
         )
         .map_err(AlignedMappingFailure::new)?;
         let base = over.address.addr();
@@ -2223,6 +2273,7 @@ impl Mapping {
             true,
             Some(hint),
             None,
+            ThpAdvice::Source,
             #[cfg(target_arch = "x86_64")]
             warning,
         )
@@ -2256,6 +2307,7 @@ impl Mapping {
         large_only: bool,
         explicit_hint: Option<usize>,
         default_random: OsRandom<'_>,
+        thp: ThpAdvice,
         #[cfg(target_arch = "x86_64")] warning: Option<HugePageWarningRoute<'_>>,
     ) -> Result<Self> {
         fault_before(FaultPoint::Map)?;
@@ -2360,16 +2412,24 @@ impl Mapping {
             }
         }
         let address = Self::mmap_with_hint(source_hint(), length, protection, flags)?;
-        if allow_large && policy.allow_thp() && config.can_use_large_page(length, try_alignment) {
+        let advice = if thp == ThpAdvice::Arena && policy.arena_declines_thp() {
+            Some(MADV_NOHUGEPAGE)
+        } else if allow_large && policy.allow_thp() && config.can_use_large_page(length, try_alignment) {
+            Some(MADV_HUGEPAGE)
+        } else {
+            None
+        };
+        if let Some(advice) = advice {
             // The source ignores this advisory's errno and does not call the
-            // resulting regular map a large-page mapping.
-            // SAFETY: this function owns the just-created mapping until it
-            // returns the explicit `Mapping` owner below.
+            // resulting regular map a large-page mapping; the arena's
+            // `MADV_NOHUGEPAGE` is equally best-effort.
+            #[cfg(test)]
+            fault::record_advice_range(address, length, advice);
             let _ = match fault_before(FaultPoint::Madvise) {
                 Ok(()) => {
                     // SAFETY: this function owns the just-created mapping
                     // until it returns the explicit Mapping owner below.
-                    unsafe { crabc_core::mm::madvise_raw(address, length, MADV_HUGEPAGE) }
+                    unsafe { crabc_core::mm::madvise_raw(address, length, advice) }
                 }
                 Err(error) => Err(error),
             };
@@ -4159,6 +4219,7 @@ impl NormalOsAllocation {
     /// `allow_large` is the exact caller argument from the source call site;
     /// it remains separate from [`VmPolicy::allow_large_os_pages`], which
     /// controls source arena selection before this primitive is reached.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn allocate_aligned_for_process(
         process: VmProcess<'_>,
         config: MemoryConfig,
@@ -4167,6 +4228,7 @@ impl NormalOsAllocation {
         access: MapAccess,
         allow_large: bool,
         default_random: OsRandom<'_>,
+        thp: ThpAdvice,
     ) -> core::result::Result<Self, NormalOsAllocationFailure> {
         let mapping = Self::allocate_aligned_mapping_for_process(
             process,
@@ -4176,6 +4238,7 @@ impl NormalOsAllocation {
             access,
             allow_large,
             default_random,
+            thp,
         )?;
         Self::from_mapping(mapping, 0)
     }
@@ -4241,6 +4304,32 @@ impl NormalOsAllocation {
             access,
             allow_large,
             default_random,
+            ThpAdvice::Source,
+        )?;
+        Self::into_base_allocation(allocation)
+    }
+
+    /// [`Self::allocate_aligned_base_for_process`] for an arena reservation,
+    /// the `_mi_os_alloc_aligned` call of source `mi_reserve_os_memory_ex2`.
+    /// Its regular mapping takes [`ThpAdvice::Arena`].
+    pub(crate) fn allocate_arena_base_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        default_random: OsRandom<'_>,
+    ) -> core::result::Result<NormalOsBaseAllocation, NormalOsAllocationFailure> {
+        let allocation = Self::allocate_aligned_for_process(
+            process,
+            config,
+            size,
+            alignment,
+            access,
+            allow_large,
+            default_random,
+            ThpAdvice::Arena,
         )?;
         Self::into_base_allocation(allocation)
     }
@@ -4327,6 +4416,7 @@ impl NormalOsAllocation {
                 access,
                 allow_large,
                 default_random.as_deref_mut(),
+                ThpAdvice::Source,
             );
         }
         let page_size = config.page_size().bytes();
@@ -4348,6 +4438,7 @@ impl NormalOsAllocation {
             access,
             allow_large,
             default_random.as_deref_mut(),
+            ThpAdvice::Source,
         )?;
         let allocation = Self::from_mapping(mapping, extra)?;
         if matches!(access, MapAccess::Committed) && extra >= page_size {
@@ -4476,6 +4567,7 @@ impl NormalOsAllocation {
             .map_err(NormalOsAllocationFailure::from_aligned_failure)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn allocate_aligned_mapping_for_process(
         process: VmProcess<'_>,
         config: MemoryConfig,
@@ -4484,6 +4576,7 @@ impl NormalOsAllocation {
         access: MapAccess,
         allow_large: bool,
         default_random: OsRandom<'_>,
+        thp: ThpAdvice,
     ) -> core::result::Result<Mapping, NormalOsAllocationFailure> {
         let length = Self::good_allocation_size(config, size)?;
         let alignment = Self::aligned_allocation_alignment(config, alignment)?;
@@ -4495,6 +4588,7 @@ impl NormalOsAllocation {
             access,
             allow_large,
             default_random,
+            thp,
         )
         .map_err(NormalOsAllocationFailure::from_aligned_failure)
     }
@@ -4975,7 +5069,8 @@ pub(crate) enum FaultPoint {
     /// This stays distinct from `Map`, which names the enclosing
     /// `_mi_os_prim_alloc_at` transition and its paired statistics update.
     LargeMap = 14,
-    /// The best-effort `MADV_HUGEPAGE` advisory after a regular source map.
+    /// The best-effort THP advisory after a regular source map: source
+    /// `MADV_HUGEPAGE`, or an arena reservation's `MADV_NOHUGEPAGE`.
     Madvise = 15,
     /// The one-word best-effort NUMA preference after a successful huge map.
     /// It remains distinct from HugeMap: its error is deliberately ignored by
@@ -7297,6 +7392,7 @@ mod tests {
             MapAccess::Committed,
             allow_large,
             Some(random),
+            ThpAdvice::Source,
         ) {
             Ok(mapping) => mapping,
             Err(_) => return false,
@@ -7774,6 +7870,70 @@ mod tests {
         mapping
             .unmap_for_process(process, length, false)
             .expect("the retained regular policy map releases through its process pair");
+    }
+
+    /// An arena reservation declines THP only at the default `allow_thp=1`
+    /// without large OS pages; every other cell, and every non-arena
+    /// mapping, keeps the source advice.
+    #[cfg(not(miri))]
+    #[test]
+    fn arena_reservation_declines_thp_only_at_the_default_options() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is one selected Linux page size"),
+            2 * 1024 * 1024,
+            true,
+            true,
+        );
+        let size = 32 * config.large_page_size();
+        for (allow_thp, access, source, arena) in [
+            (1, MapAccess::Committed, Some(MADV_HUGEPAGE), Some(MADV_NOHUGEPAGE)),
+            (1, MapAccess::Reserved, None, Some(MADV_NOHUGEPAGE)),
+            (2, MapAccess::Committed, Some(MADV_HUGEPAGE), Some(MADV_HUGEPAGE)),
+            (2, MapAccess::Reserved, None, None),
+            (0, MapAccess::Committed, None, None),
+        ] {
+            let mut policy = VmPolicy::defaults_for_test();
+            policy.set_option(VmOption::AllowLargeOsPages, 0);
+            policy.set_option(VmOption::AllowThp, allow_thp);
+            let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+            let process = VmProcess::new(&policy, subprocess);
+            for (reservation, expected) in [(false, source), (true, arena)] {
+                let capture = fault.capture_advice_range();
+                let allocation = if reservation {
+                    NormalOsAllocation::allocate_arena_base_for_process(
+                        process, config, size, 32 * 1024 * 1024, access, true, None)
+                } else {
+                    NormalOsAllocation::allocate_aligned_base_for_process(
+                        process, config, size, 32 * 1024 * 1024, access, true, None)
+                };
+                let (mut mapping, _) = match allocation {
+                    Ok(allocation) => allocation.into_mapping_and_memory(),
+                    Err(failure) => panic!("regular aligned map: {:?}", failure.error()),
+                };
+                let base = mapping.base().expect("a returned mapping is active").addr();
+                let (ranges, count) = capture.ranges().expect("the advice sequence fits the capture");
+                drop(capture);
+                let cell = std::format!("allow_thp={allow_thp}, {access:?}, arena={reservation}");
+                match expected {
+                    None => assert_eq!(count, 0, "{cell}"),
+                    Some(advice) => {
+                        assert!(count >= 1 && ranges[..count].iter().all(|range| range.2 == advice), "{cell}");
+                        // An unaligned direct attempt is advised and released
+                        // before the overmap; a reservation's last advice
+                        // covers the mapping it retains.
+                        if reservation {
+                            let (start, length, _) = ranges[count - 1];
+                            assert!(start <= base && base + size <= start + length, "{cell}");
+                        }
+                    }
+                }
+                let committed = if matches!(access, MapAccess::Committed) { size } else { 0 };
+                mapping
+                    .unmap_for_process(process, committed, false)
+                    .expect("the regular fixture mapping releases through its process pair");
+            }
+        }
     }
 
     #[test]
@@ -10143,7 +10303,7 @@ mod tests {
         let before = process.subprocess().vm_statistics().snapshot();
         let capture = fault.capture_unmap_ranges();
         let result = Mapping::map_aligned_for_process(
-            process, config, length, alignment, access, false, None,
+            process, config, length, alignment, access, false, None, ThpAdvice::Source,
         );
         let releases = capture.all();
         drop(capture);

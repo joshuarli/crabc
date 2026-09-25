@@ -2157,6 +2157,22 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/prim/unix/prim.c"
+name = "arena-reservation-thp-advice"
+source_region = "src/prim/unix/prim.c:461-484 unix_mmap regular-map MADV_HUGEPAGE advice, reached for an arena reservation through src/arena.c:1886-1896 mi_reserve_os_memory_ex2 and src/os.c _mi_os_alloc_aligned"
+rust_module = "crabc_mimalloc::os, crabc_mimalloc::arena_owned, and crabc_mimalloc::process_arena"
+rust_item = "ThpAdvice::Arena through NormalOsAllocation::allocate_arena_base_for_process and Mapping::map_unix_policy, used by ProcessArenaBacking::reserve_one_locked and ProcessSharedArenaStorage::reserve_cold_regular_os_arena_for_process"
+intentional_difference = "CRABC-MI-ARENA-RESERVATION-NO-THP: at the default allow_thp=1 without allow_large_os_pages, a regular arena reservation is advised MADV_NOHUGEPAGE instead of pinned C's MADV_HUGEPAGE (issued there only for a committed, large-page-capable reservation), so first-touch residency stays at small-page granularity as with musl, even under THP always (musl-defaults decision, plan.md). allow_thp=0, allow_thp=2, large OS pages, and every non-arena mapping keep the source advice."
+difference_kind = "algorithmic"
+tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/process_arena.rs", "crabc-mimalloc/src/arena_owned.rs", "compat/allocator/m2_arena_lifecycle_x86_64.c", "compat/allocator/m2_arena_lifecycle_x86_64.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/bitmap.c"
 name = "ordinary-bitmap-highest-set-relaxed-stale-chunkmap-scan"
 source_region = "mimalloc v3.5.0 src/bitmap.c:1383-1403 mi_bitmap_bsr and src/bitmap.h:205-208 highest-set result contract"

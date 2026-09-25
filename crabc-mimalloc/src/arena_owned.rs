@@ -1408,7 +1408,7 @@ impl ProcessArenaBacking {
     ) -> Result<ArenaId, Option<Errno>> {
         // Reserve a cleanup slot before acquiring any new OS ownership.
         self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY).ok_or(None)?;
-        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+        let allocation = NormalOsAllocation::allocate_arena_base_for_process(process, config,
             size, ARENA_ALIGNMENT, access, allow_large, random);
         let (mut mapping, memory) = match allocation {
             Ok(allocation) => {
@@ -4649,7 +4649,33 @@ mod tests {
             lifecycle_release(&mut trace, owner, &mut later);
         }
 
+        // 23. The THP advice of a fresh arena reservation (see the C
+        // fixture). At the default allow_thp=1 Rust advises MADV_NOHUGEPAGE,
+        // the recorded CRABC-MI-ARENA-RESERVATION-NO-THP difference.
         trace.marker(23);
+        for (allow_thp, eager) in [(1, 1), (1, 0), (2, 1), (2, 0), (0, 1)] {
+            let mut options = lifecycle_options(32 * 1024, eager, false, false);
+            options.set(VmOption::AllowThp, allow_thp);
+            let owner = LifecycleOwner {
+                process: process_with_options(options),
+                config: MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false),
+                backing: backing(),
+            };
+            let capture = fault.capture_advice_range();
+            let mut item = lifecycle_claim(&mut trace, owner, owner.process, 1, true, none, -1);
+            let (ranges, count) = capture.ranges().expect("at most four advisory calls");
+            drop(capture);
+            assert!(item.is_some());
+            trace.emit(-2300);
+            trace.emit(allow_thp);
+            trace.emit(eager);
+            trace.emit_bool(count > 0);
+            trace.emit(if count > 0 { i64::from(ranges[count - 1].2) } else { -1 });
+            trace.emit_bool(ranges[..count].iter().all(|range| range.2 == ranges[0].2));
+            lifecycle_release(&mut trace, owner, &mut item);
+        }
+
+        trace.marker(24);
     }
 
     /// Rust half of the M2 failed-reservation warning differential

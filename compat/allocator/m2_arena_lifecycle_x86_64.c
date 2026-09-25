@@ -122,6 +122,18 @@ static void arm_madvise(size_t ordinal, int error) {
   fail_madvise_errno = error;
 }
 
+/* Whether any call was made, the last advice (or -1), and whether every call
+   carried that advice. An unaligned direct aligned-map attempt is advised
+   and released before its overmap, so the call count is alignment luck. */
+static void emit_thp_advice_record(void) {
+  require(madvise_calls <= 4);
+  bool uniform = true;
+  for (size_t i = 1; i < madvise_calls; i++) uniform = uniform && madvise_advices[i] == madvise_advices[0];
+  emit(madvise_calls > 0);
+  emit(madvise_calls > 0 ? madvise_advices[madvise_calls - 1] : -1);
+  emit(uniform);
+}
+
 /* The recorded call count and up to four advice values, padded with -1. */
 static void emit_madvise_record(void) {
   emit((int64_t)madvise_calls);
@@ -137,7 +149,7 @@ typedef struct lifecycle_owner_s {
   mi_heap_t heap;
 } lifecycle_owner_t;
 
-static lifecycle_owner_t owners[32];
+static lifecycle_owner_t owners[64];
 static size_t owner_count;
 
 static lifecycle_owner_t* fresh_owner(void) {
@@ -1057,6 +1069,32 @@ int main(void) {
     release(owner, &later);
   }
 
+  /* 23. The THP advice of a fresh arena reservation. Pinned `unix_mmap`
+         advises a committed, large-page-capable reservation MADV_HUGEPAGE
+         when allow_thp is enabled. Each cell emits -2300, allow_thp, eager
+         commit, then the reservation's advice record; the Python comparison
+         maps the allow_thp=1 cells to the recorded Rust MADV_NOHUGEPAGE
+         (known difference CRABC-MI-ARENA-RESERVATION-NO-THP) and requires
+         every other field to match. */
   emit_marker(23);
+  {
+    static const long cells[][2] = { {1, 1}, {1, 0}, {2, 1}, {2, 0}, {0, 1} };  /* allow_thp, eager commit */
+    for (size_t i = 0; i < sizeof(cells) / sizeof(cells[0]); i++) {
+      configure(true, 32 * 1024, cells[i][1], false);
+      mi_option_set(mi_option_allow_thp, cells[i][0]);
+      lifecycle_owner_t* const owner = fresh_owner();
+      arm_madvise(0, 0);
+      lifecycle_claim_t item = claim(owner, 1, true, NULL, -1);
+      require(item.start != NULL);
+      emit(-2300);
+      emit(cells[i][0]);
+      emit(cells[i][1]);
+      emit_thp_advice_record();
+      release(owner, &item);
+    }
+    mi_option_set(mi_option_allow_thp, 1);
+  }
+
+  emit_marker(24);
   return 0;
 }

@@ -640,7 +640,7 @@ impl ProcessSharedArenaStorage {
         // policy-aware map call. A retry can see COLD only after every failed
         // primitive or unpublished-management owner is cleanly released.
         self.state.store(INITIALIZING, Ordering::Release);
-        let base_owner = match NormalOsAllocation::allocate_aligned_base_for_process(
+        let base_owner = match NormalOsAllocation::allocate_arena_base_for_process(
             backed.process,
             backed.pair.config,
             length,
@@ -2619,6 +2619,50 @@ mod tests {
             policy.test_numa_node_count_cache(),
             0,
             "the disabled source branch does not resolve the retained NUMA policy"
+        );
+    }
+
+    #[test]
+    fn process_bound_regular_first_arena_declines_thp_at_the_default_options() {
+        let fault = fault::install(fault::Plan::disabled());
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(
+            VmOption::ArenaReserve,
+            i64::try_from((4 * ARENA_MIN_SIZE) / 1024)
+                .expect("the one-arena source policy fits its signed KiB image"),
+        );
+        assert_eq!(options.value(VmOption::AllowThp), Some(1));
+        assert_eq!(options.value(VmOption::AllowLargeOsPages), Some(0));
+        // SAFETY: this fixture leaks one isolated coordinator, option image,
+        // subprocess, and PageMap for the exact policy-bound reservation.
+        let binding = unsafe {
+            ProcessMainInitializationStorage::test_static_owner().test_prepare_vm_process_backing_binding(
+                memory_config(),
+                options,
+                MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            )
+        }
+        .expect("the fixture publishes a canonical default-policy binding");
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let mut random = initialized_random();
+
+        let capture = fault.capture_advice_range();
+        let lease = match storage.reserve_default_os_arena_for_process(
+            binding,
+            ARENA_SLICE_SIZE,
+            &mut random,
+        ) {
+            Ok(lease) => lease,
+            Err(_) => panic!("the default-policy first regular arena publishes"),
+        };
+        let (ranges, count) = capture.ranges().expect("the advice sequence fits the capture");
+        drop(capture);
+        assert!(lease.arena().is_ok());
+        assert!(
+            count >= 1 && ranges[..count].iter().all(|range| range.2 == crate::os::MADV_NOHUGEPAGE),
+            "the first arena reservation is advised MADV_NOHUGEPAGE instead of the source MADV_HUGEPAGE"
         );
     }
 

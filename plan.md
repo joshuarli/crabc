@@ -62,10 +62,15 @@ are not transferable passes for a different revision.
   `_dl_debug_addr` is one export lookup). Startup is 1.18× musl user and
   1.05× kernel instructions (1.47M/2.43M against 1.24M/2.31M), still off the
   0.90× CPU gate: the two loader/libc images, symbol resolution and libc's
-  allocator option parsing remain. Startup PSS is 0.86× musl (52 of 114 perf-c rows pass PSS); allocator rows
-  stay 6.5–8× because the host's THP `always` mode backs mimalloc's arena
-  with huge pages on first touch; the arena `MADV_NOHUGEPAGE` divergence in
-  the musl-defaults contract is not implemented yet. `memory.peak` ≤ 0.90
+  allocator option parsing remain. Startup PSS is 0.86× musl (52 of 114
+  perf-c rows pass PSS); allocator rows stay 6.5–8× on the selected
+  accepted-C backend, whose arena the host's THP `always` mode backs with
+  huge pages on first touch. The native backend's arena reservations take the
+  musl-defaults `MADV_NOHUGEPAGE` (`CRABC-MI-ARENA-RESERVATION-NO-THP`,
+  pinned-C differential in the M2 arena lifecycle trace): its max RSS on the
+  startup and allocator rows is 0.99–1.08× musl against 1.44–1.59× without
+  it, and the divergence's `performance_qualified` flag waits on a qualified
+  integrated report of `startup_first_alloc` and `churn_8k`. `memory.peak` ≤ 0.90
   cannot pass where musl charges one 256 KiB cgroup batch.
   `./scripts/dev-x86_64.sh qualification-candidate --work DIR` runs the whole
   chain as one restartable command on a clean candidate revision. The M9 report path measures
@@ -94,9 +99,6 @@ are not transferable passes for a different revision.
      `7fbcc1b5d`). Next: add the `aio_cancel` oracle disposition, make the
      text family row executable with its admission receipt, then run
      `qualification-candidate --through posix-admission` on a clean checkout.
-     Give the native allocator's arena reservations `MADV_NOHUGEPAGE`
-     (musl-defaults contract) with its `known-differences.md` entry, pinned-C
-     differential and performance evidence.
   2. Lanes are wound down (user direction, 2026-09-25); `.work/tmp/lane-agents.txt`
      holds the last map. Unmerged: `lane/abi-closure` `f1c7ddc56` (WIP
      companion-reader refresh, tested but not proven on a cohort). Known

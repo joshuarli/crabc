@@ -6,7 +6,8 @@ reservation, registry search, slice claim, and release routines through
 `static.c`; `arena::owned::tests::emit_native_arena_lifecycle_trace` drives the
 Rust `ProcessArenaBacking` entries for the same scenarios. Both emit the same
 ordered, address-free `m2.arena.lifecycle.N=V` fields, and every field must
-match. The aggregate `allocator-m2` gate calls `run_evidence` with its one
+match, except that scenario 23's default-option reservations carry the
+recorded `CRABC-MI-ARENA-RESERVATION-NO-THP` advice (`expected_rust`). The aggregate `allocator-m2` gate calls `run_evidence` with its one
 prebuilt test binary; `allocator-m2-arena-lifecycle` runs `main` for focused
 development without producing a milestone receipt.
 
@@ -30,8 +31,13 @@ TARGET = "arena::owned::tests::emit_native_arena_lifecycle_trace"
 FIELD = re.compile(r"m2\.arena\.lifecycle\.([0-9]+)=(-?[0-9]+)")
 # libtest's `--nocapture` output places the first field after this delimiter.
 RUST_INLINE_PREFIX = f"test {TARGET} ... "
-# Scenario markers are `-1000 - scenario`; the final marker is scenario 23.
-FINAL_MARKER = -1023
+# Scenario markers are `-1000 - scenario`; the final marker is scenario 24.
+FINAL_MARKER = -1024
+THP_SCENARIO = -1023
+# Scenario 23 cells: this sentinel, allow_thp, eager commit, advised, last
+# advice, and whether every advice call carried it.
+THP_CELL = -2300
+MADV_NOHUGEPAGE = 15
 
 
 def parse_trace(output: str, *, source: str) -> list[int]:
@@ -52,9 +58,28 @@ def parse_trace(output: str, *, source: str) -> list[int]:
     return values
 
 
-def compare(c_trace: list[int], rust_trace: list[int]) -> dict[str, Any]:
-    """Require field-for-field equality and name the first divergences."""
+def expected_rust(c_trace: list[int]) -> list[int]:
+    """The pinned C trace with the one recorded divergence applied.
 
+    `CRABC-MI-ARENA-RESERVATION-NO-THP` (known-differences.md): at the
+    default allow_thp=1 without large OS pages, a Rust arena reservation is
+    advised MADV_NOHUGEPAGE where pinned C advises MADV_HUGEPAGE or nothing.
+    Only scenario 23's advice records change; every other field, including
+    the allow_thp=0 and allow_thp=2 cells, must equal pinned C.
+    """
+
+    expected = list(c_trace)
+    start = expected.index(THP_SCENARIO)
+    for index in range(start, expected.index(FINAL_MARKER)):
+        if expected[index] == THP_CELL and expected[index + 1] == 1:
+            expected[index + 3:index + 6] = [1, MADV_NOHUGEPAGE, 1]
+    return expected
+
+
+def compare(c_trace: list[int], rust_trace: list[int]) -> dict[str, Any]:
+    """Require field-for-field equality with the recorded divergence and name the first differences."""
+
+    c_trace = expected_rust(c_trace)
     if c_trace == rust_trace:
         return {"compared_value_count": len(c_trace), "status": "matched"}
     mismatches = [

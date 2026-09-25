@@ -2003,6 +2003,66 @@ transfer capability.
   infer runtime, lifecycle, backend, or AArch64 support from this metadata
   slice.
 
+### `CRABC-MI-ARENA-RESERVATION-NO-THP` — accepted musl-defaults residency divergence
+
+- **Port map:** `src/prim/unix/prim.c:arena-reservation-thp-advice`
+- **Upstream/Rust:** pinned mimalloc v3.5.0 `src/prim/unix/prim.c:461-484`
+  (`unix_mmap`) advises a regular mapping `MADV_HUGEPAGE` when the caller
+  allows large pages, `allow_thp` is enabled, and the size and alignment are
+  large-page multiples. An arena reservation (`src/arena.c:1886-1896`
+  `mi_reserve_os_memory_ex2` through `_mi_os_alloc_aligned`) meets those
+  conditions whenever it is committed. `os::Mapping::map_unix_policy` keeps
+  that branch for every caller except `ThpAdvice::Arena`, which
+  `NormalOsAllocation::allocate_arena_base_for_process` passes for
+  `arena_owned::ProcessArenaBacking::reserve_one_locked` and
+  `process_arena::ProcessSharedArenaStorage::reserve_cold_regular_os_arena_for_process`.
+- **Category:** native x86-64 performance and memory-residency policy; no
+  engine allocation, ABI, diagnostics, or invalid-use difference.
+- **Difference:** at the default `allow_thp=1` without
+  `allow_large_os_pages`, a regular arena reservation, committed or not, is
+  advised `MADV_NOHUGEPAGE` instead of `MADV_HUGEPAGE` (or, for an
+  uncommitted reservation, instead of no advice). `allow_thp=0` still
+  disables THP for the process as upstream does, and `allow_thp=2` or large
+  OS pages request huge pages explicitly, so all three keep the source
+  advice, as do non-arena mappings (page map, OS page claims, huge pages).
+  The advice is best-effort like the source's: its error is ignored and the
+  mapping is never marked large. An unaligned direct aligned-map attempt is
+  advised before its release, and the overmap that replaces it is advised
+  too, so only the retained mapping's advice matters.
+- **Design:** plan.md's musl-defaults contract (user decision, 2026-09-25)
+  keeps the process THP policy as musl leaves it and has the allocator's own
+  arenas opt out, so first-allocation residency is musl-like. Under the
+  host's THP `always` mode a 1 GiB arena faults in 2 MiB pages on first
+  touch even without the source `MADV_HUGEPAGE`, so only an explicit opt-out
+  gives small-page residency; a process-wide `PR_SET_THP_DISABLE` would also
+  change the application's own mappings, which musl leaves alone.
+- **Evidence:** `arena::owned::tests::emit_native_arena_lifecycle_trace`
+  scenario 23 and the pinned-C fixture
+  `compat/allocator/m2_arena_lifecycle_x86_64.c` record each fresh
+  reservation's advice for `allow_thp` 1/2/0 under eager and on-demand
+  commit; `m2_arena_lifecycle_x86_64.py` maps only the `allow_thp=1` cells
+  to `MADV_NOHUGEPAGE` and requires every other field (6388) to equal pinned
+  C, which advises `MADV_HUGEPAGE` for the committed cell and nothing for the
+  uncommitted one. `os::tests::arena_reservation_declines_thp_only_at_the_default_options`
+  and
+  `process_arena::tests::process_bound_regular_first_arena_declines_thp_at_the_default_options`
+  cover the option matrix and the first-arena route; the M2 policy
+  first-arena trace keeps the source advice with large OS pages. On
+  2026-09-25 under THP `always` and `powersave`, native products differing
+  only in this change measured median max RSS (10 interleaved runs) of
+  2160 KiB against 3184 KiB at startup, 33920 KiB against 48292 KiB for
+  `allocator_live_32m`, and 5240 KiB against 7384 KiB for
+  `allocator_live_4m`, against musl's 2188, 33576 and 4936 KiB. Kernel
+  instructions rise where pages now fault in at 4 KiB (`allocator_live_32m`
+  3.56M to 33.4M, musl 48.1M); user instructions are unchanged. The raw
+  record is
+  `.work/allocator-x86_64/reports/allocator/x86_64/thp-arena-residency.txt`;
+  the qualified integrated report's startup and churn rows are its
+  performance gate (`divergence-evidence-v3.5.0.json`).
+- **Decision/removal:** retain while the musl-defaults contract stands.
+  Remove it, restoring the source advice, only if that contract changes or a
+  qualified report shows the arena opt-out costs a CPU row its gate.
+
 ### `CRABC-MI-SHARED-MAIN-NO-PAGE-LIFECYCLE` — accepted incomplete lifecycle boundary
 
 - **Port map:** `src/init.c:later-thread-process-static-main-heap-no-page-attachment`

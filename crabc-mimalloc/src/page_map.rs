@@ -397,7 +397,7 @@ impl PageMap {
             // `mi_os_prim_alloc_aligned` accounts its own attempts, trims, and
             // warnings to the process subprocess.
             Some(process) => Mapping::map_aligned_for_process(process, config, mapped_size,
-                config.page_size().bytes(), access, true, None)
+                config.page_size().bytes(), access, true, None, crate::os::ThpAdvice::Source)
                 .map_err(|failure| failure.error()),
             None => statistics.map(Mapping::map_for_allocator(config, mapped_size, access),
                 mapped_size, commit_all),
