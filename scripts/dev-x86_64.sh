@@ -608,7 +608,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
   owned-static-replacement [STATIC_SYSROOT]  link application replacements of libc functions through the installed static archive against musl
   owned-stdio-allocator-interposition  qualify dynamic FILE allocation ownership against musl
-  owned-mimalloc-startup-errno  qualify allocator lifecycle errno preservation against musl
+  owned-mimalloc-startup-errno [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify allocator lifecycle and successful-call errno preservation against musl
   owned-signal-handler-fork  qualify early worker signal delivery and fork against musl
   owned-c-allocation-interposition  qualify caller and passwd allocation ownership against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
@@ -9923,9 +9923,8 @@ PY
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_stdio_allocator_interposition.sh
         ;;
     owned-mimalloc-startup-errno)
-        [ "$#" -eq 0 ] || fail "owned-mimalloc-startup-errno takes no arguments"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_mimalloc_startup_errno.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_mimalloc_startup_errno.sh "$@"
         ;;
     owned-signal-handler-fork)
         [ "$#" -eq 0 ] || fail "owned-signal-handler-fork takes no arguments"

@@ -153,10 +153,18 @@ unsafe fn read32(p: *const u8) -> u32 {
 
 // Linux/x86 stat is 144 bytes with st_size at byte 48. This scratch record is
 // private kernel ABI storage, not a new public struct-stat owner.
+//
+// musl's `__map_file` opens through `sys_open`, which is `__syscall_ret`
+// and so publishes a failed open's errno exactly like `__fstat` and `__mmap`
+// do. A default zone with no /etc/localtime therefore leaves ENOENT after
+// the first tzset/localtime, and callers observe it.
 unsafe fn map_file(path: *const u8) -> Option<(*const u8, usize)> {
     unsafe {
         let fd = sys::syscall3(2, path as i64, 0x80800, 0);
-        if fd < 0 { return None; }
+        if fd < 0 {
+            errno::set_errno(-fd as c_int);
+            return None;
+        }
         let mut stat = [0u64; 18];
         let status = sys::syscall2(5, fd, stat.as_mut_ptr() as i64);
         let mut mapping = -1;

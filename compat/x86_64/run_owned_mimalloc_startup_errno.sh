@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Prove the owned same-image mimalloc callback preserves application errno.
+# Prove the owned same-image mimalloc callback preserves application errno,
+# and that errno after successful libc calls matches pinned musl.
 set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly PROBE="$ROOT/compat/x86_64/owned_mimalloc_startup_errno_probe.c"
+readonly SUCCESS_PROBE="$ROOT/compat/x86_64/owned_success_errno_probe.c"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly CHROOT="$(command -v chroot)"
@@ -93,6 +95,56 @@ run_in_root() {
     run_captured "$label" env -i PATH=/usr/bin:/bin "$CHROOT" "$root" "$@"
 }
 
+# The success-errno differential runs every probe case, first in a fresh
+# process and after a warm-up call, inside one isolated root per link mode
+# and entry. The root carries the conventional account, hosts and data files
+# the cases consume; no TZ, LANG or /etc/localtime is supplied, so the
+# default-zone and default-locale paths run too. The whole transcript,
+# including each exit status, must equal pinned musl's for the same link
+# kind.
+populate_success_root() {
+    local root="$1"
+
+    mkdir -p "$root/etc" "$root/work" "$root/tmp"
+    printf 'root:x:0:0:root:/root:/bin/sh\n' >"$root/etc/passwd"
+    printf 'root:x:0:\n' >"$root/etc/group"
+    printf '127.0.0.1 localhost\n::1 localhost\n' >"$root/etc/hosts"
+    printf 'data\n' >"$root/work/data"
+}
+
+success_transcript() {
+    local root="$1" label="$2" case_name position status
+    shift 2
+
+    : >"$work/success-$label.transcript"
+    while IFS= read -r case_name; do
+        for position in first later; do
+            status=0
+            timeout 20 env -i PATH=/usr/bin:/bin "$CHROOT" "$root" "$@" "$case_name" "$position" \
+                >"$work/success-$label.stdout" 2>"$work/success-$label.stderr" || status=$?
+            [ ! -s "$work/success-$label.stderr" ] || {
+                printf 'owned success errno: %s %s %s wrote stderr\n' "$label" "$case_name" "$position" >&2
+                return 1
+            }
+            {
+                printf '%s %s status=%s\n' "$case_name" "$position" "$status"
+                cat "$work/success-$label.stdout"
+            } >>"$work/success-$label.transcript"
+        done
+    done <"$work/success-cases"
+    rm -f "$work/success-$label.stdout" "$work/success-$label.stderr"
+}
+
+compare_success_transcript() {
+    local oracle="$1" label="$2"
+
+    cmp -s "$work/success-$oracle.transcript" "$work/success-$label.transcript" || {
+        printf 'owned success errno: %s differs from musl %s\n' "$label" "$oracle" >&2
+        diff "$work/success-$oracle.transcript" "$work/success-$label.transcript" >&2 || true
+        return 1
+    }
+}
+
 run_static_mode() {
     local product="$1" mode="$2" candidate="$work/static-$mode" root="$work/static-$mode-root"
 
@@ -101,6 +153,15 @@ run_static_mode() {
     mkdir -p "$root/work"
     cp "$candidate" "$root/work/probe"
     run_in_root "$root" "static-$mode" /work/probe
+
+    (cd "$work" && "$product/bin/crabc-cc" "-$mode" \
+        --link-receipt "success-static-$mode.crabc-link.json" "$work/success-workload.o" \
+        -o "$work/success-static-$mode")
+    root="$work/success-static-$mode-root"
+    populate_success_root "$root"
+    cp "$work/success-static-$mode" "$root/work/probe"
+    success_transcript "$root" "static-$mode" /work/probe
+    compare_success_transcript oracle-static "static-$mode"
 }
 
 run_dynamic_mode() {
@@ -120,6 +181,23 @@ run_dynamic_mode() {
             run_in_root "$root" "dynamic-$mode-$entry" /work/probe
         fi
     done
+
+    (cd "$work" && "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
+        "$work/success-workload.o" -o "$work/success-dynamic-$mode")
+    for entry in kernel direct; do
+        root="$work/success-dynamic-$mode-$entry-root"
+        populate_success_root "$root"
+        mkdir -p "$root/lib" "$root/usr/lib"
+        cp "$product/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
+        cp "$product/usr/lib/libc.so" "$root/usr/lib/libc.so"
+        cp "$work/success-dynamic-$mode" "$root/work/probe"
+        if [ "$entry" = direct ]; then
+            success_transcript "$root" "dynamic-$mode-$entry" "$INTERPRETER" /work/probe
+        else
+            success_transcript "$root" "dynamic-$mode-$entry" /work/probe
+        fi
+        compare_success_transcript oracle-dynamic "dynamic-$mode-$entry"
+    done
 }
 
 "$ORACLE_CC" -DCRABC_MIMALLOC_STARTUP_ERRNO_ORACLE "$PROBE" -o "$work/oracle-dynamic"
@@ -127,6 +205,23 @@ run_dynamic_mode() {
     -o "$work/oracle-static"
 run_captured oracle-dynamic "$work/oracle-dynamic"
 run_captured oracle-static "$work/oracle-static"
+
+"$ORACLE_CC" -std=c11 -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 "$SUCCESS_PROBE" \
+    -o "$work/success-oracle-dynamic"
+"$ORACLE_CC" -std=c11 -static -fno-pie -no-pie "$SUCCESS_PROBE" -o "$work/success-oracle-static"
+"$work/success-oracle-static" --list >"$work/success-cases"
+[ -s "$work/success-cases" ]
+root="$work/success-oracle-static-root"
+populate_success_root "$root"
+cp "$work/success-oracle-static" "$root/work/probe"
+success_transcript "$root" oracle-static /work/probe
+root="$work/success-oracle-dynamic-root"
+populate_success_root "$root"
+mkdir -p "$root/lib"
+cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-x86_64.so.1"
+ln -s ld-musl-x86_64.so.1 "$root/lib/libc.so"
+cp "$work/success-oracle-dynamic" "$root/work/probe"
+success_transcript "$root" oracle-dynamic /work/probe
 
 if [ -z "$provided_dynamic" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
@@ -142,6 +237,8 @@ fi
 # that same object across both static and dynamic lifecycle link modes.
 "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$PROBE" -o "$work/workload.o"
+"$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+    -c "$SUCCESS_PROBE" -o "$work/success-workload.o"
 readelf -hW "$work/workload.o" >"$work/workload.header"
 readelf -rW "$work/workload.o" >"$work/workload.relocations"
 
@@ -151,9 +248,16 @@ if [ -n "$provided_static" ]; then
     done
 fi
 
-assert_owned_lifecycle_entries "$provided_dynamic/usr/lib/libc.so" "$work/dynamic-symbols.txt"
+# The same-image C lifecycle entries belong to the accepted C backend. A
+# supplied native-shadow product has no C backend, so only the errno
+# observations apply to it.
+dynamic_backend="$(python3 -B -c 'import json, sys; print(json.load(open(sys.argv[1])).get("allocator_backend", "accepted-c"))' \
+    "$provided_dynamic/share/crabc/libc-shared.provenance.json")"
+if [ "$dynamic_backend" != native-shadow ]; then
+    assert_owned_lifecycle_entries "$provided_dynamic/usr/lib/libc.so" "$work/dynamic-symbols.txt"
+fi
 for mode in pie non-pie; do
     run_dynamic_mode "$provided_dynamic" "$mode"
 done
 
-printf 'owned mimalloc startup errno: PASS (musl reference; preinit allocation and sentinel; user constructor and main allocations; supplied static ET_EXEC/static-PIE when present; dynamic PIE/non-PIE through kernel and direct loader entry in isolated chroots; retained stdout/stderr/status evidence); evidence: %s\n' "$work"
+printf 'owned mimalloc startup errno: PASS (musl reference; preinit allocation and sentinel; user constructor and main allocations; supplied static ET_EXEC/static-PIE when present; dynamic PIE/non-PIE through kernel and direct loader entry in isolated chroots; retained stdout/stderr/status evidence; errno after successful libc calls, first and warmed, matches the musl transcript in every mode and entry); evidence: %s\n' "$work"
