@@ -842,6 +842,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 _m2_x86_64_page_map_init_cleanup_check_record=mock.Mock(
                     return_value={"id": "page-map-initialization-cleanup-leak-c-rust-differential"}
                 ),
+                _run_m2_x86_64_startup_statistics_evidence=mock.Mock(return_value={}),
+                _m2_x86_64_startup_statistics_check_record=mock.Mock(
+                    return_value={"id": "page-map-startup-statistics-c-rust-differential"}
+                ),
                 _m2_x86_64_recursion_check_record=mock.Mock(
                     return_value={"id": "recursive-diagnostic-output-c-rust-differential"}
                 ),

@@ -133,7 +133,7 @@ impl Iterator for PageMapRange {
     }
 }
 
-const PAGE_MAP_SUB_SIZE: usize = PAGE_MAP_SUB_COUNT * size_of::<*mut Page>();
+pub(crate) const PAGE_MAP_SUB_SIZE: usize = PAGE_MAP_SUB_COUNT * size_of::<*mut Page>();
 
 /// One source-plain page pointer.
 ///
@@ -217,9 +217,15 @@ impl PageMapInitializationError {
     /// transition failed. As source `mi_os_prim_free` does, a failed release
     /// is warned through the process output route and the mapping leaks.
     #[inline]
-    fn after_private_mapping_failure(mut mapping: Mapping, initialization: Errno) -> Self {
+    fn after_private_mapping_failure(
+        mut mapping: Mapping, initialization: Errno, statistics: PageMapStatistics,
+    ) -> Self {
         let address = mapping.base().map_or(0, |base| base as usize);
         let length = mapping.length().unwrap_or(0);
+        // `_mi_os_free(subproc, pmap, extra_reserve_size, memid)` is a
+        // still-committed free: it subtracts the full extent from both
+        // counters whether or not `munmap` succeeds.
+        statistics.release(length, length);
         if let Err(cleanup) = mapping.unmap() {
             crate::process_init::process_warning_message(
                 crate::diagnostic_output::SourceFormattedMessage::os_free_failure(
@@ -249,6 +255,7 @@ impl fmt::Debug for PageMapInitializationError {
 pub(crate) struct PageMap {
     mapping: Mapping,
     config: MemoryConfig,
+    statistics: PageMapStatistics,
     header: NonNull<PageMapHeader>,
     reserved_count: usize,
     active: bool,
@@ -281,11 +288,36 @@ impl PageMap {
         self.config
     }
 
-    /// Reserves and initializes the source two-level page map.
+    /// Reserves and initializes a private two-level page map whose VM events
+    /// belong to no subprocess statistics owner (fixtures and the legacy
+    /// private metadata map).
     pub(crate) fn initialize(
         config: MemoryConfig,
         configured_virtual_bits: usize,
         force_commit: bool,
+    ) -> core::result::Result<Self, PageMapInitializationError> {
+        Self::initialize_with_statistics(config, configured_virtual_bits, force_commit,
+            PageMapStatistics(None))
+    }
+
+    /// Reserves and initializes the source process page map, recording its
+    /// VM events in the main subprocess statistics as pinned `page-map.c`
+    /// does through `_mi_subproc_main()`.
+    pub(crate) fn initialize_for_subprocess(
+        config: MemoryConfig,
+        configured_virtual_bits: usize,
+        force_commit: bool,
+        subprocess: &'static crate::subproc::SubprocessIdentity,
+    ) -> core::result::Result<Self, PageMapInitializationError> {
+        Self::initialize_with_statistics(config, configured_virtual_bits, force_commit,
+            PageMapStatistics(Some(subprocess)))
+    }
+
+    fn initialize_with_statistics(
+        config: MemoryConfig,
+        configured_virtual_bits: usize,
+        force_commit: bool,
+        statistics: PageMapStatistics,
     ) -> core::result::Result<Self, PageMapInitializationError> {
         let virtual_bits = effective_virtual_address_bits(
             configured_virtual_bits,
@@ -328,7 +360,12 @@ impl PageMap {
         // whose direct-map branch therefore already satisfies the request.
         // Keep the exact direct primitive here: no overmap cleanup owner can
         // arise from a statically page-aligned PageMap extent.
-        let mapping = match Mapping::map_for_allocator(config, extra_reserve_size, access) {
+        // `_mi_os_alloc_aligned(subproc, extra_reserve_size, 1, commit, ...)`
+        // maps (and accounts) `_mi_os_good_alloc_size(extra_reserve_size)`.
+        let mapped_size = config.good_alloc_size(extra_reserve_size);
+        let mapping = match statistics.map(Mapping::map_for_allocator(config, mapped_size, access),
+            mapped_size, commit_all)
+        {
             Ok(mapping) => mapping,
             Err(error) => {
                 // `src/page-map.c:302-305`. Process startup holds no
@@ -346,7 +383,7 @@ impl PageMap {
             Ok(base) => base,
             Err(error) => {
                 return Err(PageMapInitializationError::after_private_mapping_failure(
-                    mapping, error,
+                    mapping, error, statistics,
                 ));
             }
         };
@@ -356,6 +393,7 @@ impl PageMap {
                 return Err(PageMapInitializationError::after_private_mapping_failure(
                     mapping,
                     Errno::NOMEM,
+                    statistics,
                 ));
             }
         };
@@ -363,9 +401,9 @@ impl PageMap {
         let committed_count = match initial_commit_bytes {
             None => page_map_count_of_size(reserved_size),
             Some(minimum_bytes) => {
-                if let Err(error) = mapping.commit(0, minimum_bytes) {
+                if let Err(error) = statistics.commit(mapping.commit(0, minimum_bytes), minimum_bytes) {
                     return Err(PageMapInitializationError::after_private_mapping_failure(
-                        mapping, error,
+                        mapping, error, statistics,
                     ));
                 }
                 page_map_count_of_size(minimum_bytes)
@@ -374,9 +412,11 @@ impl PageMap {
 
         let sub0 = base.wrapping_add(reserved_size).cast::<PageEntry>();
         if !commit_all {
-            if let Err(error) = mapping.commit(reserved_size, PAGE_MAP_SUB_SIZE) {
+            if let Err(error) = statistics.commit(
+                mapping.commit(reserved_size, PAGE_MAP_SUB_SIZE), PAGE_MAP_SUB_SIZE,
+            ) {
                 return Err(PageMapInitializationError::after_private_mapping_failure(
-                    mapping, error,
+                    mapping, error, statistics,
                 ));
             }
         }
@@ -385,7 +425,7 @@ impl PageMap {
         unsafe { initialize_submap(sub0) };
         let memid = MemoryId::os(
             base,
-            extra_reserve_size,
+            mapped_size,
             commit_all,
             mapping.initially_zero(),
             false,
@@ -413,6 +453,7 @@ impl PageMap {
         Ok(Self {
             mapping,
             config,
+            statistics,
             header,
             reserved_count,
             active: true,
@@ -526,7 +567,7 @@ impl PageMap {
             .ok_or(Errno::NOMEM)?
             .min(self.header()?.reserved_size);
         let commit_count = page_map_count_of_size(commit_size);
-        self.mapping.commit(0, commit_size)?;
+        self.statistics.commit(self.mapping.commit(0, commit_size), commit_size)?;
         // Fresh anonymous committed pages already contain valid aligned null
         // raw-pointer words. No placement writes race another source-faithful
         // unlocked commit; only this Release exposes the new extent.
@@ -562,11 +603,12 @@ impl PageMap {
             self.submap_allocations.fetch_add(1, Ordering::Relaxed);
             // See `PageMap::initialize`: the requested alignment is exactly
             // the Linux base-page guarantee of this direct anonymous mapping.
-            let mut candidate = Mapping::map_for_allocator(
+            // `_mi_os_zalloc(subproc, submap_size)`: a committed good-size map.
+            let mut candidate = self.statistics.map(Mapping::map_for_allocator(
                 self.config,
                 PAGE_MAP_SUB_SIZE,
                 MapAccess::Committed,
-            )?;
+            ), self.config.good_alloc_size(PAGE_MAP_SUB_SIZE), true)?;
             let candidate_base = candidate.base()?.cast::<PageEntry>();
             // SAFETY: the candidate mapping is exclusively owned and committed.
             unsafe { initialize_submap(candidate_base) };
@@ -595,6 +637,8 @@ impl PageMap {
                     NonNull::new(candidate_base).ok_or(Errno::NOMEM)
                 }
                 Err(winner) => {
+                    let size = self.config.good_alloc_size(PAGE_MAP_SUB_SIZE);
+                    self.statistics.release(size, size);
                     candidate.unmap()?;
                     NonNull::new(winner).ok_or(Errno::NOMEM)
                 }
@@ -725,6 +769,8 @@ impl PageMap {
                 // SAFETY: exclusive `&mut self` plus documented quiescence owns
                 // the unique release right transferred into this pointer.
                 unsafe { Mapping::reclaim_published(submap.cast(), PAGE_MAP_SUB_SIZE) }?;
+                // `_mi_os_free_ex(subproc, sub, MI_PAGE_MAP_SUB_SIZE, true, ...)`.
+                self.statistics.release(PAGE_MAP_SUB_SIZE, PAGE_MAP_SUB_SIZE);
                 slot.store(null_mut(), Ordering::Release);
             }
         }
@@ -732,9 +778,56 @@ impl PageMap {
         if core::mem::replace(&mut self.fail_next_top_release, false) {
             return Err(Errno::NOMEM);
         }
+        let length = self.mapping.length()?;
         self.mapping.unmap()?;
+        // `_mi_os_free_ex(subproc, pmap, reserved_size, true, pmap->memid)`
+        // frees the memid's complete extent as still committed.
+        self.statistics.release(length, length);
         self.active = false;
         Ok(())
+    }
+}
+
+/// The main-subprocess statistics owner of a process page map's VM events,
+/// or none for a private map. Pinned `page-map.c` records every page-map
+/// allocation, commit, and free on `_mi_subproc_main()` exactly as
+/// `src/os.c` does for any other caller.
+#[derive(Clone, Copy)]
+struct PageMapStatistics(Option<&'static crate::subproc::SubprocessIdentity>);
+
+impl PageMapStatistics {
+    /// `mi_os_prim_alloc_at`: one `mmap_calls` event per attempt, then the
+    /// reserved (and, when committed, committed) extent on success.
+    fn map(self, result: Result<Mapping>, size: usize, committed: bool) -> Result<Mapping> {
+        if let Some(subprocess) = self.0 {
+            let statistics = subprocess.vm_statistics();
+            statistics.mmap_call();
+            if result.is_ok() {
+                statistics.reserve_increase(size);
+                if committed { statistics.committed_increase(size); }
+            }
+        }
+        result
+    }
+
+    /// `_mi_os_commit`: one `commit_calls` event per attempt, then the
+    /// committed extent on success.
+    fn commit<T>(self, result: Result<T>, size: usize) -> Result<T> {
+        if let Some(subprocess) = self.0 {
+            let statistics = subprocess.vm_statistics();
+            statistics.commit_call();
+            if result.is_ok() { statistics.committed_increase(size); }
+        }
+        result
+    }
+
+    /// `mi_os_prim_free` without adjustment.
+    fn release(self, reserved: usize, committed: usize) {
+        if let Some(subprocess) = self.0 {
+            let statistics = subprocess.vm_statistics();
+            if committed != 0 { statistics.committed_decrease(committed); }
+            statistics.reserve_decrease(reserved);
+        }
     }
 }
 
@@ -945,7 +1038,8 @@ mod tests {
         assert_eq!(page_map.header().unwrap().reserved_size, expected_reserved_size);
         assert_eq!(
             page_map.header().unwrap().memid.size(),
-            Some(expected_reserved_size + PAGE_MAP_SUB_SIZE),
+            Some(page_map.memory_config().good_alloc_size(expected_reserved_size + PAGE_MAP_SUB_SIZE)),
+            "`_mi_os_alloc_aligned` maps the good-size extent",
         );
 
         let root = PageMapRoot::empty();

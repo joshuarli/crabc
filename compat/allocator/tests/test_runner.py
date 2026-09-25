@@ -4524,7 +4524,10 @@ class ContractTests(unittest.TestCase):
             list(RUNNER.M2_X86_64_PAGE_MAP_CHECK_IDS),
         )
         self.assertEqual(len(page_map["bounded_source_definitions"]), 4)
-        self.assertEqual(len(page_map["failure_matrix"]), 5)
+        self.assertEqual(
+            [row["id"] for row in page_map["failure_matrix"]],
+            list(RUNNER.M2_X86_64_PAGE_MAP_FAILURE_MATRIX_IDS),
+        )
         self.assertTrue(
             all(
                 component["native_status"] == "partial"

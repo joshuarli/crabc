@@ -536,7 +536,9 @@ impl ProcessPageMapStorage {
         use crate::process_init::process_source_option;
         let configured_vabits = process_source_option(SourceOption::MaxVabits).clamp(0, MAX_VABITS as i64) as usize;
         let force_commit = process_source_option(SourceOption::PagemapCommit) != 0;
-        let page_map = match PageMap::initialize(config, configured_vabits, force_commit) {
+        let page_map = match PageMap::initialize_for_subprocess(
+            config, configured_vabits, force_commit, subprocess.identity(),
+        ) {
             Ok(page_map) => page_map,
             Err(PageMapInitializationError::Failed { error }) => {
                 // `_mi_page_map_init` runs its body through source

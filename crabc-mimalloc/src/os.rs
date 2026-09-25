@@ -10200,6 +10200,44 @@ mod tests {
         std::println!("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END");
     }
 
+    /// Rust half of `compat/allocator/m2_startup_statistics_x86_64.c`: the
+    /// main subprocess VM statistics after process initialization (the page
+    /// map is published), after the first allocation (the first arena is
+    /// reserved), and after its free.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_startup_statistics_c_rust_trace() {
+        unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+        crate::test_process::run_in_fresh_process(
+            "os::tests::emit_m2_startup_statistics_c_rust_trace",
+            || {
+                let mut field = 0usize;
+                let mut emit_statistics = || {
+                    let stats = crate::subproc::MainSubprocess::global()
+                        .identity().vm_statistics().snapshot();
+                    for value in [stats.reserved_current, stats.reserved_total, stats.reserved_peak,
+                        stats.committed_current, stats.committed_total, stats.committed_peak,
+                        stats.mmap_calls, stats.commit_calls]
+                    {
+                        std::println!("m2.startup.statistics.{field}={value}");
+                        field += 1;
+                    }
+                };
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                emit_statistics();
+                let block = match crate::runtime_lifecycle::native_allocate_aligned(16, 16, false) {
+                    crate::runtime_lifecycle::NativePageAllocationResult::Allocated(block) => block,
+                    _ => panic!("the first allocation succeeds"),
+                };
+                emit_statistics();
+                unsafe { crate::runtime_lifecycle::native_free(block) };
+                emit_statistics();
+            },
+        );
+    }
+
     #[test]
     fn purge_failure_does_not_substitute_an_unclaimed_memory_transition() {
         let fault = fault::install(fault::Plan::disabled());

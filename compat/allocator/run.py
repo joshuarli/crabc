@@ -327,6 +327,7 @@ M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "lazy-page-map-commit-failure",
     "cold-page-map-initialization-failure",
     "page-map-initialization-cleanup-leak-c-rust-differential",
+    "page-map-startup-statistics-c-rust-differential",
     "process-page-map-initialization-cleanup-leak",
     "page-map-lazy-extension-commit-owner",
     "page-map-lazy-submap-map-owner",
@@ -415,6 +416,7 @@ M2_X86_64_PAGE_MAP_FAILURE_MATRIX_IDS = (
     "lazy-commit-failure-before-publication",
     "lazy-submap-allocation-and-private-publication",
     "range-registration-rollback-and-unregister",
+    "main-subprocess-os-statistics",
 )
 M2_X86_64_PAGE_MAP_CHECKS = (
     {
@@ -440,6 +442,12 @@ M2_X86_64_PAGE_MAP_CHECKS = (
         "id": "page-map-initialization-cleanup-leak-c-rust-differential",
         "kind": "c-rust-page-map-init-cleanup-differential",
         "target": "page_map::tests::emit_m2_page_map_init_cleanup_c_rust_trace",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "page-map-startup-statistics-c-rust-differential",
+        "kind": "c-rust-startup-statistics-differential",
+        "target": "os::tests::emit_m2_startup_statistics_c_rust_trace",
     },
     {
         "expected_passed_test_count": 1,
@@ -12740,6 +12748,50 @@ def _m2_x86_64_page_map_init_cleanup_check_record(
     }
 
 
+def _m2_x86_64_startup_statistics_producer() -> Any:
+    """Load the pinned C/Rust startup statistics producer."""
+
+    path = ALLOCATOR_ROOT / "m2_startup_statistics_x86_64.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_startup_statistics", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 startup statistics producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _run_m2_x86_64_startup_statistics_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the startup statistics producer against the aggregate's binary."""
+
+    return _m2_x86_64_startup_statistics_producer().run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+    )
+
+
+def _m2_x86_64_startup_statistics_check_record(
+    check: Mapping[str, Any], evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Record the executed startup statistics differential."""
+
+    if (
+        evidence.get("status") != "passed"
+        or evidence.get("comparison", {}).get("status") != "matched"
+        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+    ):
+        raise HarnessError("native x86 M2 startup statistics receipt is invalid")
+    return {
+        "comparison_status": "matched",
+        "component": "page-map",
+        "command": list(evidence["rust_command"]),
+        "evidence_scope": "pinned-c-rust-main-subprocess-startup-reserved-committed-statistics",
+        "id": check["id"],
+        "passed_test_count": evidence["rust_passed_test_count"],
+        "target": check["target"],
+    }
+
+
 def _m2_x86_64_recursion_producer() -> Any:
     """Load the pinned C/Rust recursive diagnostic-output producer."""
 
@@ -13150,6 +13202,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-page-map-lazy-commit-failure-differential",
                     "c-rust-page-map-cold-init-differential",
                     "c-rust-page-map-init-cleanup-differential",
+                    "c-rust-startup-statistics-differential",
                     "c-rust-exclusive-arena-theap-differential",
                     "c-rust-native-bitmaps",
                     "c-rust-vm-primitives-fixed-lifecycle",
@@ -14643,6 +14696,7 @@ def m2_x86_64_memory_substrate_report(
                 "lazy-page-map-commit-failure": "matched",
                 "cold-page-map-initialization-failure": "modeled-safety-divergence",
                 "page-map-initialization-cleanup-leak-c-rust-differential": "matched",
+                "page-map-startup-statistics-c-rust-differential": "matched",
             }:
                 raise HarnessError("native x86 M2 PageMap differential result inventory changed")
         elif component_id == "bitmaps":
@@ -14887,6 +14941,17 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
             ),
         )
     ]
+    _, startup_statistics_check = _m2_x86_64_check_by_id(
+        summary, "page-map-startup-statistics-c-rust-differential"
+    )
+    page_map_cleanup_checks.append(
+        _m2_x86_64_startup_statistics_check_record(
+            startup_statistics_check,
+            _run_m2_x86_64_startup_statistics_evidence(
+                offline=offline, test_program=test_program, check=startup_statistics_check
+            ),
+        )
+    )
     _, recursion_check = _m2_x86_64_check_by_id(
         summary, "recursive-diagnostic-output-c-rust-differential"
     )

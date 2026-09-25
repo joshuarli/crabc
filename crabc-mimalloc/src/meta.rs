@@ -6361,10 +6361,11 @@ mod tests {
         let binding = bind_process_fixture(allocator, true);
         let process = binding.process();
         let page_map = binding.page_map();
+        let map = unsafe { page_map.page_map_for_owned_ranges() }.unwrap();
+        let submaps_before = map.test_lazy_submap_allocation_count();
         let before = process.subprocess().vm_statistics().snapshot();
         let mut block = allocator.zalloc(config(), 2 * ARENA_MIN_SIZE).unwrap();
         assert!(allocator.test_private_page_map_address().is_none());
-        let map = unsafe { page_map.page_map_for_owned_ranges() }.unwrap();
         let page = unsafe { map.checked_lookup(block.pointer().as_ptr()) };
         assert!(!page.is_null());
         assert_eq!(unsafe { (*page).memid().kind() }, MemoryKind::Os);
@@ -6373,7 +6374,11 @@ mod tests {
         let pointer = block.pointer();
         allocator.free(&mut block).unwrap();
         assert!(unsafe { map.checked_lookup(pointer.as_ptr()) }.is_null());
-        assert_eq!(process.subprocess().vm_statistics().snapshot().reserved_current, before.reserved_current);
+        // Only the process PageMap's lazily published submaps, which
+        // `page-map.c` charges to the main subprocess, remain reserved.
+        let submaps = (map.test_lazy_submap_allocation_count() - submaps_before) as i64;
+        assert_eq!(process.subprocess().vm_statistics().snapshot().reserved_current - before.reserved_current,
+            submaps * crate::page_map::PAGE_MAP_SUB_SIZE as i64);
     }
 
     #[test]
@@ -6652,18 +6657,23 @@ mod tests {
         assert!(!unsafe { (*old_page).memid().initially_committed() });
         assert_eq!(unsafe { (*old_page).capacity() }, 384);
         assert_eq!(unsafe { (*old_page).slice_pcommitted() }, 8);
+        let submaps_before = map.test_lazy_submap_allocation_count();
         let before = binding.process().subprocess().vm_statistics().snapshot();
         fault.set(fault::Plan::at(fault::Point::Commit, 1, crabc_core::Errno::NOMEM));
         let mut next = allocator.zalloc(config(), 64).expect(
             "a failed published OS-page extension retries through source fresh selection",
         );
+        let submaps = map.test_lazy_submap_allocation_count() - submaps_before;
         let fresh_page = unsafe { map.checked_lookup(next.pointer().as_ptr()) };
         assert_ne!(fresh_page, old_page);
         assert_eq!(unsafe { (*old_page).capacity() }, 384);
         assert_eq!(unsafe { (*old_page).slice_pcommitted() }, 8);
         assert!(!unsafe { (*fresh_page).memid().initially_committed() });
         let after = binding.process().subprocess().vm_statistics().snapshot();
-        assert_eq!(after.committed_current - before.committed_current, 16 * 1024);
+        // A fresh OS page may need a new process PageMap submap, which
+        // `page-map.c` charges to the main subprocess as a committed map.
+        assert_eq!(after.committed_current - before.committed_current,
+            (16 * 1024 + submaps * crate::page_map::PAGE_MAP_SUB_SIZE) as i64);
         assert_eq!(after.commit_calls - before.commit_calls, 3,
             "failed published extension, then fresh metadata and prefix commitments");
         for allocation in &mut allocations { allocator.free(allocation).unwrap(); }
@@ -6687,12 +6697,14 @@ mod tests {
         // failure is the private OS claim's first page-area prefix, after its
         // metadata commitment but before Page/free-list publication.
         let mut warm = allocator.zalloc(config(), 128).unwrap();
+        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let submaps_before = map.test_lazy_submap_allocation_count();
         let before = binding.process().subprocess().vm_statistics().snapshot();
         fault.set(fault::Plan::at(fault::Point::Commit, 2, crabc_core::Errno::NOMEM));
         let mut next = allocator.zalloc(config(), 64).expect(
             "the failed private OS prefix rolls back and source fresh retry commits a new prefix",
         );
-        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let submaps = map.test_lazy_submap_allocation_count() - submaps_before;
         let page = unsafe { map.checked_lookup(next.pointer().as_ptr()) };
         let pointer = next.pointer();
         assert_eq!(unsafe { (*page).memid().kind() }, MemoryKind::Os);
@@ -6700,7 +6712,8 @@ mod tests {
         assert_eq!(unsafe { (*page).capacity() }, 128);
         assert_eq!(unsafe { (*page).slice_pcommitted() }, 4);
         let after = binding.process().subprocess().vm_statistics().snapshot();
-        assert_eq!(after.committed_current - before.committed_current, 16 * 1024);
+        assert_eq!(after.committed_current - before.committed_current,
+            (16 * 1024 + submaps * crate::page_map::PAGE_MAP_SUB_SIZE) as i64);
         assert_eq!(after.commit_calls - before.commit_calls, 4,
             "metadata, failed prefix, then metadata and prefix for the source retry");
         allocator.free(&mut next).unwrap();
@@ -6711,9 +6724,11 @@ mod tests {
         }
         assert!(unsafe { map.checked_lookup(pointer.as_ptr()) }.is_null());
         let after_release = binding.process().subprocess().vm_statistics().snapshot();
-        assert_eq!(after_release.reserved_current, before.reserved_current,
+        // Only the lazily published PageMap submaps stay charged.
+        let submap_bytes = (submaps * crate::page_map::PAGE_MAP_SUB_SIZE) as i64;
+        assert_eq!(after_release.reserved_current - before.reserved_current, submap_bytes,
             "the failed unpublished claim retains no reservation");
-        assert_eq!(after_release.committed_current, before.committed_current,
+        assert_eq!(after_release.committed_current - before.committed_current, submap_bytes,
             "the failed unpublished claim retains no prefix accounting");
         allocator.free(&mut warm).unwrap();
         let mut entry = allocator.enter().unwrap();

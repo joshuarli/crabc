@@ -210,6 +210,7 @@
         { "expected_passed_test_count": 1, "id": "lazy-page-map-commit-failure", "kind": "c-rust-page-map-lazy-commit-failure-differential", "target": "page_map::tests::emit_m2_page_map_lazy_commit_failure_c_rust_trace" },
         { "expected_passed_test_count": 1, "id": "cold-page-map-initialization-failure", "kind": "c-rust-page-map-cold-init-differential", "target": "process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace" },
         { "expected_passed_test_count": 1, "id": "page-map-initialization-cleanup-leak-c-rust-differential", "kind": "c-rust-page-map-init-cleanup-differential", "target": "page_map::tests::emit_m2_page_map_init_cleanup_c_rust_trace" },
+        { "expected_passed_test_count": 1, "id": "page-map-startup-statistics-c-rust-differential", "kind": "c-rust-startup-statistics-differential", "target": "os::tests::emit_m2_startup_statistics_c_rust_trace" },
         { "expected_passed_test_count": 1, "id": "process-page-map-initialization-cleanup-leak", "kind": "rust-unit", "target": "process_page_map::tests::paired_initialization_commit_and_cleanup_unmap_failure_leaks_the_mapping" },
         { "expected_passed_test_count": 1, "id": "page-map-lazy-extension-commit-owner", "kind": "rust-unit", "target": "page_map::tests::lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry" },
         { "expected_passed_test_count": 1, "id": "page-map-lazy-submap-map-owner", "kind": "rust-unit", "target": "page_map::tests::lazy_submap_mapping_failure_preserves_the_page_map_for_retry" },
@@ -223,7 +224,8 @@
         { "evidence_check_ids": ["page-map-initialization-cleanup-leak-c-rust-differential", "process-page-map-initialization-cleanup-leak"], "id": "initial-and-trailing-commit-cleanup", "source_scope": "src/page-map.c:299-358 initial and trailing submap commit cleanup: a failed `_mi_os_free` cleanup release is warned, counted and leaked, and initialization fails" },
         { "evidence_check_ids": ["lazy-page-map-commit-failure", "page-map-lazy-extension-commit-owner"], "id": "lazy-commit-failure-before-publication", "source_scope": "src/page-map.c:236-269 commit-before-publication path" },
         { "evidence_check_ids": ["page-map-lazy-submap-map-owner", "page-map-lazy-publication-private-lock", "page-map-destroy-lazy-submap-release-owner", "page-map-destroy-top-release-owner"], "id": "lazy-submap-allocation-and-private-publication", "source_scope": "src/page-map.c:386-427 lazy submap allocation, lock, CAS, and teardown" },
-        { "evidence_check_ids": ["successful-page-map-lifecycle"], "id": "range-registration-rollback-and-unregister", "source_scope": "src/page-map.c:429-515 range setting, retry rollback, registration, and unregister" }
+        { "evidence_check_ids": ["successful-page-map-lifecycle"], "id": "range-registration-rollback-and-unregister", "source_scope": "src/page-map.c:429-515 range setting, retry rollback, registration, and unregister" },
+        { "evidence_check_ids": ["page-map-startup-statistics-c-rust-differential"], "id": "main-subprocess-os-statistics", "source_scope": "src/page-map.c:272-427 `_mi_os_alloc_aligned`, `_mi_os_commit`, `_mi_os_zalloc`, and `_mi_os_free_ex` against the main subprocess: the good-size top-level reservation, its commitments, and lazy submaps count reserved/committed bytes and mmap/commit calls" }
       ],
       "id": "page-map",
       "native_status": "complete",

@@ -9517,6 +9517,9 @@ pub(crate) mod tests {
                     .is_registered_child_of(parent))
                 .unwrap_or(false));
 
+            // SAFETY: the parent PageMap lifecycle lease outlives this read.
+            let submaps_before = unsafe { binding.page_map().page_map_for_owned_ranges() }
+                .expect("the parent PageMap is available").test_lazy_submap_allocation_count();
             let parent_stats_before = parent.vm_statistics().snapshot();
             let child_stats_before = child
                 .with_child_heap(|image, _heap, _memory| {
@@ -9555,8 +9558,18 @@ pub(crate) mod tests {
             assert_eq!(child_arena_count, 1);
             assert_eq!(parent_arena_count, parent_arena_count_before);
             assert_eq!(child_arena_memory.kind(), crate::types::MemoryKind::Arena);
-            assert_eq!(parent.vm_statistics().snapshot(), parent_stats_before,
+            // Only the process PageMap's lazily published submaps charge the
+            // main subprocess, as `page-map.c` does through `_mi_subproc_main()`.
+            let submaps = (unsafe { binding.page_map().page_map_for_owned_ranges() }
+                .expect("the parent PageMap is available").test_lazy_submap_allocation_count()
+                - submaps_before) as i64;
+            let submap_bytes = submaps * crate::page_map::PAGE_MAP_SUB_SIZE as i64;
+            let parent_stats_after = parent.vm_statistics().snapshot();
+            assert_eq!(parent_stats_after.reserved_current - parent_stats_before.reserved_current, submap_bytes);
+            assert_eq!(parent_stats_after.committed_current - parent_stats_before.committed_current, submap_bytes,
                 "child arena reserve and page commitment never charge the parent");
+            assert_eq!(parent_stats_after.mmap_calls - parent_stats_before.mmap_calls, submaps);
+            assert_eq!(parent_stats_after.commit_calls, parent_stats_before.commit_calls);
             let child_stats_after = child
                 .with_child_heap(|image, _heap, _memory| {
                     image.identity().vm_statistics().snapshot()
