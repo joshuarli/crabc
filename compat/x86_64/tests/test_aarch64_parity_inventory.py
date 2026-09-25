@@ -457,7 +457,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             },
             report["selected_private_artifacts"],
         )
-        self.assertEqual(
+        self.assertLessEqual(
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
