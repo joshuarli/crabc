@@ -3032,6 +3032,34 @@ existing teardown. A sole, arena-backed, non-singleton,
   its weak path or the project crypto boundary is explicitly changed; it does
   not authorize a local replacement implementation.
 
+### `CRABC-MI-INVALID-PROGRAM-ERROR-SITES` — accepted invalid-use handling
+
+Status: accepted. Area: invalid-use handling and diagnostics.
+
+Three release-live pinned mimalloc v3.5.0 `_mi_error_message` sites are
+reached only by an invalid program, and the Rust port keeps a stricter
+response than C instead of reproducing its continuation:
+
+- `src/page.c:164-172` (`_mi_page_thread_free_collect`): a cross-thread free
+  list longer than the page capacity, or longer than its `used` count,
+  reports `EFAULT` and returns, leaking the detached list and continuing to
+  allocate from the page. The Rust `remote_free` collectors return
+  `RemoteFreeError::TooManyRemoteBlocks` or `UsedCountUnderflow`, and the page
+  engine poisons that collection and retains the page, so no later
+  operation can hand out a block of a list already known to be corrupt.
+- `src/arena.c:1455-1478` (`_mi_arenas_free`): freeing from an invalid arena,
+  an invalid arena block, or an already-free arena block. These are
+  unreachable in the Rust port: every free first resolves its page through the
+  PageMap and releases only an exact claim the engine retains, and crabc libc
+  terminates on a pointer the PageMap does not own.
+
+Only a valid program's behavior is a parity requirement, and both C
+responses continue from a state the allocator has already found corrupt. No
+valid-program differential applies. The M7 gate's `m7.callbacks` blocker
+records these sites as not applicable for this reason. The difference would
+be removed only if the project decided to reproduce C's invalid-use
+continuation, which AGENTS.md's safety rules do not ask for.
+
 ## Entry requirements
 
 Each entry must state:
