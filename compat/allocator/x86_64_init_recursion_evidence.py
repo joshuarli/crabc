@@ -265,7 +265,7 @@ EXPECTED_LIFECYCLE_CHECKS = (
             "first_allocation_start_defers_the_loader_tail_to_runtime_startup",
             "runtime_startup_runs_the_loader_tail_once_before_activation",
             "entropy_failure_at_runtime_startup_is_reseeded_before_activation",
-            "page_map_failure_at_first_allocation_start_is_retained_without_restart",
+            "page_map_failure_at_first_allocation_start_continues_without_page_map",
             "output_recursion_in_the_runtime_startup_tail_allocates_through_the_initial_owner",
             "output_recursion_in_the_deferred_loader_tail_allocates_through_the_initial_owner",
             "runtime_process_once_waits_for_terminal_startup_and_refuses_owner_reentry",
