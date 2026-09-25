@@ -42,7 +42,8 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn report(name: &str, result: NativePageAllocationResult) {
+/// Prints and clears the captured fragments with the thread normalized.
+fn print_messages(name: &str) {
     let thread = format!("0x{:02X}", crabc_core::thread::thread_pointer_identity());
     let fragments: Vec<String> = CAPTURE
         .lock()
@@ -54,6 +55,10 @@ fn report(name: &str, result: NativePageAllocationResult) {
         })
         .collect();
     println!("error_site.{name}.messages={}", fragments.join(":"));
+}
+
+fn report(name: &str, result: NativePageAllocationResult) {
+    print_messages(name);
     println!("error_site.{name}.deferred={}", core::mem::take(&mut *DEFERRED.lock().unwrap()));
     let failed = match result {
         NativePageAllocationResult::Allocated(block) => {
@@ -101,12 +106,14 @@ fn error_sites_match_the_pinned_source() {
     .expect("a supported page size");
     assert!(publish_native_process_startup_facts(facts));
     assert!(initialize_process());
-    CAPTURE.lock().unwrap().clear();
+    println!("CRABC_MI_M7_ERROR_SITES_TRACE_BEGIN");
+    // The delayed startup output, flushed by the loader tail to the default
+    // primitive: the `mimalloc_reserve_os_memory` reservation refusal.
+    print_messages("startup");
     let _ = native_runtime_take_source_error_test_audit();
     // SAFETY: a static function with no context, registered for the process.
     unsafe { register_native_deferred_free_callback(Some(record_deferred), core::ptr::null_mut()) };
 
-    println!("CRABC_MI_M7_ERROR_SITES_TRACE_BEGIN");
     run_cases("");
     std::thread::spawn(|| {
         assert_eq!(

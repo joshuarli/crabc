@@ -122,6 +122,12 @@ int main(void) {
   /* volatile: keep the compiler from diagnosing the constant request. */
   too_large = (size_t)PTRDIFF_MAX + 1;
   printf("CRABC_MI_M7_ERROR_SITES_TRACE_BEGIN\n");
+  /* Process startup (`src/init.c:575-579`) reserved `mimalloc_reserve_os_memory`
+     KiB; a size beyond `MI_MAX_ALLOC_SIZE` reported `src/arena.c:1891-1894`
+     into the delayed buffer, which `_mi_options_post_init` flushed to stderr
+     before `main`. The driver reads that stderr as the startup record. The
+     registration above flushed the buffer again; discard that copy. */
+  message_count = 0;
   run_cases("");
   pthread_t thread;
   if (pthread_create(&thread, NULL, worker, NULL) != 0 || pthread_join(thread, NULL) != 0) return 3;

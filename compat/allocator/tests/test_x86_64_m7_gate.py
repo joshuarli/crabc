@@ -230,6 +230,7 @@ class M7ErrorSitesTraceTests(unittest.TestCase):
             f"error_site.{case}.{suffix}": "0"
             for case in gate.ERROR_SITE_CASES for suffix in ("messages", "deferred", "null", "errno")
         }
+        trace["error_site.startup.messages"] = ""
         gate.require_complete_error_sites_trace(trace, "trace")
         del trace["error_site.worker_malloc_too_large.errno"]
         with self.assertRaisesRegex(harness.HarnessError, "worker_malloc_too_large.errno"):

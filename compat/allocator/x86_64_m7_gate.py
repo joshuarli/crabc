@@ -77,7 +77,10 @@ ERROR_SITES_RUST_TEST = "native_error_sites"
 ERROR_SITES_TRACE_BEGIN = "CRABC_MI_M7_ERROR_SITES_TRACE_BEGIN"
 ERROR_SITES_TRACE_END = "CRABC_MI_M7_ERROR_SITES_TRACE_END"
 # Both halves run with the error gate open so every reached site is shown.
-ERROR_SITES_ENVIRONMENT = {"mimalloc_show_errors": "1"}
+# The reservation size exceeds `MI_MAX_ALLOC_SIZE` once rounded to a slice.
+ERROR_SITES_ENVIRONMENT = {
+    "mimalloc_show_errors": "1", "mimalloc_reserve_os_memory": "9223372036854775807",
+}
 # Every request both halves must report, on the main thread and a worker.
 ERROR_SITE_CASES = tuple(
     prefix + case
@@ -463,6 +466,8 @@ def require_complete_option_effects_trace(trace: Mapping[str, str], description:
 def require_complete_error_sites_trace(trace: Mapping[str, str], description: str) -> None:
     """Reject a trace that omits a request or one of its three records."""
 
+    if "error_site.startup.messages" not in trace:
+        raise harness.HarnessError(f"{description} lacks error_site.startup.messages")
     for case in ERROR_SITE_CASES:
         for suffix in ("messages", "deferred", "null", "errno"):
             if f"error_site.{case}.{suffix}" not in trace:
@@ -540,7 +545,7 @@ def rust_trace(
 def run_trace_differential(
     offline: bool, *, subject: str, oracle: Path, test: str, begin: str, end: str,
     require_complete: Any, report_name: str, integration_test: bool = False,
-    environment: Mapping[str, str] | None = None,
+    environment: Mapping[str, str] | None = None, c_stderr_record: tuple[str, Any] | None = None,
 ) -> dict[str, Any]:
     harness.require_native_x86_64()
     pin = harness.load_pin()
@@ -551,6 +556,11 @@ def run_trace_differential(
         c_execution = c_oracle_trace(oracle, subject, source, temporary, environment)
     rust_execution = rust_trace(test, subject, integration_test=integration_test, environment=environment)
     c_trace = parse_options_trace(str(c_execution["stdout"]), f"pinned C {subject} trace", begin, end)
+    if c_stderr_record is not None:
+        key, derive = c_stderr_record
+        if key in c_trace:
+            raise harness.HarnessError(f"pinned C {subject} trace repeated trace key {key}")
+        c_trace[key] = derive(str(c_execution["stderr"]))
     rust_trace_image = parse_options_trace(str(rust_execution["stdout"]), f"Rust {subject} trace", begin, end)
     require_complete(c_trace, f"pinned C {subject} trace")
     require_complete(rust_trace_image, f"Rust {subject} trace")
@@ -575,12 +585,26 @@ def run_options_differential(offline: bool) -> dict[str, Any]:
     )
 
 
+def startup_record_from_stderr(stderr: str) -> str:
+    """The pinned C probe's startup output, as the Rust `startup` record.
+
+    Startup reports reach the delayed buffer before any registration, and
+    `_mi_options_post_init` flushes it to stderr as one fragment, which is
+    what the Rust half's default primitive receives at the same point.
+    """
+
+    if not stderr:
+        return ""
+    return re.sub(r"thread 0x[0-9A-F]+: ", "thread 0xTID: ", stderr).encode("ascii").hex()
+
+
 def run_error_sites_differential(offline: bool) -> dict[str, Any]:
     return run_trace_differential(
         offline, subject="error-sites", oracle=ERROR_SITES_ORACLE, test=ERROR_SITES_RUST_TEST,
         begin=ERROR_SITES_TRACE_BEGIN, end=ERROR_SITES_TRACE_END,
         require_complete=require_complete_error_sites_trace, report_name="error-sites.json",
         integration_test=True, environment=ERROR_SITES_ENVIRONMENT,
+        c_stderr_record=("error_site.startup.messages", startup_record_from_stderr),
     )
 
 

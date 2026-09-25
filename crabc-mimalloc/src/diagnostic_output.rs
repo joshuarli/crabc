@@ -974,13 +974,17 @@ pub(crate) enum SourceErrorReport {
     AlignedLargeAlignmentOffset { size: usize, alignment: usize, offset: usize },
     /// `mi_error_bad_alignment`, `src/alloc-aligned.c:191-193` (EINVAL).
     BadAlignment { size: usize, alignment: usize, offset: usize },
+    /// `mi_reserve_os_memory_ex2`, `src/arena.c:1891-1894` (EOVERFLOW).
+    ReservationTooLarge { size: usize },
 }
 
 impl SourceErrorReport {
     /// The `err` argument of the source call.
     pub(crate) const fn error(self) -> Errno {
         match self {
-            Self::AllocationTooLarge { .. } | Self::AlignedLargeAlignmentOffset { .. } => Errno::OVERFLOW,
+            Self::AllocationTooLarge { .. }
+            | Self::AlignedLargeAlignmentOffset { .. }
+            | Self::ReservationTooLarge { .. } => Errno::OVERFLOW,
             Self::OutOfMemory { .. } => Errno::NOMEM,
             Self::AlignedTooLarge { .. } | Self::BadAlignment { .. } => Errno::INVAL,
         }
@@ -1019,6 +1023,11 @@ impl SourceErrorReport {
                 decimal(&mut message, alignment);
                 message.append(b", offset ");
                 decimal(&mut message, offset);
+                message.append(b")\n");
+            }
+            Self::ReservationTooLarge { size } => {
+                message.append(b"memory reservation request is too large (size ");
+                decimal(&mut message, size);
                 message.append(b")\n");
             }
             Self::BadAlignment { size, alignment, offset } => {

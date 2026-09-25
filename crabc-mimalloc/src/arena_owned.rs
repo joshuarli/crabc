@@ -1321,10 +1321,22 @@ impl ProcessArenaBacking {
         &'static self, process: VmProcess<'static>, config: MemoryConfig, size: usize,
         access: MapAccess, allow_large: bool, exclusive: bool, random: crate::os::OsRandom<'_>,
     ) -> Result<ArenaId, Errno> {
-        if size > crate::config::MAX_ALLOC_SIZE { return Err(Errno::NOMEM); }
-        let size = size.checked_add(crate::config::ARENA_SLICE_SIZE - 1)
-            .map(|size| size & !(crate::config::ARENA_SLICE_SIZE - 1))
-            .filter(|size| *size <= crate::config::MAX_ALLOC_SIZE).ok_or(Errno::NOMEM)?;
+        // `mi_reserve_os_memory_ex2` rounds a representable size up to one
+        // slice, then reports a size above `MI_MAX_ALLOC_SIZE` (the rounded
+        // one when rounding produced it) and returns `ENOMEM`
+        // (`src/arena.c:1886-1894`). The report runs before any reservation
+        // lock or mapping exists.
+        let size = if size <= crate::config::MAX_ALLOC_SIZE {
+            (size + (crate::config::ARENA_SLICE_SIZE - 1)) & !(crate::config::ARENA_SLICE_SIZE - 1)
+        } else {
+            size
+        };
+        if size > crate::config::MAX_ALLOC_SIZE {
+            let _ = crate::process_init::process_error_message(
+                crate::diagnostic_output::SourceErrorReport::ReservationTooLarge { size },
+            );
+            return Err(Errno::NOMEM);
+        }
         let _guard = self.reserve_lock.lock()?;
         if self.retained_release_error().is_some() { return Err(Errno::NOMEM); }
         unsafe { self.reserve_one_locked(process, config, size, access, allow_large, exclusive, random) }.ok_or(Errno::NOMEM)
