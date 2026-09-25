@@ -71,6 +71,8 @@ mod deferred_free;
 mod diagnostic_output;
 mod free_list;
 mod invariants;
+#[cfg(all(test, target_arch = "x86_64"))]
+mod native_local_trace;
 mod lock;
 mod main_theap;
 mod main_heap_thread;
