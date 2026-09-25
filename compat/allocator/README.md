@@ -107,10 +107,11 @@ directory.
 `./compat/allocator/run-x86_64.sh allocator-m6-adapter` links the shared
 driver [`x86_64_m6_adapter_driver.c`](x86_64_m6_adapter_driver.c) once
 against the pinned C sources and once against the native adapter's M6
-exports (`mi_heap_*` allocation and lifecycle entries, `mi_reserve_os_memory`
+exports (`mi_heap_*` allocation, reallocation, string, collection, and lifecycle entries, `mi_reserve_os_memory`
 and `mi_reserve_os_memory_ex`) and compares the two address-free traces:
 reservations with their statistics and errno, Heap allocation entries with
-their failures and messages, main-Heap refusal warnings, test-api.c's
+their failures and messages, the Heap reallocation, string, `new`, and
+collection entries, main-Heap refusal warnings, test-api.c's
 heap-os1/heap-os2/heap-many, and a second thread that allocates from a shared
 Heap and finishes. Logs live under `x86_64/m6-adapter`.
 

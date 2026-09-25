@@ -293,3 +293,357 @@ pub fn reserve_os_memory(size: usize, commit: bool, allow_large: bool) -> Source
     // SAFETY: a null output is never written.
     unsafe { reserve_os_memory_ex(size, commit, allow_large, false, null_mut()) }
 }
+
+// ---------------------------------------------------------------------------
+// Heap reallocation (`alloc.c:379-530`, `alloc-aligned.c:344-424`)
+// ---------------------------------------------------------------------------
+
+use crate::source_api::{FreeOutcome, SourceCRuntime};
+
+const WORD: usize = core::mem::size_of::<usize>();
+
+/// The Heap argument of a reallocation entry: the main Heap (handled by the
+/// default-Theap entries, whose Theap is that Heap's), or a non-main Heap.
+enum Target {
+    Main,
+    NonMain(NonNull<Heap>),
+}
+
+fn target(heap: *mut c_void) -> Option<Target> {
+    let heap = NonNull::new(heap.cast::<Heap>())?;
+    if is_main_heap(heap) {
+        main_heaps::select_main_heap_theap();
+        return Some(Target::Main);
+    }
+    Some(Target::NonMain(heap))
+}
+
+fn freed_with(result: Sourced<Block>) -> Sourced<(Block, FreeOutcome)> {
+    Sourced { value: (result.value, FreeOutcome::Freed), errno: result.errno }
+}
+
+/// `mi_theap_realloc_zero_ex` through a non-main Heap's Theap. The block is
+/// reused only when it fits with at most half waste and its page belongs to
+/// that Heap; otherwise a block of the Heap replaces it (its expanded part
+/// zeroed from the last copied word when `zero`) and the old block is freed.
+///
+/// # Safety
+/// `block` is null or an exact live block no other thread uses; on a
+/// non-null result it is consumed.
+unsafe fn heap_realloc_zero(heap: NonNull<Heap>, block: *mut u8, new_size: usize, zero: bool) -> Sourced<(Block, FreeOutcome)> {
+    let Some(live) = NonNull::new(block) else {
+        // SAFETY: forwarded Heap contract.
+        return freed_with(unsafe { heap_allocate(heap.as_ptr().cast(), new_size, Request::Plain, zero) });
+    };
+    // `mi_validate_ptr_page`: an unregistered pointer returns null.
+    // SAFETY: forwarded live-block contract.
+    let Some(page_heap) = (unsafe { main_heaps::heap_of_block(live) }) else {
+        return Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged };
+    };
+    // SAFETY: as above.
+    let size = unsafe { crate::source_api::usable_size(block) };
+    if new_size <= size && new_size >= size / 2 && new_size > 0 && page_heap == heap {
+        return Sourced { value: (Some(live), FreeOutcome::Freed), errno: SourceErrno::Unchanged };
+    }
+    // SAFETY: forwarded Heap contract.
+    let result = unsafe { heap_allocate(heap.as_ptr().cast(), new_size, Request::Plain, false) };
+    let Some(replacement) = result.value else { return freed_with(result) };
+    let copy = new_size.min(size);
+    let zero_start = (if copy >= WORD { copy - WORD } else { 0 }) & !(WORD - 1);
+    // SAFETY: the fresh block is live and exclusively ours; `block` holds at
+    // least `copy` usable bytes and does not overlap it.
+    unsafe {
+        let usable = crate::source_api::usable_size(replacement.as_ptr());
+        if zero && usable > zero_start {
+            replacement.as_ptr().add(zero_start).write_bytes(0, usable - zero_start);
+        } else if new_size == 0 {
+            replacement.as_ptr().write(0);
+        }
+        core::ptr::copy_nonoverlapping(block, replacement.as_ptr(), copy);
+    }
+    // SAFETY: the old block is freed once, after the copy.
+    let freed = unsafe { crate::source_api::free(block) };
+    Sourced { value: (Some(replacement), freed), errno: result.errno }
+}
+
+/// `mi_theap_realloc_zero_aligned_at` through a non-main Heap's Theap.
+///
+/// # Safety
+/// As [`heap_realloc_zero`].
+unsafe fn heap_realloc_zero_aligned_at(
+    heap: NonNull<Heap>,
+    block: *mut u8,
+    new_size: usize,
+    alignment: usize,
+    offset: usize,
+    zero: bool,
+) -> Sourced<(Block, FreeOutcome)> {
+    if !crate::size_class::alignment_is_valid(alignment) {
+        let report = SourceErrorReport::BadAlignment { size: new_size, alignment, offset };
+        let _ = crate::process_init::process_error_message(report);
+        return Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::error_message(report.error()) };
+    }
+    if alignment <= WORD && offset == 0 {
+        // SAFETY: forwarded.
+        return unsafe { heap_realloc_zero(heap, block, new_size, zero) };
+    }
+    if block.is_null() {
+        // SAFETY: forwarded Heap contract.
+        return freed_with(unsafe { heap_allocate(heap.as_ptr().cast(), new_size, Request::Aligned { alignment, offset }, zero) });
+    }
+    // SAFETY: forwarded live-block contract.
+    let size = unsafe { crate::source_api::usable_size(block) };
+    if new_size <= size && new_size >= size - size / 2 && (block.addr().wrapping_add(offset) & (alignment - 1)) == 0 {
+        return Sourced { value: (NonNull::new(block), FreeOutcome::Freed), errno: SourceErrno::Unchanged };
+    }
+    // SAFETY: forwarded Heap contract.
+    let result = unsafe { heap_allocate(heap.as_ptr().cast(), new_size, Request::Aligned { alignment, offset }, false) };
+    let Some(replacement) = result.value else { return freed_with(result) };
+    let copy = new_size.min(size);
+    let zero_start = if copy >= WORD { copy - WORD } else { 0 };
+    // SAFETY: as in `heap_realloc_zero`.
+    unsafe {
+        let usable = crate::source_api::usable_size(replacement.as_ptr());
+        if zero && usable > zero_start {
+            replacement.as_ptr().add(zero_start).write_bytes(0, usable - zero_start);
+        }
+        core::ptr::copy_nonoverlapping(block, replacement.as_ptr(), copy);
+    }
+    // SAFETY: the old block is freed once, after the copy.
+    let freed = unsafe { crate::source_api::free(block) };
+    Sourced { value: (Some(replacement), freed), errno: result.errno }
+}
+
+/// `mi_heap_realloc` or, with `zero`, `mi_heap_rezalloc`. The free outcome
+/// is that of the replaced block.
+///
+/// # Safety
+/// `heap` is null or a live Heap of the calling thread's subprocess; `block`
+/// is null or an exact live block no other thread uses, consumed on a
+/// non-null result.
+pub unsafe fn heap_realloc(heap: *mut c_void, block: *mut u8, new_size: usize, zero: bool) -> Sourced<(Block, FreeOutcome)> {
+    match target(heap) {
+        None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
+        // SAFETY: forwarded.
+        Some(Target::Main) if zero => freed_with(unsafe { crate::source_api::rezalloc(block, new_size) }),
+        // SAFETY: forwarded.
+        Some(Target::Main) => freed_with(unsafe { crate::source_api::realloc(block, new_size) }),
+        // SAFETY: forwarded.
+        Some(Target::NonMain(heap)) => unsafe { heap_realloc_zero(heap, block, new_size, zero) },
+    }
+}
+
+/// `mi_heap_reallocn` or, with `zero`, `mi_heap_recalloc`.
+///
+/// # Safety
+/// As [`heap_realloc`].
+pub unsafe fn heap_reallocn(heap: *mut c_void, block: *mut u8, count: usize, size: usize, zero: bool) -> Sourced<(Block, FreeOutcome)> {
+    match crate::size_class::count_size(count, size) {
+        // SAFETY: forwarded.
+        Some(total) => unsafe { heap_realloc(heap, block, total, zero) },
+        None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
+    }
+}
+
+/// `mi_heap_reallocf`: `block` is freed when the reallocation fails.
+///
+/// # Safety
+/// As [`heap_realloc`], except that `block` is consumed on every path.
+pub unsafe fn heap_reallocf(heap: *mut c_void, block: *mut u8, new_size: usize) -> Sourced<(Block, FreeOutcome)> {
+    // SAFETY: forwarded.
+    let result = unsafe { heap_realloc(heap, block, new_size, false) };
+    if result.value.0.is_none() && !block.is_null() {
+        // SAFETY: the failed reallocation left `block` live.
+        let freed = unsafe { crate::source_api::free(block) };
+        return Sourced { value: (None, freed), errno: result.errno };
+    }
+    result
+}
+
+/// `mi_heap_realloc_aligned_at` and, with `zero`, `mi_heap_rezalloc_aligned_at`.
+/// `offset: None` is the `_aligned` form, whose word-sized or smaller
+/// alignment takes the ordinary kernel before any validation.
+///
+/// # Safety
+/// As [`heap_realloc`].
+pub unsafe fn heap_realloc_aligned(
+    heap: *mut c_void,
+    block: *mut u8,
+    new_size: usize,
+    alignment: usize,
+    offset: Option<usize>,
+    zero: bool,
+) -> Sourced<(Block, FreeOutcome)> {
+    if offset.is_none() && alignment <= WORD {
+        // SAFETY: forwarded.
+        return unsafe { heap_realloc(heap, block, new_size, zero) };
+    }
+    let offset = offset.unwrap_or(0);
+    match target(heap) {
+        None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
+        // SAFETY: forwarded.
+        Some(Target::Main) if zero => freed_with(unsafe { crate::source_api::rezalloc_aligned_at(block, new_size, alignment, offset) }),
+        // SAFETY: forwarded.
+        Some(Target::Main) => freed_with(unsafe { crate::source_api::realloc_aligned_at(block, new_size, alignment, offset) }),
+        // SAFETY: forwarded.
+        Some(Target::NonMain(heap)) => unsafe { heap_realloc_zero_aligned_at(heap, block, new_size, alignment, offset, zero) },
+    }
+}
+
+/// `mi_heap_recalloc_aligned[_at]`.
+///
+/// # Safety
+/// As [`heap_realloc`].
+pub unsafe fn heap_recalloc_aligned(
+    heap: *mut c_void,
+    block: *mut u8,
+    count: usize,
+    size: usize,
+    alignment: usize,
+    offset: Option<usize>,
+) -> Sourced<(Block, FreeOutcome)> {
+    match crate::size_class::count_size(count, size) {
+        // SAFETY: forwarded.
+        Some(total) => unsafe { heap_realloc_aligned(heap, block, total, alignment, offset, true) },
+        None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Heap strings and `new` (`alloc.c:540-676,771-810`)
+// ---------------------------------------------------------------------------
+
+/// `mi_theap_strndup` after its length is known.
+///
+/// # Safety
+/// `text` has `length` readable bytes; `heap` as for [`heap_malloc`].
+unsafe fn heap_duplicate(heap: *mut c_void, text: *const core::ffi::c_char, length: usize) -> Sourced<Block> {
+    if length > crate::config::MAX_ALLOC_SIZE - 1 {
+        return Sourced { value: None, errno: SourceErrno::Unchanged };
+    }
+    // SAFETY: forwarded Heap contract.
+    let result = unsafe { heap_malloc(heap, length + 1) };
+    if let Some(copy) = result.value {
+        // SAFETY: a fresh block of `length + 1` bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(text.cast::<u8>(), copy.as_ptr(), length);
+            copy.as_ptr().add(length).write(0);
+        }
+    }
+    result
+}
+
+/// `mi_heap_strdup`.
+///
+/// # Safety
+/// `text` is null or NUL-terminated; `heap` as for [`heap_malloc`].
+pub unsafe fn heap_strdup(heap: *mut c_void, text: *const core::ffi::c_char) -> Sourced<Block> {
+    if text.is_null() {
+        return Sourced { value: None, errno: SourceErrno::Unchanged };
+    }
+    // SAFETY: forwarded.
+    unsafe { heap_duplicate(heap, text, crate::source_api::strnlen(text, usize::MAX)) }
+}
+
+/// `mi_heap_strndup`.
+///
+/// # Safety
+/// `text` is null or readable up to its terminator or `max` bytes.
+pub unsafe fn heap_strndup(heap: *mut c_void, text: *const core::ffi::c_char, max: usize) -> Sourced<Block> {
+    if text.is_null() {
+        return Sourced { value: None, errno: SourceErrno::Unchanged };
+    }
+    // SAFETY: forwarded.
+    unsafe { heap_duplicate(heap, text, crate::source_api::strnlen(text, max)) }
+}
+
+/// `mi_heap_realpath`: the resolution buffer comes from the default Theap
+/// (`mi_zalloc`), the result from the Heap.
+///
+/// # Safety
+/// `name` is null or NUL-terminated; `resolved` is null or writable for the
+/// system `PATH_MAX` bytes.
+pub unsafe fn heap_realpath(
+    runtime: &impl SourceCRuntime,
+    heap: *mut c_void,
+    name: *const core::ffi::c_char,
+    resolved: *mut core::ffi::c_char,
+) -> Sourced<*mut core::ffi::c_char> {
+    if !resolved.is_null() {
+        // SAFETY: forwarded.
+        return Sourced { value: unsafe { runtime.realpath(name, resolved) }, errno: SourceErrno::Unchanged };
+    }
+    let limit = crate::source_api::path_max(runtime);
+    let buffer = crate::source_api::zalloc(limit + 1);
+    let Some(buffer) = buffer.value else {
+        return Sourced { value: null_mut(), errno: buffer.errno.then(SourceErrno::Store(Errno::NOMEM)) };
+    };
+    // SAFETY: a fresh zeroed buffer of `limit + 1` bytes.
+    let rname = unsafe { runtime.realpath(name, buffer.as_ptr().cast()) };
+    // SAFETY: `rname` is null or the NUL-terminated result in `buffer`.
+    let result = unsafe { heap_strndup(heap, rname, limit) };
+    // SAFETY: this call's own buffer.
+    let _ = unsafe { crate::source_api::free(buffer.as_ptr()) };
+    Sourced { value: result.value.map_or(null_mut(), |copy| copy.as_ptr().cast()), errno: result.errno }
+}
+
+/// `mi_heap_alloc_new`: `mi_heap_malloc`, then `mi_theap_try_new`.
+///
+/// # Safety
+/// As [`heap_malloc`].
+pub unsafe fn heap_alloc_new(runtime: &impl SourceCRuntime, heap: *mut c_void, size: usize) -> Sourced<Block> {
+    // SAFETY: forwarded.
+    let first = unsafe { heap_malloc(heap, size) };
+    if first.value.is_some() {
+        return first;
+    }
+    let mut errno = first.errno;
+    for _ in 0..crate::source_api::TRY_NEW_MAX {
+        let (retry, effect) = crate::source_api::try_new_handler(runtime, false);
+        errno = errno.then(effect);
+        if !retry {
+            break;
+        }
+        // The handler runs at least once before this size refusal.
+        if size > crate::config::MAX_ALLOC_SIZE {
+            return Sourced { value: None, errno };
+        }
+        // SAFETY: forwarded.
+        let result = unsafe { heap_malloc(heap, size) };
+        errno = errno.then(result.errno);
+        if result.value.is_some() {
+            return Sourced { value: result.value, errno };
+        }
+    }
+    Sourced { value: None, errno }
+}
+
+/// `mi_heap_alloc_new_n`.
+///
+/// # Safety
+/// As [`heap_malloc`].
+pub unsafe fn heap_alloc_new_n(runtime: &impl SourceCRuntime, heap: *mut c_void, count: usize, size: usize) -> Sourced<Block> {
+    match crate::size_class::count_size(count, size) {
+        // SAFETY: forwarded.
+        Some(total) => unsafe { heap_alloc_new(runtime, heap, total) },
+        None => {
+            let (_, errno) = crate::source_api::try_new_handler(runtime, false);
+            Sourced { value: None, errno }
+        }
+    }
+}
+
+/// `mi_heap_collect(heap, force)`.
+///
+/// # Safety
+/// `heap` is null or a live Heap of the calling thread's subprocess.
+pub unsafe fn heap_collect(heap: *mut c_void, force: bool) {
+    match target(heap) {
+        Some(Target::Main) => crate::source_api::collect(force),
+        // A child-subprocess thread's Theaps are collected at its finish.
+        Some(Target::NonMain(_)) if crate::subproc::lifecycle::current_thread_is_child_member() => {}
+        // SAFETY: forwarded.
+        Some(Target::NonMain(heap)) => unsafe { main_heaps::native_heap_collect(heap, force) },
+        None => {}
+    }
+}

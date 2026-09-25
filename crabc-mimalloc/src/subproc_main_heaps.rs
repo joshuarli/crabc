@@ -440,12 +440,32 @@ pub(crate) unsafe fn native_heap_allocate(
         return None;
     }
     let theap = heap_theap(thread, heap)?;
-    with_theap_engine(thread, theap, |engine| match (aligned, zero) {
-        (None, zero) => engine.allocate(size, zero),
-        (Some((alignment, offset)), true) => engine.allocate_aligned_zeroed_at(size, alignment, offset),
-        (Some((alignment, offset)), false) => engine.allocate_aligned_at(size, alignment, offset),
-    })
-    .flatten()
+    use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
+    // `_mi_malloc_generic`'s collections run `_mi_deferred_free` first; the
+    // engine returns each selected collection so that the callback runs with
+    // no engine or Theap projection live, then resumes.
+    let mut phase = with_theap_engine(thread, theap, |engine| match aligned {
+        None => engine.begin_deferred_free_allocation(size, zero),
+        Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
+    })?;
+    loop {
+        match phase {
+            DeferredFreeAllocationPhase::Complete(block) => return block,
+            DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                let force = matches!(collection, GenericAllocationCollection::Force);
+                if let Ok(invocation) = crate::deferred_free::begin_process(theap, thread.tld, force) {
+                    // SAFETY: this thread's live TLD outlives the synchronous
+                    // callback, and nothing of this module is borrowed across it.
+                    let _ = unsafe {
+                        crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() })
+                    };
+                }
+                phase = with_theap_engine(thread, theap, |engine| {
+                    engine.resume_deferred_free_allocation(collection, continuation)
+                })?;
+            }
+        }
+    }
 }
 
 /// The calling thread's Theap for a non-main Heap that owns `page`, when
@@ -586,7 +606,7 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     // SAFETY: the live Heap; each record is a live main-Heap block.
     let freed = unsafe { heap.as_ref() }.take_non_main_arena_pages(|record| {
         // SAFETY: the exact live record block, freed once.
-        (unsafe { native_free(record) }) == NativePageFreeResult::Freed
+        unsafe { free_subproc_safe(record) }
     });
     if !freed {
         return Err(HeapReleaseError::Retained);
@@ -594,9 +614,10 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     // SAFETY: forwarded; the Heap has no Theap or page left.
     let image = unsafe { crate::types::heap_registry::lifecycle::unlink_non_main_heap(heap, main_heap, main_subprocess.identity()) }?;
     // SAFETY: the exact live image block; nothing names it any longer.
-    match unsafe { native_free(image.cast()) } {
-        NativePageFreeResult::Freed => Ok(HeapReleaseOutcome::Released),
-        _ => Err(HeapReleaseError::Retained),
+    if unsafe { free_subproc_safe(image.cast()) } {
+        Ok(HeapReleaseOutcome::Released)
+    } else {
+        Err(HeapReleaseError::Retained)
     }
 }
 
@@ -742,6 +763,71 @@ pub(crate) fn native_thread_done() -> bool {
         unsafe { theap_decref(theap) };
     }
     true
+}
+
+/// `_mi_free_subproc_safe` (`free.c:299-304`): `mi_free_nonnull` with
+/// `allow_collect=false`. A block on a page this thread owns is freed
+/// locally; any other is published to its page's remote list, and an
+/// abandoned page is not reclaimed or released here.
+///
+/// # Safety
+/// `block` is an exact live block, freed once.
+unsafe fn free_subproc_safe(block: NonNull<u8>) -> bool {
+    let Some(binding) = binding() else { return false };
+    // SAFETY: forwarded live-block contract.
+    let Ok(Some(allocation)) = (unsafe { binding.page_map().lookup_live_allocation(block) }) else { return false };
+    let local = crate::compiler_tls::current_thread_identity().is_some_and(|thread| allocation.is_associated_with(thread));
+    if local {
+        drop(allocation);
+        // SAFETY: forwarded; the local free never collects foreign pages.
+        return (unsafe { native_free(block) }) == NativePageFreeResult::Freed;
+    }
+    // SAFETY: forwarded; this thread does not own the page.
+    unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) }.is_ok()
+}
+
+/// The Heap of the page that holds `block` (`mi_page_heap(_mi_ptr_page(p))`),
+/// or `None` when the process PageMap registers no page for it.
+///
+/// # Safety
+/// `block` is null or a live block that no thread frees during the call.
+pub(crate) unsafe fn heap_of_block(block: NonNull<u8>) -> Option<NonNull<Heap>> {
+    let binding = binding()?;
+    // SAFETY: forwarded; the live block keeps its page and its Heap field.
+    let allocation = unsafe { binding.page_map().lookup_live_allocation(block) }.ok()??;
+    // SAFETY: as above.
+    NonNull::new(unsafe { allocation.page().as_ref() }.heap())
+}
+
+/// Pinned `mi_heap_collect(heap, force)` (`theap.c:123-166`) for a non-main
+/// Heap of the process main subprocess on the calling thread:
+/// `mi_heap_theap` (creating the Theap), `_mi_deferred_free`, then the
+/// Theap's retired/page/arena collection and its statistics merge.
+///
+/// # Safety
+/// `heap` is a live Heap from [`native_heap_new`].
+pub(crate) unsafe fn native_heap_collect(heap: NonNull<Heap>, force: bool) {
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return };
+    let Some(thread) = current_main_thread() else { return };
+    if !is_main_subprocess_heap(heap) {
+        return;
+    }
+    let Some(theap) = heap_theap(thread, heap) else { return };
+    // `_mi_deferred_free(theap, force)`: the selected callback runs with no
+    // engine or Theap projection live.
+    if let Ok(invocation) = crate::deferred_free::begin_process(theap, thread.tld, force) {
+        // SAFETY: this thread's live TLD outlives the synchronous callback
+        // and nothing of this module is borrowed across it.
+        let _ = unsafe { crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() }) };
+    }
+    let collection = if force {
+        crate::single_thread::GenericAllocationCollection::Force
+    } else {
+        crate::single_thread::GenericAllocationCollection::Full
+    };
+    let _ = with_theap_engine(thread, theap, |engine| {
+        engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
+    });
 }
 
 /// `mi_heap_get_stats(heap)`'s merge (`stats.c:453-465`) for a non-main Heap
@@ -990,6 +1076,42 @@ pub(crate) mod tests {
                 assert_eq!(free(blocks[0]), NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_free(local) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_heap_release(shared, true) }, Ok(HeapReleaseOutcome::Released));
+            },
+        );
+    }
+
+
+    /// Pinned `mi_realloc` of a non-main Heap's block through the default
+    /// Theap: its Heap is not the default Theap's, so a fitting block is not
+    /// reused; a main-Heap replacement takes its contents and the block is
+    /// freed.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn default_realloc_of_a_heap_block_replaces_it_from_the_main_heap() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::default_realloc_of_a_heap_block_replaces_it_from_the_main_heap",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let first = match native_allocate_aligned(16, 16, false) {
+                    NativePageAllocationResult::Allocated(block) => block,
+                    _ => panic!("the main thread allocates"),
+                };
+                unsafe { native_free(first) };
+                let heap = native_heap_new().expect("a Heap");
+                let block = unsafe { native_heap_allocate(heap, 100, None, false) }.expect("a block");
+                unsafe { block.as_ptr().write_bytes(0x11, 100) };
+                let replaced = match unsafe { crate::runtime_lifecycle::native_reallocate_source(Some(block), 80, false) } {
+                    NativePageAllocationResult::Allocated(replaced) => replaced,
+                    _ => panic!("the default Theap replaces the block"),
+                };
+                assert_ne!(replaced, block);
+                assert!(unsafe { core::slice::from_raw_parts(replaced.as_ptr(), 80) }.iter().all(|byte| *byte == 0x11));
+                assert_eq!(unsafe { heap_of_block(replaced) }, NonNull::new(MainSubprocess::global().ready_main_heap_pointer()));
+                assert_eq!(unsafe { native_free(replaced) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
             },
         );
     }

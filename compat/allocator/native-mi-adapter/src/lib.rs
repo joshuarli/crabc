@@ -1098,3 +1098,170 @@ pub unsafe extern "C" fn mi_reserve_os_memory_ex(
     // SAFETY: the C caller passes null or a writable `mi_arena_id_t*`.
     finish(unsafe { heaps::reserve_os_memory_ex(size, commit, allow_large, exclusive, arena_id) })
 }
+
+// ---------------------------------------------------------------------------
+// M6 (continued): Heap reallocation, strings, `new`, and collection
+// ---------------------------------------------------------------------------
+
+type HeapChar = c_char;
+
+#[inline]
+fn reallocation(result: Sourced<(Block, FreeOutcome)>) -> *mut c_void {
+    let (block, outcome) = finish(result);
+    freed(outcome);
+    pointer(block)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_realloc(heap: HeapPointer, block: *mut c_void, new_size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the C caller's `mi_heap_realloc` contract.
+    reallocation(unsafe { heaps::heap_realloc(heap, block.cast(), new_size, false) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_reallocn(heap: HeapPointer, block: *mut c_void, count: usize, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_reallocn(heap, block.cast(), count, size, false) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_reallocf(heap: HeapPointer, block: *mut c_void, new_size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_reallocf(heap, block.cast(), new_size) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_rezalloc(heap: HeapPointer, block: *mut c_void, new_size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_realloc(heap, block.cast(), new_size, true) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_recalloc(heap: HeapPointer, block: *mut c_void, count: usize, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_reallocn(heap, block.cast(), count, size, true) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_realloc_aligned(
+    heap: HeapPointer,
+    block: *mut c_void,
+    new_size: usize,
+    alignment: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_realloc_aligned(heap, block.cast(), new_size, alignment, None, false) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_realloc_aligned_at(
+    heap: HeapPointer,
+    block: *mut c_void,
+    new_size: usize,
+    alignment: usize,
+    offset: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_realloc_aligned(heap, block.cast(), new_size, alignment, Some(offset), false) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_rezalloc_aligned(
+    heap: HeapPointer,
+    block: *mut c_void,
+    new_size: usize,
+    alignment: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_realloc_aligned(heap, block.cast(), new_size, alignment, None, true) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_rezalloc_aligned_at(
+    heap: HeapPointer,
+    block: *mut c_void,
+    new_size: usize,
+    alignment: usize,
+    offset: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_realloc_aligned(heap, block.cast(), new_size, alignment, Some(offset), true) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_recalloc_aligned(
+    heap: HeapPointer,
+    block: *mut c_void,
+    count: usize,
+    size: usize,
+    alignment: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_recalloc_aligned(heap, block.cast(), count, size, alignment, None) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_recalloc_aligned_at(
+    heap: HeapPointer,
+    block: *mut c_void,
+    count: usize,
+    size: usize,
+    alignment: usize,
+    offset: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    reallocation(unsafe { heaps::heap_recalloc_aligned(heap, block.cast(), count, size, alignment, Some(offset)) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_strdup(heap: HeapPointer, text: *const HeapChar) -> *mut HeapChar {
+    bind_thread();
+    // SAFETY: the C caller passes null or a NUL-terminated string.
+    allocation(unsafe { heaps::heap_strdup(heap, text) }).cast()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_strndup(heap: HeapPointer, text: *const HeapChar, max: usize) -> *mut HeapChar {
+    bind_thread();
+    // SAFETY: as above, bounded by `max`.
+    allocation(unsafe { heaps::heap_strndup(heap, text, max) }).cast()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_realpath(heap: HeapPointer, name: *const HeapChar, resolved: *mut HeapChar) -> *mut HeapChar {
+    bind_thread();
+    // SAFETY: the C caller's `mi_heap_realpath` contract.
+    finish(unsafe { heaps::heap_realpath(&MuslRuntime, heap, name, resolved) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_alloc_new(heap: HeapPointer, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the C caller passes a live Heap.
+    allocation(unsafe { heaps::heap_alloc_new(&MuslRuntime, heap, size) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_alloc_new_n(heap: HeapPointer, count: usize, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_alloc_new_n(&MuslRuntime, heap, count, size) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_collect(heap: HeapPointer, force: bool) {
+    bind_thread();
+    // SAFETY: the C caller passes a live Heap.
+    unsafe { heaps::heap_collect(heap, force) }
+}

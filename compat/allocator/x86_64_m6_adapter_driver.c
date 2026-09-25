@@ -249,8 +249,123 @@ static void delete_section(void) {
          (long long)(done.heaps.current - after.heaps.current));
 }
 
+
+static char deferred[64];
+static size_t deferred_count;
+
+static void record_deferred(bool force, unsigned long long heartbeat, void* argument) {
+  (void)heartbeat; (void)argument;
+  if (deferred_count < sizeof(deferred) - 1) deferred[deferred_count++] = force ? '1' : '0';
+}
+
+static bool filled(const unsigned char* p, size_t size, unsigned char value) {
+  for (size_t i = 0; i < size; i++) if (p[i] != value) return false;
+  return true;
+}
+
+static void realloc_section(void) {
+  mi_heap_t* h = mi_heap_new();
+  unsigned char* p = (unsigned char*)mi_heap_malloc(h, 100);
+  memset(p, 0x11, 100);
+  unsigned char* q = (unsigned char*)mi_heap_realloc(h, p, 80);
+  printf("realloc.heap.shrink=%d,%d\n", q == p ? 1 : 0, filled(q, 80, 0x11) ? 1 : 0);
+  /* Through the default Theap the block's Heap differs: no reuse. */
+  unsigned char* r = (unsigned char*)mi_realloc(q, 80);
+  printf("realloc.default.same_size=%d,%d\n", r == q ? 1 : 0, filled(r, 80, 0x11) ? 1 : 0);
+  /* A main-Heap block reallocated through the Heap moves into it. */
+  unsigned char* m = (unsigned char*)mi_malloc(100);
+  memset(m, 0x22, 100);
+  unsigned char* moved = (unsigned char*)mi_heap_realloc(h, m, 90);
+  printf("realloc.heap.foreign=%d,%d\n", moved == m ? 1 : 0, filled(moved, 90, 0x22) ? 1 : 0);
+  unsigned char* grown = (unsigned char*)mi_heap_realloc(h, moved, 5000);
+  printf("realloc.heap.grow=%d,%zu\n", filled(grown, 90, 0x22) ? 1 : 0, mi_usable_size(grown));
+  unsigned char* z = (unsigned char*)mi_heap_rezalloc(h, NULL, 40);
+  memset(z, 0x33, 40);
+  z = (unsigned char*)mi_heap_rezalloc(h, z, 400);
+  printf("realloc.heap.rezalloc=%d,%d\n", filled(z, 32, 0x33) ? 1 : 0, zeroed(z + 40, 360) ? 1 : 0);
+  unsigned char* c = (unsigned char*)mi_heap_recalloc(h, NULL, 10, 10);
+  c = (unsigned char*)mi_heap_recalloc(h, c, 30, 10);
+  printf("realloc.heap.recalloc=%d,%zu\n", zeroed(c, 300) ? 1 : 0, mi_usable_size(c));
+  errno = 0;
+  void* overflow = mi_heap_recalloc(h, c, SIZE_MAX / 2, 3);
+  printf("realloc.heap.recalloc_overflow=%d,%d\n", overflow == NULL ? 1 : 0, errno);
+  void* n = mi_heap_reallocn(h, NULL, 4, 16);
+  n = mi_heap_reallocn(h, n, 8, 16);
+  printf("realloc.heap.reallocn=%zu\n", mi_usable_size(n));
+  void* f = mi_heap_malloc(h, 64);
+  void* failed = mi_heap_reallocf(h, f, (size_t)PTRDIFF_MAX + 1);
+  printf("realloc.heap.reallocf_fail=%d\n", failed == NULL ? 1 : 0);
+  print_errors("realloc.heap.reallocf_fail.codes");
+  print_messages("realloc.heap.reallocf_fail.messages");
+  void* a = mi_heap_malloc_aligned(h, 200, 64);
+  void* a2 = mi_heap_realloc_aligned(h, a, 150, 64);
+  printf("realloc.heap.aligned_fit=%d\n", a2 == a ? 1 : 0);
+  unsigned char* a3 = (unsigned char*)mi_heap_realloc_aligned_at(h, a2, 150, 256, 16);
+  printf("realloc.heap.aligned_at=%d\n", (((uintptr_t)a3 + 16) % 256) == 0 ? 1 : 0);
+  /* The whole usable extent is copied, then the rest is zeroed. */
+  const size_t size3 = mi_usable_size(a3);
+  memset(a3, 0x44, size3);
+  unsigned char* a4 = (unsigned char*)mi_heap_rezalloc_aligned(h, a3, 3000, 128);
+  printf("realloc.heap.rezalloc_aligned=%d,%d,%d\n", ((uintptr_t)a4 % 128) == 0 ? 1 : 0,
+         filled(a4, size3, 0x44) ? 1 : 0, zeroed(a4 + size3, 3000 - size3) ? 1 : 0);
+  unsigned char* a5 = (unsigned char*)mi_heap_rezalloc_aligned_at(h, a4, 4000, 128, 8);
+  printf("realloc.heap.rezalloc_aligned_at=%d,%d\n", (((uintptr_t)a5 + 8) % 128) == 0 ? 1 : 0,
+         zeroed(a5 + 3000, 1000) ? 1 : 0);
+  unsigned char* a6 = (unsigned char*)mi_heap_recalloc_aligned(h, NULL, 20, 20, 32);
+  unsigned char* a7 = (unsigned char*)mi_heap_recalloc_aligned_at(h, NULL, 20, 20, 32, 4);
+  printf("realloc.heap.recalloc_aligned=%d,%d\n", ((uintptr_t)a6 % 32) == 0 && zeroed(a6, 400) ? 1 : 0,
+         (((uintptr_t)a7 + 4) % 32) == 0 && zeroed(a7, 400) ? 1 : 0);
+  errno = 0;
+  void* bad = mi_heap_realloc_aligned_at(h, a6, 100, 24, 0);
+  printf("realloc.heap.bad_alignment=%d,%d\n", bad == NULL ? 1 : 0, errno);
+  print_errors("realloc.heap.bad_alignment.codes");
+  print_messages("realloc.heap.bad_alignment.messages");
+  void* main_block = mi_heap_realloc(mi_heap_main(), NULL, 70);
+  main_block = mi_heap_realloc(mi_heap_main(), main_block, 60);
+  printf("realloc.main=%zu\n", mi_usable_size(main_block));
+
+  char* s = mi_heap_strdup(h, "first-class heap");
+  char* t = mi_heap_strndup(h, "first-class heap", 5);
+  printf("strings.dup=%d,%d,%d\n", strcmp(s, "first-class heap") == 0 ? 1 : 0, strcmp(t, "first") == 0 ? 1 : 0,
+         mi_heap_strdup(h, NULL) == NULL ? 1 : 0);
+  char* rp = mi_heap_realpath(h, "/", NULL);
+  printf("strings.realpath=%s\n", rp == NULL ? "(null)" : rp);
+  void* nw = mi_heap_alloc_new(h, 72);
+  void* nn = mi_heap_alloc_new_n(h, 4, 24);
+  printf("new.heap=%zu,%zu\n", mi_usable_size(nw), mi_usable_size(nn));
+
+  mi_free(r); mi_free(grown); mi_free(z); mi_free(c); mi_free(n); mi_free(a5); mi_free(a6); mi_free(a7);
+  mi_free(main_block); mi_free(s); mi_free(t); mi_free(rp); mi_free(nw); mi_free(nn);
+
+  /* mi_heap_collect: the deferred-free callback, then page collection. */
+  enum { COUNT = 200 };
+  static void* blocks[COUNT];
+  mi_stats_t d0 = stats_now();
+  for (int i = 0; i < COUNT; i++) blocks[i] = mi_heap_malloc(h, 1000);
+  mi_stats_t d1 = stats_now();
+  for (int i = 0; i < COUNT; i++) mi_free(blocks[i]);
+  mi_stats_t d2 = stats_now();
+  printf("collect.setup.pages=%lld,%lld,%lld\n", (long long)(d1.pages.current - d0.pages.current),
+         (long long)(d2.pages.current - d0.pages.current), (long long)d2.pages_abandoned.current);
+  mi_register_deferred_free(&record_deferred, NULL);
+  mi_stats_t before = stats_now();
+  mi_heap_collect(h, false);
+  mi_stats_t normal = stats_now();
+  mi_heap_collect(h, true);
+  mi_stats_t forced = stats_now();
+  mi_heap_collect(mi_heap_main(), true);
+  mi_register_deferred_free(NULL, NULL);
+  deferred[deferred_count] = 0;
+  printf("collect.deferred=%s\n", deferred);
+  printf("collect.pages=%lld,%lld\n", (long long)(normal.pages.current - before.pages.current),
+         (long long)(forced.pages.current - before.pages.current));
+  mi_heap_destroy(h);
+}
+
 static mi_heap_t* shared_heap;
 static void* worker_blocks[3];
+static void* initial_block;
+static int worker_realloc_in_place;
 
 static void* worker(void* argument) {
   (void)argument;
@@ -258,6 +373,9 @@ static void* worker(void* argument) {
   worker_blocks[0] = mi_heap_malloc(shared_heap, 64);
   worker_blocks[1] = mi_heap_malloc(shared_heap, 64);
   worker_blocks[2] = mi_heap_malloc_aligned(shared_heap, MIB, 2 * MIB);
+  /* A block of the same Heap on the initial thread's Theap is reused. */
+  void* reused = mi_heap_realloc(shared_heap, initial_block, 56);
+  worker_realloc_in_place = (reused == initial_block);
   mi_heap_t* own = mi_heap_new();
   void* p = mi_heap_malloc(own, 100);
   mi_free(p);
@@ -268,6 +386,7 @@ static void* worker(void* argument) {
 static void thread_section(void) {
   shared_heap = mi_heap_new();
   void* local = mi_heap_malloc(shared_heap, 64);
+  initial_block = mi_heap_malloc(shared_heap, 64);
   pthread_t thread;
   if (pthread_create(&thread, NULL, worker, NULL) != 0 || pthread_join(thread, NULL) != 0) {
     printf("thread.run=0\n");
@@ -275,6 +394,8 @@ static void thread_section(void) {
   }
   printf("thread.run=1\n");
   printf("thread.blocks=%d,%d,%d\n", worker_blocks[0] != NULL, worker_blocks[1] != NULL, worker_blocks[2] != NULL);
+  printf("thread.realloc_in_place=%d\n", worker_realloc_in_place);
+  mi_free(initial_block);
   /* The exited worker's pages are abandoned; free one from here, then
      destroy the Heap with the rest. */
   mi_free(worker_blocks[0]);
@@ -299,6 +420,7 @@ int main(void) {
   /* Heap error and warning messages reach the registered output. */
   mi_option_enable(mi_option_show_errors);
   allocation_section();
+  realloc_section();
   delete_section();
   thread_section();
   print_messages("final.messages");

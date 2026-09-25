@@ -604,6 +604,51 @@ pub(crate) unsafe fn push_post_owner_exit_live_allocation(
     }
 }
 
+/// Source `mi_free_block_mt(page, block, allow_collect=false)` for one exact
+/// live allocation, as `_mi_free_subproc_safe` frees a block it did not
+/// allocate on this thread: the block joins the page's remote list with the
+/// observed owner bit preserved, so an abandoned page stays abandoned with the
+/// block pending for its next collector, and nothing is collected here.
+///
+/// # Safety
+///
+/// `allocation` must name an exact current allocation that the calling thread
+/// does not own. The caller must not access its canonical block after success.
+pub(crate) unsafe fn push_live_allocation_without_collect(
+    allocation: LiveAllocationPointer,
+) -> Result<(), RemoteFreeError> {
+    // SAFETY: the concrete PageMap observation binds these facts to one
+    // current client; only source atomics are projected.
+    let (_, producer, block, page_state) = unsafe { page_map_live_allocation_parts(&allocation) };
+    if page_state == LiveAllocationPageState::Detached {
+        return Err(RemoteFreeError::NotOwnerAssociated);
+    }
+    if block.as_ptr().addr() & THREAD_FREE_OWNED != 0 {
+        return Err(RemoteFreeError::UnalignedBlock);
+    }
+    // `free.c:81-87` with `allow_collect=false`: the new head keeps the old
+    // owner bit, so, unlike the owner-retaining publisher above, an unowned
+    // abandoned head is published to without being claimed.
+    // SAFETY: `producer` names the initialized `xthread_free` atomic field.
+    let word = unsafe { producer.xthread_free.as_ref() };
+    let block = block.cast::<Block>();
+    let block_address = block.as_ptr().expose_provenance();
+    let mut previous = word.load_relaxed();
+    loop {
+        // SAFETY: the caller exclusively owns `block` until this publication.
+        unsafe { block_set_next(block, thread_free_block(thread_free_block_address(previous))) };
+        let replacement = thread_free_create_address(block_address, is_owned(previous))
+            .expect("the checked block alignment preserves the low owner bit");
+        if word.cas_weak_acq_rel(&mut previous, replacement) {
+            break;
+        }
+    }
+    // The still-counted block kept the page registered and unreleased
+    // through the publication.
+    drop(allocation);
+    Ok(())
+}
+
 /// The source remote-free protocol encountered an unsupported lifecycle
 /// state or an invalid remote-list accounting condition.
 ///

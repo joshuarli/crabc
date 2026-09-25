@@ -11258,7 +11258,16 @@ fn native_reallocate_pointer_first_nonlocal(
     // decides local versus nonlocal, because the source page may have been
     // reclaimed by this caller while the replacement was allocated.
     let source = source.into_live_allocation();
+    // SAFETY: the renewed observation keeps the page live for this read.
+    let heap_block = unsafe { crate::subproc::main_heaps::heap_of_page(source.page()) }.is_some();
     let released = match current_thread_identity() {
+        // A block of a non-main Heap of the process main subprocess is freed
+        // through that Heap's route, as `mi_free` frees it.
+        Some(_) if heap_block => {
+            drop(source);
+            // SAFETY: the exact live old client, freed once.
+            unsafe { native_free(old_block) }
+        }
         Some(current) if source.is_associated_with(current) => {
             native_free_pointer_first_local(source, current)
         }

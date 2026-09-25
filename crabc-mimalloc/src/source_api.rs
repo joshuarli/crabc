@@ -57,7 +57,7 @@ use crate::size_class;
 /// Pinned `mi_os_mem_config.page_size` before `_mi_os_init` has run.
 const SOURCE_DEFAULT_OS_PAGE_SIZE: usize = 4096;
 /// `MI_TRY_NEW_MAX` of `src/alloc.c:690`.
-const TRY_NEW_MAX: usize = 4;
+pub(crate) const TRY_NEW_MAX: usize = 4;
 
 /// The errno effect of one pinned source path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -817,7 +817,7 @@ pub unsafe fn reallocarr(current: Option<*mut u8>, count: usize, size: usize) ->
 /// # Safety
 ///
 /// `text` is readable up to its terminator or `max` bytes.
-unsafe fn strnlen(text: *const c_char, max: usize) -> usize {
+pub(crate) unsafe fn strnlen(text: *const c_char, max: usize) -> usize {
     let mut length = 0;
     // SAFETY: forwarded readability contract; the loop stops at the first
     // terminator or the bound.
@@ -950,7 +950,7 @@ pub fn wdupenv_s(buf_is_null: bool, size_is_null: bool, name_is_null: bool) -> (
 static PATH_MAX: AtomicUsize = AtomicUsize::new(0);
 
 /// `mi_path_max`.
-fn path_max(runtime: &impl SourceCRuntime) -> usize {
+pub(crate) fn path_max(runtime: &impl SourceCRuntime) -> usize {
     let cached = PATH_MAX.load(Ordering::Acquire);
     if cached != 0 {
         return cached;
@@ -997,7 +997,7 @@ pub unsafe fn realpath(runtime: &impl SourceCRuntime, name: *const c_char, resol
 /// Plain-C `mi_try_new_handler`: `true` after calling the installed new
 /// handler, otherwise the out-of-memory report and, unless `nothrow`,
 /// `abort`.
-fn try_new_handler(runtime: &impl SourceCRuntime, nothrow: bool) -> (bool, SourceErrno) {
+pub(crate) fn try_new_handler(runtime: &impl SourceCRuntime, nothrow: bool) -> (bool, SourceErrno) {
     match runtime.new_handler() {
         None => {
             if !nothrow {
