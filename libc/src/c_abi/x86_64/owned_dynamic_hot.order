@@ -105,6 +105,7 @@ mi_arenas_get_count
 mi_free
 _Exit
 c::x86_64_static_c_abi::stdio_standard::final_flush
+c::x86_64_static_c_abi::stdio_standard::flush_stream
 c::x86_64_static_c_abi::stdio_standard::fwrite_held
 c::x86_64_static_c_abi::stdio_standard::write_backend_held
 c::x86_64_static_c_abi::owned_dynamic_runtime::flush_on_exit
@@ -353,9 +354,6 @@ crabc_mimalloc::runtime_lifecycle::start_process
 crabc_mimalloc::runtime_lifecycle::prepare_native_later_thread_arena
 crabc_mimalloc::os::source_clock_start
 crabc_mimalloc::config::observe_source_option
-crabc_core::vdso::resolve_kernel_vdso_function
-crabc_core::vdso::resolve_and_call_clock_gettime
-crabc_core::vdso::resolve_and_publish_clock_gettime
 c::x86_64_static_c_abi::native_mimalloc_lifecycle::runtime_source_environment
 core::core_arch::x86::xsave::_xgetbv
 chacha20::avx2_cpuid::init_get::init_inner
