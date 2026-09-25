@@ -78,6 +78,45 @@ static void run_atexit_chain(void)
 	exit(49);
 }
 
+/* Concurrent ordinary registrations: musl serializes atexit.c with its lock,
+ * so every one of them, including those that chain new blocks, runs. */
+enum { ATEXIT_WORKERS = 16, ATEXIT_PER_WORKER = 40 };
+static _Atomic int atexit_ready;
+static _Atomic int atexit_release;
+static int atexit_calls;
+static void counted_handler(void) { ++atexit_calls; }
+static void report_count_handler(void)
+{
+	char text[16];
+	int length = snprintf(text, sizeof text, "%d", atexit_calls);
+	emit(text, (size_t)length);
+}
+
+static void *atexit_registration_worker(void *argument)
+{
+	(void)argument;
+	atomic_fetch_add_explicit(&atexit_ready, 1, memory_order_release);
+	while (!atomic_load_explicit(&atexit_release, memory_order_acquire))
+		;
+	for (int index = 0; index != ATEXIT_PER_WORKER; ++index)
+		CHECK(atexit(counted_handler) == 0);
+	return NULL;
+}
+
+static void run_atexit_contention(void)
+{
+	pthread_t threads[ATEXIT_WORKERS];
+	CHECK(atexit(report_count_handler) == 0);
+	for (size_t index = 0; index != ATEXIT_WORKERS; ++index)
+		CHECK(pthread_create(&threads[index], NULL, atexit_registration_worker, NULL) == 0);
+	while (atomic_load_explicit(&atexit_ready, memory_order_acquire) != ATEXIT_WORKERS)
+		;
+	atomic_store_explicit(&atexit_release, 1, memory_order_release);
+	for (size_t index = 0; index != ATEXIT_WORKERS; ++index)
+		CHECK(pthread_join(threads[index], NULL) == 0);
+	exit(50);
+}
+
 static void reentrant_handler(void)
 {
 	emit("R", 1);
@@ -218,5 +257,7 @@ int main(int argc, char **argv)
 		run_fork();
 	if (!strcmp(argv[1], "atexit-chain"))
 		run_atexit_chain();
+	if (!strcmp(argv[1], "atexit-contention"))
+		run_atexit_contention();
 	fail();
 }
