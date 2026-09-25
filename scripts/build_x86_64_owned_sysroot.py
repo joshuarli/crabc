@@ -676,7 +676,7 @@ def installed_manifest(
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise BuildError("unknown owned allocator backend")
     target_inputs = list(TARGET_RUNTIME_INPUTS)
-    if allocator_backend == "native-shadow":
+    if allocator_backend in NATIVE_ALLOCATOR_BACKENDS:
         target_inputs[3] = "fixed-upstream Rust mimalloc in the selected crabc-libc Rust object"
     if allocator_backend == EVIDENCE_ALLOCATOR_BACKEND:
         target_inputs[3] = "exact pinned mimalloc v3.5.0 src/static.c in place of the libmimalloc-sys object (evidence only)"
@@ -777,7 +777,27 @@ def allocator_header_provenance(dependencies: Path, cargo_home: Path) -> dict[st
     return records
 
 
-ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow", "pinned-c-evidence")
+ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow", "pinned-c-evidence", "native")
+# The one compile-time default. Allocator M10 switches it to "native" in this
+# single line once `allocator-m10 --check` passes; nothing else selects it.
+DEFAULT_ALLOCATOR_BACKEND = "accepted-c"
+# `native` is the production-shaped Rust allocator product: the same Rust
+# selection as the evidence-only `native-shadow` build (so the identical
+# libc Cargo features), but refused together with any test-audit feature and
+# audited for the complete absence of C mimalloc by
+# compat/allocator/x86_64_m10_gate.py.
+NATIVE_ALLOCATOR_BACKEND = "native"
+NATIVE_ALLOCATOR_BACKENDS = ("native-shadow", NATIVE_ALLOCATOR_BACKEND)
+
+
+def backend_selection(allocator_backend: str, lifecycle_test_audit: bool) -> str:
+    """The compile-time build selection a recorded backend uses."""
+
+    if allocator_backend == NATIVE_ALLOCATOR_BACKEND:
+        if lifecycle_test_audit:
+            raise BuildError("the production native backend admits no allocator test-audit feature")
+        return "native-shadow"
+    return allocator_backend
 # `pinned-c-evidence` is never a production product: it is the accepted-C
 # build with its one libmimalloc-sys object replaced by exact pinned
 # mimalloc v3.5.0 `src/static.c`, compiled by the command that reproduces
@@ -973,8 +993,10 @@ def replace_allocator_member(
         raise BuildError(f"pinned mimalloc object lacks symbols the accepted wrapper imports: {missing}")
 
 
-def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c",
+def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
                          lifecycle_test_audit: bool = False) -> dict[str, object]:
+    recorded_backend = allocator_backend
+    allocator_backend = backend_selection(allocator_backend, lifecycle_test_audit)
     producer_tools = resolve_pinned_producer_tools()
     rustup_record = producer_tools["rustup"]
     if not isinstance(rustup_record, dict):
@@ -1121,7 +1143,8 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c",
         if any(name.startswith(("mi_", "_mi_")) for name in symbols):
             raise BuildError("native static archive defines C mimalloc symbols")
         libc_provenance["allocator_backend"] = {
-            "implementation": "native Rust shadow; promotion remains separate",
+            "implementation": ("native Rust; production-shaped selection" if recorded_backend == NATIVE_ALLOCATOR_BACKEND
+                               else "native Rust shadow; promotion remains separate"),
             "upstream_sha256": sha256_file(ROOT / "crabc-mimalloc/UPSTREAM.md"),
         }
     libc_provenance["dependency_graph"] = dependency_graph
@@ -1169,7 +1192,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c",
             "--remap-path-prefix",
             "$CRABC_SOURCE=/crabc",
         ],
-        "allocator_backend": allocator_backend,
+        "allocator_backend": recorded_backend,
         "crt_root": crt_root,
         "builtins": builtins,
         "builtins_provenance": builtins_provenance,
@@ -1260,7 +1283,7 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
         output,
         exclude=frozenset({manifest_path.relative_to(output).as_posix()}),
     )
-    manifest = installed_manifest(payload_hashes, producer_tools, allocator_backend=inputs.get("allocator_backend", "accepted-c"))
+    manifest = installed_manifest(payload_hashes, producer_tools, allocator_backend=inputs.get("allocator_backend", DEFAULT_ALLOCATOR_BACKEND))
     write_json(manifest_path, manifest)
     installed_hashes = regular_file_hashes(output)
     expected = set(payload_hashes) | {manifest_path.relative_to(output).as_posix()}
@@ -1269,7 +1292,7 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
     return manifest
 
 
-def build(output: Path, *, allocator_backend: str = "accepted-c",
+def build(output: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
           lifecycle_test_audit: bool = False) -> dict[str, object]:
     assert_native_target()
     output = validate_output_path(output)
@@ -1288,7 +1311,7 @@ def build(output: Path, *, allocator_backend: str = "accepted-c",
 def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default="accepted-c")
+    parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default=DEFAULT_ALLOCATOR_BACKEND)
     parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
     return parser.parse_args(arguments)
 

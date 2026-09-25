@@ -504,7 +504,7 @@ def elf_symbols(nm: str, artifact: Path, selector: str) -> set[str]:
             if len(line.split()) >= 2 and not line.endswith(":")}
 
 
-def build(output: Path, *, allocator_backend: str = "accepted-c", lifecycle_test_audit: bool = False) -> None:
+def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False) -> None:
     common.assert_native_target()
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise common.BuildError("unknown dynamic allocator backend")
@@ -529,13 +529,15 @@ def build(output: Path, *, allocator_backend: str = "accepted-c", lifecycle_test
         raise common.BuildError(str(error)) from error
 
 
-def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = "accepted-c", lifecycle_test_audit: bool = False) -> None:
+def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False) -> None:
     """Build the complete candidate privately; only build() may publish it.
 
     Failure retains diagnostic/build state under the dedicated .build owner,
     never a partially populated public output. The final manifest must pass
     the installed driver's exact validation before atomic no-replace rename.
     """
+    recorded_backend = allocator_backend
+    allocator_backend = common.backend_selection(allocator_backend, lifecycle_test_audit)
     environment = common.deterministic_environment()
     environment["CARGO_BUILD_JOBS"] = "2"
     tools = common.resolve_pinned_producer_tools()
@@ -744,7 +746,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     (output / "bin/crabc-cc-dynamic").chmod(0o755)
     provenance = {"selected_members": {item: common.sha256_file(objects / item) for item in selected},
                   "excluded_members": list(excluded),
-                  "allocator_backend": allocator_backend,
+                  "allocator_backend": recorded_backend,
                   "allocator_lifecycle_test_audit": lifecycle_test_audit,
                   "accepted_allocator": (common.accepted_allocator_pin() if accepted_c else None),
                   "pinned_c_evidence": pinned_c_evidence,
@@ -769,7 +771,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     common.write_json(metadata / "dynamic-product-state.json", {
         "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
         "status": "materialized-unqualified", "source_sha256": qualification.source_digest(),
-        "allocator_backend": allocator_backend, "allocator_lifecycle_test_audit": lifecycle_test_audit,
+        "allocator_backend": recorded_backend, "allocator_lifecycle_test_audit": lifecycle_test_audit,
         "allocator_promoted": False,
         "contracts": qualification.contract_digests(), "payload_files": payload_files,
         "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
@@ -791,7 +793,7 @@ def write_product_manifest(output: Path, metadata: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default="accepted-c")
+    parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default=common.DEFAULT_ALLOCATOR_BACKEND)
     parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
     args = parser.parse_args()
     try:
