@@ -226,21 +226,13 @@ static void final_callback(void) {
     require_owner(1);
     dprintf(1, "final worker atexit\n");
 }
+/* Joining the initial thread returns only once it has left the process's
+ * thread list, as musl's pthread_join waits for its exit; this worker is then
+ * the final task. It needs no /proc, which the dynamic modes' chroot lacks. */
+static pthread_t initial_thread;
 static void wait_for_initial_task_exit(void) {
-    char path[64], state[512];
-    snprintf(path, sizeof path, "/proc/self/task/%d/stat", (int)getpid());
-    for (;;) {
-        int fd = open(path, O_RDONLY);
-        if (fd < 0) return;
-        ssize_t length = read(fd, state, sizeof state - 1);
-        close(fd);
-        CHECK(length > 0);
-        state[length] = 0;
-        char *end = strrchr(state, ')');
-        CHECK(end && end[1] == ' ');
-        if (end[2] == 'Z') return;
-        sched_yield();
-    }
+    void *result = &initial_thread;
+    CHECK(pthread_join(initial_thread, &result) == 0 && result == 0);
 }
 static void *final_worker(void *argument) {
     (void)argument;
@@ -278,6 +270,7 @@ int main(int argc, char **argv) {
     void *result;
     if (!strcmp(argv[1], "deferred")) {
         CHECK(atexit(deferred_callback) == 0);
+        initial_thread = pthread_self();
         CHECK(pthread_create(&thread, 0, deferred_worker, 0) == 0);
         pthread_exit(0);
     }
@@ -296,6 +289,7 @@ int main(int argc, char **argv) {
     creation_refusal();
     if (!strcmp(argv[1], "final")) {
         CHECK(atexit(final_callback) == 0);
+        initial_thread = pthread_self();
         CHECK(pthread_create(&thread, 0, final_worker, 0) == 0);
         pthread_exit(0);
     }
