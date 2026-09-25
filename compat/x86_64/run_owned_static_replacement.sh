@@ -5,8 +5,9 @@
 # The link sweep (compat/x86_64/owned_static_replacement_sweep.py) links, for
 # every public function both archives define, a program that defines it and
 # names every other public symbol outside its musl member, and retains the
-# whole link-result table. Each function in `replaceable_functions` must link
-# with musl and with the candidate in both static modes.
+# whole link-result table. Each function in
+# compat/x86_64/owned-static-replacement-roster.txt must link with musl and
+# with the candidate in both static modes.
 #
 # Each probe role (compat/x86_64/owned_static_replacement_probe.c) is compiled
 # once with the project headers and linked unchanged by static musl and by the
@@ -22,20 +23,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_static_replacement_probe.c"
 readonly roles=(MALLOC_TRIO MALLOC_FULL STRINGS PRINTF VSNPRINTF SCANF)
-readonly replaceable_functions=(
-    malloc calloc realloc free aligned_alloc posix_memalign memalign valloc
-    reallocarray malloc_usable_size strerror perror
-    strlen strcmp strncmp strverscmp strchr strrchr index rindex strcspn strspn
-    strpbrk strnlen strstr strcpy strncpy strcat strncat strlcpy strlcat
-    strdup strndup strerror_r strsignal strcasecmp strncasecmp strcasestr
-    strtok_r strcoll strxfrm dirname memchr memmem memcmp bcmp memset memmove
-    bcopy bzero explicit_bzero swab atoi atol atoll qsort
-    getenv setenv unsetenv clearenv
-    printf vprintf fprintf vfprintf sprintf vsprintf snprintf vsnprintf
-    dprintf vdprintf asprintf vasprintf scanf vscanf fscanf vfscanf sscanf vsscanf
-    sin cos tan exp log pow acosh acoshf erf erfc lgamma tgamma frexp ldexp
-    cabs cexp csqrt cpow sinl fmal hypotl
-)
+readonly roster="$ROOT/compat/x86_64/owned-static-replacement-roster.txt"
 
 [ "$#" -le 1 ] || {
     printf 'usage: %s [STATIC_SYSROOT]\n' "$0" >&2
@@ -74,9 +62,9 @@ product="$(realpath -e "$product")"
 
 step=link-sweep
 required=()
-for function in "${replaceable_functions[@]}"; do
+while read -r function; do
     required+=(--require "$function")
-done
+done < <(grep -v '^#' "$roster" | tr -s ' ' '\n' | grep .)
 python3 -B "$ROOT/compat/x86_64/owned_static_replacement_sweep.py" \
     --oracle-cc "$oracle_cc" --oracle-archive /opt/musl-1.2.6/lib/libc.a \
     --product "$product" --work "$work/sweep" "${required[@]}"
@@ -131,4 +119,4 @@ for role in "${roles[@]}"; do
 done
 
 printf 'owned static replacement: PASS (%s required replaceable functions; roles: %s; pinned-musl static link and transcript matched in static and static-PIE); evidence: %s\n' \
-    "${#replaceable_functions[@]}" "${roles[*]}" "$work"
+    "$(( ${#required[@]} / 2 ))" "${roles[*]}" "$work"

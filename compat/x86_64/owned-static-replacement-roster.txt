@@ -1,0 +1,38 @@
+# Functions a static program must be able to define itself, linking against
+# the installed libc.a wherever pinned musl links (run_owned_static_replacement.sh).
+# The link sweep checks each; its report measures every other function.
+
+# Allocation
+malloc calloc realloc free aligned_alloc posix_memalign memalign valloc
+reallocarray malloc_usable_size
+
+# Strings, memory, environment, errors, stdlib
+strerror perror
+strlen strcmp strncmp strverscmp strchr strrchr index rindex strcspn strspn
+strpbrk strnlen strstr strcpy strncpy strcat strncat strlcpy strlcat strdup
+strndup strerror_r strsignal strcasecmp strncasecmp strcasestr strtok_r
+strcoll strxfrm dirname memchr memmem memcmp bcmp memset memmove bcopy bzero
+explicit_bzero swab atoi atol atoll qsort getenv setenv unsetenv clearenv
+
+# Formatted I/O
+printf vprintf fprintf vfprintf sprintf vsprintf snprintf vsnprintf dprintf
+vdprintf asprintf vasprintf scanf vscanf fscanf vfscanf sscanf vsscanf
+
+# Math (generated musl translations)
+sin cos tan exp log pow acosh acoshf erf erfc lgamma tgamma frexp ldexp cabs
+cexp csqrt cpow sinl fmal hypotl
+
+# Wide characters, ctype, locale, iconv and gettext
+bind_textdomain_codeset btowc c16rtomb catclose catgets catopen ecvt fcvt
+freelocale fwprintf fwscanf gcvt gettext iconv iconv_close iconv_open isalnum
+isalpha isascii isblank iscntrl isdigit isgraph islower isprint ispunct
+isspace isupper iswalnum iswalpha iswblank iswcntrl iswdigit iswgraph
+iswlower iswprint iswpunct iswspace iswupper iswxdigit isxdigit localeconv
+mblen mbrlen mbrtoc16 mbrtoc32 mbrtowc mbsinit mbsnrtowcs mbsrtowcs mbstowcs
+mbtowc ngettext setlocale swprintf swscanf textdomain toascii tolower toupper
+towctrans vfwprintf vfwscanf vswprintf vswscanf vwprintf vwscanf wcpcpy
+wcpncpy wcrtomb wcscasecmp wcscasecmp_l wcscat wcschr wcscmp wcscoll wcscpy
+wcscspn wcsdup wcslen wcsncasecmp wcsncasecmp_l wcsncat wcsncmp wcsncpy
+wcsnlen wcsnrtombs wcspbrk wcsrchr wcsrtombs wcsspn wcsstr wcstok wcstombs
+wcstoul wcswidth wcsxfrm wctob wctomb wctrans wcwidth wmemchr wmemcmp wmemcpy
+wmemmove wmemset wprintf wscanf

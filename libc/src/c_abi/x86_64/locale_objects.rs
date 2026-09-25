@@ -53,32 +53,30 @@ type Wctrans = *const c_int;
 // `freelocale` is the reverse source form: the strong public body also has a
 // weak `__freelocale` spelling at its exact address.
 core::arch::global_asm!(
-    ".weak __freelocale", ".set __freelocale, freelocale",
-    ".weak newlocale", ".set newlocale, __newlocale",
-    ".weak uselocale", ".set uselocale, __uselocale",
-    ".weak duplocale", ".set duplocale, __duplocale",
-    ".weak nl_langinfo_l", ".set nl_langinfo_l, __nl_langinfo_l",
-    ".weak nl_langinfo", ".set nl_langinfo, __nl_langinfo",
-    ".weak iswalnum_l", ".set iswalnum_l, __iswalnum_l",
-    ".weak iswalpha_l", ".set iswalpha_l, __iswalpha_l",
-    ".weak iswblank_l", ".set iswblank_l, __iswblank_l",
-    ".weak iswcntrl_l", ".set iswcntrl_l, __iswcntrl_l",
-    ".weak iswdigit_l", ".set iswdigit_l, __iswdigit_l",
-    ".weak iswgraph_l", ".set iswgraph_l, __iswgraph_l",
-    ".weak iswlower_l", ".set iswlower_l, __iswlower_l",
-    ".weak iswprint_l", ".set iswprint_l, __iswprint_l",
-    ".weak iswpunct_l", ".set iswpunct_l, __iswpunct_l",
-    ".weak iswspace_l", ".set iswspace_l, __iswspace_l",
-    ".weak iswupper_l", ".set iswupper_l, __iswupper_l",
-    ".weak iswxdigit_l", ".set iswxdigit_l, __iswxdigit_l",
-    ".weak iswctype_l", ".set iswctype_l, __iswctype_l",
-    ".weak wctype_l", ".set wctype_l, __wctype_l",
-    ".weak towlower_l", ".set towlower_l, __towlower_l",
-    ".weak towupper_l", ".set towupper_l, __towupper_l",
-    ".weak towctrans_l", ".set towctrans_l, __towctrans_l",
-    ".weak wctrans_l", ".set wctrans_l, __wctrans_l",
-    ".weak wcscoll_l", ".set wcscoll_l, __wcscoll_l",
-    ".weak wcsxfrm_l", ".set wcsxfrm_l, __wcsxfrm_l",
+    ".weak iswalnum_l",
+    ".set iswalnum_l, __iswalnum_l",
+    ".weak iswalpha_l",
+    ".set iswalpha_l, __iswalpha_l",
+    ".weak iswblank_l",
+    ".set iswblank_l, __iswblank_l",
+    ".weak iswcntrl_l",
+    ".set iswcntrl_l, __iswcntrl_l",
+    ".weak iswdigit_l",
+    ".set iswdigit_l, __iswdigit_l",
+    ".weak iswgraph_l",
+    ".set iswgraph_l, __iswgraph_l",
+    ".weak iswlower_l",
+    ".set iswlower_l, __iswlower_l",
+    ".weak iswprint_l",
+    ".set iswprint_l, __iswprint_l",
+    ".weak iswpunct_l",
+    ".set iswpunct_l, __iswpunct_l",
+    ".weak iswspace_l",
+    ".set iswspace_l, __iswspace_l",
+    ".weak iswupper_l",
+    ".set iswupper_l, __iswupper_l",
+    ".weak iswxdigit_l",
+    ".set iswxdigit_l, __iswxdigit_l",
 );
 
 const ENOENT: c_int = 2;
@@ -243,131 +241,179 @@ unsafe fn requested_utf8(name: *const c_char) -> Option<bool> {
     }
 }
 
-/// Create or modify one immutable built-in locale object.
-///
-/// # Safety
-///
-/// For a nonzero mask, `name` must point to a readable NUL-terminated string.
-/// `base` must be null or a live locale object, never `LC_GLOBAL_LOCALE`.
-/// The caller must exclude concurrent environment mutation when an empty
-/// name or null base requires default-category selection.
-#[export_name = "__newlocale"]
-pub unsafe extern "C" fn newlocale(mask: c_int, name: *const c_char, base: Locale) -> Locale {
-    let mut utf8 = if base.is_null() {
-        false
-    } else {
-        token_is_utf8(base)
-    };
-    #[cfg(crabc_x86_owned_runtime)]
-    {
-        // musl newlocale.c inherits unselected categories from a supplied
-        // base; without a base it resolves their default environment names.
-        // All six names must validate before the immutable token is returned.
-        for category in 0..LC_ALL {
-            let selected = mask & (1 << category) != 0;
-            if !selected && !base.is_null() {
-                continue;
+// Musl's `src/locale/newlocale.c` object.
+static_archive_member! { newlocale_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak newlocale",
+        ".set newlocale, __newlocale",
+    );
+
+    /// Create or modify one immutable built-in locale object.
+    ///
+    /// # Safety
+    ///
+    /// For a nonzero mask, `name` must point to a readable NUL-terminated string.
+    /// `base` must be null or a live locale object, never `LC_GLOBAL_LOCALE`.
+    /// The caller must exclude concurrent environment mutation when an empty
+    /// name or null base requires default-category selection.
+    #[export_name = "__newlocale"]
+    pub unsafe extern "C" fn newlocale(mask: c_int, name: *const c_char, base: Locale) -> Locale {
+        let mut utf8 = if base.is_null() {
+            false
+        } else {
+            token_is_utf8(base)
+        };
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            // musl newlocale.c inherits unselected categories from a supplied
+            // base; without a base it resolves their default environment names.
+            // All six names must validate before the immutable token is returned.
+            for category in 0..LC_ALL {
+                let selected = mask & (1 << category) != 0;
+                if !selected && !base.is_null() {
+                    continue;
+                }
+                let requested = if !selected || unsafe { *name } == 0 {
+                    unsafe { locale_multibyte::environment_locale_mode(category) }
+                } else {
+                    unsafe { requested_utf8(name) }
+                };
+                let Some(requested) = requested else {
+                    unsafe { errno::set_errno(ENOENT) };
+                    return core::ptr::null_mut();
+                };
+                if category == LC_CTYPE {
+                    utf8 = requested;
+                }
             }
-            let requested = if !selected || unsafe { *name } == 0 {
-                unsafe { locale_multibyte::environment_locale_mode(category) }
-            } else {
-                unsafe { requested_utf8(name) }
-            };
-            let Some(requested) = requested else {
+        }
+        #[cfg(not(crabc_x86_owned_runtime))]
+        if mask != 0 {
+            let Some(requested) = (unsafe { requested_utf8(name) }) else {
                 unsafe { errno::set_errno(ENOENT) };
                 return core::ptr::null_mut();
             };
-            if category == LC_CTYPE {
+            if mask & LC_CTYPE_MASK != 0 {
                 utf8 = requested;
             }
         }
+        token_for_utf8(utf8)
     }
-    #[cfg(not(crabc_x86_owned_runtime))]
-    if mask != 0 {
-        let Some(requested) = (unsafe { requested_utf8(name) }) else {
-            unsafe { errno::set_errno(ENOENT) };
-            return core::ptr::null_mut();
-        };
-        if mask & LC_CTYPE_MASK != 0 {
-            utf8 = requested;
+}}
+
+// Musl's `src/locale/freelocale.c` object.
+static_archive_member! { freelocale_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak __freelocale",
+        ".set __freelocale, freelocale",
+    );
+
+    /// Built-in locale tokens own no allocation.
+    #[no_mangle]
+    pub unsafe extern "C" fn freelocale(_locale: Locale) {}
+}}
+
+// Musl's `src/locale/uselocale.c` object.
+static_archive_member! { uselocale_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak uselocale",
+        ".set uselocale, __uselocale",
+    );
+
+    /// Select or query the calling selected thread's locale object.
+    #[export_name = "__uselocale"]
+    pub unsafe extern "C" fn uselocale(locale: Locale) -> Locale {
+        let old = unsafe { current_token() };
+        if !locale.is_null() {
+            unsafe {
+                CURRENT_LOCALE_MODE = if locale == global_locale() {
+                    THREAD_GLOBAL
+                } else if token_is_utf8(locale) {
+                    THREAD_UTF8
+                } else {
+                    THREAD_C
+                };
+            }
+        }
+        old
+    }
+}}
+
+// Musl's `src/locale/duplocale.c` object.
+static_archive_member! { duplocale_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak duplocale",
+        ".set duplocale, __duplocale",
+    );
+
+    /// Duplicate the immutable observable state of one built-in locale object.
+    #[export_name = "__duplocale"]
+    pub unsafe extern "C" fn duplocale(locale: Locale) -> Locale {
+        if locale == global_locale() {
+            token_for_utf8(locale_multibyte::global_ctype_is_utf8())
+        } else {
+            token_for_utf8(token_is_utf8(locale))
         }
     }
-    token_for_utf8(utf8)
-}
-
-/// Built-in locale tokens own no allocation.
-#[no_mangle]
-pub unsafe extern "C" fn freelocale(_locale: Locale) {}
-
-/// Select or query the calling selected thread's locale object.
-#[export_name = "__uselocale"]
-pub unsafe extern "C" fn uselocale(locale: Locale) -> Locale {
-    let old = unsafe { current_token() };
-    if !locale.is_null() {
-        unsafe {
-            CURRENT_LOCALE_MODE = if locale == global_locale() {
-                THREAD_GLOBAL
-            } else if token_is_utf8(locale) {
-                THREAD_UTF8
-            } else {
-                THREAD_C
-            };
-        }
-    }
-    old
-}
-
-/// Duplicate the immutable observable state of one built-in locale object.
-#[export_name = "__duplocale"]
-pub unsafe extern "C" fn duplocale(locale: Locale) -> Locale {
-    if locale == global_locale() {
-        token_for_utf8(locale_multibyte::global_ctype_is_utf8())
-    } else {
-        token_for_utf8(token_is_utf8(locale))
-    }
-}
+}}
 
 #[inline]
 fn bytes_pointer(bytes: &'static [u8]) -> *mut c_char {
     bytes.as_ptr() as *mut c_char
 }
 
-/// Query one fixed C/POSIX locale item through an explicit locale object.
-#[export_name = "__nl_langinfo_l"]
-pub unsafe extern "C" fn nl_langinfo_l(item: c_int, locale: Locale) -> *mut c_char {
-    const CODESET: c_int = 14;
-    if item == CODESET {
-        return if locale_utf8(locale) {
-            bytes_pointer(&UTF8_NAME)
-        } else {
-            bytes_pointer(&ASCII_NAME)
-        };
-    }
-    let category = item >> 16;
-    let index = (item & 0xffff) as usize;
-    if index == 0xffff && category >= 0 && category < LC_ALL {
-        if category == LC_CTYPE && locale_utf8(locale) {
-            return bytes_pointer(&C_UTF8_NAME);
-        }
-        return bytes_pointer(&C_NAME);
-    }
-    match category {
-        1 => match index {
-            0 => bytes_pointer(&RADIX),
-            1 => bytes_pointer(&EMPTY),
-            _ => bytes_pointer(&EMPTY),
-        },
-        2 if index < TIME_STRINGS.len() => bytes_pointer(TIME_STRINGS[index]),
-        5 if index < MESSAGE_STRINGS.len() => bytes_pointer(MESSAGE_STRINGS[index]),
-        _ => bytes_pointer(&EMPTY),
-    }
-}
+// Musl's `src/locale/langinfo.c` object.
+static_archive_member! { langinfo_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak nl_langinfo_l",
+        ".set nl_langinfo_l, __nl_langinfo_l",
+        ".weak nl_langinfo",
+        ".set nl_langinfo, __nl_langinfo",
+    );
 
-/// Query one fixed locale item through the calling thread's selection.
-#[export_name = "__nl_langinfo"]
-pub unsafe extern "C" fn nl_langinfo(item: c_int) -> *mut c_char {
-    unsafe { nl_langinfo_l(item, current_token()) }
-}
+    /// Query one fixed C/POSIX locale item through an explicit locale object.
+    #[export_name = "__nl_langinfo_l"]
+    pub unsafe extern "C" fn nl_langinfo_l(item: c_int, locale: Locale) -> *mut c_char {
+        const CODESET: c_int = 14;
+        if item == CODESET {
+            return if locale_utf8(locale) {
+                bytes_pointer(&UTF8_NAME)
+            } else {
+                bytes_pointer(&ASCII_NAME)
+            };
+        }
+        let category = item >> 16;
+        let index = (item & 0xffff) as usize;
+        if index == 0xffff && category >= 0 && category < LC_ALL {
+            if category == LC_CTYPE && locale_utf8(locale) {
+                return bytes_pointer(&C_UTF8_NAME);
+            }
+            return bytes_pointer(&C_NAME);
+        }
+        match category {
+            1 => match index {
+                0 => bytes_pointer(&RADIX),
+                1 => bytes_pointer(&EMPTY),
+                _ => bytes_pointer(&EMPTY),
+            },
+            2 if index < TIME_STRINGS.len() => bytes_pointer(TIME_STRINGS[index]),
+            5 if index < MESSAGE_STRINGS.len() => bytes_pointer(MESSAGE_STRINGS[index]),
+            _ => bytes_pointer(&EMPTY),
+        }
+    }
+
+    /// Query one fixed locale item through the calling thread's selection.
+    #[export_name = "__nl_langinfo"]
+    pub unsafe extern "C" fn nl_langinfo(item: c_int) -> *mut c_char {
+        unsafe { nl_langinfo_l(item, current_token()) }
+    }
+}}
+
 
 macro_rules! localized_classifier {
     ($localized:ident, $internal:literal, $base:ident) => {
@@ -391,62 +437,122 @@ localized_classifier!(iswspace_l, "__iswspace_l", iswspace);
 localized_classifier!(iswupper_l, "__iswupper_l", iswupper);
 localized_classifier!(iswxdigit_l, "__iswxdigit_l", iswxdigit);
 
-#[export_name = "__iswctype_l"]
-pub extern "C" fn iswctype_l(character: Wint, descriptor: Wctype, _locale: Locale) -> c_int {
-    wide_character::iswctype(character, descriptor)
-}
+// Musl's `src/ctype/iswctype.c` object.
+static_archive_member! { iswctype_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak iswctype_l",
+        ".set iswctype_l, __iswctype_l",
+        ".weak wctype_l",
+        ".set wctype_l, __wctype_l",
+    );
 
-#[export_name = "__wctype_l"]
-pub unsafe extern "C" fn wctype_l(name: *const c_char, _locale: Locale) -> Wctype {
-    unsafe { wide_character::wctype(name) }
-}
+    #[export_name = "__iswctype_l"]
+    pub extern "C" fn iswctype_l(character: Wint, descriptor: Wctype, _locale: Locale) -> c_int {
+        wide_character::iswctype(character, descriptor)
+    }
 
-#[export_name = "__towlower_l"]
-pub extern "C" fn towlower_l(character: Wint, _locale: Locale) -> Wint {
-    wide_character::towlower(character)
-}
+    #[export_name = "__wctype_l"]
+    pub unsafe extern "C" fn wctype_l(name: *const c_char, _locale: Locale) -> Wctype {
+        unsafe { wide_character::wctype(name) }
+    }
+}}
 
-#[export_name = "__towupper_l"]
-pub extern "C" fn towupper_l(character: Wint, _locale: Locale) -> Wint {
-    wide_character::towupper(character)
-}
 
-#[export_name = "__towctrans_l"]
-pub extern "C" fn towctrans_l(character: Wint, descriptor: Wctrans, _locale: Locale) -> Wint {
-    wide_character::towctrans(character, descriptor)
-}
+// Musl's `src/ctype/towctrans.c` object.
+static_archive_member! { towctrans_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak towlower_l",
+        ".set towlower_l, __towlower_l",
+        ".weak towupper_l",
+        ".set towupper_l, __towupper_l",
+    );
 
-#[export_name = "__wctrans_l"]
-pub unsafe extern "C" fn wctrans_l(name: *const c_char, _locale: Locale) -> Wctrans {
-    unsafe { wide_character::wctrans(name) }
-}
+    #[export_name = "__towlower_l"]
+    pub extern "C" fn towlower_l(character: Wint, _locale: Locale) -> Wint {
+        wide_character::towlower(character)
+    }
 
-#[no_mangle]
-pub unsafe extern "C" fn wcscasecmp_l(left: *const Wchar, right: *const Wchar, _locale: Locale) -> c_int {
-    unsafe { wide_character::wcscasecmp(left, right) }
-}
+    #[export_name = "__towupper_l"]
+    pub extern "C" fn towupper_l(character: Wint, _locale: Locale) -> Wint {
+        wide_character::towupper(character)
+    }
+}}
 
-#[no_mangle]
-pub unsafe extern "C" fn wcsncasecmp_l(
-    left: *const Wchar,
-    right: *const Wchar,
-    count: usize,
-    _locale: Locale,
-) -> c_int {
-    unsafe { wide_character::wcsncasecmp(left, right, count) }
-}
 
-#[export_name = "__wcscoll_l"]
-pub unsafe extern "C" fn wcscoll_l(left: *const Wchar, right: *const Wchar, _locale: Locale) -> c_int {
-    unsafe { wide_character::wcscoll(left, right) }
-}
+// Musl's `src/ctype/wctrans.c` object.
+static_archive_member! { wctrans_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak towctrans_l",
+        ".set towctrans_l, __towctrans_l",
+        ".weak wctrans_l",
+        ".set wctrans_l, __wctrans_l",
+    );
 
-#[export_name = "__wcsxfrm_l"]
-pub unsafe extern "C" fn wcsxfrm_l(
-    destination: *mut Wchar,
-    source: *const Wchar,
-    count: usize,
-    _locale: Locale,
-) -> usize {
-    unsafe { wide_character::wcsxfrm(destination, source, count) }
-}
+    #[export_name = "__towctrans_l"]
+    pub extern "C" fn towctrans_l(character: Wint, descriptor: Wctrans, _locale: Locale) -> Wint {
+        wide_character::towctrans(character, descriptor)
+    }
+
+    #[export_name = "__wctrans_l"]
+    pub unsafe extern "C" fn wctrans_l(name: *const c_char, _locale: Locale) -> Wctrans {
+        unsafe { wide_character::wctrans(name) }
+    }
+}}
+
+
+// Musl's `src/string/wcscasecmp_l.c` object.
+static_archive_member! { wcscasecmp_l_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcscasecmp_l(left: *const Wchar, right: *const Wchar, _locale: Locale) -> c_int {
+        unsafe { wide_character::wcscasecmp(left, right) }
+    }
+}}
+
+// Musl's `src/string/wcsncasecmp_l.c` object.
+static_archive_member! { wcsncasecmp_l_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsncasecmp_l(
+        left: *const Wchar,
+        right: *const Wchar,
+        count: usize,
+        _locale: Locale,
+    ) -> c_int {
+        unsafe { wide_character::wcsncasecmp(left, right, count) }
+    }
+}}
+
+// Musl's `src/locale/wcscoll.c` object.
+static_archive_member! { wcscoll_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak wcscoll_l",
+        ".set wcscoll_l, __wcscoll_l",
+    );
+
+    #[export_name = "__wcscoll_l"]
+    pub unsafe extern "C" fn wcscoll_l(left: *const Wchar, right: *const Wchar, _locale: Locale) -> c_int {
+        unsafe { wide_character::wcscoll(left, right) }
+    }
+}}
+
+// Musl's `src/locale/wcsxfrm.c` object.
+static_archive_member! { wcsxfrm_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak wcsxfrm_l",
+        ".set wcsxfrm_l, __wcsxfrm_l",
+    );
+
+    #[export_name = "__wcsxfrm_l"]
+    pub unsafe extern "C" fn wcsxfrm_l(
+        destination: *mut Wchar,
+        source: *const Wchar,
+        count: usize,
+        _locale: Locale,
+    ) -> usize {
+        unsafe { wide_character::wcsxfrm(destination, source, count) }
+    }
+}}

@@ -302,74 +302,80 @@ unsafe fn legacy_special(bits: u64, decimal: *mut c_int, sign: *mut c_int) -> *m
     result
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn ecvt(
-    value: f64,
-    requested_digits: c_int,
-    decimal: *mut c_int,
-    sign: *mut c_int,
-) -> *mut c_char {
-    let bits = value.to_bits();
-    if bits & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 {
-        return unsafe { legacy_special(bits, decimal, sign) };
-    }
-    let mut count = requested_digits;
-    if (count as u32).wrapping_sub(1) > 15 {
-        count = 15;
-    }
-    let count = count as usize;
-    let negative = bits >> 63 != 0;
-    let exact = exact_decimal(bits & 0x7fff_ffff_ffff_ffff);
-    let result = unsafe { legacy_result_ptr() };
-    let output = unsafe { core::slice::from_raw_parts_mut(result.cast::<u8>(), 17) };
-    let point = round_significant(&exact, count, negative, output);
-    for digit in &mut output[..count] {
-        *digit += b'0';
-    }
-    output[count] = 0;
-    unsafe {
-        core::ptr::write(decimal, point);
-        core::ptr::write(sign, negative as c_int);
-    }
-    result
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn fcvt(
-    value: f64,
-    requested_digits: c_int,
-    decimal: *mut c_int,
-    sign: *mut c_int,
-) -> *mut c_char {
-    let bits = value.to_bits();
-    if bits & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 {
-        return unsafe { legacy_special(bits, decimal, sign) };
-    }
-    let mut fractional = requested_digits;
-    if fractional as u32 > 1_400 {
-        fractional = 1_400;
-    }
-    let negative = bits >> 63 != 0;
-    let exact = exact_decimal(bits & 0x7fff_ffff_ffff_ffff);
-    let scaled_len = rounded_scaled_integer_len(&exact, fractional as usize, negative);
-    if scaled_len == 0 {
-        let mut zeroes = fractional;
-        if zeroes > 14 {
-            zeroes = 14;
+// Musl's `src/stdlib/ecvt.c` object.
+static_archive_member! { ecvt_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn ecvt(
+        value: f64,
+        requested_digits: c_int,
+        decimal: *mut c_int,
+        sign: *mut c_int,
+    ) -> *mut c_char {
+        let bits = value.to_bits();
+        if bits & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 {
+            return unsafe { legacy_special(bits, decimal, sign) };
         }
+        let mut count = requested_digits;
+        if (count as u32).wrapping_sub(1) > 15 {
+            count = 15;
+        }
+        let count = count as usize;
+        let negative = bits >> 63 != 0;
+        let exact = exact_decimal(bits & 0x7fff_ffff_ffff_ffff);
+        let result = unsafe { legacy_result_ptr() };
+        let output = unsafe { core::slice::from_raw_parts_mut(result.cast::<u8>(), 17) };
+        let point = round_significant(&exact, count, negative, output);
+        for digit in &mut output[..count] {
+            *digit += b'0';
+        }
+        output[count] = 0;
         unsafe {
-            core::ptr::write(decimal, 1);
+            core::ptr::write(decimal, point);
             core::ptr::write(sign, negative as c_int);
         }
-        return LEGACY_ZERO_RESULT
-            .as_ptr()
-            .add((14 - zeroes) as usize)
-            .cast_mut()
-            .cast::<c_char>();
+        result
     }
-    let point = scaled_len as i32 - fractional;
-    unsafe { ecvt(value, fractional + point, decimal, sign) }
-}
+}}
+
+// Musl's `src/stdlib/fcvt.c` object.
+static_archive_member! { fcvt_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn fcvt(
+        value: f64,
+        requested_digits: c_int,
+        decimal: *mut c_int,
+        sign: *mut c_int,
+    ) -> *mut c_char {
+        let bits = value.to_bits();
+        if bits & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 {
+            return unsafe { legacy_special(bits, decimal, sign) };
+        }
+        let mut fractional = requested_digits;
+        if fractional as u32 > 1_400 {
+            fractional = 1_400;
+        }
+        let negative = bits >> 63 != 0;
+        let exact = exact_decimal(bits & 0x7fff_ffff_ffff_ffff);
+        let scaled_len = rounded_scaled_integer_len(&exact, fractional as usize, negative);
+        if scaled_len == 0 {
+            let mut zeroes = fractional;
+            if zeroes > 14 {
+                zeroes = 14;
+            }
+            unsafe {
+                core::ptr::write(decimal, 1);
+                core::ptr::write(sign, negative as c_int);
+            }
+            return LEGACY_ZERO_RESULT
+                .as_ptr()
+                .add((14 - zeroes) as usize)
+                .cast_mut()
+                .cast::<c_char>();
+        }
+        let point = scaled_len as i32 - fractional;
+        unsafe { ecvt(value, fractional + point, decimal, sign) }
+    }
+}}
 
 #[inline]
 unsafe fn write_output(buffer: *mut c_char, index: &mut usize, byte: u8) {
@@ -399,101 +405,104 @@ unsafe fn write_exponent(buffer: *mut c_char, output: &mut usize, exponent: i32)
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn gcvt(
-    value: f64,
-    requested_digits: c_int,
-    buffer: *mut c_char,
-) -> *mut c_char {
-    let bits = value.to_bits();
-    let negative = bits >> 63 != 0;
-    let magnitude = bits & 0x7fff_ffff_ffff_ffff;
-    let mut output = 0usize;
-    if negative {
-        unsafe { write_output(buffer, &mut output, b'-') };
-    }
-    if magnitude & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 {
-        let word: &[u8] = if magnitude & 0x000f_ffff_ffff_ffff != 0 {
-            b"nan"
+// Musl's `src/stdlib/gcvt.c` object.
+static_archive_member! { gcvt_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn gcvt(
+        value: f64,
+        requested_digits: c_int,
+        buffer: *mut c_char,
+    ) -> *mut c_char {
+        let bits = value.to_bits();
+        let negative = bits >> 63 != 0;
+        let magnitude = bits & 0x7fff_ffff_ffff_ffff;
+        let mut output = 0usize;
+        if negative {
+            unsafe { write_output(buffer, &mut output, b'-') };
+        }
+        if magnitude & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 {
+            let word: &[u8] = if magnitude & 0x000f_ffff_ffff_ffff != 0 {
+                b"nan"
+            } else {
+                b"inf"
+            };
+            for &byte in word {
+                unsafe { write_output(buffer, &mut output, byte) };
+            }
+            unsafe { core::ptr::write(buffer.add(output), 0) };
+            return buffer;
+        }
+
+        let precision = if requested_digits < 0 {
+            6usize
+        } else if requested_digits == 0 {
+            1usize
         } else {
-            b"inf"
+            (requested_digits as usize).min(GCVT_DIGITS)
         };
-        for &byte in word {
-            unsafe { write_output(buffer, &mut output, byte) };
-        }
-        unsafe { core::ptr::write(buffer.add(output), 0) };
-        return buffer;
-    }
+        let exact = exact_decimal(magnitude);
+        let mut digits = [0u8; GCVT_DIGITS];
+        let point = round_significant(&exact, precision, negative, &mut digits);
+        let exponent = point - 1;
+        let scientific = exponent < -4 || exponent >= precision as i32;
 
-    let precision = if requested_digits < 0 {
-        6usize
-    } else if requested_digits == 0 {
-        1usize
-    } else {
-        (requested_digits as usize).min(GCVT_DIGITS)
-    };
-    let exact = exact_decimal(magnitude);
-    let mut digits = [0u8; GCVT_DIGITS];
-    let point = round_significant(&exact, precision, negative, &mut digits);
-    let exponent = point - 1;
-    let scientific = exponent < -4 || exponent >= precision as i32;
-
-    if scientific {
-        let mut end = precision;
-        while end > 1 && digits[end - 1] == 0 {
-            end -= 1;
-        }
-        unsafe { write_output(buffer, &mut output, b'0' + digits[0]) };
-        if end > 1 {
-            unsafe { write_output(buffer, &mut output, b'.') };
-            for &digit in &digits[1..end] {
-                unsafe { write_output(buffer, &mut output, b'0' + digit) };
-            }
-        }
-        unsafe {
-            write_output(buffer, &mut output, b'e');
-            write_exponent(buffer, &mut output, exponent);
-        }
-    } else if point <= 0 {
-        unsafe { write_output(buffer, &mut output, b'0') };
-        let mut end = precision;
-        while end != 0 && digits[end - 1] == 0 {
-            end -= 1;
-        }
-        if end != 0 {
-            unsafe { write_output(buffer, &mut output, b'.') };
-            for _ in 0..(-point) as usize {
-                unsafe { write_output(buffer, &mut output, b'0') };
-            }
-            for &digit in &digits[..end] {
-                unsafe { write_output(buffer, &mut output, b'0' + digit) };
-            }
-        }
-    } else {
-        let integer_digits = point as usize;
-        let copied_integer = integer_digits.min(precision);
-        for &digit in &digits[..copied_integer] {
-            unsafe { write_output(buffer, &mut output, b'0' + digit) };
-        }
-        for _ in copied_integer..integer_digits {
-            unsafe { write_output(buffer, &mut output, b'0') };
-        }
-        if precision > integer_digits {
+        if scientific {
             let mut end = precision;
-            while end > integer_digits && digits[end - 1] == 0 {
+            while end > 1 && digits[end - 1] == 0 {
                 end -= 1;
             }
-            if end > integer_digits {
+            unsafe { write_output(buffer, &mut output, b'0' + digits[0]) };
+            if end > 1 {
                 unsafe { write_output(buffer, &mut output, b'.') };
-                for &digit in &digits[integer_digits..end] {
+                for &digit in &digits[1..end] {
                     unsafe { write_output(buffer, &mut output, b'0' + digit) };
                 }
             }
+            unsafe {
+                write_output(buffer, &mut output, b'e');
+                write_exponent(buffer, &mut output, exponent);
+            }
+        } else if point <= 0 {
+            unsafe { write_output(buffer, &mut output, b'0') };
+            let mut end = precision;
+            while end != 0 && digits[end - 1] == 0 {
+                end -= 1;
+            }
+            if end != 0 {
+                unsafe { write_output(buffer, &mut output, b'.') };
+                for _ in 0..(-point) as usize {
+                    unsafe { write_output(buffer, &mut output, b'0') };
+                }
+                for &digit in &digits[..end] {
+                    unsafe { write_output(buffer, &mut output, b'0' + digit) };
+                }
+            }
+        } else {
+            let integer_digits = point as usize;
+            let copied_integer = integer_digits.min(precision);
+            for &digit in &digits[..copied_integer] {
+                unsafe { write_output(buffer, &mut output, b'0' + digit) };
+            }
+            for _ in copied_integer..integer_digits {
+                unsafe { write_output(buffer, &mut output, b'0') };
+            }
+            if precision > integer_digits {
+                let mut end = precision;
+                while end > integer_digits && digits[end - 1] == 0 {
+                    end -= 1;
+                }
+                if end > integer_digits {
+                    unsafe { write_output(buffer, &mut output, b'.') };
+                    for &digit in &digits[integer_digits..end] {
+                        unsafe { write_output(buffer, &mut output, b'0' + digit) };
+                    }
+                }
+            }
         }
+        unsafe { core::ptr::write(buffer.add(output), 0) };
+        buffer
     }
-    unsafe { core::ptr::write(buffer.add(output), 0) };
-    buffer
-}
+}}
 
 #[inline]
 fn wide_space(character: u32) -> bool {
@@ -622,32 +631,40 @@ unsafe fn scan_wide_with_end(
     result.value
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn wcstol(input: *const u32, end: *mut *mut u32, base: c_int) -> c_long {
-    unsafe { scan_wide_with_end(input, end, base, c_long::MIN as u64) as c_long }
-}
+// Musl's `src/stdlib/wcstol.c` object.
+static_archive_member! { wcstol_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcstol(input: *const u32, end: *mut *mut u32, base: c_int) -> c_long {
+        unsafe { scan_wide_with_end(input, end, base, c_long::MIN as u64) as c_long }
+    }
 
-#[no_mangle]
-pub unsafe extern "C" fn wcstoul(input: *const u32, end: *mut *mut u32, base: c_int) -> c_ulong {
-    unsafe { scan_wide_with_end(input, end, base, c_ulong::MAX as u64) as c_ulong }
-}
+    #[no_mangle]
+    pub unsafe extern "C" fn wcstoul(input: *const u32, end: *mut *mut u32, base: c_int) -> c_ulong {
+        unsafe { scan_wide_with_end(input, end, base, c_ulong::MAX as u64) as c_ulong }
+    }
 
-#[no_mangle]
-pub unsafe extern "C" fn wcstoll(input: *const u32, end: *mut *mut u32, base: c_int) -> c_longlong {
-    unsafe { scan_wide_with_end(input, end, base, c_longlong::MIN as u64) as c_longlong }
-}
+    #[no_mangle]
+    pub unsafe extern "C" fn wcstoll(input: *const u32, end: *mut *mut u32, base: c_int) -> c_longlong {
+        unsafe { scan_wide_with_end(input, end, base, c_longlong::MIN as u64) as c_longlong }
+    }
 
-#[no_mangle]
-pub unsafe extern "C" fn wcstoull(input: *const u32, end: *mut *mut u32, base: c_int) -> c_ulonglong {
-    unsafe { scan_wide_with_end(input, end, base, c_ulonglong::MAX as u64) as c_ulonglong }
-}
+    #[no_mangle]
+    pub unsafe extern "C" fn wcstoull(input: *const u32, end: *mut *mut u32, base: c_int) -> c_ulonglong {
+        unsafe { scan_wide_with_end(input, end, base, c_ulonglong::MAX as u64) as c_ulonglong }
+    }
 
-#[no_mangle]
-pub unsafe extern "C" fn wcstoimax(input: *const u32, end: *mut *mut u32, base: c_int) -> c_long {
-    unsafe { wcstoll(input, end, base) as c_long }
-}
+    #[no_mangle]
+    pub unsafe extern "C" fn wcstoimax(input: *const u32, end: *mut *mut u32, base: c_int) -> c_long {
+        unsafe { wcstoll(input, end, base) as c_long }
+    }
 
-#[no_mangle]
-pub unsafe extern "C" fn wcstoumax(input: *const u32, end: *mut *mut u32, base: c_int) -> c_ulong {
-    unsafe { wcstoull(input, end, base) as c_ulong }
-}
+    #[no_mangle]
+    pub unsafe extern "C" fn wcstoumax(input: *const u32, end: *mut *mut u32, base: c_int) -> c_ulong {
+        unsafe { wcstoull(input, end, base) as c_ulong }
+    }
+}}
+
+
+
+
+

@@ -508,176 +508,183 @@ unsafe fn publish_progress(
     }
 }
 
-/// Open one selected allocation-free encoding descriptor.
-#[no_mangle]
-pub unsafe extern "C" fn iconv_open(
-    tocode: *const c_char,
-    fromcode: *const c_char,
-) -> IconvT {
-    // SAFETY: public callers provide NUL-terminated encoding names.
-    let to = unsafe { find_encoding(tocode) };
-    // SAFETY: public callers provide NUL-terminated encoding names.
-    let from = unsafe { find_encoding(fromcode) };
-    match (to, from) {
-        (Some(to), Some(from)) => make_descriptor(from, to),
-        _ => {
-            // SAFETY: this error belongs to the calling C thread.
-            unsafe { errno::set_errno(EINVAL) };
-            usize::MAX as IconvT
-        }
-    }
-}
-
-/// Convert complete input scalars through one selected descriptor.
-///
-/// A null `inbuf` is the stateless reset query.  Otherwise all pointer/count
-/// records and their source/destination ranges must satisfy the normal C
-/// `iconv` preconditions.  Invalid descriptor or record pointers fail closed
-/// with `EINVAL`; byte-sequence failures retain musl's pointer-progress rules.
-#[no_mangle]
-pub unsafe extern "C" fn iconv(
-    descriptor: IconvT,
-    input: *mut *mut c_char,
-    input_left: *mut usize,
-    output: *mut *mut c_char,
-    output_left: *mut usize,
-) -> usize {
-    if !descriptor_is_selected(descriptor) {
-        // SAFETY: this error belongs to the calling C thread.
-        unsafe { errno::set_errno(EINVAL) };
-        return usize::MAX;
-    }
-    if input.is_null() {
-        return 0;
-    }
-    if input_left.is_null() {
-        // SAFETY: this error belongs to the calling C thread.
-        unsafe { errno::set_errno(EINVAL) };
-        return usize::MAX;
-    }
-    // SAFETY: non-null record pointers are required by the selected ABI.
-    let mut source = unsafe { core::ptr::read(input) }.cast::<u8>();
-    // SAFETY: non-null record pointers are required by the selected ABI.
-    let mut source_remaining = unsafe { core::ptr::read(input_left) };
-    if source.is_null() || source_remaining == 0 {
-        return 0;
-    }
-    if output.is_null() || output_left.is_null() {
-        // SAFETY: this error belongs to the calling C thread.
-        unsafe { errno::set_errno(EINVAL) };
-        return usize::MAX;
-    }
-    // SAFETY: non-null record pointers are required by the selected ABI.
-    let mut destination = unsafe { core::ptr::read(output) }.cast::<u8>();
-    // SAFETY: non-null record pointers are required by the selected ABI.
-    let mut destination_remaining = unsafe { core::ptr::read(output_left) };
-    if destination.is_null() {
-        // SAFETY: this error belongs to the calling C thread.
-        unsafe { errno::set_errno(EINVAL) };
-        return usize::MAX;
-    }
-
-    let from = extract_from(descriptor);
-    let to = extract_to(descriptor);
-    let mut substitutions = 0usize;
-    while source_remaining != 0 {
-        // SAFETY: the caller's input range remains readable for
-        // `source_remaining` bytes throughout this conversion.
-        let decoded = unsafe { decode(from, source, source_remaining) };
-        let (scalar, consumed) = match decoded {
-            Ok(value) => value,
-            Err(DecodeError::Incomplete) => {
-                // SAFETY: all public record pointers were validated above.
-                unsafe {
-                    publish_progress(
-                        input,
-                        input_left,
-                        output,
-                        output_left,
-                        source,
-                        source_remaining,
-                        destination,
-                        destination_remaining,
-                    )
-                };
+// Musl's `src/locale/iconv.c` object.
+static_archive_member! { iconv_source {
+    /// Open one selected allocation-free encoding descriptor.
+    #[no_mangle]
+    pub unsafe extern "C" fn iconv_open(
+        tocode: *const c_char,
+        fromcode: *const c_char,
+    ) -> IconvT {
+        // SAFETY: public callers provide NUL-terminated encoding names.
+        let to = unsafe { find_encoding(tocode) };
+        // SAFETY: public callers provide NUL-terminated encoding names.
+        let from = unsafe { find_encoding(fromcode) };
+        match (to, from) {
+            (Some(to), Some(from)) => make_descriptor(from, to),
+            _ => {
                 // SAFETY: this error belongs to the calling C thread.
                 unsafe { errno::set_errno(EINVAL) };
-                return usize::MAX;
+                usize::MAX as IconvT
             }
-            Err(DecodeError::Invalid) => {
-                // SAFETY: all public record pointers were validated above.
-                unsafe {
-                    publish_progress(
-                        input,
-                        input_left,
-                        output,
-                        output_left,
-                        source,
-                        source_remaining,
-                        destination,
-                        destination_remaining,
-                    )
-                };
-                // SAFETY: this error belongs to the calling C thread.
-                unsafe { errno::set_errno(EILSEQ) };
-                return usize::MAX;
-            }
-        };
-        // SAFETY: the caller's destination range remains writable for
-        // `destination_remaining` bytes throughout this conversion.
-        let encoded = unsafe { encode(to, scalar, destination, destination_remaining) };
-        let progress = match encoded {
-            Ok(value) => value,
-            Err(()) => {
-                // SAFETY: all public record pointers were validated above.
-                unsafe {
-                    publish_progress(
-                        input,
-                        input_left,
-                        output,
-                        output_left,
-                        source,
-                        source_remaining,
-                        destination,
-                        destination_remaining,
-                    )
-                };
-                // SAFETY: this error belongs to the calling C thread.
-                unsafe { errno::set_errno(E2BIG) };
-                return usize::MAX;
-            }
-        };
-        source = source.wrapping_add(consumed);
-        source_remaining -= consumed;
-        destination = destination.wrapping_add(progress.written);
-        destination_remaining -= progress.written;
-        substitutions += progress.substitutions;
+        }
     }
 
-    // SAFETY: all public record pointers were validated above.
-    unsafe {
-        publish_progress(
-            input,
-            input_left,
-            output,
-            output_left,
-            source,
-            source_remaining,
-            destination,
-            destination_remaining,
-        )
-    };
-    substitutions
-}
+    /// Convert complete input scalars through one selected descriptor.
+    ///
+    /// A null `inbuf` is the stateless reset query.  Otherwise all pointer/count
+    /// records and their source/destination ranges must satisfy the normal C
+    /// `iconv` preconditions.  Invalid descriptor or record pointers fail closed
+    /// with `EINVAL`; byte-sequence failures retain musl's pointer-progress rules.
+    #[no_mangle]
+    pub unsafe extern "C" fn iconv(
+        descriptor: IconvT,
+        input: *mut *mut c_char,
+        input_left: *mut usize,
+        output: *mut *mut c_char,
+        output_left: *mut usize,
+    ) -> usize {
+        if !descriptor_is_selected(descriptor) {
+            // SAFETY: this error belongs to the calling C thread.
+            unsafe { errno::set_errno(EINVAL) };
+            return usize::MAX;
+        }
+        if input.is_null() {
+            return 0;
+        }
+        if input_left.is_null() {
+            // SAFETY: this error belongs to the calling C thread.
+            unsafe { errno::set_errno(EINVAL) };
+            return usize::MAX;
+        }
+        // SAFETY: non-null record pointers are required by the selected ABI.
+        let mut source = unsafe { core::ptr::read(input) }.cast::<u8>();
+        // SAFETY: non-null record pointers are required by the selected ABI.
+        let mut source_remaining = unsafe { core::ptr::read(input_left) };
+        if source.is_null() || source_remaining == 0 {
+            return 0;
+        }
+        if output.is_null() || output_left.is_null() {
+            // SAFETY: this error belongs to the calling C thread.
+            unsafe { errno::set_errno(EINVAL) };
+            return usize::MAX;
+        }
+        // SAFETY: non-null record pointers are required by the selected ABI.
+        let mut destination = unsafe { core::ptr::read(output) }.cast::<u8>();
+        // SAFETY: non-null record pointers are required by the selected ABI.
+        let mut destination_remaining = unsafe { core::ptr::read(output_left) };
+        if destination.is_null() {
+            // SAFETY: this error belongs to the calling C thread.
+            unsafe { errno::set_errno(EINVAL) };
+            return usize::MAX;
+        }
 
-/// Close one selected allocation-free descriptor.
-#[no_mangle]
-pub unsafe extern "C" fn iconv_close(descriptor: IconvT) -> c_int {
-    if descriptor_is_selected(descriptor) {
-        0
-    } else {
-        // SAFETY: this error belongs to the calling C thread.
-        unsafe { errno::set_errno(EINVAL) };
-        -1
+        let from = extract_from(descriptor);
+        let to = extract_to(descriptor);
+        let mut substitutions = 0usize;
+        while source_remaining != 0 {
+            // SAFETY: the caller's input range remains readable for
+            // `source_remaining` bytes throughout this conversion.
+            let decoded = unsafe { decode(from, source, source_remaining) };
+            let (scalar, consumed) = match decoded {
+                Ok(value) => value,
+                Err(DecodeError::Incomplete) => {
+                    // SAFETY: all public record pointers were validated above.
+                    unsafe {
+                        publish_progress(
+                            input,
+                            input_left,
+                            output,
+                            output_left,
+                            source,
+                            source_remaining,
+                            destination,
+                            destination_remaining,
+                        )
+                    };
+                    // SAFETY: this error belongs to the calling C thread.
+                    unsafe { errno::set_errno(EINVAL) };
+                    return usize::MAX;
+                }
+                Err(DecodeError::Invalid) => {
+                    // SAFETY: all public record pointers were validated above.
+                    unsafe {
+                        publish_progress(
+                            input,
+                            input_left,
+                            output,
+                            output_left,
+                            source,
+                            source_remaining,
+                            destination,
+                            destination_remaining,
+                        )
+                    };
+                    // SAFETY: this error belongs to the calling C thread.
+                    unsafe { errno::set_errno(EILSEQ) };
+                    return usize::MAX;
+                }
+            };
+            // SAFETY: the caller's destination range remains writable for
+            // `destination_remaining` bytes throughout this conversion.
+            let encoded = unsafe { encode(to, scalar, destination, destination_remaining) };
+            let progress = match encoded {
+                Ok(value) => value,
+                Err(()) => {
+                    // SAFETY: all public record pointers were validated above.
+                    unsafe {
+                        publish_progress(
+                            input,
+                            input_left,
+                            output,
+                            output_left,
+                            source,
+                            source_remaining,
+                            destination,
+                            destination_remaining,
+                        )
+                    };
+                    // SAFETY: this error belongs to the calling C thread.
+                    unsafe { errno::set_errno(E2BIG) };
+                    return usize::MAX;
+                }
+            };
+            source = source.wrapping_add(consumed);
+            source_remaining -= consumed;
+            destination = destination.wrapping_add(progress.written);
+            destination_remaining -= progress.written;
+            substitutions += progress.substitutions;
+        }
+
+        // SAFETY: all public record pointers were validated above.
+        unsafe {
+            publish_progress(
+                input,
+                input_left,
+                output,
+                output_left,
+                source,
+                source_remaining,
+                destination,
+                destination_remaining,
+            )
+        };
+        substitutions
     }
-}
+}}
+
+
+// Musl's `src/locale/iconv_close.c` object.
+static_archive_member! { iconv_close_source {
+    /// Close one selected allocation-free descriptor.
+    #[no_mangle]
+    pub unsafe extern "C" fn iconv_close(descriptor: IconvT) -> c_int {
+        if descriptor_is_selected(descriptor) {
+            0
+        } else {
+            // SAFETY: this error belongs to the calling C thread.
+            unsafe { errno::set_errno(EINVAL) };
+            -1
+        }
+    }
+}}

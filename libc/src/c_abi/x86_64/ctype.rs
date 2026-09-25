@@ -56,108 +56,156 @@ const fn graph(c: c_int) -> bool {
     in_ascii_range(c, b'!', b'~')
 }
 
-/// Classify an ASCII letter or decimal digit.
-#[no_mangle]
-pub extern "C" fn isalnum(c: c_int) -> c_int {
-    (alpha(c) || digit(c)) as c_int
-}
-
-/// Classify an ASCII letter.
-#[no_mangle]
-pub extern "C" fn isalpha(c: c_int) -> c_int {
-    alpha(c) as c_int
-}
-
-/// Classify an ASCII horizontal blank (space or tab).
-#[no_mangle]
-pub extern "C" fn isblank(c: c_int) -> c_int {
-    (c == b' ' as c_int || c == b'\t' as c_int) as c_int
-}
-
-/// Classify an ASCII control byte.
-#[no_mangle]
-pub extern "C" fn iscntrl(c: c_int) -> c_int {
-    (ascii(c) && (c <= 0x1f || c == 0x7f)) as c_int
-}
-
-/// Classify an ASCII decimal digit.
-#[no_mangle]
-pub extern "C" fn isdigit(c: c_int) -> c_int {
-    digit(c) as c_int
-}
-
-/// Classify an ASCII visible non-space byte.
-#[no_mangle]
-pub extern "C" fn isgraph(c: c_int) -> c_int {
-    graph(c) as c_int
-}
-
-/// Classify an ASCII lowercase letter.
-#[no_mangle]
-pub extern "C" fn islower(c: c_int) -> c_int {
-    in_ascii_range(c, b'a', b'z') as c_int
-}
-
-/// Classify an ASCII printable byte, including space.
-#[no_mangle]
-pub extern "C" fn isprint(c: c_int) -> c_int {
-    in_ascii_range(c, b' ', b'~') as c_int
-}
-
-/// Classify an ASCII printable byte that is neither a letter nor a digit.
-#[no_mangle]
-pub extern "C" fn ispunct(c: c_int) -> c_int {
-    (graph(c) && !alpha(c) && !digit(c)) as c_int
-}
-
-/// Classify an ASCII space or horizontal/vertical whitespace byte.
-#[no_mangle]
-pub extern "C" fn isspace(c: c_int) -> c_int {
-    (c == b' ' as c_int || in_ascii_range(c, b'\t', b'\r')) as c_int
-}
-
-/// Classify an ASCII uppercase letter.
-#[no_mangle]
-pub extern "C" fn isupper(c: c_int) -> c_int {
-    in_ascii_range(c, b'A', b'Z') as c_int
-}
-
-/// Classify an ASCII hexadecimal digit.
-#[no_mangle]
-pub extern "C" fn isxdigit(c: c_int) -> c_int {
-    (digit(c)
-        || in_ascii_range(c, b'A', b'F')
-        || in_ascii_range(c, b'a', b'f')) as c_int
-}
-
-/// Convert an ASCII uppercase letter to lowercase, preserving other values.
-#[no_mangle]
-pub extern "C" fn tolower(c: c_int) -> c_int {
-    if in_ascii_range(c, b'A', b'Z') {
-        c + (b'a' - b'A') as c_int
-    } else {
-        c
+// Musl's `src/ctype/isalnum.c` object.
+static_archive_member! { isalnum_source {
+    /// Classify an ASCII letter or decimal digit.
+    #[no_mangle]
+    pub extern "C" fn isalnum(c: c_int) -> c_int {
+        (alpha(c) || digit(c)) as c_int
     }
-}
+}}
 
-/// Convert an ASCII lowercase letter to uppercase, preserving other values.
-#[no_mangle]
-pub extern "C" fn toupper(c: c_int) -> c_int {
-    if in_ascii_range(c, b'a', b'z') {
-        c - (b'a' - b'A') as c_int
-    } else {
-        c
+// Musl's `src/ctype/isalpha.c` object.
+static_archive_member! { isalpha_source {
+    /// Classify an ASCII letter.
+    #[no_mangle]
+    pub extern "C" fn isalpha(c: c_int) -> c_int {
+        alpha(c) as c_int
     }
-}
+}}
 
-/// Classify an integer in the seven-bit ASCII domain.
-#[no_mangle]
-pub extern "C" fn isascii(c: c_int) -> c_int {
-    ascii(c) as c_int
-}
+// Musl's `src/ctype/isblank.c` object.
+static_archive_member! { isblank_source {
+    /// Classify an ASCII horizontal blank (space or tab).
+    #[no_mangle]
+    pub extern "C" fn isblank(c: c_int) -> c_int {
+        (c == b' ' as c_int || c == b'\t' as c_int) as c_int
+    }
+}}
 
-/// Discard every bit outside the seven-bit ASCII domain.
-#[no_mangle]
-pub extern "C" fn toascii(c: c_int) -> c_int {
-    c & 0x7f
-}
+// Musl's `src/ctype/iscntrl.c` object.
+static_archive_member! { iscntrl_source {
+    /// Classify an ASCII control byte.
+    #[no_mangle]
+    pub extern "C" fn iscntrl(c: c_int) -> c_int {
+        (ascii(c) && (c <= 0x1f || c == 0x7f)) as c_int
+    }
+}}
+
+// Musl's `src/ctype/isdigit.c` object.
+static_archive_member! { isdigit_source {
+    /// Classify an ASCII decimal digit.
+    #[no_mangle]
+    pub extern "C" fn isdigit(c: c_int) -> c_int {
+        digit(c) as c_int
+    }
+}}
+
+// Musl's `src/ctype/isgraph.c` object.
+static_archive_member! { isgraph_source {
+    /// Classify an ASCII visible non-space byte.
+    #[no_mangle]
+    pub extern "C" fn isgraph(c: c_int) -> c_int {
+        graph(c) as c_int
+    }
+}}
+
+// Musl's `src/ctype/islower.c` object.
+static_archive_member! { islower_source {
+    /// Classify an ASCII lowercase letter.
+    #[no_mangle]
+    pub extern "C" fn islower(c: c_int) -> c_int {
+        in_ascii_range(c, b'a', b'z') as c_int
+    }
+}}
+
+// Musl's `src/ctype/isprint.c` object.
+static_archive_member! { isprint_source {
+    /// Classify an ASCII printable byte, including space.
+    #[no_mangle]
+    pub extern "C" fn isprint(c: c_int) -> c_int {
+        in_ascii_range(c, b' ', b'~') as c_int
+    }
+}}
+
+// Musl's `src/ctype/ispunct.c` object.
+static_archive_member! { ispunct_source {
+    /// Classify an ASCII printable byte that is neither a letter nor a digit.
+    #[no_mangle]
+    pub extern "C" fn ispunct(c: c_int) -> c_int {
+        (graph(c) && !alpha(c) && !digit(c)) as c_int
+    }
+}}
+
+// Musl's `src/ctype/isspace.c` object.
+static_archive_member! { isspace_source {
+    /// Classify an ASCII space or horizontal/vertical whitespace byte.
+    #[no_mangle]
+    pub extern "C" fn isspace(c: c_int) -> c_int {
+        (c == b' ' as c_int || in_ascii_range(c, b'\t', b'\r')) as c_int
+    }
+}}
+
+// Musl's `src/ctype/isupper.c` object.
+static_archive_member! { isupper_source {
+    /// Classify an ASCII uppercase letter.
+    #[no_mangle]
+    pub extern "C" fn isupper(c: c_int) -> c_int {
+        in_ascii_range(c, b'A', b'Z') as c_int
+    }
+}}
+
+// Musl's `src/ctype/isxdigit.c` object.
+static_archive_member! { isxdigit_source {
+    /// Classify an ASCII hexadecimal digit.
+    #[no_mangle]
+    pub extern "C" fn isxdigit(c: c_int) -> c_int {
+        (digit(c)
+            || in_ascii_range(c, b'A', b'F')
+            || in_ascii_range(c, b'a', b'f')) as c_int
+    }
+}}
+
+// Musl's `src/ctype/tolower.c` object.
+static_archive_member! { tolower_source {
+    /// Convert an ASCII uppercase letter to lowercase, preserving other values.
+    #[no_mangle]
+    pub extern "C" fn tolower(c: c_int) -> c_int {
+        if in_ascii_range(c, b'A', b'Z') {
+            c + (b'a' - b'A') as c_int
+        } else {
+            c
+        }
+    }
+}}
+
+// Musl's `src/ctype/toupper.c` object.
+static_archive_member! { toupper_source {
+    /// Convert an ASCII lowercase letter to uppercase, preserving other values.
+    #[no_mangle]
+    pub extern "C" fn toupper(c: c_int) -> c_int {
+        if in_ascii_range(c, b'a', b'z') {
+            c - (b'a' - b'A') as c_int
+        } else {
+            c
+        }
+    }
+}}
+
+// Musl's `src/ctype/isascii.c` object.
+static_archive_member! { isascii_source {
+    /// Classify an integer in the seven-bit ASCII domain.
+    #[no_mangle]
+    pub extern "C" fn isascii(c: c_int) -> c_int {
+        ascii(c) as c_int
+    }
+}}
+
+// Musl's `src/ctype/toascii.c` object.
+static_archive_member! { toascii_source {
+    /// Discard every bit outside the seven-bit ASCII domain.
+    #[no_mangle]
+    pub extern "C" fn toascii(c: c_int) -> c_int {
+        c & 0x7f
+    }
+}}

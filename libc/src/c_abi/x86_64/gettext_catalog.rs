@@ -515,152 +515,176 @@ unsafe fn ascii_case_equal_utf8(codeset: *const c_char) -> bool {
     true
 }
 
-/// Select or query the process's bounded gettext domain.
-#[no_mangle]
-pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
-    let Some(length) = (if domainname.is_null() {
-        Some(0)
-    } else {
-        unsafe { bytes_at_most(domainname, MAX_DOMAIN_LENGTH) }
-    }) else {
-        unsafe { errno::set_errno(EINVAL) };
-        return null_mut();
-    };
-    let _lock = CatalogLock::acquire();
-    if domainname.is_null() {
-        return unsafe { state::current_domain() };
-    }
-    unsafe { state::set_current_domain(domainname, length) }
-}
-
-/// Set or query one bounded permanent gettext domain binding.
-#[no_mangle]
-pub unsafe extern "C" fn bindtextdomain(
-    domainname: *const c_char,
-    dirname: *const c_char,
-) -> *mut c_char {
-    if domainname.is_null() {
-        return null_mut();
-    }
-
-    // A null dirname is musl's query path. A domain longer than any record can
-    // never match, but unlike the mutation path it does not publish EINVAL.
-    if dirname.is_null() {
-        let Some(domain_length) = (unsafe { bytes_at_most(domainname, MAX_DOMAIN_LENGTH) }) else {
+// Musl's `src/locale/textdomain.c` object.
+static_archive_member! { textdomain_source {
+    /// Select or query the process's bounded gettext domain.
+    #[no_mangle]
+    pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
+        let Some(length) = (if domainname.is_null() {
+            Some(0)
+        } else {
+            unsafe { bytes_at_most(domainname, MAX_DOMAIN_LENGTH) }
+        }) else {
+            unsafe { errno::set_errno(EINVAL) };
             return null_mut();
         };
         let _lock = CatalogLock::acquire();
-        return unsafe { state::active_directory(domainname, domain_length) };
+        if domainname.is_null() {
+            return unsafe { state::current_domain() };
+        }
+        unsafe { state::set_current_domain(domainname, length) }
     }
 
-    let Some(domain_length) = (unsafe { bytes_at_most(domainname, MAX_DOMAIN_LENGTH) }) else {
-        unsafe { errno::set_errno(EINVAL) };
-        return null_mut();
-    };
-    let Some(directory_length) = (unsafe { bytes_at_most(dirname, MAX_DIRECTORY_LENGTH) }) else {
-        unsafe { errno::set_errno(EINVAL) };
-        return null_mut();
-    };
-
-    let _lock = CatalogLock::acquire();
-    unsafe { state::bind(domainname, domain_length, dirname, directory_length) }
-}
-
-/// Query or select musl's UTF-8-only gettext codeset spelling.
-#[no_mangle]
-pub unsafe extern "C" fn bind_textdomain_codeset(
-    _domainname: *const c_char,
-    codeset: *const c_char,
-) -> *mut c_char {
-    if !unsafe { ascii_case_equal_utf8(codeset) } {
-        unsafe { errno::set_errno(EINVAL) };
-        return null_mut();
+    /// Return an identity translation for the current domain.
+    #[no_mangle]
+    pub unsafe extern "C" fn gettext(msgid: *const c_char) -> *mut c_char {
+        unsafe { dcngettext(null_mut(), msgid, null_mut(), 1, 5) }
     }
-    UTF8_CODESET.as_ptr().cast_mut().cast::<c_char>()
-}
 
-/// Return the no-catalog singular/plural fallback without changing errno.
-#[no_mangle]
-pub unsafe extern "C" fn dcngettext(
-    _domainname: *const c_char,
-    msgid1: *const c_char,
-    msgid2: *const c_char,
-    number: c_ulong,
-    _category: c_int,
-) -> *mut c_char {
-    if number == 1 {
-        msgid1.cast_mut()
-    } else {
-        msgid2.cast_mut()
+    /// Return the no-catalog singular/plural fallback for the current domain.
+    #[no_mangle]
+    pub unsafe extern "C" fn ngettext(
+        msgid1: *const c_char,
+        msgid2: *const c_char,
+        number: c_ulong,
+    ) -> *mut c_char {
+        unsafe { dcngettext(null_mut(), msgid1, msgid2, number, 5) }
     }
-}
+}}
 
-/// Return an identity translation for the current domain.
-#[no_mangle]
-pub unsafe extern "C" fn gettext(msgid: *const c_char) -> *mut c_char {
-    unsafe { dcngettext(null_mut(), msgid, null_mut(), 1, 5) }
-}
+// Musl's `src/locale/dcngettext.c` object.
+static_archive_member! { dcngettext_source {
+    /// Set or query one bounded permanent gettext domain binding.
+    #[no_mangle]
+    pub unsafe extern "C" fn bindtextdomain(
+        domainname: *const c_char,
+        dirname: *const c_char,
+    ) -> *mut c_char {
+        if domainname.is_null() {
+            return null_mut();
+        }
 
-/// Return an identity translation for one explicit domain.
-#[no_mangle]
-pub unsafe extern "C" fn dgettext(
-    domainname: *const c_char,
-    msgid: *const c_char,
-) -> *mut c_char {
-    unsafe { dcngettext(domainname, msgid, null_mut(), 1, 5) }
-}
+        // A null dirname is musl's query path. A domain longer than any record can
+        // never match, but unlike the mutation path it does not publish EINVAL.
+        if dirname.is_null() {
+            let Some(domain_length) = (unsafe { bytes_at_most(domainname, MAX_DOMAIN_LENGTH) }) else {
+                return null_mut();
+            };
+            let _lock = CatalogLock::acquire();
+            return unsafe { state::active_directory(domainname, domain_length) };
+        }
 
-/// Return an identity translation for one explicit category.
-#[no_mangle]
-pub unsafe extern "C" fn dcgettext(
-    domainname: *const c_char,
-    msgid: *const c_char,
-    category: c_int,
-) -> *mut c_char {
-    unsafe { dcngettext(domainname, msgid, null_mut(), 1, category) }
-}
+        let Some(domain_length) = (unsafe { bytes_at_most(domainname, MAX_DOMAIN_LENGTH) }) else {
+            unsafe { errno::set_errno(EINVAL) };
+            return null_mut();
+        };
+        let Some(directory_length) = (unsafe { bytes_at_most(dirname, MAX_DIRECTORY_LENGTH) }) else {
+            unsafe { errno::set_errno(EINVAL) };
+            return null_mut();
+        };
 
-/// Return the no-catalog singular/plural fallback for the current domain.
-#[no_mangle]
-pub unsafe extern "C" fn ngettext(
-    msgid1: *const c_char,
-    msgid2: *const c_char,
-    number: c_ulong,
-) -> *mut c_char {
-    unsafe { dcngettext(null_mut(), msgid1, msgid2, number, 5) }
-}
+        let _lock = CatalogLock::acquire();
+        unsafe { state::bind(domainname, domain_length, dirname, directory_length) }
+    }
 
-/// Return the no-catalog singular/plural fallback for one explicit domain.
-#[no_mangle]
-pub unsafe extern "C" fn dngettext(
-    domainname: *const c_char,
-    msgid1: *const c_char,
-    msgid2: *const c_char,
-    number: c_ulong,
-) -> *mut c_char {
-    unsafe { dcngettext(domainname, msgid1, msgid2, number, 5) }
-}
+    /// Return the no-catalog singular/plural fallback without changing errno.
+    #[no_mangle]
+    pub unsafe extern "C" fn dcngettext(
+        _domainname: *const c_char,
+        msgid1: *const c_char,
+        msgid2: *const c_char,
+        number: c_ulong,
+        _category: c_int,
+    ) -> *mut c_char {
+        if number == 1 {
+            msgid1.cast_mut()
+        } else {
+            msgid2.cast_mut()
+        }
+    }
 
-/// This selected profile intentionally owns no catalog lookup or mapping.
-#[no_mangle]
-pub unsafe extern "C" fn catopen(_name: *const c_char, _oflag: c_int) -> *mut c_void {
-    unsafe { errno::set_errno(ENOENT) };
-    usize::MAX as *mut c_void
-}
+    /// Return an identity translation for one explicit domain.
+    #[no_mangle]
+    pub unsafe extern "C" fn dgettext(
+        domainname: *const c_char,
+        msgid: *const c_char,
+    ) -> *mut c_char {
+        unsafe { dcngettext(domainname, msgid, null_mut(), 1, 5) }
+    }
 
-/// Return the caller default because this profile loads no message catalogs.
-#[no_mangle]
-pub unsafe extern "C" fn catgets(
-    _catalog: *mut c_void,
-    _set_id: c_int,
-    _message_id: c_int,
-    default_string: *const c_char,
-) -> *mut c_char {
-    default_string.cast_mut()
-}
+    /// Return an identity translation for one explicit category.
+    #[no_mangle]
+    pub unsafe extern "C" fn dcgettext(
+        domainname: *const c_char,
+        msgid: *const c_char,
+        category: c_int,
+    ) -> *mut c_char {
+        unsafe { dcngettext(domainname, msgid, null_mut(), 1, category) }
+    }
 
-/// Close no mapping because this profile never opens one.
-#[no_mangle]
-pub extern "C" fn catclose(_catalog: *mut c_void) -> c_int {
-    0
-}
+    /// Return the no-catalog singular/plural fallback for one explicit domain.
+    #[no_mangle]
+    pub unsafe extern "C" fn dngettext(
+        domainname: *const c_char,
+        msgid1: *const c_char,
+        msgid2: *const c_char,
+        number: c_ulong,
+    ) -> *mut c_char {
+        unsafe { dcngettext(domainname, msgid1, msgid2, number, 5) }
+    }
+}}
+
+// Musl's `src/locale/bind_textdomain_codeset.c` object.
+static_archive_member! { bind_textdomain_codeset_source {
+    /// Query or select musl's UTF-8-only gettext codeset spelling.
+    #[no_mangle]
+    pub unsafe extern "C" fn bind_textdomain_codeset(
+        _domainname: *const c_char,
+        codeset: *const c_char,
+    ) -> *mut c_char {
+        if !unsafe { ascii_case_equal_utf8(codeset) } {
+            unsafe { errno::set_errno(EINVAL) };
+            return null_mut();
+        }
+        UTF8_CODESET.as_ptr().cast_mut().cast::<c_char>()
+    }
+}}
+
+
+
+
+
+
+
+// Musl's `src/locale/catopen.c` object.
+static_archive_member! { catopen_source {
+    /// This selected profile intentionally owns no catalog lookup or mapping.
+    #[no_mangle]
+    pub unsafe extern "C" fn catopen(_name: *const c_char, _oflag: c_int) -> *mut c_void {
+        unsafe { errno::set_errno(ENOENT) };
+        usize::MAX as *mut c_void
+    }
+}}
+
+// Musl's `src/locale/catgets.c` object.
+static_archive_member! { catgets_source {
+    /// Return the caller default because this profile loads no message catalogs.
+    #[no_mangle]
+    pub unsafe extern "C" fn catgets(
+        _catalog: *mut c_void,
+        _set_id: c_int,
+        _message_id: c_int,
+        default_string: *const c_char,
+    ) -> *mut c_char {
+        default_string.cast_mut()
+    }
+}}
+
+// Musl's `src/locale/catclose.c` object.
+static_archive_member! { catclose_source {
+    /// Close no mapping because this profile never opens one.
+    #[no_mangle]
+    pub extern "C" fn catclose(_catalog: *mut c_void) -> c_int {
+        0
+    }
+}}

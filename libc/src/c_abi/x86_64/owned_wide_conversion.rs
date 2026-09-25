@@ -94,88 +94,97 @@ unsafe fn decode_bounded(destination: *mut c_int, source: *mut *const c_char,
     }
 }
 
-/// Convert at most `bytes` input bytes into at most `capacity` wide elements.
-///
-/// # Safety
-/// `source` must be a live readable pointer object, writable when `destination`
-/// is non-null. `*source` may be null; otherwise it must provide `bytes`
-/// readable bytes or an earlier terminating NUL. A non-null `destination`
-/// must provide `capacity` writable aligned c_int elements. Source, output,
-/// and state storage must not overlap. Non-null `state` must be an initialized
-/// writable mbstate_t for this conversion sequence, without concurrent use.
-/// Null `state` selects this function's shared sequence; callers serialize
-/// calls belonging to it. Locale mutation must follow the existing locale
-/// owner's serialization contract. Count-only calls can still change state.
-/// On a bulk resumed-character error, the source cursor follows musl and can
-/// identify the byte immediately before the supplied continuation. Retain the
-/// original backing object before dereferencing or resuming from that cursor.
-#[no_mangle]
-pub unsafe extern "C" fn mbsnrtowcs(destination: *mut c_int, source: *mut *const c_char,
-    bytes: usize, capacity: usize, state: *mut MbState) -> usize {
-    if !state.is_null() {
-        return unsafe { decode_bounded(destination, source, bytes, capacity, state) };
-    }
-    // Public mbstate_t is two u32 words; the conversion kernel accesses only
-    // its first word. Keep the private static word separate from that ABI.
-    let mut local = [DECODE_INTERNAL_STATE.load(Ordering::Acquire), 0u32];
-    let result = unsafe { decode_bounded(destination, source, bytes, capacity, local.as_mut_ptr().cast()) };
-    DECODE_INTERNAL_STATE.store(local[0], Ordering::Release);
-    result
-}
-
-/// Convert at most `characters` wide elements into at most `capacity` bytes.
-///
-/// # Safety
-/// `source` must be a live readable pointer object, writable when `destination`
-/// is non-null. `*source` may be null; otherwise it must provide `characters`
-/// readable aligned c_int elements or an earlier terminating wide NUL. A
-/// non-null `destination` must provide `capacity` writable bytes, disjoint from
-/// source storage. The state pointer is ignored, as in musl's stateless output
-/// conversion. Locale mutation follows the existing locale owner's contract.
-#[no_mangle]
-pub unsafe extern "C" fn wcsnrtombs(mut destination: *mut c_char,
-    source: *mut *const c_int, mut characters: usize, mut capacity: usize,
-    _state: *mut MbState) -> usize {
-    unsafe {
-        let mut cursor = source.read();
-        let mut count = 0usize;
-        if destination.is_null() { capacity = 0; }
-        while !cursor.is_null() && characters != 0 {
-            // The selected C/POSIX/C.UTF-8 profile has MB_LEN_MAX == 4.
-            let mut scratch = [0 as c_char; 4];
-            let output = if capacity < scratch.len() { scratch.as_mut_ptr() } else { destination };
-            let converted = locale_multibyte::wcrtomb(output, cursor.read(), ptr::null_mut());
-            if converted == usize::MAX { count = converted; break; }
-            if !destination.is_null() {
-                if capacity < scratch.len() {
-                    if converted > capacity { break; }
-                    ptr::copy_nonoverlapping(scratch.as_ptr(), destination, converted);
-                }
-                destination = destination.add(converted);
-                capacity -= converted;
-            }
-            if cursor.read() == 0 { cursor = ptr::null(); break; }
-            cursor = cursor.add(1);
-            characters -= 1;
-            count += converted;
+// Musl's `src/multibyte/mbsnrtowcs.c` object.
+static_archive_member! { mbsnrtowcs_source {
+    /// Convert at most `bytes` input bytes into at most `capacity` wide elements.
+    ///
+    /// # Safety
+    /// `source` must be a live readable pointer object, writable when `destination`
+    /// is non-null. `*source` may be null; otherwise it must provide `bytes`
+    /// readable bytes or an earlier terminating NUL. A non-null `destination`
+    /// must provide `capacity` writable aligned c_int elements. Source, output,
+    /// and state storage must not overlap. Non-null `state` must be an initialized
+    /// writable mbstate_t for this conversion sequence, without concurrent use.
+    /// Null `state` selects this function's shared sequence; callers serialize
+    /// calls belonging to it. Locale mutation must follow the existing locale
+    /// owner's serialization contract. Count-only calls can still change state.
+    /// On a bulk resumed-character error, the source cursor follows musl and can
+    /// identify the byte immediately before the supplied continuation. Retain the
+    /// original backing object before dereferencing or resuming from that cursor.
+    #[no_mangle]
+    pub unsafe extern "C" fn mbsnrtowcs(destination: *mut c_int, source: *mut *const c_char,
+        bytes: usize, capacity: usize, state: *mut MbState) -> usize {
+        if !state.is_null() {
+            return unsafe { decode_bounded(destination, source, bytes, capacity, state) };
         }
-        if !destination.is_null() { source.write(cursor); }
-        count
+        // Public mbstate_t is two u32 words; the conversion kernel accesses only
+        // its first word. Keep the private static word separate from that ABI.
+        let mut local = [DECODE_INTERNAL_STATE.load(Ordering::Acquire), 0u32];
+        let result = unsafe { decode_bounded(destination, source, bytes, capacity, local.as_mut_ptr().cast()) };
+        DECODE_INTERNAL_STATE.store(local[0], Ordering::Release);
+        result
     }
-}
+}}
 
-/// Duplicate a wide string using the selected C allocation provider.
-///
-/// # Safety
-/// `source` must be a readable aligned NUL-terminated c_int sequence. The
-/// returned allocation, when non-null, belongs to the caller and must be
-/// released with the runtime's ordinary free; it does not borrow `source`.
-#[no_mangle]
-pub unsafe extern "C" fn wcsdup(source: *const c_int) -> *mut c_int {
-    unsafe {
-        let count = wide_character::wcslen(source).wrapping_add(1);
-        let copy = malloc(count.wrapping_mul(core::mem::size_of::<c_int>())).cast::<c_int>();
-        if copy.is_null() { return copy; }
-        wide_character::wmemcpy(copy, source, count)
+// Musl's `src/multibyte/wcsnrtombs.c` object.
+static_archive_member! { wcsnrtombs_source {
+    /// Convert at most `characters` wide elements into at most `capacity` bytes.
+    ///
+    /// # Safety
+    /// `source` must be a live readable pointer object, writable when `destination`
+    /// is non-null. `*source` may be null; otherwise it must provide `characters`
+    /// readable aligned c_int elements or an earlier terminating wide NUL. A
+    /// non-null `destination` must provide `capacity` writable bytes, disjoint from
+    /// source storage. The state pointer is ignored, as in musl's stateless output
+    /// conversion. Locale mutation follows the existing locale owner's contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsnrtombs(mut destination: *mut c_char,
+        source: *mut *const c_int, mut characters: usize, mut capacity: usize,
+        _state: *mut MbState) -> usize {
+        unsafe {
+            let mut cursor = source.read();
+            let mut count = 0usize;
+            if destination.is_null() { capacity = 0; }
+            while !cursor.is_null() && characters != 0 {
+                // The selected C/POSIX/C.UTF-8 profile has MB_LEN_MAX == 4.
+                let mut scratch = [0 as c_char; 4];
+                let output = if capacity < scratch.len() { scratch.as_mut_ptr() } else { destination };
+                let converted = locale_multibyte::wcrtomb(output, cursor.read(), ptr::null_mut());
+                if converted == usize::MAX { count = converted; break; }
+                if !destination.is_null() {
+                    if capacity < scratch.len() {
+                        if converted > capacity { break; }
+                        ptr::copy_nonoverlapping(scratch.as_ptr(), destination, converted);
+                    }
+                    destination = destination.add(converted);
+                    capacity -= converted;
+                }
+                if cursor.read() == 0 { cursor = ptr::null(); break; }
+                cursor = cursor.add(1);
+                characters -= 1;
+                count += converted;
+            }
+            if !destination.is_null() { source.write(cursor); }
+            count
+        }
     }
-}
+}}
+
+// Musl's `src/string/wcsdup.c` object.
+static_archive_member! { wcsdup_source {
+    /// Duplicate a wide string using the selected C allocation provider.
+    ///
+    /// # Safety
+    /// `source` must be a readable aligned NUL-terminated c_int sequence. The
+    /// returned allocation, when non-null, belongs to the caller and must be
+    /// released with the runtime's ordinary free; it does not borrow `source`.
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsdup(source: *const c_int) -> *mut c_int {
+        unsafe {
+            let count = wide_character::wcslen(source).wrapping_add(1);
+            let copy = malloc(count.wrapping_mul(core::mem::size_of::<c_int>())).cast::<c_int>();
+            if copy.is_null() { return copy; }
+            wide_character::wmemcpy(copy, source, count)
+        }
+    }
+}}

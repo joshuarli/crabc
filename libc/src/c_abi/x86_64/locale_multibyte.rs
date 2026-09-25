@@ -457,50 +457,59 @@ pub(super) unsafe fn environment_locale_mode(category: c_int) -> Option<bool> {
     Some(true)
 }
 
-/// Select or query the bounded global C/POSIX/C.UTF-8 category state.
-///
-/// `locale` must be null or a readable NUL-terminated C string. A non-null
-/// name accepts only `C`, `POSIX`, and `C.UTF-8`; for `LC_ALL` it may also be
-/// musl's `;`-separated per-category list of those names. The pinned
-/// built-in `C.UTF-8` map affects `LC_CTYPE` alone, so a global selection
-/// serializes as `C.UTF-8;C;C;C;C;C`. In the owned runtime an empty name
-/// resolves supported names from the environment; the freestanding artifact
-/// rejects that request. Arbitrary locale-map names remain unsupported.
-/// The returned pointer is libc-owned and may be overwritten by a later call.
-///
-/// # Safety
-///
-/// `locale` must be null or point to a readable NUL-terminated string. Exclude
-/// concurrent environment mutation during an environment-backed selection.
-/// Do not read a returned mixed-category buffer while another call changes it.
-#[no_mangle]
-pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char {
-    if !(LC_CTYPE..=LC_ALL).contains(&category) {
-        return core::ptr::null_mut();
+// Musl's `src/locale/setlocale.c` object.
+static_archive_member! { setlocale_source {
+    /// Select or query the bounded global C/POSIX/C.UTF-8 category state.
+    ///
+    /// `locale` must be null or a readable NUL-terminated C string. A non-null
+    /// name accepts only `C`, `POSIX`, and `C.UTF-8`; for `LC_ALL` it may also be
+    /// musl's `;`-separated per-category list of those names. The pinned
+    /// built-in `C.UTF-8` map affects `LC_CTYPE` alone, so a global selection
+    /// serializes as `C.UTF-8;C;C;C;C;C`. In the owned runtime an empty name
+    /// resolves supported names from the environment; the freestanding artifact
+    /// rejects that request. Arbitrary locale-map names remain unsupported.
+    /// The returned pointer is libc-owned and may be overwritten by a later call.
+    ///
+    /// # Safety
+    ///
+    /// `locale` must be null or point to a readable NUL-terminated string. Exclude
+    /// concurrent environment mutation during an environment-backed selection.
+    /// Do not read a returned mixed-category buffer while another call changes it.
+    #[no_mangle]
+    pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char {
+        if !(LC_CTYPE..=LC_ALL).contains(&category) {
+            return core::ptr::null_mut();
+        }
+        lock_locale();
+        // SAFETY: the public caller contract supplies the C string if non-null;
+        // the lock owns the global state and mixed-result buffer.
+        let result = unsafe { setlocale_locked(category, locale) };
+        unlock_locale();
+        result
     }
-    lock_locale();
-    // SAFETY: the public caller contract supplies the C string if non-null;
-    // the lock owns the global state and mixed-result buffer.
-    let result = unsafe { setlocale_locked(category, locale) };
-    unlock_locale();
-    result
-}
+}}
 
-/// Return musl's immutable POSIX numeric/monetary locale record.
-#[no_mangle]
-pub unsafe extern "C" fn localeconv() -> *mut Lconv {
-    core::ptr::addr_of_mut!(POSIX_LCONV)
-}
-
-/// Return the active CTYPE maximum multibyte sequence width.
-#[no_mangle]
-pub extern "C" fn __ctype_get_mb_cur_max() -> usize {
-    if locale_ctype_is_utf8() {
-        MB_CUR_MAX_UTF8
-    } else {
-        MB_CUR_MAX_C
+// Musl's `src/locale/localeconv.c` object.
+static_archive_member! { localeconv_source {
+    /// Return musl's immutable POSIX numeric/monetary locale record.
+    #[no_mangle]
+    pub unsafe extern "C" fn localeconv() -> *mut Lconv {
+        core::ptr::addr_of_mut!(POSIX_LCONV)
     }
-}
+}}
+
+// Musl's `src/ctype/__ctype_get_mb_cur_max.c` object.
+static_archive_member! { __ctype_get_mb_cur_max_source {
+    /// Return the active CTYPE maximum multibyte sequence width.
+    #[no_mangle]
+    pub extern "C" fn __ctype_get_mb_cur_max() -> usize {
+        if locale_ctype_is_utf8() {
+            MB_CUR_MAX_UTF8
+        } else {
+            MB_CUR_MAX_C
+        }
+    }
+}}
 
 /// Decode one C-locale code unit or UTF-8 code point with musl's state shape.
 ///
@@ -683,36 +692,39 @@ unsafe fn load_decode_state(state: *const MbState, internal: &AtomicU32) -> u32 
     }
 }
 
-/// Decode one multibyte sequence while retaining its supplied conversion state.
-///
-/// `source` must be null or readable for `count` bytes; `wide`, when non-null,
-/// must point to writable x86 `wchar_t` storage; and `state`, when non-null,
-/// must point to initialized writable x86 `mbstate_t` storage. The null-state
-/// channel is intentionally distinct from `mbrlen`'s channel.
-#[no_mangle]
-pub unsafe extern "C" fn mbrtowc(
-    wide: *mut c_int,
-    source: *const c_char,
-    count: usize,
-    state: *mut MbState,
-) -> usize {
-    // SAFETY: state is null or a caller-owned mbstate_t under this API's C
-    // object/lifetime contract.
-    let current = unsafe { load_decode_state(state, &MBRTOWC_INTERNAL_STATE) };
-    let outcome = unsafe { decode_mbrtowc(current, source, count, locale_ctype_is_utf8()) };
-    // SAFETY: same state-storage contract as above.
-    unsafe { publish_decode_state(state, &MBRTOWC_INTERNAL_STATE, outcome.next_state) };
-    if outcome.error {
-        // SAFETY: mbrtowc's EILSEQ result belongs to the calling C thread.
-        unsafe { errno::set_errno(EILSEQ) };
+// Musl's `src/multibyte/mbrtowc.c` object.
+static_archive_member! { mbrtowc_source {
+    /// Decode one multibyte sequence while retaining its supplied conversion state.
+    ///
+    /// `source` must be null or readable for `count` bytes; `wide`, when non-null,
+    /// must point to writable x86 `wchar_t` storage; and `state`, when non-null,
+    /// must point to initialized writable x86 `mbstate_t` storage. The null-state
+    /// channel is intentionally distinct from `mbrlen`'s channel.
+    #[no_mangle]
+    pub unsafe extern "C" fn mbrtowc(
+        wide: *mut c_int,
+        source: *const c_char,
+        count: usize,
+        state: *mut MbState,
+    ) -> usize {
+        // SAFETY: state is null or a caller-owned mbstate_t under this API's C
+        // object/lifetime contract.
+        let current = unsafe { load_decode_state(state, &MBRTOWC_INTERNAL_STATE) };
+        let outcome = unsafe { decode_mbrtowc(current, source, count, locale_ctype_is_utf8()) };
+        // SAFETY: same state-storage contract as above.
+        unsafe { publish_decode_state(state, &MBRTOWC_INTERNAL_STATE, outcome.next_state) };
+        if outcome.error {
+            // SAFETY: mbrtowc's EILSEQ result belongs to the calling C thread.
+            unsafe { errno::set_errno(EILSEQ) };
+        }
+        if outcome.writes_wide && !wide.is_null() {
+            // SAFETY: the C caller supplied writable wchar_t storage; x86
+            // wchar_t is the same 32-bit signed ABI as c_int.
+            unsafe { core::ptr::write(wide, outcome.wide) };
+        }
+        outcome.result
     }
-    if outcome.writes_wide && !wide.is_null() {
-        // SAFETY: the C caller supplied writable wchar_t storage; x86
-        // wchar_t is the same 32-bit signed ABI as c_int.
-        unsafe { core::ptr::write(wide, outcome.wide) };
-    }
-    outcome.result
-}
+}}
 
 // FILE orientation snapshots only the fixed-profile CTYPE choice, not a
 // mutable locale object. The held caller owns state/output; wide FILE wrappers
@@ -730,19 +742,22 @@ pub(super) unsafe fn decode_for_stream(wide: *mut c_int, source: *const c_char,
     outcome.result
 }
 
-/// Encode one C-locale code unit or UTF-8 code point.
-///
-/// `destination`, when non-null, must have room for four bytes. Musl ignores
-/// its `mbstate_t` argument because both selected encodings are stateless for
-/// output; this translation retains that ABI shape without modifying it.
-#[no_mangle]
-pub unsafe extern "C" fn wcrtomb(
-    destination: *mut c_char,
-    wide: c_int,
-    _state: *mut MbState,
-) -> usize {
-    unsafe { encode_for_locale(destination, wide, locale_ctype_is_utf8()) }
-}
+// Musl's `src/multibyte/wcrtomb.c` object.
+static_archive_member! { wcrtomb_source {
+    /// Encode one C-locale code unit or UTF-8 code point.
+    ///
+    /// `destination`, when non-null, must have room for four bytes. Musl ignores
+    /// its `mbstate_t` argument because both selected encodings are stateless for
+    /// output; this translation retains that ABI shape without modifying it.
+    #[no_mangle]
+    pub unsafe extern "C" fn wcrtomb(
+        destination: *mut c_char,
+        wide: c_int,
+        _state: *mut MbState,
+    ) -> usize {
+        unsafe { encode_for_locale(destination, wide, locale_ctype_is_utf8()) }
+    }
+}}
 
 // Shared source wcrtomb kernel: public conversions use current CTYPE while
 // oriented FILE callers supply their immutable fixed-profile snapshot.
@@ -798,98 +813,113 @@ pub(super) unsafe fn encode_for_locale(destination: *mut c_char, wide: c_int, ut
     MB_RET_ILSEQ
 }
 
-/// Report whether a supplied multibyte state is in its initial state.
-///
-/// A non-null `state` must point to initialized readable x86 `mbstate_t`
-/// storage.
-#[no_mangle]
-pub unsafe extern "C" fn mbsinit(state: *const MbState) -> c_int {
-    if state.is_null() {
-        1
-    } else {
-        // SAFETY: the caller supplied readable mbstate_t storage.
-        (unsafe { read_state(state) } == 0) as c_int
-    }
-}
-
-/// Decode one multibyte sequence without retaining a caller-visible state.
-///
-/// `source` must be null or readable for `count` bytes, and a non-null `wide`
-/// must point to writable x86 `wchar_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn mbtowc(
-    wide: *mut c_int,
-    source: *const c_char,
-    count: usize,
-) -> c_int {
-    if source.is_null() {
-        return 0;
-    }
-    let outcome = unsafe { decode_mbrtowc(0, source, count, locale_ctype_is_utf8()) };
-    if outcome.error || outcome.result == MB_RET_INCOMPLETE {
-        // Unlike mbrtowc, musl's legacy mbtowc reports an incomplete input as
-        // EILSEQ/-1 rather than the restartable -2 result.
-        if !outcome.error {
-            // SAFETY: this legacy conversion failure belongs to this thread.
-            unsafe { errno::set_errno(EILSEQ) };
+// Musl's `src/multibyte/mbsinit.c` object.
+static_archive_member! { mbsinit_source {
+    /// Report whether a supplied multibyte state is in its initial state.
+    ///
+    /// A non-null `state` must point to initialized readable x86 `mbstate_t`
+    /// storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn mbsinit(state: *const MbState) -> c_int {
+        if state.is_null() {
+            1
         } else {
-            // SAFETY: decode_mbrtowc identified a malformed byte sequence.
+            // SAFETY: the caller supplied readable mbstate_t storage.
+            (unsafe { read_state(state) } == 0) as c_int
+        }
+    }
+}}
+
+// Musl's `src/multibyte/mbtowc.c` object.
+static_archive_member! { mbtowc_source {
+    /// Decode one multibyte sequence without retaining a caller-visible state.
+    ///
+    /// `source` must be null or readable for `count` bytes, and a non-null `wide`
+    /// must point to writable x86 `wchar_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn mbtowc(
+        wide: *mut c_int,
+        source: *const c_char,
+        count: usize,
+    ) -> c_int {
+        if source.is_null() {
+            return 0;
+        }
+        let outcome = unsafe { decode_mbrtowc(0, source, count, locale_ctype_is_utf8()) };
+        if outcome.error || outcome.result == MB_RET_INCOMPLETE {
+            // Unlike mbrtowc, musl's legacy mbtowc reports an incomplete input as
+            // EILSEQ/-1 rather than the restartable -2 result.
+            if !outcome.error {
+                // SAFETY: this legacy conversion failure belongs to this thread.
+                unsafe { errno::set_errno(EILSEQ) };
+            } else {
+                // SAFETY: decode_mbrtowc identified a malformed byte sequence.
+                unsafe { errno::set_errno(EILSEQ) };
+            }
+            return -1;
+        }
+        if outcome.writes_wide && !wide.is_null() {
+            // SAFETY: caller supplied writable wchar_t storage when non-null.
+            unsafe { core::ptr::write(wide, outcome.wide) };
+        }
+        outcome.result as c_int
+    }
+}}
+
+// Musl's `src/multibyte/mbrlen.c` object.
+static_archive_member! { mbrlen_source {
+    /// Decode one multibyte sequence through mbrtowc's distinct internal channel.
+    ///
+    /// `source` must be null or readable for `count` bytes. A non-null `state`
+    /// must point to initialized writable x86 `mbstate_t` storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn mbrlen(
+        source: *const c_char,
+        count: usize,
+        state: *mut MbState,
+    ) -> usize {
+        // SAFETY: state is null or a caller-owned mbstate_t under the C API.
+        let current = unsafe { load_decode_state(state, &MBRLEN_INTERNAL_STATE) };
+        let outcome = unsafe { decode_mbrtowc(current, source, count, locale_ctype_is_utf8()) };
+        // SAFETY: same state-storage contract as above.
+        unsafe { publish_decode_state(state, &MBRLEN_INTERNAL_STATE, outcome.next_state) };
+        if outcome.error {
+            // SAFETY: mbrlen inherits mbrtowc's EILSEQ publication.
             unsafe { errno::set_errno(EILSEQ) };
         }
-        return -1;
+        outcome.result
     }
-    if outcome.writes_wide && !wide.is_null() {
-        // SAFETY: caller supplied writable wchar_t storage when non-null.
-        unsafe { core::ptr::write(wide, outcome.wide) };
-    }
-    outcome.result as c_int
-}
+}}
 
-/// Decode one multibyte sequence through mbrtowc's distinct internal channel.
-///
-/// `source` must be null or readable for `count` bytes. A non-null `state`
-/// must point to initialized writable x86 `mbstate_t` storage.
-#[no_mangle]
-pub unsafe extern "C" fn mbrlen(
-    source: *const c_char,
-    count: usize,
-    state: *mut MbState,
-) -> usize {
-    // SAFETY: state is null or a caller-owned mbstate_t under the C API.
-    let current = unsafe { load_decode_state(state, &MBRLEN_INTERNAL_STATE) };
-    let outcome = unsafe { decode_mbrtowc(current, source, count, locale_ctype_is_utf8()) };
-    // SAFETY: same state-storage contract as above.
-    unsafe { publish_decode_state(state, &MBRLEN_INTERNAL_STATE, outcome.next_state) };
-    if outcome.error {
-        // SAFETY: mbrlen inherits mbrtowc's EILSEQ publication.
-        unsafe { errno::set_errno(EILSEQ) };
+// Musl's `src/multibyte/mblen.c` object.
+static_archive_member! { mblen_source {
+    /// Legacy mblen adapter over musl's stateless mbtowc route.
+    ///
+    /// `source` must be null or readable for `count` bytes.
+    #[no_mangle]
+    pub unsafe extern "C" fn mblen(source: *const c_char, count: usize) -> c_int {
+        unsafe { mbtowc(core::ptr::null_mut(), source, count) }
     }
-    outcome.result
-}
+}}
 
-/// Legacy mblen adapter over musl's stateless mbtowc route.
-///
-/// `source` must be null or readable for `count` bytes.
-#[no_mangle]
-pub unsafe extern "C" fn mblen(source: *const c_char, count: usize) -> c_int {
-    unsafe { mbtowc(core::ptr::null_mut(), source, count) }
-}
-
-/// Legacy wctomb adapter over the selected stateless output route.
-///
-/// A non-null `destination` must point to writable storage for four bytes.
-#[no_mangle]
-pub unsafe extern "C" fn wctomb(destination: *mut c_char, wide: c_int) -> c_int {
-    if destination.is_null() {
-        return 0;
+// Musl's `src/multibyte/wctomb.c` object.
+static_archive_member! { wctomb_source {
+    /// Legacy wctomb adapter over the selected stateless output route.
+    ///
+    /// A non-null `destination` must point to writable storage for four bytes.
+    #[no_mangle]
+    pub unsafe extern "C" fn wctomb(destination: *mut c_char, wide: c_int) -> c_int {
+        if destination.is_null() {
+            return 0;
+        }
+        let result = unsafe { wcrtomb(destination, wide, core::ptr::null_mut()) };
+        if result == MB_RET_ILSEQ {
+            -1
+        } else {
+            result as c_int
+        }
     }
-    let result = unsafe { wcrtomb(destination, wide, core::ptr::null_mut()) };
-    if result == MB_RET_ILSEQ {
-        -1
-    } else {
-        result as c_int
-    }
-}
+}}
 
 #[inline]
 unsafe fn c_string_len(source: *const u8) -> usize {
@@ -903,309 +933,327 @@ unsafe fn c_string_len(source: *const u8) -> usize {
     length
 }
 
-/// Convert a NUL-terminated multibyte string into wide characters.
-///
-/// `source` must point to a live writable pointer to a readable NUL-terminated
-/// C string. When `destination` is non-null it must hold `count` wide slots.
-/// `state` must be null or point to initialized writable x86 `mbstate_t`
-/// storage.
-/// Initial-state source/destination/count behavior and a caller-owned,
-/// noninitial UTF-8 resume with positive output capacity are selected. A
-/// caller-owned noninitial `mbsrtowcs` state with zero output capacity is
-/// deliberately outside this artifact; ordinary null-state conversions use no
-/// hidden state, as in musl's `mbsrtowcs`.
-#[no_mangle]
-pub unsafe extern "C" fn mbsrtowcs(
-    destination: *mut c_int,
-    source: *mut *const c_char,
-    count: usize,
-    state: *mut MbState,
-) -> usize {
-    // SAFETY: source is a caller-owned readable pointer-to-pointer object.
-    let mut cursor = unsafe { core::ptr::read(source) }.cast::<u8>();
-    let utf8_now = locale_ctype_is_utf8();
-    let initial_state = if state.is_null() {
-        0
-    } else {
-        // SAFETY: the caller supplied readable mbstate_t storage.
-        unsafe { read_state(state) }
-    };
-    // Musl resumes a pre-existing state before inspecting the current locale.
-    // After that resume label it remains on its UTF-8 path for this call.
-    let force_utf8 = initial_state != 0;
+// Musl's `src/multibyte/mbsrtowcs.c` object.
+static_archive_member! { mbsrtowcs_source {
+    /// Convert a NUL-terminated multibyte string into wide characters.
+    ///
+    /// `source` must point to a live writable pointer to a readable NUL-terminated
+    /// C string. When `destination` is non-null it must hold `count` wide slots.
+    /// `state` must be null or point to initialized writable x86 `mbstate_t`
+    /// storage.
+    /// Initial-state source/destination/count behavior and a caller-owned,
+    /// noninitial UTF-8 resume with positive output capacity are selected. A
+    /// caller-owned noninitial `mbsrtowcs` state with zero output capacity is
+    /// deliberately outside this artifact; ordinary null-state conversions use no
+    /// hidden state, as in musl's `mbsrtowcs`.
+    #[no_mangle]
+    pub unsafe extern "C" fn mbsrtowcs(
+        destination: *mut c_int,
+        source: *mut *const c_char,
+        count: usize,
+        state: *mut MbState,
+    ) -> usize {
+        // SAFETY: source is a caller-owned readable pointer-to-pointer object.
+        let mut cursor = unsafe { core::ptr::read(source) }.cast::<u8>();
+        let utf8_now = locale_ctype_is_utf8();
+        let initial_state = if state.is_null() {
+            0
+        } else {
+            // SAFETY: the caller supplied readable mbstate_t storage.
+            unsafe { read_state(state) }
+        };
+        // Musl resumes a pre-existing state before inspecting the current locale.
+        // After that resume label it remains on its UTF-8 path for this call.
+        let force_utf8 = initial_state != 0;
 
-    if destination.is_null() {
-        if initial_state == 0 && !utf8_now {
-            // SAFETY: source is a valid NUL-terminated C byte string.
-            return unsafe { c_string_len(cursor) };
+        if destination.is_null() {
+            if initial_state == 0 && !utf8_now {
+                // SAFETY: source is a valid NUL-terminated C byte string.
+                return unsafe { c_string_len(cursor) };
+            }
+
+            let mut produced = 0usize;
+            let mut pending = initial_state;
+            loop {
+                // A zero state followed by NUL terminates the input. A pending
+                // state treats that NUL as an invalid continuation just like musl.
+                if pending == 0 {
+                    // SAFETY: source is a readable NUL-terminated C string.
+                    let first = unsafe { core::ptr::read(cursor) };
+                    if first == 0 {
+                        return produced;
+                    }
+                    if !utf8_now && !force_utf8 {
+                        cursor = unsafe { cursor.add(1) };
+                        produced = produced.wrapping_add(1);
+                        continue;
+                    }
+                }
+                let outcome = unsafe { decode_mbrtowc(pending, cursor.cast(), 4, true) };
+                if outcome.error || outcome.result == MB_RET_INCOMPLETE {
+                    // SAFETY: mbsrtowcs reports malformed or incomplete input as
+                    // EILSEQ; count mode leaves source and caller state untouched.
+                    unsafe { errno::set_errno(EILSEQ) };
+                    return MB_RET_ILSEQ;
+                }
+                cursor = unsafe { cursor.add(outcome.result) };
+                produced = produced.wrapping_add(1);
+                pending = 0;
+            }
         }
 
-        let mut produced = 0usize;
+        let initial_count = count;
+        let mut remaining = count;
+        let mut output = destination;
         let mut pending = initial_state;
+        if pending != 0 {
+            // Musl clears a caller state before its output-producing resume path.
+            // SAFETY: state is non-null because pending came from it.
+            unsafe { write_state(state, 0) };
+        }
+
         loop {
-            // A zero state followed by NUL terminates the input. A pending
-            // state treats that NUL as an invalid continuation just like musl.
             if pending == 0 {
+                if remaining == 0 {
+                    // SAFETY: caller supplied a writable source pointer object.
+                    unsafe { core::ptr::write(source, cursor.cast()) };
+                    return initial_count;
+                }
                 // SAFETY: source is a readable NUL-terminated C string.
                 let first = unsafe { core::ptr::read(cursor) };
                 if first == 0 {
-                    return produced;
+                    // SAFETY: destination has at least one slot because remaining
+                    // is nonzero, and source is the caller's writable pointer.
+                    unsafe {
+                        core::ptr::write(output, 0);
+                        core::ptr::write(source, core::ptr::null());
+                    }
+                    return initial_count - remaining;
                 }
                 if !utf8_now && !force_utf8 {
+                    // SAFETY: destination has one remaining slot and cursor has
+                    // one readable non-NUL source byte.
+                    unsafe { core::ptr::write(output, codeunit(first)) };
+                    output = unsafe { output.add(1) };
                     cursor = unsafe { cursor.add(1) };
-                    produced = produced.wrapping_add(1);
+                    remaining -= 1;
                     continue;
                 }
             }
+
             let outcome = unsafe { decode_mbrtowc(pending, cursor.cast(), 4, true) };
             if outcome.error || outcome.result == MB_RET_INCOMPLETE {
-                // SAFETY: mbsrtowcs reports malformed or incomplete input as
-                // EILSEQ; count mode leaves source and caller state untouched.
-                unsafe { errno::set_errno(EILSEQ) };
+                // SAFETY: mbsrtowcs returns the start of the invalid sequence for
+                // ordinary input. Pending-state pointer details are unselected;
+                // the caller still receives EILSEQ and a valid source pointer.
+                unsafe {
+                    errno::set_errno(EILSEQ);
+                    core::ptr::write(source, cursor.cast());
+                }
                 return MB_RET_ILSEQ;
             }
-            cursor = unsafe { cursor.add(outcome.result) };
-            produced = produced.wrapping_add(1);
-            pending = 0;
-        }
-    }
-
-    let initial_count = count;
-    let mut remaining = count;
-    let mut output = destination;
-    let mut pending = initial_state;
-    if pending != 0 {
-        // Musl clears a caller state before its output-producing resume path.
-        // SAFETY: state is non-null because pending came from it.
-        unsafe { write_state(state, 0) };
-    }
-
-    loop {
-        if pending == 0 {
+            // The normal branch established remaining > 0. A pending resume with
+            // zero count is not a selected caller pattern; complete its one code
+            // point only when the caller supplied output capacity.
             if remaining == 0 {
-                // SAFETY: caller supplied a writable source pointer object.
+                // SAFETY: caller-owned source pointer remains valid on this
+                // bounded rejected resume case; report no conversion rather than
+                // creating a Rust out-of-bounds write.
                 unsafe { core::ptr::write(source, cursor.cast()) };
                 return initial_count;
             }
-            // SAFETY: source is a readable NUL-terminated C string.
-            let first = unsafe { core::ptr::read(cursor) };
-            if first == 0 {
-                // SAFETY: destination has at least one slot because remaining
-                // is nonzero, and source is the caller's writable pointer.
-                unsafe {
-                    core::ptr::write(output, 0);
-                    core::ptr::write(source, core::ptr::null());
-                }
-                return initial_count - remaining;
-            }
-            if !utf8_now && !force_utf8 {
-                // SAFETY: destination has one remaining slot and cursor has
-                // one readable non-NUL source byte.
-                unsafe { core::ptr::write(output, codeunit(first)) };
-                output = unsafe { output.add(1) };
-                cursor = unsafe { cursor.add(1) };
-                remaining -= 1;
-                continue;
-            }
+            // SAFETY: destination has one remaining wchar_t slot.
+            unsafe { core::ptr::write(output, outcome.wide) };
+            output = unsafe { output.add(1) };
+            cursor = unsafe { cursor.add(outcome.result) };
+            remaining -= 1;
+            pending = 0;
         }
-
-        let outcome = unsafe { decode_mbrtowc(pending, cursor.cast(), 4, true) };
-        if outcome.error || outcome.result == MB_RET_INCOMPLETE {
-            // SAFETY: mbsrtowcs returns the start of the invalid sequence for
-            // ordinary input. Pending-state pointer details are unselected;
-            // the caller still receives EILSEQ and a valid source pointer.
-            unsafe {
-                errno::set_errno(EILSEQ);
-                core::ptr::write(source, cursor.cast());
-            }
-            return MB_RET_ILSEQ;
-        }
-        // The normal branch established remaining > 0. A pending resume with
-        // zero count is not a selected caller pattern; complete its one code
-        // point only when the caller supplied output capacity.
-        if remaining == 0 {
-            // SAFETY: caller-owned source pointer remains valid on this
-            // bounded rejected resume case; report no conversion rather than
-            // creating a Rust out-of-bounds write.
-            unsafe { core::ptr::write(source, cursor.cast()) };
-            return initial_count;
-        }
-        // SAFETY: destination has one remaining wchar_t slot.
-        unsafe { core::ptr::write(output, outcome.wide) };
-        output = unsafe { output.add(1) };
-        cursor = unsafe { cursor.add(outcome.result) };
-        remaining -= 1;
-        pending = 0;
     }
-}
+}}
 
-/// Convert a NUL-terminated wide string into multibyte bytes.
-///
-/// `source` must point to a live writable pointer to a readable terminated x86
-/// `wchar_t` sequence. A non-null destination must hold `count` bytes. Musl
-/// ignores its mbstate_t argument for this stateless output conversion. As in
-/// musl's `wcsrtombs.c`, an output conversion advances `*source` per element:
-/// an unencodable element returns `(size_t)-1` with `*source` naming it, while
-/// the null-destination count mode never writes `*source`.
-#[no_mangle]
-pub unsafe extern "C" fn wcsrtombs(
-    destination: *mut c_char,
-    source: *mut *const c_int,
-    count: usize,
-    _state: *mut MbState,
-) -> usize {
-    // SAFETY: source is a caller-owned readable pointer-to-pointer object.
-    let mut cursor = unsafe { core::ptr::read(source) };
+// Musl's `src/multibyte/wcsrtombs.c` object.
+static_archive_member! { wcsrtombs_source {
+    /// Convert a NUL-terminated wide string into multibyte bytes.
+    ///
+    /// `source` must point to a live writable pointer to a readable terminated x86
+    /// `wchar_t` sequence. A non-null destination must hold `count` bytes. Musl
+    /// ignores its mbstate_t argument for this stateless output conversion. As in
+    /// musl's `wcsrtombs.c`, an output conversion advances `*source` per element:
+    /// an unencodable element returns `(size_t)-1` with `*source` naming it, while
+    /// the null-destination count mode never writes `*source`.
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsrtombs(
+        destination: *mut c_char,
+        source: *mut *const c_int,
+        count: usize,
+        _state: *mut MbState,
+    ) -> usize {
+        // SAFETY: source is a caller-owned readable pointer-to-pointer object.
+        let mut cursor = unsafe { core::ptr::read(source) };
 
-    if destination.is_null() {
-        let mut total = 0usize;
-        loop {
+        if destination.is_null() {
+            let mut total = 0usize;
+            loop {
+                // SAFETY: source points through a NUL-terminated wide sequence.
+                let wide = unsafe { core::ptr::read(cursor) };
+                if wide == 0 {
+                    return total;
+                }
+                if (wide as u32) >= 0x80 {
+                    let mut bytes = [0 as c_char; 4];
+                    let encoded = unsafe { wcrtomb(bytes.as_mut_ptr(), wide, core::ptr::null_mut()) };
+                    if encoded == MB_RET_ILSEQ {
+                        return MB_RET_ILSEQ;
+                    }
+                    total = total.wrapping_add(encoded);
+                } else {
+                    total = total.wrapping_add(1);
+                }
+                cursor = unsafe { cursor.add(1) };
+            }
+        }
+
+        let initial_count = count;
+        let mut remaining = count;
+        let mut output = destination;
+        while remaining >= 4 {
             // SAFETY: source points through a NUL-terminated wide sequence.
             let wide = unsafe { core::ptr::read(cursor) };
-            if wide == 0 {
-                return total;
-            }
-            if (wide as u32) >= 0x80 {
-                let mut bytes = [0 as c_char; 4];
-                let encoded = unsafe { wcrtomb(bytes.as_mut_ptr(), wide, core::ptr::null_mut()) };
+            if (wide as u32).wrapping_sub(1) >= 0x7f {
+                if wide == 0 {
+                    // SAFETY: output has room and source is a writable pointer.
+                    unsafe {
+                        core::ptr::write(output, 0);
+                        core::ptr::write(source, core::ptr::null());
+                    }
+                    return initial_count - remaining;
+                }
+                let encoded = unsafe { wcrtomb(output, wide, core::ptr::null_mut()) };
                 if encoded == MB_RET_ILSEQ {
+                    // SAFETY: musl advances `*ws` per converted element, so the
+                    // caller's source pointer names the unencodable element.
+                    unsafe { core::ptr::write(source, cursor) };
                     return MB_RET_ILSEQ;
                 }
-                total = total.wrapping_add(encoded);
+                output = unsafe { output.add(encoded) };
+                remaining -= encoded;
             } else {
-                total = total.wrapping_add(1);
+                // SAFETY: output has at least one remaining byte slot.
+                unsafe { core::ptr::write(output, wide as c_char) };
+                output = unsafe { output.add(1) };
+                remaining -= 1;
             }
             cursor = unsafe { cursor.add(1) };
         }
-    }
 
-    let initial_count = count;
-    let mut remaining = count;
-    let mut output = destination;
-    while remaining >= 4 {
-        // SAFETY: source points through a NUL-terminated wide sequence.
-        let wide = unsafe { core::ptr::read(cursor) };
-        if (wide as u32).wrapping_sub(1) >= 0x7f {
-            if wide == 0 {
-                // SAFETY: output has room and source is a writable pointer.
-                unsafe {
-                    core::ptr::write(output, 0);
-                    core::ptr::write(source, core::ptr::null());
+        while remaining != 0 {
+            // SAFETY: source points through a NUL-terminated wide sequence.
+            let wide = unsafe { core::ptr::read(cursor) };
+            if (wide as u32).wrapping_sub(1) >= 0x7f {
+                if wide == 0 {
+                    // SAFETY: output has at least one remaining byte slot.
+                    unsafe {
+                        core::ptr::write(output, 0);
+                        core::ptr::write(source, core::ptr::null());
+                    }
+                    return initial_count - remaining;
                 }
-                return initial_count - remaining;
-            }
-            let encoded = unsafe { wcrtomb(output, wide, core::ptr::null_mut()) };
-            if encoded == MB_RET_ILSEQ {
-                // SAFETY: musl advances `*ws` per converted element, so the
-                // caller's source pointer names the unencodable element.
-                unsafe { core::ptr::write(source, cursor) };
-                return MB_RET_ILSEQ;
-            }
-            output = unsafe { output.add(encoded) };
-            remaining -= encoded;
-        } else {
-            // SAFETY: output has at least one remaining byte slot.
-            unsafe { core::ptr::write(output, wide as c_char) };
-            output = unsafe { output.add(1) };
-            remaining -= 1;
-        }
-        cursor = unsafe { cursor.add(1) };
-    }
-
-    while remaining != 0 {
-        // SAFETY: source points through a NUL-terminated wide sequence.
-        let wide = unsafe { core::ptr::read(cursor) };
-        if (wide as u32).wrapping_sub(1) >= 0x7f {
-            if wide == 0 {
+                let mut bytes = [0 as c_char; 4];
+                let encoded = unsafe { wcrtomb(bytes.as_mut_ptr(), wide, core::ptr::null_mut()) };
+                if encoded == MB_RET_ILSEQ {
+                    // SAFETY: as above, publish the per-element source progress.
+                    unsafe { core::ptr::write(source, cursor) };
+                    return MB_RET_ILSEQ;
+                }
+                if encoded > remaining {
+                    // SAFETY: the current wide code point did not fit, so musl
+                    // leaves the caller's source at that unconverted element.
+                    unsafe { core::ptr::write(source, cursor) };
+                    return initial_count - remaining;
+                }
+                // SAFETY: encoded is at most remaining and the source scratch is
+                // initialized by wcrtomb for exactly encoded bytes.
+                unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), output, encoded) };
+                output = unsafe { output.add(encoded) };
+                remaining -= encoded;
+            } else {
                 // SAFETY: output has at least one remaining byte slot.
-                unsafe {
-                    core::ptr::write(output, 0);
-                    core::ptr::write(source, core::ptr::null());
-                }
-                return initial_count - remaining;
+                unsafe { core::ptr::write(output, wide as c_char) };
+                output = unsafe { output.add(1) };
+                remaining -= 1;
             }
-            let mut bytes = [0 as c_char; 4];
-            let encoded = unsafe { wcrtomb(bytes.as_mut_ptr(), wide, core::ptr::null_mut()) };
-            if encoded == MB_RET_ILSEQ {
-                // SAFETY: as above, publish the per-element source progress.
-                unsafe { core::ptr::write(source, cursor) };
-                return MB_RET_ILSEQ;
-            }
-            if encoded > remaining {
-                // SAFETY: the current wide code point did not fit, so musl
-                // leaves the caller's source at that unconverted element.
-                unsafe { core::ptr::write(source, cursor) };
-                return initial_count - remaining;
-            }
-            // SAFETY: encoded is at most remaining and the source scratch is
-            // initialized by wcrtomb for exactly encoded bytes.
-            unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), output, encoded) };
-            output = unsafe { output.add(encoded) };
-            remaining -= encoded;
-        } else {
-            // SAFETY: output has at least one remaining byte slot.
-            unsafe { core::ptr::write(output, wide as c_char) };
-            output = unsafe { output.add(1) };
-            remaining -= 1;
+            cursor = unsafe { cursor.add(1) };
         }
-        cursor = unsafe { cursor.add(1) };
+        // SAFETY: source is the caller's writable pointer-to-pointer object.
+        unsafe { core::ptr::write(source, cursor) };
+        initial_count
     }
-    // SAFETY: source is the caller's writable pointer-to-pointer object.
-    unsafe { core::ptr::write(source, cursor) };
-    initial_count
-}
+}}
 
-/// Legacy null-state adapter over mbsrtowcs.
-///
-/// `source` must point to a readable NUL-terminated C string, and a non-null
-/// `destination` must hold `count` x86 `wchar_t` slots.
-#[no_mangle]
-pub unsafe extern "C" fn mbstowcs(
-    destination: *mut c_int,
-    source: *const c_char,
-    count: usize,
-) -> usize {
-    let mut source = source;
-    // SAFETY: forwards the legacy C string and destination contract directly.
-    unsafe { mbsrtowcs(destination, &mut source, count, core::ptr::null_mut()) }
-}
-
-/// Legacy null-state adapter over wcsrtombs.
-///
-/// `source` must point to a readable NUL-terminated x86 `wchar_t` sequence,
-/// and a non-null `destination` must hold `count` bytes.
-#[no_mangle]
-pub unsafe extern "C" fn wcstombs(
-    destination: *mut c_char,
-    source: *const c_int,
-    count: usize,
-) -> usize {
-    let mut source = source;
-    // SAFETY: forwards the legacy wide-string and destination contract.
-    unsafe { wcsrtombs(destination, &mut source, count, core::ptr::null_mut()) }
-}
-
-/// Convert one byte to a wide C code unit under the active CTYPE mode.
-#[no_mangle]
-pub extern "C" fn btowc(value: c_int) -> u32 {
-    let byte = value as u8;
-    if byte < 0x80 {
-        u32::from(byte)
-    } else if !locale_ctype_is_utf8() && value != -1 {
-        codeunit(byte) as u32
-    } else {
-        u32::MAX
+// Musl's `src/multibyte/mbstowcs.c` object.
+static_archive_member! { mbstowcs_source {
+    /// Legacy null-state adapter over mbsrtowcs.
+    ///
+    /// `source` must point to a readable NUL-terminated C string, and a non-null
+    /// `destination` must hold `count` x86 `wchar_t` slots.
+    #[no_mangle]
+    pub unsafe extern "C" fn mbstowcs(
+        destination: *mut c_int,
+        source: *const c_char,
+        count: usize,
+    ) -> usize {
+        let mut source = source;
+        // SAFETY: forwards the legacy C string and destination contract directly.
+        unsafe { mbsrtowcs(destination, &mut source, count, core::ptr::null_mut()) }
     }
-}
+}}
 
-/// Convert one wide C code unit to a byte under the active CTYPE mode.
-#[no_mangle]
-pub extern "C" fn wctob(value: u32) -> c_int {
-    if value < 0x80 {
-        value as c_int
-    } else if !locale_ctype_is_utf8() && is_codeunit(value) {
-        value as u8 as c_int
-    } else {
-        -1
+// Musl's `src/multibyte/wcstombs.c` object.
+static_archive_member! { wcstombs_source {
+    /// Legacy null-state adapter over wcsrtombs.
+    ///
+    /// `source` must point to a readable NUL-terminated x86 `wchar_t` sequence,
+    /// and a non-null `destination` must hold `count` bytes.
+    #[no_mangle]
+    pub unsafe extern "C" fn wcstombs(
+        destination: *mut c_char,
+        source: *const c_int,
+        count: usize,
+    ) -> usize {
+        let mut source = source;
+        // SAFETY: forwards the legacy wide-string and destination contract.
+        unsafe { wcsrtombs(destination, &mut source, count, core::ptr::null_mut()) }
     }
-}
+}}
+
+// Musl's `src/multibyte/btowc.c` object.
+static_archive_member! { btowc_source {
+    /// Convert one byte to a wide C code unit under the active CTYPE mode.
+    #[no_mangle]
+    pub extern "C" fn btowc(value: c_int) -> u32 {
+        let byte = value as u8;
+        if byte < 0x80 {
+            u32::from(byte)
+        } else if !locale_ctype_is_utf8() && value != -1 {
+            codeunit(byte) as u32
+        } else {
+            u32::MAX
+        }
+    }
+}}
+
+// Musl's `src/multibyte/wctob.c` object.
+static_archive_member! { wctob_source {
+    /// Convert one wide C code unit to a byte under the active CTYPE mode.
+    #[no_mangle]
+    pub extern "C" fn wctob(value: u32) -> c_int {
+        if value < 0x80 {
+            value as c_int
+        } else if !locale_ctype_is_utf8() && is_codeunit(value) {
+            value as u8 as c_int
+        } else {
+            -1
+        }
+    }
+}}

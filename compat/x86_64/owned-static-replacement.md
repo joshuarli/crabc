@@ -24,7 +24,7 @@ define, except those in the function's own musl member, and links it with
 musl and with the candidate in both static modes. Musl links it unless its
 own objects need that member. The report (`sweep/report.json`) lists every
 result and each musl-replaceable function the candidate still rejects. Each
-function in the runner's `replaceable_functions` roster must link with musl
+function in `compat/x86_64/owned-static-replacement-roster.txt` must link with musl
 and with the candidate.
 
 The installed archive emits one member per Rust module. Leaf files that
@@ -32,9 +32,7 @@ group several C entries place each musl object's entries in
 `static_archive_member!` (`libc/src/c_abi/x86_64/static_archive_member.rs`),
 which becomes a child module only in the installed static build; libc.so and
 the per-leaf fixture archives, whose runners pin one object per leaf, keep
-the items inline. The roster covers the malloc family, the string, memory and
-environment entries, `strerror`/`perror`, `atoi`/`atol`/`atoll`, `qsort`,
-and the printf/scanf entry points.
+the items inline. The roster groups its functions by family.
 
 The generated musl math translations (`libc/src/c_abi/x86_64/*_musl_x86_64.S`)
 concatenate one compiled musl source file per marker. `libc/build.rs`

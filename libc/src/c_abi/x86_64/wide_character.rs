@@ -83,356 +83,428 @@ fn compare_units(left: Wchar, right: Wchar) -> c_int {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn wcslen(string: *const Wchar) -> usize {
-    // SAFETY: forwarded public wide-string contract.
-    unsafe { wide_length(string) }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcsnlen(string: *const Wchar, maximum: usize) -> usize {
-    let mut length = 0usize;
-    // SAFETY: the caller supplies `maximum` readable wide elements or a NUL.
-    while length != maximum && unsafe { *string.add(length) } != 0 {
-        length += 1;
+// Musl's `src/string/wcslen.c` object.
+static_archive_member! { wcslen_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcslen(string: *const Wchar) -> usize {
+        // SAFETY: forwarded public wide-string contract.
+        unsafe { wide_length(string) }
     }
-    length
-}
+}}
 
-#[no_mangle]
-pub unsafe extern "C" fn wcscpy(destination: *mut Wchar, source: *const Wchar) -> *mut Wchar {
-    let mut index = 0usize;
-    loop {
-        // SAFETY: the public restrict-qualified string contract supplies
-        // readable source and sufficient non-overlapping destination space.
-        let value = unsafe { *source.add(index) };
-        unsafe { *destination.add(index) = value };
-        if value == 0 {
+// Musl's `src/string/wcsnlen.c` object.
+static_archive_member! { wcsnlen_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsnlen(string: *const Wchar, maximum: usize) -> usize {
+        let mut length = 0usize;
+        // SAFETY: the caller supplies `maximum` readable wide elements or a NUL.
+        while length != maximum && unsafe { *string.add(length) } != 0 {
+            length += 1;
+        }
+        length
+    }
+}}
+
+// Musl's `src/string/wcscpy.c` object.
+static_archive_member! { wcscpy_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcscpy(destination: *mut Wchar, source: *const Wchar) -> *mut Wchar {
+        let mut index = 0usize;
+        loop {
+            // SAFETY: the public restrict-qualified string contract supplies
+            // readable source and sufficient non-overlapping destination space.
+            let value = unsafe { *source.add(index) };
+            unsafe { *destination.add(index) = value };
+            if value == 0 {
+                return destination;
+            }
+            index += 1;
+        }
+    }
+}}
+
+// Musl's `src/string/wcsncpy.c` object.
+static_archive_member! { wcsncpy_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsncpy(
+        destination: *mut Wchar,
+        source: *const Wchar,
+        count: usize,
+    ) -> *mut Wchar {
+        let mut index = 0usize;
+        // SAFETY: the caller supplies readable source through NUL or `count` and
+        // writable non-overlapping destination storage for `count` elements.
+        while index != count && unsafe { *source.add(index) } != 0 {
+            unsafe { *destination.add(index) = *source.add(index) };
+            index += 1;
+        }
+        while index != count {
+            unsafe { *destination.add(index) = 0 };
+            index += 1;
+        }
+        destination
+    }
+}}
+
+// Musl's `src/string/wcpcpy.c` object.
+static_archive_member! { wcpcpy_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcpcpy(destination: *mut Wchar, source: *const Wchar) -> *mut Wchar {
+        // SAFETY: forwarded public string-copy contract.
+        unsafe { wcscpy(destination, source) };
+        // SAFETY: the source is a readable NUL-terminated wide string.
+        destination.wrapping_add(unsafe { wide_length(source) })
+    }
+}}
+
+// Musl's `src/string/wcpncpy.c` object.
+static_archive_member! { wcpncpy_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcpncpy(
+        destination: *mut Wchar,
+        source: *const Wchar,
+        count: usize,
+    ) -> *mut Wchar {
+        // SAFETY: forwarded public bounded-copy contract.
+        unsafe { wcsncpy(destination, source, count) };
+        destination.wrapping_add(unsafe { wcsnlen(source, count) })
+    }
+}}
+
+// Musl's `src/string/wcscat.c` object.
+static_archive_member! { wcscat_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcscat(destination: *mut Wchar, source: *const Wchar) -> *mut Wchar {
+        // SAFETY: the destination is NUL-terminated and has room for source.
+        let end = destination.wrapping_add(unsafe { wide_length(destination) });
+        unsafe { wcscpy(end, source) };
+        destination
+    }
+}}
+
+// Musl's `src/string/wcsncat.c` object.
+static_archive_member! { wcsncat_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsncat(
+        destination: *mut Wchar,
+        source: *const Wchar,
+        count: usize,
+    ) -> *mut Wchar {
+        // SAFETY: the destination is readable through NUL and has sufficient
+        // writable storage for the selected source prefix and final NUL.
+        let mut end = destination.wrapping_add(unsafe { wide_length(destination) });
+        let mut index = 0usize;
+        while index != count {
+            let value = unsafe { *source.add(index) };
+            if value == 0 {
+                break;
+            }
+            unsafe { *end = value };
+            end = end.wrapping_add(1);
+            index += 1;
+        }
+        unsafe { *end = 0 };
+        destination
+    }
+}}
+
+// Musl's `src/string/wcscmp.c` object.
+static_archive_member! { wcscmp_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcscmp(left: *const Wchar, right: *const Wchar) -> c_int {
+        let mut index = 0usize;
+        loop {
+            // SAFETY: both arguments are readable NUL-terminated wide strings.
+            let left_value = unsafe { *left.add(index) };
+            let right_value = unsafe { *right.add(index) };
+            if left_value != right_value || left_value == 0 {
+                return compare_units(left_value, right_value);
+            }
+            index += 1;
+        }
+    }
+}}
+
+// Musl's `src/string/wcsncmp.c` object.
+static_archive_member! { wcsncmp_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsncmp(
+        left: *const Wchar,
+        right: *const Wchar,
+        count: usize,
+    ) -> c_int {
+        let mut index = 0usize;
+        while index != count {
+            // SAFETY: both arguments are readable through NUL or `count`.
+            let left_value = unsafe { *left.add(index) };
+            let right_value = unsafe { *right.add(index) };
+            if left_value != right_value || left_value == 0 {
+                return compare_units(left_value, right_value);
+            }
+            index += 1;
+        }
+        0
+    }
+}}
+
+// Musl's `src/string/wcschr.c` object.
+static_archive_member! { wcschr_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcschr(string: *const Wchar, character: Wchar) -> *mut Wchar {
+        let mut cursor = string;
+        loop {
+            // SAFETY: the caller supplies a readable NUL-terminated string.
+            let value = unsafe { *cursor };
+            if value == character {
+                return cursor.cast_mut();
+            }
+            if value == 0 {
+                return core::ptr::null_mut();
+            }
+            cursor = cursor.wrapping_add(1);
+        }
+    }
+}}
+
+// Musl's `src/string/wcsrchr.c` object.
+static_archive_member! { wcsrchr_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsrchr(string: *const Wchar, character: Wchar) -> *mut Wchar {
+        // SAFETY: the caller supplies a readable NUL-terminated string.
+        let mut cursor = string.wrapping_add(unsafe { wide_length(string) });
+        loop {
+            if unsafe { *cursor } == character {
+                return cursor.cast_mut();
+            }
+            if cursor == string {
+                return core::ptr::null_mut();
+            }
+            cursor = cursor.wrapping_sub(1);
+        }
+    }
+}}
+
+// Musl's `src/string/wcsstr.c` object.
+static_archive_member! { wcsstr_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsstr(haystack: *const Wchar, needle: *const Wchar) -> *mut Wchar {
+        if unsafe { *needle } == 0 {
+            return haystack.cast_mut();
+        }
+        let mut start = haystack;
+        while unsafe { *start } != 0 {
+            let mut left = start;
+            let mut right = needle;
+            while unsafe { *right } != 0 && unsafe { *left } == unsafe { *right } {
+                left = left.wrapping_add(1);
+                right = right.wrapping_add(1);
+            }
+            if unsafe { *right } == 0 {
+                return start.cast_mut();
+            }
+            start = start.wrapping_add(1);
+        }
+        core::ptr::null_mut()
+    }
+}}
+
+// Musl's `src/string/wcsspn.c` object.
+static_archive_member! { wcsspn_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsspn(string: *const Wchar, accept: *const Wchar) -> usize {
+        let mut cursor = string;
+        while unsafe { *cursor } != 0 && !unsafe { wcschr(accept, *cursor) }.is_null() {
+            cursor = cursor.wrapping_add(1);
+        }
+        unsafe { cursor.offset_from(string) as usize }
+    }
+}}
+
+// Musl's `src/string/wcscspn.c` object.
+static_archive_member! { wcscspn_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcscspn(string: *const Wchar, reject: *const Wchar) -> usize {
+        let mut cursor = string;
+        while unsafe { *cursor } != 0 && unsafe { wcschr(reject, *cursor) }.is_null() {
+            cursor = cursor.wrapping_add(1);
+        }
+        unsafe { cursor.offset_from(string) as usize }
+    }
+}}
+
+// Musl's `src/string/wcspbrk.c` object.
+static_archive_member! { wcspbrk_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcspbrk(string: *const Wchar, accept: *const Wchar) -> *mut Wchar {
+        let cursor = string.wrapping_add(unsafe { wcscspn(string, accept) });
+        if unsafe { *cursor } == 0 {
+            core::ptr::null_mut()
+        } else {
+            cursor.cast_mut()
+        }
+    }
+}}
+
+// Musl's `src/string/wcstok.c` object.
+static_archive_member! { wcstok_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcstok(
+        string: *mut Wchar,
+        separators: *const Wchar,
+        state: *mut *mut Wchar,
+    ) -> *mut Wchar {
+        let mut cursor = if string.is_null() {
+            // SAFETY: the public ABI requires a live writable state pointer.
+            unsafe { *state }
+        } else {
+            string
+        };
+        if cursor.is_null() {
+            return core::ptr::null_mut();
+        }
+        cursor = cursor.wrapping_add(unsafe { wcsspn(cursor, separators) });
+        if unsafe { *cursor } == 0 {
+            unsafe { *state = core::ptr::null_mut() };
+            return core::ptr::null_mut();
+        }
+        let token = cursor;
+        cursor = cursor.wrapping_add(unsafe { wcscspn(cursor, separators) });
+        if unsafe { *cursor } != 0 {
+            unsafe { *cursor = 0 };
+            cursor = cursor.wrapping_add(1);
+            unsafe { *state = cursor };
+        } else {
+            unsafe { *state = core::ptr::null_mut() };
+        }
+        token
+    }
+}}
+
+// Musl's `src/string/wmemchr.c` object.
+static_archive_member! { wmemchr_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wmemchr(
+        string: *const Wchar,
+        character: Wchar,
+        count: usize,
+    ) -> *mut Wchar {
+        let mut index = 0usize;
+        while index != count {
+            if unsafe { *string.add(index) } == character {
+                return string.wrapping_add(index).cast_mut();
+            }
+            index += 1;
+        }
+        core::ptr::null_mut()
+    }
+}}
+
+// Musl's `src/string/wmemcmp.c` object.
+static_archive_member! { wmemcmp_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wmemcmp(
+        left: *const Wchar,
+        right: *const Wchar,
+        count: usize,
+    ) -> c_int {
+        let mut index = 0usize;
+        while index != count {
+            let left_value = unsafe { *left.add(index) };
+            let right_value = unsafe { *right.add(index) };
+            if left_value != right_value {
+                return compare_units(left_value, right_value);
+            }
+            index += 1;
+        }
+        0
+    }
+}}
+
+// Musl's `src/string/wmemcpy.c` object.
+static_archive_member! { wmemcpy_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wmemcpy(
+        destination: *mut Wchar,
+        source: *const Wchar,
+        count: usize,
+    ) -> *mut Wchar {
+        let mut index = 0usize;
+        while index != count {
+            unsafe { *destination.add(index) = *source.add(index) };
+            index += 1;
+        }
+        destination
+    }
+}}
+
+// Musl's `src/string/wmemmove.c` object.
+static_archive_member! { wmemmove_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wmemmove(
+        destination: *mut Wchar,
+        source: *const Wchar,
+        count: usize,
+    ) -> *mut Wchar {
+        if destination == source.cast_mut() {
             return destination;
         }
-        index += 1;
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcsncpy(
-    destination: *mut Wchar,
-    source: *const Wchar,
-    count: usize,
-) -> *mut Wchar {
-    let mut index = 0usize;
-    // SAFETY: the caller supplies readable source through NUL or `count` and
-    // writable non-overlapping destination storage for `count` elements.
-    while index != count && unsafe { *source.add(index) } != 0 {
-        unsafe { *destination.add(index) = *source.add(index) };
-        index += 1;
-    }
-    while index != count {
-        unsafe { *destination.add(index) = 0 };
-        index += 1;
-    }
-    destination
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcpcpy(destination: *mut Wchar, source: *const Wchar) -> *mut Wchar {
-    // SAFETY: forwarded public string-copy contract.
-    unsafe { wcscpy(destination, source) };
-    // SAFETY: the source is a readable NUL-terminated wide string.
-    destination.wrapping_add(unsafe { wide_length(source) })
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcpncpy(
-    destination: *mut Wchar,
-    source: *const Wchar,
-    count: usize,
-) -> *mut Wchar {
-    // SAFETY: forwarded public bounded-copy contract.
-    unsafe { wcsncpy(destination, source, count) };
-    destination.wrapping_add(unsafe { wcsnlen(source, count) })
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcscat(destination: *mut Wchar, source: *const Wchar) -> *mut Wchar {
-    // SAFETY: the destination is NUL-terminated and has room for source.
-    let end = destination.wrapping_add(unsafe { wide_length(destination) });
-    unsafe { wcscpy(end, source) };
-    destination
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcsncat(
-    destination: *mut Wchar,
-    source: *const Wchar,
-    count: usize,
-) -> *mut Wchar {
-    // SAFETY: the destination is readable through NUL and has sufficient
-    // writable storage for the selected source prefix and final NUL.
-    let mut end = destination.wrapping_add(unsafe { wide_length(destination) });
-    let mut index = 0usize;
-    while index != count {
-        let value = unsafe { *source.add(index) };
-        if value == 0 {
-            break;
+        let bytes = count.wrapping_mul(core::mem::size_of::<Wchar>());
+        if (destination as usize).wrapping_sub(source as usize) < bytes {
+            let mut index = count;
+            while index != 0 {
+                index -= 1;
+                unsafe { *destination.add(index) = *source.add(index) };
+            }
+        } else {
+            unsafe { wmemcpy(destination, source, count) };
         }
-        unsafe { *end = value };
-        end = end.wrapping_add(1);
-        index += 1;
+        destination
     }
-    unsafe { *end = 0 };
-    destination
-}
+}}
 
-#[no_mangle]
-pub unsafe extern "C" fn wcscmp(left: *const Wchar, right: *const Wchar) -> c_int {
-    let mut index = 0usize;
-    loop {
-        // SAFETY: both arguments are readable NUL-terminated wide strings.
-        let left_value = unsafe { *left.add(index) };
-        let right_value = unsafe { *right.add(index) };
-        if left_value != right_value || left_value == 0 {
-            return compare_units(left_value, right_value);
+// Musl's `src/string/wmemset.c` object.
+static_archive_member! { wmemset_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wmemset(
+        destination: *mut Wchar,
+        character: Wchar,
+        count: usize,
+    ) -> *mut Wchar {
+        let mut index = 0usize;
+        while index != count {
+            unsafe { *destination.add(index) = character };
+            index += 1;
         }
-        index += 1;
+        destination
     }
-}
+}}
 
-#[no_mangle]
-pub unsafe extern "C" fn wcsncmp(
-    left: *const Wchar,
-    right: *const Wchar,
-    count: usize,
-) -> c_int {
-    let mut index = 0usize;
-    while index != count {
-        // SAFETY: both arguments are readable through NUL or `count`.
-        let left_value = unsafe { *left.add(index) };
-        let right_value = unsafe { *right.add(index) };
-        if left_value != right_value || left_value == 0 {
-            return compare_units(left_value, right_value);
+// Musl's `src/locale/wcscoll.c` object.
+static_archive_member! { wcscoll_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcscoll(left: *const Wchar, right: *const Wchar) -> c_int {
+        unsafe { wcscmp(left, right) }
+    }
+}}
+
+// Musl's `src/locale/wcsxfrm.c` object.
+static_archive_member! { wcsxfrm_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsxfrm(
+        destination: *mut Wchar,
+        source: *const Wchar,
+        count: usize,
+    ) -> usize {
+        let length = unsafe { wide_length(source) };
+        if length < count {
+            unsafe { wmemcpy(destination, source, length + 1) };
+        } else if count != 0 {
+            unsafe { wmemcpy(destination, source, count - 1) };
+            unsafe { *destination.add(count - 1) = 0 };
         }
-        index += 1;
+        length
     }
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcschr(string: *const Wchar, character: Wchar) -> *mut Wchar {
-    let mut cursor = string;
-    loop {
-        // SAFETY: the caller supplies a readable NUL-terminated string.
-        let value = unsafe { *cursor };
-        if value == character {
-            return cursor.cast_mut();
-        }
-        if value == 0 {
-            return core::ptr::null_mut();
-        }
-        cursor = cursor.wrapping_add(1);
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcsrchr(string: *const Wchar, character: Wchar) -> *mut Wchar {
-    // SAFETY: the caller supplies a readable NUL-terminated string.
-    let mut cursor = string.wrapping_add(unsafe { wide_length(string) });
-    loop {
-        if unsafe { *cursor } == character {
-            return cursor.cast_mut();
-        }
-        if cursor == string {
-            return core::ptr::null_mut();
-        }
-        cursor = cursor.wrapping_sub(1);
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcsstr(haystack: *const Wchar, needle: *const Wchar) -> *mut Wchar {
-    if unsafe { *needle } == 0 {
-        return haystack.cast_mut();
-    }
-    let mut start = haystack;
-    while unsafe { *start } != 0 {
-        let mut left = start;
-        let mut right = needle;
-        while unsafe { *right } != 0 && unsafe { *left } == unsafe { *right } {
-            left = left.wrapping_add(1);
-            right = right.wrapping_add(1);
-        }
-        if unsafe { *right } == 0 {
-            return start.cast_mut();
-        }
-        start = start.wrapping_add(1);
-    }
-    core::ptr::null_mut()
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcsspn(string: *const Wchar, accept: *const Wchar) -> usize {
-    let mut cursor = string;
-    while unsafe { *cursor } != 0 && !unsafe { wcschr(accept, *cursor) }.is_null() {
-        cursor = cursor.wrapping_add(1);
-    }
-    unsafe { cursor.offset_from(string) as usize }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcscspn(string: *const Wchar, reject: *const Wchar) -> usize {
-    let mut cursor = string;
-    while unsafe { *cursor } != 0 && unsafe { wcschr(reject, *cursor) }.is_null() {
-        cursor = cursor.wrapping_add(1);
-    }
-    unsafe { cursor.offset_from(string) as usize }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcspbrk(string: *const Wchar, accept: *const Wchar) -> *mut Wchar {
-    let cursor = string.wrapping_add(unsafe { wcscspn(string, accept) });
-    if unsafe { *cursor } == 0 {
-        core::ptr::null_mut()
-    } else {
-        cursor.cast_mut()
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcstok(
-    string: *mut Wchar,
-    separators: *const Wchar,
-    state: *mut *mut Wchar,
-) -> *mut Wchar {
-    let mut cursor = if string.is_null() {
-        // SAFETY: the public ABI requires a live writable state pointer.
-        unsafe { *state }
-    } else {
-        string
-    };
-    if cursor.is_null() {
-        return core::ptr::null_mut();
-    }
-    cursor = cursor.wrapping_add(unsafe { wcsspn(cursor, separators) });
-    if unsafe { *cursor } == 0 {
-        unsafe { *state = core::ptr::null_mut() };
-        return core::ptr::null_mut();
-    }
-    let token = cursor;
-    cursor = cursor.wrapping_add(unsafe { wcscspn(cursor, separators) });
-    if unsafe { *cursor } != 0 {
-        unsafe { *cursor = 0 };
-        cursor = cursor.wrapping_add(1);
-        unsafe { *state = cursor };
-    } else {
-        unsafe { *state = core::ptr::null_mut() };
-    }
-    token
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wmemchr(
-    string: *const Wchar,
-    character: Wchar,
-    count: usize,
-) -> *mut Wchar {
-    let mut index = 0usize;
-    while index != count {
-        if unsafe { *string.add(index) } == character {
-            return string.wrapping_add(index).cast_mut();
-        }
-        index += 1;
-    }
-    core::ptr::null_mut()
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wmemcmp(
-    left: *const Wchar,
-    right: *const Wchar,
-    count: usize,
-) -> c_int {
-    let mut index = 0usize;
-    while index != count {
-        let left_value = unsafe { *left.add(index) };
-        let right_value = unsafe { *right.add(index) };
-        if left_value != right_value {
-            return compare_units(left_value, right_value);
-        }
-        index += 1;
-    }
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wmemcpy(
-    destination: *mut Wchar,
-    source: *const Wchar,
-    count: usize,
-) -> *mut Wchar {
-    let mut index = 0usize;
-    while index != count {
-        unsafe { *destination.add(index) = *source.add(index) };
-        index += 1;
-    }
-    destination
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wmemmove(
-    destination: *mut Wchar,
-    source: *const Wchar,
-    count: usize,
-) -> *mut Wchar {
-    if destination == source.cast_mut() {
-        return destination;
-    }
-    let bytes = count.wrapping_mul(core::mem::size_of::<Wchar>());
-    if (destination as usize).wrapping_sub(source as usize) < bytes {
-        let mut index = count;
-        while index != 0 {
-            index -= 1;
-            unsafe { *destination.add(index) = *source.add(index) };
-        }
-    } else {
-        unsafe { wmemcpy(destination, source, count) };
-    }
-    destination
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wmemset(
-    destination: *mut Wchar,
-    character: Wchar,
-    count: usize,
-) -> *mut Wchar {
-    let mut index = 0usize;
-    while index != count {
-        unsafe { *destination.add(index) = character };
-        index += 1;
-    }
-    destination
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcscoll(left: *const Wchar, right: *const Wchar) -> c_int {
-    unsafe { wcscmp(left, right) }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcsxfrm(
-    destination: *mut Wchar,
-    source: *const Wchar,
-    count: usize,
-) -> usize {
-    let length = unsafe { wide_length(source) };
-    if length < count {
-        unsafe { wmemcpy(destination, source, length + 1) };
-    } else if count != 0 {
-        unsafe { wmemcpy(destination, source, count - 1) };
-        unsafe { *destination.add(count - 1) = 0 };
-    }
-    length
-}
+}}
 
 #[inline]
 fn property(table: &[u8], character: Wint) -> bool {
@@ -489,101 +561,141 @@ fn case_map(character: Wint, direction: u32) -> Wint {
     original
 }
 
-#[no_mangle]
-pub extern "C" fn towlower(character: Wint) -> Wint {
-    case_map(character, 0)
-}
-
-#[no_mangle]
-pub extern "C" fn towupper(character: Wint) -> Wint {
-    case_map(character, 1)
-}
-
-#[no_mangle]
-pub extern "C" fn iswalpha(character: Wint) -> c_int {
-    if character < 0x20000 {
-        property(&ALPHA, character) as c_int
-    } else {
-        (character < 0x2fffe) as c_int
+// Musl's `src/ctype/towctrans.c` object.
+static_archive_member! { towctrans_source {
+    #[no_mangle]
+    pub extern "C" fn towlower(character: Wint) -> Wint {
+        case_map(character, 0)
     }
-}
 
-#[no_mangle]
-pub extern "C" fn iswdigit(character: Wint) -> c_int {
-    character.wrapping_sub(b'0' as u32).lt(&10) as c_int
-}
-
-#[no_mangle]
-pub extern "C" fn iswalnum(character: Wint) -> c_int {
-    (iswdigit(character) != 0 || iswalpha(character) != 0) as c_int
-}
-
-#[no_mangle]
-pub extern "C" fn iswblank(character: Wint) -> c_int {
-    (character == b' ' as u32 || character == b'\t' as u32) as c_int
-}
-
-#[no_mangle]
-pub extern "C" fn iswcntrl(character: Wint) -> c_int {
-    (character < 32
-        || character.wrapping_sub(0x7f) < 33
-        || character.wrapping_sub(0x2028) < 2
-        || character.wrapping_sub(0xfff9) < 3) as c_int
-}
-
-#[no_mangle]
-pub extern "C" fn iswprint(character: Wint) -> c_int {
-    if character < 0xff {
-        return (((character + 1) & 0x7f) >= 0x21) as c_int;
+    #[no_mangle]
+    pub extern "C" fn towupper(character: Wint) -> Wint {
+        case_map(character, 1)
     }
-    if character < 0x2028
-        || character.wrapping_sub(0x202a) < 0xd800 - 0x202a
-        || character.wrapping_sub(0xe000) < 0xfff9 - 0xe000
-    {
-        return 1;
+}}
+
+
+// Musl's `src/ctype/iswalpha.c` object.
+static_archive_member! { iswalpha_source {
+    #[no_mangle]
+    pub extern "C" fn iswalpha(character: Wint) -> c_int {
+        if character < 0x20000 {
+            property(&ALPHA, character) as c_int
+        } else {
+            (character < 0x2fffe) as c_int
+        }
     }
-    if character.wrapping_sub(0xfffc) > 0x10ffff - 0xfffc
-        || character & 0xfffe == 0xfffe
-    {
-        return 0;
+}}
+
+// Musl's `src/ctype/iswdigit.c` object.
+static_archive_member! { iswdigit_source {
+    #[no_mangle]
+    pub extern "C" fn iswdigit(character: Wint) -> c_int {
+        character.wrapping_sub(b'0' as u32).lt(&10) as c_int
     }
-    1
-}
+}}
 
-#[no_mangle]
-pub extern "C" fn iswspace(character: Wint) -> c_int {
-    matches!(
-        character,
-        0x20 | 0x09 | 0x0a | 0x0d | 0x0b | 0x0c | 0x85 | 0x2000..=0x2006
-            | 0x2008..=0x200a | 0x2028 | 0x2029 | 0x205f | 0x3000
-    ) as c_int
-}
+// Musl's `src/ctype/iswalnum.c` object.
+static_archive_member! { iswalnum_source {
+    #[no_mangle]
+    pub extern "C" fn iswalnum(character: Wint) -> c_int {
+        (iswdigit(character) != 0 || iswalpha(character) != 0) as c_int
+    }
+}}
 
-#[no_mangle]
-pub extern "C" fn iswgraph(character: Wint) -> c_int {
-    (iswspace(character) == 0 && iswprint(character) != 0) as c_int
-}
+// Musl's `src/ctype/iswblank.c` object.
+static_archive_member! { iswblank_source {
+    #[no_mangle]
+    pub extern "C" fn iswblank(character: Wint) -> c_int {
+        (character == b' ' as u32 || character == b'\t' as u32) as c_int
+    }
+}}
 
-#[no_mangle]
-pub extern "C" fn iswlower(character: Wint) -> c_int {
-    (towupper(character) != character) as c_int
-}
+// Musl's `src/ctype/iswcntrl.c` object.
+static_archive_member! { iswcntrl_source {
+    #[no_mangle]
+    pub extern "C" fn iswcntrl(character: Wint) -> c_int {
+        (character < 32
+            || character.wrapping_sub(0x7f) < 33
+            || character.wrapping_sub(0x2028) < 2
+            || character.wrapping_sub(0xfff9) < 3) as c_int
+    }
+}}
 
-#[no_mangle]
-pub extern "C" fn iswupper(character: Wint) -> c_int {
-    (towlower(character) != character) as c_int
-}
+// Musl's `src/ctype/iswprint.c` object.
+static_archive_member! { iswprint_source {
+    #[no_mangle]
+    pub extern "C" fn iswprint(character: Wint) -> c_int {
+        if character < 0xff {
+            return (((character + 1) & 0x7f) >= 0x21) as c_int;
+        }
+        if character < 0x2028
+            || character.wrapping_sub(0x202a) < 0xd800 - 0x202a
+            || character.wrapping_sub(0xe000) < 0xfff9 - 0xe000
+        {
+            return 1;
+        }
+        if character.wrapping_sub(0xfffc) > 0x10ffff - 0xfffc
+            || character & 0xfffe == 0xfffe
+        {
+            return 0;
+        }
+        1
+    }
+}}
 
-#[no_mangle]
-pub extern "C" fn iswpunct(character: Wint) -> c_int {
-    (character < 0x20000 && property(&PUNCT, character)) as c_int
-}
+// Musl's `src/ctype/iswspace.c` object.
+static_archive_member! { iswspace_source {
+    #[no_mangle]
+    pub extern "C" fn iswspace(character: Wint) -> c_int {
+        matches!(
+            character,
+            0x20 | 0x09 | 0x0a | 0x0d | 0x0b | 0x0c | 0x85 | 0x2000..=0x2006
+                | 0x2008..=0x200a | 0x2028 | 0x2029 | 0x205f | 0x3000
+        ) as c_int
+    }
+}}
 
-#[no_mangle]
-pub extern "C" fn iswxdigit(character: Wint) -> c_int {
-    (character.wrapping_sub(b'0' as u32) < 10
-        || (character | 32).wrapping_sub(b'a' as u32) < 6) as c_int
-}
+// Musl's `src/ctype/iswgraph.c` object.
+static_archive_member! { iswgraph_source {
+    #[no_mangle]
+    pub extern "C" fn iswgraph(character: Wint) -> c_int {
+        (iswspace(character) == 0 && iswprint(character) != 0) as c_int
+    }
+}}
+
+// Musl's `src/ctype/iswlower.c` object.
+static_archive_member! { iswlower_source {
+    #[no_mangle]
+    pub extern "C" fn iswlower(character: Wint) -> c_int {
+        (towupper(character) != character) as c_int
+    }
+}}
+
+// Musl's `src/ctype/iswupper.c` object.
+static_archive_member! { iswupper_source {
+    #[no_mangle]
+    pub extern "C" fn iswupper(character: Wint) -> c_int {
+        (towlower(character) != character) as c_int
+    }
+}}
+
+// Musl's `src/ctype/iswpunct.c` object.
+static_archive_member! { iswpunct_source {
+    #[no_mangle]
+    pub extern "C" fn iswpunct(character: Wint) -> c_int {
+        (character < 0x20000 && property(&PUNCT, character)) as c_int
+    }
+}}
+
+// Musl's `src/ctype/iswxdigit.c` object.
+static_archive_member! { iswxdigit_source {
+    #[no_mangle]
+    pub extern "C" fn iswxdigit(character: Wint) -> c_int {
+        (character.wrapping_sub(b'0' as u32) < 10
+            || (character | 32).wrapping_sub(b'a' as u32) < 6) as c_int
+    }
+}}
 
 unsafe fn c_name_equal(mut input: *const c_char, expected: &[u8]) -> bool {
     if input.is_null() {
@@ -598,147 +710,167 @@ unsafe fn c_name_equal(mut input: *const c_char, expected: &[u8]) -> bool {
     unsafe { *input == 0 }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn wctype(name: *const c_char) -> Wctype {
-    const NAMES: [(&[u8], Wctype); 12] = [
-        (b"alnum", WCTYPE_ALNUM),
-        (b"alpha", WCTYPE_ALPHA),
-        (b"blank", WCTYPE_BLANK),
-        (b"cntrl", WCTYPE_CNTRL),
-        (b"digit", WCTYPE_DIGIT),
-        (b"graph", WCTYPE_GRAPH),
-        (b"lower", WCTYPE_LOWER),
-        (b"print", WCTYPE_PRINT),
-        (b"punct", WCTYPE_PUNCT),
-        (b"space", WCTYPE_SPACE),
-        (b"upper", WCTYPE_UPPER),
-        (b"xdigit", WCTYPE_XDIGIT),
-    ];
-    for (expected, descriptor) in NAMES {
-        if unsafe { c_name_equal(name, expected) } {
-            return descriptor;
+// Musl's `src/ctype/iswctype.c` object.
+static_archive_member! { iswctype_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wctype(name: *const c_char) -> Wctype {
+        const NAMES: [(&[u8], Wctype); 12] = [
+            (b"alnum", WCTYPE_ALNUM),
+            (b"alpha", WCTYPE_ALPHA),
+            (b"blank", WCTYPE_BLANK),
+            (b"cntrl", WCTYPE_CNTRL),
+            (b"digit", WCTYPE_DIGIT),
+            (b"graph", WCTYPE_GRAPH),
+            (b"lower", WCTYPE_LOWER),
+            (b"print", WCTYPE_PRINT),
+            (b"punct", WCTYPE_PUNCT),
+            (b"space", WCTYPE_SPACE),
+            (b"upper", WCTYPE_UPPER),
+            (b"xdigit", WCTYPE_XDIGIT),
+        ];
+        for (expected, descriptor) in NAMES {
+            if unsafe { c_name_equal(name, expected) } {
+                return descriptor;
+            }
+        }
+        0
+    }
+
+    #[no_mangle]
+    pub extern "C" fn iswctype(character: Wint, descriptor: Wctype) -> c_int {
+        match descriptor {
+            WCTYPE_ALNUM => iswalnum(character),
+            WCTYPE_ALPHA => iswalpha(character),
+            WCTYPE_BLANK => iswblank(character),
+            WCTYPE_CNTRL => iswcntrl(character),
+            WCTYPE_DIGIT => iswdigit(character),
+            WCTYPE_GRAPH => iswgraph(character),
+            WCTYPE_LOWER => iswlower(character),
+            WCTYPE_PRINT => iswprint(character),
+            WCTYPE_PUNCT => iswpunct(character),
+            WCTYPE_SPACE => iswspace(character),
+            WCTYPE_UPPER => iswupper(character),
+            WCTYPE_XDIGIT => iswxdigit(character),
+            _ => 0,
         }
     }
-    0
-}
+}}
 
-#[no_mangle]
-pub extern "C" fn iswctype(character: Wint, descriptor: Wctype) -> c_int {
-    match descriptor {
-        WCTYPE_ALNUM => iswalnum(character),
-        WCTYPE_ALPHA => iswalpha(character),
-        WCTYPE_BLANK => iswblank(character),
-        WCTYPE_CNTRL => iswcntrl(character),
-        WCTYPE_DIGIT => iswdigit(character),
-        WCTYPE_GRAPH => iswgraph(character),
-        WCTYPE_LOWER => iswlower(character),
-        WCTYPE_PRINT => iswprint(character),
-        WCTYPE_PUNCT => iswpunct(character),
-        WCTYPE_SPACE => iswspace(character),
-        WCTYPE_UPPER => iswupper(character),
-        WCTYPE_XDIGIT => iswxdigit(character),
-        _ => 0,
-    }
-}
 
-#[no_mangle]
-pub unsafe extern "C" fn wctrans(name: *const c_char) -> Wctrans {
-    if unsafe { c_name_equal(name, b"toupper") } {
-        1usize as Wctrans
-    } else if unsafe { c_name_equal(name, b"tolower") } {
-        2usize as Wctrans
-    } else {
-        core::ptr::null()
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn towctrans(character: Wint, descriptor: Wctrans) -> Wint {
-    match descriptor as usize {
-        1 => towupper(character),
-        2 => towlower(character),
-        _ => character,
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcsncasecmp(
-    left: *const Wchar,
-    right: *const Wchar,
-    mut count: usize,
-) -> c_int {
-    if count == 0 {
-        return 0;
-    }
-    count -= 1;
-    let mut index = 0usize;
-    while unsafe { *left.add(index) } != 0
-        && unsafe { *right.add(index) } != 0
-        && count != 0
-        && (unsafe { *left.add(index) } == unsafe { *right.add(index) }
-            || towlower(unsafe { *left.add(index) } as Wint)
-                == towlower(unsafe { *right.add(index) } as Wint))
-    {
-        index += 1;
-        count -= 1;
-    }
-    towlower(unsafe { *left.add(index) } as Wint)
-        .wrapping_sub(towlower(unsafe { *right.add(index) } as Wint)) as c_int
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcscasecmp(left: *const Wchar, right: *const Wchar) -> c_int {
-    unsafe { wcsncasecmp(left, right, usize::MAX) }
-}
-
-#[no_mangle]
-pub extern "C" fn wcwidth(character: Wchar) -> c_int {
-    let character = character as Wint;
-    if character < 0xff {
-        return if ((character + 1) & 0x7f) >= 0x21 {
-            1
-        } else if character != 0 {
-            -1
+// Musl's `src/ctype/wctrans.c` object.
+static_archive_member! { wctrans_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wctrans(name: *const c_char) -> Wctrans {
+        if unsafe { c_name_equal(name, b"toupper") } {
+            1usize as Wctrans
+        } else if unsafe { c_name_equal(name, b"tolower") } {
+            2usize as Wctrans
         } else {
-            0
-        };
+            core::ptr::null()
+        }
     }
-    if character & 0xfffeffff < 0xfffe {
-        if property(&NONSPACING, character) {
+
+    #[no_mangle]
+    pub extern "C" fn towctrans(character: Wint, descriptor: Wctrans) -> Wint {
+        match descriptor as usize {
+            1 => towupper(character),
+            2 => towlower(character),
+            _ => character,
+        }
+    }
+}}
+
+
+// Musl's `src/string/wcsncasecmp.c` object.
+static_archive_member! { wcsncasecmp_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcsncasecmp(
+        left: *const Wchar,
+        right: *const Wchar,
+        mut count: usize,
+    ) -> c_int {
+        if count == 0 {
             return 0;
         }
-        if property(&WIDE, character) {
+        count -= 1;
+        let mut index = 0usize;
+        while unsafe { *left.add(index) } != 0
+            && unsafe { *right.add(index) } != 0
+            && count != 0
+            && (unsafe { *left.add(index) } == unsafe { *right.add(index) }
+                || towlower(unsafe { *left.add(index) } as Wint)
+                    == towlower(unsafe { *right.add(index) } as Wint))
+        {
+            index += 1;
+            count -= 1;
+        }
+        towlower(unsafe { *left.add(index) } as Wint)
+            .wrapping_sub(towlower(unsafe { *right.add(index) } as Wint)) as c_int
+    }
+}}
+
+// Musl's `src/string/wcscasecmp.c` object.
+static_archive_member! { wcscasecmp_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcscasecmp(left: *const Wchar, right: *const Wchar) -> c_int {
+        unsafe { wcsncasecmp(left, right, usize::MAX) }
+    }
+}}
+
+// Musl's `src/ctype/wcwidth.c` object.
+static_archive_member! { wcwidth_source {
+    #[no_mangle]
+    pub extern "C" fn wcwidth(character: Wchar) -> c_int {
+        let character = character as Wint;
+        if character < 0xff {
+            return if ((character + 1) & 0x7f) >= 0x21 {
+                1
+            } else if character != 0 {
+                -1
+            } else {
+                0
+            };
+        }
+        if character & 0xfffeffff < 0xfffe {
+            if property(&NONSPACING, character) {
+                return 0;
+            }
+            if property(&WIDE, character) {
+                return 2;
+            }
+            return 1;
+        }
+        if character & 0xfffe == 0xfffe {
+            return -1;
+        }
+        if character.wrapping_sub(0x20000) < 0x20000 {
             return 2;
         }
-        return 1;
-    }
-    if character & 0xfffe == 0xfffe {
-        return -1;
-    }
-    if character.wrapping_sub(0x20000) < 0x20000 {
-        return 2;
-    }
-    if character == 0xe0001
-        || character.wrapping_sub(0xe0020) < 0x5f
-        || character.wrapping_sub(0xe0100) < 0xef
-    {
-        return 0;
-    }
-    1
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wcswidth(string: *const Wchar, mut count: usize) -> c_int {
-    let mut width: c_int = 0;
-    let mut cursor = string;
-    while count != 0 && unsafe { *cursor } != 0 {
-        let next = wcwidth(unsafe { *cursor });
-        if next < 0 {
-            return next;
+        if character == 0xe0001
+            || character.wrapping_sub(0xe0020) < 0x5f
+            || character.wrapping_sub(0xe0100) < 0xef
+        {
+            return 0;
         }
-        width += next;
-        cursor = cursor.wrapping_add(1);
-        count -= 1;
+        1
     }
-    width
-}
+}}
+
+// Musl's `src/ctype/wcswidth.c` object.
+static_archive_member! { wcswidth_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn wcswidth(string: *const Wchar, mut count: usize) -> c_int {
+        let mut width: c_int = 0;
+        let mut cursor = string;
+        while count != 0 && unsafe { *cursor } != 0 {
+            let next = wcwidth(unsafe { *cursor });
+            if next < 0 {
+                return next;
+            }
+            width += next;
+            cursor = cursor.wrapping_add(1);
+            count -= 1;
+        }
+        width
+    }
+}}

@@ -55,104 +55,162 @@ unsafe fn stream(stream: *mut StandardStream, format: *const c_int, args: &mut V
     }
 }
 
-/// Format to a live wide/unoriented FILE, forwarding the supplied va_list.
-/// # Safety
-/// FILE is live and not concurrently destroyed. Format is a readable
-/// NUL-terminated wchar_t string. Every promoted argument has the exact C
-/// type/extent required by its conversion; %n destinations are writable.
-#[no_mangle]
-pub unsafe extern "C" fn vfwprintf(file: *mut StandardStream, format: *const c_int, mut args: VaList) -> c_int {
-    unsafe { stream(file, format, &mut args, false) }
-}
-/// # Safety
-/// The live FILE, wide format and promoted argument obligations are vfwprintf's.
-#[no_mangle]
-pub unsafe extern "C" fn fwprintf(file: *mut StandardStream, format: *const c_int, mut args: ...) -> c_int {
-    unsafe { stream(file, format, &mut args, false) }
-}
-/// # Safety
-/// stdout is live; format and argument obligations are vfwprintf's.
-#[no_mangle]
-pub unsafe extern "C" fn vwprintf(format: *const c_int, mut args: VaList) -> c_int {
-    unsafe { stream(stdio_standard::stdout, format, &mut args, false) }
-}
-/// # Safety
-/// stdout is live; format and promoted argument obligations are vfwprintf's.
-#[no_mangle]
-pub unsafe extern "C" fn wprintf(format: *const c_int, mut args: ...) -> c_int {
-    unsafe { stream(stdio_standard::stdout, format, &mut args, false) }
-}
-/// Format to bounded caller wide storage; insufficient capacity returns -1.
-/// # Safety
-/// Destination has capacity writable wchar_t elements, disjoint from format
-/// and readable argument sources. Format/arguments satisfy vfwprintf; zero
-/// capacity does not access destination, and still requires a valid format.
-#[no_mangle]
-pub unsafe extern "C" fn vswprintf(destination: *mut c_int, capacity: usize, format: *const c_int, mut args: VaList) -> c_int {
-    unsafe { stdio_standard::with_wide_output_buffer(destination, capacity, |file| stream(file, format, &mut args, false)) }
-}
-/// # Safety
-/// Destination, format and promoted arguments satisfy vswprintf's contract.
-#[no_mangle]
-pub unsafe extern "C" fn swprintf(destination: *mut c_int, capacity: usize, format: *const c_int, mut args: ...) -> c_int {
-    unsafe { stdio_standard::with_wide_output_buffer(destination, capacity, |file| stream(file, format, &mut args, false)) }
-}
+// Musl's `src/stdio/vfwprintf.c` object.
+static_archive_member! { vfwprintf_source {
+    /// Format to a live wide/unoriented FILE, forwarding the supplied va_list.
+    /// # Safety
+    /// FILE is live and not concurrently destroyed. Format is a readable
+    /// NUL-terminated wchar_t string. Every promoted argument has the exact C
+    /// type/extent required by its conversion; %n destinations are writable.
+    #[no_mangle]
+    pub unsafe extern "C" fn vfwprintf(file: *mut StandardStream, format: *const c_int, mut args: VaList) -> c_int {
+        unsafe { stream(file, format, &mut args, false) }
+    }
+}}
+// Musl's `src/stdio/fwprintf.c` object.
+static_archive_member! { fwprintf_source {
+    /// # Safety
+    /// The live FILE, wide format and promoted argument obligations are vfwprintf's.
+    #[no_mangle]
+    pub unsafe extern "C" fn fwprintf(file: *mut StandardStream, format: *const c_int, mut args: ...) -> c_int {
+        unsafe { stream(file, format, &mut args, false) }
+    }
+}}
+// Musl's `src/stdio/vwprintf.c` object.
+static_archive_member! { vwprintf_source {
+    /// # Safety
+    /// stdout is live; format and argument obligations are vfwprintf's.
+    #[no_mangle]
+    pub unsafe extern "C" fn vwprintf(format: *const c_int, mut args: VaList) -> c_int {
+        unsafe { stream(stdio_standard::stdout, format, &mut args, false) }
+    }
+}}
+// Musl's `src/stdio/wprintf.c` object.
+static_archive_member! { wprintf_source {
+    /// # Safety
+    /// stdout is live; format and promoted argument obligations are vfwprintf's.
+    #[no_mangle]
+    pub unsafe extern "C" fn wprintf(format: *const c_int, mut args: ...) -> c_int {
+        unsafe { stream(stdio_standard::stdout, format, &mut args, false) }
+    }
+}}
+// Musl's `src/stdio/vswprintf.c` object.
+static_archive_member! { vswprintf_source {
+    /// Format to bounded caller wide storage; insufficient capacity returns -1.
+    /// # Safety
+    /// Destination has capacity writable wchar_t elements, disjoint from format
+    /// and readable argument sources. Format/arguments satisfy vfwprintf; zero
+    /// capacity does not access destination, and still requires a valid format.
+    #[no_mangle]
+    pub unsafe extern "C" fn vswprintf(destination: *mut c_int, capacity: usize, format: *const c_int, mut args: VaList) -> c_int {
+        unsafe { stdio_standard::with_wide_output_buffer(destination, capacity, |file| stream(file, format, &mut args, false)) }
+    }
+}}
+// Musl's `src/stdio/swprintf.c` object.
+static_archive_member! { swprintf_source {
+    /// # Safety
+    /// Destination, format and promoted arguments satisfy vswprintf's contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn swprintf(destination: *mut c_int, capacity: usize, format: *const c_int, mut args: ...) -> c_int {
+        unsafe { stdio_standard::with_wide_output_buffer(destination, capacity, |file| stream(file, format, &mut args, false)) }
+    }
+}}
 
-/// Scan a live wide/unoriented FILE through the pinned wide grammar.
-/// # Safety
-/// FILE is live and not concurrently destroyed; format is a readable
-/// NUL-terminated wchar_t string. Each non-suppressed destination has the
-/// exact type/extent required by its conversion; %m takes a writable pointer
-/// object and transfers a malloc-family allocation on assignment success.
-#[no_mangle]
-pub unsafe extern "C" fn vfwscanf(file: *mut StandardStream, format: *const c_int, mut args: VaList) -> c_int {
-    unsafe { stream(file, format, &mut args, true) }
-}
-/// # Safety
-/// FILE, wide format and destination obligations are vfwscanf's.
-#[no_mangle]
-pub unsafe extern "C" fn fwscanf(file: *mut StandardStream, format: *const c_int, mut args: ...) -> c_int {
-    unsafe { stream(file, format, &mut args, true) }
-}
-/// # Safety
-/// stdin is live; format and destination obligations are vfwscanf's.
-#[no_mangle]
-pub unsafe extern "C" fn vwscanf(format: *const c_int, mut args: VaList) -> c_int {
-    unsafe { stream(stdio_standard::stdin, format, &mut args, true) }
-}
-/// # Safety
-/// stdin is live; format and destination obligations are vfwscanf's.
-#[no_mangle]
-pub unsafe extern "C" fn wscanf(format: *const c_int, mut args: ...) -> c_int {
-    unsafe { stream(stdio_standard::stdin, format, &mut args, true) }
-}
-/// Scan a NUL-terminated wide string with the shared stream parser.
-/// # Safety
-/// Source and format are readable terminated wchar_t strings. Destinations
-/// satisfy vfwscanf's typed storage/allocation obligations and do not overlap
-/// either source string or the va_list object.
-#[no_mangle]
-pub unsafe extern "C" fn vswscanf(source: *const c_int, format: *const c_int, mut args: VaList) -> c_int {
-    unsafe { stdio_standard::with_wide_input_string(source, |file| stream(file, format, &mut args, true)) }
-}
-/// # Safety
-/// Source, format and typed destination obligations are vswscanf's.
-#[no_mangle]
-pub unsafe extern "C" fn swscanf(source: *const c_int, format: *const c_int, mut args: ...) -> c_int {
-    unsafe { stdio_standard::with_wide_input_string(source, |file| stream(file, format, &mut args, true)) }
-}
+// Musl's `src/stdio/vfwscanf.c` object.
+static_archive_member! { vfwscanf_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak __isoc99_vfwscanf",
+        ".set __isoc99_vfwscanf, vfwscanf",
+    );
 
-core::arch::global_asm!(r#"
-    .weak __isoc99_fwscanf
-    .set __isoc99_fwscanf, fwscanf
-    .weak __isoc99_vfwscanf
-    .set __isoc99_vfwscanf, vfwscanf
-    .weak __isoc99_wscanf
-    .set __isoc99_wscanf, wscanf
-    .weak __isoc99_vwscanf
-    .set __isoc99_vwscanf, vwscanf
-    .weak __isoc99_swscanf
-    .set __isoc99_swscanf, swscanf
-    .weak __isoc99_vswscanf
-    .set __isoc99_vswscanf, vswscanf
-"#);
+    /// Scan a live wide/unoriented FILE through the pinned wide grammar.
+    /// # Safety
+    /// FILE is live and not concurrently destroyed; format is a readable
+    /// NUL-terminated wchar_t string. Each non-suppressed destination has the
+    /// exact type/extent required by its conversion; %m takes a writable pointer
+    /// object and transfers a malloc-family allocation on assignment success.
+    #[no_mangle]
+    pub unsafe extern "C" fn vfwscanf(file: *mut StandardStream, format: *const c_int, mut args: VaList) -> c_int {
+        unsafe { stream(file, format, &mut args, true) }
+    }
+}}
+// Musl's `src/stdio/fwscanf.c` object.
+static_archive_member! { fwscanf_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak __isoc99_fwscanf",
+        ".set __isoc99_fwscanf, fwscanf",
+    );
+
+    /// # Safety
+    /// FILE, wide format and destination obligations are vfwscanf's.
+    #[no_mangle]
+    pub unsafe extern "C" fn fwscanf(file: *mut StandardStream, format: *const c_int, mut args: ...) -> c_int {
+        unsafe { stream(file, format, &mut args, true) }
+    }
+}}
+// Musl's `src/stdio/vwscanf.c` object.
+static_archive_member! { vwscanf_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak __isoc99_vwscanf",
+        ".set __isoc99_vwscanf, vwscanf",
+    );
+
+    /// # Safety
+    /// stdin is live; format and destination obligations are vfwscanf's.
+    #[no_mangle]
+    pub unsafe extern "C" fn vwscanf(format: *const c_int, mut args: VaList) -> c_int {
+        unsafe { stream(stdio_standard::stdin, format, &mut args, true) }
+    }
+}}
+// Musl's `src/stdio/wscanf.c` object.
+static_archive_member! { wscanf_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak __isoc99_wscanf",
+        ".set __isoc99_wscanf, wscanf",
+    );
+
+    /// # Safety
+    /// stdin is live; format and destination obligations are vfwscanf's.
+    #[no_mangle]
+    pub unsafe extern "C" fn wscanf(format: *const c_int, mut args: ...) -> c_int {
+        unsafe { stream(stdio_standard::stdin, format, &mut args, true) }
+    }
+}}
+// Musl's `src/stdio/vswscanf.c` object.
+static_archive_member! { vswscanf_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak __isoc99_vswscanf",
+        ".set __isoc99_vswscanf, vswscanf",
+    );
+
+    /// Scan a NUL-terminated wide string with the shared stream parser.
+    /// # Safety
+    /// Source and format are readable terminated wchar_t strings. Destinations
+    /// satisfy vfwscanf's typed storage/allocation obligations and do not overlap
+    /// either source string or the va_list object.
+    #[no_mangle]
+    pub unsafe extern "C" fn vswscanf(source: *const c_int, format: *const c_int, mut args: VaList) -> c_int {
+        unsafe { stdio_standard::with_wide_input_string(source, |file| stream(file, format, &mut args, true)) }
+    }
+}}
+// Musl's `src/stdio/swscanf.c` object.
+static_archive_member! { swscanf_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak __isoc99_swscanf",
+        ".set __isoc99_swscanf, swscanf",
+    );
+
+    /// # Safety
+    /// Source, format and typed destination obligations are vswscanf's.
+    #[no_mangle]
+    pub unsafe extern "C" fn swscanf(source: *const c_int, format: *const c_int, mut args: ...) -> c_int {
+        unsafe { stdio_standard::with_wide_input_string(source, |file| stream(file, format, &mut args, true)) }
+    }
+}}
+
