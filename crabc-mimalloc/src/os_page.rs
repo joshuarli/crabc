@@ -1763,9 +1763,179 @@ mod tests {
         }
     }
 
+    /// One faulted attempt of an OS publication case: the claim, metadata,
+    /// PageMap publication, and release steps under `selected`'s fault plan,
+    /// then the raw retry of any retained owner. Returns the nine source
+    /// relations. The fault plan and PageMap submap counter are re-armed per
+    /// attempt, so a repeated attempt sees the state the previous one left.
+    ///
+    /// A PageMap fault (cases 4 and 6) needs a previously absent lazy submap.
+    /// As the pinned-C receiver does, a claim whose range shares an already
+    /// present submap publishes without reaching the fault; it is released
+    /// normally and the next claim, at the source hint's next address, is
+    /// tried instead.
+    fn os_publication_attempt(
+        selected: usize,
+        process: VmProcess<'static>,
+        map: &crate::page_map::PageMap,
+        session: &mut crate::bootstrap::ExclusiveTheapSession<'_>,
+        fault: &fault::Guard,
+    ) -> [bool; 9] {
+        for _ in 0..16 {
+            if let Some(facts) = os_publication_try(selected, process, map, session, fault) {
+                return facts;
+            }
+        }
+        panic!("OS publication case {selected} never reached an absent PageMap submap");
+    }
+
+    /// One claim of [`os_publication_attempt`]; `None` when a PageMap-fault
+    /// case published into an already present submap and must try again.
+    fn os_publication_try(
+        selected: usize,
+        process: VmProcess<'static>,
+        map: &crate::page_map::PageMap,
+        session: &mut crate::bootstrap::ExclusiveTheapSession<'_>,
+        fault: &fault::Guard,
+    ) -> Option<[bool; 9]> {
+        let commit_ordinal = match selected { 2 | 5 => 1, 3 => 2, _ => usize::MAX };
+        let submaps_before = map.test_lazy_submap_allocation_count();
+        fault.set(if selected == 1 {
+            fault::Plan::at_pair(fault::Point::Map, 1, fault::Point::Map, 1, Errno::NOMEM)
+        } else {
+            fault::Plan::at_pair(fault::Point::Commit, commit_ordinal,
+                fault::Point::Unmap, if selected == 5 { 1 } else { usize::MAX }, Errno::NOMEM)
+        });
+        let allocation = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB),
+            128 * KIB, 128 * KIB, crate::arena::ArenaId::none());
+        let mut facts = [false; 9];
+        facts[8] = true;
+        let owner = match allocation {
+            Err(failure) => {
+                let expected_stage = match selected {
+                    1 => OsAlignedPageFailureStage::Map,
+                    2 | 5 => OsAlignedPageFailureStage::MetadataCommit,
+                    3 => OsAlignedPageFailureStage::BlockCommit,
+                    _ => panic!("unexpected early OS claim failure"),
+                };
+                assert_eq!(failure.error().stage(), expected_stage);
+                assert_eq!(failure.error().operation(), Errno::NOMEM);
+                facts[0] = true;
+                facts[1] = selected == 1 || fault.observed() == commit_ordinal;
+                facts[2] = selected != 1 || (fault.observed() == 2 && fault.secondary_observed() == 1);
+                facts[3] = selected == 1 || fault.secondary_observed() == 1;
+                facts[4] = failure.error().cleanup().is_some() == (selected == 5);
+                facts[5] = true; // no primary, aliases, or PageMap publication occurred
+                let owner = failure.into_owner();
+                assert_eq!(owner.is_some(), selected == 5);
+                if let Some(OsAlignedPageOwner::Claim(claim)) = owner.as_ref() {
+                    assert!(claim.memory_id().is_err());
+                }
+                owner
+            }
+            Ok(claim) => {
+                assert!(matches!(selected, 4 | 6 | 7));
+                facts[1] = fault.observed() == 2;
+                let layout = claim.layout();
+                let start = claim.slice_start().unwrap();
+                let memory = claim.memory_id().unwrap();
+                let mut primary = unsafe { session.publish_fresh_page(claim.metadata().unwrap(),
+                    layout.block_size(), layout.page_offset(), layout.reserved(), 0,
+                    memory.initially_zero(), memory) }.unwrap();
+                assert!(unsafe { claim.publish_secondary_metadata(primary) });
+                fault.set(if selected == 7 { fault::Plan::disabled() } else {
+                    fault::Plan::at_pair(fault::Point::Map, 1, fault::Point::Unmap,
+                        if selected == 6 { 1 } else { usize::MAX }, Errno::NOMEM)
+                });
+                let registered = unsafe {
+                    map.register_range(start.as_ptr(), layout.page_map_size(), primary)
+                }.is_ok();
+                if registered && selected != 7 && fault.observed() == 0 {
+                    // A present submap: release this successful page without
+                    // a fault and let the caller claim the next address.
+                    fault.set(fault::Plan::disabled());
+                    claim.into_published().unwrap();
+                    let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
+                        process, config(4 * KIB), primary) }.unwrap();
+                    unsafe { map.unregister_range(start.as_ptr(), layout.page_map_size()) }.unwrap();
+                    assert!(unsafe { published.clear_secondary_metadata() });
+                    assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+                    assert!(unsafe { published.reclaim() }.is_ok());
+                    return None;
+                }
+                facts[0] = registered == (selected == 7);
+                facts[2] = selected == 7 || fault.observed() >= 1;
+                let release = if registered {
+                    // Transfer the sole release right before reconstructing
+                    // a terminal Published token from its source MemoryId.
+                    claim.into_published().unwrap();
+                    let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
+                        process, config(4 * KIB), primary) }.unwrap();
+                    unsafe { map.unregister_range(start.as_ptr(), layout.page_map_size()) }.unwrap();
+                    assert!(unsafe { published.clear_secondary_metadata() });
+                    assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+                    fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+                    unsafe { published.reclaim() }
+                } else {
+                    facts[8] = map.test_lazy_submap_allocation_count() - submaps_before == 2;
+                    assert!(unsafe { claim.clear_secondary_metadata(primary) });
+                    assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+                    claim.release()
+                };
+                facts[5] = unsafe { map.checked_lookup(start.as_ptr()) }.is_null();
+                facts[3] = if selected == 7 { fault.observed() == 1 }
+                    else { fault.secondary_observed() == 1 };
+                facts[4] = release.is_err() == (selected >= 5);
+                release.err().map(|failure| failure.into_owner())
+            }
+        };
+        let before_retry = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::disabled());
+        facts[6] = match owner {
+            Some(owner) => unsafe { owner.release() }.is_ok(),
+            None => true,
+        };
+        facts[7] = process.subprocess().vm_statistics().snapshot() == before_retry;
+        Some(facts)
+    }
+
+    /// One fault-free OS page claim that publishes into the PageMap, resolves
+    /// its block area there, and releases its exact Published token.
+    fn os_publication_recovery(
+        process: VmProcess<'static>,
+        map: &crate::page_map::PageMap,
+        session: &mut crate::bootstrap::ExclusiveTheapSession<'_>,
+    ) -> bool {
+        let Ok(claim) = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB),
+            128 * KIB, 128 * KIB, crate::arena::ArenaId::none()) else { return false };
+        let layout = claim.layout();
+        let start = claim.slice_start().unwrap();
+        let memory = claim.memory_id().unwrap();
+        let mut primary = unsafe { session.publish_fresh_page(claim.metadata().unwrap(),
+            layout.block_size(), layout.page_offset(), layout.reserved(), 0,
+            memory.initially_zero(), memory) }.unwrap();
+        assert!(unsafe { claim.publish_secondary_metadata(primary) });
+        if unsafe { map.register_range(start.as_ptr(), layout.page_map_size(), primary) }.is_err() {
+            return false;
+        }
+        let published_in_map = unsafe { map.checked_lookup(start.as_ptr()) } == primary.as_ptr();
+        claim.into_published().unwrap();
+        let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
+            process, config(4 * KIB), primary) }.unwrap();
+        unsafe { map.unregister_range(start.as_ptr(), layout.page_map_size()) }.unwrap();
+        assert!(unsafe { published.clear_secondary_metadata() });
+        assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+        published_in_map
+            && unsafe { published.reclaim() }.is_ok()
+            && unsafe { map.checked_lookup(start.as_ptr()) }.is_null()
+    }
+
     /// The same seven legal source transitions as the direct-included C
     /// arena/page-map receiver. C's void failed free exposes no retry owner;
     /// Rust must preserve an exact Claim or Published token and account once.
+    /// Each case repeats its faulted request against the state the first
+    /// failure left, which must reproduce the same relations, and then makes
+    /// one fault-free request that must publish and release normally.
     #[test]
     fn emit_os_publication_fault_receiver_trace() {
         use crate::bootstrap::ExclusiveTheapBootstrap;
@@ -1780,93 +1950,18 @@ mod tests {
                 .activate_detached_for_main_subprocess(
                     process.main_subprocess().expect("fixture uses process main"),
                 ).unwrap();
-            let commit_ordinal = match selected { 2 | 5 => 1, 3 => 2, _ => usize::MAX };
-            fault.set(if selected == 1 {
-                fault::Plan::at_pair(fault::Point::Map, 1, fault::Point::Map, 1, Errno::NOMEM)
-            } else {
-                fault::Plan::at_pair(fault::Point::Commit, commit_ordinal,
-                    fault::Point::Unmap, if selected == 5 { 1 } else { usize::MAX }, Errno::NOMEM)
-            });
-            let allocation = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB),
-                128 * KIB, 128 * KIB, crate::arena::ArenaId::none());
-            let mut facts = [false; 9];
-            facts[8] = true;
-            let owner = match allocation {
-                Err(failure) => {
-                    let expected_stage = match selected {
-                        1 => OsAlignedPageFailureStage::Map,
-                        2 | 5 => OsAlignedPageFailureStage::MetadataCommit,
-                        3 => OsAlignedPageFailureStage::BlockCommit,
-                        _ => panic!("unexpected early OS claim failure"),
-                    };
-                    assert_eq!(failure.error().stage(), expected_stage);
-                    assert_eq!(failure.error().operation(), Errno::NOMEM);
-                    facts[0] = true;
-                    facts[1] = selected == 1 || fault.observed() == commit_ordinal;
-                    facts[2] = selected != 1 || (fault.observed() == 2 && fault.secondary_observed() == 1);
-                    facts[3] = selected == 1 || fault.secondary_observed() == 1;
-                    facts[4] = failure.error().cleanup().is_some() == (selected == 5);
-                    facts[5] = true; // no primary, aliases, or PageMap publication occurred
-                    let owner = failure.into_owner();
-                    assert_eq!(owner.is_some(), selected == 5);
-                    if let Some(OsAlignedPageOwner::Claim(claim)) = owner.as_ref() {
-                        assert!(claim.memory_id().is_err());
-                    }
-                    owner
-                }
-                Ok(claim) => {
-                    assert!(matches!(selected, 4 | 6 | 7));
-                    facts[1] = fault.observed() == 2;
-                    let layout = claim.layout();
-                    let start = claim.slice_start().unwrap();
-                    let memory = claim.memory_id().unwrap();
-                    let mut primary = unsafe { session.publish_fresh_page(claim.metadata().unwrap(),
-                        layout.block_size(), layout.page_offset(), layout.reserved(), 0,
-                        memory.initially_zero(), memory) }.unwrap();
-                    assert!(unsafe { claim.publish_secondary_metadata(primary) });
-                    fault.set(if selected == 7 { fault::Plan::disabled() } else {
-                        fault::Plan::at_pair(fault::Point::Map, 1, fault::Point::Unmap,
-                            if selected == 6 { 1 } else { usize::MAX }, Errno::NOMEM)
-                    });
-                    let registered = unsafe {
-                        map.register_range(start.as_ptr(), layout.page_map_size(), primary)
-                    }.is_ok();
-                    facts[0] = registered == (selected == 7);
-                    facts[2] = selected == 7 || fault.observed() >= 1;
-                    let release = if registered {
-                        // Transfer the sole release right before reconstructing
-                        // a terminal Published token from its source MemoryId.
-                        claim.into_published().unwrap();
-                        let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
-                            process, config(4 * KIB), primary) }.unwrap();
-                        unsafe { map.unregister_range(start.as_ptr(), layout.page_map_size()) }.unwrap();
-                        assert!(unsafe { published.clear_secondary_metadata() });
-                        assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
-                        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
-                        unsafe { published.reclaim() }
-                    } else {
-                        facts[8] = map.test_lazy_submap_allocation_count() == 2;
-                        assert!(unsafe { claim.clear_secondary_metadata(primary) });
-                        assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
-                        claim.release()
-                    };
-                    facts[5] = unsafe { map.checked_lookup(start.as_ptr()) }.is_null();
-                    facts[3] = if selected == 7 { fault.observed() == 1 }
-                        else { fault.secondary_observed() == 1 };
-                    facts[4] = release.is_err() == (selected >= 5);
-                    release.err().map(|failure| failure.into_owner())
-                }
-            };
-            let before_retry = process.subprocess().vm_statistics().snapshot();
+            let first = os_publication_attempt(selected, process, &map, &mut session, &fault);
+            let repeat = os_publication_attempt(selected, process, &map, &mut session, &fault);
             fault.set(fault::Plan::disabled());
-            facts[6] = match owner {
-                Some(owner) => unsafe { owner.release() }.is_ok(),
-                None => true,
-            };
-            facts[7] = process.subprocess().vm_statistics().snapshot() == before_retry;
-            assert!(facts.iter().all(|fact| *fact), "OS publication case {selected}: {facts:?}");
+            let recovered = os_publication_recovery(process, &map, &mut session);
+            let mut facts = [false; 11];
+            facts[..9].copy_from_slice(&first);
+            facts[9] = repeat == first;
+            facts[10] = recovered;
+            assert!(facts.iter().all(|fact| *fact), "OS publication case {selected}: {facts:?} repeat {repeat:?}");
             for (field, value) in ["page_result", "commit_branch", "map_branch", "release_once",
-                "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback"]
+                "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback",
+                "repeat_same_branch", "recovered_page_published"]
                 .into_iter().zip(facts) {
                 std::println!("os_publication.{selected}.{field}={}", u8::from(value));
             }

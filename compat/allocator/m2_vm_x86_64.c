@@ -3883,15 +3883,16 @@ int main(void) {
  * A PageMap fault requires a previously absent lazy submap. If the source's
  * normal high hint shares an already present submap, release that successful
  * setup page and ask the unmodified allocator for the next page. No pointer,
- * metadata, source function, or PageMap slot is fabricated. */
+ * metadata, source function, or PageMap slot is fabricated.
+ *
+ * Every case issues the faulted request twice, since a failed claim or
+ * publication leaves the engine, PageMap, and statistics in the state the
+ * next request starts from, and then one fault-free request that must publish
+ * and release normally. Facts match
+ * `os_page::tests::emit_os_publication_fault_receiver_trace`. */
+#define OS_PUBLICATION_FACTS 9
 static unsigned os_publication_case;
-static int run_os_publication_child(int descriptor) {
-  mi_process_init();
-  mi_option_set(mi_option_disallow_arena_alloc, 1);
-  mi_option_set(mi_option_allow_large_os_pages, 0);
-  mi_option_set(mi_option_show_errors, 0);
-  mi_theap_t* const theap = _mi_subproc_main()->theap_meta;
-  bool facts[9] = {0};
+static int os_publication_attempt(mi_theap_t* theap, bool facts[OS_PUBLICATION_FACTS]) {
   for (unsigned attempt = 0; attempt < 16; attempt++) {
     memset(&os_publication_probe, 0, sizeof(os_publication_probe));
     os_publication_probe.selected = os_publication_case;
@@ -3930,22 +3931,49 @@ static int run_os_publication_child(int descriptor) {
       facts[7] = reserved == _mi_subproc_main()->stats.reserved.current
           && committed == _mi_subproc_main()->stats.committed.current;
     }
-    for (size_t i = 0; i < 9; i++) if (!facts[i]) return (int)(20 + i);
-    return write(descriptor, facts, sizeof(facts)) == sizeof(facts) ? 0 : 40;
+    for (size_t i = 0; i < OS_PUBLICATION_FACTS; i++) if (!facts[i]) return (int)(20 + i);
+    return 0;
   }
   return 41;
 }
 
+static int run_os_publication_child(int descriptor) {
+  mi_process_init();
+  mi_option_set(mi_option_disallow_arena_alloc, 1);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set(mi_option_show_errors, 0);
+  mi_theap_t* const theap = _mi_subproc_main()->theap_meta;
+  bool facts[OS_PUBLICATION_FACTS + 2] = {0};
+  bool repeat[OS_PUBLICATION_FACTS] = {0};
+  int result = os_publication_attempt(theap, facts);
+  if (result != 0) return result;
+  result = os_publication_attempt(theap, repeat);
+  if (result != 0) return 60 + result;
+  facts[OS_PUBLICATION_FACTS] = memcmp(facts, repeat, sizeof(repeat)) == 0;
+  mi_page_t* const recovered = _mi_arenas_page_alloc(theap, 128 * MI_KiB, 128 * MI_KiB);
+  bool published = recovered != NULL && _mi_safe_ptr_page(mi_page_start(recovered)) == recovered;
+  if (recovered != NULL) {
+    uint8_t* const start = mi_page_start(recovered);
+    _mi_arenas_page_free(recovered, theap);
+    published = published && _mi_safe_ptr_page(start) == NULL;
+  }
+  facts[OS_PUBLICATION_FACTS + 1] = published;
+  for (size_t i = OS_PUBLICATION_FACTS; i < OS_PUBLICATION_FACTS + 2; i++)
+    if (!facts[i]) return (int)(20 + i);
+  return write(descriptor, facts, sizeof(facts)) == sizeof(facts) ? 0 : 40;
+}
+
 int main(void) {
   const char* fields[] = {"page_result", "commit_branch", "map_branch", "release_once",
-      "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback"};
+      "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback",
+      "repeat_same_branch", "recovered_page_published"};
   puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_BEGIN");
   for (unsigned selected = 1; selected <= 7; selected++) {
-    bool facts[9] = {0};
+    bool facts[OS_PUBLICATION_FACTS + 2] = {0};
     os_publication_case = selected;
     if (!capture_large_page_retry_child("OS publication child", run_os_publication_child,
         facts, sizeof(facts))) return 1;
-    for (size_t i = 0; i < 9; i++)
+    for (size_t i = 0; i < OS_PUBLICATION_FACTS + 2; i++)
       printf("os_publication.%u.%s=%u\n", selected, fields[i], (unsigned)facts[i]);
   }
   puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");

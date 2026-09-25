@@ -44,13 +44,15 @@ OS_PUBLICATION_END = "CRABC_MI_M2_OS_PUBLICATION_TRACE_END"
 OS_PUBLICATION_KEYS = tuple(
     f"os_publication.{selected}.{field}" for selected in range(1, 8)
     for field in ("page_result", "commit_branch", "map_branch", "release_once",
-                  "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback")
+                  "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback",
+                  "repeat_same_branch", "recovered_page_published")
 )
 OS_PUBLICATION_BOUNDARY = {
     "source": "src/arena.c:781-1120,1220-1297; src/page-map.c:391-515; src/os.c:240-294",
     "cases": ["map-failure", "metadata-commit-failure", "block-commit-failure",
               "page-map-publication-failure", "metadata-commit-and-cleanup-failure",
               "page-map-and-cleanup-failure", "published-page-release-failure"],
+    "requests": "each case's faulted request twice against the state the first failure left, then one fault-free publication and release",
     "c_release": "void upper free; failed range captured only for exact lower primitive fixture cleanup",
     "rust_release": "one typed Claim or Published owner; raw retry never repeats source accounting",
     "excluded": "corrupted-alias provenance refusal, general metadata allocator, hardware huge/NUMA, and complete M2",
@@ -310,7 +312,7 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
     },
 ]
 FAULT_COMPONENT_REMAINING_CONDITIONS = [
-    "The metadata-publication and ordinary OS claim/publication receivers are bounded single-request relations and are required independently of hardware.",
+    "The ordinary OS claim/publication receiver compares a repeated faulted request and a recovered request per case; the metadata-publication receiver remains single-request because a multi-request sequence exposes lazy PageMap submap mappings missing from subprocess reserved/committed statistics (pinned C `_mi_os_zalloc` counts them), which the vm-primitives statistics owner must supply. Both receivers are required independently of hardware.",
     "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
     "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
     "The fault-injection component and M2 remain partial.",
@@ -2598,7 +2600,8 @@ def main() -> int:
             raise EvidenceError("fault inventory accepts one focused mode")
         if arguments.os_publication_receiver:
             run_os_publication_receiver(offline=arguments.offline)
-            print("allocator x86-64 fault seam inventory: OS publication C/Rust receiver PASS (63 relations)")
+            print("allocator x86-64 fault seam inventory: OS publication C/Rust receiver PASS "
+                  f"({len(OS_PUBLICATION_KEYS)} relations)")
             return 0
         if arguments.metadata_publication_receiver:
             run_metadata_publication_receiver(offline=arguments.offline)

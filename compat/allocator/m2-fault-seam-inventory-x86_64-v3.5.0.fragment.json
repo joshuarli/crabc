@@ -713,7 +713,7 @@
       }
     ],
     "remaining_conditions": [
-      "The metadata-publication and ordinary OS claim/publication receivers are bounded single-request relations and are required independently of hardware.",
+      "The ordinary OS claim/publication receiver compares a repeated faulted request and a recovered request per case; the metadata-publication receiver remains single-request because a multi-request sequence exposes lazy PageMap submap mappings missing from subprocess reserved/committed statistics (pinned C `_mi_os_zalloc` counts them), which the vm-primitives statistics owner must supply. Both receivers are required independently of hardware.",
       "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
       "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
       "The fault-injection component and M2 remain partial."
