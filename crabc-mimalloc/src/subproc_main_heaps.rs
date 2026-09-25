@@ -1116,4 +1116,111 @@ pub(crate) mod tests {
         );
     }
 
+
+    /// Pinned-C/Rust differential for a non-main Heap of the process main
+    /// subprocess attached by a later thread (`compat/allocator/heap_lifecycle.c`
+    /// with `later`): the first allocation creates the thread's Theap at the
+    /// TLD-list head on the regular thread-local slot as the cached Theap, a
+    /// second Heap moves the cached root and back without a new Theap, and
+    /// thread done releases the Theap while the Heap lives on.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn source_ordered_main_subprocess_later_thread_heap_trace() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::source_ordered_main_subprocess_later_thread_heap_trace",
+            || {
+                use crate::runtime_lifecycle::{
+                    ThreadAttachResult, ThreadFinishResult, attach_current_thread,
+                    current_native_allocator_thread_descriptor,
+                    finish_current_thread_native_after_user_destructors,
+                };
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let first = match native_allocate_aligned(16, 16, false) {
+                    NativePageAllocationResult::Allocated(block) => block,
+                    _ => panic!("the main thread allocates"),
+                };
+                unsafe { native_free(first) };
+                let identity = MainSubprocess::global().identity();
+                let theaps = move || identity.statistics().final_output_snapshot().theaps;
+                let heap_count = move || identity.heap_list().test_counts().0 as i64;
+                let heaps0 = heap_count();
+                let mut trace: Vec<i64> = Vec::new();
+
+                let h = native_heap_new().expect("a Heap");
+                trace.push(i64::from(unsafe { h.as_ref() }.test_theaps_head().is_null()));
+                let theaps0 = theaps();
+                let heap_address = h.as_ptr() as usize;
+                let worker = std::thread::spawn(move || {
+                    let h = NonNull::new(heap_address as *mut Heap).unwrap();
+                    let mut trace: Vec<i64> = Vec::new();
+                    let descriptor = current_native_allocator_thread_descriptor();
+                    // SAFETY: this test thread's own allocator-TLS descriptor,
+                    // live until the thread exits; no libc registry visits it.
+                    assert!(unsafe {
+                        crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let def = default_theap();
+                    let tld = NonNull::new(unsafe { Theap::tld_at(def) }).unwrap();
+                    let links = |t: NonNull<Theap>| unsafe { Theap::test_list_links(t) };
+                    let refcount = |t: NonNull<Theap>| unsafe { t.as_ref() }.refcount() as i64;
+                    let page_of = |block: NonNull<u8>| {
+                        let binding = binding().unwrap();
+                        unsafe { binding.page_map().lookup_live_allocation(block) }.unwrap().unwrap().page()
+                    };
+                    trace.push(theaps().current - theaps0.current);
+                    let p1 = unsafe { native_heap_allocate(h, 64, None, false) }.expect("a Heap block");
+                    let ht = NonNull::new(unsafe { h.as_ref() }.test_theaps_head()).unwrap();
+                    let (_, _, ht_tnext, _, ht_tld) = links(ht);
+                    trace.push(i64::from(ht_tld == tld.as_ptr()
+                        && unsafe { ThreadLocalData::theaps_head_at(tld) } == ht.as_ptr()
+                        && ht_tnext == def.as_ptr()
+                        && unsafe { Theap::heap_at(ht) } == h.as_ptr()));
+                    trace.push(i64::from(cached_theap() == ht));
+                    trace.push(refcount(ht));
+                    trace.push(theaps().current - theaps0.current);
+                    trace.push(thread_local_count());
+                    let h2 = native_heap_new().expect("a second Heap");
+                    // The empty value stands for the cached main-Heap Theap.
+                    trace.push(i64::from(cached_theap().as_ptr() == crate::bootstrap::empty_default_theap_ptr()));
+                    trace.push(refcount(ht));
+                    let p2 = unsafe { native_heap_allocate(h, 64, None, false) }.expect("a Heap block");
+                    trace.push(i64::from(unsafe { h.as_ref() }.test_theaps_head() == ht.as_ptr()
+                        && cached_theap() == ht
+                        && unsafe { page_of(p2).as_ref() }.theap() == ht.as_ptr()));
+                    trace.push(refcount(ht));
+                    trace.push(theaps().current - theaps0.current);
+                    let p3 = unsafe { native_heap_allocate(h2, 64, None, false) }.expect("a second Heap block");
+                    let h2t = NonNull::new(unsafe { h2.as_ref() }.test_theaps_head());
+                    trace.push(i64::from(h2t.is_some_and(|h2t| {
+                        (unsafe { ThreadLocalData::theaps_head_at(tld) } == h2t.as_ptr())
+                            && links(h2t).2 == ht.as_ptr()
+                    })));
+                    trace.push(theaps().current - theaps0.current);
+                    for block in [p1, p2, p3] {
+                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    }
+                    assert_eq!(unsafe { native_heap_release(h2, false) }, Ok(HeapReleaseOutcome::Released));
+                    trace.push(i64::from(unsafe { ThreadLocalData::theaps_head_at(tld) } == ht.as_ptr()
+                        && links(ht).3.is_null()));
+                    trace.push(theaps().current - theaps0.current);
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                    trace
+                });
+                trace.extend(worker.join().expect("the later thread finishes"));
+                trace.push(i64::from(unsafe { h.as_ref() }.test_theaps_head().is_null()));
+                trace.push(theaps().current - theaps0.current);
+                trace.push(theaps().total - theaps0.total);
+                trace.push(heap_count() - heaps0);
+                assert_eq!(unsafe { native_heap_release(h, false) }, Ok(HeapReleaseOutcome::Released));
+                trace.push(heap_count() - heaps0);
+                for (index, value) in trace.iter().enumerate() {
+                    std::println!("m6.heap.later.{index}={value}");
+                }
+            },
+        );
+    }
 }

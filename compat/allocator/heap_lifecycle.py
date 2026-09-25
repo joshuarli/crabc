@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Pinned-C/Rust differential for non-main Heap creation, deletion, and destruction.
 
+Three traces: Heaps of a child subprocess (`lifecycle`), Heaps of the process
+main subprocess on the main thread (`main`), and a main-subprocess Heap
+attached by a later thread (`later`), each C/Rust pair in fresh processes.
+
 The C oracle drives pinned `mi_heap_new`, `mi_heap_delete`, and `mi_heap_destroy`
 on a thread of a child subprocess; the Rust test drives
 `types::heap_registry::lifecycle` on a child member thread. Both print the same
@@ -18,6 +22,9 @@ FIELD_COUNT = 108
 # Heaps of the process main subprocess, each side in its own process.
 MAIN_TEST = "subproc::main_heaps::tests::source_ordered_main_subprocess_heap_trace"
 MAIN_FIELD_COUNT = 32
+# A non-main Heap of the process main subprocess attached by a later thread.
+LATER_TEST = "subproc::main_heaps::tests::source_ordered_main_subprocess_later_thread_heap_trace"
+LATER_FIELD_COUNT = 21
 
 
 def trace(output: str, section: str = "lifecycle", count: int = FIELD_COUNT) -> list[int]:
@@ -65,6 +72,9 @@ def main() -> None:
         main_oracle = harness.command_record([str(artifacts / "oracle"), "main"], cwd=source, timeout_seconds=60)
         (artifacts / "c-main.log").write_text(main_oracle["stdout"] + main_oracle["stderr"])
         harness.require_success(main_oracle, "heap lifecycle main-subprocess C oracle")
+        later_oracle = harness.command_record([str(artifacts / "oracle"), "later"], cwd=source, timeout_seconds=60)
+        (artifacts / "c-later.log").write_text(later_oracle["stdout"] + later_oracle["stderr"])
+        harness.require_success(later_oracle, "heap lifecycle later-thread C oracle")
     rust = harness.command_record(["python3", "compat/allocator/run_unit_x86_64.py", TEST],
         cwd=harness.ROOT, timeout_seconds=900)
     (artifacts / "rust.log").write_text(rust["stdout"] + rust["stderr"])
@@ -73,10 +83,16 @@ def main() -> None:
         cwd=harness.ROOT, timeout_seconds=900)
     (artifacts / "rust-main.log").write_text(main_rust["stdout"] + main_rust["stderr"])
     harness.require_success(main_rust, "heap lifecycle main-subprocess Rust test")
+    later_rust = harness.command_record(["python3", "compat/allocator/run_unit_x86_64.py", LATER_TEST],
+        cwd=harness.ROOT, timeout_seconds=900)
+    (artifacts / "rust-later.log").write_text(later_rust["stdout"] + later_rust["stderr"])
+    harness.require_success(later_rust, "heap lifecycle later-thread Rust test")
     compare("lifecycle", trace(oracle["stdout"]), trace(rust["stdout"]))
     compare("main", trace(main_oracle["stdout"], "main", MAIN_FIELD_COUNT),
         trace(main_rust["stdout"], "main", MAIN_FIELD_COUNT))
-    print(f"heap lifecycle: {FIELD_COUNT} + {MAIN_FIELD_COUNT} pinned C/Rust values match; {artifacts}")
+    compare("later", trace(later_oracle["stdout"], "later", LATER_FIELD_COUNT),
+        trace(later_rust["stdout"], "later", LATER_FIELD_COUNT))
+    print(f"heap lifecycle: {FIELD_COUNT} + {MAIN_FIELD_COUNT} + {LATER_FIELD_COUNT} pinned C/Rust values match; {artifacts}")
 
 
 if __name__ == "__main__":

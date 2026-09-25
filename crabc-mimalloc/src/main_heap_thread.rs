@@ -778,6 +778,8 @@ impl<'main> MainHeapThreadAttachment<'main> {
                 .is_some_and(Theap::clear_dynamic_metadata_after_detach)
             { return Err(MainHeapThreadAttachmentError::TheapClear); }
             let mut allocation = self.theap.take().ok_or(MainHeapThreadAttachmentError::Poisoned)?;
+            // `mi_theap_free_mem` (`theap.c:347-352`) uncounts before the free.
+            main_heap.subprocess().identity().record_statistics_theap_unlinked();
             if let Err(error) = self.metadata.free(&mut allocation) {
                 self.theap = Some(allocation);
                 return Err(MainHeapThreadAttachmentError::TheapMetadata(error));
@@ -1213,6 +1215,8 @@ impl<'main> MainHeapThreadAttachment<'main> {
             .theap
             .take()
             .ok_or_else(|| self.poison(MainHeapThreadAttachmentError::Poisoned))?;
+        // `mi_theap_free_mem` (`theap.c:347-352`) uncounts before the free.
+        self.main_heap.subprocess().identity().record_statistics_theap_unlinked();
         if let Err(error) = self.metadata.free(&mut theap) {
             return Err(self.poison(MainHeapThreadAttachmentError::TheapMetadata(error)));
         }
@@ -1307,6 +1311,10 @@ impl<'main> MainHeapThreadAttachment<'main> {
             }
             NonNull::from(theap)
         };
+        // Pinned `_mi_theap_init` counts every non-detached Theap on its
+        // subprocess (`theap.c:291-293`); `mi_theap_free_mem` uncounts it
+        // (`theap.c:347-352`) on each release path below.
+        main_heap.subprocess().identity().record_statistics_theap_linked();
 
         // The counter is a Rust lifetime gate only.  It comes after source
         // list publication and before roots become reachable, so main-image

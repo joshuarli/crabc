@@ -325,6 +325,85 @@ static void main_subprocess_heaps(void) {
   mpush(subproc->stats.theaps.current - theaps0);
 }
 
+/* A non-main Heap of the process main subprocess attached by a later
+   thread (the `later` argument, in its own process), printed as
+   `m6.heap.later.*` in the field order of
+   subproc::main_heaps::tests::source_ordered_main_subprocess_later_thread_heap_trace:
+   the first allocation creates the thread's Theap for the Heap
+   (`_mi_heap_theap_get_or_init`, heap.c:59-99; `_mi_theap_create`,
+   theap.c:307-341) at the TLD-list head, on the thread's regular
+   thread-local slot, as the cached Theap; a second Heap moves the cached
+   root and back; thread done releases the Theap (theap.c:95-156). The
+   worker initializes its thread first, as crabc's pthread attach does. */
+static int64_t later_values[32];
+static size_t later_count;
+static void lpush(int64_t value) { require(later_count < 32); later_values[later_count++] = value; }
+static mi_heap_t* later_heap;
+static int64_t later_theaps0;
+
+static void* later_main(void* argument) {
+  (void)argument;
+  mi_thread_init();
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  mi_heap_t* const h = later_heap;
+  mi_theap_t* const def = _mi_theap_default();
+  require(mi_theap_is_initialized(def));
+  lpush(subproc->stats.theaps.current - later_theaps0);
+  void* const p1 = mi_heap_malloc(h, 64);
+  require(p1 != NULL);
+  mi_theap_t* const ht = h->theaps;
+  lpush(ht != NULL && ht->tld == def->tld && def->tld->theaps == ht && ht->tnext == def
+        && ht->heap == h);
+  lpush(_mi_theap_cached() == ht);
+  lpush((int64_t)mi_atomic_load_relaxed(&ht->refcount));
+  lpush(subproc->stats.theaps.current - later_theaps0);
+  lpush((int64_t)mi_thread_locals_peek()->count);
+  mi_heap_t* const h2 = mi_heap_new();
+  require(h2 != NULL);
+  lpush(_mi_theap_cached() == def);
+  lpush((int64_t)mi_atomic_load_relaxed(&ht->refcount));
+  void* const p2 = mi_heap_malloc(h, 64);
+  require(p2 != NULL);
+  lpush(h->theaps == ht && _mi_theap_cached() == ht && _mi_ptr_page(p2)->theap == ht);
+  lpush((int64_t)mi_atomic_load_relaxed(&ht->refcount));
+  lpush(subproc->stats.theaps.current - later_theaps0);
+  void* const p3 = mi_heap_malloc(h2, 64);
+  require(p3 != NULL);
+  mi_theap_t* const h2t = h2->theaps;
+  lpush(h2t != NULL && def->tld->theaps == h2t && h2t->tnext == ht);
+  lpush(subproc->stats.theaps.current - later_theaps0);
+  mi_free(p1);
+  mi_free(p2);
+  mi_free(p3);
+  mi_heap_delete(h2);
+  lpush(def->tld->theaps == ht && ht->tprev == NULL);
+  lpush(subproc->stats.theaps.current - later_theaps0);
+  /* This build's thread done is not attached to pthread exit
+     (MI_PRIM_HAS_PROCESS_ATTACH), so the worker runs it explicitly, as the
+     child-subprocess worker above does and crabc's pthread exit does. */
+  mi_thread_done();
+  return NULL;
+}
+
+static void main_subprocess_later_thread_heaps(void) {
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  const int64_t heaps0 = (int64_t)mi_atomic_load_relaxed(&subproc->heap_count);
+  later_heap = mi_heap_new();
+  require(later_heap != NULL);
+  lpush(later_heap->theaps == NULL);
+  later_theaps0 = subproc->stats.theaps.current;
+  const int64_t theaps_total0 = subproc->stats.theaps.total;
+  pthread_t thread;
+  require(pthread_create(&thread, NULL, &later_main, NULL) == 0);
+  require(pthread_join(thread, NULL) == 0);
+  lpush(later_heap->theaps == NULL);
+  lpush(subproc->stats.theaps.current - later_theaps0);
+  lpush(subproc->stats.theaps.total - theaps_total0);
+  lpush((int64_t)mi_atomic_load_relaxed(&subproc->heap_count) - heaps0);
+  mi_heap_delete(later_heap);
+  lpush((int64_t)mi_atomic_load_relaxed(&subproc->heap_count) - heaps0);
+}
+
 int main(int argc, char** argv) {
   mi_process_init();
   if (argc > 1 && strcmp(argv[1], "main") == 0) {
@@ -333,6 +412,13 @@ int main(int argc, char** argv) {
     main_subprocess_heaps();
     for (size_t i = 0; i < main_count; i++) {
       printf("m6.heap.main.%zu=%lld\n", i, (long long)main_values[i]);
+    }
+    return 0;
+  }
+  if (argc > 1 && strcmp(argv[1], "later") == 0) {
+    main_subprocess_later_thread_heaps();
+    for (size_t i = 0; i < later_count; i++) {
+      printf("m6.heap.later.%zu=%lld\n", i, (long long)later_values[i]);
     }
     return 0;
   }
