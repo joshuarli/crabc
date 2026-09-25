@@ -79,6 +79,21 @@
     "four_thread": "local_scaling_4",
     "meaning": "plan.md's early architecture sanity check compares these rows: Rust/C single-thread throughput, and each lane's four-worker aggregate throughput over its own one-worker throughput. The runner reports these indicative development values; it records no verdict."
   },
+  "critical_rows": {
+    "meaning": "plan.md's allocator promotion table applies per-workload throughput, p99 and peak-memory bounds to critical workloads. This roster names one matrix row per hot path the plan's codegen audit and architecture measurements single out; every qualified full report must measure each of them.",
+    "rows": {
+      "alloc_free_64": "local small allocation and free (bin/TLS lookup)",
+      "alloc_free_32768": "local medium allocation and free",
+      "calloc_4096": "zeroing allocation",
+      "aligned_256_at_4096": "over-aligned allocation and interior-pointer free",
+      "realloc_inplace_1024": "reallocation",
+      "usable_size_64x1024": "PageMap pointer-to-page lookup",
+      "local_scaling_4": "independent four-thread scaling",
+      "remote_free_1": "remote publication and owner collection",
+      "churn_8k": "random-size live-set churn",
+      "thread_churn_4": "thread exit, abandonment and reclaim"
+    }
+  },
   "rows": [
     {"name": "local_scaling_1", "workload": "local_scaling", "params": {"size": 64, "workers": 1, "iterations": 20000, "batches": 16}, "sets": ["architecture", "matrix"], "measures": "independent persistent local owner, one pthread worker"},
     {"name": "local_scaling_2", "workload": "local_scaling", "params": {"size": 64, "workers": 2, "iterations": 20000, "batches": 16}, "sets": ["matrix"], "measures": "independent persistent local owners"},
@@ -105,10 +120,15 @@
     {"name": "usable_size_64x1024", "workload": "usable_size", "params": {"size": 64, "count": 1024, "iterations": 20, "batches": 16}, "sets": ["matrix"], "measures": "pointer-to-page usable-size lookup"},
     {"name": "churn_8k", "workload": "churn", "params": {"live": 4096, "max_size": 8192, "iterations": 20000, "batches": 16, "seed": 1}, "sets": ["matrix"], "measures": "random-size live-set replacement across small bins"},
     {"name": "churn_256k", "workload": "churn", "params": {"live": 512, "max_size": 262144, "iterations": 5000, "batches": 16, "seed": 2}, "sets": ["matrix"], "measures": "random-size live-set replacement across small/medium/large pages"},
+    {"name": "churn_scaling_1", "workload": "churn_scaling", "params": {"live": 4096, "max_size": 8192, "iterations": 20000, "batches": 16, "workers": 1, "seed": 3}, "sets": ["matrix"], "measures": "random-size churn on one pthread owner (scaling baseline)"},
+    {"name": "churn_scaling_2", "workload": "churn_scaling", "params": {"live": 4096, "max_size": 8192, "iterations": 20000, "batches": 16, "workers": 2, "seed": 3}, "sets": ["matrix"], "measures": "independent random-size churn on two owners"},
     {"name": "churn_scaling_4", "workload": "churn_scaling", "params": {"live": 4096, "max_size": 8192, "iterations": 20000, "batches": 16, "workers": 4, "seed": 3}, "sets": ["matrix"], "measures": "independent random-size churn on four owners"},
+    {"name": "churn_scaling_8", "workload": "churn_scaling", "params": {"live": 4096, "max_size": 8192, "iterations": 20000, "batches": 16, "workers": 8, "seed": 3}, "sets": ["matrix"], "measures": "independent random-size churn on eight owners"},
     {"name": "remote_free_1", "workload": "remote_free", "params": {"size": 64, "workers": 1, "iterations": 20000, "batches": 16}, "sets": ["matrix"], "measures": "cross-thread free publication and owner collection, one producer/consumer pair"},
     {"name": "remote_free_2", "workload": "remote_free", "params": {"size": 256, "workers": 2, "iterations": 20000, "batches": 16}, "sets": ["matrix"], "measures": "cross-thread free publication and owner collection, two pairs"},
-    {"name": "thread_churn_4", "workload": "thread_churn", "params": {"size": 64, "count": 256, "workers": 4, "batches": 32}, "sets": ["matrix"], "measures": "thread attach, owner exit, abandonment and post-exit free"}
+    {"name": "remote_free_4", "workload": "remote_free", "params": {"size": 256, "workers": 4, "iterations": 20000, "batches": 16}, "sets": ["matrix"], "measures": "cross-thread free publication and owner collection, four pairs"},
+    {"name": "thread_churn_4", "workload": "thread_churn", "params": {"size": 64, "count": 256, "workers": 4, "batches": 32}, "sets": ["matrix"], "measures": "thread attach, owner exit, abandonment and post-exit free"},
+    {"name": "thread_churn_8", "workload": "thread_churn", "params": {"size": 64, "count": 256, "workers": 8, "batches": 32}, "sets": ["matrix"], "measures": "thread attach, owner exit, abandonment and post-exit free on eight concurrent threads"}
   ],
   "memory_rows": [
     {"name": "memory_live_64x16m", "workload": "memory_live", "params": {"size": 64, "total": 16777216}, "sets": ["matrix"], "measures": "small-object live set resident memory"},

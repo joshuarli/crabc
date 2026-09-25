@@ -18,16 +18,26 @@ source, toolchain, host, load, and artifact provenance.
 
 ``--set architecture`` measures the rows behind plan.md's early architecture
 sanity check (single-thread Rust/C throughput and independent four-worker
-scaling); ``--set matrix`` measures the wider workload/memory matrix.
+scaling); ``--set matrix`` measures the complete equivalent workload/memory
+matrix. Every timed row records throughput, the per-process p99 batch cost
+(the slow-batch tail) and the exec image's peak RSS (``VmHWM`` read at a
+ptrace exit stop); every memory row records peak RSS and live PSS.
 
-Every report is a development measurement: it records indicative ratios and
-never a gate verdict. Qualifying measurements need an uncontended qualified
-host and a separately reviewed procedure that this runner does not claim.
+Each report also records raw host-contention evidence (load average,
+/proc/stat CPU windows before, between and after rows, visible competing
+processes, cpufreq policy and container CPU quota/throttling) and classifies
+it under the documented ``UNCONTENDED_*`` thresholds. A report records no
+gate verdict. ``validate_qualified_full_report`` decides whether one report
+is a qualified full report (``--full --set matrix``, every row measured, a
+clean sealed checkout, an uncontended host) by recomputing everything from
+the raw data; the ``allocator-m9`` gate and ``performance.release`` consume
+it.
 """
 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import importlib.util
 import json
@@ -61,7 +71,7 @@ RUST_BACKEND = FIXTURE_ROOT / "engine-rust-backend.rs"
 # `.work/allocator-x86_64/reports`.
 REPORT_ROOT = ROOT / "compat/reports/allocator/x86_64/perf-engine"
 
-SCHEMA = 2
+SCHEMA = 3
 KIND = "crabc-mimalloc-x86_64-engine-development-performance"
 RUST_TARGET = "x86_64-unknown-linux-musl"
 LANES = ("pinned_c", "rust_engine")
@@ -167,6 +177,15 @@ def validate_manifest(manifest: Mapping[str, Any]) -> None:
             sets = row.get("sets")
             if not isinstance(sets, list) or not sets or not set(sets) <= set(ROW_SETS):
                 raise HarnessError(f"engine performance row {name} has invalid sets")
+    critical = manifest.get("critical_rows", {}).get("rows") if isinstance(manifest.get("critical_rows"), Mapping) else None
+    if not isinstance(critical, Mapping) or not critical:
+        raise HarnessError("engine performance manifest lacks its critical-row roster")
+    timed_names = {row["name"]: row for row in manifest["rows"]}
+    for name, rationale in critical.items():
+        if name not in timed_names or "matrix" not in timed_names[name]["sets"]:
+            raise HarnessError(f"critical row {name} is not a timed matrix row")
+        if not isinstance(rationale, str) or not rationale:
+            raise HarnessError(f"critical row {name} lacks its rationale")
     architecture = manifest.get("architecture_rows")
     if not isinstance(architecture, Mapping):
         raise HarnessError("engine performance manifest lacks its architecture rows")
@@ -249,6 +268,34 @@ def clean_environment() -> dict[str, str]:
     return {"LANG": "C", "LC_ALL": "C", "PATH": "/usr/bin:/bin", "TZ": "UTC"}
 
 
+PTRACE_TRACEME = 0
+PTRACE_CONT = 7
+PTRACE_SETOPTIONS = 0x4200
+PTRACE_O_TRACEEXIT = 0x40
+PTRACE_O_EXITKILL = 0x100000
+PTRACE_EVENT_EXIT = 6
+_PTRACE = None
+
+
+def _ptrace_function():
+    global _PTRACE
+    if _PTRACE is None:
+        function = ctypes.CDLL(None, use_errno=True).ptrace
+        function.restype = ctypes.c_long
+        function.argtypes = [ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p]
+        _PTRACE = function
+    return _PTRACE
+
+
+def ptrace(request: int, pid: int, data: int = 0) -> None:
+    """Call ptrace(2); the exit trace uses only TRACEME, SETOPTIONS and CONT."""
+
+    function = _ptrace_function()
+    ctypes.set_errno(0)
+    if function(request, pid, None, ctypes.c_void_p(data)) == -1 and ctypes.get_errno() != 0:
+        raise HarnessError(f"ptrace request {request:#x} on {pid} failed: {os.strerror(ctypes.get_errno())}")
+
+
 def spawn(
     binary: Path,
     arguments: Sequence[str],
@@ -257,10 +304,15 @@ def spawn(
     stdout_path: Path,
     stderr_path: Path,
     pass_fds: Sequence[int] = (),
+    trace_exit: bool = False,
 ) -> int:
+    if trace_exit:
+        _ptrace_function()  # resolve libc's ptrace before fork, not in the child
     pid = os.fork()
     if pid == 0:
         try:
+            if trace_exit:
+                ptrace(PTRACE_TRACEME, 0)
             os.sched_setaffinity(0, set(cpus))
             stdout = os.open(stdout_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             stderr = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -277,10 +329,63 @@ def spawn(
     return pid
 
 
+def exit_memory_snapshot(pid: int) -> dict[str, Any]:
+    """The exec image's memory at its exit stop, before the kernel drops its mm."""
+
+    proc = Path("/proc") / str(pid)
+    try:
+        status = (proc / "status").read_text(encoding="utf-8")
+        rollup = (proc / "smaps_rollup").read_text(encoding="utf-8")
+    except OSError as error:
+        raise HarnessError(f"cannot snapshot the exiting fixture's memory: {error}") from error
+    return {"status": parse_status(status), "smaps_rollup": shared.parse_smaps_rollup(rollup)}
+
+
+def wait_traced_exit(pid: int, timeout: float) -> tuple[int, Any, bool, dict[str, Any] | None]:
+    """Reap a PTRACE_TRACEME child, snapshotting it once at PTRACE_EVENT_EXIT.
+
+    Only the initial thread is traced (no TRACECLONE), and it stops only at
+    exec and at exit, so no timed batch is interrupted. ``ru_maxrss`` cannot
+    serve as the peak: Linux folds the forked harness image's high-water mark
+    into it at exec, so the exec image's own ``VmHWM`` is read at the exit
+    stop instead.
+    """
+
+    deadline = time.monotonic() + timeout
+    exec_stop_seen = False
+    snapshot: dict[str, Any] | None = None
+    while True:
+        completed_pid, status, usage = os.wait4(pid, os.WNOHANG)
+        if completed_pid == pid:
+            if not os.WIFSTOPPED(status):
+                return status, usage, False, snapshot
+            if status >> 8 == (signal.SIGTRAP | (PTRACE_EVENT_EXIT << 8)):
+                snapshot = exit_memory_snapshot(pid)
+                ptrace(PTRACE_CONT, pid)
+            elif not exec_stop_seen and os.WSTOPSIG(status) == signal.SIGTRAP:
+                exec_stop_seen = True
+                ptrace(PTRACE_SETOPTIONS, pid, PTRACE_O_TRACEEXIT | PTRACE_O_EXITKILL)
+                ptrace(PTRACE_CONT, pid)
+            else:
+                ptrace(PTRACE_CONT, pid, os.WSTOPSIG(status))
+            continue
+        if time.monotonic() >= deadline:
+            os.kill(pid, signal.SIGKILL)
+            while True:
+                _, status, usage = os.wait4(pid, 0)
+                if not os.WIFSTOPPED(status):
+                    return status, usage, True, snapshot
+        time.sleep(0.001)
+
+
 def finish_process(
-    pid: int, started: int, timeout: float, stdout_path: Path, stderr_path: Path
+    pid: int, started: int, timeout: float, stdout_path: Path, stderr_path: Path, *, traced: bool = False
 ) -> tuple[dict[str, Any], str]:
-    status, usage, timed_out = shared.wait_with_rusage(pid, timeout)
+    exit_memory = None
+    if traced:
+        status, usage, timed_out, exit_memory = wait_traced_exit(pid, timeout)
+    else:
+        status, usage, timed_out = shared.wait_with_rusage(pid, timeout)
     stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
     stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
     process = {
@@ -288,6 +393,8 @@ def finish_process(
         "resources": shared.rusage_record(usage),
         "status": shared.status_record(status, timed_out),
     }
+    if traced:
+        process["exit_memory"] = exit_memory
     if process["status"] != {"code": 0, "kind": "exit"} or stderr:
         raise HarnessError(
             f"fixture failed: status={process['status']} stderr={stderr[:512]!r} stdout={stdout[-512:]!r}"
@@ -309,8 +416,10 @@ def run_timed_sample(
     stdout_path = scratch / f"{sample_name}.stdout"
     stderr_path = scratch / f"{sample_name}.stderr"
     started = time.monotonic_ns()
-    pid = spawn(binary, arguments, cpus=cpus, stdout_path=stdout_path, stderr_path=stderr_path)
-    process, stdout = finish_process(pid, started, timeout, stdout_path, stderr_path)
+    pid = spawn(binary, arguments, cpus=cpus, stdout_path=stdout_path, stderr_path=stderr_path, trace_exit=True)
+    process, stdout = finish_process(pid, started, timeout, stdout_path, stderr_path, traced=True)
+    if process["exit_memory"] is None:
+        raise HarnessError("fixture exited without its PTRACE_EVENT_EXIT memory snapshot")
     batches = parse_timed_output(stdout, expected_batches=expected_batches(row, batch_divisor))
     return {"arguments": arguments, "cpus": list(cpus), "process": process, "batches": batches}
 
@@ -442,10 +551,11 @@ def quantile(values: Sequence[float], fraction: float) -> float:
 
 
 def paired_bootstrap(
-    reference: Sequence[float], candidate: Sequence[float], *, seed: int, resamples: int = BOOTSTRAP_RESAMPLES
+    reference: Sequence[float], candidate: Sequence[float], *, seed: int, resamples: int | None = None
 ) -> list[float]:
     """Candidate/reference median ratios from paired process resamples."""
 
+    resamples = BOOTSTRAP_RESAMPLES if resamples is None else resamples
     if not reference or len(reference) != len(candidate) or min(reference) <= 0 or min(candidate) <= 0:
         raise HarnessError("paired bootstrap requires equal positive sample lists")
     source = random.Random(seed)
@@ -460,14 +570,70 @@ def paired_bootstrap(
     return ratios
 
 
+def sample_batch_p99_ns_per_op(sample: Mapping[str, Any]) -> float:
+    """One process's p99 batch cost, in wall ns per allocator call.
+
+    The fixture times batches, never single operations, so this tail is the
+    slow-batch tail (periodic collection, purge, page and thread-lifecycle
+    work that concentrates in some batches), not a per-call latency.
+    """
+
+    return quantile([batch["ns"] / batch["ops"] for batch in sample["batches"]], 0.99)
+
+
+def sample_peak_rss_kib(sample: Mapping[str, Any]) -> int:
+    """The exec image's own RSS high-water mark, read at its exit stop."""
+
+    memory = sample.get("process", {}).get("exit_memory")
+    if not isinstance(memory, Mapping):
+        raise HarnessError("timed sample lacks its exit-stop memory snapshot")
+    return int(memory["status"]["vm_hwm_kib"])
+
+
+# Seeds of the tail and memory bootstraps derive from the row seed, so one
+# recorded seed reproduces every interval of a row.
+TAIL_SEED = 0x7A11
+RSS_SEED = 0x5255
+PSS_SEED = 0x5053
+
+
+def ratio_distribution(reference: Sequence[float], candidate: Sequence[float], *, seed: int) -> list[float] | None:
+    """Bootstrap candidate/reference median ratios; None for a zero reference."""
+
+    if not reference or min(reference) <= 0 or min(candidate) <= 0:
+        return None
+    return paired_bootstrap(reference, candidate, seed=seed)
+
+
+def ratio_summary(reference: Sequence[float], candidate: Sequence[float], *, seed: int) -> dict[str, Any]:
+    reference_median = statistics.median(reference)
+    candidate_median = statistics.median(candidate)
+    distribution = ratio_distribution(reference, candidate, seed=seed)
+    return {
+        "pinned_c_median": reference_median,
+        "rust_engine_median": candidate_median,
+        "ratio_rust_over_c": {
+            "median": candidate_median / reference_median if reference_median > 0 else None,
+            "bootstrap_95th_percentile": quantile(distribution, 0.95) if distribution else None,
+        },
+    }
+
+
+def throughput_distribution(c_samples: Sequence[Mapping[str, Any]], rust_samples: Sequence[Mapping[str, Any]], *, seed: int) -> list[float]:
+    c_cost = [sample_ns_per_op(sample) for sample in c_samples]
+    rust_cost = [sample_ns_per_op(sample) for sample in rust_samples]
+    return [1.0 / ratio for ratio in paired_bootstrap(c_cost, rust_cost, seed=seed)]
+
+
 def throughput_comparison(
     c_samples: Sequence[Mapping[str, Any]], rust_samples: Sequence[Mapping[str, Any]], *, seed: int
 ) -> dict[str, Any]:
-    """Indicative Rust/C throughput: the inverse ratio of per-call cost."""
+    """Indicative Rust/C throughput (the inverse ratio of per-call cost),
+    slow-batch p99 cost, and the exec image's peak RSS."""
 
     c_cost = [sample_ns_per_op(sample) for sample in c_samples]
     rust_cost = [sample_ns_per_op(sample) for sample in rust_samples]
-    throughput = [1.0 / ratio for ratio in paired_bootstrap(c_cost, rust_cost, seed=seed)]
+    throughput = throughput_distribution(c_samples, rust_samples, seed=seed)
     c_cpu = [sample_cpu_ns_per_op(sample) for sample in c_samples]
     rust_cpu = [sample_cpu_ns_per_op(sample) for sample in rust_samples]
     return {
@@ -479,6 +645,12 @@ def throughput_comparison(
             "bootstrap_5th_percentile": quantile(throughput, 0.05),
             "bootstrap_95th_percentile": quantile(throughput, 0.95),
         },
+        "batch_p99_ns_per_op": ratio_summary(
+            [sample_batch_p99_ns_per_op(sample) for sample in c_samples],
+            [sample_batch_p99_ns_per_op(sample) for sample in rust_samples], seed=seed ^ TAIL_SEED),
+        "peak_rss_kib": ratio_summary(
+            [sample_peak_rss_kib(sample) for sample in c_samples],
+            [sample_peak_rss_kib(sample) for sample in rust_samples], seed=seed ^ RSS_SEED),
         "bootstrap": {"resamples": BOOTSTRAP_RESAMPLES, "seed": seed},
     }
 
@@ -503,16 +675,32 @@ MEMORY_METRICS = {
 }
 
 
-def memory_comparison(c_samples: Sequence[Mapping[str, Any]], rust_samples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+# Memory-row metrics that carry a bootstrap upper bound: the promotion
+# table's peak RSS and PSS.
+MEMORY_BOUND_SEEDS = {"peak_rss_kib": RSS_SEED, "live_pss_kib": PSS_SEED}
+
+
+def memory_values(samples: Sequence[Mapping[str, Any]], metric: str) -> list[int]:
+    phase, group, field = MEMORY_METRICS[metric]
+    return [int(sample["snapshots"][phase][group][field]) for sample in samples]
+
+
+def memory_comparison(
+    c_samples: Sequence[Mapping[str, Any]], rust_samples: Sequence[Mapping[str, Any]], *, seed: int
+) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    for metric, (phase, group, field) in MEMORY_METRICS.items():
-        c_median = statistics.median(int(sample["snapshots"][phase][group][field]) for sample in c_samples)
-        rust_median = statistics.median(int(sample["snapshots"][phase][group][field]) for sample in rust_samples)
+    for metric in MEMORY_METRICS:
+        c_values, rust_values = memory_values(c_samples, metric), memory_values(rust_samples, metric)
+        c_median, rust_median = statistics.median(c_values), statistics.median(rust_values)
         result[metric] = {
             "pinned_c_median": c_median,
             "rust_engine_median": rust_median,
             "ratio_rust_over_c": rust_median / c_median if c_median > 0 else None,
         }
+        if metric in MEMORY_BOUND_SEEDS:
+            distribution = ratio_distribution(c_values, rust_values, seed=seed ^ MEMORY_BOUND_SEEDS[metric])
+            result[metric]["ratio_bootstrap_95th_percentile"] = quantile(distribution, 0.95) if distribution else None
+    result["bootstrap"] = {"resamples": BOOTSTRAP_RESAMPLES, "seed": seed}
     return result
 
 
@@ -875,18 +1063,496 @@ def tool_versions() -> dict[str, str]:
     return versions
 
 
-def input_provenance(archive: Path, pin: Mapping[str, str]) -> dict[str, Any]:
+HARNESS_FILES = (ALLOCATOR_ROOT / "perf_engine_x86_64.py", ALLOCATOR_ROOT / "perf_x86_64.py")
+ENGINE_MANIFESTS = (ROOT / "Cargo.toml", ROOT / "crabc-mimalloc/Cargo.toml", ROOT / "crabc-core/Cargo.toml")
+ENGINE_SOURCE_ROOTS = (ROOT / "crabc-mimalloc/src", ROOT / "crabc-core/src")
+
+
+def sealed_inputs() -> dict[str, Any]:
+    """Every checkout input that determines what a report measured.
+
+    A report's copy is its source seal: the qualified-report reader
+    recomputes this from the reading checkout, so a later edit of the
+    fixture, either backend, the manifest, this harness, the engine sources
+    or their Cargo/toolchain pins invalidates the report.
+    """
+
     return {
         "fixture": file_record(FIXTURE),
         "header": file_record(HEADER),
         "c_backend": file_record(C_BACKEND),
         "rust_backend": file_record(RUST_BACKEND),
         "manifest": file_record(MANIFEST),
+        "harness": [file_record(path) for path in HARNESS_FILES],
         "cargo_lock": file_record(ROOT / "Cargo.lock"),
+        "engine_manifests": [file_record(path) for path in ENGINE_MANIFESTS],
         "rust_toolchain": file_record(ROOT / "rust-toolchain.toml"),
-        "engine_sources": tree_digest([ROOT / "crabc-mimalloc/src", ROOT / "crabc-core/src"]),
+        "engine_sources": tree_digest(list(ENGINE_SOURCE_ROOTS)),
+    }
+
+
+def input_provenance(archive: Path, pin: Mapping[str, str]) -> dict[str, Any]:
+    return {
+        **sealed_inputs(),
         "mimalloc": {"archive": file_record(archive), **{key: pin[key] for key in ("version", "tag", "revision")}},
     }
+
+
+# ---- host contention --------------------------------------------------------
+#
+# A report is uncontended only when every contention window it records meets
+# all of these limits. The limits are part of the report and reread by the
+# qualified-report reader, which reclassifies the raw windows itself.
+#
+# * The 1-minute load average before any measurement is at most
+#   UNCONTENDED_START_LOAD1_MAX. (Later load averages include this run's own
+#   workers, so they are recorded but classified through the CPU windows.)
+# * Over every window (one before measuring, one before each row while no
+#   fixture runs, one after the last row) the whole host is at most
+#   UNCONTENDED_HOST_BUSY_MAX busy and every measurement CPU at most
+#   UNCONTENDED_CPU_BUSY_MAX busy, from /proc/stat (host-wide even inside the
+#   container; steal time counts as busy).
+# * No other process visible to the harness uses more than
+#   UNCONTENDED_PROCESS_CPU_MAX of one CPU during a window.
+# * Where cpufreq is exposed, every measurement CPU uses the `performance`
+#   governor; a missing cpufreq interface is recorded, not disqualifying.
+# * The container has no CFS quota and was never throttled during the run.
+UNCONTENDED_START_LOAD1_MAX = 1.0
+UNCONTENDED_HOST_BUSY_MAX = 0.05
+UNCONTENDED_CPU_BUSY_MAX = 0.10
+UNCONTENDED_PROCESS_CPU_MAX = 0.05
+UNCONTENDED_GOVERNOR = "performance"
+CONTENTION_EDGE_WINDOW_SECONDS = 1.0
+CONTENTION_ROW_WINDOW_SECONDS = 0.5
+UNCONTENDED_THRESHOLDS = {
+    "start_load1_max": UNCONTENDED_START_LOAD1_MAX,
+    "host_busy_max": UNCONTENDED_HOST_BUSY_MAX,
+    "cpu_busy_max": UNCONTENDED_CPU_BUSY_MAX,
+    "process_cpu_max": UNCONTENDED_PROCESS_CPU_MAX,
+    "governor": UNCONTENDED_GOVERNOR,
+    "edge_window_seconds": CONTENTION_EDGE_WINDOW_SECONDS,
+    "row_window_seconds": CONTENTION_ROW_WINDOW_SECONDS,
+}
+
+
+def _read_text(path: Path | str) -> str | None:
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def proc_stat_record() -> dict[str, Any]:
+    """Per-CPU jiffies and runnable/blocked counts from /proc/stat."""
+
+    text = _read_text("/proc/stat")
+    if text is None:
+        raise HarnessError("cannot read /proc/stat")
+    cpus: dict[str, list[int]] = {}
+    counters: dict[str, int] = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if fields and fields[0].startswith("cpu"):
+            cpus[fields[0].removeprefix("cpu") or "all"] = [int(value) for value in fields[1:]]
+        elif fields and fields[0] in {"procs_running", "procs_blocked", "ctxt"}:
+            counters[fields[0]] = int(fields[1])
+    return {"cpus": cpus, **counters}
+
+
+def visible_process_ticks() -> dict[str, dict[str, Any]]:
+    """utime+stime of every process in this PID namespace except the harness."""
+
+    result: dict[str, dict[str, Any]] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        text = _read_text(entry / "stat")
+        if text is None or ")" not in text:
+            continue
+        comm = text[text.index("(") + 1:text.rindex(")")]
+        fields = text[text.rindex(")") + 2:].split()
+        result[entry.name] = {"comm": comm, "ticks": int(fields[11]) + int(fields[12])}
+    return result
+
+
+def cgroup_cpu_record() -> dict[str, Any]:
+    stat = _read_text("/sys/fs/cgroup/cpu.stat")
+    return {
+        "cpu_max": (_read_text("/sys/fs/cgroup/cpu.max") or "").strip() or None,
+        "cpu_stat": {line.split()[0]: int(line.split()[1]) for line in (stat or "").splitlines() if len(line.split()) == 2},
+    }
+
+
+def frequency_record(cpus: Sequence[int]) -> dict[str, Any]:
+    base = Path("/sys/devices/system/cpu")
+    per_cpu = {}
+    for cpu in cpus:
+        directory = base / f"cpu{cpu}/cpufreq"
+        values = {}
+        for name in ("scaling_driver", "scaling_governor", "scaling_cur_freq", "scaling_min_freq",
+                     "scaling_max_freq", "cpuinfo_max_freq", "energy_performance_preference"):
+            value = _read_text(directory / name)
+            if value is not None:
+                values[name] = value.strip()
+        per_cpu[str(cpu)] = values
+    boost = _read_text(base / "cpufreq/boost")
+    return {"cpus": per_cpu, "boost": boost.strip() if boost is not None else None}
+
+
+def contention_window(label: str, seconds: float) -> dict[str, Any]:
+    """Raw host activity over one idle interval of the harness."""
+
+    load_before = (_read_text("/proc/loadavg") or "").strip()
+    stat_before = proc_stat_record()
+    processes_before = visible_process_ticks()
+    started = time.monotonic_ns()
+    time.sleep(seconds)
+    elapsed = time.monotonic_ns() - started
+    stat_after = proc_stat_record()
+    processes_after = visible_process_ticks()
+    load_after = (_read_text("/proc/loadavg") or "").strip()
+    active = {}
+    for pid, after in processes_after.items():
+        before = processes_before.get(pid, {"ticks": 0})
+        if after["ticks"] != before["ticks"]:
+            active[pid] = {"comm": after["comm"], "ticks_before": before["ticks"], "ticks_after": after["ticks"]}
+    return {
+        "label": label,
+        "elapsed_ns": elapsed,
+        "loadavg": [load_before, load_after],
+        "stat_before": stat_before,
+        "stat_after": stat_after,
+        "visible_processes": len(processes_after),
+        "active_processes": active,
+    }
+
+
+def host_record_start(cpus: Sequence[int]) -> dict[str, Any]:
+    return {
+        "thresholds": dict(UNCONTENDED_THRESHOLDS),
+        "measurement_cpus": list(cpus),
+        "clock_ticks_per_second": os.sysconf("SC_CLK_TCK"),
+        "pid_namespace": os.readlink("/proc/self/ns/pid"),
+        "frequency_start": frequency_record(cpus),
+        "cgroup_start": cgroup_cpu_record(),
+        "windows": [contention_window("start", CONTENTION_EDGE_WINDOW_SECONDS)],
+    }
+
+
+def host_record_finish(evidence: dict[str, Any]) -> dict[str, Any]:
+    evidence["windows"].append(contention_window("end", CONTENTION_EDGE_WINDOW_SECONDS))
+    evidence["frequency_end"] = frequency_record(evidence["measurement_cpus"])
+    evidence["cgroup_end"] = cgroup_cpu_record()
+    return evidence
+
+
+def _busy_fraction(before: Sequence[int], after: Sequence[int]) -> float | None:
+    # user nice system idle iowait irq softirq steal (guest time is in user)
+    delta = [late - early for early, late in zip(before[:8], after[:8])]
+    total = sum(delta)
+    if total <= 0:
+        return None
+    return (total - delta[3] - delta[4]) / total
+
+
+def classify_host(evidence: Mapping[str, Any]) -> list[str]:
+    """Every reason the recorded raw host evidence is not uncontended."""
+
+    reasons: list[str] = []
+    try:
+        thresholds = evidence["thresholds"]
+        windows = evidence["windows"]
+        cpus = [str(cpu) for cpu in evidence["measurement_cpus"]]
+        ticks_per_second = evidence["clock_ticks_per_second"]
+    except (KeyError, TypeError):
+        return ["host evidence lacks its thresholds, windows, measurement CPUs or clock rate"]
+    if thresholds != UNCONTENDED_THRESHOLDS:
+        reasons.append(f"host evidence was classified under other thresholds: {thresholds}")
+    if not isinstance(windows, list) or len(windows) < 2 or windows[0].get("label") != "start" or windows[-1].get("label") != "end":
+        return reasons + ["host evidence lacks its start and end contention windows"]
+    try:
+        load1 = float(windows[0]["loadavg"][0].split()[0])
+    except (IndexError, ValueError, AttributeError):
+        load1 = math.inf
+    if load1 > UNCONTENDED_START_LOAD1_MAX:
+        reasons.append(f"start 1-minute load average {load1} > {UNCONTENDED_START_LOAD1_MAX}")
+    for window in windows:
+        label = window.get("label")
+        before, after = window["stat_before"]["cpus"], window["stat_after"]["cpus"]
+        host = _busy_fraction(before.get("all", []), after.get("all", []))
+        if host is None or host > UNCONTENDED_HOST_BUSY_MAX:
+            reasons.append(f"window {label}: host busy fraction {host} > {UNCONTENDED_HOST_BUSY_MAX}")
+        for cpu in cpus:
+            busy = _busy_fraction(before.get(cpu, []), after.get(cpu, []))
+            if busy is None or busy > UNCONTENDED_CPU_BUSY_MAX:
+                reasons.append(f"window {label}: measurement CPU {cpu} busy fraction {busy} > {UNCONTENDED_CPU_BUSY_MAX}")
+        seconds = window["elapsed_ns"] / 1e9
+        for pid, process in sorted(window["active_processes"].items()):
+            share = (process["ticks_after"] - process["ticks_before"]) / ticks_per_second / seconds
+            if share > UNCONTENDED_PROCESS_CPU_MAX:
+                reasons.append(f"window {label}: process {pid} ({process['comm']}) used {share:.3f} CPU")
+    for key in ("frequency_start", "frequency_end"):
+        for cpu, values in sorted(evidence[key]["cpus"].items()):
+            governor = values.get("scaling_governor")
+            if governor is not None and governor != UNCONTENDED_GOVERNOR:
+                reasons.append(f"{key}: CPU {cpu} governor {governor} is not {UNCONTENDED_GOVERNOR}")
+    quota = evidence["cgroup_start"]["cpu_max"]
+    if quota is not None and not quota.startswith("max"):
+        reasons.append(f"container CPU quota {quota!r} is set")
+    throttled = [evidence[key]["cpu_stat"].get("nr_throttled", 0) for key in ("cgroup_start", "cgroup_end")]
+    if throttled[1] != throttled[0]:
+        reasons.append(f"container was CPU-throttled {throttled[1] - throttled[0]} time(s) during the run")
+    return reasons
+
+
+def uncontended_host_record(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    reasons = classify_host(evidence)
+    return {"status": "contended" if reasons else "uncontended", "reasons": reasons, "evidence": dict(evidence)}
+
+
+# ---- qualified full reports -------------------------------------------------
+#
+# plan.md's M9 row and its "Allocator verification and performance" table
+# need qualified full reports: the complete matrix in full mode on an
+# uncontended host, sealed to the reading checkout's sources. The reader
+# below never trusts a report's own summaries or classification: it
+# recomputes every comparison and bound from the raw samples, reclassifies
+# the raw host evidence, and recomputes the source seal.
+
+QUALIFIED_MODE = "full"
+QUALIFIED_ROW_SET = "matrix"
+QUALIFIED_HOST_FIELDS = (
+    "cpu_model", "kernel_release", "logical_cpus", "allowed_cpus", "measurement_cpus",
+    "scaling_governors", "transparent_hugepage",
+)
+# False until the shared fixture gives timed workloads a peak-state hook.
+TIMED_PEAK_PSS_MEASURED = False
+TIMED_PSS_GAP = (
+    "timed matrix rows have no peak-PSS measurement: Linux keeps no PSS high-water mark and the "
+    "shared engine fixture has no in-batch peak-state hook for timed workloads (only memory_* rows "
+    "stop at READY_LIVE), so the promotion table's per-row peak PSS is unobservable here"
+)
+
+
+def critical_rows(manifest: Mapping[str, Any]) -> list[str]:
+    return sorted(manifest["critical_rows"]["rows"])
+
+
+def geometric_mean_distribution(distributions: Sequence[Sequence[float]]) -> list[float]:
+    """Suite geometric mean per bootstrap resample of independently resampled rows."""
+
+    return [math.exp(statistics.fmean(math.log(values[index]) for values in distributions))
+            for index in range(len(distributions[0]))]
+
+
+def _lane_samples(entry: Mapping[str, Any]) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+    return list(entry["lanes"]["pinned_c"]["samples"]), list(entry["lanes"]["rust_engine"]["samples"])
+
+
+def source_seal_unmet(inputs: Mapping[str, Any]) -> list[str]:
+    """Differences between a recorded source seal and this checkout."""
+
+    unmet = []
+    current = sealed_inputs()
+    for key, value in current.items():
+        if inputs.get(key) != value:
+            unmet.append(f"source seal: {key} differs from this checkout")
+    pin = shared.load_pin()
+    mimalloc = inputs.get("mimalloc", {})
+    if {key: mimalloc.get(key) for key in ("version", "tag", "revision")} != {
+        key: pin[key] for key in ("version", "tag", "revision")
+    } or mimalloc.get("archive", {}).get("sha256") != pin["sha256"]:
+        unmet.append("source seal: pinned mimalloc identity or archive digest differs from compat/upstreams.toml")
+    return unmet
+
+
+def _row_unmet(group: str, row: Mapping[str, Any], entry: Any, mode: Mapping[str, Any]) -> list[str]:
+    name = row["name"]
+    if not isinstance(entry, Mapping) or entry.get("status") != "measured":
+        status = entry.get("status") if isinstance(entry, Mapping) else None
+        reason = entry.get("reason") if isinstance(entry, Mapping) else None
+        return [f"{group} row {name} is {status or 'absent'}" + (f": {reason}" if reason else "")]
+    unmet = []
+    if entry.get("workload") != row["workload"] or entry.get("params") != row["params"]:
+        unmet.append(f"{group} row {name} does not measure the manifest's workload and parameters")
+    c_samples, rust_samples = _lane_samples(entry)
+    if len(c_samples) != mode["samples"] or len(rust_samples) != mode["samples"] or None in (*c_samples, *rust_samples):
+        unmet.append(f"{group} row {name} lacks the full mode's {mode['samples']} samples per lane")
+        return unmet
+    if group == "timed":
+        batches = expected_batches(row, mode["batch_divisor"])
+        if any(len(sample["batches"]) != batches for sample in (*c_samples, *rust_samples)):
+            unmet.append(f"timed row {name} lacks {batches} batches per sample")
+            return unmet
+        recomputed = throughput_comparison(c_samples, rust_samples, seed=entry["seed"])
+    else:
+        recomputed = memory_comparison(c_samples, rust_samples, seed=entry["seed"])
+    if recomputed != entry.get("comparison"):
+        unmet.append(f"{group} row {name} comparison differs from a recomputation of its raw samples")
+    return unmet
+
+
+def qualification_unmet(report: Mapping[str, Any], manifest: Mapping[str, Any] | None = None) -> list[str]:
+    """Every reason one engine report is not a qualified full report."""
+
+    manifest = load_manifest() if manifest is None else manifest
+    unmet: list[str] = []
+    if report.get("schema") != SCHEMA or report.get("kind") != KIND:
+        return [f"report is not a schema-{SCHEMA} {KIND} report"]
+    if report.get("mode") != QUALIFIED_MODE or report.get("row_set") != QUALIFIED_ROW_SET:
+        unmet.append(f"report is --{report.get('mode')} --set {report.get('row_set')}, "
+                     f"not --{QUALIFIED_MODE} --set {QUALIFIED_ROW_SET}")
+    if report.get("status") != "ok" or report.get("failed_rows"):
+        unmet.append(f"report status is {report.get('status')} with failed rows {report.get('failed_rows')}")
+    if report.get("native_execution_provenance", {}).get("execution_mode") != "native":
+        unmet.append("report lacks native x86-64 execution provenance")
+    provenance = report.get("provenance", {})
+    git = provenance.get("git", {})
+    if git.get("clean") is not True:
+        unmet.append(f"measured checkout was not a clean Git tree: {git.get('dirty_paths', git.get('status'))}")
+    unmet.extend(source_seal_unmet(provenance.get("inputs", {})))
+    host = provenance.get("host", {})
+    missing_host = [field for field in QUALIFIED_HOST_FIELDS if field not in host]
+    if missing_host:
+        unmet.append(f"host identity lacks {missing_host}")
+    mode = manifest["modes"][QUALIFIED_MODE]
+    timed, memory = selected_rows(manifest, QUALIFIED_ROW_SET)
+    if report.get("mode") == QUALIFIED_MODE:
+        # Another mode's rows cannot meet the full schedule; its mode is the one reason.
+        for group, rows, recorded in (("timed", timed, report.get("rows", {})),
+                                      ("memory", memory, report.get("memory_rows", {}))):
+            for row in rows:
+                unmet.extend(_row_unmet(group, row, recorded.get(row["name"]), mode))
+    if not TIMED_PEAK_PSS_MEASURED:
+        unmet.append(TIMED_PSS_GAP)
+    record = report.get("uncontended_host")
+    if not isinstance(record, Mapping) or not isinstance(record.get("evidence"), Mapping):
+        unmet.append("report has no uncontended_host record with raw evidence")
+    else:
+        reasons = classify_host(record["evidence"])
+        status = "contended" if reasons else "uncontended"
+        if record.get("status") != status or record.get("reasons") != reasons:
+            unmet.append("uncontended_host classification differs from a reclassification of its raw evidence")
+        unmet.extend(f"host is not uncontended: {reason}" for reason in reasons)
+    return unmet
+
+
+def qualified_metrics(report: Mapping[str, Any], manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """The promotion-table metrics, recomputed from every row's raw samples.
+
+    Throughput bounds are one-sided 95% bootstrap bounds of the Rust/C
+    median ratio (lower); p99 and memory bounds are upper. Suite geometric
+    means resample every row independently per bootstrap draw. Any row
+    without a bound leaves the geometric mean unset.
+    """
+
+    timed, memory = selected_rows(manifest, QUALIFIED_ROW_SET)
+    throughput: dict[str, list[float]] = {}
+    rss: dict[str, list[float] | None] = {}
+    pss: dict[str, list[float] | None] = {}
+    tail: dict[str, float | None] = {}
+    for row in timed:
+        entry = report["rows"][row["name"]]
+        c_samples, rust_samples = _lane_samples(entry)
+        seed = entry["seed"]
+        throughput[row["name"]] = throughput_distribution(c_samples, rust_samples, seed=seed)
+        rss[row["name"]] = ratio_distribution([sample_peak_rss_kib(item) for item in c_samples],
+                                              [sample_peak_rss_kib(item) for item in rust_samples], seed=seed ^ RSS_SEED)
+        pss[row["name"]] = None
+        tail[row["name"]] = entry["comparison"]["batch_p99_ns_per_op"]["ratio_rust_over_c"]["bootstrap_95th_percentile"]
+    for row in memory:
+        entry = report["memory_rows"][row["name"]]
+        c_samples, rust_samples = _lane_samples(entry)
+        for target, metric in ((rss, "peak_rss_kib"), (pss, "live_pss_kib")):
+            target[row["name"]] = ratio_distribution(memory_values(c_samples, metric), memory_values(rust_samples, metric),
+                                                     seed=entry["seed"] ^ MEMORY_BOUND_SEEDS[metric])
+
+    def upper(distribution: Sequence[float] | None) -> float | None:
+        return quantile(distribution, 0.95) if distribution else None
+
+    def geomean_upper(distributions: Mapping[str, Sequence[float] | None]) -> float | None:
+        values = list(distributions.values())
+        return quantile(geometric_mean_distribution(values), 0.95) if values and all(values) else None
+
+    roster = critical_rows(manifest)
+    return {
+        "throughput": {
+            "suite_geometric_mean_lower_95": quantile(geometric_mean_distribution(list(throughput.values())), 0.05),
+            "critical_lower_95": {name: quantile(throughput[name], 0.05) for name in roster},
+        },
+        "tail_latency": {"critical_p99_upper_95": {name: tail[name] for name in roster}},
+        "memory": {
+            "geometric_mean_peak_upper": {"rss": geomean_upper(rss), "pss": geomean_upper(pss)},
+            "critical_peak_upper": {name: {"rss": upper(rss[name]), "pss": upper(pss[name])} for name in roster},
+        },
+    }
+
+
+def report_identity(report: Mapping[str, Any], manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Source, configuration and host identity; three qualified reports must share it."""
+
+    provenance = report["provenance"]
+    return {
+        "source": dict(provenance["inputs"], mimalloc={
+            key: provenance["inputs"]["mimalloc"].get(key) for key in ("version", "tag", "revision")
+        } | {"archive_sha256": provenance["inputs"]["mimalloc"]["archive"]["sha256"]}),
+        "configuration": {
+            "schema": report["schema"], "kind": report["kind"], "mode": report["mode"], "row_set": report["row_set"],
+            "critical_rows": critical_rows(manifest), "tools": provenance["tools"],
+            "uncontended_thresholds": report.get("uncontended_host", {}).get("evidence", {}).get("thresholds"),
+        },
+        "host": {field: provenance["host"].get(field) for field in QUALIFIED_HOST_FIELDS},
+    }
+
+
+def _checked_report_path(root: Path, path: Path) -> Path:
+    if Path(root).resolve() != ROOT.resolve():
+        raise HarnessError(f"engine reports must be read by the checkout that owns this reader: {root}")
+    path = Path(path)
+    if not path.is_file():
+        raise HarnessError(f"engine report is missing: {path}")
+    return path
+
+
+def inspect_full_report(root: Path, path: Path) -> dict[str, Any]:
+    """Every unmet qualification condition of one report, plus its identity and metrics."""
+
+    path = _checked_report_path(root, path)
+    manifest = load_manifest()
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return {"unmet": [f"report is unreadable JSON: {error}"], "identity": None, "metrics": None}
+    if not isinstance(report, dict):
+        return {"unmet": ["report is not a JSON object"], "identity": None, "metrics": None}
+    try:
+        unmet = qualification_unmet(report, manifest)
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:
+        return {"unmet": [f"report is malformed: {type(error).__name__}: {error}"], "identity": None, "metrics": None}
+    identity = metrics = None
+    try:
+        identity = report_identity(report, manifest)
+        metrics = qualified_metrics(report, manifest)
+    except (HarnessError, KeyError, TypeError, ValueError, AttributeError, IndexError, statistics.StatisticsError):
+        # The unmet conditions above already name the incomplete rows.
+        if not unmet:
+            unmet.append("report metrics cannot be derived from its raw samples")
+    return {"unmet": unmet, "identity": identity, "metrics": metrics, "critical_rows": critical_rows(manifest)}
+
+
+def validate_qualified_full_report(root: Path, path: Path) -> dict[str, Any]:
+    """Return ``{"identity", "metrics", "critical_rows"}`` of one qualified full report.
+
+    Raises HarnessError naming every unmet condition otherwise. The
+    ``performance.release`` gate applies the promotion thresholds to the
+    returned metrics; this reader decides only whether the report is a
+    qualified full measurement.
+    """
+
+    inspected = inspect_full_report(root, path)
+    if inspected["unmet"]:
+        raise HarnessError(f"{path} is not a qualified full report: " + "; ".join(inspected["unmet"]))
+    return {key: inspected[key] for key in ("identity", "metrics", "critical_rows")}
 
 
 # ---- driver -----------------------------------------------------------------
@@ -918,9 +1584,12 @@ def paired_plan(samples: int, *, seed: int) -> list[tuple[str, int]]:
 def measure_rows(
     rows: Sequence[Mapping[str, Any]], binaries: Mapping[str, Path], *, memory: bool, mode: Mapping[str, Any],
     cpu_pool: Sequence[int] | None, timeout: float, scratch: Path, seed: int,
+    host_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     results: dict[str, Any] = {}
     for row_index, row in enumerate(rows):
+        if host_evidence is not None:
+            host_evidence["windows"].append(contention_window(f"row:{row['name']}", CONTENTION_ROW_WINDOW_SECONDS))
         needed = row_thread_count(row)
         cpus = choose_cpus(cpu_pool, needed)
         entry: dict[str, Any] = {"workload": row["workload"], "params": row["params"], "measures": row.get("measures")}
@@ -934,6 +1603,7 @@ def measure_rows(
         by_lane: dict[str, list[Any]] = {lane: [None] * mode["samples"] for lane in LANES}
         plan = paired_plan(mode["samples"], seed=row_seed)
         entry["cpus"] = cpus
+        entry["seed"] = row_seed
         lane = LANES[0]
         try:
             for lane in LANES:
@@ -953,7 +1623,7 @@ def measure_rows(
         entry["sample_plan"] = [{"lane": lane, "sample_index": index} for lane, index in plan]
         entry["lanes"] = {lane: {"samples": by_lane[lane], "resources": resource_summary(by_lane[lane])} for lane in LANES}
         entry["comparison"] = (
-            memory_comparison(by_lane["pinned_c"], by_lane["rust_engine"])
+            memory_comparison(by_lane["pinned_c"], by_lane["rust_engine"], seed=row_seed)
             if memory else throughput_comparison(by_lane["pinned_c"], by_lane["rust_engine"], seed=row_seed)
         )
         entry["status"] = "measured"
@@ -1010,8 +1680,8 @@ def run(arguments: argparse.Namespace) -> Path:
         "row_set": arguments.row_set,
         "status": "pending",
         "scope": {
-            "claim": "development measurement of pinned-C versus Rust persistent-engine performance and memory through one opaque engine boundary",
-            "qualifying": False,
+            "claim": "pinned-C versus Rust persistent-engine performance and memory through one opaque engine boundary",
+            "qualifying": "decided by validate_qualified_full_report, never by this field",
             "gate_verdicts": False,
             "fully_integrated_products": False,
         },
@@ -1032,12 +1702,16 @@ def run(arguments: argparse.Namespace) -> Path:
         scratch = temporary_path / "output"
         scratch.mkdir()
         load_before = list(os.getloadavg())
+        host_evidence = host_record_start(measurement_cpus)
         seed = 0x4352_4142_4550
         report["rows"] = measure_rows(timed_rows, built["binaries"], memory=False, mode=mode,
-                                      cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch, seed=seed)
+                                      cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch, seed=seed,
+                                      host_evidence=host_evidence)
         report["memory_rows"] = measure_rows(memory_rows, built["binaries"], memory=True, mode=mode,
-                                             cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch, seed=seed ^ 0x4D45_4D)
+                                             cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch,
+                                             seed=seed ^ 0x4D45_4D, host_evidence=host_evidence)
         report["host_load_average"] = {"before": load_before, "after": list(os.getloadavg())}
+        report["uncontended_host"] = uncontended_host_record(host_record_finish(host_evidence))
     report["architecture"] = architecture_summary(manifest, report["rows"])
     report["matrix"] = matrix_summary(report["rows"])
     failed = sorted(
@@ -1045,6 +1719,8 @@ def run(arguments: argparse.Namespace) -> Path:
     )
     report["failed_rows"] = failed
     report["status"] = "failed-rows" if failed else "ok"
+    qualification = qualification_unmet(report)
+    report["qualification"] = {"status": "non-qualifying" if qualification else "candidate", "unmet": qualification}
     atomic_write_json(report_path, report)
     if failed:
         raise HarnessError(f"rows failed: {', '.join(failed)}; raw failures are recorded in {report_path}")
