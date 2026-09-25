@@ -180,3 +180,45 @@ class OwnedStaticLinkAuthorityTlsFreeTests(unittest.TestCase):
                     owner: self.fixture / "tls-relocation.o",
                 }, self.contracts_for(owner),
             )
+
+
+class OwnedStaticLinkAuthorityCrossMemberTests(unittest.TestCase):
+    """A selected function may reference hidden symbols from a sibling input.
+
+    The installed static ``libc.a`` has one member per Rust module, so a
+    selected body routinely calls a hidden helper or reads a hidden TLS object
+    (whose Rust-mangled name LLD's map prints demangled) from another member.
+    The fixture is one ordinary LLD static link of two C objects; its build
+    commands are in ``owned-static-link-authority.md``.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        value = os.environ.get("CRABC_STATIC_LINK_AUTHORITY_CROSS_MEMBER_FIXTURE_DIR")
+        if not value:
+            raise unittest.SkipTest("set CRABC_STATIC_LINK_AUTHORITY_CROSS_MEMBER_FIXTURE_DIR to the cross-member link")
+        cls.fixture = Path(value).resolve()
+        for name in ("cross-member", "cross-member.map", "caller.o", "callee.o"):
+            path = cls.fixture / name
+            if not path.is_file() or path.is_symlink():
+                raise AssertionError(f"cross-member static-link fixture is missing: {path}")
+
+    contracts = (StaticFunctionContract("selected_entry", "caller.o", "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT"),)
+
+    def test_undefined_hidden_target_joins_its_sibling_definition(self) -> None:
+        for name in ("sibling_hidden", "_RNvCs0_5crate11SIBLING_TLS"):
+            caller = OwnedStaticLinkAuthorityTlsFreeTests.named_symbols(self.fixture / "caller.o", name)
+            self.assertEqual([(row["section"], row["visibility"]) for row in caller], [(0, "HIDDEN")])
+        # LLD's map spells the Rust-mangled TLS name demangled.
+        link_map = (self.fixture / "cross-member.map").read_text()
+        self.assertIn("crate::SIBLING_TLS", link_map)
+        self.assertNotIn(" _RNvCs0_5crate11SIBLING_TLS\n", link_map)
+        require_static_functions(self.fixture / "cross-member.map", self.fixture / "cross-member", {
+            "caller.o": self.fixture / "caller.o", "callee.o": self.fixture / "callee.o",
+        }, self.contracts)
+
+    def test_hidden_target_from_an_unadmitted_sibling_is_rejected(self) -> None:
+        with self.assertRaisesRegex(StaticLinkAuthorityError, "untraced input"):
+            require_static_functions(self.fixture / "cross-member.map", self.fixture / "cross-member", {
+                "caller.o": self.fixture / "caller.o",
+            }, self.contracts)

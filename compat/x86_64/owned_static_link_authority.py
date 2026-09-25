@@ -172,6 +172,12 @@ def _require_static_functions(map_path, executable, admitted, functions):
     final_symbols = selected_symbols(final, targets)
     source_targets = {}
 
+    def _defined_non_local(owner, name):
+        if owner not in source_targets:
+            source_targets[owner] = selected_symbols(images[owner], targets)
+        found = source_targets[owner].get(name)
+        return found if found is not None and found['binding'] != 'LOCAL' else None
+
     def input_symbol(owner, name):
         if owner not in source_targets:
             source_targets[owner] = selected_symbols(images[owner], targets)
@@ -212,11 +218,24 @@ def _require_static_functions(map_path, executable, admitted, functions):
     def target_address(owner, symbol):
         # Defined local/hidden symbols resolve in their selected object. An
         # undefined or interposable C name must join the final symbol and its
-        # traced map owner to a real selected definition.
+        # traced map owner to a real selected definition. A per-module static
+        # archive also references hidden symbols defined in a sibling member,
+        # so an undefined hidden name takes the same join.
         resolved_map = None
-        if symbol['binding'] != 'LOCAL' and symbol['visibility'] == 'DEFAULT':
+        if symbol['binding'] != 'LOCAL' and (symbol['visibility'] == 'DEFAULT' or symbol['section'] == 0):
             rows = map_symbols.get(symbol['name'], [])
-            if not rows:
+            if not rows and symbol['section'] == 0 and symbol['name'] != WEAK_UNDEFINED_ZERO_GOT_DESCRIPTOR:
+                # LLD's map prints Rust symbols demangled, so a mangled
+                # cross-member reference has no map row by name. Resolve it to
+                # the one non-local definition among the traced inputs; its
+                # section placement and final symbol are checked below.
+                definitions = [
+                    (candidate, found) for candidate in images
+                    for found in [_defined_non_local(candidate, symbol['name'])] if found is not None
+                ]
+                require(len(definitions) == 1, 'static relocation target has no unique selected definition')
+                owner, symbol = definitions[0]
+            elif not rows:
                 require(
                     symbol['name'] == WEAK_UNDEFINED_ZERO_GOT_DESCRIPTOR
                     and symbol['type'] == '0' and symbol['binding'] == 'WEAK'
@@ -234,11 +253,12 @@ def _require_static_functions(map_path, executable, admitted, functions):
                     'static weak undefined descriptor is not a relocation-free zero target',
                 )
                 return 0, True
-            require(len(rows) == 1, 'static relocation target has no unique selected definition')
-            resolved_map = rows[0]
-            owner, _part, _address, extent = resolved_map
-            symbol = input_symbol(owner, symbol['name'])
-            require(symbol['size'] == extent, 'static relocation target map size differs')
+            else:
+                require(len(rows) == 1, 'static relocation target has no unique selected definition')
+                resolved_map = rows[0]
+                owner, _part, _address, extent = resolved_map
+                symbol = input_symbol(owner, symbol['name'])
+                require(symbol['size'] == extent, 'static relocation target map size differs')
         source = images[owner]
         require(0 < symbol['section'] < len(source.sections), 'unresolved static relocation target')
         section = source.sections[symbol['section']]
