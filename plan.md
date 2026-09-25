@@ -37,10 +37,14 @@ are not transferable passes for a different revision.
   backend; allocator M2–M11 remain open. Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
-  measures the Rust worker local path at 0.227× pinned C single-thread with
-  the ported direct-page malloc and local-free fast paths (the initial thread
-  still takes the slow path; 0.25× sanity gate not met). Allocator M3 passes
-  every own component and waits only on M2. The M9 report path measures
+  measures the Rust local path at about 0.33× pinned C single-thread with
+  the ported direct-page malloc and local-free fast paths on the initial and
+  worker owners (low-load, not qualifying). Allocator M3 passes every own
+  component and waits only on M2; M4 passes including the unmodified
+  upstream `test-api.c` through the native adapter. Integrated products are
+  compared against an evidence-only pinned v3.5.0 C product (the selected C
+  backend is `libmimalloc-sys` 0.1.49, mimalloc 3.3.2); the port map
+  classifies every intentional difference (`difference_kind`). The M9 report path measures
   throughput, p99 and peak RSS/PSS for all 38 rows but no report qualifies
   (contended host, `powersave` governor). The 114-row runtime scorecard runs
   end to end; startup is 32 whole-process syscalls against musl's 11 and ~2×
