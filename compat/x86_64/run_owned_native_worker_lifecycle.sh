@@ -12,7 +12,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_native_worker_lifecycle_probe.c"
-readonly scenarios=(main final)
+readonly scenarios=(main final deferred)
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -90,7 +90,11 @@ run_case() {
     local name="$mode-$scenario"
     shift 2
     local status=0
-    timeout 60 "$@" >"$work/$name.stdout" 2>"$work/$name.stderr" || status=$?
+    # The deferred scenario's worker cannot allocate its allocator metadata.
+    local environment=()
+    [ "$scenario" != deferred ] ||
+        environment=(MIMALLOC_DISALLOW_OS_ALLOC=1 MIMALLOC_DISALLOW_ARENA_ALLOC=1)
+    timeout 60 env "${environment[@]}" "$@" >"$work/$name.stdout" 2>"$work/$name.stderr" || status=$?
     printf '%s\n' "$status" >"$work/$name.status"
     if [ "$status" -ne 0 ] || [ -s "$work/$name.stderr" ]; then
         printf 'native-worker-lifecycle: %s exited %s\n' "$name" "$status" >&2
@@ -128,4 +132,4 @@ for mode in pie non-pie; do
             "/consumer-$mode" "$scenario"
     done
 done
-printf 'owned native-worker lifecycle: PASS (musl + audited native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; main return and final-worker exit); evidence: %s\n' "$work"
+printf 'owned native-worker lifecycle: PASS (musl + audited native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; main return, final-worker exit, and deferred final-worker exit); evidence: %s\n' "$work"

@@ -2530,6 +2530,12 @@ pub enum ThreadFinalProcessExitOwnerResult {
     Invalid,
     /// An old or partially created owner remains terminally retained.
     Retained,
+    /// The completed worker was admitted again, but its thread-local-data or
+    /// Theap metadata cannot be allocated (`src/init.c:267-269`,
+    /// `src/theap.c:327-329`). As in pinned mimalloc's lazy `_mi_thread_init`,
+    /// its ordinary-exit callbacks run without an owner and each allocation
+    /// retries the attachment.
+    Deferred,
 }
 
 /// Process-lifetime slots for the ticket-zero owner and its Heap witness.
@@ -17500,10 +17506,9 @@ pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
         ThreadAttachResult::Attached => ThreadFinalProcessExitOwnerResult::Reinitialized,
         ThreadAttachResult::Inactive => ThreadFinalProcessExitOwnerResult::Invalid,
         ThreadAttachResult::Retained => ThreadFinalProcessExitOwnerResult::Retained,
-        // The final task's exit callbacks need an owner the process-done
-        // transition can finish. A metadata failure here keeps the existing
-        // fail-closed retention rather than a lazily attached final owner.
-        ThreadAttachResult::Deferred => ThreadFinalProcessExitOwnerResult::Retained,
+        // No owner was installed; the slot is Fresh and deferred, which the
+        // process-done transition accepts like any unattached thread.
+        ThreadAttachResult::Deferred => ThreadFinalProcessExitOwnerResult::Deferred,
         ThreadAttachResult::AlreadyAttached | ThreadAttachResult::Reentrant | ThreadAttachResult::Finished => {
             // The direct `Fresh -> attach` call has no user-code or allocator
             // boundary. A different result would mean the current TLS image

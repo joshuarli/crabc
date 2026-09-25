@@ -191,9 +191,12 @@ pub(super) unsafe fn retain_selected_nonfinal_worker_after_process_done() {
 /// fail-stop instead of letting a callback reach the native adapter without a
 /// source owner.
 pub(super) unsafe fn reinitialize_selected_final_worker_for_ordinary_exit() {
-    if reinitialize_current_thread_native_owner_for_final_process_exit()
-        != ThreadFinalProcessExitOwnerResult::Reinitialized
-    {
+    // A deferred result has no owner: as in pinned mimalloc, the callbacks'
+    // allocations retry the thread's failed metadata allocation.
+    if !matches!(
+        reinitialize_current_thread_native_owner_for_final_process_exit(),
+        ThreadFinalProcessExitOwnerResult::Reinitialized | ThreadFinalProcessExitOwnerResult::Deferred
+    ) {
         super::immediate_termination::_Exit(134);
     }
 }

@@ -13,7 +13,12 @@
  *     mappings, one reclaimed descriptor per joined worker;
  *   - a refused pthread_create leaves no owner, and creation then succeeds;
  *   - the final worker's ordinary-exit callbacks run on a fresh owner that
- *     has not allocated, never on the finished owner reopened.
+ *     has not allocated, never on the finished owner reopened;
+ *   - `deferred` (run with the allocator's OS and arena allocation
+ *     disallowed) starts a worker whose thread-local-data metadata cannot be
+ *     allocated: as in pinned mimalloc's lazy `_mi_thread_init`, the worker
+ *     runs without an owner, each of its allocations fails with ENOMEM, and
+ *     as the final task its ordinary-exit callbacks run the same way.
  *
  * Allocation refusal with later valid use, and remote frees of live and
  * exited workers' blocks in every size class, run in both builds.
@@ -245,11 +250,37 @@ static void *final_worker(void *argument) {
     return 0;
 }
 
+/* A worker whose attachment was deferred: every allocation fails. */
+static void require_deferred_allocation_failure(void) {
+    errno = 0;
+    void *block = malloc(64);
+#ifdef CRABC_NATIVE_WORKER_AUDIT
+    CHECK(block == NULL && errno == ENOMEM);
+    CHECK(audit().owner_installed == 0);
+#endif
+    free(block);
+}
+static void deferred_callback(void) {
+    require_deferred_allocation_failure();
+    dprintf(1, "deferred final worker atexit\n");
+}
+static void *deferred_worker(void *argument) {
+    (void)argument;
+    wait_for_initial_task_exit();
+    require_deferred_allocation_failure();
+    return 0;
+}
+
 int main(int argc, char **argv) {
     CHECK(argc == 2);
     CHECK(pthread_key_create(&key, destructor) == 0);
     pthread_t thread;
     void *result;
+    if (!strcmp(argv[1], "deferred")) {
+        CHECK(atexit(deferred_callback) == 0);
+        CHECK(pthread_create(&thread, 0, deferred_worker, 0) == 0);
+        pthread_exit(0);
+    }
     mark_baseline();
     CHECK(pthread_create(&thread, 0, no_allocation, (void *)3) == 0);
     CHECK(pthread_join(thread, &result) == 0 && result == (void *)3);
