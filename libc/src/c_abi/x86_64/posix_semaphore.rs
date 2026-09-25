@@ -442,20 +442,24 @@ unsafe fn semaphore_timedwait_result(
     }
 }
 
-/// Wait for one semaphore unit, observing an enabled pending cancellation
-/// request before attempting to consume even an immediately available unit.
-///
-/// # Safety
-/// `semaphore` points to a live initialized and aligned public `sem_t`.
-/// Concurrent participants retain its storage and use compatible atomic/futex
-/// operations until the call and any cancellation cleanup have finished.
+// Musl's `src/thread/sem_wait.c` object.
 #[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn sem_wait(semaphore: *mut c_void) -> c_int {
-    // SAFETY: this is musl's sem_timedwait(sem, NULL) mapping with the same
-    // semaphore lifetime and cancellation-cleanup obligations.
-    unsafe { sem_timedwait(semaphore, core::ptr::null()) }
-}
+static_archive_member! { sem_wait_source {
+    /// Wait for one semaphore unit, observing an enabled pending cancellation
+    /// request before attempting to consume even an immediately available unit.
+    ///
+    /// # Safety
+    /// `semaphore` points to a live initialized and aligned public `sem_t`.
+    /// Concurrent participants retain its storage and use compatible atomic/futex
+    /// operations until the call and any cancellation cleanup have finished.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_wait(semaphore: *mut c_void) -> c_int {
+        // SAFETY: this is musl's sem_timedwait(sem, NULL) mapping with the same
+        // semaphore lifetime and cancellation-cleanup obligations.
+        unsafe { sem_timedwait(semaphore, core::ptr::null()) }
+    }
+}}
 
 // Musl's `src/thread/sem_timedwait.c` object.
 #[cfg(crabc_x86_owned_runtime)]
@@ -471,6 +475,7 @@ static_archive_member! { sem_timedwait_source {
     /// `deadline` is null for an unbounded wait, or points to a readable aligned
     /// native x86-64 timespec that stays valid until this call finishes.
     #[cfg(crabc_x86_owned_runtime)]
+    #[inline(never)]
     #[no_mangle]
     pub unsafe extern "C" fn sem_timedwait(
         semaphore: *mut c_void,

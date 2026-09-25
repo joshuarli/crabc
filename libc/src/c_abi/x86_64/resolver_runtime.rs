@@ -642,18 +642,26 @@ static_archive_member! { res_init_source {
     /// `/etc/resolv.conf`.
     #[no_mangle]
     pub unsafe extern "C" fn res_init() -> c_int {
-        unsafe {
-            reset_state();
-            parse_resolv_conf();
-            set_h_errno(0);
-        }
+        unsafe { initialize_state() };
         0
     }
 }}
 
+/// The body of `res_init`, kept in the resolver's own member. musl's resolver
+/// never calls `res_init`, so an application's replacement is not reached
+/// from the `res_*` entries here either.
+#[inline(never)]
+unsafe fn initialize_state() {
+    unsafe {
+        reset_state();
+        parse_resolv_conf();
+        set_h_errno(0);
+    }
+}
+
 unsafe fn ensure_initialized() {
     if unsafe { RESOLVER_RES_STATE.options as usize & RES_INIT } == 0 {
-        let _ = unsafe { res_init() };
+        unsafe { initialize_state() };
     }
 }
 

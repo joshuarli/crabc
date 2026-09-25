@@ -26,50 +26,56 @@ use core::ptr::{addr_of_mut, null_mut};
 #[cfg(crabc_x86_owned_runtime)]
 use core::sync::atomic::{AtomicI32, Ordering};
 
-// musl atexit.c `static volatile int lock[1]`: a musl `__lock` word.
-#[cfg(crabc_x86_owned_runtime)]
-static LOCK: AtomicI32 = AtomicI32::new(0);
-
-#[inline]
-fn lock() {
+// musl atexit.c `static volatile int lock[1]`, which fork reaches through
+// the weak `__atexit_lockptr` so that linking fork never links atexit.o. The
+// installed static archive keeps the word and its fork hooks in their own
+// member for the same reason: an application's own `atexit` then replaces
+// this registry without a duplicate definition.
+static_archive_member! { atexit_lock {
     #[cfg(crabc_x86_owned_runtime)]
-    super::super::musl_lock::lock(&LOCK);
-}
+    static LOCK: AtomicI32 = AtomicI32::new(0);
 
-#[inline]
-fn unlock() {
+    #[inline]
+    pub(super) fn lock() {
+        #[cfg(crabc_x86_owned_runtime)]
+        crate::x86_64_static_c_abi::musl_lock::lock(&LOCK);
+    }
+
+    #[inline]
+    pub(super) fn unlock() {
+        #[cfg(crabc_x86_owned_runtime)]
+        crate::x86_64_static_c_abi::musl_lock::unlock(&LOCK);
+    }
+
+    /// Take the registry lock before raw `fork` (musl's `__atexit_lockptr`).
+    ///
+    /// # Safety
+    /// The caller makes exactly one matching parent/error or child completion
+    /// before user callbacks resume.
     #[cfg(crabc_x86_owned_runtime)]
-    super::super::musl_lock::unlock(&LOCK);
-}
+    pub(crate) unsafe fn pthread_fork_prepare() {
+        lock();
+    }
 
-/// Take the registry lock before raw `fork` (musl's `__atexit_lockptr`).
-///
-/// # Safety
-/// The caller makes exactly one matching parent/error or child completion
-/// before user callbacks resume.
-#[cfg(crabc_x86_owned_runtime)]
-pub(crate) unsafe fn pthread_fork_prepare() {
-    lock();
-}
+    /// Release the registry lock in the original process after raw `fork`.
+    ///
+    /// # Safety
+    /// Completes one preceding `pthread_fork_prepare` in the parent or on failure.
+    #[cfg(crabc_x86_owned_runtime)]
+    pub(crate) unsafe fn pthread_fork_parent() {
+        unlock();
+    }
 
-/// Release the registry lock in the original process after raw `fork`.
-///
-/// # Safety
-/// Completes one preceding `pthread_fork_prepare` in the parent or on failure.
-#[cfg(crabc_x86_owned_runtime)]
-pub(crate) unsafe fn pthread_fork_parent() {
-    unlock();
-}
-
-/// Clear the copied registry lock in the sole `fork` child, as musl's fork
-/// zeroes each copied `atfork_locks` word.
-///
-/// # Safety
-/// Runs once after the matching prepared raw fork, before user callbacks.
-#[cfg(crabc_x86_owned_runtime)]
-pub(crate) unsafe fn pthread_fork_child() {
-    LOCK.store(0, Ordering::Relaxed);
-}
+    /// Clear the copied registry lock in the sole `fork` child, as musl's fork
+    /// zeroes each copied `atfork_locks` word.
+    ///
+    /// # Safety
+    /// Runs once after the matching prepared raw fork, before user callbacks.
+    #[cfg(crabc_x86_owned_runtime)]
+    pub(crate) unsafe fn pthread_fork_child() {
+        LOCK.store(0, Ordering::Relaxed);
+    }
+}}
 
 const COUNT: usize = 32;
 type ExitFunction = unsafe extern "C" fn(*mut c_void);
@@ -202,6 +208,7 @@ pub unsafe extern "C" fn atexit(callback: Option<PlainExitFunction>) -> c_int {
 /// # Safety
 /// The caller must exclusively own process exit; every registered callback
 /// and argument must remain valid. Recursive dispatch is not admitted.
+#[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn __funcs_on_exit() {
     lock();

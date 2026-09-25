@@ -113,23 +113,41 @@ pub use process_exit::{atexit, __cxa_atexit, __cxa_finalize, __funcs_on_exit};
 #[cfg(crabc_x86_owned_runtime)]
 static mut EXECUTABLE_FINI: Option<LifecycleFunction> = None;
 
-/// Run the fixed ordinary-exit dispatch and terminate the whole process.
-///
-/// The owned product follows musl `exit`: handlers, then ELF finalizers,
-/// then buffered stdio, then `_Exit`.
-#[no_mangle]
-pub unsafe extern "C" fn exit(status: c_int) -> ! {
-    unsafe { __funcs_on_exit() };
-    #[cfg(crabc_x86_owned_runtime)]
-    {
-        // SAFETY: ordinary exit is not concurrent or reentrant here (see
-        // __funcs_on_exit); take the callback so it runs at most once.
-        let fini = unsafe { core::ptr::replace(core::ptr::addr_of_mut!(EXECUTABLE_FINI), None) };
-        if let Some(fini) = fini { unsafe { fini() }; }
-        unsafe { __stdio_exit() };
+static_archive_member! { exit_source {
+    /// Run the fixed ordinary-exit dispatch and terminate the whole process.
+    ///
+    /// The owned product follows musl `exit`: handlers, then ELF finalizers,
+    /// then buffered stdio, then `_Exit`. Never inlined, so that
+    /// `__libc_start_main` reaches an application's own `exit` as musl's does.
+    #[inline(never)]
+    #[no_mangle]
+    pub unsafe extern "C" fn exit(status: c_int) -> ! {
+        unsafe { __funcs_on_exit() };
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            // SAFETY: ordinary exit is not concurrent or reentrant here (see
+            // __funcs_on_exit); take the callback so it runs at most once.
+            let fini = unsafe { core::ptr::replace(core::ptr::addr_of_mut!(EXECUTABLE_FINI), None) };
+            if let Some(fini) = fini { unsafe { fini() }; }
+            unsafe { __stdio_exit() };
+        }
+        posix_exit::_exit(status)
     }
-    posix_exit::_exit(status)
-}
+
+    // musl exit.c `weak_alias(dummy, __funcs_on_exit)`: in the installed
+    // static archive, a program that never links atexit.o's member gets this
+    // inert handler walk, and one that defines its own `atexit` replaces the
+    // registry without also linking this libc's.
+    #[cfg(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime)))]
+    core::arch::global_asm!(
+        ".text",
+        ".p2align 4",
+        "crabc_x86_exit_funcs_on_exit_dummy:",
+        "ret",
+        ".weak __funcs_on_exit",
+        ".set __funcs_on_exit, crabc_x86_exit_funcs_on_exit_dummy",
+    );
+}}
 
 #[cold]
 #[inline(never)]

@@ -105,7 +105,7 @@ __sigsetjmp:
     pop qword ptr [rdi + 64]
     mov qword ptr [rdi + 80], rbx
     mov rbx, rdi
-    call __setjmp
+    call setjmp
     push qword ptr [rbx + 64]
     mov rdi, rbx
     mov esi, eax
@@ -144,7 +144,7 @@ static_archive_member! { siglongjmp_source {
     .type siglongjmp,@function
 siglongjmp:
     sub rsp, 8
-    call _longjmp
+    call longjmp
     .size siglongjmp, .-siglongjmp
 
     .section .note.GNU-stack,"",@progbits

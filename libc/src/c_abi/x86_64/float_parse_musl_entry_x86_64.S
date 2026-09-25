@@ -4,6 +4,7 @@
  * x87 binary80 return ABIs. The private pseudo-FILE stack image and scanner
  * calls are the exact pinned-source form; see float_parse.rs for provenance.
  */
+/* musl-1.2.6/src/stdlib/strtod.c */
     .text
     .section .text.crabc_x86_float_parse_strtox,"ax",@progbits
     .type crabc_x86_float_parse_strtox,@function
@@ -77,6 +78,12 @@ strtold:
     jmp crabc_x86_float_parse_strtox
     .size strtold, .-strtold
 
+    .section .rodata.cst8,"aM",@progbits,8
+    .align 8
+.Lcrabc_x86_float_parse_entry_C0:
+    .quad -1
+
+/* musl-1.2.6/src/stdlib/atof.c */
     .section .text.atof,"ax",@progbits
     .globl atof
     .type atof,@function
@@ -85,8 +92,4 @@ atof:
     jmp strtod
     .size atof, .-atof
 
-    .section .rodata.cst8,"aM",@progbits,8
-    .align 8
-.Lcrabc_x86_float_parse_entry_C0:
-    .quad -1
     .section .note.GNU-stack,"",@progbits

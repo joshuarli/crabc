@@ -78,15 +78,30 @@ core::arch::global_asm!(
     include_str!("float_parse_musl_support_x86_64.S"),
     options(att_syntax)
 );
+// The installed static archive gives each public musl object below its own
+// member, as musl's libc.a does, so a program may define any of them. The
+// scanner and its pseudo-string reader stay here; the entries reach them as
+// hidden globals of this member.
+#[cfg(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime)))]
 core::arch::global_asm!(
-    include_str!("float_parse_musl_entry_x86_64.S"),
-    options(att_syntax)
+    ".globl crabc_x86_float_parse_floatscan",
+    ".hidden crabc_x86_float_parse_floatscan",
+    ".globl crabc_x86_float_parse_shlim",
+    ".hidden crabc_x86_float_parse_shlim",
 );
-core::arch::global_asm!(
-    include_str!("float_parse_locale_musl_x86_64.S"),
-    options(att_syntax)
-);
-core::arch::global_asm!(
-    include_str!("float_parse_locale_aliases_x86_64.S"),
-    options(att_syntax)
-);
+// Musl's `src/stdlib/strtod.c` and `src/stdlib/atof.c` objects.
+musl_object_assembly!("float_parse_musl_entry_x86_64");
+// Musl's `src/stdlib/wcstod.c` object.
+static_archive_member! { wcstod_source {
+    core::arch::global_asm!(
+        include_str!("float_parse_locale_musl_x86_64.S"),
+        options(att_syntax)
+    );
+}}
+// Musl's `src/locale/strtod_l.c` object.
+static_archive_member! { strtod_l_source {
+    core::arch::global_asm!(
+        include_str!("float_parse_locale_aliases_x86_64.S"),
+        options(att_syntax)
+    );
+}}

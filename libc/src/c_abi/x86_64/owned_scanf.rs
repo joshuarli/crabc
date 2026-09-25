@@ -55,7 +55,7 @@ unsafe extern "C" fn stream_get(context: *mut c_void) -> c_int {
 }
 
 unsafe extern "C" fn stream_unget(context: *mut c_void, byte: c_int) {
-    unsafe { stdio_standard::ungetc(byte, context.cast()); }
+    unsafe { stdio_standard::unread_scanned_byte(context.cast(), byte) }
 }
 
 // Public sscanf/vsscanf callers supply NUL-terminated strings and correctly

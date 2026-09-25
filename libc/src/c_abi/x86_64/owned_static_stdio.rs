@@ -1227,6 +1227,25 @@ pub(crate) unsafe fn read_scanned_byte(stream: *mut StandardStream) -> c_int {
     unsafe { read_byte_held(stream) }
 }
 
+// musl shgetc.h `shunget`: the scanner steps its lookahead back into the
+// buffer under the lock it already holds, never through public `ungetc`, so
+// an application's own `ungetc` is not reached from scanf. The byte came
+// from `read_scanned_byte`, whose buffer position always leaves UNGET room
+// for it; it is stored explicitly because an unbuffered read did not land in
+// the buffer, as musl's `__shgetc` stores `rpos[-1]`.
+pub(crate) unsafe fn unread_scanned_byte(stream: *mut StandardStream, byte: c_int) {
+    if byte < 0 {
+        return;
+    }
+    unsafe {
+        if (*stream).read_position <= (*stream).buffer.sub(UNGET) {
+            return;
+        }
+        (*stream).read_position = (*stream).read_position.sub(1);
+        (*stream).read_position.write(byte as u8);
+    }
+}
+
 // The caller holds this stream's recursive lock and its buffer is initialized.
 // Bulk/line operations reuse the held helper instead of calling gettid once
 // per byte. Public entry points and external formatter clients use the guard.

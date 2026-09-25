@@ -61,6 +61,8 @@ static_archive_member! { getlogin_source {
     ///
     /// The caller must keep the environment vector and any caller-owned entry
     /// storage valid and unchanged for every use of the returned pointer.
+    // Never inlined: musl's getlogin_r reaches it through the public symbol.
+    #[inline(never)]
     #[no_mangle]
     pub unsafe extern "C" fn getlogin() -> *mut c_char {
         unsafe { environment::getenv(LOGNAME.as_ptr().cast()) }
