@@ -780,6 +780,48 @@ class ModulePrivateSymbolTests(unittest.TestCase):
                 self.assertEqual(self.attach(accounting), [])
                 self.assertEqual(len(accounting['blockers']), len(selection.MODULE_PRIVATE_REASONS))
 
+    def test_hidden_definition_proves_a_selected_private_body_import(self):
+        for visibility, proven in (('HIDDEN', True), ('DEFAULT', True), ('PROTECTED', False)):
+            with self.subTest(visibility=visibility):
+                accounting = self.accounting()
+                record = accounting['identities'][0]
+                record['selection'] = {'disposition': 'private-provider', 'owner': 'reviewed-owner'}
+                record['unresolved'] = [selection.ORDINARY_IMPORT_REASON, 'current source-bound receipt']
+                accounting['occurrences'][1]['row']['visibility'] = visibility
+                accounting['blockers'] = [{'code': 'identity-unresolved', 'identity': record['identity'], 'reason': r}
+                                          for r in record['unresolved']]
+                self.attach(accounting)
+                self.assertEqual(selection.ORDINARY_IMPORT_REASON in record['unresolved'], not proven)
+                self.assertIn('current source-bound receipt', record['unresolved'])
+                self.assertEqual(len(accounting['blockers']), 2 - proven)
+
+    def test_selected_private_import_requires_the_authenticated_member_occurrence(self):
+        for row_index in (0, 1):
+            with self.subTest(row_index=row_index):
+                accounting = self.accounting()
+                record = accounting['identities'][0]
+                record['selection'] = {'disposition': 'private-provider', 'owner': 'reviewed-owner'}
+                record['unresolved'] = [selection.ORDINARY_IMPORT_REASON]
+                accounting['occurrences'][1]['row']['visibility'] = 'DEFAULT'
+                accounting['occurrences'][row_index]['member_occurrence'] = 1
+                accounting['blockers'] = [{'code': 'identity-unresolved', 'identity': record['identity'],
+                                           'reason': selection.ORDINARY_IMPORT_REASON}]
+                self.attach(accounting)
+                self.assertEqual(record['unresolved'], [selection.ORDINARY_IMPORT_REASON])
+                self.assertEqual(len(accounting['blockers']), 1)
+
+    def test_static_member_reference_shape(self):
+        def row(visibility, name='__res_send', role='import', artifact='candidate-static'):
+            return {'artifact_key': artifact, 'table': '.symtab', 'role': role,
+                    'row': {'name': name, 'binding': 'GLOBAL', 'visibility': visibility}}
+        private = {'__res_send'}
+        self.assertTrue(selection._is_static_member_reference(row('HIDDEN'), private=private))
+        self.assertTrue(selection._is_static_member_reference(row('DEFAULT'), private=private))
+        self.assertTrue(selection._is_static_member_reference(row('DEFAULT', name='res_send'), private=private))
+        self.assertFalse(selection._is_static_member_reference(row('PROTECTED'), private=private))
+        self.assertFalse(selection._is_static_member_reference(row('HIDDEN', role='definition'), private=private))
+        self.assertFalse(selection._is_static_member_reference(row('HIDDEN', artifact='candidate-shared'), private=private))
+
     def test_an_identity_with_another_open_reason_is_not_owned(self):
         accounting = self.accounting()
         accounting['identities'][0]['unresolved'].append('selected boundary requires its declaration/consumer/compiler/oracle receipt')

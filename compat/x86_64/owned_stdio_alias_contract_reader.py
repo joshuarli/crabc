@@ -198,6 +198,25 @@ def contract(root):
                         'family_completion':False,'public_support':False}),'stdio alias source contract differs')
     return value
 
+def declares_weak_alias(text, alias, target):
+    """Whether `text` declares `.weak alias` + `.set alias, target`.
+
+    Either spelled directly, or through a one-literal `macro_rules!` whose
+    body emits `concat!(".weak PREFIX", $name)` and
+    `concat!(".set PREFIX", $name, ", ", $name)` and is invoked as
+    `macro!("target")` with `alias == PREFIX + target` (the per-member
+    `isoc99_alias!` form placed beside each scanner entry).
+    """
+    if f'.weak {alias}' in text and f'.set {alias}, {target}' in text:
+        return True
+    for macro, body in re.findall(r'macro_rules!\s*(\w+)\s*\{(.*?)\n\}', text, flags=re.S):
+        for prefix in re.findall(r'concat!\("\.weak ([^"]*)",\s*\$name\)', body):
+            if (alias == prefix + target
+                    and re.search(r'concat!\("\.set ' + re.escape(prefix) + r'",\s*\$name,\s*", ",\s*\$name\)', body)
+                    and re.search(re.escape(macro) + r'!\(\s*"' + re.escape(target) + r'"\s*\)', text)):
+                return True
+    return False
+
 def source_account(root, revision, work, capture=False):
     require(type(revision) is str and re.fullmatch('[0-9a-f]{40}',revision),'invalid selected revision')
     records={}
@@ -205,7 +224,7 @@ def source_account(root, revision, work, capture=False):
     for owner,source,pairs in ALIAS_GROUPS:
         text=group_sources[source]
         for alias,target in pairs:
-            require(f'.weak {alias}' in text and f'.set {alias}, {target}' in text,
+            require(declares_weak_alias(text, alias, target),
                     'named FILE source alias differs: '+owner+'/'+alias)
     static_source=group_sources['libc/src/c_abi/x86_64/owned_static_stdio.rs']
     extensions_source=group_sources['libc/src/c_abi/x86_64/owned_stdio_extensions.rs']

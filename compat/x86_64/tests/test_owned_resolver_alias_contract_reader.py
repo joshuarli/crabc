@@ -150,6 +150,22 @@ class ResolverAliasOccurrenceTests(unittest.TestCase):
         self.assertEqual([row['alias'] for row in projection['alias_domains']],
                          ['res_mkquery', 'res_send', 'res_search'])
 
+    def test_sibling_member_references_are_consumers_not_roster_rows(self) -> None:
+        """The per-module archive references bodies and aliases from other members."""
+        def reference(rows, name, visibility):
+            rows.append({'index': 900 + len(rows), 'artifact_key': 'candidate-static', 'table': '.symtab',
+                         'role': 'import', 'member_name': 'caller.rcgu.o', 'member_index': 7,
+                         'member_occurrence': 0,
+                         'row': {'name': name, 'type': 'NOTYPE', 'binding': 'GLOBAL', 'visibility': visibility,
+                                 'value': '0', 'size_bytes': 0, 'section_index': 'UND'}})
+            return rows
+
+        rows = reference(reference(candidate_rows(), '__res_mkquery', 'DEFAULT'), 'res_query', 'DEFAULT')
+        self.assertEqual(validate_candidate_occurrences(rows)['candidate_occurrence_count'], 19)
+        for name, visibility in (('__res_send', 'PROTECTED'), ('res_send', 'HIDDEN')):
+            with self.subTest(name=name), self.assertRaises(ReceiptError):
+                validate_candidate_occurrences(reference(candidate_rows(), name, visibility))
+
     def test_each_alias_projection_keeps_its_own_target_indices(self) -> None:
         projection = validate_candidate_occurrences(candidate_rows())
         domains = {item['alias']: item for item in projection['alias_domains']}

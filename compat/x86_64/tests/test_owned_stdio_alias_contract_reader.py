@@ -15,6 +15,17 @@ from owned_stdio_alias_contract_reader import SymbolRow, same_definition
 
 
 class OwnedStdioAliasContractReaderTests(unittest.TestCase):
+    def test_macro_declared_scanner_alias_counts_only_when_invoked_for_its_target(self):
+        """The per-member scanner source declares each `__isoc99_` alias by macro."""
+        import owned_stdio_alias_contract_reader as reader
+        text = (SOURCE_DIR.parents[1] / 'libc/src/c_abi/x86_64/stdio_format_scan.rs').read_text()
+        self.assertTrue(reader.declares_weak_alias(text, '__isoc99_sscanf', 'sscanf'))
+        self.assertFalse(reader.declares_weak_alias(text, '__isoc99_sscanf', 'vsscanf'))
+        self.assertFalse(reader.declares_weak_alias(
+            text.replace('isoc99_alias!("sscanf");', ''), '__isoc99_sscanf', 'sscanf'))
+        direct = '".weak __isoc99_sscanf",\n".set __isoc99_sscanf, sscanf"'
+        self.assertTrue(reader.declares_weak_alias(direct, '__isoc99_sscanf', 'sscanf'))
+
     def test_same_member_zero_value_different_sections_is_not_an_alias(self) -> None:
         alias = SymbolRow(
             member="stdio.o",

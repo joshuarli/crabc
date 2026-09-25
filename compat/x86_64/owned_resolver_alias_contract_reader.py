@@ -294,11 +294,27 @@ def _one_row(rows: Sequence[Mapping[str, Any]], *, artifact: str, table: str, ro
     return matches[0]
 
 
+def _is_static_member_reference(item: Mapping[str, Any]) -> bool:
+    """An undefined reference from a sibling member of the per-module archive.
+
+    A private body's definition is HIDDEN, but undefined references to it in
+    sibling members may be DEFAULT or HIDDEN. Public names are referenced
+    DEFAULT. These GLOBAL static `.symtab` imports are consumers, not rows of
+    this finite definition roster. Any other shape stays in the roster.
+    """
+    row = item['row']
+    visibility = {'DEFAULT', 'HIDDEN'} if row.get('name') in PRIVATE_BODIES else {'DEFAULT'}
+    return (item.get('artifact_key') == 'candidate-static' and item.get('table') == '.symtab'
+            and item.get('role') == 'import' and row.get('binding') == 'GLOBAL'
+            and row.get('visibility') in visibility)
+
+
 def validate_candidate_occurrences(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Validate exactly the finite resolver rows without touching other facts."""
     require(type(rows) in {list, tuple}, 'candidate resolver occurrence roster is not a sequence')
     known = [item for item in rows if item.get('artifact_key') in {'candidate-static', 'candidate-shared'}
-             and type(item.get('row')) is dict and item['row'].get('name') in KNOWN_NAMES]
+             and type(item.get('row')) is dict and item['row'].get('name') in KNOWN_NAMES
+             and not _is_static_member_reference(item)]
     expected: list[Mapping[str, Any]] = []
     static_bodies = {}
     shared_bodies = {}

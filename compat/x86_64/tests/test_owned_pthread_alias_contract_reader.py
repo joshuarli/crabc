@@ -62,6 +62,38 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
                 _parse_args(base + partial)
         self.assertEqual(_expected_retained_paths(True) - _expected_retained_paths(False), {HISTORICAL_INPUT_COPY})
 
+    def test_candidate_mq_worker_detach_may_live_in_a_sibling_module_member(self) -> None:
+        """The per-module archive may place `notify_start` apart from `mq_notify`."""
+        import owned_pthread_alias_contract_reader as reader
+        from unittest import mock
+
+        archive = "/p/usr/lib/libc.a"
+        worker = ".rela.text._RNvNtNt1c20owned_message_queues12notify_start"
+
+        def relocations(worker_lines: str, extra: str = "") -> Path:
+            path = self.root / "relocations.txt"
+            path.write_text(
+                f"File: {archive}(a.rcgu.o)\n"
+                "Relocation section '.rela.text.mq_notify' at offset 0x40 contains 1 entry:\n"
+                "    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend\n"
+                "0000000000000005  0000000300000004 R_X86_64_PLT32         0000000000000000 pthread_create - 4\n"
+                f"{extra}\n"
+                f"File: {archive}(b.rcgu.o)\n"
+                f"Relocation section '{worker}' at offset 0x40 contains 1 entry:\n"
+                "    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend\n"
+                f"{worker_lines}\n", encoding="utf-8")
+            return path
+
+        detach = "0000000000000009  0000000500000004 R_X86_64_PLT32         0000000000000000 pthread_detach - 4"
+        private = "0000000000000009  0000000500000004 R_X86_64_PLT32         0000000000000000 __pthread_detach - 4"
+        with mock.patch.object(reader, "_mq_notify_member", return_value=([], f"{archive}(a.rcgu.o)")):
+            observed = reader._candidate_mq_notify_public_detach(self.root / "symbols", relocations(detach))
+            self.assertEqual(observed["worker_member"], f"{archive}(b.rcgu.o)")
+            self.assertEqual(observed["relocation_section"], worker)
+            for lines, extra in (("", ""), (detach + "\n" + detach, ""), (detach, private)):
+                with self.subTest(lines=lines, extra=extra), self.assertRaises(ReceiptError):
+                    reader._candidate_mq_notify_public_detach(self.root / "symbols", relocations(lines, extra))
+
     def test_retained_command_output_mutation_is_rejected(self) -> None:
         """The old input-only ledger could not bind a passing runtime stream."""
 

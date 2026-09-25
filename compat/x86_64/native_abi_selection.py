@@ -2353,6 +2353,23 @@ def account_placements(expanded: Sequence[Mapping[str, Any]], facts: Mapping[str
             'data_alias_observations': aliases, 'function_alias_observations': function_aliases, 'blockers': blockers}
 
 
+def _is_static_member_reference(row: Mapping[str, Any], *, private: set[str]) -> bool:
+    """Whether a row is an undefined reference from one static archive member.
+
+    With one member per Rust module, sibling members reference a component's
+    bodies and aliases. Such a reference is not a definition the component's
+    finite roster accounts for: a private body may be referenced DEFAULT or
+    HIDDEN even though its definition is HIDDEN; a public name is referenced
+    DEFAULT. Both are GLOBAL `.symtab` imports of the static archive. Any
+    other shape stays in the roster and so fails it.
+    """
+    item = row.get('row')
+    visibility = {'DEFAULT', 'HIDDEN'} if type(item) is dict and item.get('name') in private else {'DEFAULT'}
+    return (row.get('artifact_key') == 'candidate-static' and row.get('table') == '.symtab'
+            and row.get('role') == 'import' and type(item) is dict and item.get('binding') == 'GLOBAL'
+            and item.get('visibility') in visibility)
+
+
 MODULE_PRIVATE_GROUP = 'owned-rust-module-private'
 MODULE_PRIVATE_REASONS = (
     'candidate binding ownership is unresolved',
@@ -2428,11 +2445,46 @@ def attach_module_private_symbols(accounting: Mapping[str, Any], rule: Mapping[s
             'shared_local_indices': sorted(r['index'] for r in shared),
             'discharged_reasons': discharged,
         })
-    if owned:
+    # A reviewed owner may select a hidden body that sibling module members
+    # reference. An undefined reference may itself be DEFAULT or HIDDEN; the
+    # unique hidden definition in this archive resolves either spelling for
+    # the static link. Any foreign member or other import keeps the reason.
+    referenced = set()
+    for key, record in records.items():
+        if (key in owned or ORDINARY_IMPORT_REASON not in record['unresolved']
+                or record.get('selection', {}).get('disposition') not in {'private-provider', 'public-provider'}):
+            continue
+        rows = [r for r in by_identity.get(key, []) if not r['artifact_key'].startswith('reference-')]
+        imports = [r for r in rows if r['role'] == 'import']
+        definitions = [r for r in rows if r['artifact_key'] == 'candidate-static' and r['role'] == 'definition']
+        if not (imports and len(definitions) == 1
+                and definitions[0]['table'] == '.symtab'
+                and definitions[0]['member_name'] in members
+                and definitions[0]['member_occurrence'] == 0
+                and definitions[0]['row']['visibility'] == 'HIDDEN'
+                and all(r['artifact_key'] == 'candidate-static' and r['table'] == '.symtab'
+                        and r['member_name'] in members and r['member_occurrence'] == 0
+                        and r['row']['visibility'] in {'DEFAULT', 'HIDDEN'}
+                        and r['row']['binding'] in {'GLOBAL', 'WEAK'} for r in imports)):
+            continue
+        record['unresolved'].remove(ORDINARY_IMPORT_REASON)
+        referenced.add(key)
+        joins.append({
+            'identity': copy.deepcopy(record['identity']),
+            'owner': record['selection'].get('owner'),
+            'definition_member': definitions[0]['member_name'],
+            'definition_index': definitions[0]['index'],
+            'reference_indices': sorted(r['index'] for r in imports),
+            'shared_local_indices': [],
+            'discharged_reasons': [ORDINARY_IMPORT_REASON],
+        })
+    if owned or referenced:
         accounting['blockers'][:] = [
             blocker for blocker in accounting['blockers']
             if not (blocker.get('code') == 'identity-unresolved'
-                    and identity_key(blocker.get('identity', {})) in owned)
+                    and (identity_key(blocker.get('identity', {})) in owned
+                         or (identity_key(blocker.get('identity', {})) in referenced
+                             and blocker.get('reason') == ORDINARY_IMPORT_REASON)))
         ]
     return sorted(joins, key=lambda row: json.dumps(row['identity'], sort_keys=True))
 
@@ -4467,9 +4519,12 @@ def attach_pthread_alias_contract(accounting: Mapping[str, Any], companion: Mapp
             'pthread alias/provider cardinality differs')
     mq = observations.get('mq_notify_public_detach')
     require(type(mq) is dict and set(mq) == {'musl', 'candidate'}
-            and type(mq['candidate']) is dict and set(mq['candidate']) == {'member', 'relocation_section'},
+            and type(mq['candidate']) is dict
+            and set(mq['candidate']) == {'member', 'worker_member', 'relocation_section'},
             'pthread alias mq_notify evidence differs')
-    member = _archive_member_from_reader(mq['candidate']['member'])
+    # The public import lives in the member holding the mq worker, which the
+    # per-module archive may place apart from `mq_notify` itself.
+    member = _archive_member_from_reader(mq['candidate']['worker_member'])
     require(type(mq['candidate']['relocation_section']) is str and mq['candidate']['relocation_section'].startswith('.rela'),
             'pthread alias mq_notify relocation section differs')
     detach_key = ('pthread_detach', None, False)
@@ -8826,6 +8881,7 @@ def attach_native_resolver_alias(accounting: Mapping[str, Any],
         row['index'] for row in occurrences.values()
         if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
         and type(row.get('row')) is dict and row['row'].get('name') in known_names
+        and not _is_static_member_reference(row, private=set(private_bodies))
     }
     expected_projection_indices = set(projection['indices'])
     require(actual_indices == expected_indices == expected_projection_indices,
@@ -9337,6 +9393,7 @@ def attach_native_locale_alias(accounting: Mapping[str, Any],
         row['index'] for row in occurrences.values()
         if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
         and type(row.get('row')) is dict and row['row'].get('name') in known_names
+        and not _is_static_member_reference(row, private={private for _public, private in hidden_pairs})
     }
     require(actual_indices == expected_indices, 'locale alias candidate occurrence roster differs')
     require(len(occurrences) == occurrence_count

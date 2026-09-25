@@ -863,15 +863,32 @@ def _musl_mq_notify_public_detach(symbols: Path, relocations: Path) -> dict[str,
     return {"member": member, "relocation_section": relocated[0][0]}
 
 
+NOTIFY_START_SECTION_TOKEN = "owned_message_queues12notify_start"
+
+
 def _candidate_mq_notify_public_detach(symbols: Path, relocations: Path) -> dict[str, str]:
+    """Bind the mq worker's public `pthread_detach` call in the candidate archive.
+
+    musl's `mq_notify.c` holds both `mq_notify` and its worker. The owned
+    static archive emits one member per Rust module, and the worker
+    (`notify_start`) may be placed in another member than `mq_notify`, so the
+    relocation is located by its defining function section across the archive:
+    exactly one public `pthread_detach` relocation in `notify_start`'s text,
+    and no source-local `__pthread_detach` relocation from either member.
+    """
     _, member = _mq_notify_member(symbols)
-    relocated = _symbol_relocations(relocations, member, "pthread_detach")
+    blocks = _relocation_blocks(relocations)
+    worker = [(block_member, section) for block_member, section, _contents in blocks
+              if section.startswith(".rela.text.") and NOTIFY_START_SECTION_TOKEN in section]
+    require(len(worker) == 1, f"{relocations}: candidate mq_notify worker text section is absent or repeated")
+    worker_member, worker_section = worker[0]
+    relocated = [row for row in _symbol_relocations(relocations, worker_member, "pthread_detach")
+                 if row[0] == worker_section]
     require(len(relocated) == 1, f"{relocations}: candidate mq_notify must have one public pthread_detach relocation")
-    require("owned_message_queues12notify_start" in relocated[0][0],
-            f"{relocations}: candidate public pthread_detach relocation must originate in notify_start")
-    require(not _symbol_relocations(relocations, member, "__pthread_detach"),
-            f"{relocations}: candidate mq_notify must not relocate source-local __pthread_detach")
-    return {"member": member, "relocation_section": relocated[0][0]}
+    for source_member in {member, worker_member}:
+        require(not _symbol_relocations(relocations, source_member, "__pthread_detach"),
+                f"{relocations}: candidate mq_notify must not relocate source-local __pthread_detach")
+    return {"member": member, "worker_member": worker_member, "relocation_section": relocated[0][0]}
 
 
 def evaluate_alias_contract(work: Path) -> dict[str, object]:

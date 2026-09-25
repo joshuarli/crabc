@@ -204,7 +204,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 'aliases': aliases, 'alias_shapes': shapes, 'same_definition': definitions,
                 'mq_notify_public_detach': {
                     'musl': {},
-                    'candidate': {'member': '/retained/usr/lib/libc.a(mq_notify.o)', 'relocation_section': '.rela.text.notify_start'},
+                    'candidate': {'member': '/retained/usr/lib/libc.a(mq_notify.o)',
+                                  'worker_member': '/retained/usr/lib/libc.a(mq_notify.o)',
+                                  'relocation_section': '.rela.text.notify_start'},
                 },
                 'application_public_override': {},
             },
