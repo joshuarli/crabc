@@ -4167,3 +4167,19 @@ unit_verified = true
 differential_verified = false
 stress_verified = false
 performance_qualified = false
+
+[[item]]
+upstream = "src/page-map.c"
+name = "startup-page-map-failure"
+source_region = "mi_page_map_init_once reservation failure at src/page-map.c:302-305, ignored by mi_process_init_once at src/init.c:549, and the later allocations of a process without a page map"
+rust_module = "crabc_mimalloc::page_map and crabc_mimalloc::runtime_lifecycle"
+rust_item = "PageMap::initialize's PageMapReservation report; PROCESS_PAGE_MAP_UNAVAILABLE with allocate_without_page_map and the deferred worker attachment"
+intentional_difference = "CRABC-MI-STARTUP-PAGE-MAP-FAILURE: the process starts and every allocation fails with C's ENOMEM reports, but with no page map, arena, or page engine it does not attempt the fresh pages whose page-map commit warnings pinned C emits."
+difference_kind = "boundary"
+tests = ["compat/allocator/x86_64_m7_gate.py", "compat/allocator/x86_64_m7_page_map_driver.c", "compat/allocator/m7-gate-x86_64-v3.5.0.json", "crabc-mimalloc/src/runtime_lifecycle.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false

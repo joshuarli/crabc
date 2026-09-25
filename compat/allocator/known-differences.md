@@ -3082,6 +3082,8 @@ continuation, which AGENTS.md's safety rules do not ask for.
 
 ### `CRABC-MI-STARTUP-PAGE-MAP-FAILURE` — accepted diagnostics difference
 
+- **Port map:** `src/page-map.c:startup-page-map-failure`
+
 Status: accepted. Area: diagnostics after a valid-program startup failure.
 
 Pinned `mi_page_map_init_once` (`src/page-map.c:302-305`) reports
