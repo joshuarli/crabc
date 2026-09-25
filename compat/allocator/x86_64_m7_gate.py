@@ -464,7 +464,7 @@ def require_complete_error_sites_trace(trace: Mapping[str, str], description: st
     """Reject a trace that omits a request or one of its three records."""
 
     for case in ERROR_SITE_CASES:
-        for suffix in ("messages", "null", "errno"):
+        for suffix in ("messages", "deferred", "null", "errno"):
             if f"error_site.{case}.{suffix}" not in trace:
                 raise harness.HarnessError(f"{description} lacks error_site.{case}.{suffix}")
 

@@ -59,15 +59,28 @@ static void print_messages(const char* name) {
   printf("\n");
 }
 
+/* The force flag of every deferred-free invocation during one request: the
+   forced collection before the `mi_find_page` retry calls it with `true`. */
+static char deferred[64];
+static size_t deferred_count;
+
+static void record_deferred(bool force, unsigned long long heartbeat, void* argument) {
+  (void)heartbeat; (void)argument;
+  if (deferred_count < sizeof(deferred) - 1) deferred[deferred_count++] = force ? '1' : '0';
+}
+
 static void report(const char* name, void* p) {
   const int error = errno;
   print_messages(name);
+  deferred[deferred_count] = 0;
+  printf("error_site.%s.deferred=%s\n", name, deferred);
   printf("error_site.%s.null=%d\nerror_site.%s.errno=%d\n", name, p == NULL ? 1 : 0, name, error);
   if (p != NULL) mi_free(p);
 }
 
 #define CASE(name, call) do { \
   message_count = 0; \
+  deferred_count = 0; \
   errno = 0; \
   void* p = (call); \
   report(name, p); \
@@ -105,6 +118,7 @@ static void* worker(void* argument) {
 
 int main(void) {
   mi_register_output(&capture_output, NULL);
+  mi_register_deferred_free(&record_deferred, NULL);
   /* volatile: keep the compiler from diagnosing the constant request. */
   too_large = (size_t)PTRDIFF_MAX + 1;
   printf("CRABC_MI_M7_ERROR_SITES_TRACE_BEGIN\n");

@@ -228,7 +228,7 @@ class M7ErrorSitesTraceTests(unittest.TestCase):
     def test_a_trace_missing_a_request_record_is_rejected(self) -> None:
         trace = {
             f"error_site.{case}.{suffix}": "0"
-            for case in gate.ERROR_SITE_CASES for suffix in ("messages", "null", "errno")
+            for case in gate.ERROR_SITE_CASES for suffix in ("messages", "deferred", "null", "errno")
         }
         gate.require_complete_error_sites_trace(trace, "trace")
         del trace["error_site.worker_malloc_too_large.errno"]

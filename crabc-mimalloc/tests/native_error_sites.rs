@@ -17,11 +17,17 @@ use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, NativeProcessStartupFacts,
     RuntimeStderrOutput, ThreadAttachResult, ThreadFinishResult,
     finish_current_thread_native_after_user_destructors, initialize_process, native_allocate, native_allocate_aligned,
-    native_allocate_aligned_at, native_free, native_runtime_take_source_error_test_audit,
+    native_allocate_aligned_at, native_free, register_native_deferred_free_callback, native_runtime_take_source_error_test_audit,
     publish_native_process_startup_facts,
 };
 
 static CAPTURE: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+/// The force flag of every deferred-free invocation during one request.
+static DEFERRED: Mutex<String> = Mutex::new(String::new());
+
+unsafe extern "C" fn record_deferred(force: bool, _heartbeat: u64, _context: *mut core::ffi::c_void) {
+    DEFERRED.lock().unwrap().push(if force { '1' } else { '0' });
+}
 
 /// The default `_mi_prim_out_stderr` primitive of this process: records each
 /// source fragment. It never allocates through the allocator under test,
@@ -48,6 +54,7 @@ fn report(name: &str, result: NativePageAllocationResult) {
         })
         .collect();
     println!("error_site.{name}.messages={}", fragments.join(":"));
+    println!("error_site.{name}.deferred={}", core::mem::take(&mut *DEFERRED.lock().unwrap()));
     let failed = match result {
         NativePageAllocationResult::Allocated(block) => {
             // SAFETY: the exact live client from this request.
@@ -96,6 +103,8 @@ fn error_sites_match_the_pinned_source() {
     assert!(initialize_process());
     CAPTURE.lock().unwrap().clear();
     let _ = native_runtime_take_source_error_test_audit();
+    // SAFETY: a static function with no context, registered for the process.
+    unsafe { register_native_deferred_free_callback(Some(record_deferred), core::ptr::null_mut()) };
 
     println!("CRABC_MI_M7_ERROR_SITES_TRACE_BEGIN");
     run_cases("");

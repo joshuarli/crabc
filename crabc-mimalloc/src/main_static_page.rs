@@ -92,12 +92,6 @@ pub(crate) struct MainStaticProcessPageAllocator<'main> {
 #[must_use = "an initial deferred-free allocation phase must be completed"]
 pub(crate) enum MainStaticDeferredFreeAllocationPhase {
     Complete(Option<NonNull<u8>>),
-    /// A request `mi_find_page` refuses for its size, made before this
-    /// owner has materialized a page engine. The source runs the same
-    /// refusal as with an engine; there are no pages to collect, so the
-    /// runtime reports both `mi_find_page` refusals and the out-of-memory
-    /// result for `request` and completes without a block.
-    RefusedBeforeEngine { request: usize },
     Collect {
         source: crate::deferred_free::DeferredFreeSource,
         collection: GenericAllocationCollection,
@@ -2094,7 +2088,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         {
             // Materializing an engine (or a first arena) for a request no
             // page can satisfy would be a second, non-source policy decision.
-            return Some(MainStaticDeferredFreeAllocationPhase::RefusedBeforeEngine { request: normalized });
+            return self.begin_engine_less_generic_refusal(normalized);
         }
         self.allocate_with(request, |engine| {
             match engine.begin_deferred_free_allocation(request, zero) {
@@ -2195,6 +2189,11 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         collection: GenericAllocationCollection,
         continuation: DeferredFreeAllocationContinuation,
     ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        if continuation.source_find_page_refusal().is_some()
+            && !matches!(&self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Active(_))
+        {
+            return self.resume_engine_less_generic_refusal(source, collection, continuation);
+        }
         if !matches!(
             &self.state,
             MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)
@@ -2218,6 +2217,79 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         collection,
                         continuation,
                     })
+                }
+            }
+        })
+    }
+
+    /// The permanent session of an owner that has not materialized (or has
+    /// retired) its page engine.
+    fn engine_less_session(&mut self) -> Option<&mut MainStaticProcessPageSession> {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { session, .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { session, .. } => {
+                Some(session)
+            }
+            _ => None,
+        }
+    }
+
+    /// `_mi_malloc_generic` for a request `mi_find_page` refuses for its
+    /// size, on an owner without a page engine.
+    ///
+    /// The source runs the same steps with or without pages: count the
+    /// generic call and run its administration, refuse in `mi_find_page`,
+    /// force `mi_theap_collect` (whose `_mi_deferred_free(theap, true)` calls
+    /// a registered callback), refuse again, and report out-of-memory. This
+    /// owner has no page queue to collect, so each collection is the
+    /// session's statistics merge; the callbacks and reports go through the
+    /// ordinary runtime phases. The one step not performed is the forced
+    /// collection's `_mi_arenas_collect` purge of the process arenas, which
+    /// the page engine owns.
+    fn begin_engine_less_generic_refusal(&mut self, request: usize) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        use crate::bootstrap::TheapPageSession;
+        let session = self.engine_less_session()?;
+        let collection = match session.advance_generic_allocation_administration() {
+            crate::types::GenericAllocationAdministration::None => GenericAllocationCollection::Force,
+            crate::types::GenericAllocationAdministration::Mini => GenericAllocationCollection::Mini,
+            crate::types::GenericAllocationAdministration::Full => GenericAllocationCollection::Full,
+        };
+        Some(MainStaticDeferredFreeAllocationPhase::Collect {
+            source: session.deferred_free_source()?,
+            collection,
+            continuation: DeferredFreeAllocationContinuation::refused_for_size(request),
+        })
+    }
+
+    /// Phase C of [`Self::begin_engine_less_generic_refusal`]: after an
+    /// administration collection the refusal forces a collection; after the
+    /// forced one the allocation completes without a block.
+    fn resume_engine_less_generic_refusal(
+        &mut self,
+        source: crate::deferred_free::DeferredFreeSource,
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        use crate::bootstrap::TheapPageSession;
+        let session = self.engine_less_session()?;
+        let current = session.deferred_free_source()?;
+        if !source.matches_current(current) {
+            return None;
+        }
+        // `mi_theap_collect` (full or forced) merges the Theap statistics;
+        // the mini administration collection does not.
+        if collection != GenericAllocationCollection::Mini
+            && !session.theap().merge_statistics_into_owning_heap_after_collection()
+        {
+            return None;
+        }
+        Some(match collection {
+            GenericAllocationCollection::Force => MainStaticDeferredFreeAllocationPhase::Complete(None),
+            GenericAllocationCollection::Mini | GenericAllocationCollection::Full => {
+                MainStaticDeferredFreeAllocationPhase::Collect {
+                    source: current,
+                    collection: GenericAllocationCollection::Force,
+                    continuation,
                 }
             }
         })

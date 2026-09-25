@@ -7962,8 +7962,6 @@ impl NativeInitialDeferredFreeCall {
 #[must_use = "an initial deferred-free allocation phase must be resumed"]
 enum NativeInitialDeferredFreeAllocationPhase {
     Complete(Option<core::ptr::NonNull<u8>>),
-    /// See [`MainStaticDeferredFreeAllocationPhase::RefusedBeforeEngine`].
-    RefusedBeforeEngine { request: usize },
     Callback {
         call: NativeInitialDeferredFreeCall,
         source: crate::deferred_free::DeferredFreeSource,
@@ -8106,9 +8104,6 @@ impl NativeInitialPersistentThreadOwner {
         match phase {
             MainStaticDeferredFreeAllocationPhase::Complete(block) => {
                 Some(NativeInitialDeferredFreeAllocationPhase::Complete(block))
-            }
-            MainStaticDeferredFreeAllocationPhase::RefusedBeforeEngine { request } => {
-                Some(NativeInitialDeferredFreeAllocationPhase::RefusedBeforeEngine { request })
             }
             MainStaticDeferredFreeAllocationPhase::Collect {
                 source,
@@ -9570,16 +9565,6 @@ fn run_current_thread_native_initial_deferred_free_phase(
             NativeInitialDeferredFreeAllocationPhase::Complete(block) => {
                 report_generic_allocation_failure(forced, block.is_none());
                 return Ok(block);
-            }
-            NativeInitialDeferredFreeAllocationPhase::RefusedBeforeEngine { request } => {
-                let _ = crate::process_init::process_error_message(
-                    SourceErrorReport::AllocationTooLarge { size: request },
-                );
-                report_generic_allocation_failure(
-                    Some(DeferredFreeAllocationContinuation::refused_for_size(request)),
-                    true,
-                );
-                return Ok(None);
             }
             NativeInitialDeferredFreeAllocationPhase::Callback {
                 call,
