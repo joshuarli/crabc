@@ -1128,7 +1128,7 @@ impl VmPolicy {
     /// has no route and drops it, as a source build with warnings disabled
     /// would.
     #[inline]
-    fn source_warning(&self, message: SourceFormattedMessage) {
+    pub(crate) fn source_warning(&self, message: SourceFormattedMessage) {
         if let Some(output) = self.process_options {
             // SAFETY: `from_process_options` accepted this owner's delivery
             // obligations for every source read point on this policy,

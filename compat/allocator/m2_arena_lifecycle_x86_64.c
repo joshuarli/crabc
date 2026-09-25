@@ -1033,6 +1033,30 @@ int main(void) {
     mi_option_set(mi_option_disallow_arena_alloc, 0);
   }
 
+  /* 22. A fresh arena whose metadata commit fails and whose cleanup
+         `_mi_os_free_ex` unmap also fails: pinned `mi_os_prim_free` warns,
+         applies the statistics, and leaks the mapping; the reservation fails
+         cleanly and a later request reserves again. */
   emit_marker(22);
+  {
+    configure(true, 32 * 1024, 0, false);
+    lifecycle_owner_t* const owner = fresh_owner();
+    mprotect_calls = 0;
+    mprotect_failed = false;
+    fail_mprotect_ordinal = 1;
+    fail_munmap_after_mprotect = true;
+    retained_addr = NULL;
+    lifecycle_claim_t refused = claim(owner, 1, true, NULL, -1);
+    fail_mprotect_ordinal = 0;
+    fail_munmap_after_mprotect = false;
+    require(refused.start == NULL);
+    emit(retained_addr != NULL);
+    if (retained_addr != NULL) require(__real_munmap(retained_addr, retained_length) == 0);
+    lifecycle_claim_t later = claim(owner, 1, true, NULL, -1);
+    require(later.start != NULL);
+    release(owner, &later);
+  }
+
+  emit_marker(23);
   return 0;
 }

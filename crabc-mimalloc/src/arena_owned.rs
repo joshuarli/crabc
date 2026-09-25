@@ -314,7 +314,6 @@ pub(super) struct OwnedArenaAllocation {
     memory: MemoryId,
     process: StoredVmProcess,
     pub(super) config: MemoryConfig,
-    release_error: Option<Errno>,
 }
 
 /// The registry retains exactly one source backing owner for every published
@@ -857,7 +856,6 @@ impl ProcessArenaBacking {
                 memory,
                 process: StoredVmProcess::from_static_process(process),
                 config,
-                release_error: None,
             });
         }
         slot.state.store(INITIALIZING, Ordering::Release);
@@ -1022,7 +1020,7 @@ impl ProcessArenaBacking {
             return Err(fail(ManageArenaError::RegistryFull, allocation));
         };
         unsafe { (*slot.value.get()).write(OwnedArenaAllocation {
-            allocation, memory, process: stored_process, config, release_error: None,
+            allocation, memory, process: stored_process, config,
         }); }
         slot.state.store(INITIALIZING, Ordering::Release);
         let hook = (memory.kind() == MemoryKind::Os).then(||
@@ -1095,17 +1093,6 @@ impl ProcessArenaBacking {
         })
     }
 
-    /// Returns the source failed-cleanup owner without granting a second
-    /// syscall attempt. C accounts a failed free once; silently retrying it
-    /// would apply the same decrement twice. A retained failure therefore
-    /// prevents further automatic reservations through this owner.
-    pub(crate) fn retained_release_error(&self) -> Option<Errno> {
-        self.slots.iter().find_map(|slot| {
-            if slot.state.load(Ordering::Acquire) != RETAINED { return None; }
-            unsafe { slot.initialized() }?.release_error
-        })
-    }
-
     /// Source `mi_arenas_try_alloc`: search, serialize one fresh reservation
     /// only when the observed registry count is unchanged, then search again.
     /// Failure is not an OS fallback: that distinct caller must still enforce
@@ -1154,7 +1141,6 @@ impl ProcessArenaBacking {
         let observed_count = self.registry.count();
         {
             let _guard = self.reserve_lock.lock().ok()?;
-            if self.retained_release_error().is_some() { return None; }
             if observed_count == self.registry.count() {
                 let _ = unsafe { self.reserve_locked(process, config, requested_size, search.allow_pinned, random) };
             }
@@ -1298,7 +1284,6 @@ impl ProcessArenaBacking {
             let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large, false, random.as_deref_mut()) };
             if let Some(id) = result { return Some(id); }
             if plan.adjust_committed { stats.committed_adjust_increase(size); }
-            if self.retained_release_error().is_some() { return None; }
         }
         None
     }
@@ -1338,13 +1323,14 @@ impl ProcessArenaBacking {
             return Err(Errno::NOMEM);
         }
         let _guard = self.reserve_lock.lock()?;
-        if self.retained_release_error().is_some() { return Err(Errno::NOMEM); }
         unsafe { self.reserve_one_locked(process, config, size, access, allow_large, exclusive, random) }.ok_or(Errno::NOMEM)
     }
 
     /// Source `mi_reserve_os_memory_ex2` regular aligned map/manage/free.
-    /// A failed map trim or unpublished manage cleanup retains the exact
-    /// still-active owner in a terminal slot, never an untracked raw address.
+    /// A manage failure releases the unpublished mapping through source
+    /// `_mi_os_free_ex`: a failed `munmap` is warned, still counted, and the
+    /// mapping leaks, exactly as pinned C leaks it. The reservation simply
+    /// fails; later reservations are unaffected.
     ///
     /// # Safety
     /// The caller holds `reserve_lock` and satisfies `reserve_locked`'s
@@ -1356,47 +1342,39 @@ impl ProcessArenaBacking {
         random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaId> {
         // Reserve a cleanup slot before acquiring any new OS ownership.
-        let slot = self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY)?;
+        self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY)?;
         let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
             size, ARENA_ALIGNMENT, access, allow_large, random);
-        let (mut mapping, memory, already_failed_cleanup) = match allocation {
+        let (mut mapping, memory) = match allocation {
             Ok(allocation) => {
                 let (mapping, memory) = allocation.into_mapping_and_memory();
                 match unsafe { self.install_owned_os_mapping_locked(process,
                     StoredVmProcess::from_retained_process(process), config, size, mapping, memory, -1, exclusive) } {
                     Ok(managed) => return Some(managed.arena_id()),
-                    Err(failure) => { let (mapping, memory, _) = failure.into_parts(); (mapping, memory, None) }
+                    Err(failure) => { let (mapping, memory, _) = failure.into_parts(); (mapping, memory) }
                 }
             }
             Err(failure) => {
-                let error = failure.error();
+                // Only a post-map allocation invariant rejection returns a
+                // mapping here; aligned trim failures already leaked.
                 let mapping = failure.into_mapping()?;
-                let memory = MemoryId::os(mapping.base().expect("retained OS failure owns an active mapping"),
-                    mapping.length().expect("retained OS failure owns its complete length"),
+                let memory = MemoryId::os(mapping.base().expect("a returned OS failure owns an active mapping"),
+                    mapping.length().expect("a returned OS failure owns its complete length"),
                     mapping.initially_committed(), mapping.initially_zero(), mapping.is_large());
-                (mapping, memory, Some(error))
+                (mapping, memory)
             }
         };
-        let error = match already_failed_cleanup {
-            Some(error) => error,
-            None => {
-                let commit_size = if memory.initially_committed() {
-                    memory.os_memory().expect("unpublished arena failure retains OS provenance").size
-                } else { 0 };
-                match mapping.unmap_for_process(process, commit_size, false) {
-                    Ok(()) => return None,
-                    Err(error) => error,
-                }
-            }
-        };
-        unsafe { (*slot.value.get()).write(OwnedArenaAllocation {
-            allocation: ArenaBacking::Regular(mapping), memory,
-            // SAFETY: all callers of this private reservation path retain the
-            // process identity through this backing's quiescent destruction.
-            process: unsafe { StoredVmProcess::from_retained_process(process) },
-            config, release_error: Some(error),
-        }); }
-        slot.state.store(RETAINED, Ordering::Release);
+        let commit_size = if memory.initially_committed() {
+            memory.os_memory().expect("unpublished arena failure retains OS provenance").size
+        } else { 0 };
+        let address = memory.os_memory().map_or(0, |os| os.base as usize);
+        let length = memory.os_memory().map_or(0, |os| os.size);
+        if let Err(error) = mapping.unmap_for_process(process, commit_size, false) {
+            // Dropping the still-mapped non-RAII owner leaks it, as the
+            // source does after its warning.
+            process.policy().source_warning(
+                crate::diagnostic_output::SourceFormattedMessage::os_free_failure(error, length, address));
+        }
         None
     }
 }
@@ -2864,24 +2842,43 @@ mod tests {
         assert_eq!(shared.registry().count(), 1);
     }
 
+    /// Source `mi_arena_reserve`/`mi_reserve_os_memory_ex2`: a failed primary
+    /// metadata commit whose cleanup `_mi_os_free_ex` `munmap` also fails is
+    /// counted and leaked, and the source 128-MiB fallback is still tried and
+    /// reserves the arena.
     #[test]
-    fn failed_reservation_cleanup_is_retained_without_second_accounting_or_fallback() {
+    fn failed_reservation_cleanup_leaks_once_and_the_fallback_still_reserves() {
         let fault = fault::install(fault::Plan::disabled());
         let mut options = VmOptions::uninitialized();
         options.initialize_all(|_| VmOptionEnvironment::Absent);
         options.set(VmOption::ArenaEagerCommit, 0);
         let process = process_with_options(options);
         let backing = backing();
-        fault.set(fault::Plan::at_pair(fault::Point::Commit, 1, fault::Point::Unmap, 1, Errno::NOMEM));
-        assert!(unsafe { backing.try_allocate_slices(process, config(), search(ArenaId::none()),
-            1, ARENA_SLICE_SIZE, true) }.is_none());
-        assert_eq!(backing.registry().count(), 0);
-        assert_eq!(backing.retained_release_error(), Some(Errno::NOMEM));
         let before = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at_pair(fault::Point::Commit, 1, fault::Point::Unmap, 1, Errno::NOMEM));
+        let capture = fault.capture_unmap_ranges();
+        let claim = unsafe { backing.try_allocate_slices(process, config(), search(ArenaId::none()),
+            1, ARENA_SLICE_SIZE, true) }.expect("the source fallback reserves after the leaked primary");
+        let (ranges, count) = capture.all().expect("bounded releases");
+        drop(capture);
+        // The first release after the failed commit is the injected one;
+        // the fallback reservation's own trims may follow it.
+        assert!(fault.secondary_observed() >= 1, "the primary cleanup release failed");
         fault.set(fault::Plan::disabled());
-        assert!(unsafe { backing.try_allocate_slices(process, config(), search(ArenaId::none()),
-            1, ARENA_SLICE_SIZE, true) }.is_none());
-        assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+        assert_eq!(backing.registry().count(), 1);
+        let arena = unsafe { backing.registry().arena_at(0) }.unwrap();
+        let published = arena.memid.os_memory().unwrap().size;
+        let after = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after.reserved_current - before.reserved_current, published as i64,
+            "the leaked primary's reservation was still subtracted");
+        // The failed cleanup is the only whole-primary release recorded.
+        let (leaked, leaked_length) = ranges[..count].iter().copied()
+            .max_by_key(|&(_, length)| length).expect("the primary cleanup was recorded");
+        assert!(leaked_length > published, "the leaked range is the larger primary");
+        assert!(claim.release());
+        // SAFETY: the leaked primary mapping is represented by no owner.
+        unsafe { crabc_core::mm::munmap_raw(leaked as *mut u8, leaked_length) }
+            .expect("fixture teardown of the leaked primary");
     }
 
     #[test]
@@ -4557,7 +4554,34 @@ mod tests {
             }
         }
 
+        // 22. A fresh arena whose metadata commit and cleanup unmap both
+        // fail: the reservation fails cleanly (the mapping leaks) and a
+        // later request reserves again.
         trace.marker(22);
+        {
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let p = owner.process;
+            fault.set(fault::Plan::at_pair(fault::Point::Commit, 1, fault::Point::Unmap, 1, Errno::NOMEM));
+            let capture = fault.capture_unmap_ranges();
+            let refused = lifecycle_claim(&mut trace, owner, p, 1, true, none, -1);
+            let leaked = capture.all().and_then(|(ranges, count)| (count != 0).then(|| ranges[count - 1]));
+            drop(capture);
+            let failed_cleanup = fault.secondary_observed() >= 1;
+            fault.set(fault::Plan::disabled());
+            assert!(!refused.is_some());
+            trace.emit_bool(failed_cleanup);
+            if failed_cleanup {
+                let (address, length) = leaked.expect("the failed cleanup range was recorded");
+                // SAFETY: the leaked range is represented by no owner.
+                unsafe { crabc_core::mm::munmap_raw(address as *mut u8, length) }
+                    .expect("fixture teardown of the leaked reservation");
+            }
+            let mut later = lifecycle_claim(&mut trace, owner, p, 1, true, none, -1);
+            assert!(later.is_some());
+            lifecycle_release(&mut trace, owner, &mut later);
+        }
+
+        trace.marker(23);
     }
 }
 
