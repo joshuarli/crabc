@@ -14,6 +14,7 @@ import importlib.machinery
 import importlib.util
 import json
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
@@ -52,71 +53,15 @@ PINNED_CLEAN_ENV = {
     "TZ": "UTC",
 }
 
-# The adapter is intentionally closed over these two existing sources. Keeping
-# their paths and preprocessor closure here makes a changed source/header graph
-# a receipt failure rather than a silently broadened workload contract.
+# The adapter is intentionally closed over these two existing sources. Their
+# installed-header closure is derived from the source itself: the reparsed
+# GCC dependency trace must start with the source, stay inside the installed
+# include tree, and contain every header the source names in `#include <...>`.
 ROLE_SOURCES = {
     "atfork-registry": Path("compat/x86_64/owned_atfork_registry_probe.c"),
     "static-posix-forkexec": Path("compat/x86_64/owned_static_posix_probe.c"),
 }
-ROLE_HEADER_CLOSURES = {
-    "atfork-registry": (
-        "errno.h",
-        "features.h",
-        "bits/errno.h",
-        "pthread.h",
-        "bits/alltypes.h",
-        "sched.h",
-        "time.h",
-        "stdint.h",
-        "bits/stdint.h",
-        "stdio.h",
-        "stdlib.h",
-        "alloca.h",
-        "string.h",
-        "strings.h",
-        "sys/prctl.h",
-        "sys/syscall.h",
-        "bits/syscall.h",
-        "sys/wait.h",
-        "signal.h",
-        "bits/signal.h",
-        "sys/resource.h",
-        "sys/time.h",
-        "sys/select.h",
-        "unistd.h",
-    ),
-    "static-posix-forkexec": (
-        "errno.h",
-        "features.h",
-        "bits/errno.h",
-        "fcntl.h",
-        "bits/alltypes.h",
-        "bits/fcntl.h",
-        "poll.h",
-        "bits/poll.h",
-        "pthread.h",
-        "sched.h",
-        "time.h",
-        "signal.h",
-        "bits/signal.h",
-        "stddef.h",
-        "stdlib.h",
-        "alloca.h",
-        "string.h",
-        "strings.h",
-        "sys/stat.h",
-        "bits/stat.h",
-        "sys/types.h",
-        "endian.h",
-        "sys/select.h",
-        "sys/uio.h",
-        "sys/wait.h",
-        "sys/resource.h",
-        "sys/time.h",
-        "unistd.h",
-    ),
-}
+SYSTEM_INCLUDE = re.compile(r"^[ \t]*#[ \t]*include[ \t]*<([^>\n]+)>", re.MULTILINE)
 
 
 class EvidenceError(RuntimeError):
@@ -248,15 +193,17 @@ def role_source(checkout: Path, role: str) -> Path:
     return physical_regular(checkout / relative, f"{role} workload source")
 
 
-def role_dependency_paths(role: str, source: Path, headers: Path) -> list[Path]:
+def source_system_includes(source: Path) -> tuple[str, ...]:
+    """The installed headers a workload source names directly."""
+
     try:
-        closure = ROLE_HEADER_CLOSURES[role]
-    except KeyError:
-        fail(f"unknown immutable workload role: {role}")
-    paths = [source]
-    for relative in closure:
-        paths.append(physical_regular(headers / relative, f"{role} installed header {relative}"))
-    return paths
+        text = physical_regular(source, "workload source").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise EvidenceError("workload source is unreadable") from error
+    names = tuple(dict.fromkeys(SYSTEM_INCLUDE.findall(text)))
+    if not names:
+        fail("workload source names no installed header")
+    return names
 
 
 def dependency_records(paths: Sequence[Path]) -> list[dict[str, str]]:
@@ -370,14 +317,16 @@ def derive_static_translation(
     if not isinstance(selected, str):
         fail("current static driver did not select a compiler")
     resolved = resolved_regular(Path(selected), "static driver selected compiler")
+    # The installed driver's own hosted translation tuple is the contract.
+    translation_flags = getattr(contract, "HOSTED_TRANSLATION_FLAGS", None)
+    if not isinstance(translation_flags, tuple) or not all(isinstance(flag, str) for flag in translation_flags):
+        fail("current static driver hosted translation flags drifted")
     expected_compile = [
         selected,
         "-nostdinc",
         "-isystem",
         str(headers),
-        "-ffreestanding",
-        "-fno-builtin",
-        "-fno-stack-protector",
+        *translation_flags,
         *STATIC_SOURCE_FLAGS,
         "-fPIE",
         "-c",
@@ -393,9 +342,7 @@ def derive_static_translation(
         "-nostdinc",
         "-isystem",
         str(headers),
-        "-ffreestanding",
-        "-fno-builtin",
-        "-fno-stack-protector",
+        *translation_flags,
         *STATIC_SOURCE_FLAGS,
         "-fPIE",
         "-M",
@@ -431,13 +378,24 @@ def derive_static_translation(
     }
 
 
-def require_exact_dependency_closure(
-    role: str, source: Path, headers: Path, records: object, description: str
+def require_source_dependency_closure(
+    source: Path, headers: Path, records: object, description: str
 ) -> list[dict[str, str]]:
-    expected = dependency_records(role_dependency_paths(role, source, headers))
-    if not strict_equal(records, expected):
-        fail(f"{description} differs from the exact role-specific installed-header closure")
-    return expected
+    """Require the parsed trace to be this source's installed-header closure.
+
+    ``parse_dependencies`` already confined every entry to the source or the
+    installed include tree and bound its digest; this adds the source-derived
+    lower bound so a trace cannot omit a header the source includes.
+    """
+
+    if type(records) is not list or not records or records[0] != {"path": str(source), "sha256": digest(source)}:
+        fail(f"{description} does not start with its workload source")
+    present = {record["path"] for record in records[1:]}
+    for name in source_system_includes(source):
+        header = physical_regular(headers / name, f"installed header {name}")
+        if str(header) not in present:
+            fail(f"{description} omits the source's installed header {name}")
+    return records
 
 
 def record_compile(
@@ -476,9 +434,7 @@ def record_compile(
     if completed.returncode != 0:
         fail(f"installed-header dependency audit failed: {completed.returncode}")
     records = parse_dependencies(dependencies_path, source, headers)
-    require_exact_dependency_closure(
-        role, source, headers, records, "reparsed dependency trace"
-    )
+    require_source_dependency_closure(source, headers, records, "reparsed dependency trace")
     record = {
         "schema": 2,
         "format": COMPILE_FORMAT,
@@ -605,8 +561,8 @@ def load_compile(
     require_file_record(dependency_trace, dependency_path, "compile record dependency trace")
     require_file_record(include_trace, include_path, "compile record include trace")
     reparsed = parse_dependencies(dependency_path, source, headers_root)
-    expected_dependencies = require_exact_dependency_closure(
-        role, source, headers_root, reparsed, "reparsed dependency trace"
+    expected_dependencies = require_source_dependency_closure(
+        source, headers_root, reparsed, "reparsed dependency trace"
     )
     if not strict_equal(headers.get("dependencies"), expected_dependencies):
         fail("compile record header closure differs from the reparsed dependency trace")

@@ -101,7 +101,7 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
         self.assertNotIn("crabc-cc-dynamic", runner)
         self.assertNotIn("owned_process_trio", runner)
         for required in (
-            "ROLE_HEADER_CLOSURES",
+            "source_system_includes",
             "derive_static_translation",
             "current checkout evidence helper",
             "reparsed dependency trace",
@@ -156,7 +156,8 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
         headers = product / "usr/include"
         headers.mkdir(parents=True)
         source = checkout / evidence.ROLE_SOURCES[role]
-        for relative in evidence.ROLE_HEADER_CLOSURES[role]:
+        closure = evidence.source_system_includes(source)
+        for relative in closure:
             header = headers / relative
             header.parent.mkdir(parents=True, exist_ok=True)
             header.write_text(f"/* {relative} */\n", encoding="utf-8")
@@ -174,7 +175,7 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
         translation = evidence.derive_static_translation(
             checkout, product, role, source, workload
         )
-        dependencies = [source, *(headers / item for item in evidence.ROLE_HEADER_CLOSURES[role])]
+        dependencies = [source, *(headers / item for item in closure)]
         dependency_trace = role_directory / "headers.d"
         dependency_trace.write_text(
             "workload.o: \\\n " + " \\\n ".join(str(item) for item in dependencies) + "\n",
@@ -237,6 +238,27 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
         if mutate is not None:
             mutate(checkout, product, role_directory)
         return product, source, role_directory
+
+    def test_dependency_closure_is_derived_from_the_source_includes(self):
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            headers = root / "usr/include"
+            (headers / "sys").mkdir(parents=True)
+            source = root / "probe.c"
+            source.write_text("#include <stdio.h>\n  # include <sys/wait.h>\nint main(void) { return 0; }\n")
+            for name in ("stdio.h", "sys/wait.h", "bits/alltypes.h"):
+                (headers / name).parent.mkdir(parents=True, exist_ok=True)
+                (headers / name).write_text(f"/* {name} */\n")
+            self.assertEqual(evidence.source_system_includes(source), ("stdio.h", "sys/wait.h"))
+            closure = evidence.dependency_records([source, headers / "stdio.h", headers / "bits/alltypes.h",
+                                                   headers / "sys/wait.h"])
+            self.assertEqual(evidence.require_source_dependency_closure(source, headers, closure, "trace"), closure)
+            with self.assertRaisesRegex(evidence.EvidenceError, "omits the source's installed header sys/wait.h"):
+                evidence.require_source_dependency_closure(source, headers, closure[:-1], "trace")
+            with self.assertRaisesRegex(evidence.EvidenceError, "does not start with its workload source"):
+                evidence.require_source_dependency_closure(source, headers, closure[1:], "trace")
 
     def test_role_receipt_recomputes_translation_header_and_execution_contracts(self):
         scratch = ROOT / ".work/x86_64/tmp"

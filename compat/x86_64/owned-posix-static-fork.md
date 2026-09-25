@@ -37,8 +37,10 @@ identities, the current evidence-helper identity, the helper-selected and
 resolved compiler identity, the pinned clean environment, and the exact
 static-PIE `-fPIE` compile and `-M -H` audit vectors. Final sealing derives
 those vectors again from the current static driver, reparses `headers.d`, and
-requires the exact role-specific installed-header closure; it does not accept
-a source-only or ambient-header trace. The object hash is rechecked after the
+requires a closure derived from the source: the trace starts with the source,
+stays inside the installed include tree, and contains every header the source
+names with `#include <...>`. It does not accept a source-only or ambient-header
+trace. The object hash is rechecked after the
 musl link and after each sealed static link. The shared
 `owned_posix_product_evidence.validate_link` validator binds each product link
 to its static receipt, selected CRT, owned archives, map, trace, final ELF, and
