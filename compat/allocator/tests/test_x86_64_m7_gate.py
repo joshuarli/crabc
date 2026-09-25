@@ -44,6 +44,7 @@ class M7GateContractTests(unittest.TestCase):
         self.assertEqual(sorted(summary["runnable_evidence"]), [
             "differential:deferred-free-callback",
             "differential:diagnostic-output-owner",
+            "differential:error-reporting-sites",
             "differential:option-effects",
             "differential:options-environment",
             "differential:reclaim-options",
@@ -221,6 +222,18 @@ class M7OptionsTraceTests(unittest.TestCase):
             gate.compare_options_traces(c_trace, rust_trace)
         with self.assertRaisesRegex(harness.HarnessError, "repeated trace key"):
             gate.parse_options_trace(self.trace().replace("api.print=7631", "api.print=1\napi.print=2"), "C")
+
+
+class M7ErrorSitesTraceTests(unittest.TestCase):
+    def test_a_trace_missing_a_request_record_is_rejected(self) -> None:
+        trace = {
+            f"error_site.{case}.{suffix}": "0"
+            for case in gate.ERROR_SITE_CASES for suffix in ("messages", "null", "errno")
+        }
+        gate.require_complete_error_sites_trace(trace, "trace")
+        del trace["error_site.worker_malloc_too_large.errno"]
+        with self.assertRaisesRegex(harness.HarnessError, "worker_malloc_too_large.errno"):
+            gate.require_complete_error_sites_trace(trace, "trace")
 
 
 class M7OptionEffectsTraceTests(unittest.TestCase):

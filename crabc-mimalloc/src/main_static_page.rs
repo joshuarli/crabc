@@ -92,6 +92,12 @@ pub(crate) struct MainStaticProcessPageAllocator<'main> {
 #[must_use = "an initial deferred-free allocation phase must be completed"]
 pub(crate) enum MainStaticDeferredFreeAllocationPhase {
     Complete(Option<NonNull<u8>>),
+    /// A request `mi_find_page` refuses for its size, made before this
+    /// owner has materialized a page engine. The source runs the same
+    /// refusal as with an engine; there are no pages to collect, so the
+    /// runtime reports both `mi_find_page` refusals and the out-of-memory
+    /// result for `request` and completes without a block.
+    RefusedBeforeEngine { request: usize },
     Collect {
         source: crate::deferred_free::DeferredFreeSource,
         collection: GenericAllocationCollection,
@@ -2081,6 +2087,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 | MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)
         ) {
             return None;
+        }
+        let normalized = request.max(crate::config::WORD_SIZE);
+        if !matches!(&self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Active(_))
+            && !size_class::request_size_is_valid(normalized)
+        {
+            // Materializing an engine (or a first arena) for a request no
+            // page can satisfy would be a second, non-source policy decision.
+            return Some(MainStaticDeferredFreeAllocationPhase::RefusedBeforeEngine { request: normalized });
         }
         self.allocate_with(request, |engine| {
             match engine.begin_deferred_free_allocation(request, zero) {

@@ -113,6 +113,7 @@ use crate::diagnostic_output::{
 };
 #[cfg(all(test, target_arch = "x86_64"))]
 use crate::diagnostic_output::RuntimeStderrOutput;
+use crate::diagnostic_output::SourceErrorReport;
 use crate::process_init::{
     ProcessMainBackingBinding, ProcessMainInitializationStorage, ProcessMainInitError,
     ProcessMainThread,
@@ -7961,6 +7962,8 @@ impl NativeInitialDeferredFreeCall {
 #[must_use = "an initial deferred-free allocation phase must be resumed"]
 enum NativeInitialDeferredFreeAllocationPhase {
     Complete(Option<core::ptr::NonNull<u8>>),
+    /// See [`MainStaticDeferredFreeAllocationPhase::RefusedBeforeEngine`].
+    RefusedBeforeEngine { request: usize },
     Callback {
         call: NativeInitialDeferredFreeCall,
         source: crate::deferred_free::DeferredFreeSource,
@@ -8103,6 +8106,9 @@ impl NativeInitialPersistentThreadOwner {
         match phase {
             MainStaticDeferredFreeAllocationPhase::Complete(block) => {
                 Some(NativeInitialDeferredFreeAllocationPhase::Complete(block))
+            }
+            MainStaticDeferredFreeAllocationPhase::RefusedBeforeEngine { request } => {
+                Some(NativeInitialDeferredFreeAllocationPhase::RefusedBeforeEngine { request })
             }
             MainStaticDeferredFreeAllocationPhase::Collect {
                 source,
@@ -9347,14 +9353,19 @@ fn run_current_thread_native_deferred_free_allocation(
 fn run_current_thread_native_deferred_free_phase(
     mut phase: NativeDeferredFreeAllocationPhase,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
+    let mut forced = None;
     loop {
         phase = match phase {
-            NativeDeferredFreeAllocationPhase::Complete(block) => return Ok(block),
+            NativeDeferredFreeAllocationPhase::Complete(block) => {
+                report_generic_allocation_failure(forced, block.is_none());
+                return Ok(block);
+            }
             NativeDeferredFreeAllocationPhase::Callback {
                 call,
                 collection,
                 continuation,
             } => {
+                report_forced_collection_retry(collection, continuation, &mut forced);
                 // SAFETY: phase A returned through `with_current_thread_...`
                 // before this match. The caller-stack `call` owns only the
                 // source callback/TLD recurse marker and its linear lease;
@@ -9397,6 +9408,40 @@ fn run_current_thread_native_deferred_free_phase(
             }
         };
     }
+}
+
+/// `_mi_malloc_generic`'s first failed `mi_find_page` precedes its forced
+/// `mi_theap_collect` (whose `_mi_deferred_free` callback this phase is):
+/// a size refusal is reported there, before the callback, with no
+/// allocator projection live. The continuation is retained for the retry.
+fn report_forced_collection_retry(
+    collection: GenericAllocationCollection,
+    continuation: DeferredFreeAllocationContinuation,
+    forced: &mut Option<DeferredFreeAllocationContinuation>,
+) {
+    if collection != GenericAllocationCollection::Force {
+        return;
+    }
+    if let Some(size) = continuation.source_find_page_refusal() {
+        let _ = crate::process_init::process_error_message(SourceErrorReport::AllocationTooLarge { size });
+    }
+    *forced = Some(continuation);
+}
+
+/// The retry after the forced collection failed: `mi_find_page` reports a
+/// size refusal again, then `_mi_malloc_generic` reports out-of-memory for
+/// its request (`src/page.c:1057-1064`). A collection-only continuation
+/// (`mi_collect`) has no request and reports nothing.
+fn report_generic_allocation_failure(
+    forced: Option<DeferredFreeAllocationContinuation>,
+    failed: bool,
+) {
+    let Some(continuation) = forced.filter(|_| failed) else { return; };
+    let Some(size) = continuation.source_request() else { return; };
+    if let Some(size) = continuation.source_find_page_refusal() {
+        let _ = crate::process_init::process_error_message(SourceErrorReport::AllocationTooLarge { size });
+    }
+    let _ = crate::process_init::process_error_message(SourceErrorReport::OutOfMemory { size });
 }
 
 /// Drives an aligned allocation through the same source callback split as an
@@ -9519,15 +9564,30 @@ fn run_current_thread_native_initial_deferred_free_allocation(
 fn run_current_thread_native_initial_deferred_free_phase(
     mut phase: NativeInitialDeferredFreeAllocationPhase,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
+    let mut forced = None;
     loop {
         phase = match phase {
-            NativeInitialDeferredFreeAllocationPhase::Complete(block) => return Ok(block),
+            NativeInitialDeferredFreeAllocationPhase::Complete(block) => {
+                report_generic_allocation_failure(forced, block.is_none());
+                return Ok(block);
+            }
+            NativeInitialDeferredFreeAllocationPhase::RefusedBeforeEngine { request } => {
+                let _ = crate::process_init::process_error_message(
+                    SourceErrorReport::AllocationTooLarge { size: request },
+                );
+                report_generic_allocation_failure(
+                    Some(DeferredFreeAllocationContinuation::refused_for_size(request)),
+                    true,
+                );
+                return Ok(None);
+            }
             NativeInitialDeferredFreeAllocationPhase::Callback {
                 call,
                 source,
                 collection,
                 continuation,
             } => {
+                report_forced_collection_retry(collection, continuation, &mut forced);
                 // SAFETY: phase A returned from the initial owner cell before
                 // this match. `call` owns only the source recurse marker and
                 // optional linear active lease, never an owner/engine/TLD
@@ -10422,8 +10482,12 @@ fn native_allocate_shaped(
     // is not refused here: as in pinned `_mi_malloc_generic`, the engine
     // counts it, runs administration, and retries once after a forced
     // collection before the page lookup reports it unallocatable.
-    if let NativeAllocationShape::Aligned { alignment, .. } = shape {
-        if !crate::size_class::alignment_is_valid(alignment) {
+    // The aligned entry's pre-allocation refusals report through
+    // `_mi_error_message` before any Theap work, as in
+    // `mi_theap_malloc_zero_aligned_at`; no allocator projection exists yet.
+    if let NativeAllocationShape::Aligned { alignment, offset } = shape {
+        if let Some(report) = SourceErrorReport::aligned_precheck(request, alignment, offset) {
+            let _ = crate::process_init::process_error_message(report);
             return NativePageAllocationResult::AllocationFailed;
         }
     }

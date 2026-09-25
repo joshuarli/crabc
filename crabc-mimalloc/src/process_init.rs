@@ -1429,6 +1429,74 @@ pub(crate) fn process_source_option(option: crate::config::SourceOption) -> i64 
     option.default_value()
 }
 
+/// `_mi_error_message(err, ...)` for one release-live allocation site,
+/// reported through the process output owner's `show_errors`/`verbose`/
+/// `max_errors` gate and error handler.
+///
+/// The caller must hold no page-engine, owner, TLD, or Theap projection: a
+/// registered output or error callback may reenter the allocator, as it may
+/// in C. Before x86 startup has installed the table (and on the paused
+/// AArch64 process) no output owner exists; the source default disposition
+/// is returned without output, as C's gate is closed by its release option
+/// defaults.
+pub(crate) fn process_error_message(
+    report: crate::diagnostic_output::SourceErrorReport,
+) -> crate::diagnostic_output::SourceErrorDisposition {
+    #[cfg(target_arch = "x86_64")]
+    let disposition = match ProcessMainInitializationStorage::global().published_source_options() {
+        // SAFETY: a published owner has an installed table; the caller holds
+        // no allocator projection across this report's deliveries.
+        Some(output) => unsafe { output.error_message(report.error(), report.message()) },
+        None => report.default_disposition(),
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let disposition = report.default_disposition();
+    #[cfg(feature = "native-runtime-test-audit")]
+    record_source_error_for_test_audit(report, disposition);
+    disposition
+}
+
+#[cfg(feature = "native-runtime-test-audit")]
+static SOURCE_ERROR_AUDIT_CODE: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "native-runtime-test-audit")]
+static SOURCE_ERROR_AUDIT_ERRNO: AtomicUsize = AtomicUsize::new(0);
+
+/// Records the errno C's `mi_error_default` would leave: it writes only
+/// while errno is still zero, so the first default report since the last
+/// take wins.
+#[cfg(feature = "native-runtime-test-audit")]
+fn record_source_error_for_test_audit(
+    report: crate::diagnostic_output::SourceErrorReport,
+    disposition: crate::diagnostic_output::SourceErrorDisposition,
+) {
+    if let crate::diagnostic_output::SourceErrorDisposition::DefaultErrno(errno) = disposition {
+        if SOURCE_ERROR_AUDIT_ERRNO
+            .compare_exchange(0, errno.raw() as usize, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            SOURCE_ERROR_AUDIT_CODE.store(report.error().raw() as usize, Ordering::Release);
+        }
+    }
+}
+
+/// The first defaulted `_mi_error_message` report since the previous take.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeSourceErrorAudit {
+    pub code: i32,
+    pub default_errno: i32,
+}
+
+/// Takes and clears the first defaulted source error report.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_take_source_error_test_audit() -> Option<NativeSourceErrorAudit> {
+    let errno = SOURCE_ERROR_AUDIT_ERRNO.swap(0, Ordering::AcqRel);
+    let code = SOURCE_ERROR_AUDIT_CODE.swap(0, Ordering::AcqRel);
+    (errno != 0).then_some(NativeSourceErrorAudit { code: code as i32, default_errno: errno as i32 })
+}
+
 /// `_mi_option_get_fast(option)` counterpart of [`process_source_option`].
 #[inline]
 pub(crate) fn process_source_option_fast(option: crate::config::SourceOption) -> i64 {

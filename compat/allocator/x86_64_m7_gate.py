@@ -72,6 +72,21 @@ OPTIONS_ERROR_SCENARIOS = ("hidden", "capped", "verbose")
 # Recursive-output scenarios: a registered callback that reads `verbose` and
 # re-enters `_mi_warning_message` during startup and one direct warning.
 OPTIONS_RECURSION_SCENARIOS = ("invalid_verbose", "show_errors", "capped")
+ERROR_SITES_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_error_sites_oracle.c"
+ERROR_SITES_RUST_TEST = "native_error_sites"
+ERROR_SITES_TRACE_BEGIN = "CRABC_MI_M7_ERROR_SITES_TRACE_BEGIN"
+ERROR_SITES_TRACE_END = "CRABC_MI_M7_ERROR_SITES_TRACE_END"
+# Both halves run with the error gate open so every reached site is shown.
+ERROR_SITES_ENVIRONMENT = {"mimalloc_show_errors": "1"}
+# Every request both halves must report, on the main thread and a worker.
+ERROR_SITE_CASES = tuple(
+    prefix + case
+    for prefix in ("", "worker_")
+    for case in (
+        "malloc_too_large", "aligned_bad_alignment", "aligned_too_large",
+        "aligned_large_alignment_offset", "aligned_overallocation_too_large", "malloc_ordinary",
+    )
+)
 OPTION_EFFECTS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_option_effects_oracle.c"
 OPTION_EFFECTS_RUST_TEST = "diagnostic_output::tests::source_option_effects_trace_for_pinned_c_comparison"
 OPTION_EFFECTS_TRACE_BEGIN = "CRABC_MI_M7_OPTION_EFFECTS_TRACE_BEGIN"
@@ -445,6 +460,15 @@ def require_complete_option_effects_trace(trace: Mapping[str, str], description:
         raise harness.HarnessError(f"{description} lacks decision families {missing}")
 
 
+def require_complete_error_sites_trace(trace: Mapping[str, str], description: str) -> None:
+    """Reject a trace that omits a request or one of its three records."""
+
+    for case in ERROR_SITE_CASES:
+        for suffix in ("messages", "null", "errno"):
+            if f"error_site.{case}.{suffix}" not in trace:
+                raise harness.HarnessError(f"{description} lacks error_site.{case}.{suffix}")
+
+
 def compare_options_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, str]) -> None:
     missing = sorted(set(c_trace) - set(rust_trace))
     extra = sorted(set(rust_trace) - set(c_trace))
@@ -459,7 +483,9 @@ def compare_options_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, 
         )
 
 
-def c_oracle_trace(oracle: Path, subject: str, source: Path, temporary: Path) -> dict[str, Any]:
+def c_oracle_trace(
+    oracle: Path, subject: str, source: Path, temporary: Path, environment: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     """Build and run one pinned-C probe against the release configuration."""
 
     binary = temporary / f"m7-{subject}-c"
@@ -478,21 +504,32 @@ def c_oracle_trace(oracle: Path, subject: str, source: Path, temporary: Path) ->
     harness.parse_elf_identity(str(header["stdout"]), "x86_64")
     # An empty environment makes the load-time `_mi_options_init` observe only
     # defaults, which each probe snapshots as its per-scenario reset image.
-    execution = harness.command_record((str(binary),), cwd=source, env={})
+    execution = harness.command_record((str(binary),), cwd=source, env=dict(environment or {}))
     harness.require_success(execution, f"M7 {subject} C execution")
     return execution
 
 
-def rust_trace(test: str, subject: str) -> dict[str, Any]:
-    """Run one exact Rust trace test in the launcher's Cargo environment."""
+def rust_trace(
+    test: str, subject: str, *, integration_test: bool = False, environment: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Run one exact Rust trace test in the launcher's Cargo environment.
 
+    A library trace names one unit test; an integration trace names a
+    `native-runtime-test-audit` test target holding exactly one test.
+    """
+
+    selection = (
+        ["--features", "native-runtime-test-audit", "--test", test, "--"]
+        if integration_test else ["--lib", test, "--", "--exact"]
+    )
     command = [
         harness.require_tool("cargo"), "test", "--locked", "--target", RUST_TARGET,
-        "-p", "crabc-mimalloc", "--lib", "--no-default-features", test,
-        "--", "--exact", "--nocapture", "--test-threads=1",
+        "-p", "crabc-mimalloc", "--no-default-features", *selection, "--nocapture", "--test-threads=1",
     ]
+    ambient = {key: value for key, value in os.environ.items() if not key.lower().startswith("mimalloc_")}
     execution = harness.command_record(
-        command, cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+        command, cwd=harness.ROOT, env={**ambient, **(environment or {})},
+        timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
     )
     harness.require_success(execution, f"M7 {subject} Rust trace")
     if harness.parse_rust_test_count(str(execution["stdout"]) + "\n" + str(execution["stderr"])) != 1:
@@ -502,7 +539,8 @@ def rust_trace(test: str, subject: str) -> dict[str, Any]:
 
 def run_trace_differential(
     offline: bool, *, subject: str, oracle: Path, test: str, begin: str, end: str,
-    require_complete: Any, report_name: str,
+    require_complete: Any, report_name: str, integration_test: bool = False,
+    environment: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     harness.require_native_x86_64()
     pin = harness.load_pin()
@@ -510,8 +548,8 @@ def run_trace_differential(
     with harness.temporary_directory(f"crabc-mimalloc-x86_64-m7-{subject}-") as name:
         temporary = Path(name)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
-        c_execution = c_oracle_trace(oracle, subject, source, temporary)
-    rust_execution = rust_trace(test, subject)
+        c_execution = c_oracle_trace(oracle, subject, source, temporary, environment)
+    rust_execution = rust_trace(test, subject, integration_test=integration_test, environment=environment)
     c_trace = parse_options_trace(str(c_execution["stdout"]), f"pinned C {subject} trace", begin, end)
     rust_trace_image = parse_options_trace(str(rust_execution["stdout"]), f"Rust {subject} trace", begin, end)
     require_complete(c_trace, f"pinned C {subject} trace")
@@ -534,6 +572,15 @@ def run_options_differential(offline: bool) -> dict[str, Any]:
         offline, subject="options", oracle=OPTIONS_ORACLE, test=OPTIONS_RUST_TEST,
         begin=OPTIONS_TRACE_BEGIN, end=OPTIONS_TRACE_END,
         require_complete=require_complete_options_trace, report_name="options-environment.json",
+    )
+
+
+def run_error_sites_differential(offline: bool) -> dict[str, Any]:
+    return run_trace_differential(
+        offline, subject="error-sites", oracle=ERROR_SITES_ORACLE, test=ERROR_SITES_RUST_TEST,
+        begin=ERROR_SITES_TRACE_BEGIN, end=ERROR_SITES_TRACE_END,
+        require_complete=require_complete_error_sites_trace, report_name="error-sites.json",
+        integration_test=True, environment=ERROR_SITES_ENVIRONMENT,
     )
 
 
@@ -566,11 +613,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust options/environment differential")
     mode.add_argument("--option-effects-differential", action="store_true",
         help="run the pinned-C/Rust option-effects differential")
+    mode.add_argument("--error-sites-differential", action="store_true",
+        help="run the pinned-C/Rust `_mi_error_message` site differential")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     arguments = parser.parse_args(argv)
     if arguments.options_differential:
         report = run_options_differential(arguments.offline)
         print(f"M7 options/environment differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.error_sites_differential:
+        report = run_error_sites_differential(arguments.offline)
+        print(f"M7 error-site differential passed: {report['compared_key_count']} keys")
         return 0
     if arguments.option_effects_differential:
         report = run_option_effects_differential(arguments.offline)

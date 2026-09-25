@@ -266,3 +266,10 @@ crabc-core = { path = "../crabc-core", features = ["allocator-x86-evidence"] }
 # so only `--features loom` resolves its std-only scheduler graph.
 loom = { version = "=0.7.2", default-features = false, optional = true }
 zeroize = { version = "=1.9.0", default-features = false }
+
+[[test]]
+name = "native_error_sites"
+path = "tests/native_error_sites.rs"
+# Rust half of the M7 `_mi_error_message` site differential. The last-report
+# audit is absent from the production allocator and libc friend surface.
+required-features = ["native-runtime-test-audit"]

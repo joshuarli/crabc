@@ -952,6 +952,115 @@ pub(crate) enum SourceErrorDisposition {
     DefaultErrno(Errno),
 }
 
+/// One release-live allocation `_mi_error_message` site, carried as a value
+/// until its caller has released every page-engine projection.
+///
+/// C reports inside the allocation; a registered output or error callback
+/// may then reenter the allocator. The Rust engine instead returns the site
+/// with its arguments and the runtime reports it at the same point in the
+/// source order once no engine borrow is live.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceErrorReport {
+    /// `mi_find_page`, `src/page.c:951-954` (EOVERFLOW).
+    AllocationTooLarge { size: usize },
+    /// `_mi_malloc_generic` after its forced-collection retry,
+    /// `src/page.c:1061-1064` (ENOMEM).
+    OutOfMemory { size: usize },
+    /// `mi_theap_malloc_zero_aligned_at_generic`, `src/alloc-aligned.c:163-166`
+    /// (EINVAL).
+    AlignedTooLarge { size: usize, alignment: usize },
+    /// `mi_theap_malloc_zero_aligned_at_overalloc`, `src/alloc-aligned.c:81-84`
+    /// (EOVERFLOW).
+    AlignedLargeAlignmentOffset { size: usize, alignment: usize, offset: usize },
+    /// `mi_error_bad_alignment`, `src/alloc-aligned.c:191-193` (EINVAL).
+    BadAlignment { size: usize, alignment: usize, offset: usize },
+}
+
+impl SourceErrorReport {
+    /// The `err` argument of the source call.
+    pub(crate) const fn error(self) -> Errno {
+        match self {
+            Self::AllocationTooLarge { .. } | Self::AlignedLargeAlignmentOffset { .. } => Errno::OVERFLOW,
+            Self::OutOfMemory { .. } => Errno::NOMEM,
+            Self::AlignedTooLarge { .. } | Self::BadAlignment { .. } => Errno::INVAL,
+        }
+    }
+
+    /// The source-formatted body; every `%zu` is an unsigned decimal.
+    pub(crate) fn message(self) -> SourceFormattedMessage {
+        let mut message = SourceFormattedMessage::empty();
+        let decimal = |message: &mut SourceFormattedMessage, value: usize| {
+            append_mbind_unsigned_decimal(&mut message.bytes, &mut message.length, value as u64);
+        };
+        match self {
+            Self::AllocationTooLarge { size } => {
+                message.append(b"allocation request is too large (");
+                decimal(&mut message, size);
+                message.append(b" bytes)\n");
+            }
+            Self::OutOfMemory { size } => {
+                message.append(b"unable to allocate memory (");
+                decimal(&mut message, size);
+                message.append(b" bytes)\n");
+            }
+            Self::AlignedTooLarge { size, alignment } => {
+                message.append(b"aligned allocation request is too large (size ");
+                decimal(&mut message, size);
+                message.append(b", alignment ");
+                decimal(&mut message, alignment);
+                message.append(b")\n");
+            }
+            Self::AlignedLargeAlignmentOffset { size, alignment, offset } => {
+                message.append(
+                    b"aligned allocation with a large alignment cannot be used with an alignment offset (size ",
+                );
+                decimal(&mut message, size);
+                message.append(b", alignment ");
+                decimal(&mut message, alignment);
+                message.append(b", offset ");
+                decimal(&mut message, offset);
+                message.append(b")\n");
+            }
+            Self::BadAlignment { size, alignment, offset } => {
+                message.append(b"aligned allocation requires the alignment to be a power-of-two (size ");
+                decimal(&mut message, size);
+                message.append(b", alignment ");
+                decimal(&mut message, alignment);
+                message.append(b", offset ");
+                decimal(&mut message, offset);
+                message.append(b")\n");
+            }
+        }
+        message
+    }
+
+    /// `mi_error_default`'s errno for this code in the selected release
+    /// profile: `EINVAL` stays `EINVAL`, every other code is `ENOMEM`.
+    pub(crate) const fn default_disposition(self) -> SourceErrorDisposition {
+        SourceErrorDisposition::DefaultErrno(match self.error() {
+            Errno::INVAL => Errno::INVAL,
+            _ => Errno::NOMEM,
+        })
+    }
+
+    /// The aligned entry's checks that fail before any allocation, in the
+    /// source order of `mi_theap_malloc_zero_aligned_at`: the alignment, then
+    /// (after a small fast path that cannot serve these requests) the size,
+    /// then a nonzero offset with an OS-page-scale alignment.
+    pub(crate) fn aligned_precheck(size: usize, alignment: usize, offset: usize) -> Option<Self> {
+        if !crate::size_class::alignment_is_valid(alignment) {
+            return Some(Self::BadAlignment { size, alignment, offset });
+        }
+        if size > MAX_ALLOC_SIZE {
+            return Some(Self::AlignedTooLarge { size, alignment });
+        }
+        if alignment > crate::config::PAGE_MAX_OVERALLOC_ALIGN && offset != 0 {
+            return Some(Self::AlignedLargeAlignmentOffset { size, alignment, offset });
+        }
+        None
+    }
+}
+
 /// Private source-shaped `_mi_prim_out_stderr` primitive.
 ///
 /// The supplied function must retain the selected Linux/musl

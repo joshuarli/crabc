@@ -187,6 +187,9 @@ pub mod __crabc_runtime {
         NativeRuntimeTestUnmapFailure, native_runtime_test_fail_next_unmap,
     };
 
+    #[cfg(feature = "native-runtime-test-audit")]
+    pub use crate::process_init::{NativeSourceErrorAudit, native_runtime_take_source_error_test_audit};
+
     pub use crate::runtime_lifecycle::{
         SelectedProcessDoneResult, ThreadAttachResult, ThreadFinalProcessExitOwnerResult,
         ThreadFinishResult,

@@ -397,6 +397,9 @@ pub(crate) enum GenericAllocationCollection {
 /// select and deliver the corresponding deferred-free callback.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GenericAllocationContinuation {
+    /// The size `_mi_malloc_generic` received, which its out-of-memory
+    /// report names (`src/page.c:1061-1064`).
+    request: usize,
     bin: usize,
     block_size: usize,
     kind: PageKind,
@@ -438,11 +441,37 @@ pub(crate) enum DeferredFreeAllocationContinuation {
     /// and collection are the whole operation, with no page lookup after.
     Collection,
     /// A generic request `mi_find_page` refuses: a size above
-    /// `MI_MAX_ALLOC_SIZE`, or a huge alignment of at least
-    /// `MI_PAGE_META_ALIGNMENT` that the arena refuses. The source still
-    /// counts the generic call, runs administration, and retries once after
-    /// a forced collection before reporting out-of-memory.
-    Refused,
+    /// `MI_MAX_ALLOC_SIZE` (`size_refused`, which `mi_find_page` reports on
+    /// each attempt), or a huge alignment of at least `MI_PAGE_META_ALIGNMENT`
+    /// that the arena refuses. The source still counts the generic call, runs
+    /// administration, and retries once after a forced collection before
+    /// reporting out-of-memory for `request`.
+    Refused { request: usize, size_refused: bool },
+}
+
+impl DeferredFreeAllocationContinuation {
+    /// The continuation of a request `mi_find_page` refuses for its size.
+    pub(crate) const fn refused_for_size(request: usize) -> Self {
+        Self::Refused { request, size_refused: true }
+    }
+
+    /// The size `_mi_malloc_generic` received, or `None` for a collection.
+    pub(crate) const fn source_request(self) -> Option<usize> {
+        match self {
+            Self::Generic(generic) | Self::Aligned { generic, .. } => Some(generic.request),
+            Self::AlignedHuge { request, .. } | Self::Refused { request, .. } => Some(request),
+            Self::Collection => None,
+        }
+    }
+
+    /// The request `mi_find_page` reports as too large on every attempt
+    /// (`src/page.c:951-954`).
+    pub(crate) const fn source_find_page_refusal(self) -> Option<usize> {
+        match self {
+            Self::Refused { request, size_refused: true } => Some(request),
+            _ => None,
+        }
+    }
 }
 
 /// One completed native generic allocation attempt or its source collection
@@ -37233,7 +37262,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         let request = request.max(WORD_SIZE);
         if !size_class::request_size_is_valid(request) {
-            return self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Refused);
+            return self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Refused {
+                request,
+                size_refused: true,
+            });
         }
         if request <= SMALL_SIZE_MAX {
             return self.begin_deferred_free_small_allocation(request, zero);
@@ -37313,7 +37345,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             None if size > MAX_ALLOC_SIZE || (alignment > PAGE_MAX_OVERALLOC_ALIGN && offset != 0) => {
                 DeferredFreeAllocationPhase::Complete(None)
             }
-            None => self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Refused),
+            None => {
+                // The over-allocated base exceeds `MI_MAX_ALLOC_SIZE`, or an
+                // OS-aligned singleton's huge alignment is refused later.
+                let (request, size_refused) = if alignment > PAGE_MAX_OVERALLOC_ALIGN {
+                    (if size <= SMALL_SIZE_MAX { SMALL_SIZE_MAX + 1 } else { size }, false)
+                } else {
+                    (size.max(MAX_ALIGN_SIZE).saturating_add(alignment - 1), true)
+                };
+                self.begin_deferred_free_generic_allocation(DeferredFreeAllocationContinuation::Refused {
+                    request,
+                    size_refused,
+                })
+            }
         }
     }
 
@@ -37448,6 +37492,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return DeferredFreeAllocationPhase::Complete(None);
         };
         let generic = GenericAllocationContinuation {
+            request,
             bin,
             block_size,
             kind: PageKind::Small,
@@ -37471,6 +37516,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 return None;
             }
             return Some(GenericAllocationContinuation {
+                request,
                 bin,
                 block_size,
                 kind: PageKind::Singleton,
@@ -37487,6 +37533,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
         Some(GenericAllocationContinuation {
+            request,
             bin,
             block_size,
             kind,
@@ -37564,7 +37611,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // Phase C ends a collection before any lookup; no block exists.
             DeferredFreeAllocationContinuation::Collection => Ok(None),
             // `mi_find_page` refuses this request on every attempt.
-            DeferredFreeAllocationContinuation::Refused => Ok(None),
+            DeferredFreeAllocationContinuation::Refused { .. } => Ok(None),
         }
     }
 
