@@ -428,50 +428,60 @@ pub(super) unsafe fn orphan_current_stdio_locks() {
     }
 }
 
-/// # Safety
-/// `stream` must be a live FILE owned by this runtime.
-#[no_mangle]
-pub unsafe extern "C" fn ftrylockfile(stream: *mut StandardStream) -> c_int {
-    unsafe {
-        let holder = current_holder();
-        if (*stream).holder.load(Ordering::Relaxed) == holder {
-            if (*stream).lock_count == isize::MAX as usize { return -1; }
-            (*stream).lock_count += 1;
-            return 0;
+// Musl's `src/stdio/ftrylockfile.c` object.
+static_archive_member! { ftrylockfile_source {
+    /// # Safety
+    /// `stream` must be a live FILE owned by this runtime.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn ftrylockfile(stream: *mut StandardStream) -> c_int {
+        unsafe {
+            let holder = current_holder();
+            if (*stream).holder.load(Ordering::Relaxed) == holder {
+                if (*stream).lock_count == isize::MAX as usize { return -1; }
+                (*stream).lock_count += 1;
+                return 0;
+            }
+            if (*stream).lock.compare_exchange(FREE, LOCKED, Ordering::Acquire, Ordering::Relaxed).is_err() {
+                return -1;
+            }
+            (*stream).holder.store(holder, Ordering::Relaxed);
+            register_locked_file(stream);
+            initialize_buffer(stream);
+            0
         }
-        if (*stream).lock.compare_exchange(FREE, LOCKED, Ordering::Acquire, Ordering::Relaxed).is_err() {
-            return -1;
+    }
+}}
+
+// Musl's `src/stdio/flockfile.c` object.
+static_archive_member! { flockfile_source {
+    /// # Safety
+    /// `stream` must be live and must not be concurrently closed.
+    #[no_mangle]
+    pub unsafe extern "C" fn flockfile(stream: *mut StandardStream) {
+        unsafe {
+            if ftrylockfile(stream) == 0 { return; }
+            lock_internal(stream);
+            register_locked_file(stream);
         }
-        (*stream).holder.store(holder, Ordering::Relaxed);
-        register_locked_file(stream);
-        initialize_buffer(stream);
-        0
     }
-}
+}}
 
-/// # Safety
-/// `stream` must be live and must not be concurrently closed.
-#[no_mangle]
-pub unsafe extern "C" fn flockfile(stream: *mut StandardStream) {
-    unsafe {
-        if ftrylockfile(stream) == 0 { return; }
-        lock_internal(stream);
-        register_locked_file(stream);
+// Musl's `src/stdio/funlockfile.c` object.
+static_archive_member! { funlockfile_source {
+    /// # Safety
+    /// The calling thread must own a matching FILE lock acquisition.
+    #[no_mangle]
+    pub unsafe extern "C" fn funlockfile(stream: *mut StandardStream) {
+        unsafe {
+            if (*stream).lock_count == 1 {
+                unlist_locked_file(stream);
+                (*stream).lock_count = 0;
+                unlock_internal(stream);
+            } else { (*stream).lock_count -= 1; }
+        }
     }
-}
-
-/// # Safety
-/// The calling thread must own a matching FILE lock acquisition.
-#[no_mangle]
-pub unsafe extern "C" fn funlockfile(stream: *mut StandardStream) {
-    unsafe {
-        if (*stream).lock_count == 1 {
-            unlist_locked_file(stream);
-            (*stream).lock_count = 0;
-            unlock_internal(stream);
-        } else { (*stream).lock_count -= 1; }
-    }
-}
+}}
 
 pub(crate) fn is_permanent_stream(stream: *const StandardStream) -> bool {
     stream == ptr::addr_of!(STDIN_STREAM) || stream == ptr::addr_of!(STDOUT_STREAM)
@@ -487,90 +497,93 @@ const O_CREAT: c_int = 0o100;
 const O_EXCL: c_int = 0o200;
 const O_LARGEFILE: c_int = 0o100000;
 
-/// Retains stdio_standard.rs's kernel-entropy name generation and immediate
-/// unlink policy (musl tmpfile.c/__randname.c mapping); each call owns a FILE.
-/// # Safety
-/// Returned FILE must be released with fclose when no longer used.
-#[no_mangle]
-pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
+// Musl's `src/stdio/tmpfile.c` object.
+static_archive_member! { tmpfile_source {
+    /// Retains stdio_standard.rs's kernel-entropy name generation and immediate
+    /// unlink policy (musl tmpfile.c/__randname.c mapping); each call owns a FILE.
+    /// # Safety
+    /// Returned FILE must be released with fclose when no longer used.
+    #[no_mangle]
+    pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
 
-    let mut attempt = 0;
-    let mut last_open_error = EIO;
-    while attempt < TMPFILE_MAX_ATTEMPTS {
-        let mut entropy = [0u8; TMPFILE_RANDOM_BYTES];
-        let mut initialized = 0;
-        while initialized < entropy.len() {
-            let result = unsafe {
-                raw_syscall::syscall3(
-                    raw_syscall::SYS_GETRANDOM,
-                    entropy.as_mut_ptr().add(initialized) as usize as i64,
-                    (entropy.len() - initialized) as i64,
-                    0,
-                )
-            };
-            if result < 0 {
-                let error = (-result) as c_int;
-                if error == EINTR {
+        let mut attempt = 0;
+        let mut last_open_error = EIO;
+        while attempt < TMPFILE_MAX_ATTEMPTS {
+            let mut entropy = [0u8; TMPFILE_RANDOM_BYTES];
+            let mut initialized = 0;
+            while initialized < entropy.len() {
+                let result = unsafe {
+                    raw_syscall::syscall3(
+                        raw_syscall::SYS_GETRANDOM,
+                        entropy.as_mut_ptr().add(initialized) as usize as i64,
+                        (entropy.len() - initialized) as i64,
+                        0,
+                    )
+                };
+                if result < 0 {
+                    let error = (-result) as c_int;
+                    if error == EINTR {
+                        continue;
+                    }
+                    unsafe { errno::set_errno(error) };
+                    return ptr::null_mut();
+                }
+                if result == 0 {
                     continue;
                 }
-                unsafe { errno::set_errno(error) };
-                return ptr::null_mut();
+                initialized += result as usize;
             }
-            if result == 0 {
+
+            let mut path = *b"/tmp/tmpfile_XXXXXXXXXXXXXXXXXXXXXXXX\0";
+            let hexadecimal = b"0123456789abcdef";
+            let mut index = 0;
+            while index < entropy.len() {
+                path[TMPFILE_SUFFIX_OFFSET + index * 2] = hexadecimal[(entropy[index] >> 4) as usize];
+                path[TMPFILE_SUFFIX_OFFSET + index * 2 + 1] = hexadecimal[(entropy[index] & 0x0f) as usize];
+                index += 1;
+            }
+
+            let descriptor = unsafe {
+                raw_syscall::syscall3(
+                    raw_syscall::SYS_OPEN,
+                    path.as_ptr() as usize as i64,
+                    i64::from(O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE),
+                    0o600,
+                )
+            };
+            if descriptor < 0 {
+                last_open_error = (-descriptor) as c_int;
+                attempt += 1;
                 continue;
             }
-            initialized += result as usize;
-        }
+            if descriptor > i64::from(c_int::MAX) {
+                let _ = unsafe {
+                    raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64)
+                };
+                let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
+                unsafe { errno::set_errno(EOVERFLOW) };
+                return ptr::null_mut();
+            }
 
-        let mut path = *b"/tmp/tmpfile_XXXXXXXXXXXXXXXXXXXXXXXX\0";
-        let hexadecimal = b"0123456789abcdef";
-        let mut index = 0;
-        while index < entropy.len() {
-            path[TMPFILE_SUFFIX_OFFSET + index * 2] = hexadecimal[(entropy[index] >> 4) as usize];
-            path[TMPFILE_SUFFIX_OFFSET + index * 2 + 1] = hexadecimal[(entropy[index] & 0x0f) as usize];
-            index += 1;
-        }
-
-        let descriptor = unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_OPEN,
-                path.as_ptr() as usize as i64,
-                i64::from(O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE),
-                0o600,
-            )
-        };
-        if descriptor < 0 {
-            last_open_error = (-descriptor) as c_int;
-            attempt += 1;
-            continue;
-        }
-        if descriptor > i64::from(c_int::MAX) {
-            let _ = unsafe {
+            let unlink_status = unsafe {
                 raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64)
             };
-            let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
-            unsafe { errno::set_errno(EOVERFLOW) };
-            return ptr::null_mut();
+            if unlink_status < 0 {
+                let unlink_error = (-unlink_status) as c_int;
+                let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
+                unsafe { errno::set_errno(unlink_error) };
+                return ptr::null_mut();
+            }
+
+            let stream = unsafe { __fdopen(descriptor as c_int, c"w+".as_ptr()) };
+            if stream.is_null() { unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor); } }
+            return stream;
         }
 
-        let unlink_status = unsafe {
-            raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64)
-        };
-        if unlink_status < 0 {
-            let unlink_error = (-unlink_status) as c_int;
-            let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
-            unsafe { errno::set_errno(unlink_error) };
-            return ptr::null_mut();
-        }
-
-        let stream = unsafe { __fdopen(descriptor as c_int, c"w+".as_ptr()) };
-        if stream.is_null() { unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor); } }
-        return stream;
+        unsafe { errno::set_errno(last_open_error) };
+        ptr::null_mut()
     }
-
-    unsafe { errno::set_errno(last_open_error) };
-    ptr::null_mut()
-}
+}}
 
 unsafe fn is_selected_stream(stream: *const StandardStream) -> bool { !stream.is_null() }
 unsafe fn reject_stream() { unsafe { errno::set_errno(EINVAL); } }
@@ -597,26 +610,31 @@ unsafe fn open_mode(mode: *const c_char) -> Option<(c_int, u32)> {
     }
 }
 
-/// # Safety
-/// `mode` is NUL terminated; `fd` is an open descriptor transferred on success.
-/// Its access mode must permit the requested stream operations. As an
-/// intentional diagnostic strengthening over musl __fdopen, invalid or
-/// incompatible descriptors are rejected before ownership transfer.
-#[no_mangle]
-pub(super) unsafe extern "C" fn __fdopen(fd: c_int, mode: *const c_char) -> *mut StandardStream {
-    unsafe {
-        let Some((flags, stream_flags)) = open_mode(mode) else {
-            errno::set_errno(EINVAL); return ptr::null_mut();
-        };
-        let current = c_status(raw_syscall::syscall3(72, fd as i64, 3, 0));
-        if current < 0 { return ptr::null_mut(); }
-        if (current & 3 == 0 && stream_flags & F_NOWR == 0)
-            || (current & 3 == 1 && stream_flags & F_NORD == 0) {
-            errno::set_errno(EINVAL); return ptr::null_mut();
+// Musl's `src/stdio/__fdopen.c` object.
+static_archive_member! { fdopen_source {
+    /// # Safety
+    /// `mode` is NUL terminated; `fd` is an open descriptor transferred on success.
+    /// Its access mode must permit the requested stream operations. As an
+    /// intentional diagnostic strengthening over musl __fdopen, invalid or
+    /// incompatible descriptors are rejected before ownership transfer.
+    #[no_mangle]
+    pub(crate) unsafe extern "C" fn __fdopen(fd: c_int, mode: *const c_char) -> *mut StandardStream {
+        unsafe {
+            let Some((flags, stream_flags)) = open_mode(mode) else {
+                errno::set_errno(EINVAL); return ptr::null_mut();
+            };
+            let current = c_status(raw_syscall::syscall3(72, fd as i64, 3, 0));
+            if current < 0 { return ptr::null_mut(); }
+            if (current & 3 == 0 && stream_flags & F_NOWR == 0)
+                || (current & 3 == 1 && stream_flags & F_NORD == 0) {
+                errno::set_errno(EINVAL); return ptr::null_mut();
+            }
+            descriptor_stream(fd, flags, stream_flags, current)
         }
-        descriptor_stream(fd, flags, stream_flags, current)
     }
-}
+
+    core::arch::global_asm!(".hidden __fdopen", ".weak fdopen", ".set fdopen, __fdopen");
+}}
 
 /// Allocate and publish a descriptor stream for `fd`, whose open status
 /// flags (`F_GETFL`) are `current`, applying mode `flags`' close-on-exec and
@@ -638,16 +656,6 @@ unsafe fn descriptor_stream(fd: c_int, flags: c_int, stream_flags: u32, current:
     }
 }
 
-// Pinned musl `stdio/__fdopen.c` keeps the implementation hidden and emits
-// `weak_alias(__fdopen, fdopen)`. Keeping the directives beside the strong
-// body preserves one address and lets an application supply `fdopen` without
-// changing `fopen`/`tmpfile` ownership.
-core::arch::global_asm!(
-    ".hidden __fdopen",
-    ".weak fdopen",
-    ".set fdopen, __fdopen",
-);
-
 // The caller exclusively owns initialized, unpublished dynamic storage.
 // No allocator or application callback is entered while holding LIST_LOCK.
 unsafe fn publish_stream(stream: *mut StandardStream) -> *mut StandardStream {
@@ -661,22 +669,26 @@ unsafe fn publish_stream(stream: *mut StandardStream) -> *mut StandardStream {
     }
 }
 
-/// # Safety
-/// `path` and `mode` are readable NUL-terminated strings.
-#[no_mangle]
-pub unsafe extern "C" fn fopen(path: *const c_char, mode: *const c_char) -> *mut StandardStream {
-    unsafe {
-        let Some((flags, stream_flags)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
-        let fd = c_status(raw_syscall::syscall4(257, -100, path as i64, flags as i64, 0o666));
-        if fd < 0 { return ptr::null_mut(); }
-        // The descriptor was just opened with exactly `flags`, so its access
-        // mode matches the stream mode and O_APPEND is already set for "a":
-        // fdopen's F_GETFL query and access check would add nothing.
-        let stream = descriptor_stream(fd, flags, stream_flags, flags);
-        if stream.is_null() { raw_syscall::syscall1(3, fd as i64); }
-        stream
+// Musl's `src/stdio/fopen.c` object.
+static_archive_member! { fopen_source {
+    /// # Safety
+    /// `path` and `mode` are readable NUL-terminated strings.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn fopen(path: *const c_char, mode: *const c_char) -> *mut StandardStream {
+        unsafe {
+            let Some((flags, stream_flags)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
+            let fd = c_status(raw_syscall::syscall4(257, -100, path as i64, flags as i64, 0o666));
+            if fd < 0 { return ptr::null_mut(); }
+            // The descriptor was just opened with exactly `flags`, so its access
+            // mode matches the stream mode and O_APPEND is already set for "a":
+            // fdopen's F_GETFL query and access check would add nothing.
+            let stream = descriptor_stream(fd, flags, stream_flags, flags);
+            if stream.is_null() { raw_syscall::syscall1(3, fd as i64); }
+            stream
+        }
     }
-}
+}}
 
 // musl freopen keeps the original buffer and FILE identity, replacing only
 // descriptor behavior and access flags. Opening an allocation-free temporary
@@ -717,184 +729,216 @@ unsafe fn reopen_descriptor(path: *const c_char, mode: *const c_char, stream: *m
     }
 }
 
-/// Reopen an existing descriptor stream, retaining its FILE address and buffer.
-/// Failure retires the old stream as fclose would, including its descriptor.
-/// # Safety
-/// `stream` must be live and not concurrently destroyed. `mode` and a non-null
-/// `path` must be readable NUL-terminated strings. All stream and buffer storage
-/// remains valid through the call; after failure the FILE pointer is invalid.
-#[no_mangle]
-pub unsafe extern "C" fn freopen(path: *const c_char, mode: *const c_char, stream: *mut StandardStream) -> *mut StandardStream {
-    unsafe {
-        let guard = StreamGuard::acquire(stream);
-        // musl attempts the old flush even when the replacement open will
-        // fail, and does not let a flush failure prevent a successful reopen.
-        fflush(stream);
-        let reopened = reopen_descriptor(path, mode, stream);
-        if reopened { (*stream).orientation = 0; (*stream).wide_locale = None; }
-        drop(guard);
-        if reopened { return stream; }
-        // Registry removal cannot happen under the held FILE lock: a global
-        // flush may already hold the list lock while waiting for this stream.
-        fclose(stream);
-        ptr::null_mut()
-    }
-}
-
-/// Read through a delimiter into caller-owned reallocatable storage.
-/// The delimiter is included in the returned length, followed by a NUL byte.
-/// # Safety
-/// `stream` must be live. Non-null `line` and `capacity` must point to writable
-/// pointer and size objects; either null argument is diagnosed with EINVAL.
-/// A non-null `*line` must be a malloc-family allocation of
-/// at least `*capacity` bytes, exclusively available for realloc and writes.
-/// The output allocation and FILE buffering storage must not overlap. The
-/// caller retains ownership of `*line`, including after failure, and frees it.
-#[no_mangle]
-pub unsafe extern "C" fn getdelim(line: *mut *mut c_char, capacity: *mut usize, delimiter: c_int, stream: *mut StandardStream) -> isize {
-    unsafe {
-        let _guard = StreamGuard::acquire(stream);
-        if line.is_null() || capacity.is_null() {
-            mark_error(stream);
-            errno::set_errno(EINVAL);
-            return -1;
+// Musl's `src/stdio/freopen.c` object.
+static_archive_member! { freopen_source {
+    /// Reopen an existing descriptor stream, retaining its FILE address and buffer.
+    /// Failure retires the old stream as fclose would, including its descriptor.
+    /// # Safety
+    /// `stream` must be live and not concurrently destroyed. `mode` and a non-null
+    /// `path` must be readable NUL-terminated strings. All stream and buffer storage
+    /// remains valid through the call; after failure the FILE pointer is invalid.
+    #[no_mangle]
+    pub unsafe extern "C" fn freopen(path: *const c_char, mode: *const c_char, stream: *mut StandardStream) -> *mut StandardStream {
+        unsafe {
+            let guard = StreamGuard::acquire(stream);
+            // musl attempts the old flush even when the replacement open will
+            // fail, and does not let a flush failure prevent a successful reopen.
+            fflush(stream);
+            let reopened = reopen_descriptor(path, mode, stream);
+            if reopened { (*stream).orientation = 0; (*stream).wide_locale = None; }
+            drop(guard);
+            if reopened { return stream; }
+            // Registry removal cannot happen under the held FILE lock: a global
+            // flush may already hold the list lock while waiting for this stream.
+            fclose(stream);
+            ptr::null_mut()
         }
-        if (*line).is_null() { *capacity = 0; }
-        let mut used = 0usize;
-        loop {
-            let available = (*stream).read_end.offset_from((*stream).read_position) as usize;
-            let mut chunk = available;
-            let mut found = false;
-            for index in 0..available {
-                if *(*stream).read_position.add(index) == delimiter as u8 {
-                    chunk = index + 1;
-                    found = true;
-                    break;
-                }
-            }
-            // Refuse a length that cannot be returned as ssize_t rather than
-            // wrap the allocation arithmetic. No unread byte is consumed.
-            let Some(end) = used.checked_add(chunk).filter(|end| *end <= isize::MAX as usize) else {
+    }
+}}
+
+// Musl's `src/stdio/getdelim.c` object.
+static_archive_member! { getdelim_source {
+    /// Read through a delimiter into caller-owned reallocatable storage.
+    /// The delimiter is included in the returned length, followed by a NUL byte.
+    /// # Safety
+    /// `stream` must be live. Non-null `line` and `capacity` must point to writable
+    /// pointer and size objects; either null argument is diagnosed with EINVAL.
+    /// A non-null `*line` must be a malloc-family allocation of
+    /// at least `*capacity` bytes, exclusively available for realloc and writes.
+    /// The output allocation and FILE buffering storage must not overlap. The
+    /// caller retains ownership of `*line`, including after failure, and frees it.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn getdelim(line: *mut *mut c_char, capacity: *mut usize, delimiter: c_int, stream: *mut StandardStream) -> isize {
+        unsafe {
+            let _guard = StreamGuard::acquire(stream);
+            if line.is_null() || capacity.is_null() {
                 mark_error(stream);
-                errno::set_errno(EOVERFLOW);
+                errno::set_errno(EINVAL);
                 return -1;
-            };
-            if end >= *capacity {
-                let minimum = end + 2;
-                let mut wanted = minimum;
-                if !found && wanted < usize::MAX / 4 { wanted += wanted / 2; }
-                let mut grown = stdio_cabi_realloc((*line).cast(), wanted).cast::<c_char>();
-                if grown.is_null() {
-                    wanted = minimum;
-                    grown = stdio_cabi_realloc((*line).cast(), wanted).cast::<c_char>();
-                    if grown.is_null() {
-                        // Pinned getdelim consumes only the prefix which fits
-                        // the original allocation, retaining its ownership.
-                        let fitting = *capacity - used;
-                        if fitting != 0 {
-                            ptr::copy_nonoverlapping((*stream).read_position,
-                                (*line).add(used).cast::<u8>(), fitting);
-                            (*stream).read_position = (*stream).read_position.add(fitting);
-                        }
-                        mark_error(stream);
-                        errno::set_errno(12);
-                        return -1;
+            }
+            if (*line).is_null() { *capacity = 0; }
+            let mut used = 0usize;
+            loop {
+                let available = (*stream).read_end.offset_from((*stream).read_position) as usize;
+                let mut chunk = available;
+                let mut found = false;
+                for index in 0..available {
+                    if *(*stream).read_position.add(index) == delimiter as u8 {
+                        chunk = index + 1;
+                        found = true;
+                        break;
                     }
                 }
-                *line = grown;
-                *capacity = wanted;
+                // Refuse a length that cannot be returned as ssize_t rather than
+                // wrap the allocation arithmetic. No unread byte is consumed.
+                let Some(end) = used.checked_add(chunk).filter(|end| *end <= isize::MAX as usize) else {
+                    mark_error(stream);
+                    errno::set_errno(EOVERFLOW);
+                    return -1;
+                };
+                if end >= *capacity {
+                    let minimum = end + 2;
+                    let mut wanted = minimum;
+                    if !found && wanted < usize::MAX / 4 { wanted += wanted / 2; }
+                    let mut grown = stdio_cabi_realloc((*line).cast(), wanted).cast::<c_char>();
+                    if grown.is_null() {
+                        wanted = minimum;
+                        grown = stdio_cabi_realloc((*line).cast(), wanted).cast::<c_char>();
+                        if grown.is_null() {
+                            // Pinned getdelim consumes only the prefix which fits
+                            // the original allocation, retaining its ownership.
+                            let fitting = *capacity - used;
+                            if fitting != 0 {
+                                ptr::copy_nonoverlapping((*stream).read_position,
+                                    (*line).add(used).cast::<u8>(), fitting);
+                                (*stream).read_position = (*stream).read_position.add(fitting);
+                            }
+                            mark_error(stream);
+                            errno::set_errno(12);
+                            return -1;
+                        }
+                    }
+                    *line = grown;
+                    *capacity = wanted;
+                }
+                if chunk != 0 {
+                    ptr::copy_nonoverlapping((*stream).read_position,
+                        (*line).add(used).cast::<u8>(), chunk);
+                    (*stream).read_position = (*stream).read_position.add(chunk);
+                    used = end;
+                }
+                if found { break; }
+                let character = read_byte_held(stream);
+                if character == EOF {
+                    if used == 0 || (*stream).flags & F_EOF == 0 { return -1; }
+                    break;
+                }
+                if used == isize::MAX as usize {
+                    (*stream).read_position = (*stream).read_position.sub(1);
+                    *(*stream).read_position = character as u8;
+                    mark_error(stream);
+                    errno::set_errno(EOVERFLOW);
+                    return -1;
+                }
+                // If the fallback byte needs growth, retain it in FILE pushback
+                // storage before realloc can fail. This preserves the cursor on
+                // the same allocation-failure paths as musl getdelim.c.
+                if used + 1 >= *capacity {
+                    (*stream).read_position = (*stream).read_position.sub(1);
+                    *(*stream).read_position = character as u8;
+                } else {
+                    *(*line).add(used) = character as c_char;
+                    used += 1;
+                    if character == delimiter { break; }
+                }
             }
-            if chunk != 0 {
-                ptr::copy_nonoverlapping((*stream).read_position,
-                    (*line).add(used).cast::<u8>(), chunk);
-                (*stream).read_position = (*stream).read_position.add(chunk);
-                used = end;
-            }
-            if found { break; }
-            let character = read_byte_held(stream);
-            if character == EOF {
-                if used == 0 || (*stream).flags & F_EOF == 0 { return -1; }
-                break;
-            }
-            if used == isize::MAX as usize {
-                (*stream).read_position = (*stream).read_position.sub(1);
-                *(*stream).read_position = character as u8;
-                mark_error(stream);
-                errno::set_errno(EOVERFLOW);
-                return -1;
-            }
-            // If the fallback byte needs growth, retain it in FILE pushback
-            // storage before realloc can fail. This preserves the cursor on
-            // the same allocation-failure paths as musl getdelim.c.
-            if used + 1 >= *capacity {
-                (*stream).read_position = (*stream).read_position.sub(1);
-                *(*stream).read_position = character as u8;
-            } else {
-                *(*line).add(used) = character as c_char;
-                used += 1;
-                if character == delimiter { break; }
-            }
+            *(*line).add(used) = 0;
+            used as isize
         }
-        *(*line).add(used) = 0;
-        used as isize
     }
-}
 
-/// Read one allocated newline-delimited byte string using getdelim.
-/// # Safety
-/// The stream, pointer, allocation-size, ownership and non-overlap obligations
-/// are exactly those of getdelim; the caller frees the resulting allocation.
-#[no_mangle]
-pub unsafe extern "C" fn getline(line: *mut *mut c_char, capacity: *mut usize, stream: *mut StandardStream) -> isize {
-    unsafe { getdelim(line, capacity, b'\n' as c_int, stream) }
-}
+    core::arch::global_asm!(".weak __getdelim", ".set __getdelim, getdelim");
+}}
 
-core::arch::global_asm!(".weak __getdelim", ".set __getdelim, getdelim");
-
-/// # Safety
-/// `stream` is live; all concurrent users have stopped and caller relinquishes it.
-#[no_mangle]
-pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
-    unsafe {
-        let permanent = is_permanent_stream(stream);
-        if !permanent {
-            let _list = ListGuard::acquire();
-            if (*stream).previous.is_null() { OPEN_STREAMS = (*stream).next; }
-            else { (*(*stream).previous).next = (*stream).next; }
-            if !(*stream).next.is_null() { (*(*stream).next).previous = (*stream).previous; }
-        }
-        let result;
-        {
-            let _guard = StreamGuard::acquire(stream);
-            // musl fclose.c leaves f->fd alone. A closed permanent stream
-            // keeps its descriptor number, so fileno still reports it and
-            // later output reaches whatever the program reopens there.
-            result = fflush(stream) | owned_stdio_backends::close(stream);
-        }
-        if !permanent {
-            unlist_locked_file(stream);
-            stdio_cabi_free((*stream).getln_buffer.cast()); stdio_cabi_free(stream.cast());
-        }
-        result
+// Musl's `src/stdio/getline.c` object.
+static_archive_member! { getline_source {
+    /// Read one allocated newline-delimited byte string using getdelim.
+    /// # Safety
+    /// The stream, pointer, allocation-size, ownership and non-overlap obligations
+    /// are exactly those of getdelim; the caller frees the resulting allocation.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn getline(line: *mut *mut c_char, capacity: *mut usize, stream: *mut StandardStream) -> isize {
+        unsafe { getdelim(line, capacity, b'\n' as c_int, stream) }
     }
-}
+}}
 
-/// # Safety
-/// A non-null stream must be live; null flushes all open output streams.
-#[no_mangle]
-pub unsafe extern "C" fn fflush(stream: *mut StandardStream) -> c_int {
-    unsafe {
-        if stream.is_null() {
-            let mut result = fflush(ptr::addr_of_mut!(STDOUT_STREAM)) | fflush(ptr::addr_of_mut!(STDERR_STREAM));
-            let _list = ListGuard::acquire();
-            let mut current = OPEN_STREAMS;
-            while !current.is_null() {
-                let _guard = StreamGuard::acquire(current);
-                if pending_output(current) != 0 { result |= fflush(current); }
-                current = (*current).next;
+// Musl's `src/stdio/fclose.c` object.
+static_archive_member! { fclose_source {
+    /// # Safety
+    /// `stream` is live; all concurrent users have stopped and caller relinquishes it.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
+        unsafe {
+            let permanent = is_permanent_stream(stream);
+            if !permanent {
+                let _list = ListGuard::acquire();
+                if (*stream).previous.is_null() { OPEN_STREAMS = (*stream).next; }
+                else { (*(*stream).previous).next = (*stream).next; }
+                if !(*stream).next.is_null() { (*(*stream).next).previous = (*stream).previous; }
             }
-            return result;
+            let result;
+            {
+                let _guard = StreamGuard::acquire(stream);
+                // musl fclose.c leaves f->fd alone. A closed permanent stream
+                // keeps its descriptor number, so fileno still reports it and
+                // later output reaches whatever the program reopens there.
+                result = fflush(stream) | owned_stdio_backends::close(stream);
+            }
+            if !permanent {
+                unlist_locked_file(stream);
+                stdio_cabi_free((*stream).getln_buffer.cast()); stdio_cabi_free(stream.cast());
+            }
+            result
         }
+    }
+}}
+
+// Musl's `src/stdio/fflush.c` object.
+static_archive_member! { fflush_source {
+    /// # Safety
+    /// A non-null stream must be live; null flushes all open output streams.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn fflush(stream: *mut StandardStream) -> c_int {
+        unsafe {
+            if stream.is_null() {
+                let mut result = fflush(ptr::addr_of_mut!(STDOUT_STREAM)) | fflush(ptr::addr_of_mut!(STDERR_STREAM));
+                let _list = ListGuard::acquire();
+                let mut current = OPEN_STREAMS;
+                while !current.is_null() {
+                    let _guard = StreamGuard::acquire(current);
+                    if pending_output(current) != 0 { result |= fflush(current); }
+                    current = (*current).next;
+                }
+                return result;
+            }
+            flush_stream(stream)
+        }
+    }
+
+    core::arch::global_asm!(".weak fflush_unlocked", ".set fflush_unlocked, fflush");
+}}
+
+/// Flush one live FILE and return its unread input to the backend: the body
+/// of musl fflush.c for a non-null stream, which __stdio_exit.c's
+/// `close_file` repeats inline rather than calling the public `fflush`.
+/// # Safety
+/// `stream` is a live FILE.
+unsafe fn flush_stream(stream: *mut StandardStream) -> c_int {
+    unsafe {
         let _guard = StreamGuard::acquire(stream);
         if flush_output_held(stream) < 0 { return EOF; }
         let unread = (*stream).read_end.offset_from((*stream).read_position);
@@ -936,7 +980,7 @@ pub(crate) unsafe fn flush_all_on_exit() {
 unsafe fn final_flush(stream: *mut StandardStream) {
     unsafe {
         core::mem::forget(StreamGuard::acquire(stream));
-        fflush(stream);
+        flush_stream(stream);
     }
 }
 
@@ -1372,90 +1416,117 @@ unsafe fn write_byte_held(stream: *mut StandardStream, byte: u8) -> c_int {
     c_int::from(byte)
 }
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn fileno(stream: *mut StandardStream) -> c_int {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_selected_stream(stream) } {
-        unsafe { reject_stream() };
-        return -1;
+// Musl's `src/stdio/fileno.c` object.
+static_archive_member! { fileno_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn fileno(stream: *mut StandardStream) -> c_int {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if !unsafe { is_selected_stream(stream) } {
+            unsafe { reject_stream() };
+            return -1;
+        }
+        unsafe {
+            if (*stream).file_descriptor < 0 { errno::set_errno(9); return -1; }
+            (*stream).file_descriptor
+        }
     }
-    unsafe {
-        if (*stream).file_descriptor < 0 { errno::set_errno(9); return -1; }
-        (*stream).file_descriptor
-    }
-}
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn fgetc(stream: *mut StandardStream) -> c_int {
-    unsafe { read_byte(stream) }
-}
+    core::arch::global_asm!(".weak fileno_unlocked", ".set fileno_unlocked, fileno");
+}}
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn getc(stream: *mut StandardStream) -> c_int {
-    unsafe { fgetc(stream) }
-}
+// Musl's `src/stdio/fgetc.c` object.
+static_archive_member! { fgetc_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn fgetc(stream: *mut StandardStream) -> c_int {
+        unsafe { read_byte(stream) }
+    }
+}}
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn getchar() -> c_int {
-    unsafe { fgetc(ptr::addr_of_mut!(STDIN_STREAM)) }
-}
+// Musl's `src/stdio/getc.c` object.
+static_archive_member! { getc_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn getc(stream: *mut StandardStream) -> c_int {
+        // musl getc.c inlines do_getc rather than calling the public fgetc.
+        unsafe { read_byte(stream) }
+    }
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn ungetc(character: c_int, stream: *mut StandardStream) -> c_int {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_selected_stream(stream) } {
-        unsafe { reject_stream() };
-        return EOF;
+    core::arch::global_asm!(".weak _IO_getc", ".set _IO_getc, getc");
+}}
+
+// Musl's `src/stdio/getchar.c` object.
+static_archive_member! { getchar_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn getchar() -> c_int {
+        unsafe { read_byte(ptr::addr_of_mut!(STDIN_STREAM)) }
     }
-    if character == EOF {
-        return EOF;
-    }
-    if !unsafe { is_readable(stream) } {
-        unsafe { mark_error(stream) };
-        return EOF;
-    }
-    if !unsafe { prepare_read(stream) } { return EOF; }
-    unsafe {
-        let lower_bound = (*stream).buffer.sub(UNGET);
-        if (*stream).read_position <= lower_bound {
+}}
+
+// Musl's `src/stdio/ungetc.c` object.
+static_archive_member! { ungetc_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn ungetc(character: c_int, stream: *mut StandardStream) -> c_int {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if !unsafe { is_selected_stream(stream) } {
+            unsafe { reject_stream() };
             return EOF;
         }
-        (*stream).read_position = (*stream).read_position.sub(1);
-        (*stream).read_position.write(character as u8);
-        (*stream).flags &= !F_EOF;
+        if character == EOF {
+            return EOF;
+        }
+        if !unsafe { is_readable(stream) } {
+            unsafe { mark_error(stream) };
+            return EOF;
+        }
+        if !unsafe { prepare_read(stream) } { return EOF; }
+        unsafe {
+            let lower_bound = (*stream).buffer.sub(UNGET);
+            if (*stream).read_position <= lower_bound {
+                return EOF;
+            }
+            (*stream).read_position = (*stream).read_position.sub(1);
+            (*stream).read_position.write(character as u8);
+            (*stream).flags &= !F_EOF;
+        }
+        unsafe { mark_io_started(stream) };
+        c_int::from(character as u8)
     }
-    unsafe { mark_io_started(stream) };
-    c_int::from(character as u8)
-}
+}}
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn fread(
-    destination: *mut c_void,
-    size: usize,
-    count: usize,
-    stream: *mut StandardStream,
-) -> usize {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    unsafe { fread_held(destination, size, count, stream) }
-}
+// Musl's `src/stdio/fread.c` object.
+static_archive_member! { fread_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn fread(
+        destination: *mut c_void,
+        size: usize,
+        count: usize,
+        stream: *mut StandardStream,
+    ) -> usize {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        unsafe { fread_held(destination, size, count, stream) }
+    }
+
+    core::arch::global_asm!(".weak fread_unlocked", ".set fread_unlocked, fread");
+}}
 
 // The caller exclusively owns the initialized stream through the transfer.
 unsafe fn fread_held(destination: *mut c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
@@ -1508,43 +1579,61 @@ unsafe fn fread_held(destination: *mut c_void, size: usize, count: usize, stream
     received / size
 }
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn fputc(character: c_int, stream: *mut StandardStream) -> c_int {
-    unsafe { write_byte(stream, character as u8) }
-}
+// Musl's `src/stdio/fputc.c` object.
+static_archive_member! { fputc_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn fputc(character: c_int, stream: *mut StandardStream) -> c_int {
+        unsafe { write_byte(stream, character as u8) }
+    }
+}}
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn putc(character: c_int, stream: *mut StandardStream) -> c_int {
-    unsafe { fputc(character, stream) }
-}
+// Musl's `src/stdio/putc.c` object.
+static_archive_member! { putc_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn putc(character: c_int, stream: *mut StandardStream) -> c_int {
+        // musl putc.c inlines do_putc rather than calling the public fputc.
+        unsafe { write_byte(stream, character as u8) }
+    }
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn putchar(character: c_int) -> c_int {
-    unsafe { fputc(character, ptr::addr_of_mut!(STDOUT_STREAM)) }
-}
+    core::arch::global_asm!(".weak _IO_putc", ".set _IO_putc, putc");
+}}
 
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn fwrite(
-    source: *const c_void,
-    size: usize,
-    count: usize,
-    stream: *mut StandardStream,
-) -> usize {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    unsafe { fwrite_held(source, size, count, stream) }
-}
+// Musl's `src/stdio/putchar.c` object.
+static_archive_member! { putchar_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn putchar(character: c_int) -> c_int {
+        unsafe { write_byte(ptr::addr_of_mut!(STDOUT_STREAM), character as u8) }
+    }
+}}
+
+// Musl's `src/stdio/fwrite.c` object.
+static_archive_member! { fwrite_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn fwrite(
+        source: *const c_void,
+        size: usize,
+        count: usize,
+        stream: *mut StandardStream,
+    ) -> usize {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        unsafe { fwrite_held(source, size, count, stream) }
+    }
+
+    core::arch::global_asm!(".weak fwrite_unlocked", ".set fwrite_unlocked, fwrite");
+}}
 
 // The caller exclusively owns the initialized stream through the transfer.
 unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
@@ -1592,416 +1681,440 @@ unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: 
     }
 }
 
-/// # Safety
-/// `stream` is live and the caller has exclusive access, either by holding
-/// flockfile or by excluding every concurrent user, including initialization.
-#[no_mangle]
-pub unsafe extern "C" fn getc_unlocked(stream: *mut StandardStream) -> c_int {
-    unsafe { initialize_buffer(stream); read_byte_held(stream) }
-}
-
-/// # Safety
-/// stdin is open and the caller exclusively owns its access and initialization.
-#[no_mangle]
-pub unsafe extern "C" fn getchar_unlocked() -> c_int {
-    unsafe { getc_unlocked(ptr::addr_of_mut!(STDIN_STREAM)) }
-}
-
-/// # Safety
-/// The caller exclusively owns this live stream, including lazy initialization,
-/// until the write completes; holding flockfile satisfies this requirement.
-#[no_mangle]
-pub unsafe extern "C" fn putc_unlocked(character: c_int, stream: *mut StandardStream) -> c_int {
-    unsafe { initialize_buffer(stream); write_byte_held(stream, character as u8) }
-}
-
-/// # Safety
-/// stdout is open and the caller exclusively owns its access and initialization.
-#[no_mangle]
-pub unsafe extern "C" fn putchar_unlocked(character: c_int) -> c_int {
-    unsafe { putc_unlocked(character, ptr::addr_of_mut!(STDOUT_STREAM)) }
-}
-
-// The source bodies are the strong `getc_unlocked`/`putc_unlocked` entry
-// points; `fgetc_unlocked` and `fputc_unlocked` are weak aliases. In contrast,
-// musl's fread.c and fwrite.c alias the conventional unlocked spellings to the
-// locking public bodies. One assembler alias per source relationship preserves
-// the address, archive override point, and locking contract simultaneously.
-core::arch::global_asm!(
-    ".weak fgetc_unlocked",
-    ".set fgetc_unlocked, getc_unlocked",
-    ".weak fputc_unlocked",
-    ".set fputc_unlocked, putc_unlocked",
-    ".weak fread_unlocked",
-    ".set fread_unlocked, fread",
-    ".weak fwrite_unlocked",
-    ".set fwrite_unlocked, fwrite",
-);
-
-// Musl's weak unlocked and `_IO_` spellings of the locking bodies above. An
-// ELF `.set` alias is defined only in the object that defines its target, so
-// these stay in this module rather than in the `owned_stdio_extensions` child
-// that selects them: the static archive emits one member per Rust module.
-core::arch::global_asm!(
-    ".weak fflush_unlocked", ".set fflush_unlocked, fflush",
-    ".weak fileno_unlocked", ".set fileno_unlocked, fileno",
-    ".weak fgets_unlocked", ".set fgets_unlocked, fgets",
-    ".weak fputs_unlocked", ".set fputs_unlocked, fputs",
-    ".weak clearerr_unlocked", ".set clearerr_unlocked, clearerr",
-    ".weak feof_unlocked", ".set feof_unlocked, feof",
-    ".weak ferror_unlocked", ".set ferror_unlocked, ferror",
-    ".weak _IO_feof_unlocked", ".set _IO_feof_unlocked, feof",
-    ".weak _IO_ferror_unlocked", ".set _IO_ferror_unlocked, ferror",
-    ".weak _IO_getc", ".set _IO_getc, getc",
-    ".weak _IO_putc", ".set _IO_putc, putc",
-    ".weak _IO_getc_unlocked", ".set _IO_getc_unlocked, getc_unlocked",
-    ".weak _IO_putc_unlocked", ".set _IO_putc_unlocked, putc_unlocked"
-);
-
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn fgets(
-    destination: *mut c_char,
-    count: c_int,
-    stream: *mut StandardStream,
-) -> *mut c_char {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_selected_stream(stream) } {
-        unsafe { reject_stream() };
-        return ptr::null_mut();
+// Musl's `src/stdio/getc_unlocked.c` object.
+static_archive_member! { getc_unlocked_source {
+    /// # Safety
+    /// `stream` is live and the caller has exclusive access, either by holding
+    /// flockfile or by excluding every concurrent user, including initialization.
+    #[no_mangle]
+    pub unsafe extern "C" fn getc_unlocked(stream: *mut StandardStream) -> c_int {
+        unsafe { initialize_buffer(stream); read_byte_held(stream) }
     }
-    if destination.is_null() {
-        unsafe { errno::set_errno(EINVAL) };
-        return ptr::null_mut();
+
+    core::arch::global_asm!(".weak fgetc_unlocked", ".set fgetc_unlocked, getc_unlocked", ".weak _IO_getc_unlocked", ".set _IO_getc_unlocked, getc_unlocked");
+}}
+
+// Musl's `src/stdio/getchar_unlocked.c` object.
+static_archive_member! { getchar_unlocked_source {
+    /// # Safety
+    /// stdin is open and the caller exclusively owns its access and initialization.
+    #[no_mangle]
+    pub unsafe extern "C" fn getchar_unlocked() -> c_int {
+        // musl's stdio_impl.h getc_unlocked macro, not the public function.
+        let stream = ptr::addr_of_mut!(STDIN_STREAM);
+        unsafe { initialize_buffer(stream); read_byte_held(stream) }
     }
-    if count <= 1 {
-        unsafe { if (*stream).orientation == 0 { (*stream).orientation = -1; } }
-        if count == 1 {
-            unsafe { destination.write(0) };
-            return destination;
+}}
+
+// Musl's `src/stdio/putc_unlocked.c` object.
+static_archive_member! { putc_unlocked_source {
+    /// # Safety
+    /// The caller exclusively owns this live stream, including lazy initialization,
+    /// until the write completes; holding flockfile satisfies this requirement.
+    #[no_mangle]
+    pub unsafe extern "C" fn putc_unlocked(character: c_int, stream: *mut StandardStream) -> c_int {
+        unsafe { initialize_buffer(stream); write_byte_held(stream, character as u8) }
+    }
+
+    core::arch::global_asm!(".weak fputc_unlocked", ".set fputc_unlocked, putc_unlocked", ".weak _IO_putc_unlocked", ".set _IO_putc_unlocked, putc_unlocked");
+}}
+
+// Musl's `src/stdio/putchar_unlocked.c` object.
+static_archive_member! { putchar_unlocked_source {
+    /// # Safety
+    /// stdout is open and the caller exclusively owns its access and initialization.
+    #[no_mangle]
+    pub unsafe extern "C" fn putchar_unlocked(character: c_int) -> c_int {
+        // musl's stdio_impl.h putc_unlocked macro, not the public function.
+        let stream = ptr::addr_of_mut!(STDOUT_STREAM);
+        unsafe { initialize_buffer(stream); write_byte_held(stream, character as u8) }
+    }
+}}
+
+// Musl's `src/stdio/fgets.c` object.
+static_archive_member! { fgets_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn fgets(
+        destination: *mut c_char,
+        count: c_int,
+        stream: *mut StandardStream,
+    ) -> *mut c_char {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if !unsafe { is_selected_stream(stream) } {
+            unsafe { reject_stream() };
+            return ptr::null_mut();
         }
-        return ptr::null_mut();
-    }
-
-    let mut cursor = destination;
-    let mut remaining = count;
-    let mut stopped_without_eof = false;
-    while remaining > 1 {
-        let character = unsafe { read_byte_held(stream) };
-        if character == EOF {
-            // An earlier direction error can leave F_ERR set even when this
-            // read reaches EOF after accumulating a valid line. Pinned musl
-            // accepts that partial line based on F_EOF, not F_ERR.
-            stopped_without_eof = unsafe { (*stream).flags & F_EOF == 0 };
-            break;
+        if destination.is_null() {
+            unsafe { errno::set_errno(EINVAL) };
+            return ptr::null_mut();
         }
-        unsafe { cursor.write(character as u8 as c_char) };
-        cursor = unsafe { cursor.add(1) };
-        remaining -= 1;
-        if character == c_int::from(b'\n') {
-            break;
-        }
-    }
-    if cursor == destination || stopped_without_eof {
-        return ptr::null_mut();
-    }
-    unsafe { cursor.write(0) };
-    destination
-}
-
-/// # Safety
-/// `stream` must be a live FILE and `source` a readable NUL-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn fputs(
-    source: *const c_char,
-    stream: *mut StandardStream,
-) -> c_int {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_selected_stream(stream) } {
-        unsafe { reject_stream() };
-        return EOF;
-    }
-    if source.is_null() {
-        unsafe { errno::set_errno(EINVAL) };
-        return EOF;
-    }
-
-    let mut length = 0;
-    while unsafe { *source.add(length) } != 0 { length += 1; }
-    if unsafe { fwrite_held(source.cast(), 1, length, stream) } == length { 0 } else { EOF }
-}
-
-/// # Safety
-/// `source` must be a readable NUL-terminated string and stdout must be open.
-#[no_mangle]
-pub unsafe extern "C" fn puts(source: *const c_char) -> c_int {
-    let _guard = unsafe { StreamGuard::acquire(ptr::addr_of_mut!(STDOUT_STREAM)) };
-    if unsafe { fputs(source, ptr::addr_of_mut!(STDOUT_STREAM)) } == EOF {
-        return EOF;
-    }
-    if unsafe { write_byte_held(ptr::addr_of_mut!(STDOUT_STREAM), b'\n') } == EOF {
-        EOF
-    } else {
-        0
-    }
-}
-
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn feof(stream: *mut StandardStream) -> c_int {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_selected_stream(stream) } {
-        unsafe { reject_stream() };
-        return 0;
-    }
-    // musl feof.c: `!!(f->flags & F_EOF)`, exactly 0 or 1.
-    unsafe { ((*stream).flags & F_EOF != 0) as c_int }
-}
-
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn ferror(stream: *mut StandardStream) -> c_int {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_selected_stream(stream) } {
-        unsafe { reject_stream() };
-        return 0;
-    }
-    // musl ferror.c: `!!(f->flags & F_ERR)`, exactly 0 or 1.
-    unsafe { ((*stream).flags & F_ERR != 0) as c_int }
-}
-
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn clearerr(stream: *mut StandardStream) {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_selected_stream(stream) } {
-        unsafe { reject_stream() };
-        return;
-    }
-    unsafe { (*stream).flags &= !(F_EOF | F_ERR) };
-}
-
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub(super) unsafe extern "C" fn __fseeko(
-    stream: *mut StandardStream,
-    offset: i64,
-    whence: c_int,
-) -> c_int {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_selected_stream(stream) }
-        || (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END)
-    {
-        unsafe { errno::set_errno(EINVAL) };
-        return EOF;
-    }
-
-    let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) };
-    let adjusted_offset = if whence == SEEK_CUR {
-        let unread = unread as i64;
-        let Some(value) = offset.checked_sub(unread) else {
-            unsafe { errno::set_errno(EOVERFLOW) };
-            return EOF;
-        };
-        value
-    } else {
-        offset
-    };
-    if unsafe { flush_output_held(stream) } == EOF {
-        return EOF;
-    }
-    // Source fseek leaves writing mode before attempting the backend seek;
-    // a failed input seek, conversely, preserves its buffered read state.
-    unsafe {
-        if (*stream).direction == BufferDirection::Write { (*stream).direction = BufferDirection::Neutral; }
-    }
-    let result = unsafe {
-        owned_stdio_backends::seek(stream, adjusted_offset, whence)
-    };
-    if result < 0 {
-        return EOF;
-    }
-    unsafe {
-        (*stream).read_position = (*stream).buffer;
-        (*stream).read_end = (*stream).buffer;
-        reset_write_region(stream);
-        (*stream).flags &= !F_EOF;
-        (*stream).direction = BufferDirection::Neutral;
-    }
-    0
-}
-
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub(super) unsafe extern "C" fn __ftello(stream: *mut StandardStream) -> i64 {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_selected_stream(stream) } {
-        unsafe { reject_stream() };
-        return -1;
-    }
-    let raw_position = unsafe {
-        owned_stdio_backends::seek(stream, 0,
-            if (*stream).flags & F_APP != 0 && pending_output(stream) != 0 { SEEK_END } else { SEEK_CUR })
-    };
-    let kernel_position = raw_position;
-    if kernel_position < 0 {
-        return -1;
-    }
-    let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) } as i64;
-    let pending = if unsafe { is_writable(stream) } {
-        (unsafe { pending_output(stream) }) as i64
-    } else {
-        0
-    };
-    let Some(logical_position) = kernel_position
-        .checked_sub(unread)
-        .and_then(|position| position.checked_add(pending))
-    else {
-        unsafe { errno::set_errno(EOVERFLOW) };
-        return -1;
-    };
-    logical_position
-}
-
-// Musl fseek.c/ftell.c keep these lock-owning implementations hidden and
-// publish weak fseeko/ftello aliases. Their other public position functions
-// deliberately call the internal symbols so application overrides affect only
-// direct public calls, never this FILE's state transition.
-core::arch::global_asm!(
-    ".hidden __fseeko",
-    ".weak fseeko",
-    ".set fseeko, __fseeko",
-    ".hidden __ftello",
-    ".weak ftello",
-    ".set ftello, __ftello",
-);
-
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn ftell(stream: *mut StandardStream) -> core::ffi::c_long {
-    unsafe { __ftello(stream) as core::ffi::c_long }
-}
-
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn fseek(
-    stream: *mut StandardStream,
-    offset: core::ffi::c_long,
-    whence: c_int,
-) -> c_int {
-    unsafe { __fseeko(stream, offset as i64, whence) }
-}
-
-/// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
-#[no_mangle]
-pub unsafe extern "C" fn rewind(stream: *mut StandardStream) {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    let _ = unsafe { __fseeko(stream, 0, SEEK_SET) };
-    // musl src/stdio/rewind.c clears only the error indicator. A successful
-    // seek has already cleared end-of-file; a failed one (an unseekable
-    // stream) keeps it.
-    if unsafe { is_selected_stream(stream) } {
-        unsafe { (*stream).flags &= !F_ERR };
-    }
-}
-
-/// # Safety
-/// `stream` must be live. `position` must point to writable storage for one
-/// installed x86 `fpos_t` object (16 bytes, aligned to 8 bytes). The first
-/// eight bytes hold the opaque saved offset; callers must not interpret it.
-#[no_mangle]
-pub unsafe extern "C" fn fgetpos(
-    stream: *mut StandardStream,
-    position: *mut c_void,
-) -> c_int {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if position.is_null() {
-        unsafe { errno::set_errno(EINVAL) };
-        return EOF;
-    }
-    let offset = unsafe { __ftello(stream) };
-    if offset < 0 {
-        return EOF;
-    }
-    unsafe { ptr::write_unaligned(position.cast::<i64>(), offset) };
-    0
-}
-
-/// # Safety
-/// `stream` must be live. `position` must point to a readable installed x86
-/// `fpos_t` object (16 bytes, aligned to 8 bytes) previously populated by a
-/// successful fgetpos for this stream and not modified since that call.
-#[no_mangle]
-pub unsafe extern "C" fn fsetpos(
-    stream: *mut StandardStream,
-    position: *const c_void,
-) -> c_int {
-    let _guard = unsafe { StreamGuard::acquire(stream) };
-    if position.is_null() {
-        unsafe { errno::set_errno(EINVAL) };
-        return EOF;
-    }
-    let offset = unsafe { ptr::read_unaligned(position.cast::<i64>()) };
-    unsafe { __fseeko(stream, offset, SEEK_SET) }
-}
-
-
-/// Reconfigure buffering as pinned musl src/stdio/setvbuf.c does: only the
-/// configured buffer, its size, and line buffering change. Active unread input
-/// and pending output keep the storage their region started in until the next
-/// refill or write completes, so a (C-undefined) call after I/O loses no bytes.
-/// An unknown type returns -1 without errno, after line buffering was reset.
-/// # Safety
-/// `stream` is live. A non-null `buffer` remains writable for `size` bytes
-/// until close, and until any region already using it has drained after a
-/// later reconfiguration.
-#[no_mangle]
-pub unsafe extern "C" fn setvbuf(stream: *mut StandardStream, buffer: *mut c_char, mode: c_int, size: usize) -> c_int {
-    unsafe {
-        let _guard = StreamGuard::acquire(stream);
-        (*stream).line_break = EOF;
-        match mode {
-            2 => (*stream).capacity = 0,
-            0 | 1 => {
-                if !buffer.is_null() && size >= UNGET {
-                    (*stream).buffer = buffer.cast::<u8>().add(UNGET);
-                    (*stream).capacity = size - UNGET;
-                    // musl leaves its read pointers null until the first
-                    // read bases them on the configured buffer. An empty
-                    // read region must follow the new buffer too, or
-                    // ungetc's UNGET floor is measured against another
-                    // array. Buffered unread bytes stay where they are.
-                    if (*stream).read_position == (*stream).read_end {
-                        (*stream).read_position = (*stream).buffer;
-                        (*stream).read_end = (*stream).buffer;
-                    }
-                }
-                if mode == 1 && (*stream).capacity != 0 { (*stream).line_break = b'\n' as c_int; }
+        if count <= 1 {
+            unsafe { if (*stream).orientation == 0 { (*stream).orientation = -1; } }
+            if count == 1 {
+                unsafe { destination.write(0) };
+                return destination;
             }
-            _ => return -1,
+            return ptr::null_mut();
         }
-        (*stream).flags |= F_SVB;
+
+        let mut cursor = destination;
+        let mut remaining = count;
+        let mut stopped_without_eof = false;
+        while remaining > 1 {
+            let character = unsafe { read_byte_held(stream) };
+            if character == EOF {
+                // An earlier direction error can leave F_ERR set even when this
+                // read reaches EOF after accumulating a valid line. Pinned musl
+                // accepts that partial line based on F_EOF, not F_ERR.
+                stopped_without_eof = unsafe { (*stream).flags & F_EOF == 0 };
+                break;
+            }
+            unsafe { cursor.write(character as u8 as c_char) };
+            cursor = unsafe { cursor.add(1) };
+            remaining -= 1;
+            if character == c_int::from(b'\n') {
+                break;
+            }
+        }
+        if cursor == destination || stopped_without_eof {
+            return ptr::null_mut();
+        }
+        unsafe { cursor.write(0) };
+        destination
+    }
+
+    core::arch::global_asm!(".weak fgets_unlocked", ".set fgets_unlocked, fgets");
+}}
+
+// Musl's `src/stdio/fputs.c` object.
+static_archive_member! { fputs_source {
+    /// # Safety
+    /// `stream` must be a live FILE and `source` a readable NUL-terminated string.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn fputs(
+        source: *const c_char,
+        stream: *mut StandardStream,
+    ) -> c_int {
+        if !unsafe { is_selected_stream(stream) } {
+            unsafe { reject_stream() };
+            return EOF;
+        }
+        if source.is_null() {
+            unsafe { errno::set_errno(EINVAL) };
+            return EOF;
+        }
+        // musl fputs.c: `(fwrite(s, 1, strlen(s), f) == l) - 1` through the
+        // public spellings, so application definitions of either are reached.
+        unsafe extern "C" {
+            fn strlen(string: *const c_char) -> usize;
+        }
+        let length = unsafe { strlen(source) };
+        if unsafe { fwrite(source.cast(), 1, length, stream) } == length { 0 } else { EOF }
+    }
+
+    core::arch::global_asm!(".weak fputs_unlocked", ".set fputs_unlocked, fputs");
+}}
+
+// Musl's `src/stdio/puts.c` object.
+static_archive_member! { puts_source {
+    /// # Safety
+    /// `source` must be a readable NUL-terminated string and stdout must be open.
+    #[no_mangle]
+    pub unsafe extern "C" fn puts(source: *const c_char) -> c_int {
+        let _guard = unsafe { StreamGuard::acquire(ptr::addr_of_mut!(STDOUT_STREAM)) };
+        if unsafe { fputs(source, ptr::addr_of_mut!(STDOUT_STREAM)) } == EOF {
+            return EOF;
+        }
+        if unsafe { write_byte_held(ptr::addr_of_mut!(STDOUT_STREAM), b'\n') } == EOF {
+            EOF
+        } else {
+            0
+        }
+    }
+}}
+
+// Musl's `src/stdio/feof.c` object.
+static_archive_member! { feof_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn feof(stream: *mut StandardStream) -> c_int {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if !unsafe { is_selected_stream(stream) } {
+            unsafe { reject_stream() };
+            return 0;
+        }
+        // musl feof.c: `!!(f->flags & F_EOF)`, exactly 0 or 1.
+        unsafe { ((*stream).flags & F_EOF != 0) as c_int }
+    }
+
+    core::arch::global_asm!(".weak feof_unlocked", ".set feof_unlocked, feof", ".weak _IO_feof_unlocked", ".set _IO_feof_unlocked, feof");
+}}
+
+// Musl's `src/stdio/ferror.c` object.
+static_archive_member! { ferror_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn ferror(stream: *mut StandardStream) -> c_int {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if !unsafe { is_selected_stream(stream) } {
+            unsafe { reject_stream() };
+            return 0;
+        }
+        // musl ferror.c: `!!(f->flags & F_ERR)`, exactly 0 or 1.
+        unsafe { ((*stream).flags & F_ERR != 0) as c_int }
+    }
+
+    core::arch::global_asm!(".weak ferror_unlocked", ".set ferror_unlocked, ferror", ".weak _IO_ferror_unlocked", ".set _IO_ferror_unlocked, ferror");
+}}
+
+// Musl's `src/stdio/clearerr.c` object.
+static_archive_member! { clearerr_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn clearerr(stream: *mut StandardStream) {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if !unsafe { is_selected_stream(stream) } {
+            unsafe { reject_stream() };
+            return;
+        }
+        unsafe { (*stream).flags &= !(F_EOF | F_ERR) };
+    }
+
+    core::arch::global_asm!(".weak clearerr_unlocked", ".set clearerr_unlocked, clearerr");
+}}
+
+// Musl's `src/stdio/fseek.c` object.
+static_archive_member! { fseek_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub(crate) unsafe extern "C" fn __fseeko(
+        stream: *mut StandardStream,
+        offset: i64,
+        whence: c_int,
+    ) -> c_int {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if !unsafe { is_selected_stream(stream) }
+            || (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END)
+        {
+            unsafe { errno::set_errno(EINVAL) };
+            return EOF;
+        }
+
+        let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) };
+        let adjusted_offset = if whence == SEEK_CUR {
+            let unread = unread as i64;
+            let Some(value) = offset.checked_sub(unread) else {
+                unsafe { errno::set_errno(EOVERFLOW) };
+                return EOF;
+            };
+            value
+        } else {
+            offset
+        };
+        if unsafe { flush_output_held(stream) } == EOF {
+            return EOF;
+        }
+        // Source fseek leaves writing mode before attempting the backend seek;
+        // a failed input seek, conversely, preserves its buffered read state.
+        unsafe {
+            if (*stream).direction == BufferDirection::Write { (*stream).direction = BufferDirection::Neutral; }
+        }
+        let result = unsafe {
+            owned_stdio_backends::seek(stream, adjusted_offset, whence)
+        };
+        if result < 0 {
+            return EOF;
+        }
+        unsafe {
+            (*stream).read_position = (*stream).buffer;
+            (*stream).read_end = (*stream).buffer;
+            reset_write_region(stream);
+            (*stream).flags &= !F_EOF;
+            (*stream).direction = BufferDirection::Neutral;
+        }
         0
     }
-}
+
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn fseek(
+        stream: *mut StandardStream,
+        offset: core::ffi::c_long,
+        whence: c_int,
+    ) -> c_int {
+        unsafe { __fseeko(stream, offset as i64, whence) }
+    }
+
+    core::arch::global_asm!(".hidden __fseeko", ".weak fseeko", ".set fseeko, __fseeko");
+}}
+
+// Musl's `src/stdio/ftell.c` object.
+static_archive_member! { ftell_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub(crate) unsafe extern "C" fn __ftello(stream: *mut StandardStream) -> i64 {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if !unsafe { is_selected_stream(stream) } {
+            unsafe { reject_stream() };
+            return -1;
+        }
+        let raw_position = unsafe {
+            owned_stdio_backends::seek(stream, 0,
+                if (*stream).flags & F_APP != 0 && pending_output(stream) != 0 { SEEK_END } else { SEEK_CUR })
+        };
+        let kernel_position = raw_position;
+        if kernel_position < 0 {
+            return -1;
+        }
+        let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) } as i64;
+        let pending = if unsafe { is_writable(stream) } {
+            (unsafe { pending_output(stream) }) as i64
+        } else {
+            0
+        };
+        let Some(logical_position) = kernel_position
+            .checked_sub(unread)
+            .and_then(|position| position.checked_add(pending))
+        else {
+            unsafe { errno::set_errno(EOVERFLOW) };
+            return -1;
+        };
+        logical_position
+    }
+
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn ftell(stream: *mut StandardStream) -> core::ffi::c_long {
+        unsafe { __ftello(stream) as core::ffi::c_long }
+    }
+
+    core::arch::global_asm!(".hidden __ftello", ".weak ftello", ".set ftello, __ftello");
+}}
+
+// Musl's `src/stdio/rewind.c` object.
+static_archive_member! { rewind_source {
+    /// # Safety
+    /// Stream arguments must be live FILE pointers; string and byte ranges must
+    /// be valid for the size specified by this C operation.
+    #[no_mangle]
+    pub unsafe extern "C" fn rewind(stream: *mut StandardStream) {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        let _ = unsafe { __fseeko(stream, 0, SEEK_SET) };
+        // musl src/stdio/rewind.c clears only the error indicator. A successful
+        // seek has already cleared end-of-file; a failed one (an unseekable
+        // stream) keeps it.
+        if unsafe { is_selected_stream(stream) } {
+            unsafe { (*stream).flags &= !F_ERR };
+        }
+    }
+}}
+
+// Musl's `src/stdio/fgetpos.c` object.
+static_archive_member! { fgetpos_source {
+    /// # Safety
+    /// `stream` must be live. `position` must point to writable storage for one
+    /// installed x86 `fpos_t` object (16 bytes, aligned to 8 bytes). The first
+    /// eight bytes hold the opaque saved offset; callers must not interpret it.
+    #[no_mangle]
+    pub unsafe extern "C" fn fgetpos(
+        stream: *mut StandardStream,
+        position: *mut c_void,
+    ) -> c_int {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if position.is_null() {
+            unsafe { errno::set_errno(EINVAL) };
+            return EOF;
+        }
+        let offset = unsafe { __ftello(stream) };
+        if offset < 0 {
+            return EOF;
+        }
+        unsafe { ptr::write_unaligned(position.cast::<i64>(), offset) };
+        0
+    }
+}}
+
+// Musl's `src/stdio/fsetpos.c` object.
+static_archive_member! { fsetpos_source {
+    /// # Safety
+    /// `stream` must be live. `position` must point to a readable installed x86
+    /// `fpos_t` object (16 bytes, aligned to 8 bytes) previously populated by a
+    /// successful fgetpos for this stream and not modified since that call.
+    #[no_mangle]
+    pub unsafe extern "C" fn fsetpos(
+        stream: *mut StandardStream,
+        position: *const c_void,
+    ) -> c_int {
+        let _guard = unsafe { StreamGuard::acquire(stream) };
+        if position.is_null() {
+            unsafe { errno::set_errno(EINVAL) };
+            return EOF;
+        }
+        let offset = unsafe { ptr::read_unaligned(position.cast::<i64>()) };
+        unsafe { __fseeko(stream, offset, SEEK_SET) }
+    }
+}}
+
+// Musl's `src/stdio/setvbuf.c` object.
+static_archive_member! { setvbuf_source {
+    /// Reconfigure buffering as pinned musl src/stdio/setvbuf.c does: only the
+    /// configured buffer, its size, and line buffering change. Active unread input
+    /// and pending output keep the storage their region started in until the next
+    /// refill or write completes, so a (C-undefined) call after I/O loses no bytes.
+    /// An unknown type returns -1 without errno, after line buffering was reset.
+    /// # Safety
+    /// `stream` is live. A non-null `buffer` remains writable for `size` bytes
+    /// until close, and until any region already using it has drained after a
+    /// later reconfiguration.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn setvbuf(stream: *mut StandardStream, buffer: *mut c_char, mode: c_int, size: usize) -> c_int {
+        unsafe {
+            let _guard = StreamGuard::acquire(stream);
+            (*stream).line_break = EOF;
+            match mode {
+                2 => (*stream).capacity = 0,
+                0 | 1 => {
+                    if !buffer.is_null() && size >= UNGET {
+                        (*stream).buffer = buffer.cast::<u8>().add(UNGET);
+                        (*stream).capacity = size - UNGET;
+                        // musl leaves its read pointers null until the first
+                        // read bases them on the configured buffer. An empty
+                        // read region must follow the new buffer too, or
+                        // ungetc's UNGET floor is measured against another
+                        // array. Buffered unread bytes stay where they are.
+                        if (*stream).read_position == (*stream).read_end {
+                            (*stream).read_position = (*stream).buffer;
+                            (*stream).read_end = (*stream).buffer;
+                        }
+                    }
+                    if mode == 1 && (*stream).capacity != 0 { (*stream).line_break = b'\n' as c_int; }
+                }
+                _ => return -1,
+            }
+            (*stream).flags |= F_SVB;
+            0
+        }
+    }
+}}
 
 /// Runs a conventional database reader with musl's allocation-free,
 /// non-canceling `__fopen_rb_ca`/`__fclose_ca` lifetime. The source FILE stays

@@ -65,78 +65,87 @@ unsafe fn allocate(extra: usize, flags: u32) -> *mut StandardStream {
     }
 }
 
-/// Open a fixed-size byte memory stream.
-/// # Safety
-/// `mode` is NUL terminated. Non-null `buffer` remains valid for `size` bytes
-/// through close and is writable for a writing mode. For w+, a non-null buffer
-/// must provide at least one writable byte even when size is zero: pinned
-/// musl unconditionally writes the initial NUL in this mode. Caller storage
-/// is never freed; null storage is owned by FILE, including its zero-size sentinel.
-#[no_mangle]
-pub unsafe extern "C" fn fmemopen(buffer: *mut c_void, size: usize, mode: *const c_char) -> *mut StandardStream {
-    unsafe {
-        let Some((_, flags)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
-        if buffer.is_null() && size > isize::MAX as usize { errno::set_errno(12); return ptr::null_mut(); }
-        // Keep a writable zero-size sentinel for musl's w+ initial NUL.
-        let stream = allocate(if buffer.is_null() { size.max(1) } else { 0 }, flags);
-        if stream.is_null() { return stream; }
-        let data = if buffer.is_null() {
-            let data = stream.cast::<u8>().add(core::mem::size_of::<StandardStream>());
-            ptr::write_bytes(data, 0, size); data
-        } else { buffer.cast() };
-        let mut state = Fixed { position: 0, length: 0, size, buffer: data, mode: *mode as u8 };
-        if state.mode == b'r' { state.length = size; }
-        else if state.mode == b'a' {
-            while state.length < size && *data.add(state.length) != 0 { state.length += 1; }
-            state.position = state.length;
-        } else if flags & F_NORD == 0 { *data = 0; }
-        (*stream).backend = Backend::Fixed(state);
-        publish_stream(stream)
+// Musl's `src/stdio/fmemopen.c` object.
+static_archive_member! { fmemopen_source {
+    /// Open a fixed-size byte memory stream.
+    /// # Safety
+    /// `mode` is NUL terminated. Non-null `buffer` remains valid for `size` bytes
+    /// through close and is writable for a writing mode. For w+, a non-null buffer
+    /// must provide at least one writable byte even when size is zero: pinned
+    /// musl unconditionally writes the initial NUL in this mode. Caller storage
+    /// is never freed; null storage is owned by FILE, including its zero-size sentinel.
+    #[no_mangle]
+    pub unsafe extern "C" fn fmemopen(buffer: *mut c_void, size: usize, mode: *const c_char) -> *mut StandardStream {
+        unsafe {
+            let Some((_, flags)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
+            if buffer.is_null() && size > isize::MAX as usize { errno::set_errno(12); return ptr::null_mut(); }
+            // Keep a writable zero-size sentinel for musl's w+ initial NUL.
+            let stream = allocate(if buffer.is_null() { size.max(1) } else { 0 }, flags);
+            if stream.is_null() { return stream; }
+            let data = if buffer.is_null() {
+                let data = stream.cast::<u8>().add(core::mem::size_of::<StandardStream>());
+                ptr::write_bytes(data, 0, size); data
+            } else { buffer.cast() };
+            let mut state = Fixed { position: 0, length: 0, size, buffer: data, mode: *mode as u8 };
+            if state.mode == b'r' { state.length = size; }
+            else if state.mode == b'a' {
+                while state.length < size && *data.add(state.length) != 0 { state.length += 1; }
+                state.position = state.length;
+            } else if flags & F_NORD == 0 { *data = 0; }
+            (*stream).backend = Backend::Fixed(state);
+            publish_stream(stream)
+        }
     }
-}
+}}
 
-/// Open a growing byte output stream, publishing its caller-owned allocation.
-/// # Safety
-/// `output` and `size` are writable, non-overlapping pointer/size objects that
-/// outlive the FILE. After successful flush/close the caller may inspect the
-/// published bytes. Writes may realloc and invalidate an earlier pointer.
-/// The caller frees the final allocation after close; FILE never frees it.
-#[no_mangle]
-pub unsafe extern "C" fn open_memstream(output: *mut *mut c_char, size: *mut usize) -> *mut StandardStream {
-    unsafe {
-        let stream = allocate(0, F_NORD);
-        if stream.is_null() { return stream; }
-        let buffer = stdio_cabi_malloc(1).cast::<u8>();
-        if buffer.is_null() { stdio_cabi_free(stream.cast()); return ptr::null_mut(); }
-        *buffer = 0; *output = buffer.cast(); *size = 0;
-        (*stream).backend = Backend::Growing(Growing { output, size, position: 0, buffer, length: 0, space: 0 });
-        (*stream).orientation = -1;
-        publish_stream(stream)
+// Musl's `src/stdio/open_memstream.c` object.
+static_archive_member! { open_memstream_source {
+    /// Open a growing byte output stream, publishing its caller-owned allocation.
+    /// # Safety
+    /// `output` and `size` are writable, non-overlapping pointer/size objects that
+    /// outlive the FILE. After successful flush/close the caller may inspect the
+    /// published bytes. Writes may realloc and invalidate an earlier pointer.
+    /// The caller frees the final allocation after close; FILE never frees it.
+    #[no_mangle]
+    pub unsafe extern "C" fn open_memstream(output: *mut *mut c_char, size: *mut usize) -> *mut StandardStream {
+        unsafe {
+            let stream = allocate(0, F_NORD);
+            if stream.is_null() { return stream; }
+            let buffer = stdio_cabi_malloc(1).cast::<u8>();
+            if buffer.is_null() { stdio_cabi_free(stream.cast()); return ptr::null_mut(); }
+            *buffer = 0; *output = buffer.cast(); *size = 0;
+            (*stream).backend = Backend::Growing(Growing { output, size, position: 0, buffer, length: 0, space: 0 });
+            (*stream).orientation = -1;
+            publish_stream(stream)
+        }
     }
-}
+}}
 
-/// Open a growing wide output stream with caller-owned published storage.
-/// # Safety
-/// Output and size are writable, disjoint objects that outlive FILE. Writes
-/// may realloc/invalidate the earlier pointer; inspect published storage only
-/// after flush/close and free the final allocation after close. The stream
-/// captures current CTYPE and publishes positions in wchar_t units.
-#[no_mangle]
-pub unsafe extern "C" fn open_wmemstream(output: *mut *mut c_int, size: *mut usize) -> *mut StandardStream {
-    unsafe {
-        let stream = allocate(0, F_NORD);
-        if stream.is_null() { return stream; }
-        let buffer = stdio_cabi_malloc(4).cast::<c_int>();
-        if buffer.is_null() { stdio_cabi_free(stream.cast()); return ptr::null_mut(); }
-        *buffer = 0; *output = buffer; *size = 0;
-        (*stream).capacity = 0;
-        (*stream).backend = Backend::WideGrowing(WideGrowing {
-            output, size, position: 0, buffer, length: 0, space: 0, state: 0,
-        });
-        owned_wide_stdio::orient(stream, 1);
-        publish_stream(stream)
+// Musl's `src/stdio/open_wmemstream.c` object.
+static_archive_member! { open_wmemstream_source {
+    /// Open a growing wide output stream with caller-owned published storage.
+    /// # Safety
+    /// Output and size are writable, disjoint objects that outlive FILE. Writes
+    /// may realloc/invalidate the earlier pointer; inspect published storage only
+    /// after flush/close and free the final allocation after close. The stream
+    /// captures current CTYPE and publishes positions in wchar_t units.
+    #[no_mangle]
+    pub unsafe extern "C" fn open_wmemstream(output: *mut *mut c_int, size: *mut usize) -> *mut StandardStream {
+        unsafe {
+            let stream = allocate(0, F_NORD);
+            if stream.is_null() { return stream; }
+            let buffer = stdio_cabi_malloc(4).cast::<c_int>();
+            if buffer.is_null() { stdio_cabi_free(stream.cast()); return ptr::null_mut(); }
+            *buffer = 0; *output = buffer; *size = 0;
+            (*stream).capacity = 0;
+            (*stream).backend = Backend::WideGrowing(WideGrowing {
+                output, size, position: 0, buffer, length: 0, space: 0, state: 0,
+            });
+            owned_wide_stdio::orient(stream, 1);
+            publish_stream(stream)
+        }
     }
-}
+}}
 
 // musl open_wmemstream.c::wms_write. Space growth uses incoming byte count
 // as a conservative wide-element bound. Decoder state survives split writes;
@@ -176,25 +185,28 @@ unsafe fn write_wide(stream: *mut StandardStream, source: *const u8, length: usi
     }
 }
 
-/// Open an application-cookie byte stream.
-/// # Safety
-/// `mode` is NUL terminated. Userdata and callback code remain valid until
-/// the close callback completes. Read/write callbacks obey their buffer/count
-/// contracts and return at most the requested count. Seek writes a valid
-/// resulting offset. Callbacks may use other live streams but must not close,
-/// reopen, or reconfigure this FILE during its active operation. Global flush
-/// follows musl's registry-before-FILE lock order; callbacks invoked by a
-/// global flush must not mutate that registry or recursively flush all FILEs.
-#[no_mangle]
-pub unsafe extern "C" fn fopencookie(data: *mut c_void, mode: *const c_char, functions: CookieIoFunctions) -> *mut StandardStream {
-    unsafe {
-        let Some((_, flags)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
-        let stream = allocate(0, flags);
-        if stream.is_null() { return stream; }
-        (*stream).backend = Backend::Cookie(Cookie { data, functions });
-        publish_stream(stream)
+// Musl's `src/stdio/fopencookie.c` object.
+static_archive_member! { fopencookie_source {
+    /// Open an application-cookie byte stream.
+    /// # Safety
+    /// `mode` is NUL terminated. Userdata and callback code remain valid until
+    /// the close callback completes. Read/write callbacks obey their buffer/count
+    /// contracts and return at most the requested count. Seek writes a valid
+    /// resulting offset. Callbacks may use other live streams but must not close,
+    /// reopen, or reconfigure this FILE during its active operation. Global flush
+    /// follows musl's registry-before-FILE lock order; callbacks invoked by a
+    /// global flush must not mutate that registry or recursively flush all FILEs.
+    #[no_mangle]
+    pub unsafe extern "C" fn fopencookie(data: *mut c_void, mode: *const c_char, functions: CookieIoFunctions) -> *mut StandardStream {
+        unsafe {
+            let Some((_, flags)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
+            let stream = allocate(0, flags);
+            if stream.is_null() { return stream; }
+            (*stream).backend = Backend::Cookie(Cookie { data, functions });
+            publish_stream(stream)
+        }
     }
-}
+}}
 
 pub(super) unsafe fn read(stream: *mut StandardStream, destination: *mut u8, length: usize) -> usize {
     unsafe {

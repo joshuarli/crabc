@@ -17,6 +17,8 @@ use super::{c_char, c_int, c_void, errno, ptr, raw_syscall as sys, ListGuard,
     StandardStream, OPEN_STREAMS};
 use super::super::{owned_spawn, posix_spawn_file_actions::PosixSpawnFileActions as SpawnFileActions,
     posix_spawnattr_init::PosixSpawnAttr};
+use super::super::child_reaping::waitpid;
+use super::fclose;
 
 const CLOEXEC: i64 = 0x80000;
 const EINTR: i64 = 4;
@@ -31,6 +33,9 @@ unsafe extern "C" {
     fn posix_spawn_file_actions_adddup2(actions: *mut c_void, fd: c_int, target: c_int) -> c_int;
     fn posix_spawn_file_actions_destroy(actions: *mut c_void) -> c_int;
     fn pthread_testcancel();
+    // musl popen.c opens its end with the public `fdopen` (an alias of the
+    // hidden `__fdopen`), so an application definition is reached.
+    fn fdopen(fd: c_int, mode: *const c_char) -> *mut StandardStream;
     static mut __environ: *mut *mut c_char;
 }
 
@@ -66,105 +71,114 @@ unsafe fn wait_process_stream_raw(pid: c_int, status: *mut c_int) -> i64 {
     }
 }
 
-/// Open a shell command's standard output (`r`) or standard input (`w`).
-/// # Safety
-/// `command` and `mode` are readable NUL-terminated strings. The process
-/// environment remains readable and unchanged through child exec. The caller
-/// owns the returned FILE and eventually closes/reaps it with pclose.
-#[no_mangle]
-pub unsafe extern "C" fn popen(command: *const c_char, mode: *const c_char) -> *mut StandardStream {
-    unsafe {
-        let direction = match *mode as u8 { b'r' => 0, b'w' => 1,
-            _ => { errno::set_errno(22); return ptr::null_mut(); } };
-        let mut pipes = [-1i32; 2];
-        let result = sys::syscall2(293, pipes.as_mut_ptr() as i64, CLOEXEC);
-        if result < 0 { errno::set_errno(-result as c_int); return ptr::null_mut(); }
-        let stream = super::__fdopen(pipes[direction], mode);
-        if stream.is_null() { close(pipes[0]); close(pipes[1]); return stream; }
-        let mut actions = SpawnFileActions { _pad0: [0; 2], actions: ptr::null_mut(), _pad: [0; 16] };
-        let action_pointer = ptr::addr_of_mut!(actions).cast();
-        let mut error = 0;
-        {
-            let _registry = ListGuard::acquire();
-            let mut current = OPEN_STREAMS;
-            while !current.is_null() {
-                if (*current).pipe_pid != 0 {
-                    error = posix_spawn_file_actions_addclose(action_pointer, (*current).file_descriptor);
-                    if error != 0 { break; }
+// Musl's `src/stdio/popen.c` object.
+static_archive_member! { popen_source {
+    /// Open a shell command's standard output (`r`) or standard input (`w`).
+    /// # Safety
+    /// `command` and `mode` are readable NUL-terminated strings. The process
+    /// environment remains readable and unchanged through child exec. The caller
+    /// owns the returned FILE and eventually closes/reaps it with pclose.
+    #[no_mangle]
+    pub unsafe extern "C" fn popen(command: *const c_char, mode: *const c_char) -> *mut StandardStream {
+        unsafe {
+            let direction = match *mode as u8 { b'r' => 0, b'w' => 1,
+                _ => { errno::set_errno(22); return ptr::null_mut(); } };
+            let mut pipes = [-1i32; 2];
+            let result = sys::syscall2(293, pipes.as_mut_ptr() as i64, CLOEXEC);
+            if result < 0 { errno::set_errno(-result as c_int); return ptr::null_mut(); }
+            let stream = fdopen(pipes[direction], mode);
+            if stream.is_null() { close(pipes[0]); close(pipes[1]); return stream; }
+            let mut actions = SpawnFileActions { _pad0: [0; 2], actions: ptr::null_mut(), _pad: [0; 16] };
+            let action_pointer = ptr::addr_of_mut!(actions).cast();
+            let mut error = 0;
+            {
+                let _registry = ListGuard::acquire();
+                let mut current = OPEN_STREAMS;
+                while !current.is_null() {
+                    if (*current).pipe_pid != 0 {
+                        error = posix_spawn_file_actions_addclose(action_pointer, (*current).file_descriptor);
+                        if error != 0 { break; }
+                    }
+                    current = (*current).next;
                 }
-                current = (*current).next;
+                if error == 0 {
+                    error = posix_spawn_file_actions_adddup2(action_pointer, pipes[1-direction], (1-direction) as c_int);
+                }
+                let mut pid = 0;
+                if error == 0 { error = spawn(command, &actions, None, 0, &mut pid); }
+                posix_spawn_file_actions_destroy(action_pointer);
+                if error == 0 {
+                    (*stream).pipe_pid = pid;
+                    let mut cursor = mode;
+                    while *cursor != 0 && *cursor as u8 != b'e' { cursor = cursor.add(1); }
+                    if *cursor == 0 { sys::syscall3(72, pipes[direction] as i64, 2, 0); }
+                    close(pipes[1-direction]);
+                    return stream;
+                }
             }
-            if error == 0 {
-                error = posix_spawn_file_actions_adddup2(action_pointer, pipes[1-direction], (1-direction) as c_int);
-            }
+            fclose(stream);
+            close(pipes[1-direction]);
+            errno::set_errno(error);
+            ptr::null_mut()
+        }
+    }
+}}
+
+// Musl's `src/stdio/pclose.c` object.
+static_archive_member! { pclose_source {
+    /// Close a process stream and return its child's encoded wait status.
+    /// # Safety
+    /// `stream` is a live popen result, exclusively owned by this call. It is
+    /// consumed even if closing or waiting fails; no other code may reap its child.
+    #[no_mangle]
+    pub unsafe extern "C" fn pclose(stream: *mut StandardStream) -> c_int {
+        unsafe {
+            let pid = (*stream).pipe_pid;
+            fclose(stream);
+            let mut status = 0;
+            let result = wait_process_stream_raw(pid, &mut status);
+            if result < 0 { errno::set_errno(-result as c_int); -1 } else { status }
+        }
+    }
+}}
+
+// Musl's `src/process/system.c` object.
+static_archive_member! { system_source {
+    /// Execute a shell command and return its encoded wait status.
+    /// # Safety
+    /// A non-null command is a readable NUL-terminated string; the process
+    /// environment remains readable and unchanged through exec. Concurrent SIGINT
+    /// and SIGQUIT disposition changes require caller coordination, as in musl's
+    /// save/install/restore system.c algorithm.
+    #[no_mangle]
+    pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
+        unsafe {
+            pthread_testcancel();
+            if command.is_null() { return 1; }
+            let ignore = KernelSignalAction { handler: 1, ..DEFAULT };
+            let mut old_int = DEFAULT;
+            let mut old_quit = DEFAULT;
+            disposition(2, &ignore, &mut old_int);
+            disposition(3, &ignore, &mut old_quit);
+            let mut old_mask = 0;
+            mask(0, &(1 << 16), &mut old_mask);
+            let reset = if old_int.handler != 1 { 1 << 1 } else { 0 }
+                | if old_quit.handler != 1 { 1 << 2 } else { 0 };
             let mut pid = 0;
-            if error == 0 { error = spawn(command, &actions, None, 0, &mut pid); }
-            posix_spawn_file_actions_destroy(action_pointer);
+            let error = spawn(command, ptr::null(), Some(old_mask), reset, &mut pid);
+            let mut status = -1;
             if error == 0 {
-                (*stream).pipe_pid = pid;
-                let mut cursor = mode;
-                while *cursor != 0 && *cursor as u8 != b'e' { cursor = cursor.add(1); }
-                if *cursor == 0 { sys::syscall3(72, pipes[direction] as i64, 2, 0); }
-                close(pipes[1-direction]);
-                return stream;
+                // Unlike pclose.c, system.c retries the public waitpid boundary.
+                // Its EINTR translation remains observable after a later success;
+                // a canceled wait bypasses the source's following restorations.
+                while waitpid(pid, &mut status, 0) < 0
+                    && errno::get_errno() == EINTR as c_int {}
             }
+            disposition(2, &old_int, ptr::null_mut());
+            disposition(3, &old_quit, ptr::null_mut());
+            mask(2, &old_mask, ptr::null_mut());
+            if error != 0 { errno::set_errno(error); }
+            status
         }
-        super::fclose(stream);
-        close(pipes[1-direction]);
-        errno::set_errno(error);
-        ptr::null_mut()
     }
-}
-
-/// Close a process stream and return its child's encoded wait status.
-/// # Safety
-/// `stream` is a live popen result, exclusively owned by this call. It is
-/// consumed even if closing or waiting fails; no other code may reap its child.
-#[no_mangle]
-pub unsafe extern "C" fn pclose(stream: *mut StandardStream) -> c_int {
-    unsafe {
-        let pid = (*stream).pipe_pid;
-        super::fclose(stream);
-        let mut status = 0;
-        let result = wait_process_stream_raw(pid, &mut status);
-        if result < 0 { errno::set_errno(-result as c_int); -1 } else { status }
-    }
-}
-
-/// Execute a shell command and return its encoded wait status.
-/// # Safety
-/// A non-null command is a readable NUL-terminated string; the process
-/// environment remains readable and unchanged through exec. Concurrent SIGINT
-/// and SIGQUIT disposition changes require caller coordination, as in musl's
-/// save/install/restore system.c algorithm.
-#[no_mangle]
-pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
-    unsafe {
-        pthread_testcancel();
-        if command.is_null() { return 1; }
-        let ignore = KernelSignalAction { handler: 1, ..DEFAULT };
-        let mut old_int = DEFAULT;
-        let mut old_quit = DEFAULT;
-        disposition(2, &ignore, &mut old_int);
-        disposition(3, &ignore, &mut old_quit);
-        let mut old_mask = 0;
-        mask(0, &(1 << 16), &mut old_mask);
-        let reset = if old_int.handler != 1 { 1 << 1 } else { 0 }
-            | if old_quit.handler != 1 { 1 << 2 } else { 0 };
-        let mut pid = 0;
-        let error = spawn(command, ptr::null(), Some(old_mask), reset, &mut pid);
-        let mut status = -1;
-        if error == 0 {
-            // Unlike pclose.c, system.c retries the public waitpid boundary.
-            // Its EINTR translation remains observable after a later success;
-            // a canceled wait bypasses the source's following restorations.
-            while super::super::child_reaping::waitpid(pid, &mut status, 0) < 0
-                && errno::get_errno() == EINTR as c_int {}
-        }
-        disposition(2, &old_int, ptr::null_mut());
-        disposition(3, &old_quit, ptr::null_mut());
-        mask(2, &old_mask, ptr::null_mut());
-        if error != 0 { errno::set_errno(error); }
-        status
-    }
-}
+}}

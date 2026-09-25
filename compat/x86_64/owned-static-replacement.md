@@ -87,6 +87,39 @@ defines counting `nanosleep`, `open`, `unlink`, `rmdir`, `sendto` and
 never-inlined `open`, and `send`/`recv` (`socket_transport.rs`) call the
 public `sendto`/`recvfrom`, as musl's sources do.
 
+## Standard I/O roles
+
+`libc/src/c_abi/x86_64/owned_static_stdio.rs` and its stream children
+(`owned_stdio_backends.rs`, `owned_wide_stdio.rs`, `owned_stdio_extensions.rs`,
+`owned_stdio_process.rs`, `owned_signal_reporting.rs`) keep each musl
+`src/stdio` object's entries, with their `_unlocked`, `_IO_` and hidden-target
+aliases, in its own member; the FILE records, registry, locks and buffering
+helpers stay in the parent. Each entry reaches the others as musl's source
+does, and the public callees are never inlined:
+
+- `fputs` measures with the public `strlen` and writes with the public
+  `fwrite`; `puts` calls `fputs`; `putw` and `getw` use `fwrite` and `fread`.
+- `fclose`, `freopen` and `_flushlbf` call `fflush`; a `freopen` whose new
+  open fails closes the stream with `fclose`; `pclose` calls `fclose` and
+  `popen` opens its end with `fdopen`.
+- `getline` calls `getdelim`, and `fgetln` calls `ungetc` and `getline`;
+  `setbuf`, `setbuffer` and `setlinebuf` call `setvbuf`; `flockfile` calls
+  `ftrylockfile`; `getwc` and `getwchar` call `fgetwc`, and `putwc` and
+  `putwchar` call `fputwc`; `psiginfo` calls `psignal`, which formats with
+  `fprintf`.
+- `getc`, `getchar`, `putc` and `putchar` transfer bytes themselves, as
+  musl's inlined `do_getc`/`do_putc` do, and `getchar_unlocked` and
+  `putchar_unlocked` expand stdio_impl.h's macros; none calls `fgetc`,
+  `fputc`, `getc_unlocked` or `putc_unlocked`. `__stdio_exit` writes pending
+  output itself rather than through `fflush`.
+
+The roles define counting replacements and report whether each client
+reached them: `STDIO_BLOCK` (`fwrite`, `fread`), `FPUTS`, `FFLUSH` (a no-op
+whose buffered final output only `__stdio_exit` can write), `GETDELIM`,
+`SETVBUF`, `WIDE_STREAM` (`fgetwc`, `fputwc`), `FCLOSE`, and `BYTE` (`fgetc`,
+`fputc`, `getc_unlocked`, `putc_unlocked`, which musl's other byte entries
+do not reach). `PRINTF` also covers `psignal` and `psiginfo`.
+
 ## Allocator roles
 
 The allocator roles define a bump arena whose `free` terminates the program
