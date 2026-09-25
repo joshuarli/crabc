@@ -54,7 +54,7 @@ DEFAULT_LINE = re.compile(r'^DEFAULT_ALLOCATOR_BACKEND = "([a-z-]+)"$', re.MULTI
 PRODUCTION_BACKEND = "native"
 CURRENT_DEFAULT = "accepted-c"
 C_SYMBOL = re.compile(r"^_?mi_[A-Za-z0-9_]*$")
-C_MEMBER = re.compile(r"(?:^[0-9a-f]+-static\.o$|mimalloc)")
+C_MEMBER = re.compile(r"^(?!.*\.rcgu\.o$)(?:[0-9a-f]+-static\.o|.*mimalloc.*)$")
 C_PROVENANCE_TOKENS = ("libmimalloc", "c_src/mimalloc", "/mimalloc.h", "pinned-mimalloc", "mimalloc-3.5.0/")
 C_DEPENDENCY = "libmimalloc-sys"
 PRIOR_REPORTS = {

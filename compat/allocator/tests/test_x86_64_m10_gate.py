@@ -48,6 +48,8 @@ class ArtifactAuditTests(unittest.TestCase):
 
     def test_a_clean_native_product_passes(self) -> None:
         self.assertEqual(self.audit(), [])
+        # The Rust allocator's own codegen units are not C mimalloc objects.
+        self.assertEqual(self.audit(member="c.crabc_mimalloc-84c66b7b.crabc_mimalloc.377de8bf-cgu.114.rcgu.o"), [])
 
     def test_names_every_kind_of_c_mimalloc_trace(self) -> None:
         cases = {
