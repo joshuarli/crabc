@@ -11895,11 +11895,12 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         // immutable, and the owner publication names it.
         // SAFETY: `native_free` accepts only an exact current native
         // allocation, which keeps its PageMap registration and page live.
-        let page = unsafe { owner.page_map.as_ref().checked_lookup(block.as_ptr()) };
-        if let (Some(page), Some(current)) = (core::ptr::NonNull::new(page), current_thread_identity()) {
+        let page = unsafe { owner.page_map.as_ref().live_lookup(block.as_ptr()) };
+        if let Some(page) = core::ptr::NonNull::new(page) {
             // SAFETY: the gate holds for this admitted operation; `page`
-            // is `block`'s registered page and the caller consumes it.
-            if unsafe { crate::local_fast_path::free(owner.theap, page, block, current.get()) } {
+            // is `block`'s registered page and the caller consumes it. The
+            // raw thread pointer is the source `_mi_prim_thread_id`.
+            if unsafe { crate::local_fast_path::free(owner.theap, page, block, crate::os::thread_pointer_identity()) } {
                 #[cfg(feature = "native-runtime-test-audit")]
                 note_local_fast_operation();
                 return NativePageFreeResult::Freed;

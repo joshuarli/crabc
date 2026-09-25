@@ -743,6 +743,28 @@ impl PageMap {
         unsafe { *(*submap.as_ptr().add(location.sub_index)).0.get() }
     }
 
+    /// Pinned `_mi_unchecked_ptr_page` for the two-level map: the page of an
+    /// address inside a live registered allocation, with none of
+    /// [`Self::checked_lookup`]'s activity, committed-count, and null-submap
+    /// guards (normal-release `_mi_ptr_page` has none either).
+    ///
+    /// # Safety
+    ///
+    /// The map is active and `address` lies inside an allocation whose page
+    /// range is registered and stays registered through this read, so its
+    /// submap slot is committed and published; as for `checked_lookup`, no
+    /// registration or unregistration of that slice overlaps the read.
+    #[inline(always)]
+    pub(crate) unsafe fn live_lookup(&self, address: *const u8) -> *mut Page {
+        let location = location_of_address(address.addr());
+        // SAFETY: an active map's header is live; the registered range proves
+        // the slot committed and its submap published.
+        unsafe {
+            let submap = atomic_submap_slot(self.header, location.map_index).load(Ordering::Acquire);
+            *(*submap.add(location.sub_index)).0.get()
+        }
+    }
+
     unsafe fn set_range_prim(
         &self,
         location: PageMapLocation,

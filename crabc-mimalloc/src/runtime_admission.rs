@@ -241,7 +241,10 @@ pub(super) struct NativeAllocatorOperationGuard {
 
 impl NativeAllocatorOperationGuard {
     pub(super) fn enter() -> Result<Self, NativeAllocatorEntryError> {
-        Self::enter_at(&EPOCH, current_native_allocator_thread_descriptor())
+        // A registered descriptor already published its owner slot (see
+        // `current_native_allocator_thread_descriptor`), and an unregistered
+        // one is refused before any use, so entry need not store it again.
+        Self::enter_at(&EPOCH, NonNull::from(&DESCRIPTOR))
     }
 
     fn enter_at(epoch: &NativeAllocatorEpoch, descriptor: NonNull<NativeAllocatorThreadDescriptor>) -> Result<Self, NativeAllocatorEntryError> {
