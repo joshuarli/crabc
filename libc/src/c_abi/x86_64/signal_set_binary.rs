@@ -21,46 +21,52 @@ use core::ffi::{c_int, c_void};
 const SST_SIZE: usize = 65 / 8 / core::mem::size_of::<u64>();
 const _: [(); 1] = [(); SST_SIZE];
 
-/// Store the bitwise intersection of musl's selected x86 signal-set words.
-///
-/// # Safety
-///
-/// `dest` must point to writable storage and `left`/`right` to readable
-/// storage for public x86 `sigset_t` values. As in musl, this boundary
-/// dereferences the pointers directly and inspects/writes only their first
-/// unsigned-long word.
-#[no_mangle]
-pub unsafe extern "C" fn sigandset(
-    dest: *mut c_void,
-    left: *const c_void,
-    right: *const c_void,
-) -> c_int {
-    // SAFETY: the C caller owns public signal-set storage. Reading both source
-    // words before the write preserves musl's direct-assignment aliasing order.
-    let left_word = unsafe { core::ptr::read_unaligned(left.cast::<u64>()) };
-    let right_word = unsafe { core::ptr::read_unaligned(right.cast::<u64>()) };
-    unsafe { core::ptr::write_unaligned(dest.cast::<u64>(), left_word & right_word) };
-    0
-}
+// Musl's `src/signal/sigandset.c` object.
+static_archive_member! { sigandset_source {
+    /// Store the bitwise intersection of musl's selected x86 signal-set words.
+    ///
+    /// # Safety
+    ///
+    /// `dest` must point to writable storage and `left`/`right` to readable
+    /// storage for public x86 `sigset_t` values. As in musl, this boundary
+    /// dereferences the pointers directly and inspects/writes only their first
+    /// unsigned-long word.
+    #[no_mangle]
+    pub unsafe extern "C" fn sigandset(
+        dest: *mut c_void,
+        left: *const c_void,
+        right: *const c_void,
+    ) -> c_int {
+        // SAFETY: the C caller owns public signal-set storage. Reading both source
+        // words before the write preserves musl's direct-assignment aliasing order.
+        let left_word = unsafe { core::ptr::read_unaligned(left.cast::<u64>()) };
+        let right_word = unsafe { core::ptr::read_unaligned(right.cast::<u64>()) };
+        unsafe { core::ptr::write_unaligned(dest.cast::<u64>(), left_word & right_word) };
+        0
+    }
+}}
 
-/// Store the bitwise union of musl's selected x86 signal-set words.
-///
-/// # Safety
-///
-/// `dest` must point to writable storage and `left`/`right` to readable
-/// storage for public x86 `sigset_t` values. As in musl, this boundary
-/// dereferences the pointers directly and inspects/writes only their first
-/// unsigned-long word.
-#[no_mangle]
-pub unsafe extern "C" fn sigorset(
-    dest: *mut c_void,
-    left: *const c_void,
-    right: *const c_void,
-) -> c_int {
-    // SAFETY: the C caller owns public signal-set storage. Reading both source
-    // words before the write preserves musl's direct-assignment aliasing order.
-    let left_word = unsafe { core::ptr::read_unaligned(left.cast::<u64>()) };
-    let right_word = unsafe { core::ptr::read_unaligned(right.cast::<u64>()) };
-    unsafe { core::ptr::write_unaligned(dest.cast::<u64>(), left_word | right_word) };
-    0
-}
+// Musl's `src/signal/sigorset.c` object.
+static_archive_member! { sigorset_source {
+    /// Store the bitwise union of musl's selected x86 signal-set words.
+    ///
+    /// # Safety
+    ///
+    /// `dest` must point to writable storage and `left`/`right` to readable
+    /// storage for public x86 `sigset_t` values. As in musl, this boundary
+    /// dereferences the pointers directly and inspects/writes only their first
+    /// unsigned-long word.
+    #[no_mangle]
+    pub unsafe extern "C" fn sigorset(
+        dest: *mut c_void,
+        left: *const c_void,
+        right: *const c_void,
+    ) -> c_int {
+        // SAFETY: the C caller owns public signal-set storage. Reading both source
+        // words before the write preserves musl's direct-assignment aliasing order.
+        let left_word = unsafe { core::ptr::read_unaligned(left.cast::<u64>()) };
+        let right_word = unsafe { core::ptr::read_unaligned(right.cast::<u64>()) };
+        unsafe { core::ptr::write_unaligned(dest.cast::<u64>(), left_word | right_word) };
+        0
+    }
+}}

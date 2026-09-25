@@ -104,118 +104,145 @@ unsafe fn do_setgroups(context: *mut c_void) {
     context.ret.store(ret, Ordering::Release);
 }
 
-/// Replace every thread's supplementary-group list.
-///
-/// # Safety
-///
-/// If `count` is nonzero, `groups` must point to `count` readable `gid_t`
-/// words until return. A failure on one thread after another has changed
-/// its groups kills the process, as in musl.
-#[no_mangle]
-pub unsafe extern "C" fn setgroups(count: usize, groups: *const c_uint) -> c_int {
-    let context = SetgroupsContext { count, list: groups, ret: AtomicI32::new(1) };
-    // SAFETY: `do_setgroups` issues only a raw syscall over the caller's
-    // list, and the context outlives the rendezvous.
-    unsafe {
-        owned_synccall::synccall(do_setgroups, core::ptr::addr_of!(context).cast_mut().cast())
-    };
-    c_status(i64::from(context.ret.load(Ordering::Acquire)))
-}
+// Musl's `src/linux/setgroups.c` object.
+static_archive_member! { setgroups_source {
+    /// Replace every thread's supplementary-group list.
+    ///
+    /// # Safety
+    ///
+    /// If `count` is nonzero, `groups` must point to `count` readable `gid_t`
+    /// words until return. A failure on one thread after another has changed
+    /// its groups kills the process, as in musl.
+    #[no_mangle]
+    pub unsafe extern "C" fn setgroups(count: usize, groups: *const c_uint) -> c_int {
+        let context = SetgroupsContext { count, list: groups, ret: AtomicI32::new(1) };
+        // SAFETY: `do_setgroups` issues only a raw syscall over the caller's
+        // list, and the context outlives the rendezvous.
+        unsafe {
+            owned_synccall::synccall(do_setgroups, core::ptr::addr_of!(context).cast_mut().cast())
+        };
+        c_status(i64::from(context.ret.load(Ordering::Acquire)))
+    }
+}}
 
-/// Set every thread's user IDs through Linux `setuid(2)`.
-///
-/// # Safety
-///
-/// Scalar C ABI entry; see the module contract for partial-failure behavior.
-#[no_mangle]
-pub unsafe extern "C" fn setuid(user_id: c_uint) -> c_int {
-    setxid(raw_syscall::SYS_SETUID, user_id as c_int, 0, 0)
-}
+// Musl's `src/unistd/setuid.c` object.
+static_archive_member! { setuid_source {
+    /// Set every thread's user IDs through Linux `setuid(2)`.
+    ///
+    /// # Safety
+    ///
+    /// Scalar C ABI entry; see the module contract for partial-failure behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn setuid(user_id: c_uint) -> c_int {
+        setxid(raw_syscall::SYS_SETUID, user_id as c_int, 0, 0)
+    }
+}}
 
-/// Set every thread's group IDs through Linux `setgid(2)`.
-///
-/// # Safety
-///
-/// Scalar C ABI entry; see the module contract for partial-failure behavior.
-#[no_mangle]
-pub unsafe extern "C" fn setgid(group_id: c_uint) -> c_int {
-    setxid(raw_syscall::SYS_SETGID, group_id as c_int, 0, 0)
-}
+// Musl's `src/unistd/setgid.c` object.
+static_archive_member! { setgid_source {
+    /// Set every thread's group IDs through Linux `setgid(2)`.
+    ///
+    /// # Safety
+    ///
+    /// Scalar C ABI entry; see the module contract for partial-failure behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn setgid(group_id: c_uint) -> c_int {
+        setxid(raw_syscall::SYS_SETGID, group_id as c_int, 0, 0)
+    }
+}}
 
-/// Set every thread's effective user ID (`setresuid(-1, euid, -1)`).
-///
-/// # Safety
-///
-/// Scalar C ABI entry; see the module contract for partial-failure behavior.
-#[no_mangle]
-pub unsafe extern "C" fn seteuid(effective_user_id: c_uint) -> c_int {
-    setxid(raw_syscall::SYS_SETRESUID, -1, effective_user_id as c_int, -1)
-}
+// Musl's `src/unistd/seteuid.c` object.
+static_archive_member! { seteuid_source {
+    /// Set every thread's effective user ID (`setresuid(-1, euid, -1)`).
+    ///
+    /// # Safety
+    ///
+    /// Scalar C ABI entry; see the module contract for partial-failure behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn seteuid(effective_user_id: c_uint) -> c_int {
+        setxid(raw_syscall::SYS_SETRESUID, -1, effective_user_id as c_int, -1)
+    }
+}}
 
-/// Set every thread's effective group ID (`setresgid(-1, egid, -1)`).
-///
-/// # Safety
-///
-/// Scalar C ABI entry; see the module contract for partial-failure behavior.
-#[no_mangle]
-pub unsafe extern "C" fn setegid(effective_group_id: c_uint) -> c_int {
-    setxid(raw_syscall::SYS_SETRESGID, -1, effective_group_id as c_int, -1)
-}
+// Musl's `src/unistd/setegid.c` object.
+static_archive_member! { setegid_source {
+    /// Set every thread's effective group ID (`setresgid(-1, egid, -1)`).
+    ///
+    /// # Safety
+    ///
+    /// Scalar C ABI entry; see the module contract for partial-failure behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn setegid(effective_group_id: c_uint) -> c_int {
+        setxid(raw_syscall::SYS_SETRESGID, -1, effective_group_id as c_int, -1)
+    }
+}}
 
-/// Set every thread's real and effective user IDs through `setreuid(2)`.
-///
-/// # Safety
-///
-/// Scalar C ABI entry; all-ones means unchanged.
-#[no_mangle]
-pub unsafe extern "C" fn setreuid(real_user_id: c_uint, effective_user_id: c_uint) -> c_int {
-    setxid(SYS_SETREUID, real_user_id as c_int, effective_user_id as c_int, 0)
-}
+// Musl's `src/unistd/setreuid.c` object.
+static_archive_member! { setreuid_source {
+    /// Set every thread's real and effective user IDs through `setreuid(2)`.
+    ///
+    /// # Safety
+    ///
+    /// Scalar C ABI entry; all-ones means unchanged.
+    #[no_mangle]
+    pub unsafe extern "C" fn setreuid(real_user_id: c_uint, effective_user_id: c_uint) -> c_int {
+        setxid(SYS_SETREUID, real_user_id as c_int, effective_user_id as c_int, 0)
+    }
+}}
 
-/// Set every thread's real and effective group IDs through `setregid(2)`.
-///
-/// # Safety
-///
-/// Scalar C ABI entry; all-ones means unchanged.
-#[no_mangle]
-pub unsafe extern "C" fn setregid(real_group_id: c_uint, effective_group_id: c_uint) -> c_int {
-    setxid(SYS_SETREGID, real_group_id as c_int, effective_group_id as c_int, 0)
-}
+// Musl's `src/unistd/setregid.c` object.
+static_archive_member! { setregid_source {
+    /// Set every thread's real and effective group IDs through `setregid(2)`.
+    ///
+    /// # Safety
+    ///
+    /// Scalar C ABI entry; all-ones means unchanged.
+    #[no_mangle]
+    pub unsafe extern "C" fn setregid(real_group_id: c_uint, effective_group_id: c_uint) -> c_int {
+        setxid(SYS_SETREGID, real_group_id as c_int, effective_group_id as c_int, 0)
+    }
+}}
 
-/// Set every thread's real, effective, and saved user IDs.
-///
-/// # Safety
-///
-/// Scalar C ABI entry; all-ones means unchanged.
-#[no_mangle]
-pub unsafe extern "C" fn setresuid(
-    real_user_id: c_uint,
-    effective_user_id: c_uint,
-    saved_user_id: c_uint,
-) -> c_int {
-    setxid(
-        raw_syscall::SYS_SETRESUID,
-        real_user_id as c_int,
-        effective_user_id as c_int,
-        saved_user_id as c_int,
-    )
-}
+// Musl's `src/unistd/setresuid.c` object.
+static_archive_member! { setresuid_source {
+    /// Set every thread's real, effective, and saved user IDs.
+    ///
+    /// # Safety
+    ///
+    /// Scalar C ABI entry; all-ones means unchanged.
+    #[no_mangle]
+    pub unsafe extern "C" fn setresuid(
+        real_user_id: c_uint,
+        effective_user_id: c_uint,
+        saved_user_id: c_uint,
+    ) -> c_int {
+        setxid(
+            raw_syscall::SYS_SETRESUID,
+            real_user_id as c_int,
+            effective_user_id as c_int,
+            saved_user_id as c_int,
+        )
+    }
+}}
 
-/// Set every thread's real, effective, and saved group IDs.
-///
-/// # Safety
-///
-/// Scalar C ABI entry; all-ones means unchanged.
-#[no_mangle]
-pub unsafe extern "C" fn setresgid(
-    real_group_id: c_uint,
-    effective_group_id: c_uint,
-    saved_group_id: c_uint,
-) -> c_int {
-    setxid(
-        raw_syscall::SYS_SETRESGID,
-        real_group_id as c_int,
-        effective_group_id as c_int,
-        saved_group_id as c_int,
-    )
-}
+// Musl's `src/unistd/setresgid.c` object.
+static_archive_member! { setresgid_source {
+    /// Set every thread's real, effective, and saved group IDs.
+    ///
+    /// # Safety
+    ///
+    /// Scalar C ABI entry; all-ones means unchanged.
+    #[no_mangle]
+    pub unsafe extern "C" fn setresgid(
+        real_group_id: c_uint,
+        effective_group_id: c_uint,
+        saved_group_id: c_uint,
+    ) -> c_int {
+        setxid(
+            raw_syscall::SYS_SETRESGID,
+            real_group_id as c_int,
+            effective_group_id as c_int,
+            saved_group_id as c_int,
+        )
+    }
+}}

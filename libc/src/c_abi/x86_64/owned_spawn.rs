@@ -258,27 +258,33 @@ pub(super) unsafe fn spawn(pid: *mut c_int, path: *const c_char,
     }
 }
 
-/// Start an image with caller-supplied arguments/environment and spawn records.
-/// # Safety
-/// Path is readable NUL-terminated storage; argv/envp are readable terminated
-/// pointer vectors naming valid C strings through exec. Non-null actions and
-/// attributes are live initialized records, not concurrently modified. PID is
-/// null or writable int storage, disjoint from all inputs; it is written only
-/// on success. The successful caller owns reaping that child.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawn(pid: *mut c_int, path: *const c_char,
-    actions: *const c_void, attributes: *const c_void,
-    arguments: *const *const c_char, environment: *const *const c_char) -> c_int {
-    unsafe { spawn(pid, path, actions.cast(), attributes.cast(), arguments, environment, false) }
-}
+// Musl's `src/process/posix_spawn.c` object.
+static_archive_member! { posix_spawn_source {
+    /// Start an image with caller-supplied arguments/environment and spawn records.
+    /// # Safety
+    /// Path is readable NUL-terminated storage; argv/envp are readable terminated
+    /// pointer vectors naming valid C strings through exec. Non-null actions and
+    /// attributes are live initialized records, not concurrently modified. PID is
+    /// null or writable int storage, disjoint from all inputs; it is written only
+    /// on success. The successful caller owns reaping that child.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawn(pid: *mut c_int, path: *const c_char,
+        actions: *const c_void, attributes: *const c_void,
+        arguments: *const *const c_char, environment: *const *const c_char) -> c_int {
+        unsafe { spawn(pid, path, actions.cast(), attributes.cast(), arguments, environment, false) }
+    }
+}}
 
-/// Spawn after searching the calling process's PATH (not the supplied envp).
-/// # Safety
-/// Obligations are those of posix_spawn; the inherited environment/PATH must
-/// additionally remain readable and unchanged through the child exec attempt.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawnp(pid: *mut c_int, file: *const c_char,
-    actions: *const c_void, attributes: *const c_void,
-    arguments: *const *const c_char, environment: *const *const c_char) -> c_int {
-    unsafe { spawn(pid, file, actions.cast(), attributes.cast(), arguments, environment, true) }
-}
+// Musl's `src/process/posix_spawnp.c` object.
+static_archive_member! { posix_spawnp_source {
+    /// Spawn after searching the calling process's PATH (not the supplied envp).
+    /// # Safety
+    /// Obligations are those of posix_spawn; the inherited environment/PATH must
+    /// additionally remain readable and unchanged through the child exec attempt.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawnp(pid: *mut c_int, file: *const c_char,
+        actions: *const c_void, attributes: *const c_void,
+        arguments: *const *const c_char, environment: *const *const c_char) -> c_int {
+        unsafe { spawn(pid, file, actions.cast(), attributes.cast(), arguments, environment, true) }
+    }
+}}

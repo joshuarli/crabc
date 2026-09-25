@@ -55,8 +55,6 @@ use super::{pthread_create_join, pthread_identity, static_tls};
 // and tss_get as weak same-address aliases. Preserve those distinct source
 // linkage classes while Rust callers keep the direct item spellings below.
 core::arch::global_asm!(
-    ".hidden __pthread_key_create",
-    ".hidden __pthread_key_delete",
     ".weak pthread_getspecific",
     ".set pthread_getspecific, __pthread_getspecific",
     ".weak tss_get",
@@ -265,6 +263,12 @@ fn current_selected_values() -> Option<*const SelectedTsdValues> {
 
 // Musl's `src/thread/pthread_key_create.c` object.
 static_archive_member! { pthread_key_create_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_key_create",
+        ".hidden __pthread_key_delete",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_key_create",

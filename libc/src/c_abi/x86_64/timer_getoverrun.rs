@@ -23,24 +23,27 @@ use core::ffi::{c_int, c_void};
 
 use super::{c_status, raw_syscall};
 
-/// Forward one nonnegative opaque timer word through Linux's C status convention.
-///
-/// # Safety
-///
-/// `timer` must carry a nonnegative opaque Linux timer bit pattern. This leaf
-/// does not interpret the pointer or support musl's negative tagged
-/// thread-owned timer representation. The caller owns any valid timer's
-/// lifetime and overrun semantics; this private selected artifact establishes
-/// only rejected-handle error translation.
-#[no_mangle]
-pub unsafe extern "C" fn timer_getoverrun(timer: *mut c_void) -> c_int {
-    // SAFETY: the caller owns the opaque timer word and its selected boundary.
-    // Linux/x86-64 receives that one word in rdi.
-    let result = unsafe {
-        raw_syscall::syscall1(
-            raw_syscall::SYS_TIMER_GETOVERRUN,
-            timer as usize as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/time/timer_getoverrun.c` object.
+static_archive_member! { timer_getoverrun_source {
+    /// Forward one nonnegative opaque timer word through Linux's C status convention.
+    ///
+    /// # Safety
+    ///
+    /// `timer` must carry a nonnegative opaque Linux timer bit pattern. This leaf
+    /// does not interpret the pointer or support musl's negative tagged
+    /// thread-owned timer representation. The caller owns any valid timer's
+    /// lifetime and overrun semantics; this private selected artifact establishes
+    /// only rejected-handle error translation.
+    #[no_mangle]
+    pub unsafe extern "C" fn timer_getoverrun(timer: *mut c_void) -> c_int {
+        // SAFETY: the caller owns the opaque timer word and its selected boundary.
+        // Linux/x86-64 receives that one word in rdi.
+        let result = unsafe {
+            raw_syscall::syscall1(
+                raw_syscall::SYS_TIMER_GETOVERRUN,
+                timer as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}

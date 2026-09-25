@@ -51,57 +51,66 @@ fn selected_word_and_bit(signal: c_int) -> Option<(usize, u32)> {
     ))
 }
 
-/// Add one application-visible signal to a public x86 signal set.
-///
-/// # Safety
-///
-/// `set` must point to writable storage for one public x86 `sigset_t`. As in
-/// musl, valid input dereferences the selected public word directly.
-#[no_mangle]
-pub unsafe extern "C" fn sigaddset(set: *mut c_void, signal: c_int) -> c_int {
-    let Some((word_index, bit)) = selected_word_and_bit(signal) else {
-        return invalid_argument();
-    };
-    // SAFETY: the validated x86 index is musl's sole selected word, and the C
-    // caller owns writable public signal-set storage.
-    unsafe {
-        let word_pointer = set.cast::<u64>().add(word_index);
-        let word = core::ptr::read_unaligned(word_pointer);
-        core::ptr::write_unaligned(word_pointer, word | (1_u64 << bit));
+// Musl's `src/signal/sigaddset.c` object.
+static_archive_member! { sigaddset_source {
+    /// Add one application-visible signal to a public x86 signal set.
+    ///
+    /// # Safety
+    ///
+    /// `set` must point to writable storage for one public x86 `sigset_t`. As in
+    /// musl, valid input dereferences the selected public word directly.
+    #[no_mangle]
+    pub unsafe extern "C" fn sigaddset(set: *mut c_void, signal: c_int) -> c_int {
+        let Some((word_index, bit)) = selected_word_and_bit(signal) else {
+            return invalid_argument();
+        };
+        // SAFETY: the validated x86 index is musl's sole selected word, and the C
+        // caller owns writable public signal-set storage.
+        unsafe {
+            let word_pointer = set.cast::<u64>().add(word_index);
+            let word = core::ptr::read_unaligned(word_pointer);
+            core::ptr::write_unaligned(word_pointer, word | (1_u64 << bit));
+        }
+        0
     }
-    0
-}
+}}
 
-/// Remove one application-visible signal from a public x86 signal set.
-///
-/// # Safety
-///
-/// `set` must point to writable storage for one public x86 `sigset_t`. As in
-/// musl, valid input dereferences the selected public word directly.
-#[no_mangle]
-pub unsafe extern "C" fn sigdelset(set: *mut c_void, signal: c_int) -> c_int {
-    let Some((word_index, bit)) = selected_word_and_bit(signal) else {
-        return invalid_argument();
-    };
-    // SAFETY: the validated x86 index is musl's sole selected word, and the C
-    // caller owns writable public signal-set storage.
-    unsafe {
-        let word_pointer = set.cast::<u64>().add(word_index);
-        let word = core::ptr::read_unaligned(word_pointer);
-        core::ptr::write_unaligned(word_pointer, word & !(1_u64 << bit));
+// Musl's `src/signal/sigdelset.c` object.
+static_archive_member! { sigdelset_source {
+    /// Remove one application-visible signal from a public x86 signal set.
+    ///
+    /// # Safety
+    ///
+    /// `set` must point to writable storage for one public x86 `sigset_t`. As in
+    /// musl, valid input dereferences the selected public word directly.
+    #[no_mangle]
+    pub unsafe extern "C" fn sigdelset(set: *mut c_void, signal: c_int) -> c_int {
+        let Some((word_index, bit)) = selected_word_and_bit(signal) else {
+            return invalid_argument();
+        };
+        // SAFETY: the validated x86 index is musl's sole selected word, and the C
+        // caller owns writable public signal-set storage.
+        unsafe {
+            let word_pointer = set.cast::<u64>().add(word_index);
+            let word = core::ptr::read_unaligned(word_pointer);
+            core::ptr::write_unaligned(word_pointer, word & !(1_u64 << bit));
+        }
+        0
     }
-    0
-}
+}}
 
-/// Fill the first kernel-visible word with all musl application signals.
-///
-/// # Safety
-///
-/// `set` must point to writable storage for one public x86 `sigset_t`. Musl's
-/// x86 `sigfillset.c` path writes only this first unsigned-long word.
-#[no_mangle]
-pub unsafe extern "C" fn sigfillset(set: *mut c_void) -> c_int {
-    // SAFETY: the C caller owns writable public signal-set storage.
-    unsafe { core::ptr::write_unaligned(set.cast::<u64>(), SIGFILLSET_FIRST_WORD) };
-    0
-}
+// Musl's `src/signal/sigfillset.c` object.
+static_archive_member! { sigfillset_source {
+    /// Fill the first kernel-visible word with all musl application signals.
+    ///
+    /// # Safety
+    ///
+    /// `set` must point to writable storage for one public x86 `sigset_t`. Musl's
+    /// x86 `sigfillset.c` path writes only this first unsigned-long word.
+    #[no_mangle]
+    pub unsafe extern "C" fn sigfillset(set: *mut c_void) -> c_int {
+        // SAFETY: the C caller owns writable public signal-set storage.
+        unsafe { core::ptr::write_unaligned(set.cast::<u64>(), SIGFILLSET_FIRST_WORD) };
+        0
+    }
+}}

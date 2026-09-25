@@ -80,16 +80,7 @@ use super::{atomic, pthread_create_join, pthread_identity, pthread_vmlock, raw_s
 // Pinned musl exposes these public entry points as weak aliases of hidden
 // `__pthread_mutex_*` bodies. Retaining that source linkage makes internal
 // Rust calls nonpreemptible without changing the mutex state machine.
-core::arch::global_asm!(
-    ".hidden __pthread_mutex_trylock",
-    ".hidden __pthread_mutex_lock",
-    ".hidden __pthread_mutex_unlock",
-);
 
-#[cfg(crabc_x86_owned_runtime)]
-core::arch::global_asm!(
-    ".hidden __pthread_mutex_timedlock",
-);
 
 const EPERM: c_int = 1;
 #[cfg(crabc_x86_owned_runtime)]
@@ -2132,6 +2123,11 @@ static_archive_member! { pthread_mutex_destroy_source {
 
 // Musl's `src/thread/pthread_mutex_trylock.c` object.
 static_archive_member! { pthread_mutex_trylock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_mutex_trylock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_mutex_trylock",
@@ -2171,6 +2167,11 @@ static_archive_member! { pthread_mutex_trylock_source {
 
 // Musl's `src/thread/pthread_mutex_lock.c` object.
 static_archive_member! { pthread_mutex_lock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_mutex_lock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_mutex_lock",
@@ -2212,6 +2213,11 @@ static_archive_member! { pthread_mutex_lock_source {
 
 // Musl's `src/thread/pthread_mutex_unlock.c` object.
 static_archive_member! { pthread_mutex_unlock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_mutex_unlock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_mutex_unlock",
@@ -2254,6 +2260,12 @@ static_archive_member! { pthread_mutex_unlock_source {
 // Musl's `src/thread/pthread_mutex_timedlock.c` object.
 #[cfg(crabc_x86_owned_runtime)]
 static_archive_member! { pthread_mutex_timedlock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    #[cfg(crabc_x86_owned_runtime)]
+    core::arch::global_asm!(
+        ".hidden __pthread_mutex_timedlock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_mutex_timedlock",

@@ -60,30 +60,33 @@ unsafe fn unlock_registry() {
     super::musl_lock::unlock(&QUICK_EXIT_LOCK);
 }
 
-/// Register one C11 quick-exit callback in musl's fixed 32-slot table.
-///
-/// # Safety
-///
-/// `callback` is an executable C function that remains valid until it is
-/// called by a later `quick_exit`; it returns normally and follows the
-/// process's quiescent quick-exit contract.
-#[no_mangle]
-pub unsafe extern "C" fn at_quick_exit(callback: QuickExitFunction) -> c_int {
-    unsafe { lock_registry() };
-    let count = unsafe { QUICK_EXIT_COUNT };
-    if count == QUICK_EXIT_CAPACITY {
+// Musl's `src/exit/at_quick_exit.c` object.
+static_archive_member! { at_quick_exit_source {
+    /// Register one C11 quick-exit callback in musl's fixed 32-slot table.
+    ///
+    /// # Safety
+    ///
+    /// `callback` is an executable C function that remains valid until it is
+    /// called by a later `quick_exit`; it returns normally and follows the
+    /// process's quiescent quick-exit contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn at_quick_exit(callback: QuickExitFunction) -> c_int {
+        unsafe { lock_registry() };
+        let count = unsafe { QUICK_EXIT_COUNT };
+        if count == QUICK_EXIT_CAPACITY {
+            unsafe { unlock_registry() };
+            return -1;
+        }
+        // SAFETY: the guard serializes the bounded table/count pair. `callback`
+        // has the valid C function-pointer contract documented above.
+        unsafe {
+            QUICK_EXIT_FUNCTIONS[count] = Some(callback);
+            QUICK_EXIT_COUNT = count + 1;
+        }
         unsafe { unlock_registry() };
-        return -1;
+        0
     }
-    // SAFETY: the guard serializes the bounded table/count pair. `callback`
-    // has the valid C function-pointer contract documented above.
-    unsafe {
-        QUICK_EXIT_FUNCTIONS[count] = Some(callback);
-        QUICK_EXIT_COUNT = count + 1;
-    }
-    unsafe { unlock_registry() };
-    0
-}
+}}
 
 /// Drain C11 quick-exit callbacks in LIFO order.
 ///
@@ -114,17 +117,20 @@ unsafe fn funcs_on_quick_exit() {
     }
 }
 
-/// Run the quick-exit table and terminate without ordinary exit processing.
-///
-/// # Safety
-///
-/// Every registered callback follows the `at_quick_exit` contract. Concurrent
-/// callers arrange musl's required quiescence before either calls `quick_exit`.
-#[no_mangle]
-pub unsafe extern "C" fn quick_exit(status: c_int) -> ! {
-    unsafe { funcs_on_quick_exit() };
-    immediate_termination::_Exit(status)
-}
+// Musl's `src/exit/quick_exit.c` object.
+static_archive_member! { quick_exit_source {
+    /// Run the quick-exit table and terminate without ordinary exit processing.
+    ///
+    /// # Safety
+    ///
+    /// Every registered callback follows the `at_quick_exit` contract. Concurrent
+    /// callers arrange musl's required quiescence before either calls `quick_exit`.
+    #[no_mangle]
+    pub unsafe extern "C" fn quick_exit(status: c_int) -> ! {
+        unsafe { funcs_on_quick_exit() };
+        immediate_termination::_Exit(status)
+    }
+}}
 
 /// Acquire the copied quick-exit guard before raw `fork`.
 ///

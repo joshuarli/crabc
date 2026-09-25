@@ -58,41 +58,47 @@ pub(super) unsafe fn execve_result(
     c_status(result)
 }
 
-/// Replace the current image with `path`, `argv`, and the supplied `envp`.
-///
-/// C callers must supply Linux-valid null-terminated pathname, argv, and envp
-/// objects for the duration of the syscall. A successful call does not return.
-#[no_mangle]
-pub unsafe extern "C" fn execve(
-    path: *const c_char,
-    argv: *const *const c_char,
-    envp: *const *const c_char,
-) -> c_int {
-    unsafe { execve_result(path, argv, envp) }
-}
+// Musl's `src/process/execve.c` object.
+static_archive_member! { execve_source {
+    /// Replace the current image with `path`, `argv`, and the supplied `envp`.
+    ///
+    /// C callers must supply Linux-valid null-terminated pathname, argv, and envp
+    /// objects for the duration of the syscall. A successful call does not return.
+    #[no_mangle]
+    pub unsafe extern "C" fn execve(
+        path: *const c_char,
+        argv: *const *const c_char,
+        envp: *const *const c_char,
+    ) -> c_int {
+        unsafe { execve_result(path, argv, envp) }
+    }
+}}
 
-/// Replace the current image through Linux `execveat` and `AT_EMPTY_PATH`.
-///
-/// The descriptor, argv, and envp remain caller-owned Linux syscall inputs.
-/// A successful call does not return; Linux 5.10 `ENOSYS` is returned directly
-/// rather than triggering musl's older procfs fallback.
-#[no_mangle]
-pub unsafe extern "C" fn fexecve(
-    fd: c_int,
-    argv: *const *const c_char,
-    envp: *const *const c_char,
-) -> c_int {
-    // SAFETY: this is Linux/x86-64 execveat's five exact raw words; the C
-    // caller owns descriptor and pointer validity for image replacement.
-    let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_EXECVEAT,
-            i64::from(fd),
-            EMPTY_PATH.as_ptr() as usize as i64,
-            argv as usize as i64,
-            envp as usize as i64,
-            AT_EMPTY_PATH,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/process/fexecve.c` object.
+static_archive_member! { fexecve_source {
+    /// Replace the current image through Linux `execveat` and `AT_EMPTY_PATH`.
+    ///
+    /// The descriptor, argv, and envp remain caller-owned Linux syscall inputs.
+    /// A successful call does not return; Linux 5.10 `ENOSYS` is returned directly
+    /// rather than triggering musl's older procfs fallback.
+    #[no_mangle]
+    pub unsafe extern "C" fn fexecve(
+        fd: c_int,
+        argv: *const *const c_char,
+        envp: *const *const c_char,
+    ) -> c_int {
+        // SAFETY: this is Linux/x86-64 execveat's five exact raw words; the C
+        // caller owns descriptor and pointer validity for image replacement.
+        let result = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_EXECVEAT,
+                i64::from(fd),
+                EMPTY_PATH.as_ptr() as usize as i64,
+                argv as usize as i64,
+                envp as usize as i64,
+                AT_EMPTY_PATH,
+            )
+        };
+        c_status(result)
+    }
+}}

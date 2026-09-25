@@ -29,26 +29,29 @@ use core::ffi::{c_int, c_void};
 
 use super::{c_status, raw_syscall};
 
-/// Forward one nonnegative opaque timer word and borrowed output record.
-///
-/// # Safety
-///
-/// `timer` must carry a nonnegative opaque Linux timer bit pattern. `value`
-/// must point to writable 32-byte, align-eight x86-64 `struct itimerspec`
-/// storage for the syscall duration. This leaf does not interpret either
-/// object or support musl's negative tagged thread-owned timer representation.
-/// The caller owns any valid timer's lifetime and query semantics; this private
-/// selected artifact establishes only rejected-handle error translation.
-#[no_mangle]
-pub unsafe extern "C" fn timer_gettime(timer: *mut c_void, value: *mut c_void) -> c_int {
-    // SAFETY: the caller owns the opaque timer word, writable record, and
-    // selected boundary. Linux/x86-64 receives these words in rdi/rsi.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_TIMER_GETTIME,
-            timer as usize as i64,
-            value as usize as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/time/timer_gettime.c` object.
+static_archive_member! { timer_gettime_source {
+    /// Forward one nonnegative opaque timer word and borrowed output record.
+    ///
+    /// # Safety
+    ///
+    /// `timer` must carry a nonnegative opaque Linux timer bit pattern. `value`
+    /// must point to writable 32-byte, align-eight x86-64 `struct itimerspec`
+    /// storage for the syscall duration. This leaf does not interpret either
+    /// object or support musl's negative tagged thread-owned timer representation.
+    /// The caller owns any valid timer's lifetime and query semantics; this private
+    /// selected artifact establishes only rejected-handle error translation.
+    #[no_mangle]
+    pub unsafe extern "C" fn timer_gettime(timer: *mut c_void, value: *mut c_void) -> c_int {
+        // SAFETY: the caller owns the opaque timer word, writable record, and
+        // selected boundary. Linux/x86-64 receives these words in rdi/rsi.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_TIMER_GETTIME,
+                timer as usize as i64,
+                value as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}

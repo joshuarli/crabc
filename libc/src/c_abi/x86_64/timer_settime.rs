@@ -31,35 +31,38 @@ use core::ffi::{c_int, c_void};
 
 use super::{c_status, raw_syscall};
 
-/// Forward one nonnegative opaque timer word, request, and optional old value.
-///
-/// # Safety
-///
-/// `timer` must carry a nonnegative opaque Linux timer bit pattern. `value`
-/// must point to readable 32-byte, align-eight x86-64 `struct itimerspec`
-/// storage for the syscall duration; `old_value` must be null or point to
-/// writable storage of that layout for the same duration. This leaf does not
-/// interpret either timer record or support musl's negative tagged
-/// thread-owned timer representation. The caller owns any valid timer's
-/// lifetime and control semantics; this private selected artifact establishes
-/// only rejected-handle error translation.
-#[no_mangle]
-pub unsafe extern "C" fn timer_settime(
-    timer: *mut c_void,
-    flags: c_int,
-    value: *const c_void,
-    old_value: *mut c_void,
-) -> c_int {
-    // SAFETY: the caller owns the opaque timer word, record pointers, flags,
-    // and selected boundary. Linux/x86-64 receives these words in rdi/rsi/rdx/r10.
-    let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_TIMER_SETTIME,
-            timer as usize as i64,
-            flags as i64,
-            value as usize as i64,
-            old_value as usize as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/time/timer_settime.c` object.
+static_archive_member! { timer_settime_source {
+    /// Forward one nonnegative opaque timer word, request, and optional old value.
+    ///
+    /// # Safety
+    ///
+    /// `timer` must carry a nonnegative opaque Linux timer bit pattern. `value`
+    /// must point to readable 32-byte, align-eight x86-64 `struct itimerspec`
+    /// storage for the syscall duration; `old_value` must be null or point to
+    /// writable storage of that layout for the same duration. This leaf does not
+    /// interpret either timer record or support musl's negative tagged
+    /// thread-owned timer representation. The caller owns any valid timer's
+    /// lifetime and control semantics; this private selected artifact establishes
+    /// only rejected-handle error translation.
+    #[no_mangle]
+    pub unsafe extern "C" fn timer_settime(
+        timer: *mut c_void,
+        flags: c_int,
+        value: *const c_void,
+        old_value: *mut c_void,
+    ) -> c_int {
+        // SAFETY: the caller owns the opaque timer word, record pointers, flags,
+        // and selected boundary. Linux/x86-64 receives these words in rdi/rsi/rdx/r10.
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_TIMER_SETTIME,
+                timer as usize as i64,
+                flags as i64,
+                value as usize as i64,
+                old_value as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}

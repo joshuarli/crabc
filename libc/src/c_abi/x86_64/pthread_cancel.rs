@@ -45,10 +45,6 @@ use super::pthread_create_join;
 // weak default public spellings. Keep Rust's direct calls on the same bodies
 // by exporting the providers under their source names instead of adding C
 // forwarding wrappers.
-core::arch::global_asm!(
-    ".hidden __pthread_setcancelstate",
-    ".hidden __pthread_testcancel",
-);
 
 #[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_syscall_cancel.rs"]
@@ -349,6 +345,11 @@ static_archive_member! { pthread_cancel_source {
 
 // Musl's `src/thread/pthread_setcancelstate.c` object.
 static_archive_member! { pthread_setcancelstate_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_setcancelstate",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_setcancelstate",
@@ -420,6 +421,11 @@ static_archive_member! { pthread_setcanceltype_source {
 
 // Musl's `src/thread/pthread_testcancel.c` object.
 static_archive_member! { pthread_testcancel_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_testcancel",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_testcancel",

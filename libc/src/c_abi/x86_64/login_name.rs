@@ -49,42 +49,48 @@ unsafe fn c_string_length(value: *const c_char) -> usize {
     }
 }
 
-/// Return the first `LOGNAME` value as a borrowed environment pointer.
-///
-/// The pointer may be null. A non-null result remains valid only while the
-/// caller prevents environment replacement, direct `environ` writes, and
-/// mutation or expiry of caller-owned `putenv` storage.
-///
-/// # Safety
-///
-/// The caller must keep the environment vector and any caller-owned entry
-/// storage valid and unchanged for every use of the returned pointer.
-#[no_mangle]
-pub unsafe extern "C" fn getlogin() -> *mut c_char {
-    unsafe { environment::getenv(LOGNAME.as_ptr().cast()) }
-}
+// Musl's `src/unistd/getlogin.c` object.
+static_archive_member! { getlogin_source {
+    /// Return the first `LOGNAME` value as a borrowed environment pointer.
+    ///
+    /// The pointer may be null. A non-null result remains valid only while the
+    /// caller prevents environment replacement, direct `environ` writes, and
+    /// mutation or expiry of caller-owned `putenv` storage.
+    ///
+    /// # Safety
+    ///
+    /// The caller must keep the environment vector and any caller-owned entry
+    /// storage valid and unchanged for every use of the returned pointer.
+    #[no_mangle]
+    pub unsafe extern "C" fn getlogin() -> *mut c_char {
+        unsafe { environment::getenv(LOGNAME.as_ptr().cast()) }
+    }
+}}
 
-/// Copy the current `LOGNAME` value into caller-owned storage.
-///
-/// # Safety
-///
-/// `name` may be null when `size` is zero or when `LOGNAME` is absent because
-/// those paths return before writing. Otherwise it must designate `size`
-/// writable bytes that do not overlap the borrowed environment value. The
-/// caller must prevent concurrent environment mutation throughout the lookup,
-/// length scan, and copy.
-#[no_mangle]
-pub unsafe extern "C" fn getlogin_r(name: *mut c_char, size: usize) -> c_int {
-    let login = unsafe { getlogin() };
-    if login.is_null() {
-        return ENXIO;
+// Musl's `src/unistd/getlogin_r.c` object.
+static_archive_member! { getlogin_r_source {
+    /// Copy the current `LOGNAME` value into caller-owned storage.
+    ///
+    /// # Safety
+    ///
+    /// `name` may be null when `size` is zero or when `LOGNAME` is absent because
+    /// those paths return before writing. Otherwise it must designate `size`
+    /// writable bytes that do not overlap the borrowed environment value. The
+    /// caller must prevent concurrent environment mutation throughout the lookup,
+    /// length scan, and copy.
+    #[no_mangle]
+    pub unsafe extern "C" fn getlogin_r(name: *mut c_char, size: usize) -> c_int {
+        let login = unsafe { getlogin() };
+        if login.is_null() {
+            return ENXIO;
+        }
+        let length = unsafe { c_string_length(login) };
+        if length >= size {
+            return ERANGE;
+        }
+        // SAFETY: the caller supplies a nonoverlapping writable destination large
+        // enough for the measured value and its terminating NUL.
+        unsafe { ptr::copy_nonoverlapping(login, name, length + 1) };
+        0
     }
-    let length = unsafe { c_string_length(login) };
-    if length >= size {
-        return ERANGE;
-    }
-    // SAFETY: the caller supplies a nonoverlapping writable destination large
-    // enough for the measured value and its terminating NUL.
-    unsafe { ptr::copy_nonoverlapping(login, name, length + 1) };
-    0
-}
+}}

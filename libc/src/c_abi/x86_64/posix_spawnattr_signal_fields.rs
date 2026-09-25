@@ -78,98 +78,113 @@ unsafe fn copy_sigset_words(destination: *mut c_ulong, source: *const c_ulong) {
     }
 }
 
-/// Store musl's validated POSIX spawn flags in a caller-owned attribute record.
-///
-/// # Safety
-///
-/// For a valid flag value, `attributes` must name a writable, aligned complete
-/// x86-64 `posix_spawnattr_t`. Invalid flags are rejected before musl reaches
-/// the pointer, so a null pointer is observable only in that invalid branch.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawnattr_setflags(
-    attributes: *mut c_void,
-    flags: c_short,
-) -> c_int {
-    if (flags as c_int & !POSIX_SPAWNATTR_VALID_FLAGS) != 0 {
-        return EINVAL;
+// Musl's `src/process/posix_spawnattr_setflags.c` object.
+static_archive_member! { posix_spawnattr_setflags_source {
+    /// Store musl's validated POSIX spawn flags in a caller-owned attribute record.
+    ///
+    /// # Safety
+    ///
+    /// For a valid flag value, `attributes` must name a writable, aligned complete
+    /// x86-64 `posix_spawnattr_t`. Invalid flags are rejected before musl reaches
+    /// the pointer, so a null pointer is observable only in that invalid branch.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawnattr_setflags(
+        attributes: *mut c_void,
+        flags: c_short,
+    ) -> c_int {
+        if (flags as c_int & !POSIX_SPAWNATTR_VALID_FLAGS) != 0 {
+            return EINVAL;
+        }
+        // SAFETY: the valid-flags C contract supplies the complete aligned record.
+        unsafe { core::ptr::write(attributes.cast::<c_int>(), flags as c_int) };
+        0
     }
-    // SAFETY: the valid-flags C contract supplies the complete aligned record.
-    unsafe { core::ptr::write(attributes.cast::<c_int>(), flags as c_int) };
-    0
-}
+}}
 
-/// Copy a caller-supplied complete signal mask into an attribute record.
-///
-/// # Safety
-/// `attributes` and `mask` must name distinct valid aligned complete C objects.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawnattr_setsigmask(
-    attributes: *mut c_void,
-    mask: *const c_void,
-) -> c_int {
-    // SAFETY: this is musl's direct restrict-qualified field assignment.
-    unsafe {
-        copy_sigset_words(
-            attributes.cast::<u8>().add(POSIX_SPAWNATTR_SIGMASK_OFFSET).cast(),
-            mask.cast(),
-        );
+// Musl's `src/process/posix_spawnattr_setsigmask.c` object.
+static_archive_member! { posix_spawnattr_setsigmask_source {
+    /// Copy a caller-supplied complete signal mask into an attribute record.
+    ///
+    /// # Safety
+    /// `attributes` and `mask` must name distinct valid aligned complete C objects.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawnattr_setsigmask(
+        attributes: *mut c_void,
+        mask: *const c_void,
+    ) -> c_int {
+        // SAFETY: this is musl's direct restrict-qualified field assignment.
+        unsafe {
+            copy_sigset_words(
+                attributes.cast::<u8>().add(POSIX_SPAWNATTR_SIGMASK_OFFSET).cast(),
+                mask.cast(),
+            );
+        }
+        0
     }
-    0
-}
+}}
 
-/// Copy an attribute record's complete signal mask into caller-owned storage.
-///
-/// # Safety
-/// `attributes` and `mask` must name distinct valid aligned complete C objects.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawnattr_getsigmask(
-    attributes: *const c_void,
-    mask: *mut c_void,
-) -> c_int {
-    // SAFETY: this is musl's direct restrict-qualified field assignment.
-    unsafe {
-        copy_sigset_words(
-            mask.cast(),
-            attributes.cast::<u8>().add(POSIX_SPAWNATTR_SIGMASK_OFFSET).cast(),
-        );
+// Musl's `src/process/posix_spawnattr_getsigmask.c` object.
+static_archive_member! { posix_spawnattr_getsigmask_source {
+    /// Copy an attribute record's complete signal mask into caller-owned storage.
+    ///
+    /// # Safety
+    /// `attributes` and `mask` must name distinct valid aligned complete C objects.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawnattr_getsigmask(
+        attributes: *const c_void,
+        mask: *mut c_void,
+    ) -> c_int {
+        // SAFETY: this is musl's direct restrict-qualified field assignment.
+        unsafe {
+            copy_sigset_words(
+                mask.cast(),
+                attributes.cast::<u8>().add(POSIX_SPAWNATTR_SIGMASK_OFFSET).cast(),
+            );
+        }
+        0
     }
-    0
-}
+}}
 
-/// Copy a caller-supplied complete default-signal set into an attribute record.
-///
-/// # Safety
-/// `attributes` and `default_signals` must name distinct valid aligned C objects.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawnattr_setsigdefault(
-    attributes: *mut c_void,
-    default_signals: *const c_void,
-) -> c_int {
-    // SAFETY: this is musl's direct restrict-qualified field assignment.
-    unsafe {
-        copy_sigset_words(
-            attributes.cast::<u8>().add(POSIX_SPAWNATTR_SIGDEFAULT_OFFSET).cast(),
-            default_signals.cast(),
-        );
+// Musl's `src/process/posix_spawnattr_setsigdefault.c` object.
+static_archive_member! { posix_spawnattr_setsigdefault_source {
+    /// Copy a caller-supplied complete default-signal set into an attribute record.
+    ///
+    /// # Safety
+    /// `attributes` and `default_signals` must name distinct valid aligned C objects.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawnattr_setsigdefault(
+        attributes: *mut c_void,
+        default_signals: *const c_void,
+    ) -> c_int {
+        // SAFETY: this is musl's direct restrict-qualified field assignment.
+        unsafe {
+            copy_sigset_words(
+                attributes.cast::<u8>().add(POSIX_SPAWNATTR_SIGDEFAULT_OFFSET).cast(),
+                default_signals.cast(),
+            );
+        }
+        0
     }
-    0
-}
+}}
 
-/// Copy an attribute record's complete default-signal set into caller storage.
-///
-/// # Safety
-/// `attributes` and `default_signals` must name distinct valid aligned C objects.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawnattr_getsigdefault(
-    attributes: *const c_void,
-    default_signals: *mut c_void,
-) -> c_int {
-    // SAFETY: this is musl's direct restrict-qualified field assignment.
-    unsafe {
-        copy_sigset_words(
-            default_signals.cast(),
-            attributes.cast::<u8>().add(POSIX_SPAWNATTR_SIGDEFAULT_OFFSET).cast(),
-        );
+// Musl's `src/process/posix_spawnattr_getsigdefault.c` object.
+static_archive_member! { posix_spawnattr_getsigdefault_source {
+    /// Copy an attribute record's complete default-signal set into caller storage.
+    ///
+    /// # Safety
+    /// `attributes` and `default_signals` must name distinct valid aligned C objects.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawnattr_getsigdefault(
+        attributes: *const c_void,
+        default_signals: *mut c_void,
+    ) -> c_int {
+        // SAFETY: this is musl's direct restrict-qualified field assignment.
+        unsafe {
+            copy_sigset_words(
+                default_signals.cast(),
+                attributes.cast::<u8>().add(POSIX_SPAWNATTR_SIGDEFAULT_OFFSET).cast(),
+            );
+        }
+        0
     }
-    0
-}
+}}

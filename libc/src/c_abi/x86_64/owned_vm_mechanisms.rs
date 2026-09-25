@@ -37,125 +37,143 @@ const MREMAP_FIXED: c_int = 2;
 // The source body is `__mremap`; its public spelling remains a same-address
 // weak alias. Internal source calls therefore bind the hidden provider even
 // if an application interposes the public name.
-core::arch::global_asm!(
-    ".hidden __mremap",
-    ".weak mremap",
-    ".set mremap, __mremap",
-);
 
-/// Remap a caller-owned Linux mapping, preserving musl's variadic ABI.
-///
-/// Pinned musl rejects a new length at or above `PTRDIFF_MAX` before entering
-/// Linux. It reads the fifth C argument only when `MREMAP_FIXED` is set and
-/// otherwise passes a null fifth syscall word. A fixed replacement first
-/// waits for the selected musl-compatible VM lifetime guard.
-///
-/// # Safety
-///
-/// The caller must satisfy Linux's complete `mremap(2)` contract for the old
-/// mapping, sizes, flags, and any destination address. It must provide one
-/// fifth `void *` variadic argument exactly when `flags` includes
-/// `MREMAP_FIXED`; no such argument may be assumed for another flag set.
-/// After success, the caller must treat the old and destination ranges with
-/// Linux's resulting lifetime rules (including the distinct
-/// `MREMAP_DONTUNMAP` retained-old-range rule) and synchronize all aliases
-/// and concurrent access.
-#[no_mangle]
-pub unsafe extern "C" fn __mremap(
-    old_address: *mut c_void,
-    old_size: usize,
-    new_size: usize,
-    flags: c_int,
-    mut args: ...,
-) -> *mut c_void {
-    if new_size >= isize::MAX as usize {
+// Musl's `src/mman/mremap.c` object.
+static_archive_member! { mremap_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __mremap",
+    );
+
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak mremap",
+        ".set mremap, __mremap",
+    );
+
+    /// Remap a caller-owned Linux mapping, preserving musl's variadic ABI.
+    ///
+    /// Pinned musl rejects a new length at or above `PTRDIFF_MAX` before entering
+    /// Linux. It reads the fifth C argument only when `MREMAP_FIXED` is set and
+    /// otherwise passes a null fifth syscall word. A fixed replacement first
+    /// waits for the selected musl-compatible VM lifetime guard.
+    ///
+    /// # Safety
+    ///
+    /// The caller must satisfy Linux's complete `mremap(2)` contract for the old
+    /// mapping, sizes, flags, and any destination address. It must provide one
+    /// fifth `void *` variadic argument exactly when `flags` includes
+    /// `MREMAP_FIXED`; no such argument may be assumed for another flag set.
+    /// After success, the caller must treat the old and destination ranges with
+    /// Linux's resulting lifetime rules (including the distinct
+    /// `MREMAP_DONTUNMAP` retained-old-range rule) and synchronize all aliases
+    /// and concurrent access.
+    #[no_mangle]
+    pub unsafe extern "C" fn __mremap(
+        old_address: *mut c_void,
+        old_size: usize,
+        new_size: usize,
+        flags: c_int,
+        mut args: ...,
+    ) -> *mut c_void {
+        if new_size >= isize::MAX as usize {
+            // SAFETY: this is the selected calling thread's C errno slot.
+            unsafe { errno::set_errno(ENOMEM) };
+            return usize::MAX as *mut c_void;
+        }
+
+        let new_address = if flags & MREMAP_FIXED != 0 {
+            // SAFETY: the caller's fixed-address variadic contract above provides
+            // one `void *` word, and musl waits before consuming and forwarding it.
+            unsafe { pthread_vmlock::wait() };
+            // SAFETY: `MREMAP_FIXED` requires the fifth C argument.
+            unsafe { args.next_arg::<*mut c_void>() }
+        } else {
+            core::ptr::null_mut()
+        };
+
+        // SAFETY: the caller owns the complete Linux remap request. `syscall5`
+        // places the optional destination in the x86-64 fifth syscall register.
+        let result = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_MREMAP,
+                old_address as usize as i64,
+                old_size as i64,
+                new_size as i64,
+                i64::from(flags),
+                new_address as usize as i64,
+            )
+        };
+        c_pointer_status(result)
+    }
+}}
+
+// Musl's `src/linux/brk.c` object.
+static_archive_member! { brk_source {
+    /// Reject an application break transition with musl's fixed `ENOMEM` result.
+    ///
+    /// Pinned musl does not let this libc change the process break. The ignored
+    /// `end` pointer remains part of the installed C ABI signature.
+    #[no_mangle]
+    pub extern "C" fn brk(_end: *mut c_void) -> c_int {
         // SAFETY: this is the selected calling thread's C errno slot.
         unsafe { errno::set_errno(ENOMEM) };
-        return usize::MAX as *mut c_void;
+        -1
     }
+}}
 
-    let new_address = if flags & MREMAP_FIXED != 0 {
-        // SAFETY: the caller's fixed-address variadic contract above provides
-        // one `void *` word, and musl waits before consuming and forwarding it.
-        unsafe { pthread_vmlock::wait() };
-        // SAFETY: `MREMAP_FIXED` requires the fifth C argument.
-        unsafe { args.next_arg::<*mut c_void>() }
-    } else {
-        core::ptr::null_mut()
-    };
+// Musl's `src/linux/sbrk.c` object.
+static_archive_member! { sbrk_source {
+    /// Return the current Linux program break for zero increment only.
+    ///
+    /// Pinned musl makes every nonzero increment fail with `ENOMEM`; it does not
+    /// request a break change from Linux. `sbrk(0)` leaves `errno` untouched and
+    /// returns Linux's raw current-break word.
+    #[no_mangle]
+    pub extern "C" fn sbrk(increment: isize) -> *mut c_void {
+        if increment != 0 {
+            // SAFETY: this is the selected calling thread's C errno slot.
+            unsafe { errno::set_errno(ENOMEM) };
+            return usize::MAX as *mut c_void;
+        }
 
-    // SAFETY: the caller owns the complete Linux remap request. `syscall5`
-    // places the optional destination in the x86-64 fifth syscall register.
-    let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_MREMAP,
-            old_address as usize as i64,
-            old_size as i64,
-            new_size as i64,
-            i64::from(flags),
-            new_address as usize as i64,
-        )
-    };
-    c_pointer_status(result)
-}
-
-/// Reject an application break transition with musl's fixed `ENOMEM` result.
-///
-/// Pinned musl does not let this libc change the process break. The ignored
-/// `end` pointer remains part of the installed C ABI signature.
-#[no_mangle]
-pub extern "C" fn brk(_end: *mut c_void) -> c_int {
-    // SAFETY: this is the selected calling thread's C errno slot.
-    unsafe { errno::set_errno(ENOMEM) };
-    -1
-}
-
-/// Return the current Linux program break for zero increment only.
-///
-/// Pinned musl makes every nonzero increment fail with `ENOMEM`; it does not
-/// request a break change from Linux. `sbrk(0)` leaves `errno` untouched and
-/// returns Linux's raw current-break word.
-#[no_mangle]
-pub extern "C" fn sbrk(increment: isize) -> *mut c_void {
-    if increment != 0 {
-        // SAFETY: this is the selected calling thread's C errno slot.
-        unsafe { errno::set_errno(ENOMEM) };
-        return usize::MAX as *mut c_void;
+        // SAFETY: Linux `brk(0)` has one zero word and returns the current break.
+        // Musl deliberately passes that raw word through rather than applying C
+        // errno translation.
+        let result = unsafe { raw_syscall::syscall1(raw_syscall::SYS_BRK, 0) };
+        result as usize as *mut c_void
     }
+}}
 
-    // SAFETY: Linux `brk(0)` has one zero word and returns the current break.
-    // Musl deliberately passes that raw word through rather than applying C
-    // errno translation.
-    let result = unsafe { raw_syscall::syscall1(raw_syscall::SYS_BRK, 0) };
-    result as usize as *mut c_void
-}
-
-/// Forward one legacy Linux `remap_file_pages(2)` request.
-///
-/// # Safety
-///
-/// The caller must satisfy Linux's complete address, size, protection,
-/// offset, flags, mapping-lifetime, and concurrent-access contract. This
-/// direct compatibility entry preserves Linux's result and `errno` behavior;
-/// it does not emulate the obsolete syscall when the kernel rejects it.
-#[no_mangle]
-pub unsafe extern "C" fn remap_file_pages(
-    address: *mut c_void,
-    size: usize,
-    protection: c_int,
-    page_offset: usize,
-    flags: c_int,
-) -> c_int {
-    // SAFETY: the caller owns the complete legacy Linux remap request.
-    let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_REMAP_FILE_PAGES,
-            address as usize as i64,
-            size as i64,
-            i64::from(protection),
-            page_offset as i64,
-            i64::from(flags),
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/linux/remap_file_pages.c` object.
+static_archive_member! { remap_file_pages_source {
+    /// Forward one legacy Linux `remap_file_pages(2)` request.
+    ///
+    /// # Safety
+    ///
+    /// The caller must satisfy Linux's complete address, size, protection,
+    /// offset, flags, mapping-lifetime, and concurrent-access contract. This
+    /// direct compatibility entry preserves Linux's result and `errno` behavior;
+    /// it does not emulate the obsolete syscall when the kernel rejects it.
+    #[no_mangle]
+    pub unsafe extern "C" fn remap_file_pages(
+        address: *mut c_void,
+        size: usize,
+        protection: c_int,
+        page_offset: usize,
+        flags: c_int,
+    ) -> c_int {
+        // SAFETY: the caller owns the complete legacy Linux remap request.
+        let result = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_REMAP_FILE_PAGES,
+                address as usize as i64,
+                size as i64,
+                i64::from(protection),
+                page_offset as i64,
+                i64::from(flags),
+            )
+        };
+        c_status(result)
+    }
+}}

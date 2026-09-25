@@ -29,85 +29,91 @@ const EINTR: c_int = 4;
 const EIO: c_int = 5;
 const GETENTROPY_MAX_BYTES: usize = 256;
 
-/// Fill up to `length` caller-owned bytes from Linux's entropy source.
-///
-/// # Safety
-///
-/// If Linux examines the buffer, `buffer` must designate `length` writable
-/// bytes for the syscall's duration. A null buffer is valid only with zero
-/// length. The kernel validates `flags`; owned pthread cancellation is checked
-/// before the kernel observes the buffer, length, or flags.
-#[no_mangle]
-pub unsafe extern "C" fn getrandom(
-    buffer: *mut c_void,
-    length: usize,
-    flags: c_uint,
-) -> isize {
-    // SAFETY: the caller supplies the complete Linux output-buffer contract;
-    // the kernel validates the random-source flags and publishes raw errors.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_GETRANDOM,
-            buffer as usize as i64,
-            length as i64,
-            i64::from(flags),
-            0,
-            0,
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_GETRANDOM,
-            buffer as usize as i64,
-            length as i64,
-            i64::from(flags),
-        )
-    };
-    c_ssize_status(result)
-}
-
-/// Fill exactly `length` bytes through the BSD-compatible entropy contract.
-///
-/// # Safety
-///
-/// If `length` is nonzero, `buffer` must designate that many writable bytes
-/// for every retry. A null buffer is valid only with zero length. Requests
-/// larger than 256 bytes fail with `-1` and `errno = EIO` before Linux observes
-/// the pointer. The owned runtime suppresses cancellation across the complete
-/// fill/retry interval and restores the caller's state on success or failure.
-#[no_mangle]
-pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int {
-    if length > GETENTROPY_MAX_BYTES {
-        // SAFETY: this selected C ABI owns the calling initial-TLS errno slot.
-        unsafe { errno::set_errno(EIO) };
-        return -1;
-    }
-
-    #[cfg(crabc_x86_owned_runtime)]
-    let mut previous_state = 0;
-    #[cfg(crabc_x86_owned_runtime)]
-    // SAFETY: PTHREAD_CANCEL_DISABLE is valid and the local previous-state
-    // word is writable. Unselected C11 tasks have no cancellation slot and
-    // keep their existing non-canceling syscall behavior.
-    let guarded = unsafe {
-        super::pthread_cancel::pthread_setcancelstate(1, &mut previous_state)
-    } == 0;
-
-    // SAFETY: the public caller owns the buffer contract across every retry.
-    let result = unsafe { fill_entropy(buffer, length) };
-    #[cfg(crabc_x86_owned_runtime)]
-    if guarded {
-        // SAFETY: a successful transition initialized this valid prior state.
-        // Restore it on error as well as after a complete fill, as pinned musl.
-        let _ = unsafe {
-            super::pthread_cancel::pthread_setcancelstate(previous_state, core::ptr::null_mut())
+// Musl's `src/linux/getrandom.c` object.
+static_archive_member! { getrandom_source {
+    /// Fill up to `length` caller-owned bytes from Linux's entropy source.
+    ///
+    /// # Safety
+    ///
+    /// If Linux examines the buffer, `buffer` must designate `length` writable
+    /// bytes for the syscall's duration. A null buffer is valid only with zero
+    /// length. The kernel validates `flags`; owned pthread cancellation is checked
+    /// before the kernel observes the buffer, length, or flags.
+    #[no_mangle]
+    pub unsafe extern "C" fn getrandom(
+        buffer: *mut c_void,
+        length: usize,
+        flags: c_uint,
+    ) -> isize {
+        // SAFETY: the caller supplies the complete Linux output-buffer contract;
+        // the kernel validates the random-source flags and publishes raw errors.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_GETRANDOM,
+                buffer as usize as i64,
+                length as i64,
+                i64::from(flags),
+                0,
+                0,
+                0,
+            )
         };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_GETRANDOM,
+                buffer as usize as i64,
+                length as i64,
+                i64::from(flags),
+            )
+        };
+        c_ssize_status(result)
     }
-    result
-}
+}}
+
+// Musl's `src/misc/getentropy.c` object.
+static_archive_member! { getentropy_source {
+    /// Fill exactly `length` bytes through the BSD-compatible entropy contract.
+    ///
+    /// # Safety
+    ///
+    /// If `length` is nonzero, `buffer` must designate that many writable bytes
+    /// for every retry. A null buffer is valid only with zero length. Requests
+    /// larger than 256 bytes fail with `-1` and `errno = EIO` before Linux observes
+    /// the pointer. The owned runtime suppresses cancellation across the complete
+    /// fill/retry interval and restores the caller's state on success or failure.
+    #[no_mangle]
+    pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int {
+        if length > GETENTROPY_MAX_BYTES {
+            // SAFETY: this selected C ABI owns the calling initial-TLS errno slot.
+            unsafe { errno::set_errno(EIO) };
+            return -1;
+        }
+
+        #[cfg(crabc_x86_owned_runtime)]
+        let mut previous_state = 0;
+        #[cfg(crabc_x86_owned_runtime)]
+        // SAFETY: PTHREAD_CANCEL_DISABLE is valid and the local previous-state
+        // word is writable. Unselected C11 tasks have no cancellation slot and
+        // keep their existing non-canceling syscall behavior.
+        let guarded = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::pthread_setcancelstate(1, &mut previous_state)
+        } == 0;
+
+        // SAFETY: the public caller owns the buffer contract across every retry.
+        let result = unsafe { fill_entropy(buffer, length) };
+        #[cfg(crabc_x86_owned_runtime)]
+        if guarded {
+            // SAFETY: a successful transition initialized this valid prior state.
+            // Restore it on error as well as after a complete fill, as pinned musl.
+            let _ = unsafe {
+                crate::x86_64_static_c_abi::pthread_cancel::pthread_setcancelstate(previous_state, core::ptr::null_mut())
+            };
+        }
+        result
+    }
+}}
 
 /// Pinned musl's complete fill/retry loop, enclosed by the owned state guard.
 /// The caller owns `length` writable bytes for the entire call.

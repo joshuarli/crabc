@@ -197,194 +197,212 @@ unsafe fn add_operation(
     0
 }
 
-/// Add a close operation.
-///
-/// # Safety
-///
-/// `file_actions` must point to one live, initialized
-/// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout.
-/// The caller must hold exclusive access to that record for the duration of
-/// the call and until any later destroy operation. `fd` must name the intended
-/// close action; a negative descriptor is rejected with `EBADF`.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_addclose(
-    file_actions: *mut c_void,
-    fd: c_int,
-) -> c_int {
-    if fd < 0 {
-        return EBADF;
-    }
-    // SAFETY: the C ABI record begins with the installed 80-byte musl layout.
-    unsafe {
-        add_operation(
-            file_actions.cast::<PosixSpawnFileActions>(),
-            FDOP_CLOSE,
-            fd,
-            0,
-            0,
-            0,
-            ptr::null(),
-        )
-    }
-}
-
-/// Add a dup2 operation.
-///
-/// # Safety
-///
-/// `file_actions` must point to one live, initialized
-/// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout.
-/// The caller must hold exclusive access to that record for the duration of
-/// the call and until any later destroy operation. `srcfd` and `fd` must name
-/// the intended descriptor operation; either negative descriptor is rejected
-/// with `EBADF`.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(
-    file_actions: *mut c_void,
-    srcfd: c_int,
-    fd: c_int,
-) -> c_int {
-    if srcfd < 0 || fd < 0 {
-        return EBADF;
-    }
-    // SAFETY: the C ABI record begins with the installed 80-byte musl layout.
-    unsafe {
-        add_operation(
-            file_actions.cast::<PosixSpawnFileActions>(),
-            FDOP_DUP2,
-            fd,
-            srcfd,
-            0,
-            0,
-            ptr::null(),
-        )
-    }
-}
-
-/// Add an open operation with a copied pathname.
-///
-/// # Safety
-///
-/// `file_actions` must point to one live, initialized
-/// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout,
-/// and the caller must hold exclusive access to it for this call. `path` must
-/// be non-null and readable through its terminating NUL byte. The pathname is
-/// copied before this function returns; it need not remain live afterward.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_addopen(
-    file_actions: *mut c_void,
-    fd: c_int,
-    path: *const c_char,
-    oflag: c_int,
-    mode: c_uint,
-) -> c_int {
-    if fd < 0 {
-        return EBADF;
-    }
-    // SAFETY: the C ABI record and pathname follow musl's valid-object
-    // preconditions; `allocate_operation` copies the full string.
-    unsafe {
-        add_operation(
-            file_actions.cast::<PosixSpawnFileActions>(),
-            FDOP_OPEN,
-            fd,
-            0,
-            oflag,
-            mode,
-            path,
-        )
-    }
-}
-
-/// Add a pathname chdir operation.
-///
-/// # Safety
-///
-/// `file_actions` must point to one live, initialized
-/// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout,
-/// and the caller must hold exclusive access to it for this call. `path` must
-/// be non-null and readable through its terminating NUL byte. The pathname is
-/// copied before this function returns; it need not remain live afterward.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_addchdir_np(
-    file_actions: *mut c_void,
-    path: *const c_char,
-) -> c_int {
-    // SAFETY: musl's source retains the valid pathname precondition and uses
-    // the same flexible-array record as addopen.
-    unsafe {
-        add_operation(
-            file_actions.cast::<PosixSpawnFileActions>(),
-            FDOP_CHDIR,
-            -1,
-            0,
-            0,
-            0,
-            path,
-        )
-    }
-}
-
-/// Add a descriptor fchdir operation.
-///
-/// # Safety
-///
-/// `file_actions` must point to one live, initialized
-/// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout.
-/// The caller must hold exclusive access to that record for the duration of
-/// the call and until any later destroy operation. `fd` must name the intended
-/// directory descriptor; a negative descriptor is rejected with `EBADF`.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_addfchdir_np(
-    file_actions: *mut c_void,
-    fd: c_int,
-) -> c_int {
-    if fd < 0 {
-        return EBADF;
-    }
-    // SAFETY: the C ABI record begins with the installed 80-byte musl layout.
-    unsafe {
-        add_operation(
-            file_actions.cast::<PosixSpawnFileActions>(),
-            FDOP_FCHDIR,
-            fd,
-            0,
-            0,
-            0,
-            ptr::null(),
-        )
-    }
-}
-
-/// Destroy all action records, retaining musl's uncleared dangling head.
-///
-/// # Safety
-///
-/// `file_actions` must point to one live, initialized
-/// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout,
-/// whose action list was produced by this lifecycle API and has not already
-/// been destroyed. The caller must exclude concurrent access. On return the
-/// record retains musl's dangling head pointer and must be reinitialized before
-/// any reuse or a second destroy call.
-#[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_destroy(
-    file_actions: *mut c_void,
-) -> c_int {
-    // SAFETY: the C ABI requires one valid initialized file-actions record;
-    // each linked operation was allocated by this module's malloc boundary.
-    unsafe {
-        let file_actions = file_actions.cast::<PosixSpawnFileActions>();
-        let mut operation = ptr::addr_of!((*file_actions).actions)
-            .read()
-            .cast::<FdOp>();
-        while !operation.is_null() {
-            let next = ptr::addr_of!((*operation).next).read();
-            cabi_free(operation.cast::<c_void>());
-            operation = next;
+// Musl's `src/process/posix_spawn_file_actions_addclose.c` object.
+static_archive_member! { posix_spawn_file_actions_addclose_source {
+    /// Add a close operation.
+    ///
+    /// # Safety
+    ///
+    /// `file_actions` must point to one live, initialized
+    /// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout.
+    /// The caller must hold exclusive access to that record for the duration of
+    /// the call and until any later destroy operation. `fd` must name the intended
+    /// close action; a negative descriptor is rejected with `EBADF`.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawn_file_actions_addclose(
+        file_actions: *mut c_void,
+        fd: c_int,
+    ) -> c_int {
+        if fd < 0 {
+            return EBADF;
+        }
+        // SAFETY: the C ABI record begins with the installed 80-byte musl layout.
+        unsafe {
+            add_operation(
+                file_actions.cast::<PosixSpawnFileActions>(),
+                FDOP_CLOSE,
+                fd,
+                0,
+                0,
+                0,
+                ptr::null(),
+            )
         }
     }
-    0
-}
+}}
+
+// Musl's `src/process/posix_spawn_file_actions_adddup2.c` object.
+static_archive_member! { posix_spawn_file_actions_adddup2_source {
+    /// Add a dup2 operation.
+    ///
+    /// # Safety
+    ///
+    /// `file_actions` must point to one live, initialized
+    /// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout.
+    /// The caller must hold exclusive access to that record for the duration of
+    /// the call and until any later destroy operation. `srcfd` and `fd` must name
+    /// the intended descriptor operation; either negative descriptor is rejected
+    /// with `EBADF`.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(
+        file_actions: *mut c_void,
+        srcfd: c_int,
+        fd: c_int,
+    ) -> c_int {
+        if srcfd < 0 || fd < 0 {
+            return EBADF;
+        }
+        // SAFETY: the C ABI record begins with the installed 80-byte musl layout.
+        unsafe {
+            add_operation(
+                file_actions.cast::<PosixSpawnFileActions>(),
+                FDOP_DUP2,
+                fd,
+                srcfd,
+                0,
+                0,
+                ptr::null(),
+            )
+        }
+    }
+}}
+
+// Musl's `src/process/posix_spawn_file_actions_addopen.c` object.
+static_archive_member! { posix_spawn_file_actions_addopen_source {
+    /// Add an open operation with a copied pathname.
+    ///
+    /// # Safety
+    ///
+    /// `file_actions` must point to one live, initialized
+    /// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout,
+    /// and the caller must hold exclusive access to it for this call. `path` must
+    /// be non-null and readable through its terminating NUL byte. The pathname is
+    /// copied before this function returns; it need not remain live afterward.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawn_file_actions_addopen(
+        file_actions: *mut c_void,
+        fd: c_int,
+        path: *const c_char,
+        oflag: c_int,
+        mode: c_uint,
+    ) -> c_int {
+        if fd < 0 {
+            return EBADF;
+        }
+        // SAFETY: the C ABI record and pathname follow musl's valid-object
+        // preconditions; `allocate_operation` copies the full string.
+        unsafe {
+            add_operation(
+                file_actions.cast::<PosixSpawnFileActions>(),
+                FDOP_OPEN,
+                fd,
+                0,
+                oflag,
+                mode,
+                path,
+            )
+        }
+    }
+}}
+
+// Musl's `src/process/posix_spawn_file_actions_addchdir.c` object.
+static_archive_member! { posix_spawn_file_actions_addchdir_source {
+    /// Add a pathname chdir operation.
+    ///
+    /// # Safety
+    ///
+    /// `file_actions` must point to one live, initialized
+    /// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout,
+    /// and the caller must hold exclusive access to it for this call. `path` must
+    /// be non-null and readable through its terminating NUL byte. The pathname is
+    /// copied before this function returns; it need not remain live afterward.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawn_file_actions_addchdir_np(
+        file_actions: *mut c_void,
+        path: *const c_char,
+    ) -> c_int {
+        // SAFETY: musl's source retains the valid pathname precondition and uses
+        // the same flexible-array record as addopen.
+        unsafe {
+            add_operation(
+                file_actions.cast::<PosixSpawnFileActions>(),
+                FDOP_CHDIR,
+                -1,
+                0,
+                0,
+                0,
+                path,
+            )
+        }
+    }
+}}
+
+// Musl's `src/process/posix_spawn_file_actions_addfchdir.c` object.
+static_archive_member! { posix_spawn_file_actions_addfchdir_source {
+    /// Add a descriptor fchdir operation.
+    ///
+    /// # Safety
+    ///
+    /// `file_actions` must point to one live, initialized
+    /// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout.
+    /// The caller must hold exclusive access to that record for the duration of
+    /// the call and until any later destroy operation. `fd` must name the intended
+    /// directory descriptor; a negative descriptor is rejected with `EBADF`.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawn_file_actions_addfchdir_np(
+        file_actions: *mut c_void,
+        fd: c_int,
+    ) -> c_int {
+        if fd < 0 {
+            return EBADF;
+        }
+        // SAFETY: the C ABI record begins with the installed 80-byte musl layout.
+        unsafe {
+            add_operation(
+                file_actions.cast::<PosixSpawnFileActions>(),
+                FDOP_FCHDIR,
+                fd,
+                0,
+                0,
+                0,
+                ptr::null(),
+            )
+        }
+    }
+}}
+
+// Musl's `src/process/posix_spawn_file_actions_destroy.c` object.
+static_archive_member! { posix_spawn_file_actions_destroy_source {
+    /// Destroy all action records, retaining musl's uncleared dangling head.
+    ///
+    /// # Safety
+    ///
+    /// `file_actions` must point to one live, initialized
+    /// `posix_spawn_file_actions_t` record with the installed x86-64 musl layout,
+    /// whose action list was produced by this lifecycle API and has not already
+    /// been destroyed. The caller must exclude concurrent access. On return the
+    /// record retains musl's dangling head pointer and must be reinitialized before
+    /// any reuse or a second destroy call.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_spawn_file_actions_destroy(
+        file_actions: *mut c_void,
+    ) -> c_int {
+        // SAFETY: the C ABI requires one valid initialized file-actions record;
+        // each linked operation was allocated by this module's malloc boundary.
+        unsafe {
+            let file_actions = file_actions.cast::<PosixSpawnFileActions>();
+            let mut operation = ptr::addr_of!((*file_actions).actions)
+                .read()
+                .cast::<FdOp>();
+            while !operation.is_null() {
+                let next = ptr::addr_of!((*operation).next).read();
+                cabi_free(operation.cast::<c_void>());
+                operation = next;
+            }
+        }
+        0
+    }
+}}
 
 /// Link-time witness for this opt-in provider object.
 ///

@@ -129,99 +129,105 @@ unsafe extern "C" fn clone_start(argument: *mut c_void) -> c_int {
     }
 }
 
-/// Create a process on a caller-supplied stack, following musl's public clone.
-///
-/// # Safety
-/// If a child can be created, the callback must be non-null and executable.
-/// The stack must designate sufficient writable storage retained until child
-/// exit. Optional parent-TID/TLS/child-
-/// TID arguments occupy musl's documented slots and obey the Linux flags.
-/// CLONE_VM callbacks have vfork's restricted shared-address-space context;
-/// they must not mutate libc thread state or return into the caller's frame.
-#[no_mangle]
-pub unsafe extern "C" fn clone(function: Option<CloneFunction>, stack: *mut c_void,
-    flags: c_int, argument: *mut c_void, mut arguments: ...) -> c_int {
-    const BAD_FLAGS: c_int = CLONE_THREAD | CLONE_SETTLS | CLONE_CHILD_CLEARTID;
-    if stack.is_null() || flags & BAD_FLAGS != 0 { return c_status(-22); }
-    let mut parent_tid = core::ptr::null_mut();
-    let mut tls = core::ptr::null_mut();
-    let mut child_tid = core::ptr::null_mut();
-    if flags & (CLONE_PIDFD | CLONE_PARENT_SETTID | CLONE_CHILD_SETTID) != 0 {
-        parent_tid = unsafe { arguments.next_arg::<*mut c_int>() };
-    }
-    if flags & CLONE_CHILD_SETTID != 0 {
-        tls = unsafe { arguments.next_arg::<*mut c_void>() };
-        child_tid = unsafe { arguments.next_arg::<*mut c_int>() };
-    }
-    if flags & CLONE_VM != 0 {
-        return c_status(unsafe { __crabc_owned_clone_raw(function, stack, flags,
-            argument, parent_tid, tls, child_tid) });
-    }
-    let mut saved = 0;
-    unsafe { signal_execution::block_all_signals(&mut saved) };
-    let caller = unsafe { pthread_create_join::capture_process_child_caller() };
-    unsafe { owned_process_lock::pthread_fork_prepare() };
-    // A non-VM clone copies the native current-TLS descriptor just like the
-    // raw `fork` routes. If terminal admission has closed, complete the
-    // existing process-lock/signal pair and return the normal Linux EAGAIN
-    // form without issuing clone. CLONE_VM returned above: it shares this
-    // address space and deliberately has none of the child repair contract.
-    #[cfg(feature = "native-mimalloc-shadow")]
-    let raw_copy = match unsafe { begin_native_allocator_raw_fork_copy() } {
-        Ok(guard) => guard,
-        Err(_) => {
-            unsafe {
-                owned_process_lock::pthread_fork_parent();
-                signal_execution::restore_application_signals(&saved);
+// Musl's `src/thread/clone.c` object.
+static_archive_member! { clone_source {
+    /// Create a process on a caller-supplied stack, following musl's public clone.
+    ///
+    /// # Safety
+    /// If a child can be created, the callback must be non-null and executable.
+    /// The stack must designate sufficient writable storage retained until child
+    /// exit. Optional parent-TID/TLS/child-
+    /// TID arguments occupy musl's documented slots and obey the Linux flags.
+    /// CLONE_VM callbacks have vfork's restricted shared-address-space context;
+    /// they must not mutate libc thread state or return into the caller's frame.
+    #[no_mangle]
+    pub unsafe extern "C" fn clone(function: Option<CloneFunction>, stack: *mut c_void,
+        flags: c_int, argument: *mut c_void, mut arguments: ...) -> c_int {
+        const BAD_FLAGS: c_int = CLONE_THREAD | CLONE_SETTLS | CLONE_CHILD_CLEARTID;
+        if stack.is_null() || flags & BAD_FLAGS != 0 { return c_status(-22); }
+        let mut parent_tid = core::ptr::null_mut();
+        let mut tls = core::ptr::null_mut();
+        let mut child_tid = core::ptr::null_mut();
+        if flags & (CLONE_PIDFD | CLONE_PARENT_SETTID | CLONE_CHILD_SETTID) != 0 {
+            parent_tid = unsafe { arguments.next_arg::<*mut c_int>() };
+        }
+        if flags & CLONE_CHILD_SETTID != 0 {
+            tls = unsafe { arguments.next_arg::<*mut c_void>() };
+            child_tid = unsafe { arguments.next_arg::<*mut c_int>() };
+        }
+        if flags & CLONE_VM != 0 {
+            return c_status(unsafe { __crabc_owned_clone_raw(function, stack, flags,
+                argument, parent_tid, tls, child_tid) });
+        }
+        let mut saved = 0;
+        unsafe { signal_execution::block_all_signals(&mut saved) };
+        let caller = unsafe { pthread_create_join::capture_process_child_caller() };
+        unsafe { owned_process_lock::pthread_fork_prepare() };
+        // A non-VM clone copies the native current-TLS descriptor just like the
+        // raw `fork` routes. If terminal admission has closed, complete the
+        // existing process-lock/signal pair and return the normal Linux EAGAIN
+        // form without issuing clone. CLONE_VM returned above: it shares this
+        // address space and deliberately has none of the child repair contract.
+        #[cfg(feature = "native-mimalloc-shadow")]
+        let raw_copy = match unsafe { begin_native_allocator_raw_fork_copy() } {
+            Ok(guard) => guard,
+            Err(_) => {
+                unsafe {
+                    owned_process_lock::pthread_fork_parent();
+                    signal_execution::restore_application_signals(&saved);
+                }
+                return c_status(-EAGAIN);
             }
-            return c_status(-EAGAIN);
+        };
+        let mut start = CloneStart { function, argument, signal_mask: saved,
+            caller,
+            #[cfg(feature = "native-mimalloc-shadow")]
+            native_allocator_raw_copy: Some(raw_copy),
+        };
+        let result = unsafe { __crabc_owned_clone_raw(Some(clone_start), stack, flags,
+            core::ptr::addr_of_mut!(start).cast(), parent_tid, tls, child_tid) };
+        unsafe {
+            #[cfg(feature = "native-mimalloc-shadow")]
+            match start.native_allocator_raw_copy.take() {
+                Some(guard) => guard.complete_parent(),
+                // A parent/error path must retain the guard from its own copied
+                // stack. A missing value would mean a child-only mutation became
+                // visible without a process copy, so stop before unlocking.
+                None => crate::x86_64_static_c_abi::immediate_termination::_Exit(127),
+            }
+            owned_process_lock::pthread_fork_parent();
+            signal_execution::restore_application_signals(&saved);
         }
-    };
-    let mut start = CloneStart { function, argument, signal_mask: saved,
-        caller,
-        #[cfg(feature = "native-mimalloc-shadow")]
-        native_allocator_raw_copy: Some(raw_copy),
-    };
-    let result = unsafe { __crabc_owned_clone_raw(Some(clone_start), stack, flags,
-        core::ptr::addr_of_mut!(start).cast(), parent_tid, tls, child_tid) };
-    unsafe {
-        #[cfg(feature = "native-mimalloc-shadow")]
-        match start.native_allocator_raw_copy.take() {
-            Some(guard) => guard.complete_parent(),
-            // A parent/error path must retain the guard from its own copied
-            // stack. A missing value would mean a child-only mutation became
-            // visible without a process copy, so stop before unlocking.
-            None => super::immediate_termination::_Exit(127),
-        }
-        owned_process_lock::pthread_fork_parent();
-        signal_execution::restore_application_signals(&saved);
+        c_status(result)
     }
-    c_status(result)
-}
+}}
 
-/// Detach through musl's chdir/descriptor preparation and two ordinary forks.
-///
-/// # Safety
-/// The caller must satisfy fork's child execution obligations. Successful
-/// parent branches terminate the process with _exit(0), as daemon requires.
-#[no_mangle]
-pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
-    unsafe {
-        if nochdir == 0 && chdir(c"/".as_ptr()) != 0 { return -1; }
-        if noclose == 0 {
-            let fd = open(c"/dev/null".as_ptr(), 2);
-            if fd < 0 { return -1; }
-            let failed = dup2(fd, 0) < 0 || dup2(fd, 1) < 0 || dup2(fd, 2) < 0;
-            if fd > 2 { close(fd); }
-            if failed { return -1; }
+// Musl's `src/legacy/daemon.c` object.
+static_archive_member! { daemon_source {
+    /// Detach through musl's chdir/descriptor preparation and two ordinary forks.
+    ///
+    /// # Safety
+    /// The caller must satisfy fork's child execution obligations. Successful
+    /// parent branches terminate the process with _exit(0), as daemon requires.
+    #[no_mangle]
+    pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
+        unsafe {
+            if nochdir == 0 && chdir(c"/".as_ptr()) != 0 { return -1; }
+            if noclose == 0 {
+                let fd = open(c"/dev/null".as_ptr(), 2);
+                if fd < 0 { return -1; }
+                let failed = dup2(fd, 0) < 0 || dup2(fd, 1) < 0 || dup2(fd, 2) < 0;
+                if fd > 2 { close(fd); }
+                if failed { return -1; }
+            }
+            match crate::x86_64_static_c_abi::pthread_atfork::fork() {
+                0 => (), -1 => return -1, _ => crate::x86_64_static_c_abi::immediate_termination::_Exit(0),
+            }
+            if crate::x86_64_static_c_abi::process_context::setsid() < 0 { return -1; }
+            match crate::x86_64_static_c_abi::pthread_atfork::fork() {
+                0 => (), -1 => return -1, _ => crate::x86_64_static_c_abi::immediate_termination::_Exit(0),
+            }
         }
-        match super::pthread_atfork::fork() {
-            0 => (), -1 => return -1, _ => super::immediate_termination::_Exit(0),
-        }
-        if super::process_context::setsid() < 0 { return -1; }
-        match super::pthread_atfork::fork() {
-            0 => (), -1 => return -1, _ => super::immediate_termination::_Exit(0),
-        }
+        0
     }
-    0
-}
+}}

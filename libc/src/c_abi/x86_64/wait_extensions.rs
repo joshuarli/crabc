@@ -28,48 +28,54 @@ use super::{c_status, process_resources::Rusage, raw_syscall};
 
 const WAIT_ANY: c_int = -1;
 
-/// Reap or observe a Linux-selected child with optional resource accounting.
-///
-/// `status` and `usage` may each be null. A non-null `status` must designate a
-/// writable x86 `int`; a non-null `usage` must designate one writable public
-/// x86 `struct rusage`, both for the syscall's duration. Linux owns `pid` and
-/// `options` validation and all resulting child-state transitions, including
-/// a successful reaping operation. Callers arrange child ownership and any
-/// concurrent wait policy; this direct leaf owns no cancellation protocol.
-#[no_mangle]
-pub unsafe extern "C" fn wait4(
-    pid: c_int,
-    status: *mut c_int,
-    options: c_int,
-    usage: *mut Rusage,
-) -> c_int {
-    // SAFETY: the caller upholds both optional writable-output contracts and
-    // Linux's child selector/options contract. Linux/x86-64 receives usage in
-    // r10, its fourth syscall argument register.
-    let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_WAIT4,
-            i64::from(pid),
-            status as usize as i64,
-            i64::from(options),
-            usage as usize as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/linux/wait4.c` object.
+static_archive_member! { wait4_source {
+    /// Reap or observe a Linux-selected child with optional resource accounting.
+    ///
+    /// `status` and `usage` may each be null. A non-null `status` must designate a
+    /// writable x86 `int`; a non-null `usage` must designate one writable public
+    /// x86 `struct rusage`, both for the syscall's duration. Linux owns `pid` and
+    /// `options` validation and all resulting child-state transitions, including
+    /// a successful reaping operation. Callers arrange child ownership and any
+    /// concurrent wait policy; this direct leaf owns no cancellation protocol.
+    #[no_mangle]
+    pub unsafe extern "C" fn wait4(
+        pid: c_int,
+        status: *mut c_int,
+        options: c_int,
+        usage: *mut Rusage,
+    ) -> c_int {
+        // SAFETY: the caller upholds both optional writable-output contracts and
+        // Linux's child selector/options contract. Linux/x86-64 receives usage in
+        // r10, its fourth syscall argument register.
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_WAIT4,
+                i64::from(pid),
+                status as usize as i64,
+                i64::from(options),
+                usage as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Reap or observe any eligible child through musl's `wait4(-1, ...)` form.
-///
-/// The optional `status` and `usage` outputs have the same writable-lifetime
-/// obligations as [`wait4`]. This is a historical GNU/BSD C ABI spelling, not
-/// an ownership or process-supervision abstraction.
-#[no_mangle]
-pub unsafe extern "C" fn wait3(
-    status: *mut c_int,
-    options: c_int,
-    usage: *mut Rusage,
-) -> c_int {
-    // SAFETY: wait3 is exactly musl's wait4(-1, status, options, usage)
-    // delegation, preserving the optional-output contracts documented above.
-    unsafe { wait4(WAIT_ANY, status, options, usage) }
-}
+// Musl's `src/linux/wait3.c` object.
+static_archive_member! { wait3_source {
+    /// Reap or observe any eligible child through musl's `wait4(-1, ...)` form.
+    ///
+    /// The optional `status` and `usage` outputs have the same writable-lifetime
+    /// obligations as [`wait4`]. This is a historical GNU/BSD C ABI spelling, not
+    /// an ownership or process-supervision abstraction.
+    #[no_mangle]
+    pub unsafe extern "C" fn wait3(
+        status: *mut c_int,
+        options: c_int,
+        usage: *mut Rusage,
+    ) -> c_int {
+        // SAFETY: wait3 is exactly musl's wait4(-1, status, options, usage)
+        // delegation, preserving the optional-output contracts documented above.
+        unsafe { wait4(WAIT_ANY, status, options, usage) }
+    }
+}}

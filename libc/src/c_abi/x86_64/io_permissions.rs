@@ -20,44 +20,50 @@ use core::ffi::{c_int, c_ulong};
 
 use super::{c_status, raw_syscall};
 
-/// Request a Linux I/O privilege-level change for the calling task.
-///
-/// # Safety
-///
-/// A caller requesting a valid level must be authorized to change the calling
-/// task's kernel I/O privilege state and must coordinate any successful state
-/// change with all code that could issue port-I/O instructions. This wrapper
-/// forwards the scalar unchanged; Linux owns validation and failure behavior.
-#[no_mangle]
-pub unsafe extern "C" fn iopl(level: c_int) -> c_int {
-    // SAFETY: Linux/x86-64 syscall 172 consumes the C `int` level in rdi.
-    // `c_status` translates only a reserved raw Linux error through the
-    // selected calling thread's initial-TLS errno slot.
-    let result = unsafe { raw_syscall::syscall1(raw_syscall::SYS_IOPL, i64::from(level)) };
-    c_status(result)
-}
+// Musl's `src/linux/iopl.c` object.
+static_archive_member! { iopl_source {
+    /// Request a Linux I/O privilege-level change for the calling task.
+    ///
+    /// # Safety
+    ///
+    /// A caller requesting a valid level must be authorized to change the calling
+    /// task's kernel I/O privilege state and must coordinate any successful state
+    /// change with all code that could issue port-I/O instructions. This wrapper
+    /// forwards the scalar unchanged; Linux owns validation and failure behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn iopl(level: c_int) -> c_int {
+        // SAFETY: Linux/x86-64 syscall 172 consumes the C `int` level in rdi.
+        // `c_status` translates only a reserved raw Linux error through the
+        // selected calling thread's initial-TLS errno slot.
+        let result = unsafe { raw_syscall::syscall1(raw_syscall::SYS_IOPL, i64::from(level)) };
+        c_status(result)
+    }
+}}
 
-/// Request a Linux I/O-port permission-range change for the calling task.
-///
-/// # Safety
-///
-/// A caller requesting a valid range must be authorized to change the calling
-/// task's kernel permission bitmap and must coordinate the resulting state
-/// with all code that could access the affected ports. `from`, `count`, and
-/// `turn_on` are forwarded as raw Linux scalar words; Linux owns their
-/// validation and failure behavior.
-#[no_mangle]
-pub unsafe extern "C" fn ioperm(from: c_ulong, count: c_ulong, turn_on: c_int) -> c_int {
-    // SAFETY: Linux/x86-64 syscall 173 consumes unsigned-long from/count in
-    // rdi/rsi and the C int turn_on word in rdx. Casting preserves each
-    // machine-word bit pattern and `c_status` owns only raw-error translation.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_IOPERM,
-            from as i64,
-            count as i64,
-            i64::from(turn_on),
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/linux/ioperm.c` object.
+static_archive_member! { ioperm_source {
+    /// Request a Linux I/O-port permission-range change for the calling task.
+    ///
+    /// # Safety
+    ///
+    /// A caller requesting a valid range must be authorized to change the calling
+    /// task's kernel permission bitmap and must coordinate the resulting state
+    /// with all code that could access the affected ports. `from`, `count`, and
+    /// `turn_on` are forwarded as raw Linux scalar words; Linux owns their
+    /// validation and failure behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn ioperm(from: c_ulong, count: c_ulong, turn_on: c_int) -> c_int {
+        // SAFETY: Linux/x86-64 syscall 173 consumes unsigned-long from/count in
+        // rdi/rsi and the C int turn_on word in rdx. Casting preserves each
+        // machine-word bit pattern and `c_status` owns only raw-error translation.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_IOPERM,
+                from as i64,
+                count as i64,
+                i64::from(turn_on),
+            )
+        };
+        c_status(result)
+    }
+}}

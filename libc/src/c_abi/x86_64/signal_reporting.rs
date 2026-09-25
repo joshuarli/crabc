@@ -82,69 +82,75 @@ unsafe fn write_stderr_newline(stream: *mut StandardStream) -> bool {
     unsafe { stdio_standard::fputc(c_int::from(b'\n'), stream) >= 0 }
 }
 
-/// Print one signal description to the selected permanent stderr.
-///
-/// # Safety
-///
-/// If non-null, `message` must point to a readable NUL-terminated C string
-/// for the duration of this call. Callers must externally serialize this call
-/// with every selected use of `stderr`; the bounded permanent-stream substrate
-/// deliberately does not own musl's general FILE locking/locale/orientation
-/// state. It is not async-signal-safe and must not run from a signal handler.
-/// On complete output this preserves the incoming C `errno`; on a
-/// failed output it leaves the permanent-stream error (for example `EBADF`) in
-/// `errno`, matching musl's success-only restoration rule.
-#[no_mangle]
-pub unsafe extern "C" fn psignal(signal: c_int, message: *const c_char) {
-    // SAFETY: this feature owns the calling thread's selected errno slot.
-    let saved_errno = unsafe { errno::get_errno() };
-    // SAFETY: this helper returns only the permanent process-lifetime stderr.
-    let stream = unsafe { permanent_stderr() };
-    let mut complete = true;
+// Musl's `src/signal/psignal.c` object.
+static_archive_member! { psignal_source {
+    /// Print one signal description to the selected permanent stderr.
+    ///
+    /// # Safety
+    ///
+    /// If non-null, `message` must point to a readable NUL-terminated C string
+    /// for the duration of this call. Callers must externally serialize this call
+    /// with every selected use of `stderr`; the bounded permanent-stream substrate
+    /// deliberately does not own musl's general FILE locking/locale/orientation
+    /// state. It is not async-signal-safe and must not run from a signal handler.
+    /// On complete output this preserves the incoming C `errno`; on a
+    /// failed output it leaves the permanent-stream error (for example `EBADF`) in
+    /// `errno`, matching musl's success-only restoration rule.
+    #[no_mangle]
+    pub unsafe extern "C" fn psignal(signal: c_int, message: *const c_char) {
+        // SAFETY: this feature owns the calling thread's selected errno slot.
+        let saved_errno = unsafe { errno::get_errno() };
+        // SAFETY: this helper returns only the permanent process-lifetime stderr.
+        let stream = unsafe { permanent_stderr() };
+        let mut complete = true;
 
-    if !message.is_null() {
-        // SAFETY: `message` meets this public C entry point's string contract.
-        complete = unsafe { write_stderr_string(message, stream) };
+        if !message.is_null() {
+            // SAFETY: `message` meets this public C entry point's string contract.
+            complete = unsafe { write_stderr_string(message, stream) };
+            if complete {
+                // SAFETY: this is one immutable NUL-terminated literal.
+                complete = unsafe {
+                    write_stderr_string(b": \0".as_ptr().cast::<c_char>(), stream)
+                };
+            }
+        }
         if complete {
-            // SAFETY: this is one immutable NUL-terminated literal.
-            complete = unsafe {
-                write_stderr_string(b": \0".as_ptr().cast::<c_char>(), stream)
-            };
+            // SAFETY: `strsignal` owns its immutable process-static return string.
+            let description = strsignal::strsignal(signal);
+            // SAFETY: `description` is a readable NUL-terminated static string.
+            complete = unsafe { write_stderr_string(description, stream) };
+        }
+        if complete {
+            // SAFETY: permanent stderr accepts one selected unbuffered byte.
+            complete = unsafe { write_stderr_newline(stream) };
+        }
+
+        if complete {
+            // Musl restores errno only when the entire formatted output succeeds.
+            // SAFETY: this feature owns the calling thread's selected errno slot.
+            unsafe { errno::set_errno(saved_errno) };
         }
     }
-    if complete {
-        // SAFETY: `strsignal` owns its immutable process-static return string.
-        let description = strsignal::strsignal(signal);
-        // SAFETY: `description` is a readable NUL-terminated static string.
-        complete = unsafe { write_stderr_string(description, stream) };
-    }
-    if complete {
-        // SAFETY: permanent stderr accepts one selected unbuffered byte.
-        complete = unsafe { write_stderr_newline(stream) };
-    }
+}}
 
-    if complete {
-        // Musl restores errno only when the entire formatted output succeeds.
-        // SAFETY: this feature owns the calling thread's selected errno slot.
-        unsafe { errno::set_errno(saved_errno) };
+// Musl's `src/signal/psiginfo.c` object.
+static_archive_member! { psiginfo_source {
+    /// Report the signal number stored at the beginning of one caller-owned
+    /// Linux/x86-64 `siginfo_t` record.
+    ///
+    /// # Safety
+    ///
+    /// `information` must point to a readable `siginfo_t` whose first field is a
+    /// valid `int si_signo`; null/invalid input has the same undefined behavior as
+    /// musl's direct `si->si_signo` dereference. `message` and stderr
+    /// serialization have the same requirements as [`psignal`].
+    #[no_mangle]
+    pub unsafe extern "C" fn psiginfo(information: *const c_void, message: *const c_char) {
+        // SAFETY: the caller supplies the same complete `siginfo_t` prefix musl
+        // dereferences directly. `SigInfoPrefix` anchors only that observed field.
+        let signal = unsafe { (*information.cast::<SigInfoPrefix>()).signal };
+        // SAFETY: `message` and the permanent stderr serialization obligation pass
+        // through unchanged to the selected psignal boundary.
+        unsafe { psignal(signal, message) };
     }
-}
-
-/// Report the signal number stored at the beginning of one caller-owned
-/// Linux/x86-64 `siginfo_t` record.
-///
-/// # Safety
-///
-/// `information` must point to a readable `siginfo_t` whose first field is a
-/// valid `int si_signo`; null/invalid input has the same undefined behavior as
-/// musl's direct `si->si_signo` dereference. `message` and stderr
-/// serialization have the same requirements as [`psignal`].
-#[no_mangle]
-pub unsafe extern "C" fn psiginfo(information: *const c_void, message: *const c_char) {
-    // SAFETY: the caller supplies the same complete `siginfo_t` prefix musl
-    // dereferences directly. `SigInfoPrefix` anchors only that observed field.
-    let signal = unsafe { (*information.cast::<SigInfoPrefix>()).signal };
-    // SAFETY: `message` and the permanent stderr serialization obligation pass
-    // through unchanged to the selected psignal boundary.
-    unsafe { psignal(signal, message) };
-}
+}}

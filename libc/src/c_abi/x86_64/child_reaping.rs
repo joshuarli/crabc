@@ -71,86 +71,95 @@ unsafe fn wait4_result(pid: c_int, status: *mut c_int, options: c_int) -> i64 {
     }
 }
 
-/// Wait for any eligible child and return its process identifier.
-///
-/// `status` may be null. When non-null it must designate one writable x86
-/// `int` for Linux to fill if this call reports a child. A `WNOHANG` no-event
-/// result is zero and leaves that status word under Linux's normal wait4
-/// contract. This function does not establish child creation, ownership,
-/// or pthread-atfork coordination.
-#[no_mangle]
-pub unsafe extern "C" fn wait(status: *mut c_int) -> c_int {
-    // SAFETY: `wait` is the fixed `wait4(-1, status, 0, NULL)` spelling; the
-    // caller upholds the optional status-pointer requirement above.
-    let result = unsafe { wait4_result(WAIT_ANY, status, NO_WAIT_OPTIONS) };
-    c_status(result)
-}
+// Musl's `src/process/wait.c` object.
+static_archive_member! { wait_source {
+    /// Wait for any eligible child and return its process identifier.
+    ///
+    /// `status` may be null. When non-null it must designate one writable x86
+    /// `int` for Linux to fill if this call reports a child. A `WNOHANG` no-event
+    /// result is zero and leaves that status word under Linux's normal wait4
+    /// contract. This function does not establish child creation, ownership,
+    /// or pthread-atfork coordination.
+    #[no_mangle]
+    pub unsafe extern "C" fn wait(status: *mut c_int) -> c_int {
+        // SAFETY: `wait` is the fixed `wait4(-1, status, 0, NULL)` spelling; the
+        // caller upholds the optional status-pointer requirement above.
+        let result = unsafe { wait4_result(WAIT_ANY, status, NO_WAIT_OPTIONS) };
+        c_status(result)
+    }
+}}
 
-/// Wait for an eligible child selected by `pid`.
-///
-/// `status` may be null; when non-null it must designate one writable x86
-/// `int` for Linux's wait-status output. `options` is passed unchanged to
-/// Linux, including `WNOHANG`; unsupported bits report the kernel's `EINVAL`
-/// through the selected initial-TLS `errno` slot. The owned runtime supplies
-/// the musl pthread cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn waitpid(
-    pid: c_int,
-    status: *mut c_int,
-    options: c_int,
-) -> c_int {
-    // SAFETY: the caller owns Linux's selection/options and optional
-    // status-buffer contracts.
-    let result = unsafe { wait4_result(pid, status, options) };
-    c_status(result)
-}
+// Musl's `src/process/waitpid.c` object.
+static_archive_member! { waitpid_source {
+    /// Wait for an eligible child selected by `pid`.
+    ///
+    /// `status` may be null; when non-null it must designate one writable x86
+    /// `int` for Linux's wait-status output. `options` is passed unchanged to
+    /// Linux, including `WNOHANG`; unsupported bits report the kernel's `EINVAL`
+    /// through the selected initial-TLS `errno` slot. The owned runtime supplies
+    /// the musl pthread cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn waitpid(
+        pid: c_int,
+        status: *mut c_int,
+        options: c_int,
+    ) -> c_int {
+        // SAFETY: the caller owns Linux's selection/options and optional
+        // status-buffer contracts.
+        let result = unsafe { wait4_result(pid, status, options) };
+        c_status(result)
+    }
+}}
 
-/// Observe or reap a selected child through Linux `waitid(2)`.
-///
-/// `info` is passed directly as Linux's 128-byte, eight-byte-aligned x86
-/// `siginfo_t` output record. A C caller that supplies a non-null pointer must
-/// keep that record writable for the syscall duration; invalid pointers are
-/// left for Linux to reject with its normal error result. For a `WNOHANG`
-/// no-event observation, callers that need to detect the Linux zero-`si_pid`
-/// convention must pre-zero the record themselves. `WNOWAIT` observation does
-/// not reap the child; a later eligible wait remains required.
-///
-/// The owned runtime supplies cancellation. This does not select `wait4`,
-/// process creation, generic signal waits, or pthread lifecycle state.
-#[no_mangle]
-pub unsafe extern "C" fn waitid(
-    id_type: c_int,
-    id: c_uint,
-    info: *mut c_void,
-    options: c_int,
-) -> c_int {
-    // SAFETY: the caller owns Linux's id selector/options and `siginfo_t`
-    // output-record contract. The raw adapter places `options`/NULL rusage in
-    // Linux/x86-64's r10/r8 argument registers, respectively.
-    let result = unsafe {
-        #[cfg(crabc_x86_owned_runtime)]
-        {
-            super::pthread_cancel::syscall_cp(
-                raw_syscall::SYS_WAITID,
-                i64::from(id_type),
-                i64::from(id),
-                info as usize as i64,
-                i64::from(options),
-                0,
-                0,
-            )
-        }
-        #[cfg(not(crabc_x86_owned_runtime))]
-        {
-            raw_syscall::syscall5(
-                raw_syscall::SYS_WAITID,
-                i64::from(id_type),
-                i64::from(id),
-                info as usize as i64,
-                i64::from(options),
-                0,
-            )
-        }
-    };
-    c_status(result)
-}
+// Musl's `src/process/waitid.c` object.
+static_archive_member! { waitid_source {
+    /// Observe or reap a selected child through Linux `waitid(2)`.
+    ///
+    /// `info` is passed directly as Linux's 128-byte, eight-byte-aligned x86
+    /// `siginfo_t` output record. A C caller that supplies a non-null pointer must
+    /// keep that record writable for the syscall duration; invalid pointers are
+    /// left for Linux to reject with its normal error result. For a `WNOHANG`
+    /// no-event observation, callers that need to detect the Linux zero-`si_pid`
+    /// convention must pre-zero the record themselves. `WNOWAIT` observation does
+    /// not reap the child; a later eligible wait remains required.
+    ///
+    /// The owned runtime supplies cancellation. This does not select `wait4`,
+    /// process creation, generic signal waits, or pthread lifecycle state.
+    #[no_mangle]
+    pub unsafe extern "C" fn waitid(
+        id_type: c_int,
+        id: c_uint,
+        info: *mut c_void,
+        options: c_int,
+    ) -> c_int {
+        // SAFETY: the caller owns Linux's id selector/options and `siginfo_t`
+        // output-record contract. The raw adapter places `options`/NULL rusage in
+        // Linux/x86-64's r10/r8 argument registers, respectively.
+        let result = unsafe {
+            #[cfg(crabc_x86_owned_runtime)]
+            {
+                crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                    raw_syscall::SYS_WAITID,
+                    i64::from(id_type),
+                    i64::from(id),
+                    info as usize as i64,
+                    i64::from(options),
+                    0,
+                    0,
+                )
+            }
+            #[cfg(not(crabc_x86_owned_runtime))]
+            {
+                raw_syscall::syscall5(
+                    raw_syscall::SYS_WAITID,
+                    i64::from(id_type),
+                    i64::from(id),
+                    info as usize as i64,
+                    i64::from(options),
+                    0,
+                )
+            }
+        };
+        c_status(result)
+    }
+}}

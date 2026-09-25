@@ -102,28 +102,31 @@ const _: () = {
     assert!(offset_of!(Rlimit, maximum) == 8);
 };
 
-/// Return one selected `sysconf` value.
-///
-/// The public x86 selector namespace remains available in `<unistd.h>`, but
-/// this bounded static artifact admits only Linux's fixed `USER_HZ` value and
-/// the x86-64 base page size. Any other selector is a direct `EINVAL`, rather
-/// than a fabricated scheduler, system-information, or auxv fallback. The
-/// pinned source directly indexes negative selectors without a source-defined
-/// result, so the selected differential boundary admits only the two direct
-/// values plus a far nonnegative-invalid `EINVAL` result.
-#[no_mangle]
-pub extern "C" fn sysconf(name: c_int) -> c_long {
-    match name {
-        SC_CLK_TCK => 100,
-        SC_PAGE_SIZE => c_long::from(X86_64_LINUX_PAGE_SIZE),
-        _ => {
-            // SAFETY: this selected C ABI owns the calling thread's initial-TLS
-            // errno publication for rejected scalar selectors.
-            unsafe { errno::set_errno(EINVAL) };
-            -1
+// Musl's `src/conf/sysconf.c` object.
+static_archive_member! { sysconf_source {
+    /// Return one selected `sysconf` value.
+    ///
+    /// The public x86 selector namespace remains available in `<unistd.h>`, but
+    /// this bounded static artifact admits only Linux's fixed `USER_HZ` value and
+    /// the x86-64 base page size. Any other selector is a direct `EINVAL`, rather
+    /// than a fabricated scheduler, system-information, or auxv fallback. The
+    /// pinned source directly indexes negative selectors without a source-defined
+    /// result, so the selected differential boundary admits only the two direct
+    /// values plus a far nonnegative-invalid `EINVAL` result.
+    #[no_mangle]
+    pub extern "C" fn sysconf(name: c_int) -> c_long {
+        match name {
+            SC_CLK_TCK => 100,
+            SC_PAGE_SIZE => c_long::from(X86_64_LINUX_PAGE_SIZE),
+            _ => {
+                // SAFETY: this selected C ABI owns the calling thread's initial-TLS
+                // errno publication for rejected scalar selectors.
+                unsafe { errno::set_errno(EINVAL) };
+                -1
+            }
         }
     }
-}
+}}
 
 #[inline]
 fn confstr_value(name: c_int) -> Option<&'static [u8]> {
@@ -137,50 +140,53 @@ fn confstr_value(name: c_int) -> Option<&'static [u8]> {
     }
 }
 
-/// Query or copy a selected POSIX configuration string.
-///
-/// `buf` may be null only when `len` is zero. When it is non-null, it must
-/// designate `len` writable bytes for the call. Like musl, a too-small output
-/// buffer receives the maximal NUL-terminated prefix and the function returns
-/// the full required size including that NUL byte.
-///
-/// # Safety
-///
-/// When `buf` is non-null and `len` is nonzero, it must designate `len`
-/// writable bytes for the complete copy and terminator write.
-#[no_mangle]
-pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> usize {
-    let Some(value) = confstr_value(name) else {
-        // SAFETY: this selected C ABI owns the calling thread's initial-TLS
-        // errno publication for rejected scalar selectors.
-        unsafe { errno::set_errno(EINVAL) };
-        return 0;
-    };
+// Musl's `src/conf/confstr.c` object.
+static_archive_member! { confstr_source {
+    /// Query or copy a selected POSIX configuration string.
+    ///
+    /// `buf` may be null only when `len` is zero. When it is non-null, it must
+    /// designate `len` writable bytes for the call. Like musl, a too-small output
+    /// buffer receives the maximal NUL-terminated prefix and the function returns
+    /// the full required size including that NUL byte.
+    ///
+    /// # Safety
+    ///
+    /// When `buf` is non-null and `len` is nonzero, it must designate `len`
+    /// writable bytes for the complete copy and terminator write.
+    #[no_mangle]
+    pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> usize {
+        let Some(value) = confstr_value(name) else {
+            // SAFETY: this selected C ABI owns the calling thread's initial-TLS
+            // errno publication for rejected scalar selectors.
+            unsafe { errno::set_errno(EINVAL) };
+            return 0;
+        };
 
-    let value_len = value.len() - 1;
-    if !buf.is_null() && len != 0 {
-        let copy_len = core::cmp::min(len - 1, value_len);
-        // Unlike musl's internal `snprintf` shortcut, copy the selected small
-        // literal byte-by-byte. This retains musl's query/truncation result
-        // while keeping the isolated `confstr` static candidate free of a
-        // stdio or compiler-memory-helper closure.
-        //
-        // SAFETY: the caller owns `len` writable bytes when supplying a
-        // non-null output pointer. `copy_len < len` and `copy_len <= value_len`,
-        // so the source reads and destination/terminator writes remain inside
-        // their respective objects.
-        unsafe {
-            let source = value.as_ptr();
-            let mut index = 0usize;
-            while index < copy_len {
-                buf.add(index).write(source.add(index).read() as c_char);
-                index += 1;
+        let value_len = value.len() - 1;
+        if !buf.is_null() && len != 0 {
+            let copy_len = core::cmp::min(len - 1, value_len);
+            // Unlike musl's internal `snprintf` shortcut, copy the selected small
+            // literal byte-by-byte. This retains musl's query/truncation result
+            // while keeping the isolated `confstr` static candidate free of a
+            // stdio or compiler-memory-helper closure.
+            //
+            // SAFETY: the caller owns `len` writable bytes when supplying a
+            // non-null output pointer. `copy_len < len` and `copy_len <= value_len`,
+            // so the source reads and destination/terminator writes remain inside
+            // their respective objects.
+            unsafe {
+                let source = value.as_ptr();
+                let mut index = 0usize;
+                while index < copy_len {
+                    buf.add(index).write(source.add(index).read() as c_char);
+                    index += 1;
+                }
+                *buf.add(copy_len) = 0;
             }
-            *buf.add(copy_len) = 0;
         }
+        value_len + 1
     }
-    value_len + 1
-}
+}}
 
 #[inline(always)]
 fn pathconf_value(name: c_int) -> Option<c_long> {
@@ -218,75 +224,87 @@ unsafe fn selected_pathconf(name: c_int) -> c_long {
     }
 }
 
-/// Return a selected path configuration value for an open descriptor.
-///
-/// Musl's selected Linux contract is table-based, so `fd` is deliberately not
-/// dereferenced or passed to Linux. Valid selectors therefore do not fail for an invalid
-/// descriptor; valid indeterminate `-1` values preserve `errno`.
-#[no_mangle]
-pub extern "C" fn fpathconf(_fd: c_int, name: c_int) -> c_long {
-    // SAFETY: this helper only publishes EINVAL for an invalid scalar selector.
-    unsafe { selected_pathconf(name) }
-}
-
-/// Return a selected path configuration value for a pathname.
-///
-/// Musl's selected Linux contract is table-based, so `path` is deliberately
-/// not dereferenced or passed to Linux. Valid selectors therefore do not fail
-/// for a null or missing pathname; valid indeterminate `-1` values preserve
-/// `errno`. As in musl's delegated `fpathconf(-1, name)` source closure, this
-/// selected safe translation publishes `EINVAL` for every invalid Rust scalar,
-/// while the pinned C source's negative signed index remains outside the
-/// differential contract.
-#[no_mangle]
-pub extern "C" fn pathconf(_path: *const c_char, name: c_int) -> c_long {
-    // SAFETY: this helper only publishes EINVAL for an invalid scalar selector.
-    unsafe { selected_pathconf(name) }
-}
-
-/// Return Linux/x86-64's fixed base page size.
-///
-/// The x86-64 Linux ABI has a 4096-byte base page size; this is not an auxv
-/// reader and does not claim the future x86 C startup/runtime contract.
-#[no_mangle]
-pub extern "C" fn getpagesize() -> c_int {
-    X86_64_LINUX_PAGE_SIZE
-}
-
-/// Return the calling process's soft descriptor limit clamped to `INT_MAX`.
-///
-/// Musl's source closure is `src/legacy/getdtablesize.c` through
-/// `src/misc/getrlimit.c`: its successful `prlimit64` normal path supplies the
-/// `RLIMIT_NOFILE` record. Linux 5.10 is above musl's historical
-/// `SYS_getrlimit` fallback boundary, so this selected x86 leaf deliberately
-/// does not invent that fallback. Musl's legacy caller ignores a failed
-/// `getrlimit` and reads an uninitialized local record; this safer leaf instead
-/// translates the raw `prlimit64` error through initial-TLS errno and returns
-/// `-1`, so an error cannot fabricate a descriptor-table size.
-#[no_mangle]
-pub extern "C" fn getdtablesize() -> c_int {
-    let mut limit = Rlimit {
-        current: 0,
-        maximum: 0,
-    };
-    // SAFETY: Linux/x86-64 `prlimit64=302` consumes the target pid, resource,
-    // null new-limit, and writable old-limit in rdi/rsi/rdx/r10. This stack
-    // record has the exact 16-byte x86 public/kernel `rlimit` layout.
-    let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_PRLIMIT64,
-            0,
-            i64::from(RLIMIT_NOFILE),
-            0,
-            core::ptr::addr_of_mut!(limit) as usize as i64,
-        )
-    };
-    if c_status(result) != 0 {
-        return -1;
+// Musl's `src/conf/fpathconf.c` object.
+static_archive_member! { fpathconf_source {
+    /// Return a selected path configuration value for an open descriptor.
+    ///
+    /// Musl's selected Linux contract is table-based, so `fd` is deliberately not
+    /// dereferenced or passed to Linux. Valid selectors therefore do not fail for an invalid
+    /// descriptor; valid indeterminate `-1` values preserve `errno`.
+    #[no_mangle]
+    pub extern "C" fn fpathconf(_fd: c_int, name: c_int) -> c_long {
+        // SAFETY: this helper only publishes EINVAL for an invalid scalar selector.
+        unsafe { selected_pathconf(name) }
     }
-    if limit.current < c_ulong::try_from(c_int::MAX).unwrap_or(c_ulong::MAX) {
-        limit.current as c_int
-    } else {
-        c_int::MAX
+}}
+
+// Musl's `src/conf/pathconf.c` object.
+static_archive_member! { pathconf_source {
+    /// Return a selected path configuration value for a pathname.
+    ///
+    /// Musl's selected Linux contract is table-based, so `path` is deliberately
+    /// not dereferenced or passed to Linux. Valid selectors therefore do not fail
+    /// for a null or missing pathname; valid indeterminate `-1` values preserve
+    /// `errno`. As in musl's delegated `fpathconf(-1, name)` source closure, this
+    /// selected safe translation publishes `EINVAL` for every invalid Rust scalar,
+    /// while the pinned C source's negative signed index remains outside the
+    /// differential contract.
+    #[no_mangle]
+    pub extern "C" fn pathconf(_path: *const c_char, name: c_int) -> c_long {
+        // SAFETY: this helper only publishes EINVAL for an invalid scalar selector.
+        unsafe { selected_pathconf(name) }
     }
-}
+}}
+
+// Musl's `src/legacy/getpagesize.c` object.
+static_archive_member! { getpagesize_source {
+    /// Return Linux/x86-64's fixed base page size.
+    ///
+    /// The x86-64 Linux ABI has a 4096-byte base page size; this is not an auxv
+    /// reader and does not claim the future x86 C startup/runtime contract.
+    #[no_mangle]
+    pub extern "C" fn getpagesize() -> c_int {
+        X86_64_LINUX_PAGE_SIZE
+    }
+}}
+
+// Musl's `src/legacy/getdtablesize.c` object.
+static_archive_member! { getdtablesize_source {
+    /// Return the calling process's soft descriptor limit clamped to `INT_MAX`.
+    ///
+    /// Musl's source closure is `src/legacy/getdtablesize.c` through
+    /// `src/misc/getrlimit.c`: its successful `prlimit64` normal path supplies the
+    /// `RLIMIT_NOFILE` record. Linux 5.10 is above musl's historical
+    /// `SYS_getrlimit` fallback boundary, so this selected x86 leaf deliberately
+    /// does not invent that fallback. Musl's legacy caller ignores a failed
+    /// `getrlimit` and reads an uninitialized local record; this safer leaf instead
+    /// translates the raw `prlimit64` error through initial-TLS errno and returns
+    /// `-1`, so an error cannot fabricate a descriptor-table size.
+    #[no_mangle]
+    pub extern "C" fn getdtablesize() -> c_int {
+        let mut limit = Rlimit {
+            current: 0,
+            maximum: 0,
+        };
+        // SAFETY: Linux/x86-64 `prlimit64=302` consumes the target pid, resource,
+        // null new-limit, and writable old-limit in rdi/rsi/rdx/r10. This stack
+        // record has the exact 16-byte x86 public/kernel `rlimit` layout.
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_PRLIMIT64,
+                0,
+                i64::from(RLIMIT_NOFILE),
+                0,
+                core::ptr::addr_of_mut!(limit) as usize as i64,
+            )
+        };
+        if c_status(result) != 0 {
+            return -1;
+        }
+        if limit.current < c_ulong::try_from(c_int::MAX).unwrap_or(c_ulong::MAX) {
+            limit.current as c_int
+        } else {
+            c_int::MAX
+        }
+    }
+}}

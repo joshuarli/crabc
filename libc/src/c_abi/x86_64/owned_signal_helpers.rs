@@ -44,50 +44,62 @@ fn signal_mask(signal: c_int) -> Option<[u64; PUBLIC_SIGSET_WORDS]> {
     } else { Some(mask) }
 }
 
-/// Block one application signal in the calling task, preserving its action.
-#[no_mangle]
-pub extern "C" fn sighold(signal: c_int) -> c_int {
-    let Some(mask) = signal_mask(signal) else { return -1; };
-    unsafe { control::sigprocmask(SIG_BLOCK, mask.as_ptr().cast(), core::ptr::null_mut()) }
-}
-
-/// Unblock one application signal in the calling task, preserving its action.
-#[no_mangle]
-pub extern "C" fn sigrelse(signal: c_int) -> c_int {
-    let Some(mask) = signal_mask(signal) else { return -1; };
-    unsafe { control::sigprocmask(SIG_UNBLOCK, mask.as_ptr().cast(), core::ptr::null_mut()) }
-}
-
-/// Ignore one application signal through the owned action transaction.
-#[no_mangle]
-pub extern "C" fn sigignore(signal: c_int) -> c_int {
-    let ignored = action(SIG_IGN);
-    unsafe { public_sigaction(signal, core::ptr::addr_of!(ignored).cast(), core::ptr::null_mut()) }
-}
-
-/// Replace a disposition and unblock its signal, or hold without replacing.
-///
-/// # Safety
-/// `handler` is SIG_DFL, SIG_IGN, SIG_HOLD, or a callable signal-handler address
-/// retained until every possible asynchronous invocation has completed. The
-/// caller owns any synchronization needed to replace process-wide handlers.
-#[no_mangle]
-pub unsafe extern "C" fn sigset(signal: c_int, handler: usize) -> usize {
-    let Some(mask) = signal_mask(signal) else { return SIG_ERR; };
-    let mut old_action = action(0);
-    let new_action = action(handler);
-    let requested = if handler == SIG_HOLD { core::ptr::null() }
-        else { core::ptr::addr_of!(new_action).cast() };
-    if unsafe { public_sigaction(signal, requested, core::ptr::addr_of_mut!(old_action).cast()) } < 0 {
-        return SIG_ERR;
+// Musl's `src/signal/sighold.c` object.
+static_archive_member! { sighold_source {
+    /// Block one application signal in the calling task, preserving its action.
+    #[no_mangle]
+    pub extern "C" fn sighold(signal: c_int) -> c_int {
+        let Some(mask) = signal_mask(signal) else { return -1; };
+        unsafe { control::sigprocmask(SIG_BLOCK, mask.as_ptr().cast(), core::ptr::null_mut()) }
     }
-    let mut old_mask = [0u64; PUBLIC_SIGSET_WORDS];
-    // Musl does not undo an installed action if this second operation fails.
-    if unsafe { control::sigprocmask(if handler == SIG_HOLD { SIG_BLOCK } else { SIG_UNBLOCK },
-        mask.as_ptr().cast(), old_mask.as_mut_ptr().cast()) } < 0 {
-        return SIG_ERR;
+}}
+
+// Musl's `src/signal/sigrelse.c` object.
+static_archive_member! { sigrelse_source {
+    /// Unblock one application signal in the calling task, preserving its action.
+    #[no_mangle]
+    pub extern "C" fn sigrelse(signal: c_int) -> c_int {
+        let Some(mask) = signal_mask(signal) else { return -1; };
+        unsafe { control::sigprocmask(SIG_UNBLOCK, mask.as_ptr().cast(), core::ptr::null_mut()) }
     }
-    if unsafe { control::sigismember(old_mask.as_ptr().cast(), signal) } != 0 {
-        SIG_HOLD
-    } else { old_action.handler }
-}
+}}
+
+// Musl's `src/signal/sigignore.c` object.
+static_archive_member! { sigignore_source {
+    /// Ignore one application signal through the owned action transaction.
+    #[no_mangle]
+    pub extern "C" fn sigignore(signal: c_int) -> c_int {
+        let ignored = action(SIG_IGN);
+        unsafe { public_sigaction(signal, core::ptr::addr_of!(ignored).cast(), core::ptr::null_mut()) }
+    }
+}}
+
+// Musl's `src/signal/sigset.c` object.
+static_archive_member! { sigset_source {
+    /// Replace a disposition and unblock its signal, or hold without replacing.
+    ///
+    /// # Safety
+    /// `handler` is SIG_DFL, SIG_IGN, SIG_HOLD, or a callable signal-handler address
+    /// retained until every possible asynchronous invocation has completed. The
+    /// caller owns any synchronization needed to replace process-wide handlers.
+    #[no_mangle]
+    pub unsafe extern "C" fn sigset(signal: c_int, handler: usize) -> usize {
+        let Some(mask) = signal_mask(signal) else { return SIG_ERR; };
+        let mut old_action = action(0);
+        let new_action = action(handler);
+        let requested = if handler == SIG_HOLD { core::ptr::null() }
+            else { core::ptr::addr_of!(new_action).cast() };
+        if unsafe { public_sigaction(signal, requested, core::ptr::addr_of_mut!(old_action).cast()) } < 0 {
+            return SIG_ERR;
+        }
+        let mut old_mask = [0u64; PUBLIC_SIGSET_WORDS];
+        // Musl does not undo an installed action if this second operation fails.
+        if unsafe { control::sigprocmask(if handler == SIG_HOLD { SIG_BLOCK } else { SIG_UNBLOCK },
+            mask.as_ptr().cast(), old_mask.as_mut_ptr().cast()) } < 0 {
+            return SIG_ERR;
+        }
+        if unsafe { control::sigismember(old_mask.as_ptr().cast(), signal) } != 0 {
+            SIG_HOLD
+        } else { old_action.handler }
+    }
+}}

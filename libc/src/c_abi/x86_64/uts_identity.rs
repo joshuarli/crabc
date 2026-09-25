@@ -65,125 +65,137 @@ fn field_nul_length(
     None
 }
 
-/// Copy the current UTS hostname using musl's bounded copy rule.
-///
-/// # Safety
-///
-/// When `length` is nonzero, `output` must designate writable storage for at
-/// least `min(length, 65)` bytes for the call's duration. A zero `length`
-/// permits a null `output` and performs no output write. The caller owns any
-/// concurrent UTS-namespace identity policy.
-#[no_mangle]
-pub unsafe extern "C" fn gethostname(output: *mut c_char, length: usize) -> c_int {
-    let name = match unsafe { read_utsname() } {
-        Ok(name) => name,
-        Err(result) => return c_status(result),
-    };
-    let bounded_length = core::cmp::min(length, system_observation::UTS_FIELD_BYTES);
-    let mut index = 0;
+// Musl's `src/unistd/gethostname.c` object.
+static_archive_member! { gethostname_source {
+    /// Copy the current UTS hostname using musl's bounded copy rule.
+    ///
+    /// # Safety
+    ///
+    /// When `length` is nonzero, `output` must designate writable storage for at
+    /// least `min(length, 65)` bytes for the call's duration. A zero `length`
+    /// permits a null `output` and performs no output write. The caller owns any
+    /// concurrent UTS-namespace identity policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn gethostname(output: *mut c_char, length: usize) -> c_int {
+        let name = match unsafe { read_utsname() } {
+            Ok(name) => name,
+            Err(result) => return c_status(result),
+        };
+        let bounded_length = core::cmp::min(length, system_observation::UTS_FIELD_BYTES);
+        let mut index = 0;
 
-    while index < bounded_length {
-        let byte = name.node_name[index];
-        // SAFETY: the caller provides writable storage for exactly the
-        // bounded musl copy extent whenever `length` is nonzero.
-        unsafe { output.add(index).write(byte) };
-        if byte == 0 {
-            break;
+        while index < bounded_length {
+            let byte = name.node_name[index];
+            // SAFETY: the caller provides writable storage for exactly the
+            // bounded musl copy extent whenever `length` is nonzero.
+            unsafe { output.add(index).write(byte) };
+            if byte == 0 {
+                break;
+            }
+            index += 1;
         }
-        index += 1;
+        if bounded_length != 0 && index == bounded_length {
+            // SAFETY: the final byte belongs to the same caller-provided bounded
+            // output range. This is musl's forced-NUL truncation rule.
+            unsafe { output.add(bounded_length - 1).write(0) };
+        }
+        0
     }
-    if bounded_length != 0 && index == bounded_length {
-        // SAFETY: the final byte belongs to the same caller-provided bounded
-        // output range. This is musl's forced-NUL truncation rule.
-        unsafe { output.add(bounded_length - 1).write(0) };
-    }
-    0
-}
+}}
 
-/// Copy the current UTS domain name only when the full value fits.
-///
-/// # Safety
-///
-/// When `length` is nonzero, `output` must designate writable storage for
-/// `length` bytes for the call's duration. A zero `length` permits a null
-/// `output`, returns `-1`, and writes `EINVAL`. The caller owns any concurrent
-/// UTS-namespace identity policy.
-#[no_mangle]
-pub unsafe extern "C" fn getdomainname(output: *mut c_char, length: usize) -> c_int {
-    let name = match unsafe { read_utsname() } {
-        Ok(name) => name,
-        Err(result) => return c_status(result),
-    };
-    let domain_length = match field_nul_length(&name.domain_name) {
-        Some(length) => length,
-        // Linux's UTS field is NUL-terminated on the 5.10 baseline. Do not
-        // emulate musl's unbounded strlen if a malformed external record
-        // violates that kernel contract: preserve Rust memory safety with the
-        // same direct EINVAL result used for a non-fitting public buffer.
-        None => {
-            // SAFETY: this selected C leaf owns the direct local EINVAL slot.
+// Musl's `src/misc/getdomainname.c` object.
+static_archive_member! { getdomainname_source {
+    /// Copy the current UTS domain name only when the full value fits.
+    ///
+    /// # Safety
+    ///
+    /// When `length` is nonzero, `output` must designate writable storage for
+    /// `length` bytes for the call's duration. A zero `length` permits a null
+    /// `output`, returns `-1`, and writes `EINVAL`. The caller owns any concurrent
+    /// UTS-namespace identity policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn getdomainname(output: *mut c_char, length: usize) -> c_int {
+        let name = match unsafe { read_utsname() } {
+            Ok(name) => name,
+            Err(result) => return c_status(result),
+        };
+        let domain_length = match field_nul_length(&name.domain_name) {
+            Some(length) => length,
+            // Linux's UTS field is NUL-terminated on the 5.10 baseline. Do not
+            // emulate musl's unbounded strlen if a malformed external record
+            // violates that kernel contract: preserve Rust memory safety with the
+            // same direct EINVAL result used for a non-fitting public buffer.
+            None => {
+                // SAFETY: this selected C leaf owns the direct local EINVAL slot.
+                unsafe { errno::set_errno(EINVAL) };
+                return -1;
+            }
+        };
+        if length == 0 || domain_length >= length {
+            // SAFETY: this is the selected C wrapper's own direct EINVAL result
+            // for musl's no-truncation buffer contract.
             unsafe { errno::set_errno(EINVAL) };
             return -1;
         }
-    };
-    if length == 0 || domain_length >= length {
-        // SAFETY: this is the selected C wrapper's own direct EINVAL result
-        // for musl's no-truncation buffer contract.
-        unsafe { errno::set_errno(EINVAL) };
-        return -1;
+        // SAFETY: the successful branch requires a buffer larger than the exact
+        // domain length, so the complete NUL-terminated field prefix fits.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                name.domain_name.as_ptr(),
+                output,
+                domain_length + 1,
+            );
+        }
+        0
     }
-    // SAFETY: the successful branch requires a buffer larger than the exact
-    // domain length, so the complete NUL-terminated field prefix fits.
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            name.domain_name.as_ptr(),
-            output,
-            domain_length + 1,
-        );
+}}
+
+// Musl's `src/linux/sethostname.c` object.
+static_archive_member! { sethostname_source {
+    /// Replace the hostname in the calling UTS namespace through Linux.
+    ///
+    /// # Safety
+    ///
+    /// `name` must designate `length` readable bytes when the caller expects a
+    /// successful kernel copy. The change affects every task sharing the calling
+    /// UTS namespace, so callers must arrange namespace isolation, synchronization,
+    /// and restoration as appropriate. This wrapper supplies no namespace policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn sethostname(name: *const c_char, length: usize) -> c_int {
+        // SAFETY: the caller supplies the raw Linux pointer/length contract. The
+        // two scalar words occupy rdi/rsi for x86 sethostname=170.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_SETHOSTNAME,
+                name as usize as i64,
+                length as i64,
+            )
+        };
+        c_status(result)
     }
-    0
-}
+}}
 
-/// Replace the hostname in the calling UTS namespace through Linux.
-///
-/// # Safety
-///
-/// `name` must designate `length` readable bytes when the caller expects a
-/// successful kernel copy. The change affects every task sharing the calling
-/// UTS namespace, so callers must arrange namespace isolation, synchronization,
-/// and restoration as appropriate. This wrapper supplies no namespace policy.
-#[no_mangle]
-pub unsafe extern "C" fn sethostname(name: *const c_char, length: usize) -> c_int {
-    // SAFETY: the caller supplies the raw Linux pointer/length contract. The
-    // two scalar words occupy rdi/rsi for x86 sethostname=170.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_SETHOSTNAME,
-            name as usize as i64,
-            length as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Replace the domain name in the calling UTS namespace through Linux.
-///
-/// # Safety
-///
-/// `name` must designate `length` readable bytes when the caller expects a
-/// successful kernel copy. The change affects every task sharing the calling
-/// UTS namespace, so callers must arrange namespace isolation, synchronization,
-/// and restoration as appropriate. This wrapper supplies no namespace policy.
-#[no_mangle]
-pub unsafe extern "C" fn setdomainname(name: *const c_char, length: usize) -> c_int {
-    // SAFETY: the caller supplies the raw Linux pointer/length contract. The
-    // two scalar words occupy rdi/rsi for x86 setdomainname=171.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_SETDOMAINNAME,
-            name as usize as i64,
-            length as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/misc/setdomainname.c` object.
+static_archive_member! { setdomainname_source {
+    /// Replace the domain name in the calling UTS namespace through Linux.
+    ///
+    /// # Safety
+    ///
+    /// `name` must designate `length` readable bytes when the caller expects a
+    /// successful kernel copy. The change affects every task sharing the calling
+    /// UTS namespace, so callers must arrange namespace isolation, synchronization,
+    /// and restoration as appropriate. This wrapper supplies no namespace policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn setdomainname(name: *const c_char, length: usize) -> c_int {
+        // SAFETY: the caller supplies the raw Linux pointer/length contract. The
+        // two scalar words occupy rdi/rsi for x86 setdomainname=171.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_SETDOMAINNAME,
+                name as usize as i64,
+                length as i64,
+            )
+        };
+        c_status(result)
+    }
+}}

@@ -167,76 +167,79 @@ unsafe extern "C" fn start(argument: *mut c_void) -> *mut c_void {
     core::ptr::null_mut()
 }
 
-/// Create a POSIX timer using a valid clock and optional notification record.
-/// # Safety
-/// `event` is null or a readable initialized installed struct sigevent.
-/// `output` is writable timer_t storage; thread callback and attributes follow
-/// POSIX pthread lifetime requirements. The returned timer has one deletion owner.
-#[no_mangle]
-pub unsafe extern "C" fn timer_create(clock: c_int, event: *const Sigevent, output: *mut *mut c_void) -> c_int {
-    let notify = if event.is_null() { 0 } else { unsafe { (*event).notify } };
-    if matches!(notify, 0 | 1 | 4) {
-        let mut kernel = KernelSigevent { value: Sigval { integer: 0 }, signal: 0, notify, tid: 0, padding: [0; 44] };
-        let pointer = if event.is_null() { core::ptr::null() } else {
-            kernel.value = unsafe { (*event).value }; kernel.signal = unsafe { (*event).signal };
-            if notify == 4 { kernel.tid = unsafe { (*event).fields.thread_id }; }
-            &kernel as *const KernelSigevent
-        };
-        let mut id = 0;
-        let result = unsafe { raw_syscall::syscall3(SYS_TIMER_CREATE, clock as i64, pointer as i64, &mut id as *mut c_int as i64) };
-        if c_status(result) < 0 { return -1; }
-        unsafe { output.write(id as usize as *mut c_void); }
-        return 0;
+// Musl's `src/time/timer_create.c` object.
+static_archive_member! { timer_create_source {
+    /// Create a POSIX timer using a valid clock and optional notification record.
+    /// # Safety
+    /// `event` is null or a readable initialized installed struct sigevent.
+    /// `output` is writable timer_t storage; thread callback and attributes follow
+    /// POSIX pthread lifetime requirements. The returned timer has one deletion owner.
+    #[no_mangle]
+    pub unsafe extern "C" fn timer_create(clock: c_int, event: *const Sigevent, output: *mut *mut c_void) -> c_int {
+        let notify = if event.is_null() { 0 } else { unsafe { (*event).notify } };
+        if matches!(notify, 0 | 1 | 4) {
+            let mut kernel = KernelSigevent { value: Sigval { integer: 0 }, signal: 0, notify, tid: 0, padding: [0; 44] };
+            let pointer = if event.is_null() { core::ptr::null() } else {
+                kernel.value = unsafe { (*event).value }; kernel.signal = unsafe { (*event).signal };
+                if notify == 4 { kernel.tid = unsafe { (*event).fields.thread_id }; }
+                &kernel as *const KernelSigevent
+            };
+            let mut id = 0;
+            let result = unsafe { raw_syscall::syscall3(SYS_TIMER_CREATE, clock as i64, pointer as i64, &mut id as *mut c_int as i64) };
+            if c_status(result) < 0 { return -1; }
+            unsafe { output.write(id as usize as *mut c_void); }
+            return 0;
+        }
+        if notify != 2 { unsafe { errno::set_errno(EINVAL); } return -1; }
+        // Reinstalling the same reserved handler is idempotent, including after
+        // fork. The signal is never available to the public sigaction namespace.
+        let action = signal_foundation::KernelSigAction { handler: timer_handler as *const () as usize,
+            flags: 0x1400_0004, restorer: signal_foundation::restorer_address(), mask: 0 };
+        unsafe { raw_syscall::syscall4(raw_syscall::SYS_RT_SIGACTION, SIGTIMER, &action as *const _ as i64, 0, 8); }
+        let mapping = unsafe { raw_syscall::syscall6(raw_syscall::SYS_MMAP, 0, REGION_SIZE, 3, 0x22, -1, 0) };
+        if (-4095..0).contains(&mapping) { unsafe { errno::set_errno(EAGAIN); } return -1; }
+        let worker = mapping as *mut TimerWorker;
+        let notification = unsafe { (*event).fields.thread };
+        unsafe { worker.write(TimerWorker { id: AtomicI32::new(-1), tid: 0,
+            notify: notification.function, value: (*event).value }); }
+        let mut attr = [0usize; 7];
+        let attr_source = notification.attributes;
+        unsafe {
+            if attr_source.is_null() { pthread_attr::pthread_attr_init(attr.as_mut_ptr().cast()); }
+            else { attr = attr_source.read(); }
+            pthread_attr::pthread_attr_setdetachstate(attr.as_mut_ptr().cast(), 1);
+        }
+        let args = StartArgs { ready: AtomicI32::new(0), consumed: AtomicI32::new(0), worker };
+        let mut previous = 0u64;
+        let mut thread = core::ptr::null_mut();
+        unsafe { mask(0, &CALLBACK_MASK, &mut previous); }
+        let error = unsafe { pthread_create_join::pthread_create(&mut thread, attr.as_ptr().cast(), Some(start), &args as *const _ as *mut c_void) };
+        unsafe { mask(2, &previous, core::ptr::null_mut()); }
+        if error != 0 {
+            unsafe { raw_syscall::syscall2(raw_syscall::SYS_MUNMAP, mapping, REGION_SIZE); }
+            unsafe { errno::set_errno(error); } return -1;
+        }
+        let tid = pthread_create_join::selected_worker_linux_thread_id(thread).unwrap_or(0);
+        unsafe { (*worker).tid = tid; }
+        let kernel = KernelSigevent { value: Sigval { integer: 0 }, signal: SIGTIMER as c_int, notify: 4, tid, padding: [0; 44] };
+        let mut id = -1;
+        let result = unsafe { raw_syscall::syscall3(SYS_TIMER_CREATE, clock as i64, &kernel as *const _ as i64, &mut id as *mut c_int as i64) };
+        // Source syscall() publishes a creation error before the sem2
+        // cancellation point, so creator cleanup handlers observe that errno.
+        let status = c_status(result);
+        if status < 0 { id = -1; }
+        unsafe { (*worker).id.store(id, Ordering::Release); }
+        unsafe { post(&args.ready); }
+        wait(&args.consumed);
+        // sem_wait(sem2) checks cancellation even when its token is available.
+        // Defer that check until the reverse acknowledgement: only now may user
+        // cleanup retire the creator's stack without invalidating worker args.
+        pthread_cancel::test_current_selected_pthread_cancellation();
+        if status < 0 { return -1; }
+        unsafe { output.write(((1usize << 63) | ((worker as usize) >> 1)) as *mut c_void); }
+        0
     }
-    if notify != 2 { unsafe { errno::set_errno(EINVAL); } return -1; }
-    // Reinstalling the same reserved handler is idempotent, including after
-    // fork. The signal is never available to the public sigaction namespace.
-    let action = signal_foundation::KernelSigAction { handler: timer_handler as *const () as usize,
-        flags: 0x1400_0004, restorer: signal_foundation::restorer_address(), mask: 0 };
-    unsafe { raw_syscall::syscall4(raw_syscall::SYS_RT_SIGACTION, SIGTIMER, &action as *const _ as i64, 0, 8); }
-    let mapping = unsafe { raw_syscall::syscall6(raw_syscall::SYS_MMAP, 0, REGION_SIZE, 3, 0x22, -1, 0) };
-    if (-4095..0).contains(&mapping) { unsafe { errno::set_errno(EAGAIN); } return -1; }
-    let worker = mapping as *mut TimerWorker;
-    let notification = unsafe { (*event).fields.thread };
-    unsafe { worker.write(TimerWorker { id: AtomicI32::new(-1), tid: 0,
-        notify: notification.function, value: (*event).value }); }
-    let mut attr = [0usize; 7];
-    let attr_source = notification.attributes;
-    unsafe {
-        if attr_source.is_null() { pthread_attr::pthread_attr_init(attr.as_mut_ptr().cast()); }
-        else { attr = attr_source.read(); }
-        pthread_attr::pthread_attr_setdetachstate(attr.as_mut_ptr().cast(), 1);
-    }
-    let args = StartArgs { ready: AtomicI32::new(0), consumed: AtomicI32::new(0), worker };
-    let mut previous = 0u64;
-    let mut thread = core::ptr::null_mut();
-    unsafe { mask(0, &CALLBACK_MASK, &mut previous); }
-    let error = unsafe { pthread_create_join::pthread_create(&mut thread, attr.as_ptr().cast(), Some(start), &args as *const _ as *mut c_void) };
-    unsafe { mask(2, &previous, core::ptr::null_mut()); }
-    if error != 0 {
-        unsafe { raw_syscall::syscall2(raw_syscall::SYS_MUNMAP, mapping, REGION_SIZE); }
-        unsafe { errno::set_errno(error); } return -1;
-    }
-    let tid = pthread_create_join::selected_worker_linux_thread_id(thread).unwrap_or(0);
-    unsafe { (*worker).tid = tid; }
-    let kernel = KernelSigevent { value: Sigval { integer: 0 }, signal: SIGTIMER as c_int, notify: 4, tid, padding: [0; 44] };
-    let mut id = -1;
-    let result = unsafe { raw_syscall::syscall3(SYS_TIMER_CREATE, clock as i64, &kernel as *const _ as i64, &mut id as *mut c_int as i64) };
-    // Source syscall() publishes a creation error before the sem2
-    // cancellation point, so creator cleanup handlers observe that errno.
-    let status = c_status(result);
-    if status < 0 { id = -1; }
-    unsafe { (*worker).id.store(id, Ordering::Release); }
-    unsafe { post(&args.ready); }
-    wait(&args.consumed);
-    // sem_wait(sem2) checks cancellation even when its token is available.
-    // Defer that check until the reverse acknowledgement: only now may user
-    // cleanup retire the creator's stack without invalidating worker args.
-    pthread_cancel::test_current_selected_pthread_cancellation();
-    if status < 0 { return -1; }
-    unsafe { output.write(((1usize << 63) | ((worker as usize) >> 1)) as *mut c_void); }
-    0
-}
+}}
 
 unsafe fn kernel_id(timer: *mut c_void) -> i64 {
     if (timer as isize) < 0 {
@@ -244,39 +247,51 @@ unsafe fn kernel_id(timer: *mut c_void) -> i64 {
     } else { timer as i64 }
 }
 
-/// Delete one live timer. Nonnegative handles preserve musl's raw -errno ABI.
-/// # Safety
-/// `timer` is a live timer returned by timer_create and is deleted exactly once;
-/// no other thread may use its handle after deletion.
-#[no_mangle]
-pub unsafe extern "C" fn timer_delete(timer: *mut c_void) -> c_int {
-    if (timer as isize) < 0 {
-        let worker = (timer as usize).wrapping_shl(1) as *mut TimerWorker;
-        let tid = unsafe { (*worker).tid };
-        unsafe { (*worker).id.fetch_or(c_int::MIN, Ordering::AcqRel); raw_syscall::syscall2(raw_syscall::SYS_TKILL, tid as i64, SIGTIMER); }
-        0
-    } else { unsafe { raw_syscall::syscall1(raw_syscall::SYS_TIMER_DELETE, timer as i64) as c_int } }
-}
+// Musl's `src/time/timer_delete.c` object.
+static_archive_member! { timer_delete_source {
+    /// Delete one live timer. Nonnegative handles preserve musl's raw -errno ABI.
+    /// # Safety
+    /// `timer` is a live timer returned by timer_create and is deleted exactly once;
+    /// no other thread may use its handle after deletion.
+    #[no_mangle]
+    pub unsafe extern "C" fn timer_delete(timer: *mut c_void) -> c_int {
+        if (timer as isize) < 0 {
+            let worker = (timer as usize).wrapping_shl(1) as *mut TimerWorker;
+            let tid = unsafe { (*worker).tid };
+            unsafe { (*worker).id.fetch_or(c_int::MIN, Ordering::AcqRel); raw_syscall::syscall2(raw_syscall::SYS_TKILL, tid as i64, SIGTIMER); }
+            0
+        } else { unsafe { raw_syscall::syscall1(raw_syscall::SYS_TIMER_DELETE, timer as i64) as c_int } }
+    }
+}}
 
-/// Query overruns for one live timer.
-/// # Safety
-/// `timer` is live and not concurrently deleted.
-#[no_mangle]
-pub unsafe extern "C" fn timer_getoverrun(timer: *mut c_void) -> c_int {
-    c_status(unsafe { raw_syscall::syscall1(raw_syscall::SYS_TIMER_GETOVERRUN, kernel_id(timer)) })
-}
-/// Read the current interval and remaining time.
-/// # Safety
-/// `timer` is live; `value` points to writable installed struct itimerspec storage.
-#[no_mangle]
-pub unsafe extern "C" fn timer_gettime(timer: *mut c_void, value: *mut c_void) -> c_int {
-    c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_TIMER_GETTIME, kernel_id(timer), value as i64) })
-}
-/// Arm or disarm one live timer.
-/// # Safety
-/// `timer` is live; `value` is readable struct itimerspec storage and `old` is
-/// null or writable storage of that same installed layout for this call.
-#[no_mangle]
-pub unsafe extern "C" fn timer_settime(timer: *mut c_void, flags: c_int, value: *const c_void, old: *mut c_void) -> c_int {
-    c_status(unsafe { raw_syscall::syscall4(raw_syscall::SYS_TIMER_SETTIME, kernel_id(timer), flags as i64, value as i64, old as i64) })
-}
+// Musl's `src/time/timer_getoverrun.c` object.
+static_archive_member! { timer_getoverrun_source {
+    /// Query overruns for one live timer.
+    /// # Safety
+    /// `timer` is live and not concurrently deleted.
+    #[no_mangle]
+    pub unsafe extern "C" fn timer_getoverrun(timer: *mut c_void) -> c_int {
+        c_status(unsafe { raw_syscall::syscall1(raw_syscall::SYS_TIMER_GETOVERRUN, kernel_id(timer)) })
+    }
+}}
+// Musl's `src/time/timer_gettime.c` object.
+static_archive_member! { timer_gettime_source {
+    /// Read the current interval and remaining time.
+    /// # Safety
+    /// `timer` is live; `value` points to writable installed struct itimerspec storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn timer_gettime(timer: *mut c_void, value: *mut c_void) -> c_int {
+        c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_TIMER_GETTIME, kernel_id(timer), value as i64) })
+    }
+}}
+// Musl's `src/time/timer_settime.c` object.
+static_archive_member! { timer_settime_source {
+    /// Arm or disarm one live timer.
+    /// # Safety
+    /// `timer` is live; `value` is readable struct itimerspec storage and `old` is
+    /// null or writable storage of that same installed layout for this call.
+    #[no_mangle]
+    pub unsafe extern "C" fn timer_settime(timer: *mut c_void, flags: c_int, value: *const c_void, old: *mut c_void) -> c_int {
+        c_status(unsafe { raw_syscall::syscall4(raw_syscall::SYS_TIMER_SETTIME, kernel_id(timer), flags as i64, value as i64, old as i64) })
+    }
+}}

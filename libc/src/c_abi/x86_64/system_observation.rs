@@ -125,27 +125,25 @@ pub(super) unsafe fn sysinfo_raw(output: *mut SysInfo) -> i64 {
     unsafe { raw_syscall::syscall1(raw_syscall::SYS_SYSINFO, output as usize as i64) }
 }
 
-/// Fill one public x86 `struct utsname` through Linux `uname(2)`.
-///
-/// # Safety
-///
-/// `output` must designate writable storage for one complete 390-byte public
-/// x86 `struct utsname` for the syscall's duration. The caller owns the
-/// output record and any concurrent UTS-namespace transition policy.
-#[no_mangle]
-pub unsafe extern "C" fn uname(output: *mut UtsName) -> c_int {
-    // SAFETY: the caller owns the complete writable public record contract.
-    let result = unsafe { uname_raw(output) };
-    c_status(result)
-}
+// Musl's `src/misc/uname.c` object.
+static_archive_member! { uname_source {
+    /// Fill one public x86 `struct utsname` through Linux `uname(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `output` must designate writable storage for one complete 390-byte public
+    /// x86 `struct utsname` for the syscall's duration. The caller owns the
+    /// output record and any concurrent UTS-namespace transition policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn uname(output: *mut UtsName) -> c_int {
+        // SAFETY: the caller owns the complete writable public record contract.
+        let result = unsafe { uname_raw(output) };
+        c_status(result)
+    }
+}}
 
 // Preserve the musl source relationship: __lsysinfo is hidden in libc.a and
 // localized by the shared link; sysinfo is its weak, same-address public alias.
-core::arch::global_asm!(
-    ".hidden __lsysinfo",
-    ".weak sysinfo",
-    ".set sysinfo, __lsysinfo",
-);
 
 /// Fill one public x86 `struct sysinfo` through Linux `sysinfo(2)`.
 ///
@@ -159,10 +157,24 @@ core::arch::global_asm!(
 /// x86 `struct sysinfo` for the syscall's duration. The caller owns the output
 /// record and any concurrent system-state observation policy.
 
-#[no_mangle]
-pub unsafe extern "C" fn __lsysinfo(output: *mut SysInfo) -> c_int {
-    // SAFETY: the caller owns the complete writable public record contract;
-    // Linux reads only the pointer word in x86 rdi and fills its ABI prefix.
-    let result = unsafe { sysinfo_raw(output) };
-    c_status(result)
-}
+// Musl's `src/linux/sysinfo.c` object.
+static_archive_member! { sysinfo_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __lsysinfo",
+    );
+
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak sysinfo",
+        ".set sysinfo, __lsysinfo",
+    );
+
+    #[no_mangle]
+    pub unsafe extern "C" fn __lsysinfo(output: *mut SysInfo) -> c_int {
+        // SAFETY: the caller owns the complete writable public record contract;
+        // Linux reads only the pointer word in x86 rdi and fills its ABI prefix.
+        let result = unsafe { sysinfo_raw(output) };
+        c_status(result)
+    }
+}}

@@ -79,227 +79,275 @@ fn selected_owned_vm_wait() {
 #[inline]
 fn selected_owned_vm_wait() {}
 
-/// Create one virtual-memory mapping through Linux `mmap(2)`.
-///
-/// The selected pre-syscall offset/length validation and the anonymous
-/// non-fixed `EPERM` to `ENOMEM` mapping are musl-visible C behavior. All
-/// remaining flag, descriptor, address, lifetime, and file-offset semantics
-/// stay Linux-owned.
-///
-/// # Safety
-///
-/// The caller owns every raw mapping contract: pointer/address meaning, range
-/// validity, descriptor lifetime, file-offset semantics, concurrency, and the
-/// later unmap/protection lifecycle. In the owned product, a fixed mapping
-/// first waits for the existing selected pthread VM-lifetime interval; the
-/// frozen archive retains its established no-op boundary.
-#[no_mangle]
-pub unsafe extern "C" fn __mmap(
-    address: *mut c_void,
-    length: usize,
-    protection: c_int,
-    flags: c_int,
-    file_descriptor: c_int,
-    offset: c_long,
-) -> *mut c_void {
-    // x86-64 has the byte-offset mmap syscall, but musl still retains the
-    // mmap2-unit alignment filter in its shared source. Preserve that visible
-    // rejection before entering Linux.
-    if (offset as u64) & MMAP_OFFSET_MASK != 0 {
-        return mapping_failed(EINVAL);
-    }
-    if length >= isize::MAX as usize {
-        return mapping_failed(ENOMEM);
-    }
+// Musl's `src/mman/mmap.c` object.
+static_archive_member! { mmap_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __mmap",
+    );
 
-    if flags & MAP_FIXED != 0 {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak mmap",
+        ".set mmap, __mmap",
+    );
+
+    /// Create one virtual-memory mapping through Linux `mmap(2)`.
+    ///
+    /// The selected pre-syscall offset/length validation and the anonymous
+    /// non-fixed `EPERM` to `ENOMEM` mapping are musl-visible C behavior. All
+    /// remaining flag, descriptor, address, lifetime, and file-offset semantics
+    /// stay Linux-owned.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns every raw mapping contract: pointer/address meaning, range
+    /// validity, descriptor lifetime, file-offset semantics, concurrency, and the
+    /// later unmap/protection lifecycle. In the owned product, a fixed mapping
+    /// first waits for the existing selected pthread VM-lifetime interval; the
+    /// frozen archive retains its established no-op boundary.
+    #[no_mangle]
+    pub unsafe extern "C" fn __mmap(
+        address: *mut c_void,
+        length: usize,
+        protection: c_int,
+        flags: c_int,
+        file_descriptor: c_int,
+        offset: c_long,
+    ) -> *mut c_void {
+        // x86-64 has the byte-offset mmap syscall, but musl still retains the
+        // mmap2-unit alignment filter in its shared source. Preserve that visible
+        // rejection before entering Linux.
+        if (offset as u64) & MMAP_OFFSET_MASK != 0 {
+            return mapping_failed(EINVAL);
+        }
+        if length >= isize::MAX as usize {
+            return mapping_failed(ENOMEM);
+        }
+
+        if flags & MAP_FIXED != 0 {
+            selected_owned_vm_wait();
+        }
+
+        // SAFETY: the caller owns the complete Linux mapping request; syscall6
+        // maps C arguments one through six into rdi/rsi/rdx/r10/r8/r9.
+        let mut result = unsafe {
+            raw_syscall::syscall6(
+                raw_syscall::SYS_MMAP,
+                address as usize as i64,
+                length as i64,
+                i64::from(protection),
+                i64::from(flags),
+                i64::from(file_descriptor),
+                offset,
+            )
+        };
+
+        // Match musl's compatibility fallback for anonymous mappings that Linux
+        // rejects with EPERM at an unspecified, non-fixed address.
+        if result == -EPERM
+            && address.is_null()
+            && flags & MAP_ANONYMOUS != 0
+            && flags & MAP_FIXED == 0
+        {
+            result = -i64::from(ENOMEM);
+        }
+
+        c_pointer_status(result)
+    }
+}}
+
+// Musl's `src/mman/munmap.c` object.
+static_archive_member! { munmap_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __munmap",
+    );
+
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak munmap",
+        ".set munmap, __munmap",
+    );
+
+    /// Remove one virtual-memory mapping through Linux `munmap(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `address` and `length` must designate a caller-owned mapping range, unless
+    /// deliberately exercising Linux's error path. Unmapping can invalidate every
+    /// pointer into the range; the caller owns all concurrent access and the
+    /// frozen archive supplies no process-wide VM synchronization. The owned
+    /// product waits for its existing selected pthread VM-lifetime interval before
+    /// making the kernel request.
+    #[no_mangle]
+    pub unsafe extern "C" fn __munmap(address: *mut c_void, length: usize) -> c_int {
         selected_owned_vm_wait();
+        // SAFETY: the caller owns the Linux mapping-range lifetime and aliasing
+        // contract.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_MUNMAP,
+                address as usize as i64,
+                length as i64,
+            )
+        };
+        c_status(result)
     }
+}}
 
-    // SAFETY: the caller owns the complete Linux mapping request; syscall6
-    // maps C arguments one through six into rdi/rsi/rdx/r10/r8/r9.
-    let mut result = unsafe {
-        raw_syscall::syscall6(
-            raw_syscall::SYS_MMAP,
-            address as usize as i64,
-            length as i64,
-            i64::from(protection),
-            i64::from(flags),
-            i64::from(file_descriptor),
-            offset,
-        )
-    };
+// Musl's `src/mman/mprotect.c` object.
+static_archive_member! { mprotect_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __mprotect",
+    );
 
-    // Match musl's compatibility fallback for anonymous mappings that Linux
-    // rejects with EPERM at an unspecified, non-fixed address.
-    if result == -EPERM
-        && address.is_null()
-        && flags & MAP_ANONYMOUS != 0
-        && flags & MAP_FIXED == 0
-    {
-        result = -i64::from(ENOMEM);
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak mprotect",
+        ".set mprotect, __mprotect",
+    );
+
+    /// Change protection after musl's page-rounded range translation.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns the mapping range, its aliases, and all synchronization
+    /// around altered access permissions. This selected boundary intentionally
+    /// rounds the address and end exactly as pinned musl does.
+    #[no_mangle]
+    pub unsafe extern "C" fn __mprotect(
+        address: *mut c_void,
+        length: usize,
+        protection: c_int,
+    ) -> c_int {
+        let start = (address as usize) & !PAGE_MASK;
+        let end = (address as usize)
+            .wrapping_add(length)
+            .wrapping_add(PAGE_MASK)
+            & !PAGE_MASK;
+        let rounded_length = end.wrapping_sub(start);
+
+        // SAFETY: the caller owns the page-rounded mapping-range contract. The
+        // wrapping arithmetic above deliberately mirrors musl's size_t path.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_MPROTECT,
+                start as i64,
+                rounded_length as i64,
+                i64::from(protection),
+            )
+        };
+        c_status(result)
     }
+}}
 
-    c_pointer_status(result)
-}
+// Musl's `src/mman/madvise.c` object.
+static_archive_member! { madvise_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __madvise",
+    );
 
-/// Remove one virtual-memory mapping through Linux `munmap(2)`.
-///
-/// # Safety
-///
-/// `address` and `length` must designate a caller-owned mapping range, unless
-/// deliberately exercising Linux's error path. Unmapping can invalidate every
-/// pointer into the range; the caller owns all concurrent access and the
-/// frozen archive supplies no process-wide VM synchronization. The owned
-/// product waits for its existing selected pthread VM-lifetime interval before
-/// making the kernel request.
-#[no_mangle]
-pub unsafe extern "C" fn __munmap(address: *mut c_void, length: usize) -> c_int {
-    selected_owned_vm_wait();
-    // SAFETY: the caller owns the Linux mapping-range lifetime and aliasing
-    // contract.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_MUNMAP,
-            address as usize as i64,
-            length as i64,
-        )
-    };
-    c_status(result)
-}
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak madvise",
+        ".set madvise, __madvise",
+    );
 
-/// Change protection after musl's page-rounded range translation.
-///
-/// # Safety
-///
-/// The caller owns the mapping range, its aliases, and all synchronization
-/// around altered access permissions. This selected boundary intentionally
-/// rounds the address and end exactly as pinned musl does.
-#[no_mangle]
-pub unsafe extern "C" fn __mprotect(
-    address: *mut c_void,
-    length: usize,
-    protection: c_int,
-) -> c_int {
-    let start = (address as usize) & !PAGE_MASK;
-    let end = (address as usize)
-        .wrapping_add(length)
-        .wrapping_add(PAGE_MASK)
-        & !PAGE_MASK;
-    let rounded_length = end.wrapping_sub(start);
-
-    // SAFETY: the caller owns the page-rounded mapping-range contract. The
-    // wrapping arithmetic above deliberately mirrors musl's size_t path.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_MPROTECT,
-            start as i64,
-            rounded_length as i64,
-            i64::from(protection),
-        )
-    };
-    c_status(result)
-}
-
-/// Give Linux one GNU virtual-memory advice request.
-///
-/// # Safety
-///
-/// The caller owns pointer validity, mapping lifetime, advice semantics, and
-/// concurrent access for the raw Linux request.
-#[no_mangle]
-pub unsafe extern "C" fn __madvise(address: *mut c_void, length: usize, advice: c_int) -> c_int {
-    // SAFETY: the caller owns the complete raw Linux advice contract.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_MADVISE,
-            address as usize as i64,
-            length as i64,
-            i64::from(advice),
-        )
-    };
-    c_status(result)
-}
+    /// Give Linux one GNU virtual-memory advice request.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns pointer validity, mapping lifetime, advice semantics, and
+    /// concurrent access for the raw Linux request.
+    #[no_mangle]
+    pub unsafe extern "C" fn __madvise(address: *mut c_void, length: usize, advice: c_int) -> c_int {
+        // SAFETY: the caller owns the complete raw Linux advice contract.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_MADVISE,
+                address as usize as i64,
+                length as i64,
+                i64::from(advice),
+            )
+        };
+        c_status(result)
+    }
+}}
 
 // Musl's mman wrappers define hidden implementation symbols and weak public
 // aliases in the same object. Preserve that one-address relationship so the
 // selected internal mapping owners cannot be redirected through application
 // mmap-family overrides.
-core::arch::global_asm!(
-    ".hidden __mmap",
-    ".weak mmap",
-    ".set mmap, __mmap",
-    ".hidden __munmap",
-    ".weak munmap",
-    ".set munmap, __munmap",
-    ".hidden __mprotect",
-    ".weak mprotect",
-    ".set mprotect, __mprotect",
-    ".hidden __madvise",
-    ".weak madvise",
-    ".set madvise, __madvise",
-);
 
-/// Give one POSIX memory-advice request its musl result convention.
-///
-/// Unlike `madvise`, failures return a positive errno value directly and do
-/// not publish through C `errno`. Pinned musl makes `POSIX_MADV_DONTNEED` a
-/// successful no-op rather than passing Linux `MADV_DONTNEED` through.
-///
-/// # Safety
-///
-/// The caller owns the raw mapping, lifetime, and concurrent-access contract
-/// for every advice other than the selected `DONTNEED` no-op.
-#[no_mangle]
-pub unsafe extern "C" fn posix_madvise(
-    address: *mut c_void,
-    length: usize,
-    advice: c_int,
-) -> c_int {
-    if advice == POSIX_MADV_DONTNEED {
-        return 0;
+// Musl's `src/mman/posix_madvise.c` object.
+static_archive_member! { posix_madvise_source {
+    /// Give one POSIX memory-advice request its musl result convention.
+    ///
+    /// Unlike `madvise`, failures return a positive errno value directly and do
+    /// not publish through C `errno`. Pinned musl makes `POSIX_MADV_DONTNEED` a
+    /// successful no-op rather than passing Linux `MADV_DONTNEED` through.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns the raw mapping, lifetime, and concurrent-access contract
+    /// for every advice other than the selected `DONTNEED` no-op.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_madvise(
+        address: *mut c_void,
+        length: usize,
+        advice: c_int,
+    ) -> c_int {
+        if advice == POSIX_MADV_DONTNEED {
+            return 0;
+        }
+
+        // SAFETY: the caller owns the complete raw Linux advice contract.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_MADVISE,
+                address as usize as i64,
+                length as i64,
+                i64::from(advice),
+            )
+        };
+
+        // `posix_madvise` is intentionally not a c_status caller: musl negates a
+        // raw Linux errno into its direct-positive result and leaves errno stale.
+        if (-LINUX_ERRNO_MAX..0).contains(&result) {
+            result.wrapping_neg() as c_int
+        } else {
+            result as c_int
+        }
     }
+}}
 
-    // SAFETY: the caller owns the complete raw Linux advice contract.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_MADVISE,
-            address as usize as i64,
-            length as i64,
-            i64::from(advice),
-        )
-    };
-
-    // `posix_madvise` is intentionally not a c_status caller: musl negates a
-    // raw Linux errno into its direct-positive result and leaves errno stale.
-    if (-LINUX_ERRNO_MAX..0).contains(&result) {
-        result.wrapping_neg() as c_int
-    } else {
-        result as c_int
+// Musl's `src/mman/mincore.c` object.
+static_archive_member! { mincore_source {
+    /// Report Linux page residency for one caller-owned mapping range.
+    ///
+    /// # Safety
+    ///
+    /// `address` and `length` must describe a mapping range and `residency` must
+    /// provide writable storage for every page result, unless deliberately testing
+    /// Linux's validation errors. The caller owns mapping lifetime and races.
+    #[no_mangle]
+    pub unsafe extern "C" fn mincore(
+        address: *mut c_void,
+        length: usize,
+        residency: *mut u8,
+    ) -> c_int {
+        // SAFETY: the caller owns the complete raw Linux mapping/vector contract.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_MINCORE,
+                address as usize as i64,
+                length as i64,
+                residency as usize as i64,
+            )
+        };
+        c_status(result)
     }
-}
-
-/// Report Linux page residency for one caller-owned mapping range.
-///
-/// # Safety
-///
-/// `address` and `length` must describe a mapping range and `residency` must
-/// provide writable storage for every page result, unless deliberately testing
-/// Linux's validation errors. The caller owns mapping lifetime and races.
-#[no_mangle]
-pub unsafe extern "C" fn mincore(
-    address: *mut c_void,
-    length: usize,
-    residency: *mut u8,
-) -> c_int {
-    // SAFETY: the caller owns the complete raw Linux mapping/vector contract.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_MINCORE,
-            address as usize as i64,
-            length as i64,
-            residency as usize as i64,
-        )
-    };
-    c_status(result)
-}
+}}

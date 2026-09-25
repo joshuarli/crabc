@@ -150,198 +150,219 @@ pub(super) unsafe fn restore_application_signals(saved_mask: *const u64) {
     };
 }
 
-/// Send `signal` to `process_id` through Linux `kill(2)`.
-///
-/// The usual Linux process/group selector and permission semantics remain
-/// caller-owned. This is a process-signal delivery seam only; it does not
-/// establish process lifecycle, signal-disposition, or pthread coordination.
-#[no_mangle]
-pub extern "C" fn kill(process_id: c_int, signal: c_int) -> c_int {
-    // SAFETY: Linux `kill(2)` accepts two scalar x86 `int`/`pid_t` words.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_KILL,
-            i64::from(process_id),
-            i64::from(signal),
-        )
-    };
-    c_status(result)
-}
-
-/// Send `signal` to nonnegative process group `process_group`.
-///
-/// Musl rejects a negative group before forwarding the negated selector to
-/// `kill`. Widen before negating so this Rust implementation never creates a
-/// signed-overflow edge for the otherwise unspecified C `INT_MIN` expression.
-#[no_mangle]
-pub extern "C" fn killpg(process_group: c_int, signal: c_int) -> c_int {
-    if process_group < 0 {
-        // SAFETY: the selected archive owns the calling initial-TLS errno
-        // slot, exactly as the shared C status translator does.
-        unsafe { errno::set_errno(EINVAL) };
-        return -1;
+// Musl's `src/signal/kill.c` object.
+static_archive_member! { kill_source {
+    /// Send `signal` to `process_id` through Linux `kill(2)`.
+    ///
+    /// The usual Linux process/group selector and permission semantics remain
+    /// caller-owned. This is a process-signal delivery seam only; it does not
+    /// establish process lifecycle, signal-disposition, or pthread coordination.
+    #[no_mangle]
+    pub extern "C" fn kill(process_id: c_int, signal: c_int) -> c_int {
+        // SAFETY: Linux `kill(2)` accepts two scalar x86 `int`/`pid_t` words.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_KILL,
+                i64::from(process_id),
+                i64::from(signal),
+            )
+        };
+        c_status(result)
     }
+}}
 
-    // SAFETY: `killpg` is musl's `kill(-pgid, sig)` form. Widening retains
-    // the exact Linux low pid_t bits even at the signed boundary.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_KILL,
-            -i64::from(process_group),
-            i64::from(signal),
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/signal/killpg.c` object.
+static_archive_member! { killpg_source {
+    /// Send `signal` to nonnegative process group `process_group`.
+    ///
+    /// Musl rejects a negative group before forwarding the negated selector to
+    /// `kill`. Widen before negating so this Rust implementation never creates a
+    /// signed-overflow edge for the otherwise unspecified C `INT_MIN` expression.
+    #[no_mangle]
+    pub extern "C" fn killpg(process_group: c_int, signal: c_int) -> c_int {
+        if process_group < 0 {
+            // SAFETY: the selected archive owns the calling initial-TLS errno
+            // slot, exactly as the shared C status translator does.
+            unsafe { errno::set_errno(EINVAL) };
+            return -1;
+        }
 
-/// Deliver `signal` to the calling task through musl's protected raise path.
-///
-/// The application-signal mask transaction preserves the caller's prior mask
-/// after delivery setup. It is not a generic `tgkill` export or a pthread
-/// signal-policy implementation.
-#[no_mangle]
-pub extern "C" fn raise(signal: c_int) -> c_int {
-    let mut saved_mask = 0_u64;
-    // SAFETY: both private helpers use complete local one-word mask storage.
-    unsafe { block_application_signals(&mut saved_mask) };
-    // SAFETY: `gettid` has no arguments. Its normal Linux result is the
-    // current task id, which `tkill` then consumes as one scalar word.
-    let thread_id = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
-    // SAFETY: `tkill` takes a current task id and the caller's scalar signal.
-    let result = unsafe {
-        raw_syscall::syscall2(raw_syscall::SYS_TKILL, thread_id, i64::from(signal))
-    };
-    // SAFETY: restore the exact pre-transaction kernel mask before publishing
-    // the delivery syscall result, matching musl's ordering.
-    unsafe { restore_application_signals(&saved_mask) };
-    c_status(result)
-}
-
-/// Queue one signal with the caller's selected `sigval` payload.
-///
-/// The public `siginfo_t` sender fields are initialized exactly as musl's
-/// `sigqueue.c` does. Linux validates target, signal, and permission; this
-/// leaf provides no queue lifetime, signal-handler, or thread policy.
-#[no_mangle]
-pub extern "C" fn sigqueue(process_id: c_int, signal: c_int, value: SigValue) -> c_int {
-    let mut info = QueuedSigInfo {
-        signal,
-        error: 0,
-        code: SI_QUEUE,
-        alignment_padding: 0,
-        process_id: 0,
-        // Musl captures the real uid before the protected transaction.
-        user_id: process_context::getuid(),
-        value,
-        tail: [0; 96],
-    };
-    let mut saved_mask = 0_u64;
-    // SAFETY: both private helpers use complete local one-word mask storage.
-    unsafe { block_application_signals(&mut saved_mask) };
-    // Musl captures its sender pid after application signals are blocked.
-    info.process_id = process_context::getpid();
-    // SAFETY: Linux reads the complete initialized 128-byte `siginfo_t` and
-    // receives the two scalar C ABI words unchanged.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_RT_SIGQUEUEINFO,
-            i64::from(process_id),
-            i64::from(signal),
-            (&info as *const QueuedSigInfo) as usize as i64,
-        )
-    };
-    // SAFETY: restore the exact pre-transaction kernel mask before publishing
-    // the queue result, matching musl's ordering.
-    unsafe { restore_application_signals(&saved_mask) };
-    c_status(result)
-}
-
-/// Wait for one selected pending signal, retrying interrupted waits as musl.
-///
-/// # Safety
-///
-/// `mask` must be readable for its first eight-byte kernel signal word.
-/// `info` must be null or valid writable storage for one complete x86 public
-/// 128-byte `siginfo_t`; `timeout` must be null or a valid readable x86
-/// `struct timespec`. Their lifetimes must cover the kernel call. The owned
-/// runtime uses musl's cancellation-point boundary; the standalone leaf keeps
-/// its raw syscall profile.
-#[no_mangle]
-pub unsafe extern "C" fn sigtimedwait(
-    mask: *const c_void,
-    info: *mut c_void,
-    timeout: *const c_void,
-) -> c_int {
-    loop {
-        // SAFETY: the caller owns all three pointer contracts. Linux x86
-        // consumes one eight-byte mask word as pinned musl does.
-        #[cfg(crabc_x86_owned_runtime)]
+        // SAFETY: `killpg` is musl's `kill(-pgid, sig)` form. Widening retains
+        // the exact Linux low pid_t bits even at the signed boundary.
         let result = unsafe {
-            super::pthread_cancel::syscall_cp(
-                raw_syscall::SYS_RT_SIGTIMEDWAIT,
-                mask as usize as i64,
-                info as usize as i64,
-                timeout as usize as i64,
-                KERNEL_SIGSET_SIZE,
-                0,
-                0,
+            raw_syscall::syscall2(
+                raw_syscall::SYS_KILL,
+                -i64::from(process_group),
+                i64::from(signal),
             )
         };
-        #[cfg(not(crabc_x86_owned_runtime))]
+        c_status(result)
+    }
+}}
+
+// Musl's `src/signal/raise.c` object.
+static_archive_member! { raise_source {
+    /// Deliver `signal` to the calling task through musl's protected raise path.
+    ///
+    /// The application-signal mask transaction preserves the caller's prior mask
+    /// after delivery setup. It is not a generic `tgkill` export or a pthread
+    /// signal-policy implementation.
+    #[no_mangle]
+    pub extern "C" fn raise(signal: c_int) -> c_int {
+        let mut saved_mask = 0_u64;
+        // SAFETY: both private helpers use complete local one-word mask storage.
+        unsafe { block_application_signals(&mut saved_mask) };
+        // SAFETY: `gettid` has no arguments. Its normal Linux result is the
+        // current task id, which `tkill` then consumes as one scalar word.
+        let thread_id = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
+        // SAFETY: `tkill` takes a current task id and the caller's scalar signal.
         let result = unsafe {
-            raw_syscall::syscall4(
-                raw_syscall::SYS_RT_SIGTIMEDWAIT,
-                mask as usize as i64,
-                info as usize as i64,
-                timeout as usize as i64,
-                KERNEL_SIGSET_SIZE,
+            raw_syscall::syscall2(raw_syscall::SYS_TKILL, thread_id, i64::from(signal))
+        };
+        // SAFETY: restore the exact pre-transaction kernel mask before publishing
+        // the delivery syscall result, matching musl's ordering.
+        unsafe { restore_application_signals(&saved_mask) };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/signal/sigqueue.c` object.
+static_archive_member! { sigqueue_source {
+    /// Queue one signal with the caller's selected `sigval` payload.
+    ///
+    /// The public `siginfo_t` sender fields are initialized exactly as musl's
+    /// `sigqueue.c` does. Linux validates target, signal, and permission; this
+    /// leaf provides no queue lifetime, signal-handler, or thread policy.
+    #[no_mangle]
+    pub extern "C" fn sigqueue(process_id: c_int, signal: c_int, value: SigValue) -> c_int {
+        let mut info = QueuedSigInfo {
+            signal,
+            error: 0,
+            code: SI_QUEUE,
+            alignment_padding: 0,
+            process_id: 0,
+            // Musl captures the real uid before the protected transaction.
+            user_id: process_context::getuid(),
+            value,
+            tail: [0; 96],
+        };
+        let mut saved_mask = 0_u64;
+        // SAFETY: both private helpers use complete local one-word mask storage.
+        unsafe { block_application_signals(&mut saved_mask) };
+        // Musl captures its sender pid after application signals are blocked.
+        info.process_id = process_context::getpid();
+        // SAFETY: Linux reads the complete initialized 128-byte `siginfo_t` and
+        // receives the two scalar C ABI words unchanged.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_RT_SIGQUEUEINFO,
+                i64::from(process_id),
+                i64::from(signal),
+                (&info as *const QueuedSigInfo) as usize as i64,
             )
         };
-        if result != -EINTR {
-            return c_status(result);
+        // SAFETY: restore the exact pre-transaction kernel mask before publishing
+        // the queue result, matching musl's ordering.
+        unsafe { restore_application_signals(&saved_mask) };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/signal/sigtimedwait.c` object.
+static_archive_member! { sigtimedwait_source {
+    /// Wait for one selected pending signal, retrying interrupted waits as musl.
+    ///
+    /// # Safety
+    ///
+    /// `mask` must be readable for its first eight-byte kernel signal word.
+    /// `info` must be null or valid writable storage for one complete x86 public
+    /// 128-byte `siginfo_t`; `timeout` must be null or a valid readable x86
+    /// `struct timespec`. Their lifetimes must cover the kernel call. The owned
+    /// runtime uses musl's cancellation-point boundary; the standalone leaf keeps
+    /// its raw syscall profile.
+    #[no_mangle]
+    pub unsafe extern "C" fn sigtimedwait(
+        mask: *const c_void,
+        info: *mut c_void,
+        timeout: *const c_void,
+    ) -> c_int {
+        loop {
+            // SAFETY: the caller owns all three pointer contracts. Linux x86
+            // consumes one eight-byte mask word as pinned musl does.
+            #[cfg(crabc_x86_owned_runtime)]
+            let result = unsafe {
+                crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                    raw_syscall::SYS_RT_SIGTIMEDWAIT,
+                    mask as usize as i64,
+                    info as usize as i64,
+                    timeout as usize as i64,
+                    KERNEL_SIGSET_SIZE,
+                    0,
+                    0,
+                )
+            };
+            #[cfg(not(crabc_x86_owned_runtime))]
+            let result = unsafe {
+                raw_syscall::syscall4(
+                    raw_syscall::SYS_RT_SIGTIMEDWAIT,
+                    mask as usize as i64,
+                    info as usize as i64,
+                    timeout as usize as i64,
+                    KERNEL_SIGSET_SIZE,
+                )
+            };
+            if result != -EINTR {
+                return c_status(result);
+            }
         }
     }
-}
+}}
 
-/// Wait indefinitely for one selected pending signal.
-///
-/// # Safety
-///
-/// `mask` and `info` have the same pointer/lifetime requirements as
-/// [`sigtimedwait`].
-#[no_mangle]
-pub unsafe extern "C" fn sigwaitinfo(mask: *const c_void, info: *mut c_void) -> c_int {
-    // SAFETY: this is musl's null-timeout forwarding wrapper.
-    unsafe { sigtimedwait(mask, info, core::ptr::null()) }
-}
-
-/// Wait indefinitely and publish only the delivered signal number.
-///
-/// # Safety
-///
-/// `mask` must have the same readable kernel-word lifetime as
-/// [`sigtimedwait`], and `signal` must be writable for one C `int` if a wait
-/// succeeds. This source mapping follows pinned musl exactly: a failed wait
-/// returns `-1` with the errno already set by [`sigtimedwait`], rather than a
-/// positive errno value. The older baseline discrepancy is being corrected at
-/// its source and is not selected behavior.
-#[no_mangle]
-pub unsafe extern "C" fn sigwait(mask: *const c_void, signal: *mut c_int) -> c_int {
-    let mut info = MaybeUninit::<QueuedSigInfo>::uninit();
-    // SAFETY: the complete local record is writable as one x86 `siginfo_t`.
-    // The caller owns `mask`; null timeout implements `sigwaitinfo` behavior.
-    let result = unsafe {
-        sigtimedwait(
-            mask,
-            info.as_mut_ptr().cast(),
-            core::ptr::null(),
-        )
-    };
-    if result < 0 {
-        return -1;
+// Musl's `src/signal/sigwaitinfo.c` object.
+static_archive_member! { sigwaitinfo_source {
+    /// Wait indefinitely for one selected pending signal.
+    ///
+    /// # Safety
+    ///
+    /// `mask` and `info` have the same pointer/lifetime requirements as
+    /// [`sigtimedwait`].
+    #[no_mangle]
+    pub unsafe extern "C" fn sigwaitinfo(mask: *const c_void, info: *mut c_void) -> c_int {
+        // SAFETY: this is musl's null-timeout forwarding wrapper.
+        unsafe { sigtimedwait(mask, info, core::ptr::null()) }
     }
-    // SAFETY: a successful kernel wait initialized the leading signal field,
-    // and this public entry point requires writable caller signal storage.
-    unsafe { core::ptr::write(signal, result) };
-    0
-}
+}}
+
+// Musl's `src/signal/sigwait.c` object.
+static_archive_member! { sigwait_source {
+    /// Wait indefinitely and publish only the delivered signal number.
+    ///
+    /// # Safety
+    ///
+    /// `mask` must have the same readable kernel-word lifetime as
+    /// [`sigtimedwait`], and `signal` must be writable for one C `int` if a wait
+    /// succeeds. This source mapping follows pinned musl exactly: a failed wait
+    /// returns `-1` with the errno already set by [`sigtimedwait`], rather than a
+    /// positive errno value. The older baseline discrepancy is being corrected at
+    /// its source and is not selected behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn sigwait(mask: *const c_void, signal: *mut c_int) -> c_int {
+        let mut info = MaybeUninit::<QueuedSigInfo>::uninit();
+        // SAFETY: the complete local record is writable as one x86 `siginfo_t`.
+        // The caller owns `mask`; null timeout implements `sigwaitinfo` behavior.
+        let result = unsafe {
+            sigtimedwait(
+                mask,
+                info.as_mut_ptr().cast(),
+                core::ptr::null(),
+            )
+        };
+        if result < 0 {
+            return -1;
+        }
+        // SAFETY: a successful kernel wait initialized the leading signal field,
+        // and this public entry point requires writable caller signal storage.
+        unsafe { core::ptr::write(signal, result) };
+        0
+    }
+}}

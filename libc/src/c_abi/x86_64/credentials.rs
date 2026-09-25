@@ -35,155 +35,182 @@ fn profile_unsupported() -> c_int {
     -1
 }
 
-/// Replace the calling task's supplementary-group list through Linux.
-///
-/// # Safety
-///
-/// If `count` is nonzero and Linux examines the list, `groups` must point to
-/// `count` readable x86 `gid_t` words for the syscall's duration. Credential
-/// mutation is process-sensitive: callers must arrange their own authority,
-/// thread coordination, and recovery policy. This static leaf does not turn a
-/// successful kernel transition into a process-wide pthread guarantee.
-#[no_mangle]
-pub unsafe extern "C" fn setgroups(count: usize, groups: *const c_uint) -> c_int {
-    // SAFETY: the C caller upholds Linux's pointer and credential-transition
-    // requirements for `setgroups(2)`.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_SETGROUPS,
-            count as i64,
-            groups as usize as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/linux/setgroups.c` object.
+static_archive_member! { setgroups_source {
+    /// Replace the calling task's supplementary-group list through Linux.
+    ///
+    /// # Safety
+    ///
+    /// If `count` is nonzero and Linux examines the list, `groups` must point to
+    /// `count` readable x86 `gid_t` words for the syscall's duration. Credential
+    /// mutation is process-sensitive: callers must arrange their own authority,
+    /// thread coordination, and recovery policy. This static leaf does not turn a
+    /// successful kernel transition into a process-wide pthread guarantee.
+    #[no_mangle]
+    pub unsafe extern "C" fn setgroups(count: usize, groups: *const c_uint) -> c_int {
+        // SAFETY: the C caller upholds Linux's pointer and credential-transition
+        // requirements for `setgroups(2)`.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_SETGROUPS,
+                count as i64,
+                groups as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Change the calling task's Linux real/effective/saved user identity.
-///
-/// # Safety
-///
-/// The caller must provide a Linux `uid_t` word and coordinate any credential
-/// transition with all affected program threads. This direct static boundary
-/// makes no process-wide pthread synchronization claim.
-#[no_mangle]
-pub unsafe extern "C" fn setuid(user_id: c_uint) -> c_int {
-    // SAFETY: the scalar C argument is passed directly to Linux `setuid(2)`.
-    let result = unsafe { raw_syscall::syscall1(raw_syscall::SYS_SETUID, i64::from(user_id)) };
-    c_status(result)
-}
+// Musl's `src/unistd/setuid.c` object.
+static_archive_member! { setuid_source {
+    /// Change the calling task's Linux real/effective/saved user identity.
+    ///
+    /// # Safety
+    ///
+    /// The caller must provide a Linux `uid_t` word and coordinate any credential
+    /// transition with all affected program threads. This direct static boundary
+    /// makes no process-wide pthread synchronization claim.
+    #[no_mangle]
+    pub unsafe extern "C" fn setuid(user_id: c_uint) -> c_int {
+        // SAFETY: the scalar C argument is passed directly to Linux `setuid(2)`.
+        let result = unsafe { raw_syscall::syscall1(raw_syscall::SYS_SETUID, i64::from(user_id)) };
+        c_status(result)
+    }
+}}
 
-/// Change the calling task's Linux real/effective/saved group identity.
-///
-/// # Safety
-///
-/// The caller must provide a Linux `gid_t` word and coordinate any credential
-/// transition with all affected program threads. This direct static boundary
-/// makes no process-wide pthread synchronization claim.
-#[no_mangle]
-pub unsafe extern "C" fn setgid(group_id: c_uint) -> c_int {
-    // SAFETY: the scalar C argument is passed directly to Linux `setgid(2)`.
-    let result = unsafe { raw_syscall::syscall1(raw_syscall::SYS_SETGID, i64::from(group_id)) };
-    c_status(result)
-}
+// Musl's `src/unistd/setgid.c` object.
+static_archive_member! { setgid_source {
+    /// Change the calling task's Linux real/effective/saved group identity.
+    ///
+    /// # Safety
+    ///
+    /// The caller must provide a Linux `gid_t` word and coordinate any credential
+    /// transition with all affected program threads. This direct static boundary
+    /// makes no process-wide pthread synchronization claim.
+    #[no_mangle]
+    pub unsafe extern "C" fn setgid(group_id: c_uint) -> c_int {
+        // SAFETY: the scalar C argument is passed directly to Linux `setgid(2)`.
+        let result = unsafe { raw_syscall::syscall1(raw_syscall::SYS_SETGID, i64::from(group_id)) };
+        c_status(result)
+    }
+}}
 
-/// Set selected calling-task user-ID slots through Linux `setresuid(2)`.
-///
-/// # Safety
-///
-/// Each argument is one raw Linux `uid_t` word; all-ones means "unchanged".
-/// The caller must coordinate any actual identity transition with every
-/// affected thread. This artifact does not provide musl's process-wide
-/// credential rendezvous.
-#[no_mangle]
-pub unsafe extern "C" fn setresuid(
-    real_user_id: c_uint,
-    effective_user_id: c_uint,
-    saved_user_id: c_uint,
-) -> c_int {
-    // SAFETY: the scalar C arguments are passed unchanged to Linux's three
-    // x86 syscall registers for `setresuid(2)`.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_SETRESUID,
-            i64::from(real_user_id),
-            i64::from(effective_user_id),
-            i64::from(saved_user_id),
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/unistd/setresuid.c` object.
+static_archive_member! { setresuid_source {
+    /// Set selected calling-task user-ID slots through Linux `setresuid(2)`.
+    ///
+    /// # Safety
+    ///
+    /// Each argument is one raw Linux `uid_t` word; all-ones means "unchanged".
+    /// The caller must coordinate any actual identity transition with every
+    /// affected thread. This artifact does not provide musl's process-wide
+    /// credential rendezvous.
+    #[no_mangle]
+    pub unsafe extern "C" fn setresuid(
+        real_user_id: c_uint,
+        effective_user_id: c_uint,
+        saved_user_id: c_uint,
+    ) -> c_int {
+        // SAFETY: the scalar C arguments are passed unchanged to Linux's three
+        // x86 syscall registers for `setresuid(2)`.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SETRESUID,
+                i64::from(real_user_id),
+                i64::from(effective_user_id),
+                i64::from(saved_user_id),
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Set selected calling-task group-ID slots through Linux `setresgid(2)`.
-///
-/// # Safety
-///
-/// Each argument is one raw Linux `gid_t` word; all-ones means "unchanged".
-/// The caller must coordinate any actual identity transition with every
-/// affected thread. This artifact does not provide musl's process-wide
-/// credential rendezvous.
-#[no_mangle]
-pub unsafe extern "C" fn setresgid(
-    real_group_id: c_uint,
-    effective_group_id: c_uint,
-    saved_group_id: c_uint,
-) -> c_int {
-    // SAFETY: the scalar C arguments are passed unchanged to Linux's three
-    // x86 syscall registers for `setresgid(2)`.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_SETRESGID,
-            i64::from(real_group_id),
-            i64::from(effective_group_id),
-            i64::from(saved_group_id),
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/unistd/setresgid.c` object.
+static_archive_member! { setresgid_source {
+    /// Set selected calling-task group-ID slots through Linux `setresgid(2)`.
+    ///
+    /// # Safety
+    ///
+    /// Each argument is one raw Linux `gid_t` word; all-ones means "unchanged".
+    /// The caller must coordinate any actual identity transition with every
+    /// affected thread. This artifact does not provide musl's process-wide
+    /// credential rendezvous.
+    #[no_mangle]
+    pub unsafe extern "C" fn setresgid(
+        real_group_id: c_uint,
+        effective_group_id: c_uint,
+        saved_group_id: c_uint,
+    ) -> c_int {
+        // SAFETY: the scalar C arguments are passed unchanged to Linux's three
+        // x86 syscall registers for `setresgid(2)`.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SETRESGID,
+                i64::from(real_group_id),
+                i64::from(effective_group_id),
+                i64::from(saved_group_id),
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Report the deliberate C-profile limitation for effective user-ID changes.
-///
-/// # Safety
-///
-/// This function accepts one raw C `uid_t` word. It never dereferences memory
-/// or changes credentials; it always reports `EOPNOTSUPP` in the caller's
-/// initial-TLS `errno` slot.
-#[no_mangle]
-pub unsafe extern "C" fn seteuid(_effective_user_id: c_uint) -> c_int {
-    profile_unsupported()
-}
+// Musl's `src/unistd/seteuid.c` object.
+static_archive_member! { seteuid_source {
+    /// Report the deliberate C-profile limitation for effective user-ID changes.
+    ///
+    /// # Safety
+    ///
+    /// This function accepts one raw C `uid_t` word. It never dereferences memory
+    /// or changes credentials; it always reports `EOPNOTSUPP` in the caller's
+    /// initial-TLS `errno` slot.
+    #[no_mangle]
+    pub unsafe extern "C" fn seteuid(_effective_user_id: c_uint) -> c_int {
+        profile_unsupported()
+    }
+}}
 
-/// Report the deliberate C-profile limitation for effective group-ID changes.
-///
-/// # Safety
-///
-/// This function accepts one raw C `gid_t` word. It never dereferences memory
-/// or changes credentials; it always reports `EOPNOTSUPP` in the caller's
-/// initial-TLS `errno` slot.
-#[no_mangle]
-pub unsafe extern "C" fn setegid(_effective_group_id: c_uint) -> c_int {
-    profile_unsupported()
-}
+// Musl's `src/unistd/setegid.c` object.
+static_archive_member! { setegid_source {
+    /// Report the deliberate C-profile limitation for effective group-ID changes.
+    ///
+    /// # Safety
+    ///
+    /// This function accepts one raw C `gid_t` word. It never dereferences memory
+    /// or changes credentials; it always reports `EOPNOTSUPP` in the caller's
+    /// initial-TLS `errno` slot.
+    #[no_mangle]
+    pub unsafe extern "C" fn setegid(_effective_group_id: c_uint) -> c_int {
+        profile_unsupported()
+    }
+}}
 
-/// Report the deliberate C-profile limitation for real/effective user changes.
-///
-/// # Safety
-///
-/// This function accepts two raw C `uid_t` words. It never dereferences memory
-/// or changes credentials; it always reports `EOPNOTSUPP` in the caller's
-/// initial-TLS `errno` slot.
-#[no_mangle]
-pub unsafe extern "C" fn setreuid(_real_user_id: c_uint, _effective_user_id: c_uint) -> c_int {
-    profile_unsupported()
-}
+// Musl's `src/unistd/setreuid.c` object.
+static_archive_member! { setreuid_source {
+    /// Report the deliberate C-profile limitation for real/effective user changes.
+    ///
+    /// # Safety
+    ///
+    /// This function accepts two raw C `uid_t` words. It never dereferences memory
+    /// or changes credentials; it always reports `EOPNOTSUPP` in the caller's
+    /// initial-TLS `errno` slot.
+    #[no_mangle]
+    pub unsafe extern "C" fn setreuid(_real_user_id: c_uint, _effective_user_id: c_uint) -> c_int {
+        profile_unsupported()
+    }
+}}
 
-/// Report the deliberate C-profile limitation for real/effective group changes.
-///
-/// # Safety
-///
-/// This function accepts two raw C `gid_t` words. It never dereferences memory
-/// or changes credentials; it always reports `EOPNOTSUPP` in the caller's
-/// initial-TLS `errno` slot.
-#[no_mangle]
-pub unsafe extern "C" fn setregid(_real_group_id: c_uint, _effective_group_id: c_uint) -> c_int {
-    profile_unsupported()
-}
+// Musl's `src/unistd/setregid.c` object.
+static_archive_member! { setregid_source {
+    /// Report the deliberate C-profile limitation for real/effective group changes.
+    ///
+    /// # Safety
+    ///
+    /// This function accepts two raw C `gid_t` words. It never dereferences memory
+    /// or changes credentials; it always reports `EOPNOTSUPP` in the caller's
+    /// initial-TLS `errno` slot.
+    #[no_mangle]
+    pub unsafe extern "C" fn setregid(_real_group_id: c_uint, _effective_group_id: c_uint) -> c_int {
+        profile_unsupported()
+    }
+}}

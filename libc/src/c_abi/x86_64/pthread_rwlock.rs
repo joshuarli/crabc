@@ -534,6 +534,11 @@ static_archive_member! { pthread_rwlock_destroy_source {
 
 // Musl's `src/thread/pthread_rwlock_rdlock.c` object.
 static_archive_member! { pthread_rwlock_rdlock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_rwlock_rdlock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_rwlock_rdlock",
@@ -556,6 +561,11 @@ static_archive_member! { pthread_rwlock_rdlock_source {
 
 // Musl's `src/thread/pthread_rwlock_tryrdlock.c` object.
 static_archive_member! { pthread_rwlock_tryrdlock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_rwlock_tryrdlock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_rwlock_tryrdlock",
@@ -577,6 +587,11 @@ static_archive_member! { pthread_rwlock_tryrdlock_source {
 
 // Musl's `src/thread/pthread_rwlock_timedrdlock.c` object.
 static_archive_member! { pthread_rwlock_timedrdlock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_rwlock_timedrdlock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_rwlock_timedrdlock",
@@ -606,6 +621,11 @@ static_archive_member! { pthread_rwlock_timedrdlock_source {
 
 // Musl's `src/thread/pthread_rwlock_wrlock.c` object.
 static_archive_member! { pthread_rwlock_wrlock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_rwlock_wrlock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_rwlock_wrlock",
@@ -628,6 +648,11 @@ static_archive_member! { pthread_rwlock_wrlock_source {
 
 // Musl's `src/thread/pthread_rwlock_trywrlock.c` object.
 static_archive_member! { pthread_rwlock_trywrlock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_rwlock_trywrlock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_rwlock_trywrlock",
@@ -649,6 +674,11 @@ static_archive_member! { pthread_rwlock_trywrlock_source {
 
 // Musl's `src/thread/pthread_rwlock_timedwrlock.c` object.
 static_archive_member! { pthread_rwlock_timedwrlock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_rwlock_timedwrlock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_rwlock_timedwrlock",
@@ -678,6 +708,11 @@ static_archive_member! { pthread_rwlock_timedwrlock_source {
 
 // Musl's `src/thread/pthread_rwlock_unlock.c` object.
 static_archive_member! { pthread_rwlock_unlock_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_rwlock_unlock",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_rwlock_unlock",
@@ -729,12 +764,3 @@ static_archive_member! { pthread_rwlock_unlock_source {
 // of hidden strong `__pthread_rwlock_*` definitions at the same address.  A
 // forwarding Rust wrapper would silently break both the address and archive
 // override contracts, so keep the alias graph in assembler.
-core::arch::global_asm!(
-    ".hidden __pthread_rwlock_rdlock",
-    ".hidden __pthread_rwlock_tryrdlock",
-    ".hidden __pthread_rwlock_timedrdlock",
-    ".hidden __pthread_rwlock_wrlock",
-    ".hidden __pthread_rwlock_trywrlock",
-    ".hidden __pthread_rwlock_timedwrlock",
-    ".hidden __pthread_rwlock_unlock",
-);

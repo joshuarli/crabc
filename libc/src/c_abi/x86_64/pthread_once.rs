@@ -37,9 +37,6 @@ use super::{atomic, pthread_cancel, raw_syscall};
 // This is musl's `weak_alias(__pthread_once,pthread_once)` source form. The
 // Rust item retains its direct internal spelling while ELF callers receive a
 // weak public alias of the hidden provider.
-core::arch::global_asm!(
-    ".hidden __pthread_once",
-);
 
 const ONCE_INITIAL: c_int = 0;
 const ONCE_INITIALIZING: c_int = 1;
@@ -232,6 +229,11 @@ unsafe fn run_selected_once(control: *mut c_int, init_routine: OnceRoutine) -> c
 
 // Musl's `src/thread/pthread_once.c` object.
 static_archive_member! { pthread_once_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __pthread_once",
+    );
+
     // Musl defines this alias beside its target, in the same object.
     core::arch::global_asm!(
         ".weak pthread_once",

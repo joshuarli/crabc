@@ -26,21 +26,24 @@ use core::ffi::{c_int, c_void};
 
 use super::raw_syscall;
 
-/// Forward one nonnegative opaque timer word through musl's raw syscall branch.
-///
-/// # Safety
-///
-/// `timer` must carry a nonnegative opaque Linux timer bit pattern. This leaf
-/// does not interpret the pointer or support musl's negative tagged
-/// thread-owned timer representation. The caller owns any valid timer's
-/// lifetime and deletion semantics; this private selected artifact establishes
-/// only the raw rejected-word result boundary.
-#[no_mangle]
-pub unsafe extern "C" fn timer_delete(timer: *mut c_void) -> c_int {
-    // SAFETY: the caller owns the opaque timer word and its selected boundary.
-    // Linux/x86-64 receives that one word in rdi and returns the raw result.
-    let result = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_TIMER_DELETE, timer as usize as i64)
-    };
-    result as c_int
-}
+// Musl's `src/time/timer_delete.c` object.
+static_archive_member! { timer_delete_source {
+    /// Forward one nonnegative opaque timer word through musl's raw syscall branch.
+    ///
+    /// # Safety
+    ///
+    /// `timer` must carry a nonnegative opaque Linux timer bit pattern. This leaf
+    /// does not interpret the pointer or support musl's negative tagged
+    /// thread-owned timer representation. The caller owns any valid timer's
+    /// lifetime and deletion semantics; this private selected artifact establishes
+    /// only the raw rejected-word result boundary.
+    #[no_mangle]
+    pub unsafe extern "C" fn timer_delete(timer: *mut c_void) -> c_int {
+        // SAFETY: the caller owns the opaque timer word and its selected boundary.
+        // Linux/x86-64 receives that one word in rdi and returns the raw result.
+        let result = unsafe {
+            raw_syscall::syscall1(raw_syscall::SYS_TIMER_DELETE, timer as usize as i64)
+        };
+        result as c_int
+    }
+}}
