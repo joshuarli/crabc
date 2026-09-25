@@ -172,7 +172,8 @@ def build_products(manifest: Mapping[str, Any], work: Path, *, reuse: bool) -> d
                 output.parent.mkdir(parents=True, exist_ok=True)
                 run_logged(["python3", product["builder"], "--output", output, "--allocator-backend", backend],
                            work / f"build-{kind}-{backend}.log")
-            recorded = json.loads((output / "share/crabc/manifest.json").read_text(encoding="utf-8"))
+            provenance = sorted((output / "share/crabc").glob("libc-*.provenance.json"))
+            recorded = json.loads(provenance[0].read_text(encoding="utf-8")) if len(provenance) == 1 else {}
             if recorded.get("allocator_backend") != backend:
                 raise HarnessError(f"{output} is not a {backend} product")
             products[kind][lane] = output
