@@ -160,10 +160,28 @@ pub struct StandardStream {
     line_break: c_int,
     backend: Backend,
     write_failed: bool,
-    storage: [u8; BUFSIZ + UNGET],
+    // The buffer (after UNGET pushback bytes) is written before it is read,
+    // so a dynamic FILE leaves it uninitialized, as musl's fdopen leaves its
+    // malloc'd buffer; only the preceding header is initialized.
+    storage: [core::mem::MaybeUninit<u8>; BUFSIZ + UNGET],
 }
 
 impl StandardStream {
+    /// Initialize every field of fresh `stream` storage except the buffer
+    /// bytes, which musl's `__fdopen` also leaves unset (`memset` covers only
+    /// its FILE header). `storage` is the final `repr(C)` field.
+    ///
+    /// # Safety
+    /// `stream` is writable, aligned, exclusively owned FILE storage.
+    unsafe fn write_header(stream: *mut Self, fd: c_int, flags: u32, capacity: usize) {
+        let header = core::mem::ManuallyDrop::new(Self::new(fd, flags, capacity));
+        unsafe {
+            ptr::copy_nonoverlapping(
+                (&*header as *const Self).cast::<u8>(), stream.cast::<u8>(), core::mem::offset_of!(Self, storage),
+            );
+        }
+    }
+
     const fn new(fd: c_int, flags: u32, capacity: usize) -> Self {
         Self { flags, file_descriptor: fd, pipe_pid: 0, orientation: 0, wide_locale: None,
             direction: BufferDirection::Neutral, getln_buffer: ptr::null_mut(),
@@ -174,7 +192,7 @@ impl StandardStream {
             lock_count: 0, next: ptr::null_mut(), previous: ptr::null_mut(),
             next_locked: ptr::null_mut(), previous_locked: ptr::null_mut(),
             line_break: if flags & F_STDOUT_WRITE != 0 { b'\n' as c_int } else { EOF }, backend: Backend::Descriptor, write_failed: false,
-            storage: [0; BUFSIZ + UNGET] }
+            storage: [core::mem::MaybeUninit::new(0); BUFSIZ + UNGET] }
     }
 }
 
@@ -643,7 +661,7 @@ unsafe fn descriptor_stream(fd: c_int, flags: c_int, stream_flags: u32, current:
     unsafe {
         let stream = stdio_cabi_malloc(core::mem::size_of::<StandardStream>()).cast::<StandardStream>();
         if stream.is_null() { return stream; }
-        ptr::write(stream, StandardStream::new(fd, stream_flags, BUFSIZ));
+        StandardStream::write_header(stream, fd, stream_flags, BUFSIZ);
         if flags & 0o2000000 != 0 { raw_syscall::syscall3(72, fd as i64, 2, 1); }
         if flags & 0o2000 != 0 && current & 0o2000 == 0 {
             if c_status(raw_syscall::syscall3(72, fd as i64, 4, (current | 0o2000) as i64)) < 0 {
