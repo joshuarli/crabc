@@ -14,6 +14,15 @@ strndup strerror_r strsignal strcasecmp strncasecmp strcasestr strtok_r
 strcoll strxfrm dirname memchr memmem memcmp bcmp memset memmove bcopy bzero
 explicit_bzero swab atoi atol atoll qsort getenv setenv unsetenv clearenv
 
+# Standard I/O streams, their process and signal reporters
+clearerr fclose feof ferror fflush fgetc fgetln fgetpos fgets fgetws fileno
+flockfile fmemopen fopen fopencookie fputc fputs fputwc fputws fread freopen
+fsetpos funlockfile fwide getc getc_unlocked getchar getchar_unlocked getdelim
+getline gets getw getwc getwchar open_memstream open_wmemstream pclose popen
+psiginfo psignal putc putc_unlocked putchar putchar_unlocked puts putw putwc
+putwchar rewind setbuf setbuffer setlinebuf setvbuf system tmpfile ungetc
+ungetwc
+
 # Formatted I/O
 printf vprintf fprintf vfprintf sprintf vsprintf snprintf vsnprintf dprintf
 vdprintf asprintf vasprintf scanf vscanf fscanf vfscanf sscanf vsscanf

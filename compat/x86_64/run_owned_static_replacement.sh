@@ -22,7 +22,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_static_replacement_probe.c"
-readonly roles=(MALLOC_TRIO MALLOC_FULL STRINGS PRINTF VSNPRINTF SCANF MATH WIDE SYSTEM)
+readonly roles=(MALLOC_TRIO MALLOC_FULL STRINGS PRINTF VSNPRINTF SCANF MATH WIDE SYSTEM STDIO_BLOCK FPUTS FFLUSH GETDELIM SETVBUF WIDE_STREAM FCLOSE BYTE)
 readonly roster="$ROOT/compat/x86_64/owned-static-replacement-roster.txt"
 
 [ "$#" -le 1 ] || {

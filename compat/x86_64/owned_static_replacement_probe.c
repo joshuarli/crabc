@@ -14,8 +14,10 @@
 #define _GNU_SOURCE 1
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <locale.h>
+#include <signal.h>
 #include <netdb.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -600,6 +602,17 @@ static int run_printf_clients(void)
     emit_flag("asprintf", "status", asprintf(&text, "%s-%d", "value", 3) != 7 || strcmp(text, "value-3"));
     report_replacement("asprintf", mark);
     free(text);
+    /* Musl's psignal formats with the public fprintf, and psiginfo calls
+     * psignal; both write the description to standard error. */
+    mark = replacement_calls;
+    psignal(SIGTERM, "psignal");
+    report_replacement("psignal", mark);
+    {
+        siginfo_t information = {.si_signo = SIGINT};
+        mark = replacement_calls;
+        psiginfo(&information, "psiginfo");
+        report_replacement("psiginfo", mark);
+    }
     return 0;
 }
 #endif
@@ -901,6 +914,341 @@ static int run_system_clients(void)
 }
 #endif
 
+#if defined(CRABC_REPLACE_STDIO_BLOCK) || defined(CRABC_REPLACE_FPUTS) || defined(CRABC_REPLACE_FFLUSH) || \
+    defined(CRABC_REPLACE_GETDELIM) || defined(CRABC_REPLACE_SETVBUF) || defined(CRABC_REPLACE_WIDE_STREAM) || \
+    defined(CRABC_REPLACE_FCLOSE) || defined(CRABC_REPLACE_BYTE)
+#define CRABC_REPLACE_STDIO 1
+static unsigned long stdio_calls;
+
+static void report_stdio(const char *operation, unsigned long mark)
+{
+    emit_flag(operation, "replacement", stdio_calls != mark);
+}
+
+/* Read back a file the role wrote, through raw descriptors. */
+static void emit_file(const char *operation, const char *path)
+{
+    char buffer[64];
+    int descriptor = open(path, O_RDONLY);
+    ssize_t count = descriptor < 0 ? -1 : read(descriptor, buffer, sizeof buffer - 1);
+    if (descriptor >= 0) close(descriptor);
+    buffer[count < 0 ? 0 : count] = 0;
+    for (ssize_t index = 0; index < count; index++)
+        if (buffer[index] == '\n') buffer[index] = '|';
+    emit_record(operation, "file", buffer);
+}
+#endif
+
+#ifdef CRABC_REPLACE_STDIO_BLOCK
+/* Counting `fwrite` and `fread` over libc's byte entries. Musl's fputs
+ * (and so puts), putw and perror write through the public fwrite; getw
+ * reads through the public fread. */
+size_t fwrite(const void *restrict source, size_t size, size_t count, FILE *restrict stream)
+{
+    const unsigned char *bytes = source;
+    size_t total = size * count, index;
+
+    stdio_calls++;
+    for (index = 0; index < total; index++)
+        if (fputc(bytes[index], stream) == EOF) break;
+    return size ? index / size : 0;
+}
+
+size_t fread(void *restrict destination, size_t size, size_t count, FILE *restrict stream)
+{
+    unsigned char *bytes = destination;
+    size_t total = size * count, index;
+    int character;
+
+    stdio_calls++;
+    for (index = 0; index < total && (character = fgetc(stream)) != EOF; index++)
+        bytes[index] = (unsigned char)character;
+    return size ? index / size : 0;
+}
+
+static int run_stdio_clients(void)
+{
+    unsigned long mark;
+    FILE *stream = fopen("/replacement-block", "w+");
+    if (!stream) return 50;
+    mark = stdio_calls;
+    emit_flag("fputs", "status", fputs("line\n", stream) < 0);
+    report_stdio("fputs", mark);
+    mark = stdio_calls;
+    emit_flag("putw", "status", putw(0x0a434241, stream) != 0);
+    report_stdio("putw", mark);
+    if (fseek(stream, 5, SEEK_SET)) return 51;
+    mark = stdio_calls;
+    emit_flag("getw", "status", getw(stream) != 0x0a434241);
+    report_stdio("getw", mark);
+    if (fclose(stream)) return 52;
+    emit_file("block", "/replacement-block");
+    mark = stdio_calls;
+    emit_flag("puts", "status", puts("puts-line") < 0 || fflush(stdout));
+    report_stdio("puts", mark);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_FPUTS
+/* A counting `fputs` over the public fwrite. Musl's puts calls it. */
+int fputs(const char *restrict text, FILE *restrict stream)
+{
+    size_t length = strlen(text);
+
+    stdio_calls++;
+    return fwrite(text, 1, length, stream) == length ? 0 : EOF;
+}
+
+static int run_stdio_clients(void)
+{
+    unsigned long mark = stdio_calls;
+
+    emit_flag("puts", "status", puts("puts-line") < 0 || fflush(stdout));
+    report_stdio("puts", mark);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_FFLUSH
+/* A counting `fflush` that flushes nothing. Musl's fclose, freopen and
+ * _flushlbf call it; __stdio_exit writes pending output itself, so the
+ * buffered tail printed last still reaches standard output. */
+int fflush(FILE *stream)
+{
+    (void)stream;
+    stdio_calls++;
+    return 0;
+}
+
+extern void _flushlbf(void);
+
+static int run_stdio_clients(void)
+{
+    unsigned long mark;
+    FILE *stream = fopen("/replacement-flush", "w");
+    if (!stream) return 60;
+    mark = stdio_calls;
+    emit_flag("fclose", "status", fclose(stream) != 0);
+    report_stdio("fclose", mark);
+    stream = fopen("/replacement-flush", "r");
+    if (!stream) return 61;
+    mark = stdio_calls;
+    emit_flag("freopen", "status", freopen("/replacement-flush", "r", stream) != stream);
+    report_stdio("freopen", mark);
+    mark = stdio_calls;
+    _flushlbf();
+    report_stdio("_flushlbf", mark);
+    /* Left buffered: only __stdio_exit can write it. */
+    if (fputs("exit-tail", stdout) < 0) return 62;
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_GETDELIM
+/* A counting `getdelim` over libc's fgetc. Musl's getline calls it, and
+ * fgetln reaches it through getline. */
+ssize_t getdelim(char **restrict line, size_t *restrict capacity, int delimiter, FILE *restrict stream)
+{
+    size_t length = 0;
+    int character;
+
+    stdio_calls++;
+    if (!*line || *capacity < 64) {
+        char *grown = realloc(*line, 64);
+        if (!grown) return -1;
+        *line = grown;
+        *capacity = 64;
+    }
+    while (length + 1 < *capacity && (character = fgetc(stream)) != EOF) {
+        (*line)[length++] = (char)character;
+        if (character == delimiter) break;
+    }
+    (*line)[length] = 0;
+    return length ? (ssize_t)length : -1;
+}
+
+extern char *fgetln(FILE *, size_t *);
+
+static int run_stdio_clients(void)
+{
+    unsigned long mark;
+    char *line = 0;
+    size_t capacity = 0, length = 0;
+    FILE *stream = fopen("/replacement-getdelim", "w+");
+    if (!stream || fputs("first\nsecond\n", stream) < 0 || fseek(stream, 0, SEEK_SET)) return 70;
+    mark = stdio_calls;
+    emit_flag("getline", "status", getline(&line, &capacity, stream) != 6 || strcmp(line, "first\n"));
+    report_stdio("getline", mark);
+    mark = stdio_calls;
+    emit_flag("fgetln", "status", !fgetln(stream, &length) || length != 7);
+    report_stdio("fgetln", mark);
+    free(line);
+    return fclose(stream) ? 71 : 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_SETVBUF
+/* A counting `setvbuf` that keeps libc's default buffering. Musl's setbuf,
+ * setbuffer and setlinebuf call it. */
+int setvbuf(FILE *restrict stream, char *restrict buffer, int mode, size_t size)
+{
+    (void)stream, (void)buffer, (void)mode, (void)size;
+    stdio_calls++;
+    return 0;
+}
+
+static int run_stdio_clients(void)
+{
+    static char buffer[BUFSIZ];
+    unsigned long mark;
+    FILE *stream = fopen("/replacement-setvbuf", "w");
+    if (!stream) return 80;
+    mark = stdio_calls;
+    setbuf(stream, buffer);
+    report_stdio("setbuf", mark);
+    mark = stdio_calls;
+    setbuffer(stream, buffer, sizeof buffer);
+    report_stdio("setbuffer", mark);
+    mark = stdio_calls;
+    setlinebuf(stream);
+    report_stdio("setlinebuf", mark);
+    return fclose(stream) ? 81 : 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_WIDE_STREAM
+/* Counting single-byte `fgetwc` and `fputwc` over libc's fgetc and fputc,
+ * in the C locale. Musl's getwc and getwchar read, and putwc and putwchar
+ * write, through them. */
+wint_t fgetwc(FILE *stream)
+{
+    int character;
+
+    stdio_calls++;
+    character = fgetc(stream);
+    return character == EOF ? WEOF : (wint_t)character;
+}
+
+wint_t fputwc(wchar_t character, FILE *stream)
+{
+    stdio_calls++;
+    return fputc((int)character, stream) == EOF ? WEOF : (wint_t)character;
+}
+
+static int run_stdio_clients(void)
+{
+    unsigned long mark;
+    FILE *stream = fopen("/replacement-wide", "w+");
+    if (!stream) return 90;
+    mark = stdio_calls;
+    emit_flag("putwc", "status", putwc(L'w', stream) != L'w');
+    report_stdio("putwc", mark);
+    if (fseek(stream, 0, SEEK_SET)) return 91;
+    mark = stdio_calls;
+    emit_flag("getwc", "status", getwc(stream) != L'w');
+    report_stdio("getwc", mark);
+    if (fclose(stream)) return 92;
+    /* The runner supplies an empty standard input. */
+    mark = stdio_calls;
+    emit_flag("getwchar", "status", getwchar() != WEOF);
+    report_stdio("getwchar", mark);
+    mark = stdio_calls;
+    emit_flag("putwchar", "status", putwchar(L'\n') != L'\n' || fflush(stdout));
+    report_stdio("putwchar", mark);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_BYTE
+/* Counting `fgetc`, `fputc`, `getc_unlocked` and `putc_unlocked` over getc
+ * and putc. Musl's getc, getchar, putc and putchar inline their own byte
+ * transfer, and getchar_unlocked and putchar_unlocked use stdio_impl.h's
+ * macros, so none of them reaches these definitions. */
+int fgetc(FILE *stream)
+{
+    stdio_calls++;
+    return getc(stream);
+}
+
+int fputc(int character, FILE *stream)
+{
+    stdio_calls++;
+    return putc(character, stream);
+}
+
+int getc_unlocked(FILE *stream)
+{
+    stdio_calls++;
+    return getc(stream);
+}
+
+int putc_unlocked(int character, FILE *stream)
+{
+    stdio_calls++;
+    return putc(character, stream);
+}
+
+static int run_stdio_clients(void)
+{
+    unsigned long mark;
+    FILE *stream = fopen("/replacement-byte", "w+");
+    if (!stream) return 110;
+    mark = stdio_calls;
+    emit_flag("fputc", "status", fputc('a', stream) != 'a');
+    report_stdio("fputc", mark);
+    mark = stdio_calls;
+    emit_flag("putc", "status", putc('b', stream) != 'b');
+    report_stdio("putc", mark);
+    if (fseek(stream, 0, SEEK_SET)) return 111;
+    mark = stdio_calls;
+    emit_flag("fgetc", "status", fgetc(stream) != 'a');
+    report_stdio("fgetc", mark);
+    mark = stdio_calls;
+    emit_flag("getc", "status", getc(stream) != 'b');
+    report_stdio("getc", mark);
+    if (fclose(stream)) return 112;
+    /* The runner supplies an empty standard input. */
+    mark = stdio_calls;
+    emit_flag("getchar", "status", getchar() != EOF);
+    report_stdio("getchar", mark);
+    mark = stdio_calls;
+    emit_flag("getchar_unlocked", "status", getchar_unlocked() != EOF);
+    report_stdio("getchar_unlocked", mark);
+    mark = stdio_calls;
+    emit_flag("putchar", "status", putchar('c') != 'c');
+    report_stdio("putchar", mark);
+    mark = stdio_calls;
+    emit_flag("putchar_unlocked", "status", putchar_unlocked('\n') != '\n' || fflush(stdout));
+    report_stdio("putchar_unlocked", mark);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_FCLOSE
+/* A counting `fclose` that flushes and closes the descriptor and leaks the
+ * FILE. A freopen whose new open fails closes the old stream through it, as
+ * musl's freopen.c does. */
+int fclose(FILE *stream)
+{
+    int status = fflush(stream);
+
+    stdio_calls++;
+    return close(fileno(stream)) || status ? EOF : 0;
+}
+
+static int run_stdio_clients(void)
+{
+    unsigned long mark;
+    FILE *stream = fopen("/replacement-fclose", "w");
+    if (!stream) return 100;
+    mark = stdio_calls;
+    emit_flag("freopen", "status", freopen("/missing/replacement", "r", stream) != 0);
+    report_stdio("freopen", mark);
+    return 0;
+}
+#endif
+
 int main(void)
 {
 #ifdef CRABC_REPLACE_MALLOC
@@ -933,6 +1281,10 @@ int main(void)
 #endif
 #ifdef CRABC_REPLACE_MATH
     int status = run_math_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_STDIO
+    int status = run_stdio_clients();
     if (status) return status;
 #endif
     emit("owned-static-replacement-ok\n");
