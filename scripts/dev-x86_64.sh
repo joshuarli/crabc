@@ -204,7 +204,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-text-math-locale-stdio-family {assemble|validate} ...  assemble or replay text/math/locale/stdio family evidence in the pinned image
   native-abi-elf-facts {collect|validate-report} ...  inspect or replay complete ELF facts supplementing a current v1 inventory
   native-abi-selection {build-report|validate-report|require-closure} ...  account native ABI selection and replay its retained evidence
-  abi-differential-evidence {assemble|validate} ...  bind or replay the current-source compat.abi-differential evidence set
+  abi-differential-evidence {collect-companions|assemble|validate} ...  collect selection companions for, bind, or replay the current-source compat.abi-differential evidence set
   header-declaration-inventory {collect|validate-report} ...  retain or replay compiler declaration and macro occurrences
   public-data-ordinary-link {collect|validate-report} ...  prove or replay ordinary links to selected public data objects
   native-abi-ratchet {check|validate-report} ...  check or replay the reviewed native x86 public-dynamic ABI floor
@@ -6449,6 +6449,43 @@ run_in_resolver_family_image_container() {
         "$image_id" "$@"
 }
 
+# The selection companion runners need chroot authority, no network, and the
+# observed image identity under each runner's own marker variable.
+run_in_abi_companion_container() {
+    local image_id reference
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve ABI companion image identity"
+    reference="crabc-core-evidence@$image_id"
+    prepare_work_dir
+    docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" \
+        --cap-add=SYS_CHROOT \
+        --network none \
+        --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env LC_ALL=C \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --env "CRABC_LOADER_DEBUG_IMAGE_ID=$reference" \
+        --env "CRABC_RESOLVER_ALIAS_IMAGE_ID=$reference" \
+        --env "CRABC_X86_DECLARATION_ABI_IMAGE_ID=$reference" \
+        --env "CRABC_X86_SYSCALL_ALIAS_IMAGE_ID=$reference" \
+        --env "CRABC_X86_COMPILER_HELPER_IMAGE=$reference" \
+        --env "CRABC_X86_PUBLIC_DATA_IMAGE_ID=$reference" \
+        --env "CRABC_PUBLIC_DATA_VARIABLE_RUNTIME_IMAGE_ID=$reference" \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$image_id" "$@"
+}
+
 run_in_loader_debug_image_container() {
     run_in_resolver_family_image_container CRABC_LOADER_DEBUG_IMAGE_ID "$@"
 }
@@ -7157,10 +7194,10 @@ case "$command" in
         esac
         ;;
     abi-differential-evidence)
-        [ "$#" -ge 1 ] || fail "abi-differential-evidence requires assemble or validate"
+        [ "$#" -ge 1 ] || fail "abi-differential-evidence requires collect-companions, assemble, or validate"
         case "$1" in
-            assemble|validate) ;;
-            *) fail "abi-differential-evidence requires assemble or validate" ;;
+            collect-companions|assemble|validate) ;;
+            *) fail "abi-differential-evidence requires collect-companions, assemble, or validate" ;;
         esac
         ;;
     owned-text-math-locale-stdio-family)
@@ -7643,8 +7680,13 @@ case "$command" in
         # The gate evaluates this set in the pinned image at /workspace, and
         # the ratchet and selection reports it produces record checkout
         # paths, so assembly runs there too. It compiles and executes nothing.
+        # Companion collection instead runs each companion's existing runner.
         ensure_image
-        run_in_network_none_container python3 -B /workspace/compat/x86_64/abi_differential_evidence.py "$@"
+        if [ "$1" = collect-companions ]; then
+            run_in_abi_companion_container python3 -B /workspace/compat/x86_64/abi_differential_evidence.py "$@"
+        else
+            run_in_network_none_container python3 -B /workspace/compat/x86_64/abi_differential_evidence.py "$@"
+        fi
         ;;
     owned-text-math-locale-stdio-family)
         ensure_image

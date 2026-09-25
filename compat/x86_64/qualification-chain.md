@@ -68,7 +68,12 @@ lanes) and `performance.release performance-release` (`receipt.json` from
 `abi-evidence` binds one current-source set: the static preparation and
 product, the materialized dynamic product, the natively collected native ABI
 inventory, ELF facts, declaration inventory and public-data ordinary-link
-reports, and any selection companion receipts. Assembly then produces the
+reports, and the selection companion receipts. `collect-companions` runs each
+companion's existing runner (`PRODUCERS` in `abi_differential_evidence.py`)
+against that one cohort and writes `companions.json`; a failed runner, and any
+companion that consumes its receipt, is recorded and never bound, so its
+selection blockers stay open. The text-family and POSIX `__sysv_signal`
+receipts come only from their family admission flows. Assembly then produces the
 ratchet check and selection report from exactly those inputs. Every product
 and report must come from the evaluated clean revision, and assembly runs in
 the pinned image because the ratchet and selection reports record checkout
@@ -84,11 +89,13 @@ P="--static-product .work/x86_64/abi/static/products/primary --dynamic-product $
 ./scripts/dev-x86_64.sh native-abi-elf-facts collect --base-inventory .work/x86_64/native-abi-inventory/abi/report.json $P --output .work/x86_64/abi/elf
 ./scripts/dev-x86_64.sh header-declaration-inventory collect --output .work/x86_64/header-declaration-inventory/abi --workers 8
 ./scripts/dev-x86_64.sh public-data-ordinary-link collect $P --output .work/x86_64/public-data-ordinary-link/abi
-./scripts/dev-x86_64.sh abi-differential-evidence assemble $P \
-  --native-abi-inventory .work/x86_64/native-abi-inventory/abi/report.json \
+R="--native-abi-inventory .work/x86_64/native-abi-inventory/abi/report.json \
   --native-abi-elf-facts .work/x86_64/abi/elf/report.json \
   --header-declaration-inventory .work/x86_64/header-declaration-inventory/abi/report.json \
-  --public-data-ordinary-link .work/x86_64/public-data-ordinary-link/abi/report.json \
+  --public-data-ordinary-link .work/x86_64/public-data-ordinary-link/abi/report.json"
+./scripts/dev-x86_64.sh abi-differential-evidence collect-companions $P $R --output .work/x86_64/abi-differential/companions
+./scripts/dev-x86_64.sh abi-differential-evidence assemble $P $R \
+  --companions .work/x86_64/abi-differential/companions/companions.json \
   --output .work/x86_64/abi-differential/abi
 ./scripts/dev-x86_64.sh qualification-manifest --publish compat.abi-differential abi-evidence .work/x86_64/abi-differential/abi/abi-evidence.json
 ``` `compat.resolver-network` reads
