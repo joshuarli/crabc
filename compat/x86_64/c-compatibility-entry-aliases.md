@@ -21,10 +21,12 @@ selected `mknod`/`mknodat` path to supply its normal result and `errno`.
 They remain strong `GLOBAL` function definitions in the installed static and
 shared artifacts. This does not make the normal direct call an application
 interposition guarantee. The installed static archive has one member per
-Rust module; [owned-error-reporting.md](owned-error-reporting.md) records the
-rule that member extraction lets an application definition replace an
-internal reference only where the provider has its own member and the caller
-keeps a public call edge. Pinned
+Rust module, and most C entries have their own member
+([owned-static-replacement.md](owned-static-replacement.md));
+[owned-error-reporting.md](owned-error-reporting.md) records the rule that
+member extraction lets an application definition replace an internal
+reference only where the provider has its own member and the caller keeps a
+public call edge. Pinned
 musl's separate `__xstat.lo` public-call relocation remains source-oracle
 observation. An application-supplied strong `mknod` or `mknodat` is outside
 this component's static contract, and this clarification does not alter the

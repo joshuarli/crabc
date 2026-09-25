@@ -34,9 +34,11 @@ per Rust module (`scripts/build_x86_64_owned_sysroot.py`), and `strerror`
 (`owned_error_reporting::perror_source`), and the `err.c` family are separate
 modules whose called providers are never inlined across those edges. Static
 and static-PIE consumers of both replacement objects therefore link without a
-duplicate definition and match musl's output. Replacement is not a general
-guarantee for every libc function: it holds where the provider owns its
-member and its libc callers keep a public call edge.
+duplicate definition and match musl's output. The same rule
+holds for every libc function the installed archive gives its own member
+(`static_archive_member!`, [owned-static-replacement.md](owned-static-replacement.md)):
+replacement links where the provider owns its member, and reaches a libc
+caller where that caller keeps a public call edge.
 In a dynamic link, a provider DSO before `libc.so` resolves the consumer's
 public `strerror` or `perror` reference, while musl's internal libc edges stay
 local; the candidate is compared with that observed behavior in both dynamic

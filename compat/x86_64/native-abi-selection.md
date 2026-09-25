@@ -187,12 +187,13 @@ static and shared provenance, dynamic materialization state, and ELF report to
 the same current transaction, then rechecks them after placement joins. It
 discharges the ordinary-import reason only for the seven unversioned
 `NOTYPE GLOBAL DEFAULT` candidate-static `.symtab` imports in the authenticated
-static Rust-root archive member: `_mi_auto_process_done`,
+static Rust archive members (the installed archive has one per Rust module;
+each member that calls the backend imports it once): `_mi_auto_process_done`,
 `_mi_auto_process_init`, `mi_free`, `mi_malloc_aligned`,
 `mi_realloc_aligned`, `mi_usable_size`, and `mi_zalloc`. The fixed-C producer
 account must also supply the matching selected static and shared provider
-metadata. An import of the same name from another member or artifact remains
-an unresolved ordinary consumer. This does not make the C v3.3.2 backend an
+metadata. An import of the same name from any other member or artifact
+remains an unresolved ordinary consumer. This does not make the C v3.3.2 backend an
 allocator-family, general allocation semantics, promotion, or public-support
 claim.
 
