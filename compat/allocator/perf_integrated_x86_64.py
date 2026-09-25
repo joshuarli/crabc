@@ -162,6 +162,16 @@ def run_logged(command: Sequence[str], log: Path, *, cwd: Path = ROOT) -> None:
         raise HarnessError(f"command failed ({completed.returncode}): {' '.join(map(str, command))}; see {log}")
 
 
+def product_backend(product: Path) -> object:
+    """The static manifest names its backend; the dynamic product records it in its libc provenance."""
+
+    selected = json.loads((product / "share/crabc/manifest.json").read_text(encoding="utf-8")).get("allocator_backend")
+    shared = product / "share/crabc/libc-shared.provenance.json"
+    if selected is None and shared.is_file():
+        selected = json.loads(shared.read_text(encoding="utf-8")).get("allocator_backend")
+    return selected
+
+
 def build_products(manifest: Mapping[str, Any], work: Path, *, reuse: bool) -> dict[str, dict[str, Path]]:
     products: dict[str, dict[str, Path]] = {}
     for kind, product in manifest["products"].items():
@@ -172,9 +182,7 @@ def build_products(manifest: Mapping[str, Any], work: Path, *, reuse: bool) -> d
                 output.parent.mkdir(parents=True, exist_ok=True)
                 run_logged(["python3", product["builder"], "--output", output, "--allocator-backend", backend],
                            work / f"build-{kind}-{backend}.log")
-            provenance = sorted((output / "share/crabc").glob("libc-*.provenance.json"))
-            recorded = json.loads(provenance[0].read_text(encoding="utf-8")) if len(provenance) == 1 else {}
-            if recorded.get("allocator_backend") != backend:
+            if product_backend(output) != backend:
                 raise HarnessError(f"{output} is not a {backend} product")
             products[kind][lane] = output
     return products
