@@ -73,27 +73,32 @@ readelf --symbols --wide "$object" >"$object_symbols"
 readelf --relocs --wide "$object" >"$object_relocations"
 objdump -d "$object" >"$object_disassembly"
 
-for symbol in memcpy __memcpy_fwd memset memmove; do
+for symbol in memcpy __memcpy_fwd memset memmove memcmp bcmp; do
 	grep -Eq "[[:space:]]${symbol}$" "$object_symbols" \
 		|| fail "object does not define ${symbol}"
 done
 if grep -Eq 'crabc_core|crabc_libc|__tls_get_addr' "$object_relocations"; then
 	fail "source-only memory object depends on a runtime artifact or dynamic TLS"
 fi
-for instruction in 'rep[[:space:]]+movs' 'rep[[:space:]]+stos' 'std' 'cld'; do
+for instruction in 'rep[[:space:]]+movs' 'rep[[:space:]]+stos'; do
 	grep -Eq "$instruction" "$object_disassembly" \
 		|| fail "object lacks ${instruction}"
 done
+# The backward memmove copies SSE2 blocks and never sets the direction flag;
+# no instruction beyond the x86-64 baseline (SSE2) may appear.
+if grep -Eq '[[:space:]](std|vmov|vpcmp|vpmov)' "$object_disassembly"; then
+	fail "object sets the direction flag or uses an instruction beyond the x86-64 baseline"
+fi
 
 cc -no-pie -fno-builtin -I"$ROOT_DIR/include" \
 	compat/x86_64/libc_memory_probe.c "$object" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --dyn-syms --wide "$candidate" >"$candidate_dynamic_symbols"
-for symbol in memcpy memset memmove; do
+for symbol in memcpy memset memmove memcmp bcmp; do
 	grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
 		|| fail "candidate does not define ${symbol}"
 done
-if grep -Eq '[[:space:]]UND[[:space:]].*(memcpy|memmove|memset)' \
+if grep -Eq '[[:space:]]UND[[:space:]].*(memcpy|memmove|memset|memcmp|bcmp)' \
 	"$candidate_dynamic_symbols"; then
 	fail "candidate leaves a memory symbol to the ambient C runtime"
 fi

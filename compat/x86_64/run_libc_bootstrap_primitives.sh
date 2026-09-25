@@ -169,10 +169,14 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
     || fail "candidate errno does not use direct fs initial TLS"
-for instruction in fnstenv fldenv stmxcsr ldmxcsr fnclex std cld; do
+for instruction in fnstenv fldenv stmxcsr ldmxcsr fnclex; do
     grep -Eq "[[:space:]]${instruction}([[:space:]]|$)" "$candidate_disassembly" \
         || fail "candidate lacks ${instruction}"
 done
+# The bulk-memory leaf's backward memmove never sets the direction flag.
+if grep -Eq "[[:space:]]std([[:space:]]|$)" "$candidate_disassembly"; then
+    fail "candidate sets the direction flag"
+fi
 grep -Eq 'rep[[:space:]]+movs' "$candidate_disassembly" \
     || fail "candidate lacks the selected string-copy instruction path"
 
