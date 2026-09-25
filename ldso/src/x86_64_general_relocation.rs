@@ -147,7 +147,12 @@ unsafe fn definition(objects: &[Object], owner: usize, index: usize) -> Option<D
         if index >= object.symcount { return None; }
         unsafe { object.symtab.add(index * 24) }
     };
-    Some(Definition {
+    Some(unsafe { definition_at(owner, symbol) })
+}
+
+/// Decode one already-proven readable 24-byte dynsym record.
+unsafe fn definition_at(owner: usize, symbol: *const u8) -> Definition {
+    Definition {
         owner,
         value: unsafe { read_u64(symbol.add(8)) },
         size: unsafe { read_u64(symbol.add(16)) },
@@ -155,7 +160,19 @@ unsafe fn definition(objects: &[Object], owner: usize, index: usize) -> Option<D
         binding: unsafe { *symbol.add(4) >> 4 },
         visibility: unsafe { *symbol.add(5) & 3 },
         section: unsafe { read_u16(symbol.add(6)) },
-    })
+    }
+}
+
+/// Whether the NUL-terminated string at `string` (with `available` bytes to
+/// the end of a table whose last byte is NUL) equals `name`, stopping at the
+/// first difference.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn terminated_name_equals(string: *const u8, available: usize, name: &[u8]) -> bool {
+    // Equal means `name` then a NUL; the table's final NUL bounds every
+    // string, so `name.len() + 1` in-table bytes decide it in one compare.
+    available > name.len()
+        && unsafe { core::slice::from_raw_parts(string, name.len()) } == name
+        && unsafe { string.add(name.len()).read() } == 0
 }
 
 unsafe fn symbol_name(object: &Object, index: usize) -> Option<&[u8]> {
@@ -183,13 +200,8 @@ unsafe fn terminated_symbol_name_is(object: &Object, index: usize, name: &[u8]) 
     let symbol = unsafe { direct_symbol(object, index) }?;
     let offset = unsafe { read_u32(symbol) } as usize;
     if offset >= object.strsz { return None; }
-    let available = object.strsz - offset;
-    for (position, &expected) in name.iter().chain(core::iter::once(&0)).enumerate() {
-        // A terminated table ends every in-range name before its last byte.
-        if position == available { return Some(false); }
-        if unsafe { object.strtab.add(offset + position).read() } != expected { return Some(false); }
-    }
-    Some(true)
+    // A terminated table ends every in-range name before its last byte.
+    Some(unsafe { terminated_name_equals(object.strtab.add(offset), object.strsz - offset, name) })
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -219,16 +231,27 @@ unsafe fn lookup_exported(
     objects: &[Object], owner: usize, name: &[u8],
 ) -> Option<Option<Definition>> {
     let object = objects.get(owner)?;
+    // Every candidate below is an index the object's hash table certified at
+    // load (decode_gnu_hash/decode_sysv_hash proved each record in
+    // [symbol_offset or 0, symbol_count) readable and file-backed), so the
+    // record is read without repeating that range proof per lookup. With a
+    // NUL-terminated string table no name read can fail, so the name is
+    // compared bytewise up to its first difference instead of being measured.
+    let terminated = object.strsz != 0 && unsafe { object.strtab.add(object.strsz - 1).read() } == 0;
     let candidate_matches = |index: usize| -> Option<Option<Definition>> {
-        let definition = unsafe { definition(objects, owner, index) }?;
+        let symbol = unsafe { object.symtab.add(index.checked_mul(24)?) };
+        let definition = unsafe { definition_at(owner, symbol) };
         if !unsafe { exported_symbol_is_visible(object, index) }? {
             return Some(None);
         }
-        if unsafe { symbol_name(object, index) }? == name {
-            Some(Some(definition))
+        let matches = if terminated {
+            let offset = unsafe { read_u32(symbol) } as usize;
+            if offset >= object.strsz { return None; }
+            unsafe { terminated_name_equals(object.strtab.add(offset), object.strsz - offset, name) }
         } else {
-            Some(None)
-        }
+            unsafe { symbol_name(object, index) }? == name
+        };
+        Some(matches.then_some(definition))
     };
     match object.symbol_lookup {
         SymbolLookupTable::Gnu {
@@ -397,9 +420,11 @@ unsafe fn word_value(
     kind: u32, index: usize, addend: i64,
 ) -> Option<u64> {
     let object = &objects[owner];
+    // One name read serves both private-name selectors below.
+    let requested_name = if index != 0 { Some(unsafe { symbol_name(object, index) }?) } else { None };
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    if index != 0 {
-        if let Some(address) = x86_64_initial_worker_tls::runtime_function(unsafe { symbol_name(object, index) }?) {
+    if let Some(requested_name) = requested_name {
+        if let Some(address) = x86_64_initial_worker_tls::runtime_function(requested_name) {
             let requested = unsafe { definition(objects, owner, index) }?;
             return (matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT)
                 && addend == 0 && requested.section == 0 && requested.binding == 1
@@ -407,7 +432,7 @@ unsafe fn word_value(
                 .then_some(address);
         }
     }
-    if index != 0 && is_private_runtime_symbol(unsafe { symbol_name(object, index) }?) {
+    if requested_name.is_some_and(is_private_runtime_symbol) {
         // The loader-to-main RuntimeV1 descriptor is an address capability,
         // not an ordinary private-name lookup. Its resolver below verifies
         // the physical main endpoint; reject a changed relocation form here,
@@ -743,7 +768,11 @@ unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], 
         }?;
         count += 1;
     }
-    spans[..count].sort_unstable_by_key(|span| span.start);
+    // Linkers emit relocations in ascending offset order, so the sort is
+    // usually already done; checking first skips its n log n work.
+    if !spans[..count].is_sorted_by_key(|span| span.start) {
+        spans[..count].sort_unstable_by_key(|span| span.start);
+    }
     let mut end = 0;
     for span in &spans[..count] {
         if span.length == 0 { continue; }
