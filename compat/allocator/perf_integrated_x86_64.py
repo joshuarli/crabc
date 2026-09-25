@@ -251,7 +251,7 @@ def build_programs(manifest: Mapping[str, Any], products: Mapping[str, Mapping[s
         if objects["pinned_c"] != objects["rust_engine"]:
             raise HarnessError(f"{kind} objects differ between backends; the programs are not source- and build-identical")
     launcher = work / "programs" / "integrated-startup-launcher"
-    run_logged(["musl-gcc", "-std=c11", "-O2", "-static", LAUNCHER, "-o", launcher], work / "launcher.log")
+    run_logged(["musl-gcc", "-std=c11", "-O2", "-fno-pie", "-static", "-no-pie", LAUNCHER, "-o", launcher], work / "launcher.log")
     records["launcher"] = engine.artifact_record(launcher)
     return {"binaries": binaries, "launcher": launcher, "records": records}
 
