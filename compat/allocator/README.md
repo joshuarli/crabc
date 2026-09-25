@@ -151,8 +151,9 @@ OOM/failure preservation, the native `mi_*` adapter, and the unmodified
 `test/test-api.c`. Its evidence modes are `x86_64_m4_gate.py --native-tests`
 (the focused native-engine regressions), `--adapter-boundary` (the export and
 header audit of [`native-mi-adapter/`](native-mi-adapter/), an evidence-only
-static library exporting exactly the M4 `mi_*` functions over
-`crabc_mimalloc::source_api`), and `--differential SCENARIO`, which links the
+static library exporting every M4 `mi_*` function, plus the M6 and M7
+functions those gates add, over `crabc_mimalloc::source_api`, and nothing
+the pinned header does not declare), and `--differential SCENARIO`, which links the
 one shared driver [`x86_64_m4_operations_driver.c`](x86_64_m4_operations_driver.c)
 against the pinned C sources and against that adapter and requires the two
 processes' address-free traces to be equal for the `operations`, `page-kinds`,

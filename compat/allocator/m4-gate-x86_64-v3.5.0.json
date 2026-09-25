@@ -85,7 +85,7 @@
         "--offline",
         "--adapter-boundary"
       ],
-      "scope": "The native adapter builds as a static library whose defined `mi_*` globals are exactly the M4 external functions, that defines no libc allocator entry and no C mimalloc `_mi_*` internal, and against which alone a C probe naming every function through the pinned `include/mimalloc.h` prototypes links and runs on native x86-64."
+      "scope": "The native adapter builds as a static library whose defined `mi_*` globals include every M4 external function and only functions the pinned header declares, that defines no libc allocator entry and no C mimalloc `_mi_*` internal, and against which alone a C probe naming every function through the pinned `include/mimalloc.h` prototypes links and runs on native x86-64."
     },
     "upstream:test-api": {
       "command": null,
@@ -284,7 +284,7 @@
       "id": "m4.c-adapter",
       "required": true,
       "items": [],
-      "acceptance": "One native adapter exports exactly the M4 external functions with the pinned `mimalloc.h` prototypes over `__crabc_runtime`, attaches and finishes threads through the source thread-done key, and contains no C mimalloc object.",
+      "acceptance": "One native adapter exports every M4 external function, and only pinned-header functions, with the pinned `mimalloc.h` prototypes over `__crabc_runtime`, attaches and finishes threads through the source thread-done key, and contains no C mimalloc object.",
       "evidence": [
         "adapter:export-boundary",
         "differential:threads"

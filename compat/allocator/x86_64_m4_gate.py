@@ -28,8 +28,9 @@ The evidence checks this module owns:
   `operations` scenario also requires identical termination for every
   process-terminating `mi_new` case;
 - `--adapter-boundary` audits the native adapter static library: its defined
-  `mi_*` globals are exactly the M4 external functions, it defines no libc
-  allocator entry or C mimalloc `_mi_*` internal, and a C probe that
+  `mi_*` globals include every M4 external function and only functions the
+  pinned header declares (the M6 and M7 gates add theirs to the same
+  adapter), it defines no libc allocator entry or C mimalloc `_mi_*` internal, and a C probe that
   takes every function's address through the pinned `mimalloc.h` links
   against it alone and runs.
 """
@@ -504,6 +505,12 @@ def m4_external_functions(contract: Mapping[str, Any], api: Mapping[str, Any]) -
     )
 
 
+def pinned_external_functions(api: Mapping[str, Any]) -> set[str]:
+    """Every function the pinned header declares."""
+
+    return {item["name"] for item in api["items"] if item.get("kind") == "external-function"}
+
+
 def defined_global_symbols(nm_output: str) -> set[str]:
     """Names from `nm -g --defined-only` (`[address] type name` lines)."""
 
@@ -534,7 +541,8 @@ def run_adapter_boundary(offline: bool) -> dict[str, Any]:
     harness.require_native_x86_64()
     pin = harness.load_pin()
     contract = harness.read_json(CONTRACT)
-    functions = m4_external_functions(contract, harness.read_json(harness.ALLOCATOR_ROOT / "api-v3.5.0.json"))
+    api = harness.read_json(harness.ALLOCATOR_ROOT / "api-v3.5.0.json")
+    functions = m4_external_functions(contract, api)
     archive = harness.fetch_archive(pin, offline)
     with harness.temporary_directory("crabc-mimalloc-x86_64-m4-adapter-") as name:
         temporary = Path(name)
@@ -557,10 +565,14 @@ def run_adapter_boundary(offline: bool) -> dict[str, Any]:
         harness.require_success(execution, "M4 adapter probe execution")
     defined = defined_global_symbols(str(symbols["stdout"]))
     exported = sorted(name for name in defined if name.startswith("mi_"))
-    if exported != functions:
+    # The adapter is shared with the M6 and M7 gates: it must export every M4
+    # function and nothing outside the pinned header's external functions.
+    missing = sorted(set(functions) - set(exported))
+    unpinned = sorted(set(exported) - pinned_external_functions(api))
+    if missing or unpinned:
         raise harness.HarnessError(
-            "M4 adapter mi_* exports differ from the M4 external functions: "
-            f"missing {sorted(set(functions) - set(exported))}, extra {sorted(set(exported) - set(functions))}"
+            "M4 adapter mi_* exports are not the M4 functions within the pinned API: "
+            f"missing {missing}, outside the pinned API {unpinned}"
         )
     interposed = sorted(defined & C_ALLOCATOR_NAMES)
     if interposed:
