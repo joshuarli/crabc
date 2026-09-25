@@ -187,180 +187,203 @@ unsafe fn futimesat_timeval_pair(
 // Musl's `weak_alias(__futimesat, futimesat)` requires the two ELF names to
 // identify one implementation. A Rust forwarding wrapper would have a
 // distinct address and change that source-specific ABI contract.
-core::arch::global_asm!(
-    ".weak futimesat",
-    ".set futimesat, __futimesat",
-);
 
-/// Update a pathname's timestamps through Linux `utimensat(2)`.
-///
-/// # Safety
-///
-/// If non-null, `times` must point to two readable x86 `struct timespec`
-/// records. `path`, `directory_descriptor`, and `flags` must satisfy Linux
-/// `utimensat(2)`'s complete pointer, lifetime, and argument requirements.
-#[no_mangle]
-pub unsafe extern "C" fn utimensat(
-    directory_descriptor: c_int,
-    path: *const c_char,
-    times: *const Timespec,
-    flags: c_int,
-) -> c_int {
-    // SAFETY: this C entry point documents the raw `utimensat` requirements.
-    unsafe { utimensat_impl(directory_descriptor, path, times, flags) }
-}
-
-/// Update an open file descriptor's timestamps through the null-path
-/// `utimensat` form.
-///
-/// # Safety
-///
-/// If non-null, `times` must point to two readable x86 `struct timespec`
-/// records. `file_descriptor` must be suitable for Linux `futimens`-style
-/// timestamp updates and remain valid for the syscall.
-#[no_mangle]
-pub unsafe extern "C" fn futimens(
-    file_descriptor: c_int,
-    times: *const Timespec,
-) -> c_int {
-    // SAFETY: the C entry point's descriptor and timespec requirements are
-    // exactly those of the selected null-path `utimensat` form.
-    unsafe { utimensat_impl(file_descriptor, core::ptr::null(), times, 0) }
-}
-
-/// Musl's strong implementation behind the weak `futimesat` C ABI alias.
-///
-/// # Safety
-///
-/// If non-null, `times` must point to two readable x86 `struct timeval`
-/// records. `path` and `directory_descriptor` must satisfy Linux
-/// `utimensat(2)`'s pathname and descriptor requirements.
-#[no_mangle]
-pub unsafe extern "C" fn __futimesat(
-    directory_descriptor: c_int,
-    path: *const c_char,
-    times: *const Timeval,
-) -> c_int {
-    let mut converted = [
-        Timespec {
-            seconds: 0,
-            nanoseconds: 0,
-        },
-        Timespec {
-            seconds: 0,
-            nanoseconds: 0,
-        },
-    ];
-    // SAFETY: the C entry point documents the input timeval pair requirement.
-    let times = match unsafe { futimesat_timeval_pair(times, &mut converted) } {
-        Some(times) => times,
-        None => return -1,
-    };
-    // SAFETY: the converted pair is valid private stack storage for this call,
-    // and the C entry point documents the pathname/descriptor requirements.
-    unsafe { utimensat_impl(directory_descriptor, path, times, 0) }
-}
-
-/// Update an open file descriptor's timestamps from a legacy timeval pair.
-///
-/// # Safety
-///
-/// If non-null, `times` must point to two readable x86 `struct timeval`
-/// records. `file_descriptor` must be suitable for Linux timestamp updates
-/// and remain valid for the syscall.
-#[no_mangle]
-pub unsafe extern "C" fn futimes(file_descriptor: c_int, times: *const Timeval) -> c_int {
-    if times.is_null() {
-        // SAFETY: a null pair selects Linux's current-time behavior.
-        return unsafe { futimens(file_descriptor, core::ptr::null()) };
+// Musl's `src/stat/utimensat.c` object.
+static_archive_member! { utimensat_source {
+    /// Update a pathname's timestamps through Linux `utimensat(2)`.
+    ///
+    /// # Safety
+    ///
+    /// If non-null, `times` must point to two readable x86 `struct timespec`
+    /// records. `path`, `directory_descriptor`, and `flags` must satisfy Linux
+    /// `utimensat(2)`'s complete pointer, lifetime, and argument requirements.
+    #[no_mangle]
+    pub unsafe extern "C" fn utimensat(
+        directory_descriptor: c_int,
+        path: *const c_char,
+        times: *const Timespec,
+        flags: c_int,
+    ) -> c_int {
+        // SAFETY: this C entry point documents the raw `utimensat` requirements.
+        unsafe { utimensat_impl(directory_descriptor, path, times, flags) }
     }
+}}
 
-    let mut converted = [
-        Timespec {
-            seconds: 0,
-            nanoseconds: 0,
-        },
-        Timespec {
-            seconds: 0,
-            nanoseconds: 0,
-        },
-    ];
-    // SAFETY: the C entry point documents the input timeval pair requirement.
-    let times = unsafe { legacy_timeval_pair(times, &mut converted) };
-    // SAFETY: the converted pair is valid private stack storage for this call.
-    unsafe { futimens(file_descriptor, times) }
-}
+// Musl's `src/stat/futimens.c` object.
+static_archive_member! { futimens_source {
+    /// Update an open file descriptor's timestamps through the null-path
+    /// `utimensat` form.
+    ///
+    /// # Safety
+    ///
+    /// If non-null, `times` must point to two readable x86 `struct timespec`
+    /// records. `file_descriptor` must be suitable for Linux `futimens`-style
+    /// timestamp updates and remain valid for the syscall.
+    #[no_mangle]
+    pub unsafe extern "C" fn futimens(
+        file_descriptor: c_int,
+        times: *const Timespec,
+    ) -> c_int {
+        // SAFETY: the C entry point's descriptor and timespec requirements are
+        // exactly those of the selected null-path `utimensat` form.
+        unsafe { utimensat_impl(file_descriptor, core::ptr::null(), times, 0) }
+    }
+}}
 
-/// Update a pathname's timestamps from a legacy timeval pair without
-/// following the final symbolic link.
-///
-/// # Safety
-///
-/// If non-null, `times` must point to two readable x86 `struct timeval`
-/// records. `path` must satisfy Linux `utimensat(2)`'s pathname, lifetime,
-/// and accessibility requirements.
-#[no_mangle]
-pub unsafe extern "C" fn lutimes(path: *const c_char, times: *const Timeval) -> c_int {
-    let mut converted = [
-        Timespec {
-            seconds: 0,
-            nanoseconds: 0,
-        },
-        Timespec {
-            seconds: 0,
-            nanoseconds: 0,
-        },
-    ];
-    // SAFETY: the C entry point documents the input timeval pair requirement.
-    let times = unsafe { legacy_timeval_pair(times, &mut converted) };
-    // SAFETY: the converted pair is valid private stack storage for this call,
-    // and the C entry point documents the pathname requirement.
-    unsafe { utimensat_impl(AT_FDCWD, path, times, AT_SYMLINK_NOFOLLOW) }
-}
+// Musl's `src/stat/futimesat.c` object.
+static_archive_member! { futimesat_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak futimesat",
+        ".set futimesat, __futimesat",
+    );
 
-/// Update a pathname's timestamps from a legacy timeval pair.
-///
-/// # Safety
-///
-/// If non-null, `times` must point to two readable x86 `struct timeval`
-/// records. `path` must satisfy Linux `utimensat(2)`'s pathname, lifetime,
-/// and accessibility requirements.
-#[no_mangle]
-pub unsafe extern "C" fn utimes(path: *const c_char, times: *const Timeval) -> c_int {
-    // SAFETY: forwarded unchanged to musl's selected `__futimesat` boundary.
-    unsafe { __futimesat(AT_FDCWD, path, times) }
-}
+    /// Musl's strong implementation behind the weak `futimesat` C ABI alias.
+    ///
+    /// # Safety
+    ///
+    /// If non-null, `times` must point to two readable x86 `struct timeval`
+    /// records. `path` and `directory_descriptor` must satisfy Linux
+    /// `utimensat(2)`'s pathname and descriptor requirements.
+    #[no_mangle]
+    pub unsafe extern "C" fn __futimesat(
+        directory_descriptor: c_int,
+        path: *const c_char,
+        times: *const Timeval,
+    ) -> c_int {
+        let mut converted = [
+            Timespec {
+                seconds: 0,
+                nanoseconds: 0,
+            },
+            Timespec {
+                seconds: 0,
+                nanoseconds: 0,
+            },
+        ];
+        // SAFETY: the C entry point documents the input timeval pair requirement.
+        let times = match unsafe { futimesat_timeval_pair(times, &mut converted) } {
+            Some(times) => times,
+            None => return -1,
+        };
+        // SAFETY: the converted pair is valid private stack storage for this call,
+        // and the C entry point documents the pathname/descriptor requirements.
+        unsafe { utimensat_impl(directory_descriptor, path, times, 0) }
+    }
+}}
 
-/// Update a pathname's timestamps from a legacy seconds-only `utimbuf`.
-///
-/// # Safety
-///
-/// If non-null, `times` must point to one readable x86 `struct utimbuf`
-/// record. `path` must satisfy Linux `utimensat(2)`'s pathname, lifetime,
-/// and accessibility requirements.
-#[no_mangle]
-pub unsafe extern "C" fn utime(path: *const c_char, times: *const Utimbuf) -> c_int {
-    let mut converted = [
-        Timespec {
-            seconds: 0,
-            nanoseconds: 0,
-        },
-        Timespec {
-            seconds: 0,
-            nanoseconds: 0,
-        },
-    ];
-    let times = if times.is_null() {
-        core::ptr::null()
-    } else {
-        // SAFETY: the C entry point documents one readable `Utimbuf` record.
-        let times = unsafe { times.read() };
-        converted[0].seconds = times.access_time;
-        converted[1].seconds = times.modification_time;
-        converted.as_ptr()
-    };
+// Musl's `src/legacy/futimes.c` object.
+static_archive_member! { futimes_source {
+    /// Update an open file descriptor's timestamps from a legacy timeval pair.
+    ///
+    /// # Safety
+    ///
+    /// If non-null, `times` must point to two readable x86 `struct timeval`
+    /// records. `file_descriptor` must be suitable for Linux timestamp updates
+    /// and remain valid for the syscall.
+    #[no_mangle]
+    pub unsafe extern "C" fn futimes(file_descriptor: c_int, times: *const Timeval) -> c_int {
+        if times.is_null() {
+            // SAFETY: a null pair selects Linux's current-time behavior.
+            return unsafe { futimens(file_descriptor, core::ptr::null()) };
+        }
 
-    // SAFETY: the converted pair is valid private stack storage for this call,
-    // and the C entry point documents the pathname requirement.
-    unsafe { utimensat_impl(AT_FDCWD, path, times, 0) }
-}
+        let mut converted = [
+            Timespec {
+                seconds: 0,
+                nanoseconds: 0,
+            },
+            Timespec {
+                seconds: 0,
+                nanoseconds: 0,
+            },
+        ];
+        // SAFETY: the C entry point documents the input timeval pair requirement.
+        let times = unsafe { legacy_timeval_pair(times, &mut converted) };
+        // SAFETY: the converted pair is valid private stack storage for this call.
+        unsafe { futimens(file_descriptor, times) }
+    }
+}}
+
+// Musl's `src/legacy/lutimes.c` object.
+static_archive_member! { lutimes_source {
+    /// Update a pathname's timestamps from a legacy timeval pair without
+    /// following the final symbolic link.
+    ///
+    /// # Safety
+    ///
+    /// If non-null, `times` must point to two readable x86 `struct timeval`
+    /// records. `path` must satisfy Linux `utimensat(2)`'s pathname, lifetime,
+    /// and accessibility requirements.
+    #[no_mangle]
+    pub unsafe extern "C" fn lutimes(path: *const c_char, times: *const Timeval) -> c_int {
+        let mut converted = [
+            Timespec {
+                seconds: 0,
+                nanoseconds: 0,
+            },
+            Timespec {
+                seconds: 0,
+                nanoseconds: 0,
+            },
+        ];
+        // SAFETY: the C entry point documents the input timeval pair requirement.
+        let times = unsafe { legacy_timeval_pair(times, &mut converted) };
+        // SAFETY: the converted pair is valid private stack storage for this call,
+        // and the C entry point documents the pathname requirement.
+        unsafe { utimensat_impl(AT_FDCWD, path, times, AT_SYMLINK_NOFOLLOW) }
+    }
+}}
+
+// Musl's `src/linux/utimes.c` object.
+static_archive_member! { utimes_source {
+    /// Update a pathname's timestamps from a legacy timeval pair.
+    ///
+    /// # Safety
+    ///
+    /// If non-null, `times` must point to two readable x86 `struct timeval`
+    /// records. `path` must satisfy Linux `utimensat(2)`'s pathname, lifetime,
+    /// and accessibility requirements.
+    #[no_mangle]
+    pub unsafe extern "C" fn utimes(path: *const c_char, times: *const Timeval) -> c_int {
+        // SAFETY: forwarded unchanged to musl's selected `__futimesat` boundary.
+        unsafe { __futimesat(AT_FDCWD, path, times) }
+    }
+}}
+
+// Musl's `src/time/utime.c` object.
+static_archive_member! { utime_source {
+    /// Update a pathname's timestamps from a legacy seconds-only `utimbuf`.
+    ///
+    /// # Safety
+    ///
+    /// If non-null, `times` must point to one readable x86 `struct utimbuf`
+    /// record. `path` must satisfy Linux `utimensat(2)`'s pathname, lifetime,
+    /// and accessibility requirements.
+    #[no_mangle]
+    pub unsafe extern "C" fn utime(path: *const c_char, times: *const Utimbuf) -> c_int {
+        let mut converted = [
+            Timespec {
+                seconds: 0,
+                nanoseconds: 0,
+            },
+            Timespec {
+                seconds: 0,
+                nanoseconds: 0,
+            },
+        ];
+        let times = if times.is_null() {
+            core::ptr::null()
+        } else {
+            // SAFETY: the C entry point documents one readable `Utimbuf` record.
+            let times = unsafe { times.read() };
+            converted[0].seconds = times.access_time;
+            converted[1].seconds = times.modification_time;
+            converted.as_ptr()
+        };
+
+        // SAFETY: the converted pair is valid private stack storage for this call,
+        // and the C entry point documents the pathname requirement.
+        unsafe { utimensat_impl(AT_FDCWD, path, times, 0) }
+    }
+}}

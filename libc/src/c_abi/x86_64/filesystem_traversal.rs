@@ -646,62 +646,80 @@ unsafe fn prepare_io_path(
     Ok(io_length)
 }
 
-/// Walk a pathname tree with a four-argument callback.
-///
-/// # Safety
-///
-/// `path` must designate a readable NUL-terminated pathname for the call.
-/// `callback` must be non-null and follow the C `nftw` callback ABI. It may
-/// inspect only the supplied `struct stat`/`struct FTW` during the callback and
-/// must return normally: C++ exceptions and C `longjmp` must not cross this
-/// Rust frame. `FTW_CHDIR` changes process-global CWD during callbacks and
-/// restores the entry CWD before return; callers retain external serialization
-/// of every CWD-sensitive operation. In the owned static aggregate, pinned
-/// musl's disable/walk/restore cancellation-state interval includes every
-/// callback; the standalone feature selects no cancellation owner.
-#[no_mangle]
-pub unsafe extern "C" fn nftw(
-    path: *const c_char,
-    callback: Option<NftwCallback>,
-    fd_limit: c_int,
-    flags: c_int,
-) -> c_int {
-    if path.is_null() || callback.is_none() {
-        return unsafe { fail(EINVAL) };
-    }
-    if fd_limit <= 0 {
-        return 0;
-    }
-    let path_length = unsafe { c_string_length(path) };
-    if path_length > PATH_MAX {
-        return unsafe { fail(ENAMETOOLONG) };
-    }
-    let mut path_buffer = [0u8; PATH_MAX + 1];
-    // SAFETY: the length limit leaves room for the source NUL in path_buffer.
-    unsafe { ptr::copy_nonoverlapping(path.cast::<u8>(), path_buffer.as_mut_ptr(), path_length + 1) };
-    let callbacks = Callbacks {
-        ftw: None,
-        nftw: callback,
-    };
-    let mut io_buffer = [0u8; IO_PATH_MAX];
-    let (io_path, io_length, io_capacity) = if flags & FTW_CHDIR == 0 {
-        (
-            path_buffer.as_mut_ptr(),
-            path_length,
-            path_buffer.len(),
-        )
-    } else {
-        let io_length = match unsafe {
-            prepare_io_path(path, path_length, io_buffer.as_mut_ptr())
-        } {
-            Ok(length) => length,
-            Err(error) => return unsafe { fail(error) },
+// Musl's `src/misc/nftw.c` object.
+static_archive_member! { nftw_source {
+    /// Walk a pathname tree with a four-argument callback.
+    ///
+    /// # Safety
+    ///
+    /// `path` must designate a readable NUL-terminated pathname for the call.
+    /// `callback` must be non-null and follow the C `nftw` callback ABI. It may
+    /// inspect only the supplied `struct stat`/`struct FTW` during the callback and
+    /// must return normally: C++ exceptions and C `longjmp` must not cross this
+    /// Rust frame. `FTW_CHDIR` changes process-global CWD during callbacks and
+    /// restores the entry CWD before return; callers retain external serialization
+    /// of every CWD-sensitive operation. In the owned static aggregate, pinned
+    /// musl's disable/walk/restore cancellation-state interval includes every
+    /// callback; the standalone feature selects no cancellation owner.
+    #[no_mangle]
+    pub unsafe extern "C" fn nftw(
+        path: *const c_char,
+        callback: Option<NftwCallback>,
+        fd_limit: c_int,
+        flags: c_int,
+    ) -> c_int {
+        if path.is_null() || callback.is_none() {
+            return unsafe { fail(EINVAL) };
+        }
+        if fd_limit <= 0 {
+            return 0;
+        }
+        let path_length = unsafe { c_string_length(path) };
+        if path_length > PATH_MAX {
+            return unsafe { fail(ENAMETOOLONG) };
+        }
+        let mut path_buffer = [0u8; PATH_MAX + 1];
+        // SAFETY: the length limit leaves room for the source NUL in path_buffer.
+        unsafe { ptr::copy_nonoverlapping(path.cast::<u8>(), path_buffer.as_mut_ptr(), path_length + 1) };
+        let callbacks = Callbacks {
+            ftw: None,
+            nftw: callback,
         };
-        (io_buffer.as_mut_ptr(), io_length, io_buffer.len())
-    };
-    #[cfg(crabc_x86_owned_runtime)]
-    return unsafe {
-        owned_static_nftw_cancellation_guard(|| unsafe {
+        let mut io_buffer = [0u8; IO_PATH_MAX];
+        let (io_path, io_length, io_capacity) = if flags & FTW_CHDIR == 0 {
+            (
+                path_buffer.as_mut_ptr(),
+                path_length,
+                path_buffer.len(),
+            )
+        } else {
+            let io_length = match unsafe {
+                prepare_io_path(path, path_length, io_buffer.as_mut_ptr())
+            } {
+                Ok(length) => length,
+                Err(error) => return unsafe { fail(error) },
+            };
+            (io_buffer.as_mut_ptr(), io_length, io_buffer.len())
+        };
+        #[cfg(crabc_x86_owned_runtime)]
+        return unsafe {
+            owned_static_nftw_cancellation_guard(|| unsafe {
+                walk(
+                    path_buffer.as_mut_ptr(),
+                    path_length,
+                    path_buffer.len(),
+                    io_path,
+                    io_length,
+                    io_capacity,
+                    &callbacks,
+                    fd_limit,
+                    flags,
+                    ptr::null(),
+                )
+            })
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        unsafe {
             walk(
                 path_buffer.as_mut_ptr(),
                 path_length,
@@ -714,62 +732,65 @@ pub unsafe extern "C" fn nftw(
                 flags,
                 ptr::null(),
             )
-        })
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    unsafe {
-        walk(
-            path_buffer.as_mut_ptr(),
-            path_length,
-            path_buffer.len(),
-            io_path,
-            io_length,
-            io_capacity,
-            &callbacks,
-            fd_limit,
-            flags,
-            ptr::null(),
-        )
+        }
     }
-}
+}}
 
-/// Walk a pathname tree with the historical three-argument physical callback.
-///
-/// # Safety
-///
-/// `path` must designate a readable NUL-terminated pathname for the call.
-/// `callback` must be non-null, follow the C `ftw` callback ABI, and return
-/// normally; C++ exceptions and C `longjmp` must not cross this Rust frame.
-/// Callback pointers and stat records are borrowed only for each synchronous
-/// call. The owned static aggregate applies the same pinned-musl
-/// disable/walk/restore cancellation-state interval as `nftw`; this standalone
-/// feature selects no general cancellation owner.
-#[no_mangle]
-pub unsafe extern "C" fn ftw(
-    path: *const c_char,
-    callback: Option<FtwCallback>,
-    fd_limit: c_int,
-) -> c_int {
-    if path.is_null() || callback.is_none() {
-        return unsafe { fail(EINVAL) };
-    }
-    if fd_limit <= 0 {
-        return 0;
-    }
-    let path_length = unsafe { c_string_length(path) };
-    if path_length > PATH_MAX {
-        return unsafe { fail(ENAMETOOLONG) };
-    }
-    let mut path_buffer = [0u8; PATH_MAX + 1];
-    // SAFETY: the length limit leaves room for the source NUL in path_buffer.
-    unsafe { ptr::copy_nonoverlapping(path.cast::<u8>(), path_buffer.as_mut_ptr(), path_length + 1) };
-    let callbacks = Callbacks {
-        ftw: callback,
-        nftw: None,
-    };
-    #[cfg(crabc_x86_owned_runtime)]
-    return unsafe {
-        owned_static_nftw_cancellation_guard(|| unsafe {
+// Musl's `src/legacy/ftw.c` object.
+static_archive_member! { ftw_source {
+    /// Walk a pathname tree with the historical three-argument physical callback.
+    ///
+    /// # Safety
+    ///
+    /// `path` must designate a readable NUL-terminated pathname for the call.
+    /// `callback` must be non-null, follow the C `ftw` callback ABI, and return
+    /// normally; C++ exceptions and C `longjmp` must not cross this Rust frame.
+    /// Callback pointers and stat records are borrowed only for each synchronous
+    /// call. The owned static aggregate applies the same pinned-musl
+    /// disable/walk/restore cancellation-state interval as `nftw`; this standalone
+    /// feature selects no general cancellation owner.
+    #[no_mangle]
+    pub unsafe extern "C" fn ftw(
+        path: *const c_char,
+        callback: Option<FtwCallback>,
+        fd_limit: c_int,
+    ) -> c_int {
+        if path.is_null() || callback.is_none() {
+            return unsafe { fail(EINVAL) };
+        }
+        if fd_limit <= 0 {
+            return 0;
+        }
+        let path_length = unsafe { c_string_length(path) };
+        if path_length > PATH_MAX {
+            return unsafe { fail(ENAMETOOLONG) };
+        }
+        let mut path_buffer = [0u8; PATH_MAX + 1];
+        // SAFETY: the length limit leaves room for the source NUL in path_buffer.
+        unsafe { ptr::copy_nonoverlapping(path.cast::<u8>(), path_buffer.as_mut_ptr(), path_length + 1) };
+        let callbacks = Callbacks {
+            ftw: callback,
+            nftw: None,
+        };
+        #[cfg(crabc_x86_owned_runtime)]
+        return unsafe {
+            owned_static_nftw_cancellation_guard(|| unsafe {
+                walk(
+                    path_buffer.as_mut_ptr(),
+                    path_length,
+                    path_buffer.len(),
+                    path_buffer.as_mut_ptr(),
+                    path_length,
+                    path_buffer.len(),
+                    &callbacks,
+                    fd_limit,
+                    FTW_PHYS,
+                    ptr::null(),
+                )
+            })
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        unsafe {
             walk(
                 path_buffer.as_mut_ptr(),
                 path_length,
@@ -782,21 +803,6 @@ pub unsafe extern "C" fn ftw(
                 FTW_PHYS,
                 ptr::null(),
             )
-        })
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    unsafe {
-        walk(
-            path_buffer.as_mut_ptr(),
-            path_length,
-            path_buffer.len(),
-            path_buffer.as_mut_ptr(),
-            path_length,
-            path_buffer.len(),
-            &callbacks,
-            fd_limit,
-            FTW_PHYS,
-            ptr::null(),
-        )
+        }
     }
-}
+}}

@@ -807,157 +807,161 @@ pub(super) unsafe fn free_shell_result(result: &mut Glob) {
     unsafe { globfree(result) }
 }
 
-/// Expand a C pathname pattern with musl's result-vector ownership protocol.
-///
-/// # Safety
-///
-/// `pattern` is a readable NUL-terminated C string and `result` is writable.
-/// With `GLOB_APPEND`, `result` must retain one exclusively owned valid prior
-/// result from this entry; `globfree` releases every successful result.
-#[no_mangle]
-pub unsafe extern "C" fn glob(
-    pattern: *const c_char,
-    flags: c_int,
-    error: Option<ErrorFunction>,
-    result: *mut Glob,
-) -> c_int {
-    let error = error.unwrap_or(ignore_error);
-    let mut head = Match { next: ptr::null_mut() };
-    let mut tail: *mut Match = &mut head;
-    let mut offsets = if flags & GLOB_DOOFFS != 0 { unsafe { (*result).offsets } } else { 0 };
-    let mut glob_error = 0;
+// Musl's `src/regex/glob.c` object.
+static_archive_member! { glob_source {
+    /// Expand a C pathname pattern with musl's result-vector ownership protocol.
+    ///
+    /// # Safety
+    ///
+    /// `pattern` is a readable NUL-terminated C string and `result` is writable.
+    /// With `GLOB_APPEND`, `result` must retain one exclusively owned valid prior
+    /// result from this entry; `globfree` releases every successful result.
+    #[no_mangle]
+    pub unsafe extern "C" fn glob(
+        pattern: *const c_char,
+        flags: c_int,
+        error: Option<ErrorFunction>,
+        result: *mut Glob,
+    ) -> c_int {
+        let error = error.unwrap_or(ignore_error);
+        let mut head = Match { next: ptr::null_mut() };
+        let mut tail: *mut Match = &mut head;
+        let mut offsets = if flags & GLOB_DOOFFS != 0 { unsafe { (*result).offsets } } else { 0 };
+        let mut glob_error = 0;
 
-    if flags & GLOB_APPEND == 0 {
+        if flags & GLOB_APPEND == 0 {
+            unsafe {
+                (*result).offsets = offsets;
+                (*result).path_count = 0;
+                (*result).path_vector = ptr::null_mut();
+            }
+        }
+        if unsafe { byte(pattern) } != 0 {
+            let copy = unsafe { duplicate_string(pattern) };
+            if copy.is_null() {
+                return GLOB_NOSPACE;
+            }
+            let mut buffer = [0u8; PATH_MAX];
+            let mut position = 0usize;
+            let mut walk_pattern = copy;
+            if flags & (GLOB_TILDE | GLOB_TILDE_CHECK) != 0 && unsafe { byte(copy) } == b'~' {
+                if let Err(code) = unsafe { expand_tilde(&mut walk_pattern, &mut buffer, &mut position) } {
+                    glob_error = code;
+                }
+            }
+            if glob_error == 0 {
+                glob_error = unsafe {
+                    do_glob(
+                        &mut buffer,
+                        position,
+                        0,
+                        walk_pattern,
+                        flags,
+                        error,
+                        &mut tail,
+                        PatternMode::c(),
+                    )
+                };
+            }
+            unsafe { cabi_free(copy.cast()) };
+        }
+
+        let mut count = 0usize;
+        let mut record = head.next;
+        while !record.is_null() {
+            count += 1;
+            record = unsafe { (*record).next };
+        }
+        if glob_error == GLOB_NOSPACE {
+            unsafe { free_list(&mut head) };
+            return glob_error;
+        }
+        if count == 0 {
+            if flags & GLOB_NOCHECK != 0 {
+                tail = &mut head;
+                if unsafe { append(&mut tail, pattern, string_length(pattern), false) } != 0 {
+                    return GLOB_NOSPACE;
+                }
+                count += 1;
+            } else if glob_error == 0 {
+                return GLOB_NOMATCH;
+            }
+        }
+
+        let vector_count = if flags & GLOB_APPEND != 0 {
+            unsafe { offsets.checked_add((*result).path_count) }
+        } else {
+            Some(offsets)
+        }.and_then(|count_before| count_before.checked_add(count)).and_then(|count_after| count_after.checked_add(1));
+        let Some(vector_count) = vector_count else {
+            unsafe { free_list(&mut head) };
+            return GLOB_NOSPACE;
+        };
+        let Some(vector_bytes) = vector_count.checked_mul(size_of::<*mut c_char>()) else {
+            unsafe { free_list(&mut head) };
+            return GLOB_NOSPACE;
+        };
+        let vector = if flags & GLOB_APPEND != 0 {
+            unsafe { cabi_realloc((*result).path_vector.cast(), vector_bytes).cast::<*mut c_char>() }
+        } else {
+            unsafe { cabi_malloc(vector_bytes).cast::<*mut c_char>() }
+        };
+        if vector.is_null() {
+            unsafe { free_list(&mut head) };
+            return GLOB_NOSPACE;
+        }
+        if flags & GLOB_APPEND != 0 {
+            offsets += unsafe { (*result).path_count };
+        } else {
+            for index in 0..offsets {
+                unsafe { vector.add(index).write(ptr::null_mut()) };
+            }
+        }
+        unsafe { (*result).path_vector = vector };
+        let mut record = head.next;
+        for index in 0..count {
+            unsafe {
+                vector.add(offsets + index).write(match_name(record));
+                record = (*record).next;
+            }
+        }
         unsafe {
-            (*result).offsets = offsets;
+            vector.add(offsets + count).write(ptr::null_mut());
+            (*result).path_count += count;
+        }
+        if flags & GLOB_NOSORT == 0 {
+            unsafe {
+                cabi_qsort(
+                    vector.add(offsets).cast(),
+                    count,
+                    size_of::<*mut c_char>(),
+                    sort,
+                );
+            }
+        }
+        glob_error
+    }
+
+    /// Release a `glob` result without altering the caller's selected offset.
+    ///
+    /// # Safety
+    ///
+    /// `result` is an exclusively owned successful `glob` record. It must not be
+    /// null, copied, manually mutated, or freed through another allocator route.
+    #[no_mangle]
+    pub unsafe extern "C" fn globfree(result: *mut Glob) {
+        let count = unsafe { (*result).path_count };
+        let vector = unsafe { (*result).path_vector };
+        let offsets = unsafe { (*result).offsets };
+        for index in 0..count {
+            let path = unsafe { vector.add(offsets + index).read() };
+            unsafe { cabi_free(path.cast::<u8>().sub(size_of::<Match>()).cast()) };
+        }
+        unsafe {
+            cabi_free(vector.cast());
             (*result).path_count = 0;
             (*result).path_vector = ptr::null_mut();
         }
     }
-    if unsafe { byte(pattern) } != 0 {
-        let copy = unsafe { duplicate_string(pattern) };
-        if copy.is_null() {
-            return GLOB_NOSPACE;
-        }
-        let mut buffer = [0u8; PATH_MAX];
-        let mut position = 0usize;
-        let mut walk_pattern = copy;
-        if flags & (GLOB_TILDE | GLOB_TILDE_CHECK) != 0 && unsafe { byte(copy) } == b'~' {
-            if let Err(code) = unsafe { expand_tilde(&mut walk_pattern, &mut buffer, &mut position) } {
-                glob_error = code;
-            }
-        }
-        if glob_error == 0 {
-            glob_error = unsafe {
-                do_glob(
-                    &mut buffer,
-                    position,
-                    0,
-                    walk_pattern,
-                    flags,
-                    error,
-                    &mut tail,
-                    PatternMode::c(),
-                )
-            };
-        }
-        unsafe { cabi_free(copy.cast()) };
-    }
+}}
 
-    let mut count = 0usize;
-    let mut record = head.next;
-    while !record.is_null() {
-        count += 1;
-        record = unsafe { (*record).next };
-    }
-    if glob_error == GLOB_NOSPACE {
-        unsafe { free_list(&mut head) };
-        return glob_error;
-    }
-    if count == 0 {
-        if flags & GLOB_NOCHECK != 0 {
-            tail = &mut head;
-            if unsafe { append(&mut tail, pattern, string_length(pattern), false) } != 0 {
-                return GLOB_NOSPACE;
-            }
-            count += 1;
-        } else if glob_error == 0 {
-            return GLOB_NOMATCH;
-        }
-    }
-
-    let vector_count = if flags & GLOB_APPEND != 0 {
-        unsafe { offsets.checked_add((*result).path_count) }
-    } else {
-        Some(offsets)
-    }.and_then(|count_before| count_before.checked_add(count)).and_then(|count_after| count_after.checked_add(1));
-    let Some(vector_count) = vector_count else {
-        unsafe { free_list(&mut head) };
-        return GLOB_NOSPACE;
-    };
-    let Some(vector_bytes) = vector_count.checked_mul(size_of::<*mut c_char>()) else {
-        unsafe { free_list(&mut head) };
-        return GLOB_NOSPACE;
-    };
-    let vector = if flags & GLOB_APPEND != 0 {
-        unsafe { cabi_realloc((*result).path_vector.cast(), vector_bytes).cast::<*mut c_char>() }
-    } else {
-        unsafe { cabi_malloc(vector_bytes).cast::<*mut c_char>() }
-    };
-    if vector.is_null() {
-        unsafe { free_list(&mut head) };
-        return GLOB_NOSPACE;
-    }
-    if flags & GLOB_APPEND != 0 {
-        offsets += unsafe { (*result).path_count };
-    } else {
-        for index in 0..offsets {
-            unsafe { vector.add(index).write(ptr::null_mut()) };
-        }
-    }
-    unsafe { (*result).path_vector = vector };
-    let mut record = head.next;
-    for index in 0..count {
-        unsafe {
-            vector.add(offsets + index).write(match_name(record));
-            record = (*record).next;
-        }
-    }
-    unsafe {
-        vector.add(offsets + count).write(ptr::null_mut());
-        (*result).path_count += count;
-    }
-    if flags & GLOB_NOSORT == 0 {
-        unsafe {
-            cabi_qsort(
-                vector.add(offsets).cast(),
-                count,
-                size_of::<*mut c_char>(),
-                sort,
-            );
-        }
-    }
-    glob_error
-}
-
-/// Release a `glob` result without altering the caller's selected offset.
-///
-/// # Safety
-///
-/// `result` is an exclusively owned successful `glob` record. It must not be
-/// null, copied, manually mutated, or freed through another allocator route.
-#[no_mangle]
-pub unsafe extern "C" fn globfree(result: *mut Glob) {
-    let count = unsafe { (*result).path_count };
-    let vector = unsafe { (*result).path_vector };
-    let offsets = unsafe { (*result).offsets };
-    for index in 0..count {
-        let path = unsafe { vector.add(offsets + index).read() };
-        unsafe { cabi_free(path.cast::<u8>().sub(size_of::<Match>()).cast()) };
-    }
-    unsafe {
-        cabi_free(vector.cast());
-        (*result).path_count = 0;
-        (*result).path_vector = ptr::null_mut();
-    }
-}

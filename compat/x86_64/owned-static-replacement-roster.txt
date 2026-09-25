@@ -91,3 +91,21 @@ sigprocmask sigqueue sigrelse sigset sigtimedwait sigwait sigwaitinfo swapoff
 swapon sysconf tcdrain timer_create timer_delete timer_getoverrun
 timer_gettime timer_settime umask umount umount2 uname unshare vhangup
 vmsplice wait wait3 wait4 waitid waitpid
+
+# Files, directories, descriptors, terminals, polling, temporary files, glob and AIO
+access aio_suspend alphasort cfgetispeed cfgetospeed cfmakeraw cfsetspeed
+chdir chmod chroot close closedir creat dirfd dup dup2 epoll_create
+epoll_create1 epoll_ctl epoll_pwait epoll_wait euidaccess eventfd
+eventfd_read eventfd_write faccessat fallocate fchmod fchmodat fchown
+fchownat fdatasync fdopendir fnmatch forkpty fsync ftruncate ftw futimens
+futimes getcwd getdents glob globfree inotify_add_watch inotify_init
+inotify_init1 inotify_rm_watch lchmod link lio_listio lockf login_tty lstat
+lutimes mkdir mkdtemp mknod mknodat mkostemp mkstemp mkstemps
+name_to_handle_at nftw open open_by_handle_at openat opendir openpty pause
+pipe pipe2 poll posix_fadvise posix_getdents ppoll pread preadv preadv2
+pselect ptsname pwrite pwritev pwritev2 read readahead readdir readdir_r
+readlink readv remove rename renameat rewinddir rmdir scandir seekdir select
+sigsuspend stat statx symlink symlinkat tcflow tcflush tcgetattr tcgetsid
+tcgetwinsize tcsendbreak tcsetattr tcsetwinsize tdelete tdestroy telldir
+tempnam tfind tmpnam truncate ttyname twalk unlink utime utimensat utimes
+versionsort write writev

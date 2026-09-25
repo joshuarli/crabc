@@ -99,336 +99,379 @@ pub(super) fn procfdname(path: &mut [u8; PROC_FD_NAME_SIZE], fd: c_int) {
     debug_assert!(cursor == digits_start);
 }
 
-/// Change the calling process's current directory through Linux `chdir(2)`.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the syscall
-/// duration. The process-global CWD transition and every pathname policy
-/// consequence remain caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
-    // SAFETY: the caller owns the pathname pointer contract.
-    let result = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_CHDIR, path as usize as i64)
-    };
-    c_status(result)
-}
+// Musl's `src/unistd/chdir.c` object.
+static_archive_member! { chdir_source {
+    /// Change the calling process's current directory through Linux `chdir(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the syscall
+    /// duration. The process-global CWD transition and every pathname policy
+    /// consequence remain caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
+        // SAFETY: the caller owns the pathname pointer contract.
+        let result = unsafe {
+            raw_syscall::syscall1(raw_syscall::SYS_CHDIR, path as usize as i64)
+        };
+        c_status(result)
+    }
+}}
 
-/// Change the process root directory using Linux `chroot` without changing CWD.
-///
-/// # Safety
-/// `path` must designate a readable NUL-terminated pathname during the syscall.
-/// The caller owns process-wide pathname coordination and the consequences for
-/// existing CWD and open descriptors; this operation is not a confinement API.
+// Musl's `src/linux/chroot.c` object.
 #[cfg(crabc_x86_owned_runtime)]
-#[no_mangle]
-pub unsafe extern "C" fn chroot(path: *const c_char) -> c_int {
-    c_status(unsafe { raw_syscall::syscall1(raw_syscall::SYS_CHROOT, path as usize as i64) })
-}
+static_archive_member! { chroot_source {
+    /// Change the process root directory using Linux `chroot` without changing CWD.
+    ///
+    /// # Safety
+    /// `path` must designate a readable NUL-terminated pathname during the syscall.
+    /// The caller owns process-wide pathname coordination and the consequences for
+    /// existing CWD and open descriptors; this operation is not a confinement API.
+    #[cfg(crabc_x86_owned_runtime)]
+    #[no_mangle]
+    pub unsafe extern "C" fn chroot(path: *const c_char) -> c_int {
+        c_status(unsafe { raw_syscall::syscall1(raw_syscall::SYS_CHROOT, path as usize as i64) })
+    }
+}}
 
-/// Obtain the absolute current-directory spelling in caller-owned storage.
-///
-/// # Safety
-///
-/// `buffer` must designate writable `capacity` bytes for the syscall duration
-/// and remain valid while its result is inspected, or be null. A null buffer
-/// follows musl: `capacity` is ignored, the name is read into a `PATH_MAX`
-/// stack buffer, and the result is a `strdup` copy the caller frees.
-#[no_mangle]
-pub unsafe extern "C" fn getcwd(buffer: *mut c_char, capacity: usize) -> *mut c_char {
-    #[cfg(crabc_x86_allocator_string_duplication)]
-    if buffer.is_null() {
-        unsafe extern "C" {
-            fn strdup(source: *const c_char) -> *mut c_char;
+// Musl's `src/unistd/getcwd.c` object.
+static_archive_member! { getcwd_source {
+    /// Obtain the absolute current-directory spelling in caller-owned storage.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must designate writable `capacity` bytes for the syscall duration
+    /// and remain valid while its result is inspected, or be null. A null buffer
+    /// follows musl: `capacity` is ignored, the name is read into a `PATH_MAX`
+    /// stack buffer, and the result is a `strdup` copy the caller frees.
+    #[no_mangle]
+    pub unsafe extern "C" fn getcwd(buffer: *mut c_char, capacity: usize) -> *mut c_char {
+        #[cfg(crabc_x86_allocator_string_duplication)]
+        if buffer.is_null() {
+            unsafe extern "C" {
+                fn strdup(source: *const c_char) -> *mut c_char;
+            }
+            let mut name = [0 as c_char; 4096];
+            // SAFETY: the local buffer is writable for its full length.
+            let result = unsafe { getcwd(name.as_mut_ptr(), name.len()) };
+            if result.is_null() {
+                return result;
+            }
+            // SAFETY: successful getcwd left a NUL-terminated name in `name`.
+            return unsafe { strdup(name.as_ptr()) };
         }
-        let mut name = [0 as c_char; 4096];
-        // SAFETY: the local buffer is writable for its full length.
-        let result = unsafe { getcwd(name.as_mut_ptr(), name.len()) };
-        if result.is_null() {
-            return result;
+        if buffer.is_null() || capacity == 0 {
+            return null_with_errno(EINVAL);
         }
-        // SAFETY: successful getcwd left a NUL-terminated name in `name`.
-        return unsafe { strdup(name.as_ptr()) };
+
+        // SAFETY: the caller supplies writable caller-owned storage.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_GETCWD,
+                buffer as usize as i64,
+                capacity as i64,
+            )
+        };
+        if result < 0 {
+            let _ = c_status(result);
+            return core::ptr::null_mut();
+        }
+
+        // SAFETY: successful getcwd writes a NUL-terminated prefix beginning at
+        // the caller-provided buffer. Like musl, reject the kernel's unreachable
+        // non-absolute spelling rather than returning it as a C pathname.
+        if result == 0 || unsafe { *buffer } != b'/' as c_char {
+            return null_with_errno(ENOENT);
+        }
+        buffer
     }
-    if buffer.is_null() || capacity == 0 {
-        return null_with_errno(EINVAL);
+}}
+
+// Musl's `src/stat/mkdir.c` object.
+static_archive_member! { mkdir_source {
+    /// Create one directory through Linux `mkdir(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the syscall
+    /// duration. Filesystem and process-umask policy remain caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn mkdir(path: *const c_char, mode: c_uint) -> c_int {
+        // SAFETY: the caller owns the pathname pointer contract; Linux validates
+        // the scalar mode word.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_MKDIR,
+                path as usize as i64,
+                i64::from(mode),
+            )
+        };
+        c_status(result)
     }
+}}
 
-    // SAFETY: the caller supplies writable caller-owned storage.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_GETCWD,
-            buffer as usize as i64,
-            capacity as i64,
-        )
-    };
-    if result < 0 {
-        let _ = c_status(result);
-        return core::ptr::null_mut();
+// Musl's `src/unistd/unlink.c` object.
+static_archive_member! { unlink_source {
+    /// Remove one non-directory pathname through Linux `unlink(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the syscall
+    /// duration. Namespace and link-lifetime policy remain caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
+        // SAFETY: the caller owns the pathname pointer contract.
+        let result = unsafe {
+            raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path as usize as i64)
+        };
+        c_status(result)
     }
+}}
 
-    // SAFETY: successful getcwd writes a NUL-terminated prefix beginning at
-    // the caller-provided buffer. Like musl, reject the kernel's unreachable
-    // non-absolute spelling rather than returning it as a C pathname.
-    if result == 0 || unsafe { *buffer } != b'/' as c_char {
-        return null_with_errno(ENOENT);
-    }
-    buffer
-}
-
-/// Create one directory through Linux `mkdir(2)`.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the syscall
-/// duration. Filesystem and process-umask policy remain caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn mkdir(path: *const c_char, mode: c_uint) -> c_int {
-    // SAFETY: the caller owns the pathname pointer contract; Linux validates
-    // the scalar mode word.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_MKDIR,
-            path as usize as i64,
-            i64::from(mode),
-        )
-    };
-    c_status(result)
-}
-
-/// Remove one non-directory pathname through Linux `unlink(2)`.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the syscall
-/// duration. Namespace and link-lifetime policy remain caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
-    // SAFETY: the caller owns the pathname pointer contract.
-    let result = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path as usize as i64)
-    };
-    c_status(result)
-}
-
-/// Remove one empty directory through Linux `rmdir(2)`.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the syscall
-/// duration. Namespace and directory-lifetime policy remain caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
-    // SAFETY: the caller owns the pathname pointer contract.
-    let result = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_RMDIR, path as usize as i64)
-    };
-    c_status(result)
-}
-
-/// Remove a pathname, retrying an `EISDIR` unlink failure as `rmdir`.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the syscall
-/// duration. This matches musl's unlink-then-rmdir ordering; namespace and
-/// removal policy remain caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn remove(path: *const c_char) -> c_int {
-    // SAFETY: the caller owns the pathname pointer contract.
-    let mut result = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path as usize as i64)
-    };
-    if result == -EISDIR {
-        // SAFETY: preserve musl's raw intermediate result so a successful
-        // directory retry does not manufacture stale EISDIR errno.
-        result = unsafe {
+// Musl's `src/unistd/rmdir.c` object.
+static_archive_member! { rmdir_source {
+    /// Remove one empty directory through Linux `rmdir(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the syscall
+    /// duration. Namespace and directory-lifetime policy remain caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
+        // SAFETY: the caller owns the pathname pointer contract.
+        let result = unsafe {
             raw_syscall::syscall1(raw_syscall::SYS_RMDIR, path as usize as i64)
         };
+        c_status(result)
     }
-    c_status(result)
-}
+}}
 
-/// Atomically rename one pathname through Linux `rename(2)`.
-///
-/// # Safety
-///
-/// `old_path` and `new_path` must point to readable NUL-terminated pathnames
-/// for the syscall duration. Cross-directory and replacement policy remain
-/// caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn rename(old_path: *const c_char, new_path: *const c_char) -> c_int {
-    // SAFETY: the caller owns both pathname pointer contracts.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_RENAME,
-            old_path as usize as i64,
-            new_path as usize as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Create one hard link through Linux `link(2)`.
-///
-/// # Safety
-///
-/// `existing_path` and `new_path` must point to readable NUL-terminated
-/// pathnames for the syscall duration. Filesystem/link policy remains
-/// caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn link(
-    existing_path: *const c_char,
-    new_path: *const c_char,
-) -> c_int {
-    // SAFETY: the caller owns both pathname pointer contracts.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_LINK,
-            existing_path as usize as i64,
-            new_path as usize as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Create one symbolic link through Linux `symlink(2)`.
-///
-/// # Safety
-///
-/// `target` and `link_path` must point to readable NUL-terminated pathnames
-/// for the syscall duration. The target spelling and namespace policy remain
-/// caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn symlink(target: *const c_char, link_path: *const c_char) -> c_int {
-    // SAFETY: the caller owns both pathname pointer contracts.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_SYMLINK,
-            target as usize as i64,
-            link_path as usize as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Read one symbolic-link target into caller-owned bytes.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname. When `capacity`
-/// is nonzero, `buffer` must designate writable storage for that many bytes.
-/// A zero capacity accepts any buffer value and follows musl's dummy-byte,
-/// zero-result behavior. The output is not NUL-terminated by this API.
-#[no_mangle]
-pub unsafe extern "C" fn readlink(
-    path: *const c_char,
-    buffer: *mut c_char,
-    capacity: usize,
-) -> isize {
-    let mut dummy = 0u8;
-    let (kernel_buffer, kernel_capacity) = if capacity == 0 {
-        (&mut dummy as *mut u8 as *mut c_char, 1usize)
-    } else {
-        (buffer, capacity)
-    };
-    // SAFETY: the caller owns the pathname and nonzero output contracts; the
-    // local dummy is writable for the zero-capacity musl compatibility path.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_READLINK,
-            path as usize as i64,
-            kernel_buffer as usize as i64,
-            kernel_capacity as i64,
-        )
-    };
-    if capacity == 0 && result > 0 {
-        0
-    } else {
-        c_ssize_status(result)
+// Musl's `src/stdio/remove.c` object.
+static_archive_member! { remove_source {
+    /// Remove a pathname, retrying an `EISDIR` unlink failure as `rmdir`.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the syscall
+    /// duration. This matches musl's unlink-then-rmdir ordering; namespace and
+    /// removal policy remain caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn remove(path: *const c_char) -> c_int {
+        // SAFETY: the caller owns the pathname pointer contract.
+        let mut result = unsafe {
+            raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path as usize as i64)
+        };
+        if result == -EISDIR {
+            // SAFETY: preserve musl's raw intermediate result so a successful
+            // directory retry does not manufacture stale EISDIR errno.
+            result = unsafe {
+                raw_syscall::syscall1(raw_syscall::SYS_RMDIR, path as usize as i64)
+            };
+        }
+        c_status(result)
     }
-}
+}}
 
-/// Change one pathname's mode through Linux `chmod(2)`.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the syscall
-/// duration. Permission, ownership, and namespace policy remain caller-owned.
-#[no_mangle]
-pub unsafe extern "C" fn chmod(path: *const c_char, mode: c_uint) -> c_int {
-    // SAFETY: the caller owns the pathname pointer contract; Linux validates
-    // the scalar mode word.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_CHMOD,
-            path as usize as i64,
-            i64::from(mode),
-        )
-    };
-    c_status(result)
-}
-
-/// Change one descriptor's mode, including musl's O_PATH procfs fallback.
-///
-/// The fallback is intentionally constrained to a live descriptor whose
-/// `F_GETFD` probe succeeds after `fchmod` reports `EBADF`; other direct
-/// errors preserve their original Linux `errno` result.
-#[no_mangle]
-pub extern "C" fn fchmod(fd: c_int, mode: c_uint) -> c_int {
-    // SAFETY: both initial fchmod words are scalar Linux values.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_FCHMOD,
-            i64::from(fd),
-            i64::from(mode),
-        )
-    };
-    if result != -EBADF {
-        return c_status(result);
+// Musl's `src/stdio/rename.c` object.
+static_archive_member! { rename_source {
+    /// Atomically rename one pathname through Linux `rename(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `old_path` and `new_path` must point to readable NUL-terminated pathnames
+    /// for the syscall duration. Cross-directory and replacement policy remain
+    /// caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn rename(old_path: *const c_char, new_path: *const c_char) -> c_int {
+        // SAFETY: the caller owns both pathname pointer contracts.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_RENAME,
+                old_path as usize as i64,
+                new_path as usize as i64,
+            )
+        };
+        c_status(result)
     }
+}}
 
-    // SAFETY: F_GETFD is the selected scalar descriptor-liveness probe. Do
-    // not translate this intermediate result: musl returns the original
-    // fchmod EBADF if the probe itself fails.
-    let descriptor_is_live = unsafe {
-        raw_syscall::syscall2(raw_syscall::SYS_FCNTL, i64::from(fd), F_GETFD)
-    } >= 0;
-    if !descriptor_is_live {
-        return c_status(result);
+// Musl's `src/unistd/link.c` object.
+static_archive_member! { link_source {
+    /// Create one hard link through Linux `link(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `existing_path` and `new_path` must point to readable NUL-terminated
+    /// pathnames for the syscall duration. Filesystem/link policy remains
+    /// caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn link(
+        existing_path: *const c_char,
+        new_path: *const c_char,
+    ) -> c_int {
+        // SAFETY: the caller owns both pathname pointer contracts.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_LINK,
+                existing_path as usize as i64,
+                new_path as usize as i64,
+            )
+        };
+        c_status(result)
     }
+}}
 
-    let mut procfd_path = [0u8; PROC_FD_NAME_SIZE];
-    procfdname(&mut procfd_path, fd);
-    // SAFETY: procfdname writes a NUL-terminated fixed stack pathname, and
-    // Linux validates the scalar mode word.
-    let fallback = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_CHMOD,
-            procfd_path.as_ptr() as i64,
-            i64::from(mode),
-        )
-    };
-    c_status(fallback)
-}
+// Musl's `src/unistd/symlink.c` object.
+static_archive_member! { symlink_source {
+    /// Create one symbolic link through Linux `symlink(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `target` and `link_path` must point to readable NUL-terminated pathnames
+    /// for the syscall duration. The target spelling and namespace policy remain
+    /// caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn symlink(target: *const c_char, link_path: *const c_char) -> c_int {
+        // SAFETY: the caller owns both pathname pointer contracts.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_SYMLINK,
+                target as usize as i64,
+                link_path as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Resize one pathname through Linux `truncate(2)`.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the syscall
-/// duration. The caller owns file, range, and storage policy.
-#[no_mangle]
-pub unsafe extern "C" fn truncate(path: *const c_char, length: c_long) -> c_int {
-    // SAFETY: the caller owns the pathname pointer contract; x86 LP64 off_t
-    // is the signed 64-bit second syscall word.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_TRUNCATE,
-            path as usize as i64,
-            length,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/unistd/readlink.c` object.
+static_archive_member! { readlink_source {
+    /// Read one symbolic-link target into caller-owned bytes.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname. When `capacity`
+    /// is nonzero, `buffer` must designate writable storage for that many bytes.
+    /// A zero capacity accepts any buffer value and follows musl's dummy-byte,
+    /// zero-result behavior. The output is not NUL-terminated by this API.
+    #[no_mangle]
+    pub unsafe extern "C" fn readlink(
+        path: *const c_char,
+        buffer: *mut c_char,
+        capacity: usize,
+    ) -> isize {
+        let mut dummy = 0u8;
+        let (kernel_buffer, kernel_capacity) = if capacity == 0 {
+            (&mut dummy as *mut u8 as *mut c_char, 1usize)
+        } else {
+            (buffer, capacity)
+        };
+        // SAFETY: the caller owns the pathname and nonzero output contracts; the
+        // local dummy is writable for the zero-capacity musl compatibility path.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_READLINK,
+                path as usize as i64,
+                kernel_buffer as usize as i64,
+                kernel_capacity as i64,
+            )
+        };
+        if capacity == 0 && result > 0 {
+            0
+        } else {
+            c_ssize_status(result)
+        }
+    }
+}}
+
+// Musl's `src/stat/chmod.c` object.
+static_archive_member! { chmod_source {
+    /// Change one pathname's mode through Linux `chmod(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the syscall
+    /// duration. Permission, ownership, and namespace policy remain caller-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn chmod(path: *const c_char, mode: c_uint) -> c_int {
+        // SAFETY: the caller owns the pathname pointer contract; Linux validates
+        // the scalar mode word.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_CHMOD,
+                path as usize as i64,
+                i64::from(mode),
+            )
+        };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/stat/fchmod.c` object.
+static_archive_member! { fchmod_source {
+    /// Change one descriptor's mode, including musl's O_PATH procfs fallback.
+    ///
+    /// The fallback is intentionally constrained to a live descriptor whose
+    /// `F_GETFD` probe succeeds after `fchmod` reports `EBADF`; other direct
+    /// errors preserve their original Linux `errno` result.
+    #[no_mangle]
+    pub extern "C" fn fchmod(fd: c_int, mode: c_uint) -> c_int {
+        // SAFETY: both initial fchmod words are scalar Linux values.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_FCHMOD,
+                i64::from(fd),
+                i64::from(mode),
+            )
+        };
+        if result != -EBADF {
+            return c_status(result);
+        }
+
+        // SAFETY: F_GETFD is the selected scalar descriptor-liveness probe. Do
+        // not translate this intermediate result: musl returns the original
+        // fchmod EBADF if the probe itself fails.
+        let descriptor_is_live = unsafe {
+            raw_syscall::syscall2(raw_syscall::SYS_FCNTL, i64::from(fd), F_GETFD)
+        } >= 0;
+        if !descriptor_is_live {
+            return c_status(result);
+        }
+
+        let mut procfd_path = [0u8; PROC_FD_NAME_SIZE];
+        procfdname(&mut procfd_path, fd);
+        // SAFETY: procfdname writes a NUL-terminated fixed stack pathname, and
+        // Linux validates the scalar mode word.
+        let fallback = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_CHMOD,
+                procfd_path.as_ptr() as i64,
+                i64::from(mode),
+            )
+        };
+        c_status(fallback)
+    }
+}}
+
+// Musl's `src/unistd/truncate.c` object.
+static_archive_member! { truncate_source {
+    /// Resize one pathname through Linux `truncate(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the syscall
+    /// duration. The caller owns file, range, and storage policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn truncate(path: *const c_char, length: c_long) -> c_int {
+        // SAFETY: the caller owns the pathname pointer contract; x86 LP64 off_t
+        // is the signed 64-bit second syscall word.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_TRUNCATE,
+                path as usize as i64,
+                length,
+            )
+        };
+        c_status(result)
+    }
+}}

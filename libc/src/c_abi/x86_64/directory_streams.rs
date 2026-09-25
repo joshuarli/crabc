@@ -429,118 +429,133 @@ unsafe fn next_record(stream: *mut DirectoryStream) -> *mut Dirent {
     record as *mut Dirent
 }
 
-/// Open one pathname as an owned close-on-exec directory stream.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the complete
-/// raw Linux `openat(2)` call, unless the caller deliberately exercises a
-/// kernel pointer-fault path. The caller owns pathname resolution races.
-// Internal callers such as `nftw` reach this one public provider, as they
-// reach musl's separate `opendir.c`; keep it a call rather than an inlined
-// copy now that its body is small.
-#[inline(never)]
-#[no_mangle]
-pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut DirectoryStream {
-    // SAFETY: the caller owns the raw pathname contract; Linux x86's fourth
-    // openat word is zero mode and `syscall4` places it in r10.
-    let descriptor = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_OPENAT,
-            i64::from(AT_FDCWD),
-            path as usize as i64,
-            i64::from(O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_LARGEFILE),
-            0,
-        )
-    };
-    if is_linux_error(descriptor) {
-        // SAFETY: the result was checked as Linux's errno encoding.
-        unsafe { set_linux_error(descriptor) };
-        return ptr::null_mut();
+// Musl's `src/dirent/opendir.c` object.
+static_archive_member! { opendir_source {
+    /// Open one pathname as an owned close-on-exec directory stream.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the complete
+    /// raw Linux `openat(2)` call, unless the caller deliberately exercises a
+    /// kernel pointer-fault path. The caller owns pathname resolution races.
+    // Internal callers such as `nftw` reach this one public provider, as they
+    // reach musl's separate `opendir.c`; keep it a call rather than an inlined
+    // copy now that its body is small.
+    #[inline(never)]
+    #[no_mangle]
+    pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut DirectoryStream {
+        // SAFETY: the caller owns the raw pathname contract; Linux x86's fourth
+        // openat word is zero mode and `syscall4` places it in r10.
+        let descriptor = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_OPENAT,
+                i64::from(AT_FDCWD),
+                path as usize as i64,
+                i64::from(O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_LARGEFILE),
+                0,
+            )
+        };
+        if is_linux_error(descriptor) {
+            // SAFETY: the result was checked as Linux's errno encoding.
+            unsafe { set_linux_error(descriptor) };
+            return ptr::null_mut();
+        }
+        // Musl's `open` follows every O_CLOEXEC descriptor with this fix-up;
+        // O_DIRECTORY has already rejected a non-directory.
+        unsafe { set_close_on_exec(descriptor as c_int) };
+        let stream = unsafe { new_directory_stream(descriptor as c_int) };
+        if stream.is_null() {
+            // The raw close publishes no errno, so the allocation failure stays
+            // the reported error, as in musl's `__syscall(SYS_close, fd)`.
+            let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
+        }
+        stream
     }
-    // Musl's `open` follows every O_CLOEXEC descriptor with this fix-up;
-    // O_DIRECTORY has already rejected a non-directory.
-    unsafe { set_close_on_exec(descriptor as c_int) };
-    let stream = unsafe { new_directory_stream(descriptor as c_int) };
-    if stream.is_null() {
-        // The raw close publishes no errno, so the allocation failure stays
-        // the reported error, as in musl's `__syscall(SYS_close, fd)`.
-        let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
-    }
-    stream
-}
+}}
 
-/// Transfer one existing descriptor into a directory stream on success.
-///
-/// A failure leaves the descriptor owned by the caller. The selected leaf
-/// rejects an `O_PATH` descriptor with `EBADF` and a non-directory descriptor
-/// with `ENOTDIR`; all other descriptor behavior remains Linux-owned.
-#[no_mangle]
-pub extern "C" fn fdopendir(file_descriptor: c_int) -> *mut DirectoryStream {
-    // SAFETY: Linux validates the scalar descriptor and the helper does not
-    // dereference caller-provided memory.
-    unsafe { adopt_directory_descriptor(file_descriptor) }
-}
-
-/// Close the owned descriptor and release its stream state.
-///
-/// # Safety
-///
-/// `stream` must be a live, exclusive `DIR *` previously returned by this
-/// leaf. The pointer becomes invalid on every return path, and callers must
-/// not concurrently access it or retain `readdir` record pointers afterward.
-#[no_mangle]
-pub unsafe extern "C" fn closedir(stream: *mut DirectoryStream) -> c_int {
-    if stream.is_null() {
-        // SAFETY: this selected C ABI owns its defensive null-stream errno.
-        unsafe { errno::set_errno(EBADF) };
-        return -1;
+// Musl's `src/dirent/fdopendir.c` object.
+static_archive_member! { fdopendir_source {
+    /// Transfer one existing descriptor into a directory stream on success.
+    ///
+    /// A failure leaves the descriptor owned by the caller. The selected leaf
+    /// rejects an `O_PATH` descriptor with `EBADF` and a non-directory descriptor
+    /// with `ENOTDIR`; all other descriptor behavior remains Linux-owned.
+    #[no_mangle]
+    pub extern "C" fn fdopendir(file_descriptor: c_int) -> *mut DirectoryStream {
+        // SAFETY: Linux validates the scalar descriptor and the helper does not
+        // dereference caller-provided memory.
+        unsafe { adopt_directory_descriptor(file_descriptor) }
     }
-    let file_descriptor = unsafe { (*stream).file_descriptor };
-    let close_result = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_CLOSE, i64::from(file_descriptor))
-    };
-    // SAFETY: `stream` is the caller's live exclusive stream; it is not used
-    // after release.
-    unsafe { release_stream(stream) };
-    c_status(close_result)
-}
+}}
 
-/// Return the descriptor owned by one live directory stream.
-///
-/// # Safety
-///
-/// `stream` must be a live, exclusively accessible `DIR *` returned by this
-/// leaf for the duration of the read.
-#[no_mangle]
-pub unsafe extern "C" fn dirfd(stream: *mut DirectoryStream) -> c_int {
-    if stream.is_null() {
-        // SAFETY: this selected C ABI owns its defensive null-stream errno.
-        unsafe { errno::set_errno(EBADF) };
-        -1
-    } else {
-        unsafe { (*stream).file_descriptor }
+// Musl's `src/dirent/closedir.c` object.
+static_archive_member! { closedir_source {
+    /// Close the owned descriptor and release its stream state.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must be a live, exclusive `DIR *` previously returned by this
+    /// leaf. The pointer becomes invalid on every return path, and callers must
+    /// not concurrently access it or retain `readdir` record pointers afterward.
+    #[no_mangle]
+    pub unsafe extern "C" fn closedir(stream: *mut DirectoryStream) -> c_int {
+        if stream.is_null() {
+            // SAFETY: this selected C ABI owns its defensive null-stream errno.
+            unsafe { errno::set_errno(EBADF) };
+            return -1;
+        }
+        let file_descriptor = unsafe { (*stream).file_descriptor };
+        let close_result = unsafe {
+            raw_syscall::syscall1(raw_syscall::SYS_CLOSE, i64::from(file_descriptor))
+        };
+        // SAFETY: `stream` is the caller's live exclusive stream; it is not used
+        // after release.
+        unsafe { release_stream(stream) };
+        c_status(close_result)
     }
-}
+}}
 
-/// Read the next validated directory record, or return null at exhaustion.
-///
-/// # Safety
-///
-/// `stream` must be a live, exclusively accessible `DIR *` returned by this
-/// leaf. A non-null record pointer borrows private stream storage and remains
-/// valid only until the next directory operation on that stream or `closedir`.
-#[no_mangle]
-pub unsafe extern "C" fn readdir(stream: *mut DirectoryStream) -> *mut Dirent {
-    if stream.is_null() {
-        // SAFETY: this selected C ABI owns its defensive null-stream errno.
-        unsafe { errno::set_errno(EBADF) };
-        return ptr::null_mut();
+// Musl's `src/dirent/dirfd.c` object.
+static_archive_member! { dirfd_source {
+    /// Return the descriptor owned by one live directory stream.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must be a live, exclusively accessible `DIR *` returned by this
+    /// leaf for the duration of the read.
+    #[no_mangle]
+    pub unsafe extern "C" fn dirfd(stream: *mut DirectoryStream) -> c_int {
+        if stream.is_null() {
+            // SAFETY: this selected C ABI owns its defensive null-stream errno.
+            unsafe { errno::set_errno(EBADF) };
+            -1
+        } else {
+            unsafe { (*stream).file_descriptor }
+        }
     }
-    // SAFETY: the caller's documented live/exclusive stream requirement
-    // covers the cursor state for this unlocked musl `readdir`.
-    unsafe { next_record(stream) }
-}
+}}
+
+// Musl's `src/dirent/readdir.c` object.
+static_archive_member! { readdir_source {
+    /// Read the next validated directory record, or return null at exhaustion.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must be a live, exclusively accessible `DIR *` returned by this
+    /// leaf. A non-null record pointer borrows private stream storage and remains
+    /// valid only until the next directory operation on that stream or `closedir`.
+    #[no_mangle]
+    pub unsafe extern "C" fn readdir(stream: *mut DirectoryStream) -> *mut Dirent {
+        if stream.is_null() {
+            // SAFETY: this selected C ABI owns its defensive null-stream errno.
+            unsafe { errno::set_errno(EBADF) };
+            return ptr::null_mut();
+        }
+        // SAFETY: the caller's documented live/exclusive stream requirement
+        // covers the cursor state for this unlocked musl `readdir`.
+        unsafe { next_record(stream) }
+    }
+}}
 
 /// Read one validated entry name without exposing the private `dirent` layout.
 ///
@@ -593,58 +608,61 @@ pub(super) unsafe fn next_entry_name(
     }))
 }
 
-/// Copy the next directory record into caller-owned `struct dirent` storage.
-///
-/// # Safety
-///
-/// `stream` must be live and exclusively accessible. `buffer` must designate
-/// writable storage for one complete x86 `struct dirent`, and `result` must
-/// designate writable storage for one record pointer; those regions must not
-/// overlap the private stream state in a way that violates the copy contract.
-#[no_mangle]
-pub unsafe extern "C" fn readdir_r(
-    stream: *mut DirectoryStream,
-    buffer: *mut Dirent,
-    result: *mut *mut Dirent,
-) -> c_int {
-    if stream.is_null() || buffer.is_null() || result.is_null() {
-        return EBADF;
-    }
-    let saved_errno = unsafe { errno::get_errno() };
-    let lock = unsafe { stream_lock(stream) };
-    musl_lock::lock(lock);
-    // SAFETY: a zero errno distinguishes normal exhaustion from readdir's
-    // selected error result for this legacy C API.
-    unsafe { errno::set_errno(0) };
-    // SAFETY: the held stream lock serializes this cursor update with every
-    // other readdir_r, seekdir, and rewinddir caller.
-    let record = unsafe { next_record(stream) };
-    let read_errno = unsafe { errno::get_errno() };
-    if read_errno != 0 {
-        musl_lock::unlock(lock);
-        return read_errno;
-    }
-    // SAFETY: normal EOF must leave the caller's previous errno observable.
-    unsafe { errno::set_errno(saved_errno) };
-    let published = if record.is_null() {
-        ptr::null_mut()
-    } else {
-        let record_length = unsafe { (*record).record_length } as usize;
-        // SAFETY: `next_record` validates that this raw record fits in the
-        // private buffer and in the public 280-byte dirent layout; the caller
-        // provides one complete output dirent. Musl copies it before unlocking
-        // because another reader may refill the buffer afterward.
-        unsafe {
-            ptr::copy_nonoverlapping(record.cast::<u8>(), buffer.cast::<u8>(), record_length)
+// Musl's `src/dirent/readdir_r.c` object.
+static_archive_member! { readdir_r_source {
+    /// Copy the next directory record into caller-owned `struct dirent` storage.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must be live and exclusively accessible. `buffer` must designate
+    /// writable storage for one complete x86 `struct dirent`, and `result` must
+    /// designate writable storage for one record pointer; those regions must not
+    /// overlap the private stream state in a way that violates the copy contract.
+    #[no_mangle]
+    pub unsafe extern "C" fn readdir_r(
+        stream: *mut DirectoryStream,
+        buffer: *mut Dirent,
+        result: *mut *mut Dirent,
+    ) -> c_int {
+        if stream.is_null() || buffer.is_null() || result.is_null() {
+            return EBADF;
+        }
+        let saved_errno = unsafe { errno::get_errno() };
+        let lock = unsafe { stream_lock(stream) };
+        musl_lock::lock(lock);
+        // SAFETY: a zero errno distinguishes normal exhaustion from readdir's
+        // selected error result for this legacy C API.
+        unsafe { errno::set_errno(0) };
+        // SAFETY: the held stream lock serializes this cursor update with every
+        // other readdir_r, seekdir, and rewinddir caller.
+        let record = unsafe { next_record(stream) };
+        let read_errno = unsafe { errno::get_errno() };
+        if read_errno != 0 {
+            musl_lock::unlock(lock);
+            return read_errno;
+        }
+        // SAFETY: normal EOF must leave the caller's previous errno observable.
+        unsafe { errno::set_errno(saved_errno) };
+        let published = if record.is_null() {
+            ptr::null_mut()
+        } else {
+            let record_length = unsafe { (*record).record_length } as usize;
+            // SAFETY: `next_record` validates that this raw record fits in the
+            // private buffer and in the public 280-byte dirent layout; the caller
+            // provides one complete output dirent. Musl copies it before unlocking
+            // because another reader may refill the buffer afterward.
+            unsafe {
+                ptr::copy_nonoverlapping(record.cast::<u8>(), buffer.cast::<u8>(), record_length)
+            };
+            buffer
         };
-        buffer
-    };
-    musl_lock::unlock(lock);
-    // SAFETY: the caller provides writable result-pointer storage; musl
-    // publishes it after releasing the stream.
-    unsafe { *result = published };
-    0
-}
+        musl_lock::unlock(lock);
+        // SAFETY: the caller provides writable result-pointer storage; musl
+        // publishes it after releasing the stream.
+        unsafe { *result = published };
+        0
+    }
+}}
 
 // `scandir` is an allocation client, not a second allocator.  The x86 thunks
 // keep calls at the C ABI spelling even though this crate also owns strong
@@ -731,125 +749,129 @@ unsafe extern "C" fn scandir_qsort_compare(
     unsafe { comparator(left.cast(), right.cast()) }
 }
 
-/// Collect selected directory records into caller-owned C allocations.
-///
-/// This is enabled only by the opt-in `x86-scandir` mixed-runtime feature. It
-/// follows musl 1.2.6 `src/dirent/scandir.c`: each accepted transient readdir
-/// record is copied through its exact `d_reclen`, and successful callers free
-/// every returned record followed by the returned pointer vector through the
-/// same C `free` ABI. A zero-result scan stores a null vector and returns zero.
-///
-/// # Safety
-///
-/// `path` must meet `opendir`'s NUL-terminated pathname requirement and
-/// `result` must designate writable storage for one `struct dirent **` on the
-/// successful-result path. If non-null, `selector` receives a transient
-/// readdir record valid only for that callback; if non-null, `comparator`
-/// receives pointers to live returned-record slots while sorting. Both callbacks
-/// must remain valid, obey their C pointer contracts, and return normally:
-/// C++ exceptions and C `longjmp` must not cross this Rust boundary.
+// Musl's `src/dirent/scandir.c` object.
 #[cfg(crabc_x86_scandir)]
-#[no_mangle]
-pub unsafe extern "C" fn scandir(
-    path: *const c_char,
-    result: *mut *mut *mut Dirent,
-    selector: Option<ScandirSelector>,
-    comparator: Option<ScandirComparator>,
-) -> c_int {
-    // Preserve musl's initialization order: opendir owns its direct failure
-    // errno, while a successful scan restores the errno observed immediately
-    // after opening.
-    let directory = unsafe { opendir(path) };
-    let saved_errno = unsafe { errno::get_errno() };
-    if directory.is_null() {
-        return -1;
-    }
-
-    let mut names: *mut *mut Dirent = ptr::null_mut();
-    let mut count = 0usize;
-    let mut length = 0usize;
-
-    loop {
-        // Like musl, distinguish ordinary end-of-stream from readdir failure
-        // through the selected calling-thread errno slot on every iteration.
-        unsafe { errno::set_errno(0) };
-        let entry = unsafe { readdir(directory) };
-        if entry.is_null() {
-            break;
+static_archive_member! { scandir_source {
+    /// Collect selected directory records into caller-owned C allocations.
+    ///
+    /// This is enabled only by the opt-in `x86-scandir` mixed-runtime feature. It
+    /// follows musl 1.2.6 `src/dirent/scandir.c`: each accepted transient readdir
+    /// record is copied through its exact `d_reclen`, and successful callers free
+    /// every returned record followed by the returned pointer vector through the
+    /// same C `free` ABI. A zero-result scan stores a null vector and returns zero.
+    ///
+    /// # Safety
+    ///
+    /// `path` must meet `opendir`'s NUL-terminated pathname requirement and
+    /// `result` must designate writable storage for one `struct dirent **` on the
+    /// successful-result path. If non-null, `selector` receives a transient
+    /// readdir record valid only for that callback; if non-null, `comparator`
+    /// receives pointers to live returned-record slots while sorting. Both callbacks
+    /// must remain valid, obey their C pointer contracts, and return normally:
+    /// C++ exceptions and C `longjmp` must not cross this Rust boundary.
+    #[cfg(crabc_x86_scandir)]
+    #[no_mangle]
+    pub unsafe extern "C" fn scandir(
+        path: *const c_char,
+        result: *mut *mut *mut Dirent,
+        selector: Option<ScandirSelector>,
+        comparator: Option<ScandirComparator>,
+    ) -> c_int {
+        // Preserve musl's initialization order: opendir owns its direct failure
+        // errno, while a successful scan restores the errno observed immediately
+        // after opening.
+        let directory = unsafe { opendir(path) };
+        let saved_errno = unsafe { errno::get_errno() };
+        if directory.is_null() {
+            return -1;
         }
-        if let Some(select) = selector {
-            // SAFETY: the live directory stream supplies this transient,
-            // validated record for the callback's duration only.
-            if unsafe { select(entry.cast_const()) } == 0 {
-                continue;
-            }
-        }
 
-        if count >= length {
-            // Musl's size_t growth sequence is 1, 3, 7, ... . The following
-            // multiplication guard is source-faithful: it exits the loop
-            // before realloc rather than manufacturing another error policy.
-            length = length.wrapping_mul(2).wrapping_add(1);
-            if length > usize::MAX / size_of::<*mut Dirent>() {
+        let mut names: *mut *mut Dirent = ptr::null_mut();
+        let mut count = 0usize;
+        let mut length = 0usize;
+
+        loop {
+            // Like musl, distinguish ordinary end-of-stream from readdir failure
+            // through the selected calling-thread errno slot on every iteration.
+            unsafe { errno::set_errno(0) };
+            let entry = unsafe { readdir(directory) };
+            if entry.is_null() {
                 break;
             }
-            let replacement = unsafe {
-                cabi_scandir_realloc(
+            if let Some(select) = selector {
+                // SAFETY: the live directory stream supplies this transient,
+                // validated record for the callback's duration only.
+                if unsafe { select(entry.cast_const()) } == 0 {
+                    continue;
+                }
+            }
+
+            if count >= length {
+                // Musl's size_t growth sequence is 1, 3, 7, ... . The following
+                // multiplication guard is source-faithful: it exits the loop
+                // before realloc rather than manufacturing another error policy.
+                length = length.wrapping_mul(2).wrapping_add(1);
+                if length > usize::MAX / size_of::<*mut Dirent>() {
+                    break;
+                }
+                let replacement = unsafe {
+                    cabi_scandir_realloc(
+                        names.cast(),
+                        length * size_of::<*mut Dirent>(),
+                    )
+                }
+                .cast::<*mut Dirent>();
+                if replacement.is_null() {
+                    break;
+                }
+                names = replacement;
+            }
+
+            // `next_record` has already checked the Linux record framing and NUL
+            // termination. Preserve musl's exact allocated/copy length instead of
+            // copying the complete fixed public 280-byte representation.
+            let record_length = unsafe { (*entry).record_length } as usize;
+            let copy = unsafe { cabi_scandir_malloc(record_length) }.cast::<Dirent>();
+            if copy.is_null() {
+                break;
+            }
+            unsafe {
+                ptr::copy_nonoverlapping(entry.cast::<u8>(), copy.cast::<u8>(), record_length);
+                names.add(count).write(copy);
+            }
+            count = count.wrapping_add(1);
+        }
+
+        // Musl deliberately lets closedir's errno participate in the final error
+        // decision, so do not preserve or replace its return value here.
+        let _ = unsafe { closedir(directory) };
+        if unsafe { errno::get_errno() } != 0 {
+            unsafe { scandir_free_partial(names, count) };
+            return -1;
+        }
+        unsafe { errno::set_errno(saved_errno) };
+
+        if let Some(compare) = comparator {
+            // SAFETY: every initialized vector slot owns one full copied record;
+            // qsort consumes only this contiguous pointer array and the callback
+            // boundary is documented above.
+            unsafe {
+                crate::x86_64_static_c_abi::qsort::qsort_with_context(
                     names.cast(),
-                    length * size_of::<*mut Dirent>(),
+                    count,
+                    size_of::<*mut Dirent>(),
+                    scandir_qsort_compare,
+                    compare as *mut c_void,
                 )
-            }
-            .cast::<*mut Dirent>();
-            if replacement.is_null() {
-                break;
-            }
-            names = replacement;
+            };
         }
 
-        // `next_record` has already checked the Linux record framing and NUL
-        // termination. Preserve musl's exact allocated/copy length instead of
-        // copying the complete fixed public 280-byte representation.
-        let record_length = unsafe { (*entry).record_length } as usize;
-        let copy = unsafe { cabi_scandir_malloc(record_length) }.cast::<Dirent>();
-        if copy.is_null() {
-            break;
-        }
-        unsafe {
-            ptr::copy_nonoverlapping(entry.cast::<u8>(), copy.cast::<u8>(), record_length);
-            names.add(count).write(copy);
-        }
-        count = count.wrapping_add(1);
+        // Match musl's success publication point. In particular, a failed open or
+        // scan never writes `result`, and no null-result hardening is introduced.
+        unsafe { result.write(names) };
+        count as c_int
     }
-
-    // Musl deliberately lets closedir's errno participate in the final error
-    // decision, so do not preserve or replace its return value here.
-    let _ = unsafe { closedir(directory) };
-    if unsafe { errno::get_errno() } != 0 {
-        unsafe { scandir_free_partial(names, count) };
-        return -1;
-    }
-    unsafe { errno::set_errno(saved_errno) };
-
-    if let Some(compare) = comparator {
-        // SAFETY: every initialized vector slot owns one full copied record;
-        // qsort consumes only this contiguous pointer array and the callback
-        // boundary is documented above.
-        unsafe {
-            super::qsort::qsort_with_context(
-                names.cast(),
-                count,
-                size_of::<*mut Dirent>(),
-                scandir_qsort_compare,
-                compare as *mut c_void,
-            )
-        };
-    }
-
-    // Match musl's success publication point. In particular, a failed open or
-    // scan never writes `result`, and no null-result hardening is introduced.
-    unsafe { result.write(names) };
-    count as c_int
-}
+}}
 
 /// Link-time witness for the opt-in x86 scandir object.
 ///
@@ -862,201 +884,222 @@ pub extern "C" fn __crabc_x86_scandir_v1() -> usize {
     1
 }
 
-/// Reset a stream to Linux directory offset zero and discard buffered records.
-///
-/// # Safety
-///
-/// `stream` must be a live, exclusively accessible `DIR *` returned by this
-/// leaf. The caller owns concurrent directory mutation and cookie semantics.
-#[no_mangle]
-pub unsafe extern "C" fn rewinddir(stream: *mut DirectoryStream) {
-    if stream.is_null() {
-        // SAFETY: this selected C ABI owns its defensive null-stream errno.
-        unsafe { errno::set_errno(EBADF) };
-        return;
-    }
-    let lock = unsafe { stream_lock(stream) };
-    musl_lock::lock(lock);
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_LSEEK,
-            i64::from((*stream).file_descriptor),
-            0,
-            i64::from(SEEK_SET),
-        )
-    };
-    if is_linux_error(result) {
-        // SAFETY: the result was checked as Linux's errno encoding.
-        unsafe { set_linux_error(result) };
-    }
-    // SAFETY: the held stream lock serializes this cursor reset.
-    unsafe {
-        (*stream).buffer_position = 0;
-        (*stream).buffer_end = 0;
-        (*stream).tell = 0;
-    }
-    musl_lock::unlock(lock);
-}
-
-/// Seek to one opaque directory cookie and discard buffered records.
-///
-/// # Safety
-///
-/// `stream` must be a live, exclusively accessible `DIR *` returned by this
-/// leaf. `offset` must be a cookie previously obtained from this stream for
-/// portable behavior; all other kernel cookie semantics remain Linux-owned.
-#[no_mangle]
-pub unsafe extern "C" fn seekdir(stream: *mut DirectoryStream, offset: c_long) {
-    if stream.is_null() {
-        // SAFETY: this selected C ABI owns its defensive null-stream errno.
-        unsafe { errno::set_errno(EBADF) };
-        return;
-    }
-    let lock = unsafe { stream_lock(stream) };
-    musl_lock::lock(lock);
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_LSEEK,
-            i64::from((*stream).file_descriptor),
-            offset,
-            i64::from(SEEK_SET),
-        )
-    };
-    // SAFETY: the held stream lock serializes this cursor replacement.
-    unsafe {
+// Musl's `src/dirent/rewinddir.c` object.
+static_archive_member! { rewinddir_source {
+    /// Reset a stream to Linux directory offset zero and discard buffered records.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must be a live, exclusively accessible `DIR *` returned by this
+    /// leaf. The caller owns concurrent directory mutation and cookie semantics.
+    #[no_mangle]
+    pub unsafe extern "C" fn rewinddir(stream: *mut DirectoryStream) {
+        if stream.is_null() {
+            // SAFETY: this selected C ABI owns its defensive null-stream errno.
+            unsafe { errno::set_errno(EBADF) };
+            return;
+        }
+        let lock = unsafe { stream_lock(stream) };
+        musl_lock::lock(lock);
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_LSEEK,
+                i64::from((*stream).file_descriptor),
+                0,
+                i64::from(SEEK_SET),
+            )
+        };
         if is_linux_error(result) {
-            set_linux_error(result);
-            (*stream).tell = -1;
+            // SAFETY: the result was checked as Linux's errno encoding.
+            unsafe { set_linux_error(result) };
+        }
+        // SAFETY: the held stream lock serializes this cursor reset.
+        unsafe {
+            (*stream).buffer_position = 0;
+            (*stream).buffer_end = 0;
+            (*stream).tell = 0;
+        }
+        musl_lock::unlock(lock);
+    }
+}}
+
+// Musl's `src/dirent/seekdir.c` object.
+static_archive_member! { seekdir_source {
+    /// Seek to one opaque directory cookie and discard buffered records.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must be a live, exclusively accessible `DIR *` returned by this
+    /// leaf. `offset` must be a cookie previously obtained from this stream for
+    /// portable behavior; all other kernel cookie semantics remain Linux-owned.
+    #[no_mangle]
+    pub unsafe extern "C" fn seekdir(stream: *mut DirectoryStream, offset: c_long) {
+        if stream.is_null() {
+            // SAFETY: this selected C ABI owns its defensive null-stream errno.
+            unsafe { errno::set_errno(EBADF) };
+            return;
+        }
+        let lock = unsafe { stream_lock(stream) };
+        musl_lock::lock(lock);
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_LSEEK,
+                i64::from((*stream).file_descriptor),
+                offset,
+                i64::from(SEEK_SET),
+            )
+        };
+        // SAFETY: the held stream lock serializes this cursor replacement.
+        unsafe {
+            if is_linux_error(result) {
+                set_linux_error(result);
+                (*stream).tell = -1;
+            } else {
+                (*stream).tell = result as c_long;
+            }
+            (*stream).buffer_position = 0;
+            (*stream).buffer_end = 0;
+        }
+        musl_lock::unlock(lock);
+    }
+}}
+
+// Musl's `src/dirent/telldir.c` object.
+static_archive_member! { telldir_source {
+    /// Return the last opaque directory cookie observed by this stream.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must be a live, exclusively accessible `DIR *` returned by this
+    /// leaf for the duration of the read.
+    #[no_mangle]
+    pub unsafe extern "C" fn telldir(stream: *mut DirectoryStream) -> c_long {
+        if stream.is_null() {
+            // SAFETY: this selected C ABI owns its defensive null-stream errno.
+            unsafe { errno::set_errno(EBADF) };
+            -1
         } else {
-            (*stream).tell = result as c_long;
+            unsafe { (*stream).tell }
         }
-        (*stream).buffer_position = 0;
-        (*stream).buffer_end = 0;
     }
-    musl_lock::unlock(lock);
-}
+}}
 
-/// Return the last opaque directory cookie observed by this stream.
-///
-/// # Safety
-///
-/// `stream` must be a live, exclusively accessible `DIR *` returned by this
-/// leaf for the duration of the read.
-#[no_mangle]
-pub unsafe extern "C" fn telldir(stream: *mut DirectoryStream) -> c_long {
-    if stream.is_null() {
-        // SAFETY: this selected C ABI owns its defensive null-stream errno.
-        unsafe { errno::set_errno(EBADF) };
-        -1
-    } else {
-        unsafe { (*stream).tell }
-    }
-}
-
-/// Compare two directory entries using the selected C/POSIX/C.UTF-8 byte
-/// collation profile.
-///
-/// # Safety
-///
-/// `left` and `right` must each point to one valid pointer to a `struct
-/// dirent` whose `d_name` is a readable NUL-terminated byte string.
-#[no_mangle]
-pub unsafe extern "C" fn alphasort(
-    left: *const *const Dirent,
-    right: *const *const Dirent,
-) -> c_int {
-    let mut left_name = unsafe { (*left).cast::<u8>().add(offset_of!(Dirent, name)) };
-    let mut right_name = unsafe { (*right).cast::<u8>().add(offset_of!(Dirent, name)) };
-    loop {
-        let left_byte = unsafe { *left_name };
-        let right_byte = unsafe { *right_name };
-        if left_byte != right_byte {
-            return i32::from(left_byte) - i32::from(right_byte);
+// Musl's `src/dirent/alphasort.c` object.
+static_archive_member! { alphasort_source {
+    /// Compare two directory entries using the selected C/POSIX/C.UTF-8 byte
+    /// collation profile.
+    ///
+    /// # Safety
+    ///
+    /// `left` and `right` must each point to one valid pointer to a `struct
+    /// dirent` whose `d_name` is a readable NUL-terminated byte string.
+    #[no_mangle]
+    pub unsafe extern "C" fn alphasort(
+        left: *const *const Dirent,
+        right: *const *const Dirent,
+    ) -> c_int {
+        let mut left_name = unsafe { (*left).cast::<u8>().add(offset_of!(Dirent, name)) };
+        let mut right_name = unsafe { (*right).cast::<u8>().add(offset_of!(Dirent, name)) };
+        loop {
+            let left_byte = unsafe { *left_name };
+            let right_byte = unsafe { *right_name };
+            if left_byte != right_byte {
+                return i32::from(left_byte) - i32::from(right_byte);
+            }
+            if left_byte == 0 {
+                return 0;
+            }
+            left_name = unsafe { left_name.add(1) };
+            right_name = unsafe { right_name.add(1) };
         }
-        if left_byte == 0 {
-            return 0;
+    }
+}}
+
+// Musl's `src/dirent/versionsort.c` object.
+static_archive_member! { versionsort_source {
+    /// Compare two directory entry names with GNU `versionsort` ordering.
+    ///
+    /// # Safety
+    ///
+    /// `left` and `right` must each point to one valid pointer to a `struct
+    /// dirent` whose `d_name` is a readable NUL-terminated byte string. The
+    /// callback has no allocation or locale state and delegates to the selected
+    /// GNU `strverscmp` entry.
+    #[no_mangle]
+    pub unsafe extern "C" fn versionsort(
+        left: *const *const Dirent,
+        right: *const *const Dirent,
+    ) -> c_int {
+        let left_name = unsafe { (*left).cast::<u8>().add(offset_of!(Dirent, name)) };
+        let right_name = unsafe { (*right).cast::<u8>().add(offset_of!(Dirent, name)) };
+        // SAFETY: the caller's documented pointers provide two readable
+        // NUL-terminated directory names for the selected C-string comparator.
+        unsafe { byte_strings::strverscmp(left_name.cast(), right_name.cast()) }
+    }
+}}
+
+// Musl's `src/linux/getdents.c` object.
+static_archive_member! { getdents_source {
+    /// Fill one caller buffer with raw Linux `getdents64` records.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must designate `length` writable bytes for Linux's complete
+    /// `getdents64(2)` call. The caller owns descriptor lifetime, buffer parsing,
+    /// filesystem mutation, and any record-pointer lifetime.
+    #[no_mangle]
+    pub unsafe extern "C" fn getdents(
+        file_descriptor: c_int,
+        buffer: *mut Dirent,
+        length: usize,
+    ) -> c_int {
+        let length = length.min(DIRECTORY_RESULT_MAX);
+        // SAFETY: the caller supplies the full raw Linux output-buffer contract.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_GETDENTS64,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                length as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/dirent/posix_getdents.c` object.
+static_archive_member! { posix_getdents_source {
+    /// Fill one caller buffer with raw Linux records when no POSIX extension flag
+    /// is requested.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must designate `length` writable bytes for Linux's complete
+    /// `getdents64(2)` call when `flags` is zero. The caller owns descriptor and
+    /// output-buffer lifetime, filesystem mutation, and record parsing.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_getdents(
+        file_descriptor: c_int,
+        buffer: *mut c_void,
+        length: usize,
+        flags: c_int,
+    ) -> isize {
+        if flags != 0 {
+            // SAFETY: selected POSIX extension flags have one explicit unsupported
+            // boundary rather than a broad flag-translation layer.
+            unsafe { errno::set_errno(EOPNOTSUPP) };
+            return -1;
         }
-        left_name = unsafe { left_name.add(1) };
-        right_name = unsafe { right_name.add(1) };
+        let length = length.min(DIRECTORY_RESULT_MAX);
+        // SAFETY: the caller supplies the full raw Linux output-buffer contract.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_GETDENTS64,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                length as i64,
+            )
+        };
+        c_ssize_status(result)
     }
-}
-
-/// Compare two directory entry names with GNU `versionsort` ordering.
-///
-/// # Safety
-///
-/// `left` and `right` must each point to one valid pointer to a `struct
-/// dirent` whose `d_name` is a readable NUL-terminated byte string. The
-/// callback has no allocation or locale state and delegates to the selected
-/// GNU `strverscmp` entry.
-#[no_mangle]
-pub unsafe extern "C" fn versionsort(
-    left: *const *const Dirent,
-    right: *const *const Dirent,
-) -> c_int {
-    let left_name = unsafe { (*left).cast::<u8>().add(offset_of!(Dirent, name)) };
-    let right_name = unsafe { (*right).cast::<u8>().add(offset_of!(Dirent, name)) };
-    // SAFETY: the caller's documented pointers provide two readable
-    // NUL-terminated directory names for the selected C-string comparator.
-    unsafe { byte_strings::strverscmp(left_name.cast(), right_name.cast()) }
-}
-
-/// Fill one caller buffer with raw Linux `getdents64` records.
-///
-/// # Safety
-///
-/// `buffer` must designate `length` writable bytes for Linux's complete
-/// `getdents64(2)` call. The caller owns descriptor lifetime, buffer parsing,
-/// filesystem mutation, and any record-pointer lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn getdents(
-    file_descriptor: c_int,
-    buffer: *mut Dirent,
-    length: usize,
-) -> c_int {
-    let length = length.min(DIRECTORY_RESULT_MAX);
-    // SAFETY: the caller supplies the full raw Linux output-buffer contract.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_GETDENTS64,
-            i64::from(file_descriptor),
-            buffer as usize as i64,
-            length as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Fill one caller buffer with raw Linux records when no POSIX extension flag
-/// is requested.
-///
-/// # Safety
-///
-/// `buffer` must designate `length` writable bytes for Linux's complete
-/// `getdents64(2)` call when `flags` is zero. The caller owns descriptor and
-/// output-buffer lifetime, filesystem mutation, and record parsing.
-#[no_mangle]
-pub unsafe extern "C" fn posix_getdents(
-    file_descriptor: c_int,
-    buffer: *mut c_void,
-    length: usize,
-    flags: c_int,
-) -> isize {
-    if flags != 0 {
-        // SAFETY: selected POSIX extension flags have one explicit unsupported
-        // boundary rather than a broad flag-translation layer.
-        unsafe { errno::set_errno(EOPNOTSUPP) };
-        return -1;
-    }
-    let length = length.min(DIRECTORY_RESULT_MAX);
-    // SAFETY: the caller supplies the full raw Linux output-buffer contract.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_GETDENTS64,
-            i64::from(file_descriptor),
-            buffer as usize as i64,
-            length as i64,
-        )
-    };
-    c_ssize_status(result)
-}
+}}

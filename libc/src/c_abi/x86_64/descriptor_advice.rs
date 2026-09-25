@@ -41,60 +41,66 @@ fn posix_status(result: i64) -> c_int {
     }
 }
 
-/// Give Linux one POSIX access-pattern advisory over an open descriptor.
-///
-/// # Safety
-///
-/// `descriptor` must be open for a file type accepted by Linux
-/// `fadvise64(2)`, or the caller deliberately requests its direct error
-/// result. `offset` and `length` are passed unchanged as signed LP64 `off_t`
-/// words; `advice` is passed unchanged for Linux validation. The caller owns
-/// descriptor lifetime and all caching-policy consequences.
-#[no_mangle]
-pub unsafe extern "C" fn posix_fadvise(
-    descriptor: c_int,
-    offset: c_long,
-    length: c_long,
-    advice: c_int,
-) -> c_int {
-    // SAFETY: the caller owns the descriptor, signed-range, and advice-word
-    // contracts; syscall4 places the fourth Linux argument in r10.
-    let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_FADVISE64,
-            i64::from(descriptor),
-            i64::from(offset),
-            i64::from(length),
-            i64::from(advice),
-        )
-    };
-    posix_status(result)
-}
+// Musl's `src/fcntl/posix_fadvise.c` object.
+static_archive_member! { posix_fadvise_source {
+    /// Give Linux one POSIX access-pattern advisory over an open descriptor.
+    ///
+    /// # Safety
+    ///
+    /// `descriptor` must be open for a file type accepted by Linux
+    /// `fadvise64(2)`, or the caller deliberately requests its direct error
+    /// result. `offset` and `length` are passed unchanged as signed LP64 `off_t`
+    /// words; `advice` is passed unchanged for Linux validation. The caller owns
+    /// descriptor lifetime and all caching-policy consequences.
+    #[no_mangle]
+    pub unsafe extern "C" fn posix_fadvise(
+        descriptor: c_int,
+        offset: c_long,
+        length: c_long,
+        advice: c_int,
+    ) -> c_int {
+        // SAFETY: the caller owns the descriptor, signed-range, and advice-word
+        // contracts; syscall4 places the fourth Linux argument in r10.
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_FADVISE64,
+                i64::from(descriptor),
+                i64::from(offset),
+                i64::from(length),
+                i64::from(advice),
+            )
+        };
+        posix_status(result)
+    }
+}}
 
-/// Request Linux readahead for one descriptor range.
-///
-/// # Safety
-///
-/// `descriptor` must be open for a file type accepted by Linux
-/// `readahead(2)`, or the caller deliberately requests its ordinary C error
-/// result. `offset` is passed unchanged as signed LP64 `off_t`, and `count`
-/// is passed unchanged as `size_t`; the caller owns descriptor lifetime and
-/// the advisory caching consequences.
-#[no_mangle]
-pub unsafe extern "C" fn readahead(
-    descriptor: c_int,
-    offset: c_long,
-    count: usize,
-) -> isize {
-    // SAFETY: the caller owns the descriptor and scalar range contracts;
-    // Linux x86-64 receives readahead=187 in rdi/rsi/rdx.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_READAHEAD,
-            i64::from(descriptor),
-            i64::from(offset),
-            count as i64,
-        )
-    };
-    c_ssize_status(result)
-}
+// Musl's `src/linux/readahead.c` object.
+static_archive_member! { readahead_source {
+    /// Request Linux readahead for one descriptor range.
+    ///
+    /// # Safety
+    ///
+    /// `descriptor` must be open for a file type accepted by Linux
+    /// `readahead(2)`, or the caller deliberately requests its ordinary C error
+    /// result. `offset` is passed unchanged as signed LP64 `off_t`, and `count`
+    /// is passed unchanged as `size_t`; the caller owns descriptor lifetime and
+    /// the advisory caching consequences.
+    #[no_mangle]
+    pub unsafe extern "C" fn readahead(
+        descriptor: c_int,
+        offset: c_long,
+        count: usize,
+    ) -> isize {
+        // SAFETY: the caller owns the descriptor and scalar range contracts;
+        // Linux x86-64 receives readahead=187 in rdi/rsi/rdx.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_READAHEAD,
+                i64::from(descriptor),
+                i64::from(offset),
+                count as i64,
+            )
+        };
+        c_ssize_status(result)
+    }
+}}

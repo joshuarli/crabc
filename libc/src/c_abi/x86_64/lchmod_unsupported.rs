@@ -28,19 +28,22 @@ use super::errno;
 
 const EOPNOTSUPP: c_int = 95;
 
-/// Report Linux's deliberate unsupported no-follow mode-change result.
-///
-/// # Safety
-///
-/// The C ABI accepts the usual pathname pointer and `mode_t` scalar. This
-/// selected Linux profile deliberately does not dereference `path`, resolve a
-/// target, or inspect either argument before it writes the calling thread's
-/// initial-TLS `errno` slot. Callers still own all wider C pathname-lifetime
-/// and filesystem-policy expectations, which are outside this leaf.
-#[no_mangle]
-pub unsafe extern "C" fn lchmod(_path: *const c_char, _mode: c_uint) -> c_int {
-    // SAFETY: this selected x86 C ABI owns the caller's initial-TLS errno slot
-    // for this fixed Linux unsupported result.
-    unsafe { errno::set_errno(EOPNOTSUPP) };
-    -1
-}
+// Musl's `src/stat/lchmod.c` object.
+static_archive_member! { lchmod_source {
+    /// Report Linux's deliberate unsupported no-follow mode-change result.
+    ///
+    /// # Safety
+    ///
+    /// The C ABI accepts the usual pathname pointer and `mode_t` scalar. This
+    /// selected Linux profile deliberately does not dereference `path`, resolve a
+    /// target, or inspect either argument before it writes the calling thread's
+    /// initial-TLS `errno` slot. Callers still own all wider C pathname-lifetime
+    /// and filesystem-policy expectations, which are outside this leaf.
+    #[no_mangle]
+    pub unsafe extern "C" fn lchmod(_path: *const c_char, _mode: c_uint) -> c_int {
+        // SAFETY: this selected x86 C ABI owns the caller's initial-TLS errno slot
+        // for this fixed Linux unsupported result.
+        unsafe { errno::set_errno(EOPNOTSUPP) };
+        -1
+    }
+}}

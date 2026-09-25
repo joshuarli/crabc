@@ -1331,290 +1331,318 @@ unsafe fn submit(control: *mut AioCb, operation: c_int) -> c_int {
     result
 }
 
-/// Queue one positioned/as-appropriate read request.
-///
-/// # Safety
-/// `control` must designate a live aligned public `aiocb`; its descriptor,
-/// buffer and notification/storage lifetimes must meet POSIX through request
-/// completion/cancellation and `aio_return` observation.
-#[no_mangle]
-pub unsafe extern "C" fn aio_read(control: *mut AioCb) -> c_int {
-    unsafe { submit(control, LIO_READ) }
-}
-
-/// Queue one positioned/as-appropriate write request.
-///
-/// # Safety
-/// See [`aio_read`]; the buffer must be readable for the worker I/O duration.
-#[no_mangle]
-pub unsafe extern "C" fn aio_write(control: *mut AioCb) -> c_int {
-    unsafe { submit(control, LIO_WRITE) }
-}
-
-/// Queue one fsync/fdatasync request after validating musl's operation word.
-///
-/// # Safety
-/// `control` has the same lifetime requirements as [`aio_read`].
-#[no_mangle]
-pub unsafe extern "C" fn aio_fsync(operation: c_int, control: *mut AioCb) -> c_int {
-    if operation != O_SYNC && operation != O_DSYNC {
-        unsafe { errno::set_errno(EINVAL) };
-        return -1;
-    }
-    unsafe { submit(control, operation) }
-}
-
-/// Return the completed request byte count/result.
-///
-/// # Safety
-/// The caller must first observe a non-`EINPROGRESS` result through
-/// [`aio_error`] and keep the aiocb live. That acquire observation pairs with
-/// the worker's release completion before this source-shaped plain result read.
-#[no_mangle]
-pub unsafe extern "C" fn aio_return(control: *mut AioCb) -> isize {
-    unsafe { ptr::read(ptr::addr_of!((*control).result)) }
-}
-
-/// Observe one request's atomic completion/error state.
-///
-/// # Safety
-/// `control` must name a live aligned aiocb whose error word participates only
-/// in this AIO atomic protocol while the request is outstanding.
-#[no_mangle]
-pub unsafe extern "C" fn aio_error(control: *const AioCb) -> c_int {
-    unsafe { control_error_load(control.cast_mut()) & 0x7fff_ffff }
-}
-
-/// Cancel one matching live request or all requests for a descriptor.
-///
-/// # Safety
-/// `control`, when non-null, must be a live aiocb for `descriptor`; the
-/// descriptor and all queued request objects retain POSIX-required lifetimes.
-#[no_mangle]
-pub unsafe extern "C" fn aio_cancel(descriptor: c_int, control: *mut AioCb) -> c_int {
-    if !control.is_null() && descriptor != unsafe { (*control).descriptor } {
-        unsafe { errno::set_errno(EINVAL) };
-        return -1;
+// Musl's `src/aio/aio.c` object.
+static_archive_member! { aio_source {
+    /// Queue one positioned/as-appropriate read request.
+    ///
+    /// # Safety
+    /// `control` must designate a live aligned public `aiocb`; its descriptor,
+    /// buffer and notification/storage lifetimes must meet POSIX through request
+    /// completion/cancellation and `aio_return` observation.
+    #[no_mangle]
+    pub unsafe extern "C" fn aio_read(control: *mut AioCb) -> c_int {
+        unsafe { submit(control, LIO_READ) }
     }
 
-    let mut all_mask = SignalSet::empty();
-    let mut original_mask = SignalSet::empty();
-    unsafe {
-        signal_set_mutation::sigfillset(ptr::addr_of_mut!(all_mask).cast());
-        let _ = signal_control::pthread_sigmask(
-            SIG_BLOCK,
-            ptr::addr_of!(all_mask).cast(),
-            ptr::addr_of_mut!(original_mask).cast(),
-        );
-        errno::set_errno(ENOENT);
+    /// Queue one positioned/as-appropriate write request.
+    ///
+    /// # Safety
+    /// See [`aio_read`]; the buffer must be readable for the worker I/O duration.
+    #[no_mangle]
+    pub unsafe extern "C" fn aio_write(control: *mut AioCb) -> c_int {
+        unsafe { submit(control, LIO_WRITE) }
     }
 
-    let mut result = AIO_ALLDONE;
-    let queue = unsafe { get_queue(descriptor, false) };
-    if queue.is_null() {
-        if unsafe { errno::get_errno() } == EBADF {
-            result = -1;
+    /// Queue one fsync/fdatasync request after validating musl's operation word.
+    ///
+    /// # Safety
+    /// `control` has the same lifetime requirements as [`aio_read`].
+    #[no_mangle]
+    pub unsafe extern "C" fn aio_fsync(operation: c_int, control: *mut AioCb) -> c_int {
+        if operation != O_SYNC && operation != O_DSYNC {
+            unsafe { errno::set_errno(EINVAL) };
+            return -1;
         }
-    } else {
-        // The source holds q over its entire traversal. That deadlocks when a
-        // sequenced worker is cancelled inside pthread_cond_wait: its cleanup
-        // must reacquire q before it can publish running=0. The cursor bounds
-        // the exact source-visible request set while we release q per pinned
-        // worker. It is stack storage only; all queue mutation remains under
-        // q and no new allocation/refcount ownership is introduced here.
-        let mut cursor = AioCancelCursor {
-            link: AioListNode::cancel_cursor(),
-        };
-        let cursor_link = ptr::addr_of_mut!(cursor.link);
-        unsafe { queue_link_head(queue, cursor_link) };
+        unsafe { submit(control, operation) }
+    }
 
-        loop {
-            let node = unsafe { (*cursor_link).next };
-            if node.is_null() {
-                unsafe {
-                    queue_unlink_node(queue, cursor_link);
-                    queue_unlock(queue);
+    /// Return the completed request byte count/result.
+    ///
+    /// # Safety
+    /// The caller must first observe a non-`EINPROGRESS` result through
+    /// [`aio_error`] and keep the aiocb live. That acquire observation pairs with
+    /// the worker's release completion before this source-shaped plain result read.
+    #[no_mangle]
+    pub unsafe extern "C" fn aio_return(control: *mut AioCb) -> isize {
+        unsafe { ptr::read(ptr::addr_of!((*control).result)) }
+    }
+
+    /// Observe one request's atomic completion/error state.
+    ///
+    /// # Safety
+    /// `control` must name a live aligned aiocb whose error word participates only
+    /// in this AIO atomic protocol while the request is outstanding.
+    #[no_mangle]
+    pub unsafe extern "C" fn aio_error(control: *const AioCb) -> c_int {
+        unsafe { control_error_load(control.cast_mut()) & 0x7fff_ffff }
+    }
+
+    /// Cancel one matching live request or all requests for a descriptor.
+    ///
+    /// # Safety
+    /// `control`, when non-null, must be a live aiocb for `descriptor`; the
+    /// descriptor and all queued request objects retain POSIX-required lifetimes.
+    #[no_mangle]
+    pub unsafe extern "C" fn aio_cancel(descriptor: c_int, control: *mut AioCb) -> c_int {
+        if !control.is_null() && descriptor != unsafe { (*control).descriptor } {
+            unsafe { errno::set_errno(EINVAL) };
+            return -1;
+        }
+
+        let mut all_mask = SignalSet::empty();
+        let mut original_mask = SignalSet::empty();
+        unsafe {
+            signal_set_mutation::sigfillset(ptr::addr_of_mut!(all_mask).cast());
+            let _ = signal_control::pthread_sigmask(
+                SIG_BLOCK,
+                ptr::addr_of!(all_mask).cast(),
+                ptr::addr_of_mut!(original_mask).cast(),
+            );
+            errno::set_errno(ENOENT);
+        }
+
+        let mut result = AIO_ALLDONE;
+        let queue = unsafe { get_queue(descriptor, false) };
+        if queue.is_null() {
+            if unsafe { errno::get_errno() } == EBADF {
+                result = -1;
+            }
+        } else {
+            // The source holds q over its entire traversal. That deadlocks when a
+            // sequenced worker is cancelled inside pthread_cond_wait: its cleanup
+            // must reacquire q before it can publish running=0. The cursor bounds
+            // the exact source-visible request set while we release q per pinned
+            // worker. It is stack storage only; all queue mutation remains under
+            // q and no new allocation/refcount ownership is introduced here.
+            let mut cursor = AioCancelCursor {
+                link: AioListNode::cancel_cursor(),
+            };
+            let cursor_link = ptr::addr_of_mut!(cursor.link);
+            unsafe { queue_link_head(queue, cursor_link) };
+
+            loop {
+                let node = unsafe { (*cursor_link).next };
+                if node.is_null() {
+                    unsafe {
+                        queue_unlink_node(queue, cursor_link);
+                        queue_unlock(queue);
+                    }
+                    break;
                 }
-                break;
-            }
 
-            if unsafe { (*node).kind } == AIO_LIST_CANCEL_CURSOR {
-                // Concurrent cancelers publish their own finite boundaries.
-                // Advancing across one never crosses a real worker backward.
+                if unsafe { (*node).kind } == AIO_LIST_CANCEL_CURSOR {
+                    // Concurrent cancelers publish their own finite boundaries.
+                    // Advancing across one never crosses a real worker backward.
+                    unsafe { advance_cancel_cursor(queue, cursor_link) };
+                    continue;
+                }
+
+                debug_assert!(unsafe { (*node).kind } == AIO_LIST_WORKER);
+                let worker = unsafe { worker_from_link(node) };
+                let matches = control.is_null() || control == unsafe { (*worker).control };
+                if !matches {
+                    unsafe { advance_cancel_cursor(queue, cursor_link) };
+                    continue;
+                }
+
+                // Source treats both old values one and minus one as live: the
+                // first caller requests cancellation, later callers join its
+                // completion edge. A completed zero is already all-done and is
+                // only crossed by the bounded cursor.
+                let (pinned, request_cancellation) = unsafe { pin_worker_cancellation(worker) };
                 unsafe { advance_cancel_cursor(queue, cursor_link) };
-                continue;
-            }
+                if !pinned {
+                    continue;
+                }
 
-            debug_assert!(unsafe { (*node).kind } == AIO_LIST_WORKER);
-            let worker = unsafe { worker_from_link(node) };
-            let matches = control.is_null() || control == unsafe { (*worker).control };
-            if !matches {
-                unsafe { advance_cancel_cursor(queue, cursor_link) };
-                continue;
-            }
-
-            // Source treats both old values one and minus one as live: the
-            // first caller requests cancellation, later callers join its
-            // completion edge. A completed zero is already all-done and is
-            // only crossed by the bounded cursor.
-            let (pinned, request_cancellation) = unsafe { pin_worker_cancellation(worker) };
-            unsafe { advance_cancel_cursor(queue, cursor_link) };
-            if !pinned {
-                continue;
-            }
-
-            if request_cancellation {
-                let _ = unsafe { pthread_cancel::pthread_cancel((*worker).thread) };
-            }
-            // This is the only unlocked interval in a traversal. The counted
-            // pin retains both `worker` and its original queue reference.
-            unsafe {
-                queue_unlock(queue);
-                wait_while_equal((*worker).running.as_ptr(), -1);
-            }
-            // The running release-to-zero publishes this immutable worker
-            // error; keeping the pin until after q reacquisition keeps its
-            // stack storage live even if cleanup has already unlinked it.
-            let error = unsafe { ptr::read(ptr::addr_of!((*worker).error)) };
-            unsafe {
-                queue_lock(queue);
-                unpin_worker_cancellation(worker);
-            }
-            // Preserve musl's accumulation: successful cancellation changes
-            // ALLDONE to CANCELED; an ordinary completion leaves ALLDONE (or
-            // an earlier CANCELED) rather than inventing NOTCANCELED.
-            if error == ECANCELED {
-                result = AIO_CANCELED;
+                if request_cancellation {
+                    let _ = unsafe { pthread_cancel::pthread_cancel((*worker).thread) };
+                }
+                // This is the only unlocked interval in a traversal. The counted
+                // pin retains both `worker` and its original queue reference.
+                unsafe {
+                    queue_unlock(queue);
+                    wait_while_equal((*worker).running.as_ptr(), -1);
+                }
+                // The running release-to-zero publishes this immutable worker
+                // error; keeping the pin until after q reacquisition keeps its
+                // stack storage live even if cleanup has already unlinked it.
+                let error = unsafe { ptr::read(ptr::addr_of!((*worker).error)) };
+                unsafe {
+                    queue_lock(queue);
+                    unpin_worker_cancellation(worker);
+                }
+                // Preserve musl's accumulation: successful cancellation changes
+                // ALLDONE to CANCELED; an ordinary completion leaves ALLDONE (or
+                // an earlier CANCELED) rather than inventing NOTCANCELED.
+                if error == ECANCELED {
+                    result = AIO_CANCELED;
+                }
             }
         }
-    }
 
-    unsafe {
-        let _ = signal_control::pthread_sigmask(
-            SIG_SETMASK,
-            ptr::addr_of!(original_mask).cast(),
-            null_mut(),
-        );
-    }
-    result
-}
-
-/// Wait until at least one listed control block has completed.
-///
-/// # Safety
-/// `controls` must name `count` readable aiocb pointers when `count > 0`;
-/// every non-null control block must retain the same atomic AIO lifetime until
-/// this call returns. `timeout`, when non-null, names one readable x86
-/// `timespec` duration record.
-#[no_mangle]
-pub unsafe extern "C" fn aio_suspend(
-    controls: *const *const AioCb,
-    count: c_int,
-    timeout: *const Timespec,
-) -> c_int {
-    pthread_cancel::test_current_selected_pthread_cancellation();
-    if count < 0 {
-        unsafe { errno::set_errno(EINVAL) };
-        return -1;
-    }
-
-    let count = count as usize;
-    let mut non_null_count = 0usize;
-    let mut last_control = null_mut();
-    for index in 0..count {
-        let control = unsafe { ptr::read(controls.add(index)) }.cast_mut();
-        if !control.is_null() {
-            if unsafe { aio_error(control) } != EINPROGRESS {
-                return 0;
-            }
-            non_null_count += 1;
-            last_control = control;
+        unsafe {
+            let _ = signal_control::pthread_sigmask(
+                SIG_SETMASK,
+                ptr::addr_of!(original_mask).cast(),
+                null_mut(),
+            );
         }
+        result
     }
 
-    let mut absolute = Timespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    let deadline = if timeout.is_null() {
-        null()
-    } else {
-        // Source ignores a failed clock query and then adds to its local
-        // record. A zero initializer keeps this Rust port defined on that
-        // otherwise unrepresentable kernel-failure path.
-        let _ = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_CLOCK_GETTIME,
-                i64::from(CLOCK_MONOTONIC),
-                ptr::addr_of_mut!(absolute) as usize as i64,
-            )
-        };
-        let duration = unsafe { ptr::read(timeout) };
-        absolute.seconds = absolute.seconds.wrapping_add(duration.seconds);
-        absolute.nanoseconds = absolute.nanoseconds.wrapping_add(duration.nanoseconds);
-        if absolute.nanoseconds >= NANOS_PER_SECOND {
-            absolute.nanoseconds -= NANOS_PER_SECOND;
-            absolute.seconds = absolute.seconds.wrapping_add(1);
-        }
-        ptr::addr_of!(absolute)
-    };
+    /// Strong musl-private spelling retained for objects that bind `aio_impl.h`.
+    ///
+    /// # Safety
+    ///
+    /// This is a fork-transaction hook, never a general application entry point.
+    /// Callers may pass only `-1`, `0`, or `1`: `-1` acquires the map reader
+    /// before the raw fork; the matching parent/error path calls `0` exactly once
+    /// after raw fork; and `1` runs only in the sole surviving child after minimal
+    /// thread repair and abort-lock release, while the inherited all-signal mask
+    /// is still held. The child path may discard inherited map visibility and
+    /// reinitialize its copied rwlock only under that sole-survivor condition;
+    /// invoking it in a live parent would corrupt the map lock protocol.
+    #[no_mangle]
+    pub unsafe extern "C" fn __aio_atfork(who: c_int) {
+        unsafe { atfork(who) };
+    }
+}}
 
-    let dummy = AtomicI32::new(0);
-    let mut thread_id = 0;
-    loop {
+
+
+
+
+
+// Musl's `src/aio/aio_suspend.c` object.
+static_archive_member! { aio_suspend_source {
+    /// Wait until at least one listed control block has completed.
+    ///
+    /// # Safety
+    /// `controls` must name `count` readable aiocb pointers when `count > 0`;
+    /// every non-null control block must retain the same atomic AIO lifetime until
+    /// this call returns. `timeout`, when non-null, names one readable x86
+    /// `timespec` duration record.
+    #[no_mangle]
+    pub unsafe extern "C" fn aio_suspend(
+        controls: *const *const AioCb,
+        count: c_int,
+        timeout: *const Timespec,
+    ) -> c_int {
+        pthread_cancel::test_current_selected_pthread_cancellation();
+        if count < 0 {
+            unsafe { errno::set_errno(EINVAL) };
+            return -1;
+        }
+
+        let count = count as usize;
+        let mut non_null_count = 0usize;
+        let mut last_control = null_mut();
         for index in 0..count {
             let control = unsafe { ptr::read(controls.add(index)) }.cast_mut();
-            if !control.is_null() && unsafe { aio_error(control) } != EINPROGRESS {
-                return 0;
+            if !control.is_null() {
+                if unsafe { aio_error(control) } != EINPROGRESS {
+                    return 0;
+                }
+                non_null_count += 1;
+                last_control = control;
             }
         }
 
-        let (futex, expected) = match non_null_count {
-            0 => (dummy.as_ptr(), 0),
-            1 => {
-                let word = unsafe { control_error_word(last_control) };
-                let expected = EINPROGRESS | c_int::MIN;
-                let _ = unsafe { atomic::x86_64_compare_exchange_acqrel_i32(word, EINPROGRESS, expected) };
-                (word, expected)
+        let mut absolute = Timespec {
+            seconds: 0,
+            nanoseconds: 0,
+        };
+        let deadline = if timeout.is_null() {
+            null()
+        } else {
+            // Source ignores a failed clock query and then adds to its local
+            // record. A zero initializer keeps this Rust port defined on that
+            // otherwise unrepresentable kernel-failure path.
+            let _ = unsafe {
+                raw_syscall::syscall2(
+                    raw_syscall::SYS_CLOCK_GETTIME,
+                    i64::from(CLOCK_MONOTONIC),
+                    ptr::addr_of_mut!(absolute) as usize as i64,
+                )
+            };
+            let duration = unsafe { ptr::read(timeout) };
+            absolute.seconds = absolute.seconds.wrapping_add(duration.seconds);
+            absolute.nanoseconds = absolute.nanoseconds.wrapping_add(duration.nanoseconds);
+            if absolute.nanoseconds >= NANOS_PER_SECOND {
+                absolute.nanoseconds -= NANOS_PER_SECOND;
+                absolute.seconds = absolute.seconds.wrapping_add(1);
             }
-            _ => {
-                if thread_id == 0 {
-                    thread_id = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) } as c_int;
-                }
-                let observed = unsafe {
-                    atomic::x86_64_compare_exchange_acqrel_i32(
-                        AIO_FUTEX.as_ptr(),
-                        0,
-                        thread_id,
-                    )
-                };
-                let expected = if observed == 0 { thread_id } else { observed };
-                // Source rechecks after it has joined the shared global futex
-                // protocol, closing the completion-before-sleep race.
-                for index in 0..count {
-                    let control = unsafe { ptr::read(controls.add(index)) }.cast_mut();
-                    if !control.is_null() && unsafe { aio_error(control) } != EINPROGRESS {
-                        return 0;
-                    }
-                }
-                (AIO_FUTEX.as_ptr(), expected)
-            }
+            ptr::addr_of!(absolute)
         };
 
-        let wait_result = unsafe { timed_wait_cp(futex, expected, CLOCK_MONOTONIC, deadline, true) };
-        match wait_result {
-            ETIMEDOUT => {
-                unsafe { errno::set_errno(EAGAIN) };
-                return -1;
+        let dummy = AtomicI32::new(0);
+        let mut thread_id = 0;
+        loop {
+            for index in 0..count {
+                let control = unsafe { ptr::read(controls.add(index)) }.cast_mut();
+                if !control.is_null() && unsafe { aio_error(control) } != EINPROGRESS {
+                    return 0;
+                }
             }
-            ECANCELED | EINTR => {
-                unsafe { errno::set_errno(wait_result) };
-                return -1;
+
+            let (futex, expected) = match non_null_count {
+                0 => (dummy.as_ptr(), 0),
+                1 => {
+                    let word = unsafe { control_error_word(last_control) };
+                    let expected = EINPROGRESS | c_int::MIN;
+                    let _ = unsafe { atomic::x86_64_compare_exchange_acqrel_i32(word, EINPROGRESS, expected) };
+                    (word, expected)
+                }
+                _ => {
+                    if thread_id == 0 {
+                        thread_id = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) } as c_int;
+                    }
+                    let observed = unsafe {
+                        atomic::x86_64_compare_exchange_acqrel_i32(
+                            AIO_FUTEX.as_ptr(),
+                            0,
+                            thread_id,
+                        )
+                    };
+                    let expected = if observed == 0 { thread_id } else { observed };
+                    // Source rechecks after it has joined the shared global futex
+                    // protocol, closing the completion-before-sleep race.
+                    for index in 0..count {
+                        let control = unsafe { ptr::read(controls.add(index)) }.cast_mut();
+                        if !control.is_null() && unsafe { aio_error(control) } != EINPROGRESS {
+                            return 0;
+                        }
+                    }
+                    (AIO_FUTEX.as_ptr(), expected)
+                }
+            };
+
+            let wait_result = unsafe { timed_wait_cp(futex, expected, CLOCK_MONOTONIC, deadline, true) };
+            match wait_result {
+                ETIMEDOUT => {
+                    unsafe { errno::set_errno(EAGAIN) };
+                    return -1;
+                }
+                ECANCELED | EINTR => {
+                    unsafe { errno::set_errno(wait_result) };
+                    return -1;
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
-}
+}}
 
 /// Internal list state allocated with the public `malloc` spelling, exactly as
 /// `lio_listio.c` does. Its flexible aiocb pointer array follows this prefix.
@@ -1739,109 +1767,112 @@ unsafe fn list_wait_attributes(event: *mut Sigevent) -> PublicPthreadAttr {
     attributes
 }
 
-/// Submit one list of read/write requests and optionally wait/notify.
-///
-/// # Safety
-/// `controls` names `count` readable aiocb pointers when nonzero. Every
-/// non-null aiocb, its I/O storage, descriptor, and optional `event` remain
-/// live under POSIX's list-I/O lifetime contract until work/notification ends.
-#[no_mangle]
-pub unsafe extern "C" fn lio_listio(
-    mode: c_int,
-    controls: *mut *mut AioCb,
-    count: c_int,
-    event: *mut Sigevent,
-) -> c_int {
-    if count < 0 {
-        unsafe { errno::set_errno(EINVAL) };
-        return -1;
-    }
-    let count_usize = count as usize;
-    let mut state = null_mut::<LioState>();
-    if mode == LIO_WAIT
-        || (!event.is_null() && unsafe { notification_selector(event) } != SIGEV_NONE)
-    {
-        let size = size_of::<LioState>() + count_usize * size_of::<*mut AioCb>();
-        state = unsafe { public_malloc(size) }.cast();
-        if state.is_null() {
-            unsafe { errno::set_errno(EAGAIN) };
+// Musl's `src/aio/lio_listio.c` object.
+static_archive_member! { lio_listio_source {
+    /// Submit one list of read/write requests and optionally wait/notify.
+    ///
+    /// # Safety
+    /// `controls` names `count` readable aiocb pointers when nonzero. Every
+    /// non-null aiocb, its I/O storage, descriptor, and optional `event` remain
+    /// live under POSIX's list-I/O lifetime contract until work/notification ends.
+    #[no_mangle]
+    pub unsafe extern "C" fn lio_listio(
+        mode: c_int,
+        controls: *mut *mut AioCb,
+        count: c_int,
+        event: *mut Sigevent,
+    ) -> c_int {
+        if count < 0 {
+            unsafe { errno::set_errno(EINVAL) };
             return -1;
         }
-        unsafe {
-            (*state).count = count;
-            (*state).event = event;
-            let destination = state_controls(state);
-            for index in 0..count_usize {
-                ptr::write(destination.add(index), ptr::read(controls.add(index)));
+        let count_usize = count as usize;
+        let mut state = null_mut::<LioState>();
+        if mode == LIO_WAIT
+            || (!event.is_null() && unsafe { notification_selector(event) } != SIGEV_NONE)
+        {
+            let size = size_of::<LioState>() + count_usize * size_of::<*mut AioCb>();
+            state = unsafe { public_malloc(size) }.cast();
+            if state.is_null() {
+                unsafe { errno::set_errno(EAGAIN) };
+                return -1;
             }
-        }
-    }
-
-    for index in 0..count_usize {
-        let control = unsafe { ptr::read(controls.add(index)) };
-        if control.is_null() {
-            continue;
-        }
-        let result = match unsafe { (*control).list_operation } {
-            LIO_READ => unsafe { aio_read(control) },
-            LIO_WRITE => unsafe { aio_write(control) },
-            _ => continue,
-        };
-        if result != 0 {
             unsafe {
-                public_free(state.cast());
-                errno::set_errno(EAGAIN);
+                (*state).count = count;
+                (*state).event = event;
+                let destination = state_controls(state);
+                for index in 0..count_usize {
+                    ptr::write(destination.add(index), ptr::read(controls.add(index)));
+                }
             }
-            return -1;
         }
-    }
 
-    if mode == LIO_WAIT {
-        let result = unsafe { lio_wait(state) };
-        unsafe { public_free(state.cast()) };
-        return result;
-    }
-
-    if !state.is_null() {
-        let attributes = unsafe { list_wait_attributes(event) };
-        let mut all_mask = SignalSet::empty();
-        let mut original_mask = SignalSet::empty();
-        unsafe {
-            signal_set_mutation::sigfillset(ptr::addr_of_mut!(all_mask).cast());
-            let _ = signal_control::pthread_sigmask(
-                SIG_BLOCK,
-                ptr::addr_of!(all_mask).cast(),
-                ptr::addr_of_mut!(original_mask).cast(),
-            );
+        for index in 0..count_usize {
+            let control = unsafe { ptr::read(controls.add(index)) };
+            if control.is_null() {
+                continue;
+            }
+            let result = match unsafe { (*control).list_operation } {
+                LIO_READ => unsafe { aio_read(control) },
+                LIO_WRITE => unsafe { aio_write(control) },
+                _ => continue,
+            };
+            if result != 0 {
+                unsafe {
+                    public_free(state.cast());
+                    errno::set_errno(EAGAIN);
+                }
+                return -1;
+            }
         }
-        let mut thread = null_mut();
-        let create_result = unsafe {
-            pthread_create_join::pthread_create(
-                ptr::addr_of_mut!(thread),
-                ptr::addr_of!(attributes).cast(),
-                Some(list_wait_thread),
-                state.cast(),
-            )
-        };
-        if create_result != 0 {
-            // Source returns without restoring the all-application mask on
-            // this failure branch. Preserve that exact musl ordering/edge.
+
+        if mode == LIO_WAIT {
+            let result = unsafe { lio_wait(state) };
+            unsafe { public_free(state.cast()) };
+            return result;
+        }
+
+        if !state.is_null() {
+            let attributes = unsafe { list_wait_attributes(event) };
+            let mut all_mask = SignalSet::empty();
+            let mut original_mask = SignalSet::empty();
             unsafe {
-                public_free(state.cast());
-                errno::set_errno(EAGAIN);
+                signal_set_mutation::sigfillset(ptr::addr_of_mut!(all_mask).cast());
+                let _ = signal_control::pthread_sigmask(
+                    SIG_BLOCK,
+                    ptr::addr_of!(all_mask).cast(),
+                    ptr::addr_of_mut!(original_mask).cast(),
+                );
             }
-            return -1;
+            let mut thread = null_mut();
+            let create_result = unsafe {
+                pthread_create_join::pthread_create(
+                    ptr::addr_of_mut!(thread),
+                    ptr::addr_of!(attributes).cast(),
+                    Some(list_wait_thread),
+                    state.cast(),
+                )
+            };
+            if create_result != 0 {
+                // Source returns without restoring the all-application mask on
+                // this failure branch. Preserve that exact musl ordering/edge.
+                unsafe {
+                    public_free(state.cast());
+                    errno::set_errno(EAGAIN);
+                }
+                return -1;
+            }
+            unsafe {
+                let _ = signal_control::pthread_sigmask(
+                    SIG_SETMASK,
+                    ptr::addr_of!(original_mask).cast(),
+                    null_mut(),
+                );
+            }
         }
-        unsafe {
-            let _ = signal_control::pthread_sigmask(
-                SIG_SETMASK,
-                ptr::addr_of!(original_mask).cast(),
-                null_mut(),
-            );
-        }
+        0
     }
-    0
-}
+}}
 
 /// Remove the currently visible queue incarnation after close cancellation.
 ///
@@ -1963,19 +1994,3 @@ pub(super) unsafe fn atfork(who: c_int) {
     let _ = unsafe { pthread_rwlock::pthread_rwlock_init(MAP_LOCK.pointer(), null()) };
 }
 
-/// Strong musl-private spelling retained for objects that bind `aio_impl.h`.
-///
-/// # Safety
-///
-/// This is a fork-transaction hook, never a general application entry point.
-/// Callers may pass only `-1`, `0`, or `1`: `-1` acquires the map reader
-/// before the raw fork; the matching parent/error path calls `0` exactly once
-/// after raw fork; and `1` runs only in the sole surviving child after minimal
-/// thread repair and abort-lock release, while the inherited all-signal mask
-/// is still held. The child path may discard inherited map visibility and
-/// reinitialize its copied rwlock only under that sole-survivor condition;
-/// invoking it in a live parent would corrupt the map lock protocol.
-#[no_mangle]
-pub unsafe extern "C" fn __aio_atfork(who: c_int) {
-    unsafe { atfork(who) };
-}

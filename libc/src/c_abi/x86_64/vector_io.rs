@@ -47,197 +47,209 @@ pub struct IoVec {
 const _: [(); 16] = [(); core::mem::size_of::<IoVec>()];
 const _: [(); 8] = [(); core::mem::align_of::<IoVec>()];
 
-/// Read through a caller-owned vector list with Linux `readv(2)`.
-///
-/// # Safety
-///
-/// `iov` and every iovec Linux may examine must remain valid and writable for
-/// the syscall duration. The caller owns descriptor lifetime, aggregate
-/// buffer bounds, shared-offset synchronization, and all signal policy.
-/// Owned-runtime selection includes musl's syscall cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn readv(file_descriptor: c_int, iov: *const IoVec, iovcnt: c_int) -> isize {
-    // SAFETY: the caller owns the complete raw vector-I/O contract. Linux
-    // validates the iovec count and each memory range without a libc-side
-    // prevalidation pass.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_READV,
-        file_descriptor as i64, iov as i64, iovcnt as i64, 0, 0, 0) };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_READV,
-            i64::from(file_descriptor),
-            iov as usize as i64,
-            i64::from(iovcnt),
-        )
-    };
-    c_ssize_status(result)
-}
-
-/// Write through a caller-owned vector list with Linux `writev(2)`.
-///
-/// # Safety
-///
-/// `iov` and every iovec Linux may examine must remain valid and readable for
-/// the syscall duration. The caller owns descriptor lifetime, aggregate
-/// buffer bounds, shared-offset synchronization, and SIGPIPE policy.
-/// Owned-runtime selection includes musl's syscall cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn writev(file_descriptor: c_int, iov: *const IoVec, iovcnt: c_int) -> isize {
-    // SAFETY: the caller owns the complete raw vector-I/O contract.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_WRITEV,
-        file_descriptor as i64, iov as i64, iovcnt as i64, 0, 0, 0) };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_WRITEV,
-            i64::from(file_descriptor),
-            iov as usize as i64,
-            i64::from(iovcnt),
-        )
-    };
-    c_ssize_status(result)
-}
-
-/// Read a vector list at a fixed signed offset with Linux `preadv(2)`.
-///
-/// # Safety
-///
-/// `iov` and every iovec Linux may examine must remain valid and writable for
-/// the syscall duration. `offset` is passed as the exact signed LP64 `off_t`;
-/// the caller owns descriptor lifetime and concurrent file-state policy. The
-/// owned runtime supplies musl's cancellation point with caller-owned cleanup.
-#[no_mangle]
-pub unsafe extern "C" fn preadv(
-    file_descriptor: c_int,
-    iov: *const IoVec,
-    iovcnt: c_int,
-    offset: c_long,
-) -> isize {
-    // Linux/x86-64's legacy preadv ABI takes the signed 64-bit C offset as
-    // two machine words in r10/r8, low word first. Arithmetic shift keeps the
-    // signed high word for negative-offset kernel validation.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_PREADV,
-            i64::from(file_descriptor),
-            iov as usize as i64,
-            i64::from(iovcnt),
-            offset,
-            offset >> 32,
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_PREADV,
-            i64::from(file_descriptor),
-            iov as usize as i64,
-            i64::from(iovcnt),
-            offset,
-            offset >> 32,
-        )
-    };
-    c_ssize_status(result)
-}
-
-/// Write a vector list at a fixed signed offset with musl's append protection.
-///
-/// # Safety
-///
-/// `iov` and every iovec Linux may examine must remain valid and readable for
-/// the syscall duration. The caller owns descriptor lifetime, vector storage,
-/// and concurrent file-state policy. The owned runtime supplies musl's
-/// cancellation points with caller-owned cleanup; legacy fixtures stay raw.
-#[no_mangle]
-pub unsafe extern "C" fn pwritev(
-    file_descriptor: c_int,
-    iov: *const IoVec,
-    iovcnt: c_int,
-    offset: c_long,
-) -> isize {
-    // Linux pwritev2 reserves -1 as the current-offset sentinel. C pwritev
-    // must instead reject it as an invalid positioned offset, so retain musl's
-    // -1 -> -2 transformation before either kernel path.
-    let kernel_offset = if offset == -1 { -2 } else { offset };
-    // SAFETY: the caller owns the vector-I/O lifetime/accessibility contract;
-    // r10/r8 split the offset and r9 carries RWF_NOAPPEND exactly as Linux
-    // x86-64 requires.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_PWRITEV2,
-            i64::from(file_descriptor),
-            iov as usize as i64,
-            i64::from(iovcnt),
-            kernel_offset,
-            kernel_offset >> 32,
-            RWF_NOAPPEND,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall6(
-            raw_syscall::SYS_PWRITEV2,
-            i64::from(file_descriptor),
-            iov as usize as i64,
-            i64::from(iovcnt),
-            kernel_offset,
-            kernel_offset >> 32,
-            RWF_NOAPPEND,
-        )
-    };
-    if result != -EOPNOTSUPP && result != -ENOSYS {
-        return c_ssize_status(result);
+// Musl's `src/unistd/readv.c` object.
+static_archive_member! { readv_source {
+    /// Read through a caller-owned vector list with Linux `readv(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `iov` and every iovec Linux may examine must remain valid and writable for
+    /// the syscall duration. The caller owns descriptor lifetime, aggregate
+    /// buffer bounds, shared-offset synchronization, and all signal policy.
+    /// Owned-runtime selection includes musl's syscall cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn readv(file_descriptor: c_int, iov: *const IoVec, iovcnt: c_int) -> isize {
+        // SAFETY: the caller owns the complete raw vector-I/O contract. Linux
+        // validates the iovec count and each memory range without a libc-side
+        // prevalidation pass.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe { crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(raw_syscall::SYS_READV,
+            file_descriptor as i64, iov as i64, iovcnt as i64, 0, 0, 0) };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_READV,
+                i64::from(file_descriptor),
+                iov as usize as i64,
+                i64::from(iovcnt),
+            )
+        };
+        c_ssize_status(result)
     }
+}}
 
-    // SAFETY: F_GETFL accepts only scalar descriptor/command words. This is
-    // private implementation detail needed by musl's positioned-write rule;
-    // it does not select a general public C fcntl boundary.
-    let status_flags = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_FCNTL,
-            i64::from(file_descriptor),
-            F_GETFL,
-        )
-    };
-    if status_flags < 0 {
-        return c_ssize_status(status_flags);
+// Musl's `src/unistd/writev.c` object.
+static_archive_member! { writev_source {
+    /// Write through a caller-owned vector list with Linux `writev(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `iov` and every iovec Linux may examine must remain valid and readable for
+    /// the syscall duration. The caller owns descriptor lifetime, aggregate
+    /// buffer bounds, shared-offset synchronization, and SIGPIPE policy.
+    /// Owned-runtime selection includes musl's syscall cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn writev(file_descriptor: c_int, iov: *const IoVec, iovcnt: c_int) -> isize {
+        // SAFETY: the caller owns the complete raw vector-I/O contract.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe { crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(raw_syscall::SYS_WRITEV,
+            file_descriptor as i64, iov as i64, iovcnt as i64, 0, 0, 0) };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_WRITEV,
+                i64::from(file_descriptor),
+                iov as usize as i64,
+                i64::from(iovcnt),
+            )
+        };
+        c_ssize_status(result)
     }
-    if status_flags & O_APPEND != 0 {
-        // SAFETY: this selected static C ABI owns the initial-TLS errno slot.
-        unsafe { errno::set_errno(EOPNOTSUPP as c_int) };
-        return -1;
-    }
+}}
 
-    // SAFETY: the caller's vector-I/O contract remains live for the fallback;
-    // split offset words match Linux x86-64's preadv/pwritev ABI.
-    #[cfg(crabc_x86_owned_runtime)]
-    let fallback = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_PWRITEV,
-            i64::from(file_descriptor),
-            iov as usize as i64,
-            i64::from(iovcnt),
-            kernel_offset,
-            kernel_offset >> 32,
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let fallback = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_PWRITEV,
-            i64::from(file_descriptor),
-            iov as usize as i64,
-            i64::from(iovcnt),
-            kernel_offset,
-            kernel_offset >> 32,
-        )
-    };
-    c_ssize_status(fallback)
-}
+// Musl's `src/unistd/preadv.c` object.
+static_archive_member! { preadv_source {
+    /// Read a vector list at a fixed signed offset with Linux `preadv(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `iov` and every iovec Linux may examine must remain valid and writable for
+    /// the syscall duration. `offset` is passed as the exact signed LP64 `off_t`;
+    /// the caller owns descriptor lifetime and concurrent file-state policy. The
+    /// owned runtime supplies musl's cancellation point with caller-owned cleanup.
+    #[no_mangle]
+    pub unsafe extern "C" fn preadv(
+        file_descriptor: c_int,
+        iov: *const IoVec,
+        iovcnt: c_int,
+        offset: c_long,
+    ) -> isize {
+        // Linux/x86-64's legacy preadv ABI takes the signed 64-bit C offset as
+        // two machine words in r10/r8, low word first. Arithmetic shift keeps the
+        // signed high word for negative-offset kernel validation.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_PREADV,
+                i64::from(file_descriptor),
+                iov as usize as i64,
+                i64::from(iovcnt),
+                offset,
+                offset >> 32,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_PREADV,
+                i64::from(file_descriptor),
+                iov as usize as i64,
+                i64::from(iovcnt),
+                offset,
+                offset >> 32,
+            )
+        };
+        c_ssize_status(result)
+    }
+}}
+
+// Musl's `src/unistd/pwritev.c` object.
+static_archive_member! { pwritev_source {
+    /// Write a vector list at a fixed signed offset with musl's append protection.
+    ///
+    /// # Safety
+    ///
+    /// `iov` and every iovec Linux may examine must remain valid and readable for
+    /// the syscall duration. The caller owns descriptor lifetime, vector storage,
+    /// and concurrent file-state policy. The owned runtime supplies musl's
+    /// cancellation points with caller-owned cleanup; legacy fixtures stay raw.
+    #[no_mangle]
+    pub unsafe extern "C" fn pwritev(
+        file_descriptor: c_int,
+        iov: *const IoVec,
+        iovcnt: c_int,
+        offset: c_long,
+    ) -> isize {
+        // Linux pwritev2 reserves -1 as the current-offset sentinel. C pwritev
+        // must instead reject it as an invalid positioned offset, so retain musl's
+        // -1 -> -2 transformation before either kernel path.
+        let kernel_offset = if offset == -1 { -2 } else { offset };
+        // SAFETY: the caller owns the vector-I/O lifetime/accessibility contract;
+        // r10/r8 split the offset and r9 carries RWF_NOAPPEND exactly as Linux
+        // x86-64 requires.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_PWRITEV2,
+                i64::from(file_descriptor),
+                iov as usize as i64,
+                i64::from(iovcnt),
+                kernel_offset,
+                kernel_offset >> 32,
+                RWF_NOAPPEND,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall6(
+                raw_syscall::SYS_PWRITEV2,
+                i64::from(file_descriptor),
+                iov as usize as i64,
+                i64::from(iovcnt),
+                kernel_offset,
+                kernel_offset >> 32,
+                RWF_NOAPPEND,
+            )
+        };
+        if result != -EOPNOTSUPP && result != -ENOSYS {
+            return c_ssize_status(result);
+        }
+
+        // SAFETY: F_GETFL accepts only scalar descriptor/command words. This is
+        // private implementation detail needed by musl's positioned-write rule;
+        // it does not select a general public C fcntl boundary.
+        let status_flags = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_FCNTL,
+                i64::from(file_descriptor),
+                F_GETFL,
+            )
+        };
+        if status_flags < 0 {
+            return c_ssize_status(status_flags);
+        }
+        if status_flags & O_APPEND != 0 {
+            // SAFETY: this selected static C ABI owns the initial-TLS errno slot.
+            unsafe { errno::set_errno(EOPNOTSUPP as c_int) };
+            return -1;
+        }
+
+        // SAFETY: the caller's vector-I/O contract remains live for the fallback;
+        // split offset words match Linux x86-64's preadv/pwritev ABI.
+        #[cfg(crabc_x86_owned_runtime)]
+        let fallback = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_PWRITEV,
+                i64::from(file_descriptor),
+                iov as usize as i64,
+                i64::from(iovcnt),
+                kernel_offset,
+                kernel_offset >> 32,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let fallback = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_PWRITEV,
+                i64::from(file_descriptor),
+                iov as usize as i64,
+                i64::from(iovcnt),
+                kernel_offset,
+                kernel_offset >> 32,
+            )
+        };
+        c_ssize_status(fallback)
+    }
+}}

@@ -878,17 +878,20 @@ pub(super) fn shell_matches(pattern: ShellPattern<'_>, string: &[u8]) -> bool {
     }
 }
 
-/// Public C `fnmatch` with musl's pathname component routing.
-///
-/// # Safety
-///
-/// `pattern` and `string` must each designate a readable NUL-terminated C
-/// string for the entire call, as required by the C ABI.
-#[no_mangle]
-pub unsafe extern "C" fn fnmatch(
-    pattern: *const c_char,
-    string: *const c_char,
-    flags: c_int,
-) -> c_int {
-    unsafe { fnmatch_with_mode(pattern, string, flags, PatternMode::c()) }
-}
+// Musl's `src/regex/fnmatch.c` object.
+static_archive_member! { fnmatch_source {
+    /// Public C `fnmatch` with musl's pathname component routing.
+    ///
+    /// # Safety
+    ///
+    /// `pattern` and `string` must each designate a readable NUL-terminated C
+    /// string for the entire call, as required by the C ABI.
+    #[no_mangle]
+    pub unsafe extern "C" fn fnmatch(
+        pattern: *const c_char,
+        string: *const c_char,
+        flags: c_int,
+    ) -> c_int {
+        unsafe { fnmatch_with_mode(pattern, string, flags, PatternMode::c()) }
+    }
+}}

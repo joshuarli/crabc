@@ -261,545 +261,588 @@ unsafe fn fchmodat_nofollow_fallback(
     result
 }
 
-/// Change one pathname's mode relative to a caller-selected directory.
-///
-/// A zero flag uses legacy `fchmodat`. A nonzero flag first tries Linux's
-/// newer `fchmodat2`; only its `ENOSYS` result enters the pinned-musl
-/// `AT_SYMLINK_NOFOLLOW` fallback. Other flag words and all other raw errors
-/// remain visible exactly where the source returns them.
-///
-/// # Safety
-///
-/// `path` must remain a readable NUL-terminated pathname for the request.
-/// The caller owns directory-descriptor lifetime, namespace/permission races,
-/// mode policy, and the target's resulting state.
-#[no_mangle]
-pub unsafe extern "C" fn fchmodat(
-    directory_descriptor: c_int,
-    path: *const c_char,
-    mode: c_uint,
-    flags: c_int,
-) -> c_int {
-    if flags == 0 {
-        // SAFETY: the caller owns the raw dirfd/path/mode contract.
-        return c_status(unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_FCHMODAT,
+// Musl's `src/stat/fchmodat.c` object.
+static_archive_member! { fchmodat_source {
+    /// Change one pathname's mode relative to a caller-selected directory.
+    ///
+    /// A zero flag uses legacy `fchmodat`. A nonzero flag first tries Linux's
+    /// newer `fchmodat2`; only its `ENOSYS` result enters the pinned-musl
+    /// `AT_SYMLINK_NOFOLLOW` fallback. Other flag words and all other raw errors
+    /// remain visible exactly where the source returns them.
+    ///
+    /// # Safety
+    ///
+    /// `path` must remain a readable NUL-terminated pathname for the request.
+    /// The caller owns directory-descriptor lifetime, namespace/permission races,
+    /// mode policy, and the target's resulting state.
+    #[no_mangle]
+    pub unsafe extern "C" fn fchmodat(
+        directory_descriptor: c_int,
+        path: *const c_char,
+        mode: c_uint,
+        flags: c_int,
+    ) -> c_int {
+        if flags == 0 {
+            // SAFETY: the caller owns the raw dirfd/path/mode contract.
+            return c_status(unsafe {
+                raw_syscall::syscall3(
+                    raw_syscall::SYS_FCHMODAT,
+                    i64::from(directory_descriptor),
+                    path as usize as i64,
+                    i64::from(mode),
+                )
+            });
+        }
+
+        // SAFETY: fchmodat2 takes the source's four words in rdi/rsi/rdx/r10.
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_FCHMODAT2,
                 i64::from(directory_descriptor),
                 path as usize as i64,
                 i64::from(mode),
+                i64::from(flags),
             )
-        });
+        };
+        if result != -ENOSYS {
+            return c_status(result);
+        }
+        if flags != AT_SYMLINK_NOFOLLOW {
+            return c_status(raw_error(EINVAL));
+        }
+
+        // SAFETY: the caller's pathname and descriptor obligations remain live
+        // through the source-faithful temporary-descriptor fallback.
+        c_status(unsafe { fchmodat_nofollow_fallback(directory_descriptor, path, mode) })
+    }
+}}
+
+// Musl's `src/stat/lchmod.c` object.
+static_archive_member! { lchmod_source {
+    /// Change a non-symlink pathname's mode through [`fchmodat`]'s no-follow
+    /// source path.
+    ///
+    /// # Safety
+    ///
+    /// `path` must remain a readable NUL-terminated pathname for the call. The
+    /// caller owns pathname resolution, permissions, and the resulting mode.
+    #[no_mangle]
+    pub unsafe extern "C" fn lchmod(path: *const c_char, mode: c_uint) -> c_int {
+        // SAFETY: exact musl composition; fchmodat documents the inherited path
+        // and mode obligations.
+        unsafe { fchmodat(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW) }
+    }
+}}
+
+// Musl's `src/unistd/fchown.c` object.
+static_archive_member! { fchown_source {
+    /// Change one open descriptor's ownership, retrying a live O_PATH descriptor
+    /// through musl's fixed procfd pathname.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns descriptor lifetime, authorization, uid/gid values, and
+    /// resulting filesystem state. An invalid descriptor intentionally requests
+    /// Linux's raw error behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn fchown(
+        descriptor: c_int,
+        user: c_uint,
+        group: c_uint,
+    ) -> c_int {
+        // SAFETY: the caller owns the scalar descriptor/uid/gid request.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_FCHOWN,
+                i64::from(descriptor),
+                i64::from(user),
+                i64::from(group),
+            )
+        };
+        if result != -EBADF {
+            return c_status(result);
+        }
+
+        // SAFETY: F_GETFD is musl's narrow liveness test. Keep its result private:
+        // a failed probe returns the original fchown EBADF, not its own error.
+        let live = unsafe {
+            raw_syscall::syscall2(raw_syscall::SYS_FCNTL, i64::from(descriptor), F_GETFD)
+        } >= 0;
+        if !live {
+            return c_status(result);
+        }
+
+        let mut procfd_path = [0u8; pathname_lifecycle::PROC_FD_NAME_SIZE];
+        pathname_lifecycle::procfdname(&mut procfd_path, descriptor);
+        // SAFETY: the fixed local procfd pathname remains valid through chown.
+        c_status(unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_CHOWN,
+                procfd_path.as_ptr() as i64,
+                i64::from(user),
+                i64::from(group),
+            )
+        })
+    }
+}}
+
+// Musl's `src/unistd/fchownat.c` object.
+static_archive_member! { fchownat_source {
+    /// Change one pathname entry's ownership relative to a caller-selected
+    /// directory descriptor.
+    ///
+    /// # Safety
+    ///
+    /// `path` must remain a readable NUL-terminated pathname for the call. The
+    /// caller owns directory-descriptor lifetime, raw flag meaning, permissions,
+    /// uid/gid values, and namespace races.
+    #[no_mangle]
+    pub unsafe extern "C" fn fchownat(
+        directory_descriptor: c_int,
+        path: *const c_char,
+        user: c_uint,
+        group: c_uint,
+        flags: c_int,
+    ) -> c_int {
+        // SAFETY: Linux validates the caller-owned dirfd/path/uid/gid/flag words.
+        c_status(unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_FCHOWNAT,
+                i64::from(directory_descriptor),
+                path as usize as i64,
+                i64::from(user),
+                i64::from(group),
+                i64::from(flags),
+            )
+        })
+    }
+}}
+
+// Musl's `src/stat/mknod.c` object.
+static_archive_member! { mknod_source {
+    /// Create one special filesystem node through the direct x86 `mknod` request.
+    ///
+    /// # Safety
+    ///
+    /// `path` must remain a readable NUL-terminated pathname. The caller owns
+    /// node type/device interpretation, umask, permissions, and namespace races.
+    #[no_mangle]
+    pub unsafe extern "C" fn mknod(
+        path: *const c_char,
+        mode: c_uint,
+        device: c_ulong,
+    ) -> c_int {
+        // SAFETY: the caller owns the raw pathname/mode/dev_t request.
+        c_status(unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_MKNOD,
+                path as usize as i64,
+                i64::from(mode),
+                device as i64,
+            )
+        })
+    }
+}}
+
+// Musl's `src/stat/mknodat.c` object.
+static_archive_member! { mknodat_source {
+    /// Create one special filesystem node relative to a caller-selected directory.
+    ///
+    /// # Safety
+    ///
+    /// `path` must remain a readable NUL-terminated pathname. The caller owns
+    /// directory-descriptor lifetime, mode/device interpretation, umask,
+    /// permissions, and namespace races.
+    #[no_mangle]
+    pub unsafe extern "C" fn mknodat(
+        directory_descriptor: c_int,
+        path: *const c_char,
+        mode: c_uint,
+        device: c_ulong,
+    ) -> c_int {
+        // SAFETY: syscall4 places the dev_t machine word in x86 Linux r10.
+        c_status(unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_MKNODAT,
+                i64::from(directory_descriptor),
+                path as usize as i64,
+                i64::from(mode),
+                device as i64,
+            )
+        })
+    }
+}}
+
+// Musl's `src/stat/__xstat.c` object.
+static_archive_member! { __xstat_source {
+    /// Musl's historical xstat compatibility entry for [`mknod`].
+    ///
+    /// The source ignores `version` and reads `*device` before making the ordinary
+    /// special-node call.  It deliberately performs neither version validation nor
+    /// a null check: callers must provide a readable `dev_t` pointer, exactly as
+    /// `src/stat/__xstat.c` requires.
+    ///
+    /// # Safety
+    ///
+    /// `path` must remain a readable NUL-terminated pathname and `device` must
+    /// point to one readable x86 Linux `dev_t`.  The caller owns the namespace,
+    /// mode, device interpretation, and all ordinary `mknod` preconditions.
+    #[no_mangle]
+    pub unsafe extern "C" fn __xmknod(
+        _version: c_int,
+        path: *const c_char,
+        mode: c_uint,
+        device: *mut c_ulong,
+    ) -> c_int {
+        // SAFETY: musl's source passes the caller-owned dev_t value directly.
+        unsafe { mknod(path, mode, core::ptr::read(device)) }
     }
 
-    // SAFETY: fchmodat2 takes the source's four words in rdi/rsi/rdx/r10.
-    let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_FCHMODAT2,
-            i64::from(directory_descriptor),
-            path as usize as i64,
-            i64::from(mode),
-            i64::from(flags),
-        )
-    };
-    if result != -ENOSYS {
-        return c_status(result);
+    /// Musl's historical xstat compatibility entry for [`mknodat`].
+    ///
+    /// `version` is source-ignored and `device` is dereferenced before the
+    /// existing directory-relative special-node request, preserving the same raw
+    /// caller contract as [`__xmknod`].
+    ///
+    /// # Safety
+    ///
+    /// `path` and `device` have the same requirements as [`__xmknod`], and
+    /// `directory_descriptor` must be valid for the selected `mknodat` request.
+    #[no_mangle]
+    pub unsafe extern "C" fn __xmknodat(
+        _version: c_int,
+        directory_descriptor: c_int,
+        path: *const c_char,
+        mode: c_uint,
+        device: *mut c_ulong,
+    ) -> c_int {
+        // SAFETY: musl's source passes the caller-owned dev_t value directly.
+        unsafe { mknodat(directory_descriptor, path, mode, core::ptr::read(device)) }
     }
-    if flags != AT_SYMLINK_NOFOLLOW {
-        return c_status(raw_error(EINVAL));
+}}
+
+
+// Musl's `src/unistd/renameat.c` object.
+static_archive_member! { renameat_source {
+    /// Rename one entry between caller-selected directory descriptors.
+    ///
+    /// # Safety
+    ///
+    /// Both path pointers must remain readable NUL-terminated pathnames for the
+    /// call. The caller owns descriptor lifetimes, namespace races, and replacement
+    /// policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn renameat(
+        old_directory_descriptor: c_int,
+        old_path: *const c_char,
+        new_directory_descriptor: c_int,
+        new_path: *const c_char,
+    ) -> c_int {
+        // SAFETY: the caller owns both raw directory/path pairs.
+        c_status(unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_RENAMEAT,
+                i64::from(old_directory_descriptor),
+                old_path as usize as i64,
+                i64::from(new_directory_descriptor),
+                new_path as usize as i64,
+            )
+        })
     }
+}}
 
-    // SAFETY: the caller's pathname and descriptor obligations remain live
-    // through the source-faithful temporary-descriptor fallback.
-    c_status(unsafe { fchmodat_nofollow_fallback(directory_descriptor, path, mode) })
-}
-
-/// Change a non-symlink pathname's mode through [`fchmodat`]'s no-follow
-/// source path.
-///
-/// # Safety
-///
-/// `path` must remain a readable NUL-terminated pathname for the call. The
-/// caller owns pathname resolution, permissions, and the resulting mode.
-#[no_mangle]
-pub unsafe extern "C" fn lchmod(path: *const c_char, mode: c_uint) -> c_int {
-    // SAFETY: exact musl composition; fchmodat documents the inherited path
-    // and mode obligations.
-    unsafe { fchmodat(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW) }
-}
-
-/// Change one open descriptor's ownership, retrying a live O_PATH descriptor
-/// through musl's fixed procfd pathname.
-///
-/// # Safety
-///
-/// The caller owns descriptor lifetime, authorization, uid/gid values, and
-/// resulting filesystem state. An invalid descriptor intentionally requests
-/// Linux's raw error behavior.
-#[no_mangle]
-pub unsafe extern "C" fn fchown(
-    descriptor: c_int,
-    user: c_uint,
-    group: c_uint,
-) -> c_int {
-    // SAFETY: the caller owns the scalar descriptor/uid/gid request.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_FCHOWN,
-            i64::from(descriptor),
-            i64::from(user),
-            i64::from(group),
-        )
-    };
-    if result != -EBADF {
-        return c_status(result);
+// Musl's `src/unistd/symlinkat.c` object.
+static_archive_member! { symlinkat_source {
+    /// Create one symbolic link relative to a caller-selected directory descriptor.
+    ///
+    /// # Safety
+    ///
+    /// Both path pointers must remain readable NUL-terminated strings for the
+    /// call. The caller owns target spelling, directory-descriptor lifetime, and
+    /// the resulting namespace transition.
+    #[no_mangle]
+    pub unsafe extern "C" fn symlinkat(
+        target: *const c_char,
+        directory_descriptor: c_int,
+        link_path: *const c_char,
+    ) -> c_int {
+        // SAFETY: the caller owns the two raw pathnames and directory descriptor.
+        c_status(unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SYMLINKAT,
+                target as usize as i64,
+                i64::from(directory_descriptor),
+                link_path as usize as i64,
+            )
+        })
     }
+}}
 
-    // SAFETY: F_GETFD is musl's narrow liveness test. Keep its result private:
-    // a failed probe returns the original fchown EBADF, not its own error.
-    let live = unsafe {
-        raw_syscall::syscall2(raw_syscall::SYS_FCNTL, i64::from(descriptor), F_GETFD)
-    } >= 0;
-    if !live {
-        return c_status(result);
+// Musl's `src/linux/statx.c` object.
+static_archive_member! { statx_source {
+    /// Fill the installed public `struct statx` record for one pathname.
+    ///
+    /// Linux 5.10 guarantees this direct request, which supplies caller-selected
+    /// flags and request mask. Its raw result, including `ENOSYS` under a caller's
+    /// syscall filter, is published through the C ABI unchanged; no old-kernel
+    /// compatibility fallback is selected.
+    ///
+    /// # Safety
+    ///
+    /// `path` must remain a readable NUL-terminated pathname and `output` must
+    /// remain writable for one aligned 256-byte public `struct statx` record. The
+    /// caller owns directory-descriptor lifetime, flag/mask interpretation, and
+    /// all namespace races.
+    #[no_mangle]
+    pub unsafe extern "C" fn statx(
+        directory_descriptor: c_int,
+        path: *const c_char,
+        flags: c_int,
+        mask: c_uint,
+        output: *mut Statx,
+    ) -> c_int {
+        // SAFETY: Linux x86-64 places flags/mask/output in rdx/r10/r8.
+        c_status(unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_STATX,
+                i64::from(directory_descriptor),
+                path as usize as i64,
+                i64::from(flags),
+                i64::from(mask),
+                output as usize as i64,
+            )
+        })
     }
+}}
 
-    let mut procfd_path = [0u8; pathname_lifecycle::PROC_FD_NAME_SIZE];
-    pathname_lifecycle::procfdname(&mut procfd_path, descriptor);
-    // SAFETY: the fixed local procfd pathname remains valid through chown.
-    c_status(unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_CHOWN,
-            procfd_path.as_ptr() as i64,
-            i64::from(user),
-            i64::from(group),
-        )
-    })
-}
+// Musl's `src/linux/fallocate.c` object.
+static_archive_member! { fallocate_source {
+    /// Allocate file storage over one signed range through Linux `fallocate(2)`.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns descriptor lifetime, mode-bit meaning, signed range,
+    /// filesystem policy, and every resulting content or allocation effect.
+    #[no_mangle]
+    pub unsafe extern "C" fn fallocate(
+        descriptor: c_int,
+        mode: c_int,
+        offset: c_long,
+        length: c_long,
+    ) -> c_int {
+        // SAFETY: syscall4 puts the source's fd/mode/off_t/off_t words in
+        // rdi/rsi/rdx/r10. Linux validates all scalar semantics.
+        c_status(unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_FALLOCATE,
+                i64::from(descriptor),
+                i64::from(mode),
+                offset,
+                length,
+            )
+        })
+    }
+}}
 
-/// Change one pathname entry's ownership relative to a caller-selected
-/// directory descriptor.
-///
-/// # Safety
-///
-/// `path` must remain a readable NUL-terminated pathname for the call. The
-/// caller owns directory-descriptor lifetime, raw flag meaning, permissions,
-/// uid/gid values, and namespace races.
-#[no_mangle]
-pub unsafe extern "C" fn fchownat(
-    directory_descriptor: c_int,
-    path: *const c_char,
-    user: c_uint,
-    group: c_uint,
-    flags: c_int,
-) -> c_int {
-    // SAFETY: Linux validates the caller-owned dirfd/path/uid/gid/flag words.
-    c_status(unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_FCHOWNAT,
-            i64::from(directory_descriptor),
-            path as usize as i64,
-            i64::from(user),
-            i64::from(group),
-            i64::from(flags),
-        )
-    })
-}
+// Musl's `src/misc/lockf.c` object.
+static_archive_member! { lockf_source {
+    /// Apply musl's selected `lockf` operation over a current-offset write lock.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns descriptor lifetime, shared file offset, lock range, and
+    /// blocking/cancellation coordination. `F_LOCK` can block and uses the owned
+    /// runtime's same cancellation window as musl's `F_SETLKW` `fcntl` route.
+    #[no_mangle]
+    pub unsafe extern "C" fn lockf(descriptor: c_int, operation: c_int, size: c_long) -> c_int {
+        let mut record = Flock {
+            lock_type: F_WRLCK,
+            whence: SEEK_CUR,
+            start: 0,
+            length: size,
+            process_id: 0,
+        };
+        let pointer = (&mut record as *mut Flock) as usize as i64;
 
-/// Create one special filesystem node through the direct x86 `mknod` request.
-///
-/// # Safety
-///
-/// `path` must remain a readable NUL-terminated pathname. The caller owns
-/// node type/device interpretation, umask, permissions, and namespace races.
-#[no_mangle]
-pub unsafe extern "C" fn mknod(
-    path: *const c_char,
-    mode: c_uint,
-    device: c_ulong,
-) -> c_int {
-    // SAFETY: the caller owns the raw pathname/mode/dev_t request.
-    c_status(unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_MKNOD,
-            path as usize as i64,
-            i64::from(mode),
-            device as i64,
-        )
-    })
-}
-
-/// Create one special filesystem node relative to a caller-selected directory.
-///
-/// # Safety
-///
-/// `path` must remain a readable NUL-terminated pathname. The caller owns
-/// directory-descriptor lifetime, mode/device interpretation, umask,
-/// permissions, and namespace races.
-#[no_mangle]
-pub unsafe extern "C" fn mknodat(
-    directory_descriptor: c_int,
-    path: *const c_char,
-    mode: c_uint,
-    device: c_ulong,
-) -> c_int {
-    // SAFETY: syscall4 places the dev_t machine word in x86 Linux r10.
-    c_status(unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_MKNODAT,
-            i64::from(directory_descriptor),
-            path as usize as i64,
-            i64::from(mode),
-            device as i64,
-        )
-    })
-}
-
-/// Musl's historical xstat compatibility entry for [`mknod`].
-///
-/// The source ignores `version` and reads `*device` before making the ordinary
-/// special-node call.  It deliberately performs neither version validation nor
-/// a null check: callers must provide a readable `dev_t` pointer, exactly as
-/// `src/stat/__xstat.c` requires.
-///
-/// # Safety
-///
-/// `path` must remain a readable NUL-terminated pathname and `device` must
-/// point to one readable x86 Linux `dev_t`.  The caller owns the namespace,
-/// mode, device interpretation, and all ordinary `mknod` preconditions.
-#[no_mangle]
-pub unsafe extern "C" fn __xmknod(
-    _version: c_int,
-    path: *const c_char,
-    mode: c_uint,
-    device: *mut c_ulong,
-) -> c_int {
-    // SAFETY: musl's source passes the caller-owned dev_t value directly.
-    unsafe { mknod(path, mode, core::ptr::read(device)) }
-}
-
-/// Musl's historical xstat compatibility entry for [`mknodat`].
-///
-/// `version` is source-ignored and `device` is dereferenced before the
-/// existing directory-relative special-node request, preserving the same raw
-/// caller contract as [`__xmknod`].
-///
-/// # Safety
-///
-/// `path` and `device` have the same requirements as [`__xmknod`], and
-/// `directory_descriptor` must be valid for the selected `mknodat` request.
-#[no_mangle]
-pub unsafe extern "C" fn __xmknodat(
-    _version: c_int,
-    directory_descriptor: c_int,
-    path: *const c_char,
-    mode: c_uint,
-    device: *mut c_ulong,
-) -> c_int {
-    // SAFETY: musl's source passes the caller-owned dev_t value directly.
-    unsafe { mknodat(directory_descriptor, path, mode, core::ptr::read(device)) }
-}
-
-/// Rename one entry between caller-selected directory descriptors.
-///
-/// # Safety
-///
-/// Both path pointers must remain readable NUL-terminated pathnames for the
-/// call. The caller owns descriptor lifetimes, namespace races, and replacement
-/// policy.
-#[no_mangle]
-pub unsafe extern "C" fn renameat(
-    old_directory_descriptor: c_int,
-    old_path: *const c_char,
-    new_directory_descriptor: c_int,
-    new_path: *const c_char,
-) -> c_int {
-    // SAFETY: the caller owns both raw directory/path pairs.
-    c_status(unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_RENAMEAT,
-            i64::from(old_directory_descriptor),
-            old_path as usize as i64,
-            i64::from(new_directory_descriptor),
-            new_path as usize as i64,
-        )
-    })
-}
-
-/// Create one symbolic link relative to a caller-selected directory descriptor.
-///
-/// # Safety
-///
-/// Both path pointers must remain readable NUL-terminated strings for the
-/// call. The caller owns target spelling, directory-descriptor lifetime, and
-/// the resulting namespace transition.
-#[no_mangle]
-pub unsafe extern "C" fn symlinkat(
-    target: *const c_char,
-    directory_descriptor: c_int,
-    link_path: *const c_char,
-) -> c_int {
-    // SAFETY: the caller owns the two raw pathnames and directory descriptor.
-    c_status(unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_SYMLINKAT,
-            target as usize as i64,
-            i64::from(directory_descriptor),
-            link_path as usize as i64,
-        )
-    })
-}
-
-/// Fill the installed public `struct statx` record for one pathname.
-///
-/// Linux 5.10 guarantees this direct request, which supplies caller-selected
-/// flags and request mask. Its raw result, including `ENOSYS` under a caller's
-/// syscall filter, is published through the C ABI unchanged; no old-kernel
-/// compatibility fallback is selected.
-///
-/// # Safety
-///
-/// `path` must remain a readable NUL-terminated pathname and `output` must
-/// remain writable for one aligned 256-byte public `struct statx` record. The
-/// caller owns directory-descriptor lifetime, flag/mask interpretation, and
-/// all namespace races.
-#[no_mangle]
-pub unsafe extern "C" fn statx(
-    directory_descriptor: c_int,
-    path: *const c_char,
-    flags: c_int,
-    mask: c_uint,
-    output: *mut Statx,
-) -> c_int {
-    // SAFETY: Linux x86-64 places flags/mask/output in rdx/r10/r8.
-    c_status(unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_STATX,
-            i64::from(directory_descriptor),
-            path as usize as i64,
-            i64::from(flags),
-            i64::from(mask),
-            output as usize as i64,
-        )
-    })
-}
-
-/// Allocate file storage over one signed range through Linux `fallocate(2)`.
-///
-/// # Safety
-///
-/// The caller owns descriptor lifetime, mode-bit meaning, signed range,
-/// filesystem policy, and every resulting content or allocation effect.
-#[no_mangle]
-pub unsafe extern "C" fn fallocate(
-    descriptor: c_int,
-    mode: c_int,
-    offset: c_long,
-    length: c_long,
-) -> c_int {
-    // SAFETY: syscall4 puts the source's fd/mode/off_t/off_t words in
-    // rdi/rsi/rdx/r10. Linux validates all scalar semantics.
-    c_status(unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_FALLOCATE,
-            i64::from(descriptor),
-            i64::from(mode),
-            offset,
-            length,
-        )
-    })
-}
-
-/// Apply musl's selected `lockf` operation over a current-offset write lock.
-///
-/// # Safety
-///
-/// The caller owns descriptor lifetime, shared file offset, lock range, and
-/// blocking/cancellation coordination. `F_LOCK` can block and uses the owned
-/// runtime's same cancellation window as musl's `F_SETLKW` `fcntl` route.
-#[no_mangle]
-pub unsafe extern "C" fn lockf(descriptor: c_int, operation: c_int, size: c_long) -> c_int {
-    let mut record = Flock {
-        lock_type: F_WRLCK,
-        whence: SEEK_CUR,
-        start: 0,
-        length: size,
-        process_id: 0,
-    };
-    let pointer = (&mut record as *mut Flock) as usize as i64;
-
-    match operation {
-        F_TEST => {
-            record.lock_type = F_RDLCK;
-            // SAFETY: the local complete x86 flock record remains writable
-            // through the selected F_GETLK request.
-            let result = unsafe {
-                raw_syscall::syscall3(
-                    raw_syscall::SYS_FCNTL,
-                    i64::from(descriptor),
-                    F_GETLK,
-                    pointer,
-                )
-            };
-            if result < 0 {
-                return c_status(result);
+        match operation {
+            F_TEST => {
+                record.lock_type = F_RDLCK;
+                // SAFETY: the local complete x86 flock record remains writable
+                // through the selected F_GETLK request.
+                let result = unsafe {
+                    raw_syscall::syscall3(
+                        raw_syscall::SYS_FCNTL,
+                        i64::from(descriptor),
+                        F_GETLK,
+                        pointer,
+                    )
+                };
+                if result < 0 {
+                    return c_status(result);
+                }
+                // SAFETY: getpid has no pointer contract and cannot produce a
+                // Linux error on the selected baseline.
+                let caller_process = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETPID) } as c_int;
+                if record.lock_type == F_UNLCK || record.process_id == caller_process {
+                    0
+                } else {
+                    // SAFETY: this source-specific conflict result owns only the
+                    // calling thread's existing C errno slot.
+                    unsafe { errno::set_errno(EACCES) };
+                    -1
+                }
             }
-            // SAFETY: getpid has no pointer contract and cannot produce a
-            // Linux error on the selected baseline.
-            let caller_process = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETPID) } as c_int;
-            if record.lock_type == F_UNLCK || record.process_id == caller_process {
-                0
-            } else {
-                // SAFETY: this source-specific conflict result owns only the
-                // calling thread's existing C errno slot.
-                unsafe { errno::set_errno(EACCES) };
+            F_ULOCK => {
+                record.lock_type = F_UNLCK;
+                // SAFETY: Linux reads the complete local flock record.
+                c_status(unsafe {
+                    raw_syscall::syscall3(
+                        raw_syscall::SYS_FCNTL,
+                        i64::from(descriptor),
+                        F_SETLK,
+                        pointer,
+                    )
+                })
+            }
+            F_TLOCK => {
+                // SAFETY: Linux reads the complete local flock record.
+                c_status(unsafe {
+                    raw_syscall::syscall3(
+                        raw_syscall::SYS_FCNTL,
+                        i64::from(descriptor),
+                        F_SETLK,
+                        pointer,
+                    )
+                })
+            }
+            F_LOCK => {
+                // SAFETY: Linux reads the complete local flock record while it
+                // waits. The owned cancellation owner retains the caller's
+                // blocking pointer lifetime contract.
+                c_status(unsafe {
+                    crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                        raw_syscall::SYS_FCNTL,
+                        i64::from(descriptor),
+                        F_SETLKW,
+                        pointer,
+                        0,
+                        0,
+                        0,
+                    )
+                })
+            }
+            _ => {
+                // SAFETY: musl's default switch case owns this one local errno
+                // result and must not issue a fcntl request.
+                unsafe { errno::set_errno(EINVAL) };
                 -1
             }
         }
-        F_ULOCK => {
-            record.lock_type = F_UNLCK;
-            // SAFETY: Linux reads the complete local flock record.
-            c_status(unsafe {
-                raw_syscall::syscall3(
-                    raw_syscall::SYS_FCNTL,
-                    i64::from(descriptor),
-                    F_SETLK,
-                    pointer,
-                )
-            })
-        }
-        F_TLOCK => {
-            // SAFETY: Linux reads the complete local flock record.
-            c_status(unsafe {
-                raw_syscall::syscall3(
-                    raw_syscall::SYS_FCNTL,
-                    i64::from(descriptor),
-                    F_SETLK,
-                    pointer,
-                )
-            })
-        }
-        F_LOCK => {
-            // SAFETY: Linux reads the complete local flock record while it
-            // waits. The owned cancellation owner retains the caller's
-            // blocking pointer lifetime contract.
-            c_status(unsafe {
-                super::pthread_cancel::syscall_cp(
-                    raw_syscall::SYS_FCNTL,
-                    i64::from(descriptor),
-                    F_SETLKW,
-                    pointer,
-                    0,
-                    0,
-                    0,
-                )
-            })
-        }
-        _ => {
-            // SAFETY: musl's default switch case owns this one local errno
-            // result and must not issue a fcntl request.
-            unsafe { errno::set_errno(EINVAL) };
-            -1
-        }
     }
-}
+}}
 
-/// Read vectors with musl's `preadv2` zero-flag/current-offset routing.
-///
-/// # Safety
-///
-/// `iov` and each kernel-accessed vector must remain valid and writable for
-/// the operation. The caller owns descriptor lifetime, vector count and
-/// aggregate bounds, file-offset synchronization, and flag interpretation.
-#[no_mangle]
-pub unsafe extern "C" fn preadv2(
-    descriptor: c_int,
-    iov: *const vector_io::IoVec,
-    count: c_int,
-    offset: c_long,
-    flags: c_int,
-) -> isize {
-    if flags == 0 {
-        if offset == -1 {
-            // SAFETY: inherited vector-I/O caller obligations are unchanged.
-            return unsafe { vector_io::readv(descriptor, iov, count) };
+// Musl's `src/linux/preadv2.c` object.
+static_archive_member! { preadv2_source {
+    /// Read vectors with musl's `preadv2` zero-flag/current-offset routing.
+    ///
+    /// # Safety
+    ///
+    /// `iov` and each kernel-accessed vector must remain valid and writable for
+    /// the operation. The caller owns descriptor lifetime, vector count and
+    /// aggregate bounds, file-offset synchronization, and flag interpretation.
+    #[no_mangle]
+    pub unsafe extern "C" fn preadv2(
+        descriptor: c_int,
+        iov: *const vector_io::IoVec,
+        count: c_int,
+        offset: c_long,
+        flags: c_int,
+    ) -> isize {
+        if flags == 0 {
+            if offset == -1 {
+                // SAFETY: inherited vector-I/O caller obligations are unchanged.
+                return unsafe { vector_io::readv(descriptor, iov, count) };
+            }
+            // SAFETY: musl's cancellation-point request receives the signed
+            // offset in low/high x86 Linux words.
+            return c_ssize_status(unsafe {
+                crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                    raw_syscall::SYS_PREADV,
+                    i64::from(descriptor),
+                    iov as usize as i64,
+                    i64::from(count),
+                    offset,
+                    offset >> 32,
+                    0,
+                )
+            });
         }
-        // SAFETY: musl's cancellation-point request receives the signed
-        // offset in low/high x86 Linux words.
-        return c_ssize_status(unsafe {
-            super::pthread_cancel::syscall_cp(
-                raw_syscall::SYS_PREADV,
+
+        // SAFETY: the source's flags-bearing request keeps the same offset split
+        // and routes through the owned runtime cancellation window.
+        c_ssize_status(unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_PREADV2,
                 i64::from(descriptor),
                 iov as usize as i64,
                 i64::from(count),
                 offset,
                 offset >> 32,
-                0,
+                i64::from(flags),
             )
-        });
+        })
     }
+}}
 
-    // SAFETY: the source's flags-bearing request keeps the same offset split
-    // and routes through the owned runtime cancellation window.
-    c_ssize_status(unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_PREADV2,
-            i64::from(descriptor),
-            iov as usize as i64,
-            i64::from(count),
-            offset,
-            offset >> 32,
-            i64::from(flags),
-        )
-    })
-}
-
-/// Write vectors with musl's `pwritev2` zero-flag/current-offset routing.
-///
-/// # Safety
-///
-/// `iov` and each kernel-accessed vector must remain valid and readable for
-/// the operation. The caller owns descriptor lifetime, vector count and
-/// aggregate bounds, file-offset synchronization, and flag interpretation.
-#[no_mangle]
-pub unsafe extern "C" fn pwritev2(
-    descriptor: c_int,
-    iov: *const vector_io::IoVec,
-    count: c_int,
-    offset: c_long,
-    flags: c_int,
-) -> isize {
-    if flags == 0 {
-        if offset == -1 {
-            // SAFETY: inherited vector-I/O caller obligations are unchanged.
-            return unsafe { vector_io::writev(descriptor, iov, count) };
+// Musl's `src/linux/pwritev2.c` object.
+static_archive_member! { pwritev2_source {
+    /// Write vectors with musl's `pwritev2` zero-flag/current-offset routing.
+    ///
+    /// # Safety
+    ///
+    /// `iov` and each kernel-accessed vector must remain valid and readable for
+    /// the operation. The caller owns descriptor lifetime, vector count and
+    /// aggregate bounds, file-offset synchronization, and flag interpretation.
+    #[no_mangle]
+    pub unsafe extern "C" fn pwritev2(
+        descriptor: c_int,
+        iov: *const vector_io::IoVec,
+        count: c_int,
+        offset: c_long,
+        flags: c_int,
+    ) -> isize {
+        if flags == 0 {
+            if offset == -1 {
+                // SAFETY: inherited vector-I/O caller obligations are unchanged.
+                return unsafe { vector_io::writev(descriptor, iov, count) };
+            }
+            // SAFETY: musl's cancellation-point request receives the signed
+            // offset in low/high x86 Linux words.
+            return c_ssize_status(unsafe {
+                crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                    raw_syscall::SYS_PWRITEV,
+                    i64::from(descriptor),
+                    iov as usize as i64,
+                    i64::from(count),
+                    offset,
+                    offset >> 32,
+                    0,
+                )
+            });
         }
-        // SAFETY: musl's cancellation-point request receives the signed
-        // offset in low/high x86 Linux words.
-        return c_ssize_status(unsafe {
-            super::pthread_cancel::syscall_cp(
-                raw_syscall::SYS_PWRITEV,
+
+        // SAFETY: the source's flags-bearing request keeps the same offset split
+        // and routes through the owned runtime cancellation window.
+        c_ssize_status(unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_PWRITEV2,
                 i64::from(descriptor),
                 iov as usize as i64,
                 i64::from(count),
                 offset,
                 offset >> 32,
-                0,
+                i64::from(flags),
             )
-        });
+        })
     }
-
-    // SAFETY: the source's flags-bearing request keeps the same offset split
-    // and routes through the owned runtime cancellation window.
-    c_ssize_status(unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_PWRITEV2,
-            i64::from(descriptor),
-            iov as usize as i64,
-            i64::from(count),
-            offset,
-            offset >> 32,
-            i64::from(flags),
-        )
-    })
-}
+}}

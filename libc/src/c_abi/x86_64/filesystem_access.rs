@@ -34,100 +34,111 @@ const AT_EACCESS: c_int = 0x200;
 // Musl weak_alias(euidaccess, eaccess) makes both ELF names identify the same
 // implementation. A Rust weak forwarding wrapper would use another address
 // and silently widen the source-specific alias contract.
-core::arch::global_asm!(
-    ".weak eaccess",
-    ".set eaccess, euidaccess",
-);
 
-/// Test a pathname against Linux's real-ID permission check through
-/// `access(2)`.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the duration
-/// of the syscall, unless the caller deliberately requests Linux's `EFAULT`
-/// behavior. The caller owns pathname lifetime, resolution races, and the
-/// meaning of the raw Linux access-mode bits. This direct leaf has no musl
-/// pthread-cancellation behavior.
-#[no_mangle]
-pub unsafe extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
-    // SAFETY: the caller owns the raw pathname and access-mode contract; Linux
-    // x86-64 takes them in rdi/rsi for the direct access=21 request.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_ACCESS,
-            path as usize as i64,
-            i64::from(mode),
-        )
-    };
-    c_status(result)
-}
-
-/// Test a pathname relative to a directory descriptor through Linux
-/// `faccessat(2)` or its flags-bearing `faccessat2(2)` form.
-///
-/// A zero `flags` word preserves musl's three-argument legacy
-/// `faccessat=269` route. Any nonzero word uses Linux 5.10's
-/// `faccessat2=439` request, whose fourth argument is moved from the C ABI's
-/// rcx into Linux x86-64's r10 register. No availability fallback or
-/// credentials-in-userspace emulation is selected.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the duration
-/// of the syscall, unless the caller deliberately requests Linux's `EFAULT`
-/// behavior. The caller owns `directory_descriptor` lifetime, pathname
-/// resolution races, and the meaning of all raw Linux mode and flag bits.
-/// This direct leaf has no musl pthread-cancellation behavior.
-#[no_mangle]
-pub unsafe extern "C" fn faccessat(
-    directory_descriptor: c_int,
-    path: *const c_char,
-    mode: c_int,
-    flags: c_int,
-) -> c_int {
-    let result = if flags == 0 {
-        // SAFETY: the caller owns the raw directory-descriptor, pathname, and
-        // access-mode contract. Legacy faccessat has no fourth flags argument.
-        unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_FACCESSAT,
-                i64::from(directory_descriptor),
+// Musl's `src/unistd/access.c` object.
+static_archive_member! { access_source {
+    /// Test a pathname against Linux's real-ID permission check through
+    /// `access(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the duration
+    /// of the syscall, unless the caller deliberately requests Linux's `EFAULT`
+    /// behavior. The caller owns pathname lifetime, resolution races, and the
+    /// meaning of the raw Linux access-mode bits. This direct leaf has no musl
+    /// pthread-cancellation behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
+        // SAFETY: the caller owns the raw pathname and access-mode contract; Linux
+        // x86-64 takes them in rdi/rsi for the direct access=21 request.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_ACCESS,
                 path as usize as i64,
                 i64::from(mode),
             )
-        }
-    } else {
-        // SAFETY: the caller owns the raw directory-descriptor, pathname,
-        // access-mode, and flags contract. syscall4 routes flags through r10.
-        unsafe {
-            raw_syscall::syscall4(
-                raw_syscall::SYS_FACCESSAT2,
-                i64::from(directory_descriptor),
-                path as usize as i64,
-                i64::from(mode),
-                i64::from(flags),
-            )
-        }
-    };
-    c_status(result)
-}
+        };
+        c_status(result)
+    }
+}}
 
-/// Test a pathname using Linux's effective-ID permission check.
-///
-/// This is musl's `faccessat(AT_FDCWD, path, mode, AT_EACCESS)` composition;
-/// [`eaccess`] is its weak same-address ELF alias.
-///
-/// # Safety
-///
-/// `path` must point to a readable NUL-terminated pathname for the duration
-/// of the syscall, unless the caller deliberately requests Linux's `EFAULT`
-/// behavior. The caller owns pathname lifetime, resolution races, and the
-/// raw access-mode bits. This direct leaf has no musl pthread-cancellation
-/// behavior.
-#[no_mangle]
-pub unsafe extern "C" fn euidaccess(path: *const c_char, mode: c_int) -> c_int {
-    // SAFETY: euidaccess has the same caller-owned pathname/mode obligations
-    // as faccessat and fixes the remaining two arguments to musl's contract.
-    unsafe { faccessat(AT_FDCWD, path, mode, AT_EACCESS) }
-}
+// Musl's `src/unistd/faccessat.c` object.
+static_archive_member! { faccessat_source {
+    /// Test a pathname relative to a directory descriptor through Linux
+    /// `faccessat(2)` or its flags-bearing `faccessat2(2)` form.
+    ///
+    /// A zero `flags` word preserves musl's three-argument legacy
+    /// `faccessat=269` route. Any nonzero word uses Linux 5.10's
+    /// `faccessat2=439` request, whose fourth argument is moved from the C ABI's
+    /// rcx into Linux x86-64's r10 register. No availability fallback or
+    /// credentials-in-userspace emulation is selected.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the duration
+    /// of the syscall, unless the caller deliberately requests Linux's `EFAULT`
+    /// behavior. The caller owns `directory_descriptor` lifetime, pathname
+    /// resolution races, and the meaning of all raw Linux mode and flag bits.
+    /// This direct leaf has no musl pthread-cancellation behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn faccessat(
+        directory_descriptor: c_int,
+        path: *const c_char,
+        mode: c_int,
+        flags: c_int,
+    ) -> c_int {
+        let result = if flags == 0 {
+            // SAFETY: the caller owns the raw directory-descriptor, pathname, and
+            // access-mode contract. Legacy faccessat has no fourth flags argument.
+            unsafe {
+                raw_syscall::syscall3(
+                    raw_syscall::SYS_FACCESSAT,
+                    i64::from(directory_descriptor),
+                    path as usize as i64,
+                    i64::from(mode),
+                )
+            }
+        } else {
+            // SAFETY: the caller owns the raw directory-descriptor, pathname,
+            // access-mode, and flags contract. syscall4 routes flags through r10.
+            unsafe {
+                raw_syscall::syscall4(
+                    raw_syscall::SYS_FACCESSAT2,
+                    i64::from(directory_descriptor),
+                    path as usize as i64,
+                    i64::from(mode),
+                    i64::from(flags),
+                )
+            }
+        };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/legacy/euidaccess.c` object.
+static_archive_member! { euidaccess_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak eaccess",
+        ".set eaccess, euidaccess",
+    );
+
+    /// Test a pathname using Linux's effective-ID permission check.
+    ///
+    /// This is musl's `faccessat(AT_FDCWD, path, mode, AT_EACCESS)` composition;
+    /// [`eaccess`] is its weak same-address ELF alias.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname for the duration
+    /// of the syscall, unless the caller deliberately requests Linux's `EFAULT`
+    /// behavior. The caller owns pathname lifetime, resolution races, and the
+    /// raw access-mode bits. This direct leaf has no musl pthread-cancellation
+    /// behavior.
+    #[no_mangle]
+    pub unsafe extern "C" fn euidaccess(path: *const c_char, mode: c_int) -> c_int {
+        // SAFETY: euidaccess has the same caller-owned pathname/mode obligations
+        // as faccessat and fixes the remaining two arguments to musl's contract.
+        unsafe { faccessat(AT_FDCWD, path, mode, AT_EACCESS) }
+    }
+}}

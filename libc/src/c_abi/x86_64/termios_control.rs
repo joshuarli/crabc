@@ -187,288 +187,323 @@ unsafe fn write_control_code(termios: *mut c_void, index: usize, value: u8) {
     };
 }
 
-/// Return the public output baud selector from `c_cflag`.
-///
-/// # Safety
-///
-/// `termios` must point to readable storage for a complete public x86
-/// `struct termios` record.
-#[no_mangle]
-pub unsafe extern "C" fn cfgetospeed(termios: *const c_void) -> c_uint {
-    // SAFETY: The caller owns the readable C record contract.
-    unsafe { read_public_u32(termios, PUBLIC_CONTROL_FLAGS_OFFSET) & CBAUD }
-}
-
-/// Return the public input baud selector from `c_cflag`.
-///
-/// # Safety
-///
-/// `termios` must point to readable storage for a complete public x86
-/// `struct termios` record. A zero input selector remains Linux's distinct
-/// `B0` value; this function does not infer the output selector.
-#[no_mangle]
-pub unsafe extern "C" fn cfgetispeed(termios: *const c_void) -> c_uint {
-    // SAFETY: The caller owns the readable C record contract.
-    unsafe {
-        (read_public_u32(termios, PUBLIC_CONTROL_FLAGS_OFFSET) & CIBAUD)
-            / INPUT_SPEED_MULTIPLIER
+// Musl's `src/termios/cfgetospeed.c` object.
+static_archive_member! { cfgetospeed_source {
+    /// Return the public output baud selector from `c_cflag`.
+    ///
+    /// # Safety
+    ///
+    /// `termios` must point to readable storage for a complete public x86
+    /// `struct termios` record.
+    #[no_mangle]
+    pub unsafe extern "C" fn cfgetospeed(termios: *const c_void) -> c_uint {
+        // SAFETY: The caller owns the readable C record contract.
+        unsafe { read_public_u32(termios, PUBLIC_CONTROL_FLAGS_OFFSET) & CBAUD }
     }
-}
 
-/// Change only the output baud-selector bits of a public C termios record.
-///
-/// # Safety
-///
-/// For a valid selector, `termios` must point to writable storage for a
-/// complete public x86 `struct termios`. As in musl, an invalid selector is
-/// rejected with `EINVAL` before this function dereferences `termios`.
-#[no_mangle]
-pub unsafe extern "C" fn cfsetospeed(termios: *mut c_void, speed: c_uint) -> c_int {
-    if speed & !CBAUD != 0 {
-        return invalid_argument();
+    /// Return the public input baud selector from `c_cflag`.
+    ///
+    /// # Safety
+    ///
+    /// `termios` must point to readable storage for a complete public x86
+    /// `struct termios` record. A zero input selector remains Linux's distinct
+    /// `B0` value; this function does not infer the output selector.
+    #[no_mangle]
+    pub unsafe extern "C" fn cfgetispeed(termios: *const c_void) -> c_uint {
+        // SAFETY: The caller owns the readable C record contract.
+        unsafe {
+            (read_public_u32(termios, PUBLIC_CONTROL_FLAGS_OFFSET) & CIBAUD)
+                / INPUT_SPEED_MULTIPLIER
+        }
     }
-    // SAFETY: The valid-speed branch reaches the caller's writable C record.
-    unsafe {
-        let flags = read_public_u32(termios.cast_const(), PUBLIC_CONTROL_FLAGS_OFFSET);
-        write_public_u32(
-            termios,
-            PUBLIC_CONTROL_FLAGS_OFFSET,
-            (flags & !CBAUD) | speed,
-        );
+}}
+
+
+// Musl's `src/termios/cfsetospeed.c` object.
+static_archive_member! { cfsetospeed_source {
+    /// Change only the output baud-selector bits of a public C termios record.
+    ///
+    /// # Safety
+    ///
+    /// For a valid selector, `termios` must point to writable storage for a
+    /// complete public x86 `struct termios`. As in musl, an invalid selector is
+    /// rejected with `EINVAL` before this function dereferences `termios`.
+    #[no_mangle]
+    pub unsafe extern "C" fn cfsetospeed(termios: *mut c_void, speed: c_uint) -> c_int {
+        if speed & !CBAUD != 0 {
+            return invalid_argument();
+        }
+        // SAFETY: The valid-speed branch reaches the caller's writable C record.
+        unsafe {
+            let flags = read_public_u32(termios.cast_const(), PUBLIC_CONTROL_FLAGS_OFFSET);
+            write_public_u32(
+                termios,
+                PUBLIC_CONTROL_FLAGS_OFFSET,
+                (flags & !CBAUD) | speed,
+            );
+        }
+        0
     }
-    0
-}
 
-/// Change only the input baud-selector bits of a public C termios record.
-///
-/// # Safety
-///
-/// For a valid selector, `termios` must point to writable storage for a
-/// complete public x86 `struct termios`. As in musl, an invalid selector is
-/// rejected with `EINVAL` before this function dereferences `termios`.
-#[no_mangle]
-pub unsafe extern "C" fn cfsetispeed(termios: *mut c_void, speed: c_uint) -> c_int {
-    if speed & !CBAUD != 0 {
-        return invalid_argument();
+    /// Change only the input baud-selector bits of a public C termios record.
+    ///
+    /// # Safety
+    ///
+    /// For a valid selector, `termios` must point to writable storage for a
+    /// complete public x86 `struct termios`. As in musl, an invalid selector is
+    /// rejected with `EINVAL` before this function dereferences `termios`.
+    #[no_mangle]
+    pub unsafe extern "C" fn cfsetispeed(termios: *mut c_void, speed: c_uint) -> c_int {
+        if speed & !CBAUD != 0 {
+            return invalid_argument();
+        }
+        // SAFETY: The valid-speed branch reaches the caller's writable C record.
+        unsafe {
+            let flags = read_public_u32(termios.cast_const(), PUBLIC_CONTROL_FLAGS_OFFSET);
+            write_public_u32(
+                termios,
+                PUBLIC_CONTROL_FLAGS_OFFSET,
+                (flags & !CIBAUD) | speed * INPUT_SPEED_MULTIPLIER,
+            );
+        }
+        0
     }
-    // SAFETY: The valid-speed branch reaches the caller's writable C record.
-    unsafe {
-        let flags = read_public_u32(termios.cast_const(), PUBLIC_CONTROL_FLAGS_OFFSET);
-        write_public_u32(
-            termios,
-            PUBLIC_CONTROL_FLAGS_OFFSET,
-            (flags & !CIBAUD) | speed * INPUT_SPEED_MULTIPLIER,
-        );
+}}
+
+
+// Musl's `src/termios/cfsetspeed.c` object.
+static_archive_member! { cfsetspeed_source {
+    /// Set an output selector and the distinct zero input selector.
+    ///
+    /// # Safety
+    ///
+    /// The pointer contract is the same as [`cfsetospeed`] and [`cfsetispeed`].
+    /// An invalid selector is rejected by the first operation before it touches
+    /// `termios`; a successful call keeps Linux's `B0` input selector rather than
+    /// copying the output selector.
+    #[no_mangle]
+    pub unsafe extern "C" fn cfsetspeed(termios: *mut c_void, speed: c_uint) -> c_int {
+        // SAFETY: This forwards the C caller's record contract to the two
+        // musl-shaped selected helpers.
+        let result = unsafe { cfsetospeed(termios, speed) };
+        if result != 0 {
+            return result;
+        }
+        // SAFETY: zero is a valid selector and the first successful write proved
+        // the caller's writable record contract for this direct follow-up write.
+        unsafe { cfsetispeed(termios, 0) }
     }
-    0
-}
+}}
 
-/// Set an output selector and the distinct zero input selector.
-///
-/// # Safety
-///
-/// The pointer contract is the same as [`cfsetospeed`] and [`cfsetispeed`].
-/// An invalid selector is rejected by the first operation before it touches
-/// `termios`; a successful call keeps Linux's `B0` input selector rather than
-/// copying the output selector.
-#[no_mangle]
-pub unsafe extern "C" fn cfsetspeed(termios: *mut c_void, speed: c_uint) -> c_int {
-    // SAFETY: This forwards the C caller's record contract to the two
-    // musl-shaped selected helpers.
-    let result = unsafe { cfsetospeed(termios, speed) };
-    if result != 0 {
-        return result;
+// Musl's `src/termios/cfmakeraw.c` object.
+static_archive_member! { cfmakeraw_source {
+    /// Apply musl's POSIX raw-mode bit transformation in place.
+    ///
+    /// # Safety
+    ///
+    /// `termios` must point to writable storage for one complete public x86
+    /// `struct termios`. Only the named flag fields and `VMIN`/`VTIME` bytes are
+    /// modified; every other control byte and the public record tail remain
+    /// caller-resident.
+    #[no_mangle]
+    pub unsafe extern "C" fn cfmakeraw(termios: *mut c_void) {
+        // SAFETY: The C caller supplies the complete writable public record.
+        unsafe {
+            let input_flags = read_public_u32(termios.cast_const(), 0);
+            write_public_u32(
+                termios,
+                0,
+                input_flags & !(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON),
+            );
+            let output_flags = read_public_u32(termios.cast_const(), 4);
+            write_public_u32(termios, 4, output_flags & !OPOST);
+            let local_flags = read_public_u32(termios.cast_const(), 12);
+            write_public_u32(
+                termios,
+                12,
+                local_flags & !(ECHO | ECHONL | ICANON | ISIG | IEXTEN),
+            );
+            let control_flags = read_public_u32(termios.cast_const(), PUBLIC_CONTROL_FLAGS_OFFSET);
+            write_public_u32(
+                termios,
+                PUBLIC_CONTROL_FLAGS_OFFSET,
+                (control_flags & !(CSIZE | PARENB)) | CS8,
+            );
+            write_control_code(termios, VMIN, 1);
+            write_control_code(termios, VTIME, 0);
+        }
     }
-    // SAFETY: zero is a valid selector and the first successful write proved
-    // the caller's writable record contract for this direct follow-up write.
-    unsafe { cfsetispeed(termios, 0) }
-}
+}}
 
-/// Apply musl's POSIX raw-mode bit transformation in place.
-///
-/// # Safety
-///
-/// `termios` must point to writable storage for one complete public x86
-/// `struct termios`. Only the named flag fields and `VMIN`/`VTIME` bytes are
-/// modified; every other control byte and the public record tail remain
-/// caller-resident.
-#[no_mangle]
-pub unsafe extern "C" fn cfmakeraw(termios: *mut c_void) {
-    // SAFETY: The C caller supplies the complete writable public record.
-    unsafe {
-        let input_flags = read_public_u32(termios.cast_const(), 0);
-        write_public_u32(
-            termios,
-            0,
-            input_flags & !(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON),
-        );
-        let output_flags = read_public_u32(termios.cast_const(), 4);
-        write_public_u32(termios, 4, output_flags & !OPOST);
-        let local_flags = read_public_u32(termios.cast_const(), 12);
-        write_public_u32(
-            termios,
-            12,
-            local_flags & !(ECHO | ECHONL | ICANON | ISIG | IEXTEN),
-        );
-        let control_flags = read_public_u32(termios.cast_const(), PUBLIC_CONTROL_FLAGS_OFFSET);
-        write_public_u32(
-            termios,
-            PUBLIC_CONTROL_FLAGS_OFFSET,
-            (control_flags & !(CSIZE | PARENB)) | CS8,
-        );
-        write_control_code(termios, VMIN, 1);
-        write_control_code(termios, VTIME, 0);
+// Musl's `src/termios/tcgetattr.c` object.
+static_archive_member! { tcgetattr_source {
+    /// Query one terminal's attributes through `TCGETS`.
+    ///
+    /// # Safety
+    ///
+    /// `termios` must be null or point to writable storage for a complete public
+    /// x86 `struct termios`; Linux itself reports `EFAULT` for an invalid non-null
+    /// pointer. On success Linux writes only the shared 36-byte kernel prefix,
+    /// leaving bytes 36 through 59 unchanged exactly as musl does.
+    #[no_mangle]
+    pub unsafe extern "C" fn tcgetattr(fd: c_int, termios: *mut c_void) -> c_int {
+        // SAFETY: Linux receives the C caller's pointer directly and owns its
+        // accessibility validation and exact 36-byte output boundary.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_IOCTL,
+                i64::from(fd),
+                TCGETS,
+                termios as usize as i64,
+            )
+        };
+        c_status(result)
     }
-}
+}}
 
-/// Query one terminal's attributes through `TCGETS`.
-///
-/// # Safety
-///
-/// `termios` must be null or point to writable storage for a complete public
-/// x86 `struct termios`; Linux itself reports `EFAULT` for an invalid non-null
-/// pointer. On success Linux writes only the shared 36-byte kernel prefix,
-/// leaving bytes 36 through 59 unchanged exactly as musl does.
-#[no_mangle]
-pub unsafe extern "C" fn tcgetattr(fd: c_int, termios: *mut c_void) -> c_int {
-    // SAFETY: Linux receives the C caller's pointer directly and owns its
-    // accessibility validation and exact 36-byte output boundary.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_IOCTL,
-            i64::from(fd),
-            TCGETS,
-            termios as usize as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Apply one public termios prefix through `TCSETS`, `TCSETSW`, or `TCSETSF`.
-///
-/// # Safety
-///
-/// For actions `TCSANOW..=TCSAFLUSH`, `termios` must be null or point to a
-/// readable public x86 `struct termios`; Linux consumes only its first 36
-/// bytes and reports invalid pointers itself. As in musl, an invalid action is
-/// rejected with `EINVAL` before this function accesses either `fd` or
-/// `termios`.
-#[no_mangle]
-pub unsafe extern "C" fn tcsetattr(
-    fd: c_int,
-    action: c_int,
-    termios: *const c_void,
-) -> c_int {
-    if !(TCSANOW..=TCSAFLUSH).contains(&action) {
-        return invalid_argument();
+// Musl's `src/termios/tcsetattr.c` object.
+static_archive_member! { tcsetattr_source {
+    /// Apply one public termios prefix through `TCSETS`, `TCSETSW`, or `TCSETSF`.
+    ///
+    /// # Safety
+    ///
+    /// For actions `TCSANOW..=TCSAFLUSH`, `termios` must be null or point to a
+    /// readable public x86 `struct termios`; Linux consumes only its first 36
+    /// bytes and reports invalid pointers itself. As in musl, an invalid action is
+    /// rejected with `EINVAL` before this function accesses either `fd` or
+    /// `termios`.
+    #[no_mangle]
+    pub unsafe extern "C" fn tcsetattr(
+        fd: c_int,
+        action: c_int,
+        termios: *const c_void,
+    ) -> c_int {
+        if !(TCSANOW..=TCSAFLUSH).contains(&action) {
+            return invalid_argument();
+        }
+        // SAFETY: Linux receives the C caller's pointer directly and owns its
+        // accessibility validation and exact 36-byte input boundary.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_IOCTL,
+                i64::from(fd),
+                TCSETS + i64::from(action),
+                termios as usize as i64,
+            )
+        };
+        c_status(result)
     }
-    // SAFETY: Linux receives the C caller's pointer directly and owns its
-    // accessibility validation and exact 36-byte input boundary.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_IOCTL,
-            i64::from(fd),
-            TCSETS + i64::from(action),
-            termios as usize as i64,
-        )
-    };
-    c_status(result)
-}
+}}
 
-/// Flush one named terminal queue through `TCFLSH`.
-///
-/// # Safety
-///
-/// `fd` must be suitable for the requested Linux terminal operation. Queue
-/// validation and all error ordering remain with the kernel, matching musl.
-#[no_mangle]
-pub unsafe extern "C" fn tcflush(fd: c_int, queue: c_int) -> c_int {
-    // SAFETY: This is the fixed Linux ioctl argument boundary; kernel validates
-    // the descriptor and queue selector.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_IOCTL,
-            i64::from(fd),
-            TCFLSH,
-            i64::from(queue),
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/termios/tcflush.c` object.
+static_archive_member! { tcflush_source {
+    /// Flush one named terminal queue through `TCFLSH`.
+    ///
+    /// # Safety
+    ///
+    /// `fd` must be suitable for the requested Linux terminal operation. Queue
+    /// validation and all error ordering remain with the kernel, matching musl.
+    #[no_mangle]
+    pub unsafe extern "C" fn tcflush(fd: c_int, queue: c_int) -> c_int {
+        // SAFETY: This is the fixed Linux ioctl argument boundary; kernel validates
+        // the descriptor and queue selector.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_IOCTL,
+                i64::from(fd),
+                TCFLSH,
+                i64::from(queue),
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Perform one named terminal flow operation through `TCXONC`.
-///
-/// # Safety
-///
-/// `fd` must be suitable for the requested Linux terminal operation. Action
-/// validation and all error ordering remain with the kernel, matching musl.
-#[no_mangle]
-pub unsafe extern "C" fn tcflow(fd: c_int, action: c_int) -> c_int {
-    // SAFETY: This is the fixed Linux ioctl argument boundary; kernel validates
-    // the descriptor and flow selector.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_IOCTL,
-            i64::from(fd),
-            TCXONC,
-            i64::from(action),
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/termios/tcflow.c` object.
+static_archive_member! { tcflow_source {
+    /// Perform one named terminal flow operation through `TCXONC`.
+    ///
+    /// # Safety
+    ///
+    /// `fd` must be suitable for the requested Linux terminal operation. Action
+    /// validation and all error ordering remain with the kernel, matching musl.
+    #[no_mangle]
+    pub unsafe extern "C" fn tcflow(fd: c_int, action: c_int) -> c_int {
+        // SAFETY: This is the fixed Linux ioctl argument boundary; kernel validates
+        // the descriptor and flow selector.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_IOCTL,
+                i64::from(fd),
+                TCXONC,
+                i64::from(action),
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Send Linux's fixed terminal break request.
-///
-/// # Safety
-///
-/// `fd` must be suitable for the Linux terminal operation. The duration is
-/// intentionally ignored: musl always sends `TCSBRK` with a zero argument.
-#[no_mangle]
-pub unsafe extern "C" fn tcsendbreak(fd: c_int, _duration: c_int) -> c_int {
-    // SAFETY: The named Linux request has a fixed zero argument. The kernel
-    // validates the descriptor; no C generic ioctl API is exposed.
-    let result = unsafe {
-        raw_syscall::syscall3(raw_syscall::SYS_IOCTL, i64::from(fd), TCSBRK, 0)
-    };
-    c_status(result)
-}
+// Musl's `src/termios/tcsendbreak.c` object.
+static_archive_member! { tcsendbreak_source {
+    /// Send Linux's fixed terminal break request.
+    ///
+    /// # Safety
+    ///
+    /// `fd` must be suitable for the Linux terminal operation. The duration is
+    /// intentionally ignored: musl always sends `TCSBRK` with a zero argument.
+    #[no_mangle]
+    pub unsafe extern "C" fn tcsendbreak(fd: c_int, _duration: c_int) -> c_int {
+        // SAFETY: The named Linux request has a fixed zero argument. The kernel
+        // validates the descriptor; no C generic ioctl API is exposed.
+        let result = unsafe {
+            raw_syscall::syscall3(raw_syscall::SYS_IOCTL, i64::from(fd), TCSBRK, 0)
+        };
+        c_status(result)
+    }
+}}
 
-/// Read one fixed Linux `winsize` record through `TIOCGWINSZ`.
-///
-/// # Safety
-///
-/// `winsize` must be null or point to writable storage for an eight-byte x86
-/// public `struct winsize`; Linux reports an invalid pointer with `EFAULT`.
-#[no_mangle]
-pub unsafe extern "C" fn tcgetwinsize(fd: c_int, winsize: *mut c_void) -> c_int {
-    // SAFETY: Linux receives the caller's exact fixed-size output pointer.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_IOCTL,
-            i64::from(fd),
-            TIOCGWINSZ,
-            winsize as usize as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/termios/tcgetwinsize.c` object.
+static_archive_member! { tcgetwinsize_source {
+    /// Read one fixed Linux `winsize` record through `TIOCGWINSZ`.
+    ///
+    /// # Safety
+    ///
+    /// `winsize` must be null or point to writable storage for an eight-byte x86
+    /// public `struct winsize`; Linux reports an invalid pointer with `EFAULT`.
+    #[no_mangle]
+    pub unsafe extern "C" fn tcgetwinsize(fd: c_int, winsize: *mut c_void) -> c_int {
+        // SAFETY: Linux receives the caller's exact fixed-size output pointer.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_IOCTL,
+                i64::from(fd),
+                TIOCGWINSZ,
+                winsize as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Write one fixed Linux `winsize` record through `TIOCSWINSZ`.
-///
-/// # Safety
-///
-/// `winsize` must be null or point to readable storage for an eight-byte x86
-/// public `struct winsize`; Linux reports an invalid pointer with `EFAULT`.
-#[no_mangle]
-pub unsafe extern "C" fn tcsetwinsize(fd: c_int, winsize: *const c_void) -> c_int {
-    // SAFETY: Linux receives the caller's exact fixed-size input pointer.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_IOCTL,
-            i64::from(fd),
-            TIOCSWINSZ,
-            winsize as usize as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/termios/tcsetwinsize.c` object.
+static_archive_member! { tcsetwinsize_source {
+    /// Write one fixed Linux `winsize` record through `TIOCSWINSZ`.
+    ///
+    /// # Safety
+    ///
+    /// `winsize` must be null or point to readable storage for an eight-byte x86
+    /// public `struct winsize`; Linux reports an invalid pointer with `EFAULT`.
+    #[no_mangle]
+    pub unsafe extern "C" fn tcsetwinsize(fd: c_int, winsize: *const c_void) -> c_int {
+        // SAFETY: Linux receives the caller's exact fixed-size input pointer.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_IOCTL,
+                i64::from(fd),
+                TIOCSWINSZ,
+                winsize as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}

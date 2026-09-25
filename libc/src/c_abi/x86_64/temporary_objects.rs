@@ -62,63 +62,84 @@ unsafe fn create(template: *mut c_char, suffix_length: c_int, object: Object) ->
     -1
 }
 
-/// Create an exclusive read/write file, preserving a trailing suffix.
-///
-/// # Safety
-/// `template` must be writable NUL-terminated storage, exclusively borrowed
-/// for the call. Its six `X` bytes preceding `suffix_length` are replaced on
-/// success; the caller must close the returned descriptor and remove the file.
-#[export_name = "__mkostemps"]
-pub unsafe extern "C" fn mkostemps(template: *mut c_char, suffix_length: c_int, flags: c_int) -> c_int {
-    unsafe { create(template, suffix_length, Object::File(flags)) }
-}
+// Musl's `src/temp/mkostemps.c` object.
+static_archive_member! { mkostemps_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __mkostemps",
+    );
+
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak mkostemps",
+        ".set mkostemps, __mkostemps",
+    );
+
+    /// Create an exclusive read/write file, preserving a trailing suffix.
+    ///
+    /// # Safety
+    /// `template` must be writable NUL-terminated storage, exclusively borrowed
+    /// for the call. Its six `X` bytes preceding `suffix_length` are replaced on
+    /// success; the caller must close the returned descriptor and remove the file.
+    #[export_name = "__mkostemps"]
+    pub unsafe extern "C" fn mkostemps(template: *mut c_char, suffix_length: c_int, flags: c_int) -> c_int {
+        unsafe { create(template, suffix_length, Object::File(flags)) }
+    }
+}}
 
 // Musl's `weak_alias(__mkostemps, mkostemps)` leaves public replacement valid
 // while `mkostemp`, `mkstemps`, and `mkstemp` retain their source-local helper.
-core::arch::global_asm!(
-    ".hidden __mkostemps",
-    ".weak mkostemps",
-    ".set mkostemps, __mkostemps",
-);
 
-/// Create an exclusive file from a template ending in six `X` bytes.
-///
-/// # Safety
-/// `template` must be writable NUL-terminated storage exclusively borrowed
-/// for this call. The caller owns the returned descriptor and created pathname.
-#[no_mangle]
-pub unsafe extern "C" fn mkostemp(template: *mut c_char, flags: c_int) -> c_int {
-    unsafe { mkostemps(template, 0, flags) }
-}
+// Musl's `src/temp/mkostemp.c` object.
+static_archive_member! { mkostemp_source {
+    /// Create an exclusive file from a template ending in six `X` bytes.
+    ///
+    /// # Safety
+    /// `template` must be writable NUL-terminated storage exclusively borrowed
+    /// for this call. The caller owns the returned descriptor and created pathname.
+    #[no_mangle]
+    pub unsafe extern "C" fn mkostemp(template: *mut c_char, flags: c_int) -> c_int {
+        unsafe { mkostemps(template, 0, flags) }
+    }
+}}
 
-/// Create an exclusive read/write file with a preserved trailing suffix.
-///
-/// # Safety
-/// `template` must be writable NUL-terminated storage exclusively borrowed
-/// for this call. The caller owns the returned descriptor and created pathname.
-#[no_mangle]
-pub unsafe extern "C" fn mkstemps(template: *mut c_char, suffix_length: c_int) -> c_int {
-    unsafe { mkostemps(template, suffix_length, 0) }
-}
+// Musl's `src/temp/mkstemps.c` object.
+static_archive_member! { mkstemps_source {
+    /// Create an exclusive read/write file with a preserved trailing suffix.
+    ///
+    /// # Safety
+    /// `template` must be writable NUL-terminated storage exclusively borrowed
+    /// for this call. The caller owns the returned descriptor and created pathname.
+    #[no_mangle]
+    pub unsafe extern "C" fn mkstemps(template: *mut c_char, suffix_length: c_int) -> c_int {
+        unsafe { mkostemps(template, suffix_length, 0) }
+    }
+}}
 
-/// Create an exclusive mode-0600 file from a six-X template.
-///
-/// # Safety
-/// `template` must be writable NUL-terminated storage exclusively borrowed
-/// for this call. The caller owns the returned descriptor and created pathname.
-#[no_mangle]
-pub unsafe extern "C" fn mkstemp(template: *mut c_char) -> c_int {
-    unsafe { mkostemps(template, 0, 0) }
-}
+// Musl's `src/temp/mkstemp.c` object.
+static_archive_member! { mkstemp_source {
+    /// Create an exclusive mode-0600 file from a six-X template.
+    ///
+    /// # Safety
+    /// `template` must be writable NUL-terminated storage exclusively borrowed
+    /// for this call. The caller owns the returned descriptor and created pathname.
+    #[no_mangle]
+    pub unsafe extern "C" fn mkstemp(template: *mut c_char) -> c_int {
+        unsafe { mkostemps(template, 0, 0) }
+    }
+}}
 
-/// Create an exclusive mode-0700 directory from a six-X template.
-///
-/// # Safety
-/// `template` must be writable NUL-terminated storage exclusively borrowed
-/// for this call. Success returns that same buffer; the caller owns removal
-/// of the newly created directory and must retain the name for later use.
-#[no_mangle]
-pub unsafe extern "C" fn mkdtemp(template: *mut c_char) -> *mut c_char {
-    if unsafe { create(template, 0, Object::Directory) } == 0 { template }
-    else { core::ptr::null_mut() }
-}
+// Musl's `src/temp/mkdtemp.c` object.
+static_archive_member! { mkdtemp_source {
+    /// Create an exclusive mode-0700 directory from a six-X template.
+    ///
+    /// # Safety
+    /// `template` must be writable NUL-terminated storage exclusively borrowed
+    /// for this call. Success returns that same buffer; the caller owns removal
+    /// of the newly created directory and must retain the name for later use.
+    #[no_mangle]
+    pub unsafe extern "C" fn mkdtemp(template: *mut c_char) -> *mut c_char {
+        if unsafe { create(template, 0, Object::Directory) } == 0 { template }
+        else { core::ptr::null_mut() }
+    }
+}}

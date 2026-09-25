@@ -113,304 +113,322 @@ const _: () = {
     assert!(offset_of!(PselectMaskArgument, size) == 8);
 };
 
-/// Wait for events on a public x86 `pollfd` array through Linux `poll(2)`.
-///
-/// # Safety
-///
-/// `file_descriptors` must be null only when `count` is zero; otherwise it
-/// must designate `count` readable-and-writable eight-byte public `pollfd`
-/// records for the syscall's duration. The caller owns descriptor lifetimes,
-/// concurrent readiness consumption, interruption policy, and cancellation
-/// cleanup. The owned runtime supplies musl's cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn poll(
-    file_descriptors: *mut c_void,
-    count: usize,
-    timeout_milliseconds: c_int,
-) -> c_int {
-    // SAFETY: the caller owns the complete Linux poll-array contract. The
-    // scalar count and timeout retain their x86 C ABI words exactly.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_POLL,
-            file_descriptors as usize as i64,
-            count as i64,
-            i64::from(timeout_milliseconds),
-            0,
-            0,
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_POLL,
-            file_descriptors as usize as i64,
-            count as i64,
-            i64::from(timeout_milliseconds),
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/select/poll.c` object.
+static_archive_member! { poll_source {
+    /// Wait for events on a public x86 `pollfd` array through Linux `poll(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `file_descriptors` must be null only when `count` is zero; otherwise it
+    /// must designate `count` readable-and-writable eight-byte public `pollfd`
+    /// records for the syscall's duration. The caller owns descriptor lifetimes,
+    /// concurrent readiness consumption, interruption policy, and cancellation
+    /// cleanup. The owned runtime supplies musl's cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn poll(
+        file_descriptors: *mut c_void,
+        count: usize,
+        timeout_milliseconds: c_int,
+    ) -> c_int {
+        // SAFETY: the caller owns the complete Linux poll-array contract. The
+        // scalar count and timeout retain their x86 C ABI words exactly.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_POLL,
+                file_descriptors as usize as i64,
+                count as i64,
+                i64::from(timeout_milliseconds),
+                0,
+                0,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_POLL,
+                file_descriptors as usize as i64,
+                count as i64,
+                i64::from(timeout_milliseconds),
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Wait for events with an optional temporary signal mask through `ppoll(2)`.
-///
-/// # Safety
-///
-/// `file_descriptors` follows [`poll`]'s array contract. `timeout` must be
-/// null or point to one readable public x86 `timespec`; `mask` must be null or
-/// cover its first readable kernel-visible eight-byte word of a public x86
-/// `sigset_t`. Every pointer must remain live for the syscall. The caller owns
-/// temporary-mask, signal-delivery, and cancellation-cleanup policy. The owned
-/// runtime supplies musl's cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn ppoll(
-    file_descriptors: *mut c_void,
-    count: usize,
-    timeout: *const c_void,
-    mask: *const c_void,
-) -> c_int {
-    let mut timeout_storage = if timeout.is_null() {
-        None
-    } else {
-        // Musl copies the public const record before entering Linux. An
-        // unaligned raw read preserves the C pointer boundary without making
-        // a Rust reference to caller memory.
-        // SAFETY: the caller gives one readable public timespec.
-        Some(unsafe { core::ptr::read_unaligned(timeout.cast::<Timespec>()) })
-    };
-    let timeout_pointer = match timeout_storage.as_mut() {
-        Some(storage) => storage as *mut Timespec as usize as i64,
-        None => 0,
-    };
-    // SAFETY: all pointer and signal-mask semantics remain with the C caller;
-    // Linux uses x86 r10/r8 for the timeout/mask fourth and fifth words.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_PPOLL,
-            file_descriptors as usize as i64,
-            count as i64,
-            timeout_pointer,
-            mask as usize as i64,
-            KERNEL_SIGSET_SIZE as i64,
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_PPOLL,
-            file_descriptors as usize as i64,
-            count as i64,
-            timeout_pointer,
-            mask as usize as i64,
-            KERNEL_SIGSET_SIZE as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Wait for descriptor-set readiness through Linux `select(2)`.
-///
-/// This retains musl's non-kernel validation and normalization of an optional
-/// public `timeval`. It passes a private two-word timeval to Linux, so neither
-/// a successful wait nor an interrupted raw syscall can update the caller's
-/// public timeout record.
-///
-/// # Safety
-///
-/// Each descriptor-set pointer must be null or point to writable storage for
-/// one complete x86 public `fd_set`; `timeout` must be null or point to one
-/// readable public x86 `timeval`. The records must remain live for the syscall
-/// and satisfy the C `restrict`/descriptor-range requirements for `count`.
-/// The caller owns descriptor lifetime, signal interruption, and cancellation
-/// cleanup. Validation precedes the owned cancellation point, as in musl.
-#[no_mangle]
-pub unsafe extern "C" fn select(
-    count: c_int,
-    readable: *mut c_void,
-    writable: *mut c_void,
-    exceptional: *mut c_void,
-    timeout: *mut c_void,
-) -> c_int {
-    let mut timeout_storage = Timeval {
-        seconds: 0,
-        microseconds: 0,
-    };
-    let timeout_pointer = if timeout.is_null() {
-        0
-    } else {
-        // SAFETY: the caller supplies one readable public timeval. Preserve
-        // musl's local copy before its explicit negative-value validation.
-        let requested = unsafe { core::ptr::read_unaligned(timeout.cast::<Timeval>()) };
-        if requested.seconds < 0 || requested.microseconds < 0 {
-            return c_status(-EINVAL);
-        }
-
-        // This is the direct x86 `SYS_select` branch of musl's source: carry
-        // whole microseconds into seconds, saturating the public time_t range
-        // before a signed addition could overflow.
-        if requested.microseconds / MICROSECONDS_PER_SECOND > MAX_TIME - requested.seconds {
-            timeout_storage.seconds = MAX_TIME;
-            timeout_storage.microseconds = MICROSECONDS_PER_SECOND - 1;
+// Musl's `src/select/ppoll.c` object.
+static_archive_member! { ppoll_source {
+    /// Wait for events with an optional temporary signal mask through `ppoll(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `file_descriptors` follows [`poll`]'s array contract. `timeout` must be
+    /// null or point to one readable public x86 `timespec`; `mask` must be null or
+    /// cover its first readable kernel-visible eight-byte word of a public x86
+    /// `sigset_t`. Every pointer must remain live for the syscall. The caller owns
+    /// temporary-mask, signal-delivery, and cancellation-cleanup policy. The owned
+    /// runtime supplies musl's cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn ppoll(
+        file_descriptors: *mut c_void,
+        count: usize,
+        timeout: *const c_void,
+        mask: *const c_void,
+    ) -> c_int {
+        let mut timeout_storage = if timeout.is_null() {
+            None
         } else {
-            timeout_storage.seconds =
-                requested.seconds + requested.microseconds / MICROSECONDS_PER_SECOND;
-            timeout_storage.microseconds = requested.microseconds % MICROSECONDS_PER_SECOND;
-        }
-        &mut timeout_storage as *mut Timeval as usize as i64
-    };
+            // Musl copies the public const record before entering Linux. An
+            // unaligned raw read preserves the C pointer boundary without making
+            // a Rust reference to caller memory.
+            // SAFETY: the caller gives one readable public timespec.
+            Some(unsafe { core::ptr::read_unaligned(timeout.cast::<Timespec>()) })
+        };
+        let timeout_pointer = match timeout_storage.as_mut() {
+            Some(storage) => storage as *mut Timespec as usize as i64,
+            None => 0,
+        };
+        // SAFETY: all pointer and signal-mask semantics remain with the C caller;
+        // Linux uses x86 r10/r8 for the timeout/mask fourth and fifth words.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_PPOLL,
+                file_descriptors as usize as i64,
+                count as i64,
+                timeout_pointer,
+                mask as usize as i64,
+                KERNEL_SIGSET_SIZE as i64,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_PPOLL,
+                file_descriptors as usize as i64,
+                count as i64,
+                timeout_pointer,
+                mask as usize as i64,
+                KERNEL_SIGSET_SIZE as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
 
-    // SAFETY: the caller owns all descriptor-set extents and syscall-visible
-    // storage. Linux takes its fourth and fifth arguments in x86 r10/r8.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_SELECT,
-            i64::from(count),
-            readable as usize as i64,
-            writable as usize as i64,
-            exceptional as usize as i64,
-            timeout_pointer,
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_SELECT,
-            i64::from(count),
-            readable as usize as i64,
-            writable as usize as i64,
-            exceptional as usize as i64,
-            timeout_pointer,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/select/select.c` object.
+static_archive_member! { select_source {
+    /// Wait for descriptor-set readiness through Linux `select(2)`.
+    ///
+    /// This retains musl's non-kernel validation and normalization of an optional
+    /// public `timeval`. It passes a private two-word timeval to Linux, so neither
+    /// a successful wait nor an interrupted raw syscall can update the caller's
+    /// public timeout record.
+    ///
+    /// # Safety
+    ///
+    /// Each descriptor-set pointer must be null or point to writable storage for
+    /// one complete x86 public `fd_set`; `timeout` must be null or point to one
+    /// readable public x86 `timeval`. The records must remain live for the syscall
+    /// and satisfy the C `restrict`/descriptor-range requirements for `count`.
+    /// The caller owns descriptor lifetime, signal interruption, and cancellation
+    /// cleanup. Validation precedes the owned cancellation point, as in musl.
+    #[no_mangle]
+    pub unsafe extern "C" fn select(
+        count: c_int,
+        readable: *mut c_void,
+        writable: *mut c_void,
+        exceptional: *mut c_void,
+        timeout: *mut c_void,
+    ) -> c_int {
+        let mut timeout_storage = Timeval {
+            seconds: 0,
+            microseconds: 0,
+        };
+        let timeout_pointer = if timeout.is_null() {
+            0
+        } else {
+            // SAFETY: the caller supplies one readable public timeval. Preserve
+            // musl's local copy before its explicit negative-value validation.
+            let requested = unsafe { core::ptr::read_unaligned(timeout.cast::<Timeval>()) };
+            if requested.seconds < 0 || requested.microseconds < 0 {
+                return c_status(-EINVAL);
+            }
 
-/// Wait for descriptor-set readiness with an optional temporary mask through
-/// Linux `pselect6(2)`.
-///
-/// # Safety
-///
-/// The descriptor-set pointers follow [`select`]'s requirements. `timeout`
-/// must be null or point to one readable public x86 `timespec`; `mask` must
-/// be null or cover its first readable kernel-visible eight-byte word of a
-/// public x86 `sigset_t`. All arguments must remain live for the syscall; the
-/// caller owns temporary-mask, descriptor, interruption, and cancellation
-/// cleanup policy. The owned runtime supplies musl's cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn pselect(
-    count: c_int,
-    readable: *mut c_void,
-    writable: *mut c_void,
-    exceptional: *mut c_void,
-    timeout: *const c_void,
-    mask: *const c_void,
-) -> c_int {
-    let mut timeout_storage = if timeout.is_null() {
-        None
-    } else {
-        // SAFETY: the caller gives one readable public timespec. As in musl,
-        // Linux can mutate only this private copy.
-        Some(unsafe { core::ptr::read_unaligned(timeout.cast::<Timespec>()) })
-    };
-    let timeout_pointer = match timeout_storage.as_mut() {
-        Some(storage) => storage as *mut Timespec as usize as i64,
-        None => 0,
-    };
-    let mask_argument = PselectMaskArgument {
-        mask,
-        size: KERNEL_SIGSET_SIZE,
-    };
-    // SAFETY: the caller owns the public record and descriptor-set contracts;
-    // this local pair has the Linux `pselect6` pointer/size ABI in x86 r9.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_PSELECT6,
-            i64::from(count),
-            readable as usize as i64,
-            writable as usize as i64,
-            exceptional as usize as i64,
-            timeout_pointer,
-            &mask_argument as *const PselectMaskArgument as usize as i64,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall6(
-            raw_syscall::SYS_PSELECT6,
-            i64::from(count),
-            readable as usize as i64,
-            writable as usize as i64,
-            exceptional as usize as i64,
-            timeout_pointer,
-            &mask_argument as *const PselectMaskArgument as usize as i64,
-        )
-    };
-    c_status(result)
-}
+            // This is the direct x86 `SYS_select` branch of musl's source: carry
+            // whole microseconds into seconds, saturating the public time_t range
+            // before a signed addition could overflow.
+            if requested.microseconds / MICROSECONDS_PER_SECOND > MAX_TIME - requested.seconds {
+                timeout_storage.seconds = MAX_TIME;
+                timeout_storage.microseconds = MICROSECONDS_PER_SECOND - 1;
+            } else {
+                timeout_storage.seconds =
+                    requested.seconds + requested.microseconds / MICROSECONDS_PER_SECOND;
+                timeout_storage.microseconds = requested.microseconds % MICROSECONDS_PER_SECOND;
+            }
+            &mut timeout_storage as *mut Timeval as usize as i64
+        };
 
-/// Suspend the calling thread until Linux interrupts it with a handled signal.
-///
-/// The usual `pause(2)` lost-wakeup race remains the caller's signal-policy
-/// responsibility. The owned runtime supplies musl's cancellation point;
-/// legacy fixtures retain the direct Linux syscall.
-#[no_mangle]
-pub extern "C" fn pause() -> c_int {
-    // SAFETY: pause has no user arguments and Linux owns all wait state.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_PAUSE,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe { raw_syscall::syscall0(raw_syscall::SYS_PAUSE) };
-    c_status(result)
-}
+        // SAFETY: the caller owns all descriptor-set extents and syscall-visible
+        // storage. Linux takes its fourth and fifth arguments in x86 r10/r8.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_SELECT,
+                i64::from(count),
+                readable as usize as i64,
+                writable as usize as i64,
+                exceptional as usize as i64,
+                timeout_pointer,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_SELECT,
+                i64::from(count),
+                readable as usize as i64,
+                writable as usize as i64,
+                exceptional as usize as i64,
+                timeout_pointer,
+            )
+        };
+        c_status(result)
+    }
+}}
 
-/// Atomically replace the calling mask and wait through `rt_sigsuspend(2)`.
-///
-/// # Safety
-///
-/// `mask` must cover its first readable kernel-visible eight-byte word of one
-/// public x86 `sigset_t` and remain live until Linux returns. The caller owns
-/// temporary-mask, signal-handler lifetime, and cancellation-cleanup policy.
-/// The owned runtime supplies musl's cancellation point.
-#[no_mangle]
-pub unsafe extern "C" fn sigsuspend(mask: *const c_void) -> c_int {
-    // SAFETY: Linux consumes one x86 kernel signal-set word from the caller's
-    // public record and owns the atomic mask swap/restore transition.
-    #[cfg(crabc_x86_owned_runtime)]
-    let result = unsafe {
-        super::pthread_cancel::syscall_cp(
-            raw_syscall::SYS_RT_SIGSUSPEND,
-            mask as usize as i64,
-            KERNEL_SIGSET_SIZE as i64,
-            0,
-            0,
-            0,
-            0,
-        )
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_RT_SIGSUSPEND,
-            mask as usize as i64,
-            KERNEL_SIGSET_SIZE as i64,
-        )
-    };
-    c_status(result)
-}
+// Musl's `src/select/pselect.c` object.
+static_archive_member! { pselect_source {
+    /// Wait for descriptor-set readiness with an optional temporary mask through
+    /// Linux `pselect6(2)`.
+    ///
+    /// # Safety
+    ///
+    /// The descriptor-set pointers follow [`select`]'s requirements. `timeout`
+    /// must be null or point to one readable public x86 `timespec`; `mask` must
+    /// be null or cover its first readable kernel-visible eight-byte word of a
+    /// public x86 `sigset_t`. All arguments must remain live for the syscall; the
+    /// caller owns temporary-mask, descriptor, interruption, and cancellation
+    /// cleanup policy. The owned runtime supplies musl's cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn pselect(
+        count: c_int,
+        readable: *mut c_void,
+        writable: *mut c_void,
+        exceptional: *mut c_void,
+        timeout: *const c_void,
+        mask: *const c_void,
+    ) -> c_int {
+        let mut timeout_storage = if timeout.is_null() {
+            None
+        } else {
+            // SAFETY: the caller gives one readable public timespec. As in musl,
+            // Linux can mutate only this private copy.
+            Some(unsafe { core::ptr::read_unaligned(timeout.cast::<Timespec>()) })
+        };
+        let timeout_pointer = match timeout_storage.as_mut() {
+            Some(storage) => storage as *mut Timespec as usize as i64,
+            None => 0,
+        };
+        let mask_argument = PselectMaskArgument {
+            mask,
+            size: KERNEL_SIGSET_SIZE,
+        };
+        // SAFETY: the caller owns the public record and descriptor-set contracts;
+        // this local pair has the Linux `pselect6` pointer/size ABI in x86 r9.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_PSELECT6,
+                i64::from(count),
+                readable as usize as i64,
+                writable as usize as i64,
+                exceptional as usize as i64,
+                timeout_pointer,
+                &mask_argument as *const PselectMaskArgument as usize as i64,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall6(
+                raw_syscall::SYS_PSELECT6,
+                i64::from(count),
+                readable as usize as i64,
+                writable as usize as i64,
+                exceptional as usize as i64,
+                timeout_pointer,
+                &mask_argument as *const PselectMaskArgument as usize as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/unistd/pause.c` object.
+static_archive_member! { pause_source {
+    /// Suspend the calling thread until Linux interrupts it with a handled signal.
+    ///
+    /// The usual `pause(2)` lost-wakeup race remains the caller's signal-policy
+    /// responsibility. The owned runtime supplies musl's cancellation point;
+    /// legacy fixtures retain the direct Linux syscall.
+    #[no_mangle]
+    pub extern "C" fn pause() -> c_int {
+        // SAFETY: pause has no user arguments and Linux owns all wait state.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_PAUSE,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe { raw_syscall::syscall0(raw_syscall::SYS_PAUSE) };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/signal/sigsuspend.c` object.
+static_archive_member! { sigsuspend_source {
+    /// Atomically replace the calling mask and wait through `rt_sigsuspend(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `mask` must cover its first readable kernel-visible eight-byte word of one
+    /// public x86 `sigset_t` and remain live until Linux returns. The caller owns
+    /// temporary-mask, signal-handler lifetime, and cancellation-cleanup policy.
+    /// The owned runtime supplies musl's cancellation point.
+    #[no_mangle]
+    pub unsafe extern "C" fn sigsuspend(mask: *const c_void) -> c_int {
+        // SAFETY: Linux consumes one x86 kernel signal-set word from the caller's
+        // public record and owns the atomic mask swap/restore transition.
+        #[cfg(crabc_x86_owned_runtime)]
+        let result = unsafe {
+            crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_RT_SIGSUSPEND,
+                mask as usize as i64,
+                KERNEL_SIGSET_SIZE as i64,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_RT_SIGSUSPEND,
+                mask as usize as i64,
+                KERNEL_SIGSET_SIZE as i64,
+            )
+        };
+        c_status(result)
+    }
+}}
