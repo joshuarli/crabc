@@ -15,13 +15,27 @@ use super::*;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 use super::x86_64_runtime_lock::AllocationGuard;
 
-/// Roots without the installed runtime allocate only during the one-threaded
-/// initial transaction: no loader API is callable once other threads exist.
+/// Roots without the installed runtime have no loader lock module. Their
+/// production use is the one-threaded initial transaction, but their source
+/// tests allocate from concurrent harness threads, so the pool still takes a
+/// short spin lock.
 #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
 struct AllocationGuard;
 #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+static POOL_SPIN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
 impl AllocationGuard {
-    fn acquire() -> Self { Self }
+    fn acquire() -> Self {
+        use core::sync::atomic::Ordering;
+        while POOL_SPIN.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            core::hint::spin_loop();
+        }
+        Self
+    }
+}
+#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+impl Drop for AllocationGuard {
+    fn drop(&mut self) { POOL_SPIN.store(false, core::sync::atomic::Ordering::Release); }
 }
 use core::cell::UnsafeCell;
 
@@ -238,9 +252,6 @@ mod pool_tests {
         let large = allocate(LARGEST_CLASS + 1, 8).unwrap();
         assert_eq!(large as usize % PAGE as usize, 0, "an oversized block is its own mapping");
         unsafe { release(large, LARGEST_CLASS + 1, 8); }
-        // Only the installed runtime locks the pool; other roots allocate in
-        // their one-threaded initial transaction.
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         let workers: std::vec::Vec<_> = (0..4usize).map(|worker| std::thread::spawn(move || {
             for round in 0..2_000usize {
                 let bytes = 16 << ((worker + round) % 6);
@@ -252,7 +263,6 @@ mod pool_tests {
                 unsafe { release(block, bytes, 8); }
             }
         })).collect();
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         for worker in workers { worker.join().unwrap(); }
     }
 }
