@@ -668,8 +668,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-mutex  test owned recursive, error-checking, and timed mutex behavior
   owned-pthread-lifecycle  run pinned-musl and installed pthread lifetime consumers
   owned-static-sysroot  build twice and run the declared owned static product suite; write its receipt
-  lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
-  lua-dynamic-source-build  qualify pinned Lua through installed/extracted x86 dynamic sysroots
+  lua-static-source-build [--allocator-backend native-shadow]  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
+  lua-dynamic-source-build [--allocator-backend native-shadow]  qualify pinned Lua through installed/extracted x86 dynamic sysroots
   lua-source-build-admission [--output NEW_DIR]  validate both physical current-source Lua lane reports and product identities; retain NEW_DIR/admission.json
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
   owned-loader-short-stack  compare owned dynamic startup with musl at libc-test's 100 KiB stack limit
@@ -6306,7 +6306,7 @@ run_lua_static_source_build_probe() {
     # on Docker's optional host-environment forwarding semantics.
     run_in_container python3 -B /workspace/compat/lua/run_x86_static_dispatch.py \
         --jobs "${CRABC_X86_64_LUA_JOBS:-4}" \
-        --timeout "${CRABC_X86_64_LUA_TIMEOUT:-120}"
+        --timeout "${CRABC_X86_64_LUA_TIMEOUT:-120}" "$@"
 }
 
 run_owned_classic_netdb_probe() {
@@ -6610,7 +6610,7 @@ run_lua_dynamic_source_build_probe() {
     # interpreter and needs only chroot authority for that private execution.
     run_in_chroot_cap_container python3 -B /workspace/compat/lua/run_x86_dynamic.py \
         --jobs "${CRABC_X86_64_LUA_JOBS:-4}" \
-        --timeout "${CRABC_X86_64_LUA_TIMEOUT:-180}"
+        --timeout "${CRABC_X86_64_LUA_TIMEOUT:-180}" "$@"
 }
 
 run_libc_owned_wordexp_probe() {
@@ -10115,14 +10115,16 @@ PY
         run_owned_static_sysroot_probe
         ;;
     lua-static-source-build)
-        [ "$#" -eq 0 ] || fail "lua-static-source-build takes no arguments"
+        [ "$#" -eq 0 ] || { [ "$#" -eq 2 ] && [ "$1" = --allocator-backend ] && [ "$2" = native-shadow ]; } ||
+            fail "lua-static-source-build takes only --allocator-backend native-shadow"
         ensure_image
-        run_lua_static_source_build_probe
+        run_lua_static_source_build_probe "$@"
         ;;
     lua-dynamic-source-build)
-        [ "$#" -eq 0 ] || fail "lua-dynamic-source-build takes no arguments"
+        [ "$#" -eq 0 ] || { [ "$#" -eq 2 ] && [ "$1" = --allocator-backend ] && [ "$2" = native-shadow ]; } ||
+            fail "lua-dynamic-source-build takes only --allocator-backend native-shadow"
         ensure_image
-        run_lua_dynamic_source_build_probe
+        run_lua_dynamic_source_build_probe "$@"
         ;;
     lua-source-build-admission)
         lua_admission_arguments=()

@@ -48,6 +48,10 @@ MUSL_ROOT = Path("/opt/musl-1.2.6")
 SYSROOT_TOOL = ROOT / "scripts/crabc_sysroot.py"
 DEFAULT_SYSROOT = ROOT / "target/crabc-sysroot"
 DEFAULT_X86_STATIC_WORK_ROOT = ROOT / ".work/x86_64/lua-static-source-build"
+# The sysroot builders' production allocator backends. The native-shadow
+# products (the Rust mimalloc port) are allocator-promotion evidence: a run on
+# them keeps its private report and never replaces an accepted-C latest report.
+X86_ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow")
 X86_MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 DEFAULT_JOBS = 4
 MAX_JOBS = 8
@@ -1614,8 +1618,12 @@ def audit_static_link_receipt(
             seen.add(next(archive for archive in archives if line == archive or line.startswith(f"{archive}(")))
         else:
             raise RunnerError(f"sealed static Lua link trace consumed an unowned input: {line}")
-    expected_seen = direct | set(archives)
-    if seen != expected_seen:
+    # The helper archive serves only the helpers a link references: the
+    # native-shadow libc needs none that the Lua graph reaches, so ld extracts
+    # no member and the trace never names it. libc and every direct input must
+    # still be consumed.
+    expected_seen = direct | {archives[0]}
+    if not expected_seen <= seen:
         raise RunnerError("sealed static Lua link trace omitted an expected input")
     map_text = receipt.with_suffix(".map").read_text(encoding="utf-8", errors="replace")
     for marker in ("/opt/musl-", "/usr/lib/gcc", "compiler-rt", "libgcc", "libc.so", "ld-musl", "ld-linux"):
@@ -2119,9 +2127,10 @@ def run_x86_static_dispatch(
     jobs: int,
     timeout: float,
     state_parent: Path = DEFAULT_X86_STATIC_WORK_ROOT,
-    latest_report: Path = DEFAULT_X86_STATIC_REPORT,
+    latest_report: Path | None = DEFAULT_X86_STATIC_REPORT,
     builder: Path | None = None,
     static_runner: Any | None = None,
+    allocator_backend: str = "accepted-c",
 ) -> tuple[dict[str, object], Path, Path | None]:
     """Materialize and qualify one isolated installed x86 Lua static product.
 
@@ -2135,7 +2144,10 @@ def run_x86_static_dispatch(
         raise RunnerError(f"native Lua static dispatcher jobs must be from 1 through {MAX_JOBS}")
     if not math.isfinite(timeout) or timeout <= 0 or timeout > 300:
         raise RunnerError("native Lua static dispatcher timeout must be > 0 and <= 300")
-    latest_report = Path(os.path.abspath(latest_report))
+    if allocator_backend not in X86_ALLOCATOR_BACKENDS:
+        raise RunnerError(f"native Lua static dispatcher allocator backend must be one of {X86_ALLOCATOR_BACKENDS}")
+    if latest_report is not None:
+        latest_report = Path(os.path.abspath(latest_report))
     disable_core_dump_inheritance()
     state = allocate_x86_static_dispatch_state(state_parent)
     report_path = state / "report.json"
@@ -2145,8 +2157,10 @@ def run_x86_static_dispatch(
         "state_root": str(state),
         "authoritative_report": str(report_path),
         "producer": None,
-        "latest_report": str(latest_report),
-        "latest_report_publication": "only after a passing private report",
+        "allocator_backend": allocator_backend,
+        "latest_report": str(latest_report) if latest_report is not None else None,
+        "latest_report_publication": ("only after a passing private report" if latest_report is not None
+                                      else "never; the private report is authoritative"),
         "source_identity": source_identity,
     }
     try:
@@ -2155,7 +2169,8 @@ def run_x86_static_dispatch(
             "native Lua static sysroot builder",
         )
         producer = command_record(
-            [sys.executable, "-B", str(selected_builder), "--output", str(sysroot)],
+            [sys.executable, "-B", str(selected_builder), "--output", str(sysroot),
+             *(("--allocator-backend", allocator_backend) if allocator_backend != "accepted-c" else ())],
             cwd=ROOT,
             environment=static_environment(state / "producer"),
             timeout=timeout,
@@ -2192,6 +2207,8 @@ def run_x86_static_dispatch(
         return report, report_path, None
     if current_source_identity() != source_identity:
         raise RunnerError(f"source changed during Lua static qualification; retained report: {report_path}")
+    if latest_report is None:
+        return report, report_path, None
     try:
         latest = publish_x86_static_dispatch_report(report_path, latest_report)
     except RunnerError as error:

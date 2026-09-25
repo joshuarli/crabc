@@ -20,6 +20,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jobs", type=int, default=LUA.DEFAULT_JOBS)
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument("--allocator-backend", choices=LUA.X86_ALLOCATOR_BACKENDS, default="accepted-c",
+                        help="sysroot allocator backend; native-shadow runs never publish the latest report")
     args = parser.parse_args(argv)
     if args.jobs < 1 or args.jobs > LUA.MAX_JOBS:
         parser.error(f"--jobs must be an integer from 1 through {LUA.MAX_JOBS}")
@@ -31,7 +33,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        report, report_path, latest = LUA.run_x86_static_dispatch(jobs=args.jobs, timeout=args.timeout)
+        if args.allocator_backend == "accepted-c":
+            report, report_path, latest = LUA.run_x86_static_dispatch(jobs=args.jobs, timeout=args.timeout)
+        else:
+            report, report_path, latest = LUA.run_x86_static_dispatch(
+                jobs=args.jobs, timeout=args.timeout, allocator_backend=args.allocator_backend,
+                state_parent=LUA.DEFAULT_X86_STATIC_WORK_ROOT.with_name(
+                    f"{LUA.DEFAULT_X86_STATIC_WORK_ROOT.name}-{args.allocator_backend}"),
+                latest_report=None,
+            )
     except LUA.RunnerError as error:
         print(f"x86 Lua static source-build dispatcher failed: {error}", file=sys.stderr)
         return 1

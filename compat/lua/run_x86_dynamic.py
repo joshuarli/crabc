@@ -1775,7 +1775,7 @@ def publish_report(report: Path, latest_report: Path) -> Path:
 
 def run_dynamic_dispatch(
     *, jobs: int, timeout: float, offline: bool, state_parent: Path = DEFAULT_WORK_ROOT,
-    latest_report: Path = DEFAULT_REPORT
+    latest_report: Path | None = DEFAULT_REPORT, allocator_backend: str = "accepted-c",
 ) -> tuple[dict[str, object], Path, Path | None]:
     """Build, package/extract, and source-qualify one isolated dynamic Lua graph."""
 
@@ -1783,6 +1783,9 @@ def run_dynamic_dispatch(
         raise LUA.RunnerError(f"native Lua dynamic dispatcher jobs must be from 1 through {LUA.MAX_JOBS}")
     if not math.isfinite(timeout) or timeout <= 0 or timeout > 300:
         raise LUA.RunnerError("native Lua dynamic dispatcher timeout must be > 0 and <= 300")
+    if allocator_backend not in LUA.X86_ALLOCATOR_BACKENDS:
+        raise LUA.RunnerError(
+            f"native Lua dynamic dispatcher allocator backend must be one of {LUA.X86_ALLOCATOR_BACKENDS}")
     LUA.disable_core_dump_inheritance()
     state = LUA.allocate_x86_static_dispatch_state(state_parent)
     report_path = state / "report.json"
@@ -1793,8 +1796,11 @@ def run_dynamic_dispatch(
     dispatcher: dict[str, object] = {
         "state_root": str(state),
         "authoritative_report": str(report_path),
-        "latest_report": str(Path(os.path.abspath(latest_report))),
-        "latest_report_publication": "only after a passing installed-and-extracted report",
+        "allocator_backend": allocator_backend,
+        "latest_report": str(Path(os.path.abspath(latest_report))) if latest_report is not None else None,
+        "latest_report_publication": ("only after a passing installed-and-extracted report"
+                                      if latest_report is not None
+                                      else "never; the private report is authoritative"),
         "source_identity": source_identity,
     }
     report: dict[str, object] = {
@@ -1807,7 +1813,8 @@ def run_dynamic_dispatch(
     try:
         builder = require_regular(DYNAMIC_SYSROOT_BUILDER, "native Lua dynamic sysroot builder")
         producer = command(
-            [sys.executable, "-B", str(builder), "--output", str(installed)],
+            [sys.executable, "-B", str(builder), "--output", str(installed),
+             *(("--allocator-backend", allocator_backend) if allocator_backend != "accepted-c" else ())],
             work=ROOT,
             state=state / "producer",
             timeout=timeout,
@@ -1863,6 +1870,8 @@ def run_dynamic_dispatch(
         return report, report_path, None
     if LUA.current_source_identity() != source_identity:
         raise LUA.RunnerError(f"source changed during Lua dynamic qualification; retained report: {report_path}")
+    if latest_report is None:
+        return report, report_path, None
     latest = publish_report(report_path, latest_report)
     return report, report_path, latest
 
@@ -1872,6 +1881,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--jobs", type=int, default=LUA.DEFAULT_JOBS)
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--allocator-backend", choices=LUA.X86_ALLOCATOR_BACKENDS, default="accepted-c",
+                        help="sysroot allocator backend; native-shadow runs never publish the latest report")
     args = parser.parse_args(argv)
     if args.jobs < 1 or args.jobs > LUA.MAX_JOBS:
         parser.error(f"--jobs must be an integer from 1 through {LUA.MAX_JOBS}")
@@ -1883,9 +1894,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        report, report_path, latest = run_dynamic_dispatch(
-            jobs=args.jobs, timeout=args.timeout, offline=args.offline
-        )
+        if args.allocator_backend == "accepted-c":
+            report, report_path, latest = run_dynamic_dispatch(
+                jobs=args.jobs, timeout=args.timeout, offline=args.offline
+            )
+        else:
+            report, report_path, latest = run_dynamic_dispatch(
+                jobs=args.jobs, timeout=args.timeout, offline=args.offline,
+                allocator_backend=args.allocator_backend,
+                state_parent=DEFAULT_WORK_ROOT.with_name(f"{DEFAULT_WORK_ROOT.name}-{args.allocator_backend}"),
+                latest_report=None,
+            )
     except LUA.RunnerError as error:
         print(f"x86 Lua dynamic source-build dispatcher failed: {error}", file=sys.stderr)
         return 1
