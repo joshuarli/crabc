@@ -44,7 +44,11 @@ are not transferable passes for a different revision.
   upstream `test-api.c` through the native adapter. Integrated products are
   compared against an evidence-only pinned v3.5.0 C product (the selected C
   backend is `libmimalloc-sys` 0.1.49, mimalloc 3.3.2); the port map
-  classifies every intentional difference (`difference_kind`). The M9 report path measures
+  classifies every intentional difference (`difference_kind`). The M8
+  owned-libc integration gate exists; its failing rows trace to an
+  `unown_with` release-then-classify race that returns NULL under load
+  (lane `m5-remote`). Static replacement rejects 80 of 1406 musl-replaceable
+  functions; startup PSS is about 600 KiB against musl's ~515 KiB. The M9 report path measures
   throughput, p99 and peak RSS/PSS for all 38 rows but no report qualifies
   (contended host, `powersave` governor). The 114-row runtime scorecard runs
   end to end; startup is 32 whole-process syscalls against musl's 11 and ~2×
