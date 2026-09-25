@@ -30,7 +30,7 @@ SPEC.loader.exec_module(gate)
 engine = gate.engine
 
 from test_perf_engine_x86_64 import (  # noqa: E402,F401
-    FixturePeakHookTests, HostClassificationTests, PeakHookEffectTests, QualifiedReportTests)
+    FixturePeakHookTests, HostClassificationTests, PeakHookABTests, QualifiedReportTests)
 
 
 ROSTER = ["alloc_free_64", "remote_free_1"]

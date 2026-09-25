@@ -498,30 +498,36 @@ class ExitTraceTests(unittest.TestCase):
         self.assertIn("pss_kib", process["exit_memory"]["smaps_rollup"])
 
 
-class PeakHookEffectTests(unittest.TestCase):
+class PeakHookABTests(unittest.TestCase):
     def setUp(self) -> None:
         patcher = patch.object(engine, "BOOTSTRAP_RESAMPLES", 24)
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_identical_timed_samples_are_consistent_with_no_effect(self) -> None:
-        effect = engine.peak_hook_effect(synthetic_report(), synthetic_report(peak_hook=False))
-        self.assertEqual(effect["compared_rows"], len(engine.selected_rows(engine.load_manifest(), "matrix")[0]))
-        self.assertEqual(effect["rows_whose_90_percent_interval_excludes_1"],
+    def test_the_plan_pairs_every_sample_index_adjacently(self) -> None:
+        plan = engine.peak_hook_plan(7, seed=3)
+        self.assertEqual(len(plan), 14)
+        for first, second in zip(plan[::2], plan[1::2]):
+            self.assertEqual(first[1], second[1])
+            self.assertEqual({first[0], second[0]}, set(engine.PEAK_HOOK_VARIANTS))
+
+    def comparison(self, hook_factor: int) -> dict:
+        hook = [timed_sample([10 * hook_factor + (index + batch) % 3 for batch in range(16)]) for index in range(9)]
+        no_hook = [timed_sample([10 + (index + batch) % 3 for batch in range(16)], peak_pss_kib=None) for index in range(9)]
+        return engine.peak_hook_comparison(hook, no_hook, seed=5)
+
+    def test_identical_samples_are_consistent_with_no_effect(self) -> None:
+        comparison = self.comparison(1)
+        self.assertEqual(comparison["cost"]["ratio_hook_over_no_hook"]["median"], 1.0)
+        self.assertEqual(len(comparison["cost"]["hook_samples"]), 9)
+        summary = engine.peak_hook_summary({"r": {"lanes": {lane: {"comparison": comparison} for lane in engine.LANES}}})
+        self.assertEqual(summary["rows_whose_90_percent_interval_excludes_1"],
                          {lane: {"cost": [], "batch_p99": []} for lane in engine.LANES})
-        row = effect["rows"]["alloc_free_64"]["rust_engine"]["cost"]
-        self.assertEqual(len(row["with_hook_samples"]), engine.load_manifest()["modes"]["full"]["samples"])
-        self.assertEqual(row["ratio_with_over_without"]["median"], 1.0)
+        self.assertAlmostEqual(summary["median_ratio_geometric_mean"]["pinned_c"]["cost"], 1.0)
 
-    def test_a_perturbed_lane_is_named(self) -> None:
-        effect = engine.peak_hook_effect(synthetic_report(rust_cost_factor=2.0), synthetic_report(peak_hook=False))
-        outside = effect["rows_whose_90_percent_interval_excludes_1"]
-        self.assertIn("alloc_free_64", outside["rust_engine"]["cost"])
-        self.assertEqual(outside["pinned_c"]["cost"], [])
-
-    def test_the_reports_must_be_a_with_and_a_without_pair(self) -> None:
-        with self.assertRaisesRegex(engine.HarnessError, "in that order"):
-            engine.peak_hook_effect(synthetic_report(peak_hook=False), synthetic_report())
+    def test_a_perturbed_variant_is_named(self) -> None:
+        summary = engine.peak_hook_summary({"r": {"lanes": {"rust_engine": {"comparison": self.comparison(2)}}}})
+        self.assertEqual(summary["rows_whose_90_percent_interval_excludes_1"]["rust_engine"]["cost"], ["r"])
 
 
 STUB_BACKEND = """
@@ -593,6 +599,25 @@ class FixturePeakHookTests(unittest.TestCase):
                 self.assertGreater(sample["peak_state"]["smaps_rollup"]["pss_kib"], 0)
                 self.assertGreater(sample["process"]["exit_memory"]["status"]["vm_hwm_kib"], 0)
                 self.assertNotIn("peak_state", self.run_row(row, peak_hook=False))
+
+    def test_the_ab_run_interleaves_hook_and_no_hook_processes(self) -> None:
+        row = {"name": "alloc_batch_small", "workload": "alloc_batch",
+               "params": {"size": 64, "count": 64, "iterations": 2, "batches": 2}}
+        with tempfile.TemporaryDirectory() as scratch, patch.object(engine, "BOOTSTRAP_RESAMPLES", 8):
+            try:
+                rows = engine.measure_peak_hook_ab(
+                    [row], {lane: self.binary for lane in engine.LANES},
+                    mode={"samples": 3, "warmup_processes": 0, "batch_divisor": 1},
+                    cpu_pool=None, timeout=60.0, scratch=Path(scratch), seed=9)
+            except engine.HarnessError as error:
+                if "Operation not permitted" in str(error):
+                    self.skipTest(f"ptrace is not permitted here: {error}")
+                raise
+        lane = rows["alloc_batch_small"]["lanes"]["rust_engine"]
+        self.assertEqual(lane["status"], "measured")
+        self.assertTrue(all("peak_state" in sample for sample in lane["samples"]["hook"]))
+        self.assertTrue(all("peak_state" not in sample for sample in lane["samples"]["no_hook"]))
+        self.assertEqual(len(lane["sample_plan"]), 6)
 
     def test_the_peak_state_holds_the_batch_live_set(self) -> None:
         # The fixture touches each block's first and last byte: two resident

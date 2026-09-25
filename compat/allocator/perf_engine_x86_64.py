@@ -23,8 +23,9 @@ matrix. Every timed row records throughput, the per-process p99 batch cost
 (the slow-batch tail), the exec image's peak RSS (``VmHWM`` read at a
 ptrace exit stop) and its peak-state PSS, read while the fixture holds its
 largest live batch state at an untimed READY_PEAK pause after the last
-timed batch (``--no-peak-hook`` omits the pause; ``--compare-peak-hook``
-records the timed-sample distributions of a run with and one without it).
+timed batch (``--no-peak-hook`` omits the pause; ``--peak-hook-ab``
+measures each lane's timed rows with and without it in adjacent process
+pairs and records both distributions and their paired ratio).
 Every memory row records peak RSS and live PSS.
 
 Each report also records raw host-contention evidence (load average,
@@ -1684,72 +1685,106 @@ def validate_qualified_full_report(root: Path, path: Path) -> dict[str, Any]:
     return {key: inspected[key] for key in ("identity", "metrics", "critical_rows")}
 
 
-# ---- peak-hook effect -------------------------------------------------------
+# ---- peak-hook A/B -----------------------------------------------------------
+
+PEAK_HOOK_AB_KIND = "crabc-mimalloc-x86_64-engine-peak-hook-ab"
+PEAK_HOOK_VARIANTS = ("hook", "no_hook")
 
 
-def independent_ratio(numerator: Sequence[float], denominator: Sequence[float], *, seed: int) -> dict[str, float]:
-    """Median ratio of two independent sample sets with a bootstrap 90% interval."""
+def peak_hook_plan(samples: int, *, seed: int) -> list[tuple[str, int]]:
+    """Adjacent hook/no-hook process pairs in a recorded random order."""
 
-    source = random.Random(seed)
-    draws = []
-    for _ in range(BOOTSTRAP_RESAMPLES):
-        top = statistics.median(source.choice(numerator) for _ in numerator)
-        bottom = statistics.median(source.choice(denominator) for _ in denominator)
-        draws.append(top / bottom)
-    return {
-        "median": statistics.median(numerator) / statistics.median(denominator),
-        "bootstrap_5th_percentile": quantile(draws, 0.05),
-        "bootstrap_95th_percentile": quantile(draws, 0.95),
-    }
+    return [(PEAK_HOOK_VARIANTS[LANES.index(lane)], index) for lane, index in paired_plan(samples, seed=seed)]
 
 
-def peak_hook_effect(with_hook: Mapping[str, Any], without_hook: Mapping[str, Any]) -> dict[str, Any]:
-    """Timed-sample distributions of one report with the READY_PEAK pause and one without.
+def peak_hook_comparison(hook: Sequence[Mapping[str, Any]], no_hook: Sequence[Mapping[str, Any]], *, seed: int) -> dict[str, Any]:
+    """Paired hook/no-hook ratios of per-call cost and slow-batch p99 cost."""
 
-    The pause runs after the last timed batch, so every per-row, per-lane
-    with/without cost ratio should be consistent with 1 up to host noise.
-    """
+    result: dict[str, Any] = {"bootstrap": {"resamples": BOOTSTRAP_RESAMPLES, "seed": seed}}
+    for offset, (metric, measure) in enumerate((("cost", sample_ns_per_op), ("batch_p99", sample_batch_p99_ns_per_op))):
+        with_values = [measure(sample) for sample in hook]
+        without_values = [measure(sample) for sample in no_hook]
+        draws = paired_bootstrap(without_values, with_values, seed=seed + offset)
+        result[metric] = {
+            "unit": "wall ns per allocator call",
+            "hook_samples": with_values,
+            "no_hook_samples": without_values,
+            "ratio_hook_over_no_hook": {
+                "median": statistics.median(with_values) / statistics.median(without_values),
+                "bootstrap_5th_percentile": quantile(draws, 0.05),
+                "bootstrap_95th_percentile": quantile(draws, 0.95),
+            },
+        }
+    return result
 
-    if with_hook.get("peak_hook") is not True or without_hook.get("peak_hook") is not False:
-        raise HarnessError("compare a --peak-hook report with a --no-peak-hook report, in that order")
-    for key in ("mode", "row_set"):
-        if with_hook.get(key) != without_hook.get(key):
-            raise HarnessError(f"peak-hook comparison reports differ in {key}")
-    if with_hook["provenance"]["inputs"] != without_hook["provenance"]["inputs"]:
-        raise HarnessError("peak-hook comparison reports measured different sealed inputs")
-    rows: dict[str, Any] = {}
-    outside = {lane: {"cost": [], "batch_p99": []} for lane in LANES}
-    for index, (name, entry) in enumerate(sorted(with_hook["rows"].items())):
-        other = without_hook["rows"].get(name, {})
-        if entry.get("status") != "measured" or other.get("status") != "measured":
-            continue
-        row: dict[str, Any] = {}
+
+def peak_hook_summary(rows: Mapping[str, Any]) -> dict[str, Any]:
+    outside: dict[str, dict[str, list[str]]] = {lane: {"cost": [], "batch_p99": []} for lane in LANES}
+    ratios: dict[str, dict[str, list[float]]] = {lane: {"cost": [], "batch_p99": []} for lane in LANES}
+    for name, row in sorted(rows.items()):
         for lane in LANES:
-            lane_record: dict[str, Any] = {}
-            for metric, measure in (("cost", sample_ns_per_op), ("batch_p99", sample_batch_p99_ns_per_op)):
-                present = [measure(sample) for sample in entry["lanes"][lane]["samples"]]
-                absent = [measure(sample) for sample in other["lanes"][lane]["samples"]]
-                ratio = independent_ratio(present, absent, seed=0x9EAC + 31 * index + (metric == "cost"))
-                lane_record[metric] = {
-                    "unit": "wall ns per allocator call",
-                    "with_hook_samples": present,
-                    "without_hook_samples": absent,
-                    "ratio_with_over_without": ratio,
-                }
-                if not ratio["bootstrap_5th_percentile"] <= 1.0 <= ratio["bootstrap_95th_percentile"]:
+            comparison = row.get("lanes", {}).get(lane, {}).get("comparison")
+            if comparison is None:
+                continue
+            for metric in ("cost", "batch_p99"):
+                bound = comparison[metric]["ratio_hook_over_no_hook"]
+                ratios[lane][metric].append(bound["median"])
+                if not bound["bootstrap_5th_percentile"] <= 1.0 <= bound["bootstrap_95th_percentile"]:
                     outside[lane][metric].append(name)
-            row[lane] = lane_record
-        rows[name] = row
     return {
-        "kind": "crabc-mimalloc-x86_64-engine-peak-hook-effect",
-        "with_hook": {"label": with_hook.get("label"), "git": with_hook["provenance"]["git"]},
-        "without_hook": {"label": without_hook.get("label"), "git": without_hook["provenance"]["git"]},
-        "hosts": {"with_hook": with_hook.get("uncontended_host", {}).get("status"),
-                  "without_hook": without_hook.get("uncontended_host", {}).get("status")},
-        "rows": rows,
         "rows_whose_90_percent_interval_excludes_1": outside,
-        "compared_rows": len(rows),
+        "median_ratio_geometric_mean": {
+            lane: {metric: math.exp(statistics.fmean(math.log(value) for value in values)) if values else None
+                   for metric, values in metrics.items()}
+            for lane, metrics in ratios.items()
+        },
     }
+
+
+def measure_peak_hook_ab(
+    rows: Sequence[Mapping[str, Any]], binaries: Mapping[str, Path], *, mode: Mapping[str, Any],
+    cpu_pool: Sequence[int] | None, timeout: float, scratch: Path, seed: int,
+) -> dict[str, Any]:
+    """Each lane's timed samples with and without the READY_PEAK pause, interleaved in adjacent pairs."""
+
+    results: dict[str, Any] = {}
+    for row_index, row in enumerate(rows):
+        needed = row_thread_count(row)
+        cpus = choose_cpus(cpu_pool, needed)
+        entry: dict[str, Any] = {"workload": row["workload"], "params": row["params"], "cpus": cpus, "lanes": {}}
+        if not cpus:
+            entry.update(status="unavailable", reason=f"needs {needed} distinct allowed CPUs")
+            results[row["name"]] = entry
+            continue
+        entry["status"] = "measured"
+        for lane_index, lane in enumerate(LANES):
+            lane_seed = seed + 1009 * row_index + 17 * lane_index
+            plan = peak_hook_plan(mode["samples"], seed=lane_seed)
+            by_variant: dict[str, list[Any]] = {variant: [None] * mode["samples"] for variant in PEAK_HOOK_VARIANTS}
+            kwargs = {"batch_divisor": mode["batch_divisor"], "cpus": cpus, "timeout": timeout, "scratch": scratch}
+            try:
+                for variant in PEAK_HOOK_VARIANTS:
+                    for warmup in range(mode["warmup_processes"]):
+                        run_timed_sample(binaries[lane], row, sample_name=f"ab-{row['name']}-{lane}-{variant}-w{warmup}",
+                                         peak_hook=variant == "hook", **kwargs)
+                for variant, index in plan:
+                    by_variant[variant][index] = run_timed_sample(
+                        binaries[lane], row, sample_name=f"ab-{row['name']}-{lane}-{variant}-{index}",
+                        peak_hook=variant == "hook", **kwargs)
+            except HarnessError as error:
+                entry["lanes"][lane] = {"status": "failed", "reason": str(error)}
+                entry["status"] = "failed"
+                print(f"FAILED {row['name']} ({lane}): {error}", file=sys.stderr, flush=True)
+                continue
+            entry["lanes"][lane] = {
+                "status": "measured",
+                "sample_plan": [{"variant": variant, "sample_index": index} for variant, index in plan],
+                "samples": by_variant,
+                "comparison": peak_hook_comparison(by_variant["hook"], by_variant["no_hook"], seed=lane_seed),
+            }
+        results[row["name"]] = entry
+        print(f"peak-hook A/B {row['name']}", file=sys.stderr, flush=True)
+    return results
 
 
 # ---- driver -----------------------------------------------------------------
@@ -1843,8 +1878,9 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=180.0, help="per-process timeout in seconds")
     parser.add_argument("--no-peak-hook", dest="peak_hook", action="store_false",
                         help="omit the untimed READY_PEAK pause (only to show it leaves timed samples unchanged)")
-    parser.add_argument("--compare-peak-hook", nargs=2, metavar=("WITH", "WITHOUT"), type=Path, default=None,
-                        help="compare the timed samples of two reports taken with and without the peak hook")
+    parser.add_argument("--peak-hook-ab", action="store_true",
+                        help="instead of C versus Rust, measure each lane's timed rows with and without the "
+                             "READY_PEAK pause in adjacent pairs")
     arguments = parser.parse_args(argv)
     validate_label(arguments.label)
     if arguments.timeout <= 0:
@@ -1870,14 +1906,15 @@ def run(arguments: argparse.Namespace) -> Path:
     pin = shared.load_pin()
     archive = shared.fetch_archive(pin, offline=arguments.offline)
     label = validate_label(arguments.label)
-    report_path = REPORT_ROOT / f"{label}.json"
-    artifacts = REPORT_ROOT / f"{label}.artifacts"
+    base = REPORT_ROOT / "peak-hook-ab" if arguments.peak_hook_ab else REPORT_ROOT
+    report_path = base / f"{label}.json"
+    artifacts = base / f"{label}.artifacts"
     if artifacts.exists():
         shutil.rmtree(artifacts)
     artifacts.mkdir(parents=True)
     report: dict[str, Any] = {
         "schema": SCHEMA,
-        "kind": KIND,
+        "kind": PEAK_HOOK_AB_KIND if arguments.peak_hook_ab else KIND,
         "label": label,
         "mode": mode_name,
         "row_set": arguments.row_set,
@@ -1908,6 +1945,17 @@ def run(arguments: argparse.Namespace) -> Path:
         load_before = list(os.getloadavg())
         host_evidence = host_record_start(measurement_cpus)
         seed = 0x4352_4142_4550
+        if arguments.peak_hook_ab:
+            report["rows"] = measure_peak_hook_ab(timed_rows, built["binaries"], mode=mode, cpu_pool=arguments.cpus,
+                                                  timeout=arguments.timeout, scratch=scratch, seed=seed)
+            report["host_load_average"] = {"before": load_before, "after": list(os.getloadavg())}
+            report["uncontended_host"] = uncontended_host_record(host_record_finish(host_evidence))
+            report["summary"] = peak_hook_summary(report["rows"])
+            failed = sorted(name for name, row in report["rows"].items() if row["status"] == "failed")
+            report["failed_rows"] = failed
+            report["status"] = "failed-rows" if failed else "ok"
+            atomic_write_json(report_path, report)
+            return report_path
         report["rows"] = measure_rows(timed_rows, built["binaries"], memory=False, mode=mode,
                                       cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch, seed=seed,
                                       host_evidence=host_evidence, peak_hook=arguments.peak_hook)
@@ -1931,23 +1979,10 @@ def run(arguments: argparse.Namespace) -> Path:
     return report_path
 
 
-def compare_peak_hook(arguments: argparse.Namespace) -> Path:
-    with_path, without_path = arguments.compare_peak_hook
-    effect = peak_hook_effect(json.loads(with_path.read_text(encoding="utf-8")),
-                              json.loads(without_path.read_text(encoding="utf-8")))
-    path = REPORT_ROOT / f"peak-hook-effect-{arguments.label}.json"
-    atomic_write_json(path, effect)
-    for lane, metrics in effect["rows_whose_90_percent_interval_excludes_1"].items():
-        for metric, names in metrics.items():
-            print(f"{lane} {metric}: {len(names)}/{effect['compared_rows']} rows outside a 90% interval around 1: "
-                  f"{', '.join(names)}", file=sys.stderr)
-    return path
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = parse_arguments(argv)
     try:
-        path = compare_peak_hook(arguments) if arguments.compare_peak_hook else run(arguments)
+        path = run(arguments)
     except (HarnessError, OSError, tarfile.TarError, json.JSONDecodeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
