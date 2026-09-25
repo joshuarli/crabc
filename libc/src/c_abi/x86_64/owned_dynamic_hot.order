@@ -6,7 +6,8 @@
 # trivial dynamic program touched 32 text pages spread over 12 windows (about
 # 800 KiB resident). These are the functions that startup, exit and the native
 # C performance rows execute, most widely shared first; placed together they
-# span two windows.
+# span two windows. The builder also gathers the read-only data these
+# functions reference into one section beside the dynamic tables.
 #
 # One name per line: a C symbol or a hash-free demangled Rust path, as printed
 # by the pinned llvm-nm --demangle. The builder resolves each to the linked
@@ -293,3 +294,125 @@ write
 vfprintf
 vfscanf
 vsscanf
+# Native-shadow backend: the functions the same rows execute only in the Rust
+# mimalloc product (the fixed-C product records them as unresolved).
+<crabc_mimalloc::main_theap::MainStaticHeapFoundation>::initialize_with_publishing_observer::<<crabc_mimalloc::main_theap::MainStaticHeapFoundation>::initialize::{closure#0}>
+<crabc_mimalloc::main_theap::MainStaticMetadataHeapLease>::with_heap::<core::result::Result<(), crabc_mimalloc::types::TheapMainStaticInitError>, <crabc_mimalloc::bootstrap::ExclusiveTheapBootstrap>::bind_detached_for_main_heap::{closure#0}>
+<crabc_mimalloc::os::VmPolicy>::numa_node_count_with_raw::<crabc_mimalloc::os::numa_node_count>
+<crabc_mimalloc::types::Theap>::with_os_reservation_random_at::<core::option::Option<u64>, <crabc_mimalloc::types::Theap>::next_os_reservation_random_at::{closure#0}>
+<crabc_mimalloc::subproc::ThreadRegistrationTicket>::initialize_and_activate_first_main_tld_with_numa_source::<<crabc_mimalloc::main_theap::MainStaticTheapAttachment>::begin_after_heap_foundation_with_vm_process::{closure#0}>
+core::ptr::drop_glue::<crabc_mimalloc::meta::MetaEntry>
+crabc_mimalloc::runtime_lifecycle::with_current_thread_native_initial_persistent_owner::<(bool, bool), crabc_mimalloc::runtime_lifecycle::with_current_thread_native_initial_persistent_allocator<(bool, bool), crabc_mimalloc::runtime_lifecycle::prepare_current_thread_native_initial_persistent_owner_for_later_thread::{closure#0}>::{closure#1}>
+crabc_mimalloc::runtime_lifecycle::with_current_thread_native_initial_persistent_allocator::<(bool, bool), crabc_mimalloc::runtime_lifecycle::prepare_current_thread_native_initial_persistent_owner_for_later_thread::{closure#0}>
+crabc_mimalloc::arena::manage_in_place_with_publisher_and_numa_source::<<crabc_mimalloc::arena::owned::ProcessArenaBacking>::install_owned_allocation_locked::{closure#5}, <crabc_mimalloc::arena::owned::ProcessArenaBacking>::install_owned_allocation_locked::{closure#4}>
+chacha20::backends::avx2::inner::<chacha20::R20, cipher::stream::core_api::WriteBlockCtx<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UTerm, typenum::bit::B1>, typenum::bit::B0>, typenum::bit::B0>, typenum::bit::B0>, typenum::bit::B0>, typenum::bit::B0>, typenum::bit::B0>>, chacha20::variants::Legacy>
+crabc_mimalloc::runtime_lifecycle::with_pointer_associated_initial_persistent_owner::<(bool, bool), crabc_mimalloc::runtime_lifecycle::with_current_thread_native_initial_persistent_allocator<(bool, bool), crabc_mimalloc::runtime_lifecycle::prepare_current_thread_native_initial_persistent_owner_for_later_thread::{closure#0}>::{closure#1}>::{closure#0}
+crabc_mimalloc::runtime_lifecycle::begin_current_thread_native_initial_persistent_owner::{closure#0}
+<crabc_mimalloc::main_static_page::MainStaticRuntimeFirstArenaPageAllocator>::prepare_dormant_page_pair_current_initial_thread_local
+<crabc_mimalloc::diagnostic_output::ProcessSourceOptions>::initialize_one
+<crabc_mimalloc::subproc::registry::SourceSubprocessRegistry>::initialize_main
+<crabc_mimalloc::process_page_map::ProcessPageMapStorage>::initialize
+<crabc_mimalloc::types::Heap>::initialize_main_static_after_kind_only_memid
+<crabc_mimalloc::arena::owned::ProcessArenaBacking>::reserve_locked
+<crabc_mimalloc::arena::owned::ProcessArenaBacking>::reserve_one_locked
+<crabc_mimalloc::arena::owned::ProcessArenaBacking>::install_owned_allocation_locked
+<crabc_mimalloc::arena::owned::ProcessArenaBacking>::reserve_first_arena_with_random
+<crabc_mimalloc::arena::owned::ProcessArenaBacking>::matches_existing_process_binding
+<crabc_mimalloc::page_map::PageMap>::initialize
+<crabc_mimalloc::main_theap::MainStaticTheapAttachment>::begin_process_lifetime_page_session
+<crabc_mimalloc::main_theap::MainStaticTheapAttachment>::begin_after_heap_foundation_with_vm_process
+<crabc_mimalloc::bitmap::BitmapView>::unsafe_set_range_local
+<crabc_mimalloc::diagnostic_output::PendingSourceWarnings>::deliver
+<crabc_mimalloc::runtime_lifecycle::RuntimeProcessStorage>::construct_initial_page_owner
+<crabc_mimalloc::random::TheapRandomImage>::initialize_ex
+<crabc_mimalloc::random::TheapRandomImage>::refill
+<crabc_mimalloc::types::heap_registry::SubprocessHeapList>::link_first_main_heap
+<crabc_mimalloc::diagnostic_output::OutputOwner>::initialize_source_options
+<crabc_mimalloc::diagnostic_output::OutputOwner>::post_init
+<crabc_mimalloc::os::VmPolicy>::apply_thp_process_policy
+<crabc_mimalloc::types::Theap>::initialize_main_static
+<crabc_mimalloc::types::Theap>::initialize_source_options
+<crabc_mimalloc::types::Theap>::initialize_for_owner_on_list
+<crabc_mimalloc::bitmap::BinnedBitmapView>::unsafe_set_range_local
+<crabc_mimalloc::meta::MetadataEngine>::bind_process_backing
+<crabc_mimalloc::meta::MetadataEngine>::prepare_for_main_heap
+<crabc_mimalloc::meta::MetadataEngine>::enter_for_main_subprocess
+<crabc_mimalloc::meta::MetadataEngine>::reinitialize_detached_metadata_random_if_weak
+<crabc_mimalloc::meta::MetadataEngine>::enter
+<crabc_mimalloc::meta::MetaEntry>::ensure_bound
+<crabc_mimalloc::os::Mapping>::map_unix_policy
+<crabc_mimalloc::os::NormalOsAllocation>::allocate_aligned_base_for_process
+crabc_mimalloc::runtime_lifecycle::start_process
+crabc_mimalloc::runtime_lifecycle::prepare_native_later_thread_arena
+crabc_mimalloc::os::source_clock_start
+crabc_mimalloc::config::observe_source_option
+crabc_core::vdso::resolve_kernel_vdso_function
+crabc_core::vdso::resolve_and_call_clock_gettime
+crabc_core::vdso::resolve_and_publish_clock_gettime
+c::x86_64_static_c_abi::native_mimalloc_lifecycle::runtime_source_environment
+core::core_arch::x86::xsave::_xgetbv
+chacha20::avx2_cpuid::init_get::init_inner
+<crabc_mimalloc::random::TheapRandomImage as core::ops::drop::Drop>::drop
+<crabc_mimalloc::os::CurrentDefaultTheapRandom as crabc_mimalloc::os::OsRandomSource>::next_if_initialized
+__tls_get_addr
+<crabc_mimalloc::diagnostic_output::OutputOwner>::final_process_done_message
+c::x86_64_static_c_abi::native_mimalloc_lifecycle::finish_selected_process_in_fini_array
+c::x86_64_static_c_abi::musl_lock::lock
+__funcs_on_exit
+<core::option::Option<crabc_mimalloc::process_page_map::ProcessPageMapMutationLease>>::map_or::<core::result::Result<(), crabc_mimalloc::process_page_map::ProcessPageMapError>, <crabc_mimalloc::process_page_map::ProcessPageMapMutationLease>::finish>
+<crabc_mimalloc::arena::ArenaRegistry>::try_find_free_with::<<crabc_mimalloc::arena::owned::ProcessArenaBacking>::try_find_free::{closure#0}>
+<crabc_mimalloc::thread_local::PersistentCompilerTlsOwnerCell<crabc_mimalloc::runtime_lifecycle::NativeInitialPersistentThreadOwner>>::with_owner::<(core::option::Option<crabc_mimalloc::runtime_lifecycle::NativeInitialDeferredFreeAllocationPhase>, bool), crabc_mimalloc::runtime_lifecycle::with_pointer_associated_initial_persistent_owner<(core::option::Option<crabc_mimalloc::runtime_lifecycle::NativeInitialDeferredFreeAllocationPhase>, bool), crabc_mimalloc::runtime_lifecycle::with_current_thread_native_initial_persistent_allocator<(core::option::Option<crabc_mimalloc::runtime_lifecycle::NativeInitialDeferredFreeAllocationPhase>, bool), crabc_mimalloc::runtime_lifecycle::begin_current_thread_native_initial_deferred_free_aligned_allocation::{closure#0}>::{closure#0}>::{closure#0}>
+<crabc_mimalloc::main_theap::MainStaticProcessPageSession>::with_heap::<core::result::Result<(), crabc_mimalloc::types::HeapArenaPagesError>, <crabc_mimalloc::main_theap::MainStaticProcessPageSession as crabc_mimalloc::bootstrap::TheapPageSession>::ensure_arena_pages::{closure#0}>
+core::ptr::drop_glue::<crabc_mimalloc::main_static_page::MainStaticRuntimeFirstArenaPageAllocatorState>
+<crabc_mimalloc::main_theap::MainStaticProcessPageSession as crabc_mimalloc::bootstrap::TheapPageSession>::with_static_main_mapped_regular_claim_source::<core::result::Result<crabc_mimalloc::single_thread::MappedRegularReclaimBeforeFresh, crabc_mimalloc::single_thread::GenericPathError>, <crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::reclaim_selected_mapped_regular_before_fresh::{closure#0}>
+<crabc_mimalloc::main_static_page::MainStaticRuntimeFirstArenaPageAllocator>::begin_deferred_free_aligned_at_current_initial_thread_local::{closure#0}
+crabc_mimalloc::runtime_lifecycle::begin_current_thread_native_initial_deferred_free_aligned_allocation::{closure#0}
+<crabc_mimalloc::arena::owned::ProcessArenaBacking>::collect_purge_at
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::pop_or_extend
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::collect_retired
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::push_regular_page
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::allocate_fresh_page
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::update_direct_cache
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::allocate_generic_once
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::collect_retired_pages
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::retry_pending_os_release
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::extend_page_before_allocation
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::attempt_deferred_free_allocation
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::collect_full_pages_non_abandoning
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::complete_deferred_free_aligned_base
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::begin_deferred_free_generic_allocation
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::find_generic_queue_page_with_first_try
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::begin_deferred_free_aligned_allocation_at
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::reclaim_selected_mapped_regular_with_source
+<crabc_mimalloc::bitmap::Chunk>::try_claim_one
+<crabc_mimalloc::arena::owned::ProcessArenaBacking>::allocation_for_arena
+<crabc_mimalloc::arena::owned::ProcessArenaBacking>::try_allocate_slices_with_random
+<crabc_mimalloc::page_map::PageMap>::register_range
+<crabc_mimalloc::page_map::PageMap>::ensure_submap_at
+<crabc_mimalloc::bitmap::BitmapView>::is_xset_range
+<crabc_mimalloc::bitmap::BitmapView>::popcount_range
+<crabc_mimalloc::bitmap::BitmapView>::set_range
+<crabc_mimalloc::arena::ArenaSliceClaim>::page_metadata
+<crabc_mimalloc::types::Theap>::record_page_registered
+<crabc_mimalloc::bitmap::BinnedBitmapView>::try_find_and_claim
+<crabc_mimalloc::main_theap::MainStaticProcessPageSession>::current_tld_numa_node
+<crabc_mimalloc::main_theap::MainStaticProcessPageSession>::ensure_static_main_mapped_regular_claim_selector_for_process
+<crabc_mimalloc::arena::ArenaView>::try_claim_slices_with_owner
+crabc_mimalloc::single_thread::arena_page_map_size
+crabc_mimalloc::single_thread::page_statistics_bin
+crabc_mimalloc::runtime_lifecycle::native_allocate_shaped
+crabc_mimalloc::runtime_lifecycle::native_allocate_shaped_slow
+crabc_mimalloc::runtime_lifecycle::report_generic_allocation_failure
+crabc_mimalloc::runtime_lifecycle::run_current_thread_native_initial_deferred_free_phase
+crabc_mimalloc::runtime_lifecycle::run_current_thread_native_initial_deferred_free_aligned_allocation
+crabc_mimalloc::arena::owned::purge::arena_purge_delay
+<crabc_mimalloc::arena::selection::ArenaCandidates as core::iter::traits::iterator::Iterator>::next
+<crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking as crabc_mimalloc::page_backing::PageBacking>::claim_with_random
+<crabc_mimalloc::main_theap::MainStaticProcessPageSession as crabc_mimalloc::bootstrap::TheapPageSession>::set_arena_page
+<crabc_mimalloc::main_theap::MainStaticProcessPageSession as crabc_mimalloc::bootstrap::TheapPageSession>::publish_fresh_page
+crabc_mimalloc::local_fast_path::free
+crabc_mimalloc::runtime_lifecycle::native_free
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::generic_allocation_continuation
+crabc_mimalloc::local_fast_path::allocate
+<crabc_mimalloc::single_thread::PageAllocatorEngine<crabc_mimalloc::main_theap::MainStaticProcessPageSession, crabc_mimalloc::page_backing::RuntimeFirstRegularPageBacking>>::begin_deferred_free_small_allocation_with
+c::x86_64_static_c_abi::pthread_create_join::selected_worker_native_mimalloc_attached
