@@ -1,0 +1,145 @@
+{
+  "schema": "crabc-mimalloc-x86_64-m8-gate",
+  "format": 1,
+  "upstream": {
+    "version": "3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801"
+  },
+  "products": {
+    "evidence": "product:native-allocator-policy",
+    "evidence_line": "native-allocator-policy evidence: ",
+    "static_sysroot": "static-sysroot",
+    "dynamic_sysroot": "dynamic-sysroot"
+  },
+  "evidence": {
+    "product:native-allocator-policy": {
+      "command": ["scripts/dev-x86_64.sh", "owned-native-allocator-policy"],
+      "scope": "Builds the native-shadow static and dynamic sysroots (`--allocator-backend native-shadow`) that the product-consuming rows below receive, and runs the unmodified allocator-basic runtime probe, the observability fixture, and the size-class policy probe through static, static-PIE, and dynamic PIE/non-PIE (kernel and direct loader) products against pinned musl's status and transcript: zero size, alignment, calloc overflow, realloc failure and realloc(p, 0), posix_memalign output preservation, errno, threads, fork/atfork, and atexit allocation."
+    },
+    "product:mimalloc-startup-errno": {
+      "command": ["scripts/dev-x86_64.sh", "owned-mimalloc-startup-errno", "--static-sysroot", "{static_sysroot}", "{dynamic_sysroot}"],
+      "scope": "On the native-shadow products, a first allocation in the executable preinit callback, allocations in a user constructor and in main, and the application's errno around the allocator's startup callback match pinned musl in static and dynamic link modes."
+    },
+    "product:native-worker-lifecycle": {
+      "command": ["scripts/dev-x86_64.sh", "owned-native-worker-lifecycle"],
+      "scope": "Audit-enabled native-shadow static, static-PIE, and dynamic products run the worker-owner lifecycle probe (worker attach, allocation, thread-specific-data destructors, exit, and final-worker process exit) and reproduce the musl transcript with the scalar worker-owner audit."
+    },
+    "product:native-allocator-fork": {
+      "command": ["scripts/dev-x86_64.sh", "owned-native-allocator-fork", "--static-sysroot", "{static_sysroot}", "{dynamic_sysroot}"],
+      "scope": "A multithreaded parent with live allocations and concurrent churn forks from the initial thread, a worker, and after a join, forks repeatedly under churn, and runs a single-threaded _Fork, with allocating pthread_atfork handlers, reproducing the musl transcript in every product mode."
+    },
+    "product:native-allocator-stress": {
+      "command": ["scripts/dev-x86_64.sh", "owned-native-allocator-stress"],
+      "scope": "Unmodified pinned test-stress.c at 1, 2, 4, 8, and 32 workers including large-object mode, and the seeded watchdog-bound soak covering constructors, cleanup/TSD, normal return, pthread_exit, cancellation, remote free, and transfer, through audited native-shadow static-PIE and dynamic PIE products with plateaued audit counts."
+    },
+    "product:allocator-override": {
+      "command": ["scripts/dev-x86_64.sh", "owned-allocator-override", "--static-sysroot", "{static_sysroot}", "{dynamic_sysroot}"],
+      "scope": "An application allocator in the executable replacing the complete malloc family or only malloc/free/realloc, and in dynamic modes one taken from an initial DSO, is used by every native-shadow product mode for libc's public allocations, reproducing the musl transcript."
+    },
+    "product:c-allocation-interposition": {
+      "command": ["scripts/dev-x86_64.sh", "owned-c-allocation-interposition", "{dynamic_sysroot}"],
+      "scope": "On the native-shadow dynamic product, an executable-defined malloc/realloc/free receives asprintf's caller storage and the passwd lookup's temporary getline allocation, while list I/O keeps its private queue allocation, matching pinned musl."
+    },
+    "product:stdio-allocator-interposition": {
+      "command": ["scripts/dev-x86_64.sh", "owned-stdio-allocator-interposition", "{dynamic_sysroot}"],
+      "scope": "On the native-shadow dynamic product, every FILE allocation and release goes through an executable-defined public allocator in each dynamic entry mode, matching pinned musl."
+    },
+    "product:native-allocator-dso": {
+      "command": ["scripts/dev-x86_64.sh", "owned-native-allocator-dso", "{dynamic_sysroot}"],
+      "scope": "An executable, an initial DSO, and a dlopen plugin allocate, grow, and free each other's blocks, compare malloc-family identities and errno contracts, and keep the plugin's blocks across dlclose, as PIE and non-PIE through the kernel and the direct loader; libc.so binds the malloc family as musl's does."
+    },
+    "product:loader-synthetic": {
+      "command": ["scripts/dev-x86_64.sh", "owned-loader-synthetic", "{dynamic_sysroot}"],
+      "scope": "All frozen synthetic loader workloads (initial graphs, TLS, relocation, dlopen/dlclose, constructors) run through the native-shadow dynamic product."
+    },
+    "product:loader-libc-identity": {
+      "command": ["scripts/dev-x86_64.sh", "owned-loader-libc-identity", "{dynamic_sysroot}"],
+      "scope": "The native-shadow dynamic product's copied interpreter and libc keep one identity before startup callbacks run."
+    },
+    "product:package-corpus-input": {
+      "command": ["scripts/dev-x86_64.sh", "owned-package-corpus-input"],
+      "scope": "Materializes the pinned Alpine APK closure and index the package corpus consumes (primary-checkout copy or exact download)."
+    },
+    "product:package-corpus": {
+      "command": ["scripts/dev-x86_64.sh", "owned-package-corpus", "--dynamic-sysroot", "{dynamic_sysroot}", "--quiet"],
+      "scope": "The selected real-program corpus (frozen Alpine package workloads) runs every tier through the native-shadow dynamic product."
+    },
+    "consumer:rust-std-lto": {
+      "command": null,
+      "scope": "The `consumer.rust-std-lto` gate (`scripts/dev-x86_64.sh consumer-rust-std-lto run`) links Rust std, std-dependent, LTO, and unwind fixtures against native-shadow static and dynamic products and passes."
+    },
+    "consumer:lua": {
+      "command": null,
+      "scope": "The `consumer.source-build` Lua lanes (`lua-static-source-build`, `lua-dynamic-source-build`, `lua-source-build-admission`) build and qualify pinned Lua on native-shadow products and pass."
+    }
+  },
+  "gates": [
+    {
+      "id": "m8.startup-constructors",
+      "required": true,
+      "acceptance": "The native allocator starts lazily on a first allocation in preinit, constructors, or main, and eagerly through libc startup, without disturbing application errno, in every static and dynamic product mode.",
+      "evidence": ["product:mimalloc-startup-errno", "product:native-worker-lifecycle", "product:native-allocator-stress"],
+      "blocked_by": []
+    },
+    {
+      "id": "m8.threads-fork",
+      "required": true,
+      "acceptance": "Workers attach before user code and finish after cleanup handlers and TSD destructors on return, pthread_exit, and cancellation; fork and _Fork from any thread preserve the parent and give the child a usable allocator; atfork handlers may allocate.",
+      "evidence": ["product:native-worker-lifecycle", "product:native-allocator-fork", "product:native-allocator-stress"],
+      "blocked_by": []
+    },
+    {
+      "id": "m8.errno-c-abi",
+      "required": true,
+      "acceptance": "The libc malloc family keeps musl's C ABI: argument rules, errno results (unchanged on success), realloc/posix_memalign failure preservation, malloc_usable_size, and size-class behavior.",
+      "evidence": ["product:native-allocator-policy", "product:mimalloc-startup-errno"],
+      "blocked_by": []
+    },
+    {
+      "id": "m8.weak-interposed",
+      "required": true,
+      "acceptance": "An application-defined allocator (full family or trio, executable or initial DSO) replaces libc's weak public entries, and libc's caller-visible allocations (asprintf, getline in passwd, FILE) go through it while private allocations stay native.",
+      "evidence": ["product:allocator-override", "product:c-allocation-interposition", "product:stdio-allocator-interposition"],
+      "blocked_by": []
+    },
+    {
+      "id": "m8.static-dynamic-products",
+      "required": true,
+      "acceptance": "Static, static-PIE, and dynamic PIE/non-PIE products built with the native-shadow backend link and run the allocator probes through the kernel and the direct loader.",
+      "evidence": ["product:native-allocator-policy", "product:allocator-override", "product:native-worker-lifecycle"],
+      "blocked_by": []
+    },
+    {
+      "id": "m8.dso-loader",
+      "required": true,
+      "acceptance": "Allocations cross the executable, initial DSOs, and dlopen plugins, and the loader's own workloads run on the native-shadow dynamic product.",
+      "evidence": ["product:native-allocator-dso", "product:loader-synthetic", "product:loader-libc-identity"],
+      "blocked_by": []
+    },
+    {
+      "id": "m8.rust-std",
+      "required": true,
+      "acceptance": "Rust std, its dependent fixture, LTO, and unwind consumers pass on native-shadow products.",
+      "evidence": ["consumer:rust-std-lto"],
+      "blocked_by": [
+        "`consumer-rust-std-lto run` qualifies only the accepted-C products from the ordered qualification chain; its `--development-*-sysroot` inputs produce a receipt that cannot pass, so no passing run on native-shadow products exists."
+      ]
+    },
+    {
+      "id": "m8.lua",
+      "required": true,
+      "acceptance": "Pinned Lua builds and passes its source-build qualification on native-shadow products.",
+      "evidence": ["consumer:lua"],
+      "blocked_by": [
+        "`lua-static-source-build` and `lua-dynamic-source-build` take no product argument and build accepted-C sysroots; neither can select the native-shadow backend."
+      ]
+    },
+    {
+      "id": "m8.corpus",
+      "required": true,
+      "acceptance": "The selected real-program corpus runs every tier on the native-shadow dynamic product.",
+      "evidence": ["product:package-corpus-input", "product:package-corpus"],
+      "blocked_by": []
+    }
+  ]
+}

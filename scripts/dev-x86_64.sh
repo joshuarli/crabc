@@ -607,10 +607,10 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-credentials-profile [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify the selected credential-setter profile against musl
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
   owned-static-replacement [STATIC_SYSROOT]  link application replacements of libc functions through the installed static archive against musl
-  owned-stdio-allocator-interposition  qualify dynamic FILE allocation ownership against musl
+  owned-stdio-allocator-interposition [DYNAMIC_SYSROOT]  qualify dynamic FILE allocation ownership against musl
   owned-mimalloc-startup-errno [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify allocator lifecycle and successful-call errno preservation against musl
   owned-signal-handler-fork  qualify early worker signal delivery and fork against musl
-  owned-c-allocation-interposition  qualify caller and passwd allocation ownership against musl
+  owned-c-allocation-interposition [DYNAMIC_SYSROOT]  qualify caller and passwd allocation ownership against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-signal [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test installed pthread signal delivery and task retirement
   native-thread-signal-abi --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  test the native tgkill C extension through supplied owned products
@@ -9918,9 +9918,9 @@ PY
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_static_replacement.sh "$@"
         ;;
     owned-stdio-allocator-interposition)
-        [ "$#" -eq 0 ] || fail "owned-stdio-allocator-interposition takes no arguments"
+        [ "$#" -le 1 ] || fail "owned-stdio-allocator-interposition accepts at most one dynamic sysroot"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_stdio_allocator_interposition.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_stdio_allocator_interposition.sh "$@"
         ;;
     owned-mimalloc-startup-errno)
         ensure_image
@@ -9932,9 +9932,9 @@ PY
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_signal_handler_fork.sh
         ;;
     owned-c-allocation-interposition)
-        [ "$#" -eq 0 ] || fail "owned-c-allocation-interposition takes no arguments"
+        [ "$#" -le 1 ] || fail "owned-c-allocation-interposition accepts at most one dynamic sysroot"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_c_allocation_interposition.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_c_allocation_interposition.sh "$@"
         ;;
     native-thread-signal-abi)
         ensure_image

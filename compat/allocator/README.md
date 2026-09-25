@@ -182,6 +182,17 @@ processes' address-free traces to be equal for the `operations`, `page-kinds`,
 the report, `x86_64/m4-gate/report.json` under the allocator artifacts
 directory. `--gate ID` runs one gate's evidence.
 
+`./compat/allocator/run-x86_64.sh allocator-m8` is the fail-closed Milestone 8
+owned-libc integration gate. [`m8-gate-x86_64-v3.5.0.json`](m8-gate-x86_64-v3.5.0.json)
+names, per plan row (startup/constructors, threads/fork, errno/C ABI,
+weak/interposed symbols, static/dynamic products, DSOs/loader, Rust std, Lua,
+corpus), the installed native-shadow `scripts/dev-x86_64.sh` product commands
+it requires. `owned-native-allocator-policy` builds the native-shadow sysroots
+that the product-consuming rows receive through `{static_sysroot}` and
+`{dynamic_sysroot}`. Because each row starts its own container, the gate runs
+on the native host; logs and `report.json` are under
+`.work/allocator-x86_64/reports/allocator/x86_64/m8-gate/`.
+
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
 Linux/x86-64 little-endian development is active alongside runtime parity;
