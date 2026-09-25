@@ -433,6 +433,13 @@ impl PageMap {
 
     pub(crate) const fn reserved_count(&self) -> usize { self.reserved_count }
 
+    /// The source `reserved_size`: the page-aligned header and entry span,
+    /// excluding the trailing submap for the NULL address.
+    #[cfg(feature = "native-runtime-test-audit")]
+    pub(crate) fn reserved_size(&self) -> Result<usize> {
+        Ok(self.header()?.reserved_size)
+    }
+
     /// Returns a read-only ownership audit after callers have established the
     /// PageMap's normal external no-mutation boundary. This test-only view
     /// counts source-plain live registrations rather than treating retained

@@ -559,7 +559,11 @@ impl<'owner> FinalStatisticsOutputPermit<'owner> {
     pub(crate) unsafe fn emit(self, view: FinalProcessDiagnosticView) {
         // SAFETY: the permit was issued by this exact owner after source
         // option selection, and the caller upholds the output lifetime above.
-        unsafe { render_final_statistics(self.output_owner, view) };
+        unsafe {
+            render_final_statistics(
+                StatisticsOutput::default_route(self.output_owner), b"subproc", view, view.statistics.committed.peak,
+            )
+        };
     }
 }
 
@@ -2291,8 +2295,167 @@ impl Write for FinalOutputLine {
     }
 }
 
+/// The `out`/`arg` pair a pinned statistics printer writes through:
+/// `_mi_fputs` sends a null `out` (or `stdout`/`stderr`, which the C ABI
+/// adapter maps to null) to the process default route and calls any other
+/// `out` directly, without the recursion guard.
+#[derive(Clone, Copy)]
+pub(crate) struct StatisticsOutput<'owner> {
+    owner: Option<&'owner OutputOwner>,
+    callback: Option<(OutputCallback, *mut c_void)>,
+}
+
+impl<'owner> StatisticsOutput<'owner> {
+    /// The process default route of `owner`.
+    #[inline]
+    pub(crate) const fn default_route(owner: &'owner OutputOwner) -> Self {
+        Self { owner: Some(owner), callback: None }
+    }
+
+    /// `out` when non-null, else the default route of `owner` (dropped when
+    /// no owner exists).
+    ///
+    /// # Safety
+    ///
+    /// A non-null `out` must be callable with a NUL-terminated message and
+    /// `argument` for every delivery of this printer, and may reenter the
+    /// allocator.
+    #[inline]
+    pub(crate) unsafe fn source(
+        owner: Option<&'owner OutputOwner>, out: Option<OutputCallback>, argument: *mut c_void,
+    ) -> Self {
+        Self { owner, callback: out.map(|out| (out, argument)) }
+    }
+
+    /// Delivers one fragment. The caller holds no allocator projection.
+    unsafe fn put(self, bytes: &[u8]) {
+        let message = SourceFormattedMessage::from_rendered_bytes(bytes);
+        match (self.callback, self.owner) {
+            // SAFETY: `source`'s caller supplies the callback contract.
+            (Some((out, argument)), _) => unsafe { invoke_callback(out, message.as_c_str(), argument) },
+            // SAFETY: the printer's caller owns the default-route scope.
+            (None, Some(owner)) => unsafe { owner.raw_message(message) },
+            (None, None) => {}
+        }
+    }
+
+    /// Delivers one assembled fragment.
+    unsafe fn put_line(self, line: &FinalOutputLine) {
+        // SAFETY: forwarded.
+        unsafe { self.put(&line.bytes[..line.length]) };
+    }
+}
+
+/// Pinned `mi_process_info_print_out(out, arg)` (`src/stats.c:334-353`).
+/// Unlike the copy inside `_mi_stats_print`, it is not line-buffered: each
+/// `_mi_fprintf` is its own delivery.
+///
+/// # Safety
+///
+/// As [`StatisticsOutput::put`]: the caller holds no allocator projection.
+pub(crate) unsafe fn render_process_info(output: StatisticsOutput<'_>, info: SourceProcessInfo) {
+    let mut elapsed = FinalOutputLine::new();
+    elapsed.append_bytes(b"  ");
+    elapsed.append_left(b"elapsed", 10);
+    let _ = write!(elapsed, ": {:>5}.{:03} s\n", info.elapsed_milliseconds / 1_000, info.elapsed_milliseconds % 1_000);
+    // SAFETY: forwarded caller contract.
+    unsafe { output.put_line(&elapsed) };
+    let mut process = FinalOutputLine::new();
+    process.append_bytes(b"  ");
+    process.append_left(b"process", 10);
+    let _ = write!(
+        process,
+        ": user: {}.{:03} s, system: {}.{:03} s, faults: {}, peak rss: ",
+        info.user_milliseconds / 1_000,
+        info.user_milliseconds % 1_000,
+        info.system_milliseconds / 1_000,
+        info.system_milliseconds % 1_000,
+        info.page_faults,
+    );
+    // SAFETY: forwarded caller contract.
+    unsafe { output.put_line(&process) };
+    let mut amount = FinalOutputLine::new();
+    append_final_amount(&mut amount, info.peak_rss as i64, 1, false);
+    // SAFETY: forwarded caller contract.
+    unsafe { output.put_line(&amount) };
+    if info.peak_commit > 0 {
+        let mut label = FinalOutputLine::new();
+        label.append_bytes(b", peak commit: ");
+        // SAFETY: forwarded caller contract.
+        unsafe { output.put_line(&label) };
+        let mut amount = FinalOutputLine::new();
+        append_final_amount(&mut amount, info.peak_commit as i64, 1, false);
+        // SAFETY: forwarded caller contract.
+        unsafe { output.put_line(&amount) };
+    }
+    // SAFETY: forwarded caller contract.
+    unsafe { output.put(b"\n") };
+}
+
+/// Pinned `mi_process_info`'s eight results (`src/stats.c:568-597`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(C)]
+pub struct SourceProcessInfo {
+    pub elapsed_milliseconds: usize,
+    pub user_milliseconds: usize,
+    pub system_milliseconds: usize,
+    pub current_rss: usize,
+    pub peak_rss: usize,
+    pub current_commit: usize,
+    pub peak_commit: usize,
+    pub page_faults: usize,
+}
+
+impl SourceProcessInfo {
+    /// Assembles the source image from the main subprocess's committed
+    /// statistics and one `_mi_prim_process_info` observation: on Linux a
+    /// failed `getrusage` leaves the committed-derived defaults, and the
+    /// current RSS always stays the current commit.
+    pub(crate) fn from_source(
+        elapsed_milliseconds: i64,
+        committed: crate::statistics::ProcessInfoCommittedDefaults,
+        usage: Option<ProcessUsage>,
+    ) -> Self {
+        let mut info = Self {
+            elapsed_milliseconds: source_process_milliseconds(elapsed_milliseconds),
+            user_milliseconds: 0,
+            system_milliseconds: 0,
+            current_rss: committed.current_bytes,
+            peak_rss: committed.peak_bytes,
+            current_commit: committed.current_bytes,
+            peak_commit: committed.peak_bytes,
+            page_faults: 0,
+        };
+        if let Some(usage) = usage {
+            info.user_milliseconds = source_process_milliseconds(usage.user_milliseconds);
+            info.system_milliseconds = source_process_milliseconds(usage.system_milliseconds);
+            info.peak_rss = usage.peak_resident_bytes;
+            info.page_faults = usage.major_page_faults;
+        }
+        info
+    }
+}
+
+/// Pinned `_mi_stats_print` for a caller's `out`/`arg` pair.
+///
+/// # Safety
+///
+/// As [`StatisticsOutput::put`].
+pub(crate) unsafe fn render_statistics(
+    output: StatisticsOutput<'_>, name: &[u8], sequence: usize,
+    statistics: crate::statistics::FinalStatisticsSnapshot, info: SourceProcessInfo, numa_nodes: usize,
+) {
+    let process = FinalProcessInfo::new(
+        info.elapsed_milliseconds, info.user_milliseconds, info.system_milliseconds,
+        info.peak_rss, info.page_faults, numa_nodes,
+    );
+    let view = FinalProcessDiagnosticView::new(sequence, statistics, process);
+    // SAFETY: forwarded caller contract.
+    unsafe { render_final_statistics(output, name, view, info.peak_commit as i64) };
+}
+
 #[inline]
-unsafe fn emit_final_statistics_line(output: &OutputOwner, line: &FinalOutputLine) {
+unsafe fn emit_final_statistics_line(output: StatisticsOutput<'_>, line: &FinalOutputLine) {
     // `_mi_stats_print` wraps its output in `buffered_t { count: 255 }`: it
     // flushes before the next byte once that many bytes are retained, and
     // flushes again at every LF. Keep the actual callback boundary here rather
@@ -2304,11 +2467,7 @@ unsafe fn emit_final_statistics_line(output: &OutputOwner, line: &FinalOutputLin
         // SAFETY: the enclosing final-output adapter owns the serialized
         // output scope; this slice is copied into source-shaped message
         // storage before synchronous dispatch.
-        unsafe {
-            output.raw_message(SourceFormattedMessage::from_rendered_bytes(
-                &line.bytes[offset..end],
-            ))
-        };
+        unsafe { output.put(&line.bytes[offset..end]) };
         offset = end;
     }
 }
@@ -2366,7 +2525,7 @@ fn append_final_count(line: &mut FinalOutputLine, value: i64, unit: i64) {
 }
 
 #[inline]
-fn emit_final_header(output: &OutputOwner, name: &[u8]) {
+fn emit_final_header(output: StatisticsOutput<'_>, name: &[u8]) {
     let mut line = FinalOutputLine::new();
     line.append_bytes(b" ");
     line.append_left(name, 11);
@@ -2382,7 +2541,7 @@ fn emit_final_header(output: &OutputOwner, name: &[u8]) {
 }
 
 #[inline]
-fn emit_final_stat(output: &OutputOwner, statistic: FinalStatCount, name: &[u8], unit: i64, not_ok: &[u8]) {
+fn emit_final_stat(output: StatisticsOutput<'_>, statistic: FinalStatCount, name: &[u8], unit: i64, not_ok: &[u8]) {
     let mut line = FinalOutputLine::new();
     line.append_bytes(b"  ");
     line.append_left(name, 10);
@@ -2424,7 +2583,7 @@ fn emit_final_stat(output: &OutputOwner, statistic: FinalStatCount, name: &[u8],
 }
 
 #[inline]
-fn emit_final_counter(output: &OutputOwner, value: i64, name: &[u8], unit: i64) {
+fn emit_final_counter(output: StatisticsOutput<'_>, value: i64, name: &[u8], unit: i64) {
     let mut line = FinalOutputLine::new();
     line.append_bytes(b"  ");
     line.append_left(name, 10);
@@ -2437,7 +2596,7 @@ fn emit_final_counter(output: &OutputOwner, value: i64, name: &[u8], unit: i64) 
 }
 
 #[inline]
-fn emit_final_average(output: &OutputOwner, count: i64, total: i64, name: &[u8]) {
+fn emit_final_average(output: StatisticsOutput<'_>, count: i64, total: i64, name: &[u8]) {
     let average_tens = if count == 0 { 0 } else { total.wrapping_mul(10) / count };
     let mut line = FinalOutputLine::new();
     line.append_bytes(b"  ");
@@ -2448,11 +2607,20 @@ fn emit_final_average(output: &OutputOwner, count: i64, total: i64, name: &[u8])
     unsafe { emit_final_statistics_line(output, &line) };
 }
 
-unsafe fn render_final_statistics(output: &OutputOwner, view: FinalProcessDiagnosticView) {
+/// Pinned `_mi_stats_print(name, id, stats, out, arg)` (`src/stats.c:356-436`)
+/// under the selected `MI_STAT == 0` profile.
+///
+/// `peak_commit` is `mi_process_info`'s main-subprocess committed peak,
+/// which is the printed image's own peak only when that image is the main
+/// subprocess.
+unsafe fn render_final_statistics(
+    output: StatisticsOutput<'_>, name: &[u8], view: FinalProcessDiagnosticView, peak_commit: i64,
+) {
     let statistics = view.statistics;
     let process = view.process;
     let mut line = FinalOutputLine::new();
-    let _ = write!(line, "subproc {}\n", view.subprocess_sequence);
+    line.append_bytes(name);
+    let _ = write!(line, " {}\n", view.subprocess_sequence);
     unsafe { emit_final_statistics_line(output, &line) };
 
     // `MI_STAT == 0` keeps the malloc section structurally present but emits
@@ -2525,9 +2693,9 @@ unsafe fn render_final_statistics(output: &OutputOwner, view: FinalProcessDiagno
         process.page_faults,
     );
     append_final_amount(&mut process_line, process.peak_resident_bytes as i64, 1, false);
-    if statistics.committed.peak > 0 {
+    if peak_commit > 0 {
         process_line.append_bytes(b", peak commit: ");
-        append_final_amount(&mut process_line, statistics.committed.peak, 1, false);
+        append_final_amount(&mut process_line, peak_commit, 1, false);
     }
     process_line.append_bytes(b"\n");
     unsafe { emit_final_statistics_line(output, &process_line) };

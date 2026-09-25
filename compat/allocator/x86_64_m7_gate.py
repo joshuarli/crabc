@@ -105,6 +105,19 @@ OPTION_PROFILES = {
     "arena_reserve": {"mimalloc_arena_reserve": "65536"},
     "arena_reserve_lazy": {"mimalloc_arena_reserve": "65536", "mimalloc_arena_eager_commit": "0"},
     "arena_reserve_eager": {"mimalloc_arena_reserve": "65536", "mimalloc_arena_eager_commit": "1"},
+    # A lazily committed arena exposes the page commit decision.
+    "page_commit_on_demand_0": {"mimalloc_page_commit_on_demand": "0", "mimalloc_arena_eager_commit": "0"},
+    "page_commit_on_demand_1": {"mimalloc_page_commit_on_demand": "1", "mimalloc_arena_eager_commit": "0"},
+    "page_commit_on_demand_2": {"mimalloc_page_commit_on_demand": "2", "mimalloc_arena_eager_commit": "0"},
+    "arena_is_numa_local": {"mimalloc_arena_is_numa_local": "1"},
+    "arena_is_numa_local_reserve": {"mimalloc_arena_is_numa_local": "1", "mimalloc_reserve_os_memory": "65536"},
+    "allow_thp_0": {"mimalloc_allow_thp": "0"},
+    "allow_large_os_pages": {"mimalloc_allow_large_os_pages": "1", "mimalloc_arena_reserve": "65536"},
+    "reserve_huge_os_pages": {"mimalloc_reserve_huge_os_pages": "1"},
+    "reserve_huge_os_pages_at": {"mimalloc_reserve_huge_os_pages": "1", "mimalloc_reserve_huge_os_pages_at": "0"},
+    "max_vabits_40": {"mimalloc_max_vabits": "40"},
+    "max_vabits_48": {"mimalloc_max_vabits": "48"},
+    "pagemap_commit": {"mimalloc_pagemap_commit": "1"},
 }
 OPTION_PROFILE_CASES = ("small", "medium", "large", "huge")
 OPTION_EFFECTS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_option_effects_oracle.c"
@@ -494,10 +507,11 @@ def require_complete_error_sites_trace(trace: Mapping[str, str], description: st
 def require_complete_option_profile_trace(trace: Mapping[str, str], description: str) -> None:
     """Reject a profile trace that omits a request record or the first arena."""
 
-    if "profile.first_arena" not in trace:
-        raise harness.HarnessError(f"{description} lacks profile.first_arena")
+    for key in ("profile.first_arena", "profile.page_map", "profile.arena_count", "profile.thp_enabled"):
+        if key not in trace:
+            raise harness.HarnessError(f"{description} lacks {key}")
     for case in OPTION_PROFILE_CASES:
-        for suffix in ("null", "memkind"):
+        for suffix in ("null", "memkind", "slice_pcommitted"):
             if f"profile.{case}.{suffix}" not in trace:
                 raise harness.HarnessError(f"{description} lacks profile.{case}.{suffix}")
 
@@ -637,6 +651,9 @@ THREAD_INIT_TRACE_END = "CRABC_MI_M7_THREAD_INIT_TRACE_END"
 PAGE_MAP_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_page_map_driver.c"
 PAGE_MAP_TRACE_BEGIN = "CRABC_MI_M7_PAGE_MAP_TRACE_BEGIN"
 PAGE_MAP_TRACE_END = "CRABC_MI_M7_PAGE_MAP_TRACE_END"
+STATISTICS_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_driver.c"
+STATISTICS_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_TRACE_BEGIN"
+STATISTICS_TRACE_END = "CRABC_MI_M7_STATISTICS_TRACE_END"
 
 
 def run_adapter_differential(
@@ -755,6 +772,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the shared-driver pinned-C/native-adapter thread-initialization failure differential")
     mode.add_argument("--page-map-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter startup page-map failure differential")
+    mode.add_argument("--statistics-differential", action="store_true",
+        help="run the shared-driver pinned-C/native-adapter statistics differential")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -780,6 +799,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             end=PAGE_MAP_TRACE_END, report_name="page-map.json",
         )
         print(f"M7 startup page-map differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.statistics_differential:
+        report = run_adapter_differential(
+            arguments.offline, driver=STATISTICS_DRIVER, begin=STATISTICS_TRACE_BEGIN,
+            end=STATISTICS_TRACE_END, report_name="statistics.json",
+        )
+        print(f"M7 statistics differential passed: {report['compared_key_count']} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

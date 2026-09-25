@@ -52,6 +52,7 @@ unsafe extern "C" {
     fn abort() -> !;
     fn fputs(message: *const c_char, stream: *mut c_void) -> c_int;
     static mut stderr: *mut c_void;
+    static mut stdout: *mut c_void;
     static mut environ: *mut *mut c_char;
     fn getauxval(tag: c_ulong) -> c_ulong;
     fn getenv(name: *const c_char) -> *mut c_char;
@@ -926,6 +927,111 @@ pub unsafe extern "C" fn mi_stats_get(stats: *mut c_void) -> bool {
     let _ = unsafe { register_current_native_allocator_worker_descriptor(current_native_allocator_thread_descriptor()) };
     // SAFETY: the C caller passes null or a `mi_stats_t`.
     unsafe { options::stats_get(stats) }
+}
+
+/// Pinned `_mi_fputs` sends a null `out`, or one equal to `stdout` or
+/// `stderr` (`src/options.c:466-478`), to the process default route.
+fn source_output(out: *const c_void) -> Option<OutputFunction> {
+    // SAFETY: plain reads of musl's permanent stream words.
+    let (standard_output, standard_error) = unsafe {
+        (core::ptr::read(core::ptr::addr_of!(stdout)), core::ptr::read(core::ptr::addr_of!(stderr)))
+    };
+    if out.is_null() || out == standard_output.cast_const() || out == standard_error.cast_const() {
+        return None;
+    }
+    // SAFETY: the C caller passes an `mi_output_fun`.
+    Some(unsafe { core::mem::transmute::<*const c_void, OutputFunction>(out) })
+}
+
+/// Registers the calling thread's allocator descriptor before a statistics
+/// entry, which, as in the source, does not initialize the thread.
+fn register_thread_for_statistics() {
+    // SAFETY: this musl thread's allocator TLS stays mapped for its life;
+    // registration is idempotent.
+    let _ = unsafe { register_current_native_allocator_worker_descriptor(current_native_allocator_thread_descriptor()) };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_stats_print_out(out: Option<OutputFunction>, argument: *mut c_void) {
+    register_thread_for_statistics();
+    let out = source_output(out.map_or(core::ptr::null(), |out| out as *const c_void));
+    // SAFETY: the C caller's `mi_output_fun` contract.
+    unsafe { options::stats_print_out(out, argument) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_stats_print(out: *mut c_void) {
+    register_thread_for_statistics();
+    // SAFETY: as `mi_stats_print_out` with a null argument.
+    unsafe { options::stats_print_out(source_output(out), core::ptr::null_mut()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_thread_stats_print_out(out: Option<OutputFunction>, argument: *mut c_void) {
+    register_thread_for_statistics();
+    let out = source_output(out.map_or(core::ptr::null(), |out| out as *const c_void));
+    // SAFETY: the C caller's `mi_output_fun` contract.
+    unsafe { options::thread_stats_print_out(out, argument) }
+}
+
+#[no_mangle]
+pub extern "C" fn mi_stats_reset() {
+    register_thread_for_statistics();
+    options::stats_reset();
+}
+
+#[no_mangle]
+pub extern "C" fn mi_stats_get_bin_size(bin: usize) -> usize {
+    options::stats_get_bin_size(bin)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_stats_get_json(size: usize, buffer: *mut c_char) -> *mut c_char {
+    register_thread_for_statistics();
+    // SAFETY: the C caller's buffer contract.
+    unsafe { options::stats_json(core::ptr::null(), size, buffer) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_stats_as_json(stats: *const c_void, size: usize, buffer: *mut c_char) -> *mut c_char {
+    register_thread_for_statistics();
+    if stats.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: the C caller's image and buffer contracts.
+    unsafe { options::stats_json(stats, size, buffer) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_process_info(
+    elapsed: *mut usize, user: *mut usize, system: *mut usize, current_rss: *mut usize,
+    peak_rss: *mut usize, current_commit: *mut usize, peak_commit: *mut usize, page_faults: *mut usize,
+) {
+    let info = options::process_info();
+    for (pointer, value) in [
+        (elapsed, info.elapsed_milliseconds), (user, info.user_milliseconds),
+        (system, info.system_milliseconds), (current_rss, info.current_rss), (peak_rss, info.peak_rss),
+        (current_commit, info.current_commit), (peak_commit, info.peak_commit),
+        (page_faults, info.page_faults),
+    ] {
+        if !pointer.is_null() {
+            // SAFETY: each non-null pointer is a writable `size_t`.
+            unsafe { pointer.write(value) };
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_process_info_print_out(out: Option<OutputFunction>, argument: *mut c_void) {
+    let out = source_output(out.map_or(core::ptr::null(), |out| out as *const c_void));
+    // SAFETY: the C caller's `mi_output_fun` contract.
+    unsafe { options::process_info_print_out(out, argument) }
+}
+
+#[no_mangle]
+pub extern "C" fn mi_process_info_print() {
+    // SAFETY: the default route.
+    unsafe { options::process_info_print_out(None, core::ptr::null_mut()) }
 }
 
 // ---------------------------------------------------------------------------

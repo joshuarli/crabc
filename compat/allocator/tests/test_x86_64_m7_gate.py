@@ -51,6 +51,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:options-environment",
             "differential:reclaim-options",
             "differential:startup-page-map-failure",
+            "differential:statistics",
             "differential:thread-init-failure",
         ])
         # Every M7 gate but the options/environment gate names an open condition.
@@ -143,7 +144,7 @@ class M7GateContractTests(unittest.TestCase):
 
     def test_missing_evidence_cannot_be_unblocked_by_editing_the_contract(self) -> None:
         unblocked = copy.deepcopy(self.contract)
-        self.gate_record(unblocked, "m7.statistics")["blocked_by"] = []
+        self.gate_record(unblocked, "m7.visitation")["blocked_by"] = []
         with self.assertRaisesRegex(harness.HarnessError, "missing evidence without a blocker"):
             self.validate(unblocked)
 

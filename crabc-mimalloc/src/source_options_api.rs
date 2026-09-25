@@ -157,3 +157,56 @@ pub unsafe fn stats_get(stats: *mut c_void) -> bool {
     // SAFETY: forwarded.
     unsafe { crate::runtime_lifecycle::native_stats_get(stats.cast()) }
 }
+
+pub use crate::diagnostic_output::SourceProcessInfo;
+
+/// `mi_stats_print_out`; a null `out` is the process default route.
+///
+/// # Safety
+/// A non-null `out` is callable with each message and `argument`.
+pub unsafe fn stats_print_out(out: Option<OutputFunction>, argument: *mut c_void) {
+    // SAFETY: forwarded.
+    unsafe { crate::runtime_lifecycle::native_stats_print_out(out, argument) }
+}
+
+/// `mi_thread_stats_print_out`.
+///
+/// # Safety
+/// As [`stats_print_out`].
+pub unsafe fn thread_stats_print_out(out: Option<OutputFunction>, argument: *mut c_void) {
+    // SAFETY: forwarded.
+    unsafe { crate::runtime_lifecycle::native_thread_stats_print_out(out, argument) }
+}
+
+/// `mi_process_info_print_out`.
+///
+/// # Safety
+/// As [`stats_print_out`].
+pub unsafe fn process_info_print_out(out: Option<OutputFunction>, argument: *mut c_void) {
+    // SAFETY: forwarded.
+    unsafe { crate::runtime_lifecycle::native_process_info_print_out(out, argument) }
+}
+
+/// `mi_process_info`'s eight results.
+pub fn process_info() -> SourceProcessInfo {
+    crate::runtime_lifecycle::native_process_info()
+}
+
+/// `mi_stats_get_json` (null `stats`) and `mi_stats_as_json`.
+///
+/// # Safety
+/// As [`crate::runtime_lifecycle::native_stats_json`].
+pub unsafe fn stats_json(stats: *const c_void, size: usize, buffer: *mut c_char) -> *mut c_char {
+    // SAFETY: forwarded.
+    unsafe { crate::runtime_lifecycle::native_stats_json(stats.cast(), size, buffer.cast()) }.cast()
+}
+
+/// `mi_stats_get_bin_size`.
+pub const fn stats_get_bin_size(bin: usize) -> usize {
+    crate::runtime_lifecycle::native_stats_bin_size(bin)
+}
+
+/// `mi_stats_reset`.
+pub fn stats_reset() {
+    crate::runtime_lifecycle::native_stats_reset();
+}

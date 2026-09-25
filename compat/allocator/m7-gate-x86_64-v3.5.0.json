@@ -93,7 +93,7 @@
       "scope": "Separate pinned-C and Rust processes per `mimalloc_*` environment image (disallow_arena_alloc, disallow_os_alloc, both, reserve_os_memory, and arena_reserve with default, lazy, and eager arena_eager_commit) report, for small, medium, large, and huge requests, whether each failed and the `mi_memkind_t` of its page, and the size and eager commitment of the arena backing a first small allocation."
     },
     "differential:statistics": {
-      "command": null,
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-differential"],
       "scope": "Pinned-C/Rust mi_stats_* and mi_process_info values, JSON, and printed output for the selected MI_STAT level, normalized for addresses and times."
     },
     "differential:visitation-profiles": {
@@ -213,9 +213,9 @@
         "differential:reclaim-options"
       ],
       "blocked_by": [
-        "The option-effects differential traces the arena max-object size, arena purge delay, minimal purge size, NUMA node count, generic-collect frequency, arena reservation size/eager commit, and `_mi_os_purge_ex` (purge_decommits, purge_delay, allow_reset) decisions after `mi_option_set`; the option-profile differential covers disallow_arena_alloc, disallow_os_alloc, reserve_os_memory, arena_reserve, and arena_eager_commit through process start and page allocation. page_commit_on_demand, arena_is_numa_local (a one-node host cannot discriminate it), reserve_huge_os_pages, reserve_huge_os_pages_at, destroy_on_exit, allow_thp's process THP policy, and allow_large_os_pages's large-page mapping branch have no decision-level C/Rust trace yet.",
+        "The option-effects differential traces the arena max-object size, arena purge delay, minimal purge size, NUMA node count, generic-collect frequency, arena reservation size/eager commit, and `_mi_os_purge_ex` (purge_decommits, purge_delay, allow_reset) decisions after `mi_option_set`. The option-profile differential covers, through process start and page allocation, disallow_arena_alloc, disallow_os_alloc, reserve_os_memory, arena_reserve, arena_eager_commit, page_commit_on_demand (a page's `slice_pcommitted` in a lazily committed arena), arena_is_numa_local (the first arena's stored node), allow_thp (the process THP state), and max_vabits (the PageMap reservation). destroy_on_exit has no C/Rust trace yet. On this host (no reserved huge pages, overcommit enabled) the reserve_huge_os_pages, reserve_huge_os_pages_at, allow_large_os_pages, and pagemap_commit profiles run but cannot discriminate their decisions: the huge and large-page mappings fail over, and overcommit commits the PageMap regardless.",
 
-        "page_max_candidates (src/page.c:805), max_vabits (src/page-map.c:273), and pagemap_commit (src/page-map.c:299) are read from the process table at their source points but have no discriminating C/Rust trace: the reclaim profiles never build a queue of expandable, not-immediately-available pages, and no trace compares the PageMap reserved/committed extent under a configured max_vabits or a non-overcommit host."
+        "page_max_candidates (src/page.c:805) is read from the process table at its source point but has no discriminating C/Rust trace: the reclaim profiles never build a queue of expandable, not-immediately-available pages."
       ]
     },
     {
@@ -271,7 +271,7 @@
         "differential:adapter"
       ],
       "blocked_by": [
-        "The native adapter maps only `mi_stats_get`; `mi_stats_get_json`, `mi_stats_as_json`, `mi_stats_print`, `mi_stats_print_out`, `mi_thread_stats_print_out`, `mi_stats_reset`, `mi_stats_get_bin_size`, and the `mi_process_info` family are absent, and `mi_stats_get` merges only the calling thread's default Theap on the process main subprocess.",
+        "The statistics differential compares `mi_stats_print_out`, `mi_stats_print`, `mi_thread_stats_print_out`, the JSON entries, and the `mi_process_info` family by output structure, with every numeric token normalized, plus exact bin sizes, delivery counts, and a truncated fixed JSON buffer; the exact values of the `MI_STAT == 0` producers are compared only as the page and thread deltas of the adapter differential.",
         "Statistics producers gated on `MI_STAT > 0` are absent."
       ]
     },

@@ -6433,6 +6433,48 @@ fn native_process_backing_first_arena_policy_audit(
     native_process_backing_canonical_root_arena_audit(process_backing)
 }
 
+/// Process facts decided by source options at startup, for the M7
+/// option-profile differential.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeProcessOptionsAudit {
+    /// Source `reserved_size` of the process PageMap, and whether its entries
+    /// are fully committed: the `max_vabits` and `pagemap_commit` decisions
+    /// of `mi_page_map_init_once`. Entry counts are not compared: the Rust
+    /// header's private lock is smaller than C's `mi_lock_t`, so the same
+    /// reservation holds a few more entries.
+    pub page_map_reserved_size: usize,
+    pub page_map_fully_committed: bool,
+    /// Source `mi_arenas_get_count` of the main subprocess.
+    pub arena_count: usize,
+}
+
+/// Returns [`NativeRuntimeProcessOptionsAudit`] for an active process.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_process_options_test_audit() -> Option<NativeRuntimeProcessOptionsAudit> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    if !RUNTIME_PROCESS.is_active() {
+        return None;
+    }
+    // SAFETY: PROCESS_ACTIVE follows the one process-lifetime owner; this
+    // audit takes only its immutable witnesses.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let ready = owner.ready().ok()?;
+    let process_page_map = ready.page_map().ok()?;
+    let page_map = process_page_map.page_map().ok()?;
+    let arena_count = ready.process_backing().ok()?.process().subprocess().arena_backing().registry().count();
+    Some(NativeRuntimeProcessOptionsAudit {
+        page_map_reserved_size: page_map.reserved_size().ok()?,
+        page_map_fully_committed: page_map.committed_count().ok()? == page_map.reserved_count(),
+        arena_count,
+    })
+}
+
 /// Returns scalar-only lifecycle accounting for the process-global runtime.
 ///
 /// A `None` result means the source process image is not active and quiescent
@@ -6696,6 +6738,27 @@ pub unsafe fn native_runtime_live_client_memory_kind_test_audit(client: core::pt
         MemoryKind::Arena => 6,
         MemoryKind::Malloc => 7,
     })
+}
+
+/// The source `slice_pcommitted` of one exact live native client's page:
+/// its committed OS pages from the first slice, or zero when
+/// `_mi_arenas_page_alloc` committed it fully (`page_commit_on_demand`).
+///
+/// # Safety
+///
+/// As [`native_runtime_live_client_page_test_audit`].
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_live_client_slice_pcommitted_test_audit(client: core::ptr::NonNull<u8>) -> Option<u16> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the caller's exact-live-client proof, as for the page audit.
+    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    // SAFETY: the quiescent owner cannot extend the page during this read.
+    Some(unsafe { page.as_ref() }.slice_pcommitted())
 }
 
 /// Reports whether one exact live native client belongs to the source-start
@@ -10664,6 +10727,215 @@ pub unsafe fn native_stats_get(stats: *mut u8) -> bool {
         true
     });
     true
+}
+
+/// Pinned `mi_process_info` (`src/stats.c:568-597`): elapsed time since
+/// process start, the main subprocess's committed bytes, and one
+/// `_mi_prim_process_info` observation.
+#[doc(hidden)]
+pub fn native_process_info() -> crate::diagnostic_output::SourceProcessInfo {
+    let committed = crate::subproc::SubprocessIdentity::global()
+        .statistics()
+        .final_output_snapshot()
+        .process_info_committed_defaults();
+    let elapsed = crate::statistics::process_elapsed_msecs();
+    crate::diagnostic_output::SourceProcessInfo::from_source(elapsed, committed, crate::os::process_usage().ok())
+}
+
+/// Facts the statistics printers read from the started process: the output
+/// owner, the main subprocess sequence, and `_mi_os_numa_node_count`.
+fn statistics_print_facts() -> Option<(Option<&'static crate::diagnostic_output::OutputOwner>, usize, usize)> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    if !RUNTIME_PROCESS.is_active() {
+        return None;
+    }
+    // SAFETY: PROCESS_ACTIVE follows the permanent owner publication.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let ready = owner.ready().ok()?;
+    let sequence = ready.subprocess_sequence().ok()?;
+    let nodes = ready.vm_process().ok()?.policy().numa_node_count();
+    Some((crate::process_init::process_output_owner(), sequence, nodes))
+}
+
+/// Pinned `mi_stats_print_out(out, arg)`: `mi_subproc_stats_print_out` of
+/// the main subprocess, whose `mi_subproc_stats_get` image (subprocess plus
+/// every Heap, after the calling thread's Theap merge) `_mi_stats_print`
+/// prints as `subproc <seq>` (`src/stats.c:512-524`).
+///
+/// # Safety
+///
+/// A non-null `out` must be callable with a NUL-terminated message and
+/// `argument` for every line; it may reenter the allocator.
+#[doc(hidden)]
+pub unsafe fn native_stats_print_out(
+    out: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut core::ffi::c_void)>,
+    argument: *mut core::ffi::c_void,
+) {
+    let mut image = crate::statistics::HeapTheapStatistics::new();
+    // SAFETY: a local image with a source header, exclusively owned.
+    if !unsafe { native_stats_get(core::ptr::from_mut(&mut image).cast()) } {
+        return;
+    }
+    let Some((owner, sequence, nodes)) = statistics_print_facts() else { return; };
+    let info = native_process_info();
+    // SAFETY: no allocator projection is live; the caller supplies `out`.
+    unsafe {
+        crate::diagnostic_output::render_statistics(
+            crate::diagnostic_output::StatisticsOutput::source(owner, out, argument),
+            b"subproc", sequence, image.final_output_snapshot(), info, nodes,
+        )
+    };
+}
+
+/// Pinned `mi_process_info_print_out(out, arg)` (`src/stats.c:334-353`).
+///
+/// # Safety
+///
+/// As [`native_stats_print_out`].
+#[doc(hidden)]
+pub unsafe fn native_process_info_print_out(
+    out: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut core::ffi::c_void)>,
+    argument: *mut core::ffi::c_void,
+) {
+    let owner = crate::process_init::process_output_owner();
+    let info = native_process_info();
+    // SAFETY: no allocator projection is live; the caller supplies `out`.
+    unsafe {
+        crate::diagnostic_output::render_process_info(
+            crate::diagnostic_output::StatisticsOutput::source(owner, out, argument), info,
+        )
+    };
+}
+
+/// Pinned `mi_stats_get_json(buf_size, buf)` and `mi_stats_as_json`
+/// (`src/stats.c:764-851`): render `stats`, or the `mi_stats_get` image when
+/// null, into `buffer` when both it and `size` are nonzero, else into a
+/// buffer grown with `mi_rezalloc` that the caller frees with `mi_free`.
+/// Null when the image is invalid or the output does not fit.
+///
+/// # Safety
+///
+/// `stats` is null or a readable source `mi_stats_t`; a non-null `buffer`
+/// with nonzero `size` is writable for `size` bytes.
+#[doc(hidden)]
+pub unsafe fn native_stats_json(stats: *const u8, size: usize, buffer: *mut u8) -> *mut u8 {
+    let mut image = crate::statistics::HeapTheapStatistics::new();
+    let source = if stats.is_null() {
+        // SAFETY: a local image with a source header, exclusively owned.
+        if !unsafe { native_stats_get(core::ptr::from_mut(&mut image).cast()) } {
+            return core::ptr::null_mut();
+        }
+        &image
+    } else {
+        // SAFETY: the caller's image contract.
+        match unsafe { crate::statistics::HeapTheapStatistics::from_source_image(stats) } {
+            Some(source) => source,
+            None => return core::ptr::null_mut(),
+        }
+    };
+    let info = native_process_info();
+    let process = crate::statistics::JsonProcessInfo {
+        elapsed: info.elapsed_milliseconds,
+        user: info.user_milliseconds,
+        system: info.system_milliseconds,
+        page_faults: info.page_faults,
+        rss_current: info.current_rss,
+        rss_peak: info.peak_rss,
+        commit_current: info.current_commit,
+        commit_peak: info.peak_commit,
+    };
+    // `mi_rezalloc`: a reallocation whose new tail is zeroed.
+    let mut grow = |old: *mut u8, new_size: usize| -> *mut u8 {
+        // SAFETY: `old` is null or this buffer's live native block.
+        match unsafe { native_reallocate_zeroed(core::ptr::NonNull::new(old), new_size) } {
+            NativePageAllocationResult::Allocated(block) => block.as_ptr(),
+            _ => core::ptr::null_mut(),
+        }
+    };
+    let mut out = if size > 0 && !buffer.is_null() {
+        // SAFETY: the caller's buffer contract.
+        unsafe { crate::statistics::JsonBuffer::fixed(buffer, size) }
+    } else {
+        let mut out = crate::statistics::JsonBuffer::growing(&mut grow);
+        if !out.expand() {
+            return core::ptr::null_mut();
+        }
+        out
+    };
+    source.render_json(process, &mut out);
+    out.finish(|block| {
+        if let Some(block) = core::ptr::NonNull::new(block) {
+            // SAFETY: the grown buffer is this call's live native block.
+            let _ = unsafe { native_free(block) };
+        }
+    })
+}
+
+/// Pinned `mi_thread_stats_print_out(out, arg)` (`src/stats.c:532-538`):
+/// print the calling thread's default Theap statistics as `heap <seq>`,
+/// then merge them into its Heap. Nothing when the Theap is uninitialized.
+///
+/// # Safety
+///
+/// As [`native_stats_print_out`].
+#[doc(hidden)]
+pub unsafe fn native_thread_stats_print_out(
+    out: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut core::ffi::c_void)>,
+    argument: *mut core::ffi::c_void,
+) {
+    let Some((owner, _, nodes)) = statistics_print_facts() else { return; };
+    let theap = {
+        #[cfg(target_arch = "x86_64")]
+        let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
+        // SAFETY: the calling thread's own root, with no owner projection
+        // live at this API entry.
+        unsafe { crate::types::Theap::final_statistics_at(crate::compiler_tls::default_theap()) }
+    };
+    let Some((sequence, statistics)) = theap else { return; };
+    let info = native_process_info();
+    // SAFETY: no allocator projection is live; the caller supplies `out`.
+    unsafe {
+        crate::diagnostic_output::render_statistics(
+            crate::diagnostic_output::StatisticsOutput::source(owner, out, argument),
+            b"heap", sequence, statistics, info, nodes,
+        )
+    };
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
+    merge_current_thread_theap_statistics();
+}
+
+/// Pinned `mi_stats_reset` (`src/stats.c:472-477`): on a thread with an
+/// initialized default Theap, merge its main-Heap Theap into the main Heap
+/// and the main Heap into the main subprocess.
+#[doc(hidden)]
+pub fn native_stats_reset() {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
+    // SAFETY: the calling thread's own root; no projection is live.
+    if unsafe { crate::types::Theap::final_statistics_at(crate::compiler_tls::default_theap()) }.is_none()
+        || !RUNTIME_PROCESS.is_active()
+    {
+        return;
+    }
+    merge_current_thread_theap_statistics();
+    // SAFETY: PROCESS_ACTIVE follows the permanent main-Heap publication.
+    let Some(main_heap) = (unsafe { RUNTIME_PROCESS.active_main_heap() }) else { return; };
+    let Ok(mut heap) = main_heap.lock_heap() else { return; };
+    let _ = heap.heap_mut().merge_main_heap_statistics_into_owning_subprocess_before_unlink();
+    let _ = heap.unlock();
+}
+
+/// Pinned `mi_stats_get_bin_size` (`src/stats.c:608-611`).
+#[doc(hidden)]
+pub const fn native_stats_bin_size(bin: usize) -> usize {
+    match crate::size_class::bin_size(bin) {
+        Some(size) => size,
+        None => 0,
+    }
 }
 
 /// `mi_stats_merge_theap_to_heap` for the calling thread's default Theap,

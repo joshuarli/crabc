@@ -1249,6 +1249,269 @@ fn bytes_to_i64(bytes: usize) -> i64 {
     bytes as i64
 }
 
+/// The `mi_json_buf_t` of pinned `src/stats.c:659-693`: a caller buffer, or
+/// one grown by `mi_rezalloc` through `grow`.
+pub(crate) struct JsonBuffer<'grow> {
+    buffer: *mut u8,
+    size: usize,
+    used: usize,
+    grow: Option<&'grow mut dyn FnMut(*mut u8, usize) -> *mut u8>,
+}
+
+impl<'grow> JsonBuffer<'grow> {
+    /// A caller-supplied buffer of `size > 0` bytes, zeroed first as the
+    /// source does.
+    ///
+    /// # Safety
+    /// `buffer` is valid for writes of `size` bytes and not otherwise
+    /// accessed while this value lives.
+    pub(crate) unsafe fn fixed(buffer: *mut u8, size: usize) -> Self {
+        // SAFETY: the caller's buffer contract.
+        unsafe { buffer.write_bytes(0, size) };
+        Self { buffer, size, used: 0, grow: None }
+    }
+
+    /// An allocator-grown buffer: `grow(old, new_size)` is the source
+    /// `mi_rezalloc` and returns null on failure, leaving `old` owned.
+    pub(crate) fn growing(grow: &'grow mut dyn FnMut(*mut u8, usize) -> *mut u8) -> Self {
+        Self { buffer: core::ptr::null_mut(), size: 0, used: 0, grow: Some(grow) }
+    }
+
+    /// `mi_json_buf_expand`.
+    pub(crate) fn expand(&mut self) -> bool {
+        if !self.buffer.is_null() && self.size > 0 {
+            // SAFETY: `size` bytes are owned.
+            unsafe { self.buffer.add(self.size - 1).write(0) };
+        }
+        let Some(grow) = self.grow.as_mut() else { return false };
+        if self.size > usize::MAX / 2 {
+            return false;
+        }
+        let new_size = if self.size == 0 {
+            crate::source_api::good_size(12 * crate::config::KIB)
+        } else {
+            2 * self.size
+        };
+        let buffer = grow(self.buffer, new_size);
+        if buffer.is_null() {
+            return false;
+        }
+        self.buffer = buffer;
+        self.size = new_size;
+        true
+    }
+
+    /// `mi_json_buf_print`.
+    fn print(&mut self, message: &[u8]) {
+        if self.used + 1 >= self.size && self.grow.is_none() {
+            return;
+        }
+        for &byte in message {
+            if self.used + 1 >= self.size && !self.expand() {
+                return;
+            }
+            // SAFETY: `used < size` bytes are owned.
+            unsafe { self.buffer.add(self.used).write(byte) };
+            self.used += 1;
+        }
+        // SAFETY: as above.
+        unsafe { self.buffer.add(self.used).write(0) };
+    }
+
+    /// The source's final check: `NULL` (after freeing a grown buffer via
+    /// `free`) when the output did not fit.
+    pub(crate) fn finish(self, free: impl FnOnce(*mut u8)) -> *mut u8 {
+        if self.used + 1 >= self.size {
+            if self.grow.is_some() && !self.buffer.is_null() {
+                free(self.buffer);
+            }
+            return core::ptr::null_mut();
+        }
+        self.buffer
+    }
+}
+
+/// One `_mi_snprintf(buf, 128, ...)` line: at most 127 bytes are kept.
+struct JsonLine {
+    bytes: [u8; 127],
+    length: usize,
+}
+
+impl JsonLine {
+    const fn new() -> Self { Self { bytes: [0; 127], length: 0 } }
+    fn as_bytes(&self) -> &[u8] { &self.bytes[..self.length] }
+}
+
+impl core::fmt::Write for JsonLine {
+    fn write_str(&mut self, value: &str) -> core::fmt::Result {
+        let copied = core::cmp::min(self.bytes.len() - self.length, value.len());
+        self.bytes[self.length..self.length + copied].copy_from_slice(&value.as_bytes()[..copied]);
+        self.length += copied;
+        Ok(())
+    }
+}
+
+/// `mi_process_info`'s results as the JSON `"process"` object prints them.
+#[derive(Clone, Copy)]
+pub(crate) struct JsonProcessInfo {
+    pub(crate) elapsed: usize,
+    pub(crate) user: usize,
+    pub(crate) system: usize,
+    pub(crate) page_faults: usize,
+    pub(crate) rss_current: usize,
+    pub(crate) rss_peak: usize,
+    pub(crate) commit_current: usize,
+    pub(crate) commit_peak: usize,
+}
+
+impl HeapTheapStatistics {
+    /// Borrows a caller's source `mi_stats_t` whose header names this layout
+    /// and version, as `mi_stats_get_json_from` requires.
+    ///
+    /// # Safety
+    /// `image` is null or valid for reads of a two-word header and, when that
+    /// header matches, of the whole image for `'image`, with only atomic or
+    /// no concurrent writes.
+    pub(crate) unsafe fn from_source_image<'image>(image: *const u8) -> Option<&'image Self> {
+        if image.is_null() || image.addr() % core::mem::align_of::<Self>() != 0 {
+            return None;
+        }
+        // SAFETY: the caller supplies a readable header.
+        let (size, version) = unsafe { (image.cast::<usize>().read(), image.cast::<usize>().add(1).read()) };
+        if size != core::mem::size_of::<Self>() || version != STAT_VERSION {
+            return None;
+        }
+        // SAFETY: a matching header names this exact `repr(C)` layout (the
+        // layout records pin it), every field after the header is an `i64`
+        // read atomically, and the caller keeps the image live.
+        Some(unsafe { &*image.cast::<Self>() })
+    }
+
+    /// The body of pinned `mi_stats_get_json_from` (`src/stats.c:764-826`)
+    /// after its buffer is set up.
+    pub(crate) fn render_json(&self, process: JsonProcessInfo, out: &mut JsonBuffer<'_>) {
+        use core::fmt::Write;
+        fn count(out: &mut JsonBuffer<'_>, prefix: &str, stat: &StatCount, suffix: &str, comma: bool) {
+            let mut line = JsonLine::new();
+            let _ = write!(
+                line,
+                "{prefix}{{ \"total\": {}, \"peak\": {}, \"current\": {}{suffix} }}{}\n",
+                i64_load_relaxed(&stat.total), i64_load_relaxed(&stat.peak), i64_load_relaxed(&stat.current),
+                if comma { "," } else { "" },
+            );
+            out.print(line.as_bytes());
+        }
+        let value = |out: &mut JsonBuffer<'_>, name: &str, value: i64| {
+            let mut line = JsonLine::new();
+            let _ = write!(line, "  \"{name}\": {value},\n");
+            out.print(line.as_bytes());
+        };
+        let size = |out: &mut JsonBuffer<'_>, name: &str, value: usize, comma: bool| {
+            let mut line = JsonLine::new();
+            let _ = write!(line, "    \"{name}\": {value}{}\n", if comma { "," } else { "" });
+            out.print(line.as_bytes());
+        };
+        let count_value = |out: &mut JsonBuffer<'_>, name: &str, stat: &StatCount| {
+            let mut line = JsonLine::new();
+            let _ = write!(line, "  \"{name}\": ");
+            out.print(line.as_bytes());
+            count(out, "", stat, "", true);
+        };
+        let counter = |out: &mut JsonBuffer<'_>, name: &str, stat: &StatCounter| value(out, name, i64_load_relaxed(&stat.total));
+
+        out.print(b"{\n");
+        value(out, "stat_version", STAT_VERSION as i64);
+        value(out, "mimalloc_version", 30_500);
+        out.print(b"  \"process\": {\n");
+        size(out, "elapsed_msecs", process.elapsed, true);
+        size(out, "user_msecs", process.user, true);
+        size(out, "system_msecs", process.system, true);
+        size(out, "page_faults", process.page_faults, true);
+        size(out, "rss_current", process.rss_current, true);
+        size(out, "rss_peak", process.rss_peak, true);
+        size(out, "commit_current", process.commit_current, true);
+        size(out, "commit_peak", process.commit_peak, false);
+        out.print(b"  },\n");
+
+        // `MI_STAT_FIELDS()` in declaration order.
+        count_value(out, "pages", &self.pages);
+        count_value(out, "reserved", &self.reserved);
+        count_value(out, "committed", &self.committed);
+        counter(out, "reset", &self.reset);
+        counter(out, "purged", &self.purged);
+        count_value(out, "page_committed", &self.page_committed);
+        count_value(out, "pages_abandoned", &self.pages_abandoned);
+        count_value(out, "threads", &self.threads);
+        count_value(out, "malloc_normal", &self.malloc_normal);
+        count_value(out, "malloc_huge", &self.malloc_huge);
+        count_value(out, "malloc_requested", &self.malloc_requested);
+        counter(out, "mmap_calls", &self.mmap_calls);
+        counter(out, "commit_calls", &self.commit_calls);
+        counter(out, "reset_calls", &self.reset_calls);
+        counter(out, "purge_calls", &self.purge_calls);
+        counter(out, "arena_count", &self.arena_count);
+        counter(out, "malloc_normal_count", &self.malloc_normal_count);
+        counter(out, "malloc_huge_count", &self.malloc_huge_count);
+        counter(out, "malloc_guarded_count", &self.malloc_guarded_count);
+        counter(out, "arena_rollback_count", &self.arena_rollback_count);
+        counter(out, "arena_purges", &self.arena_purges);
+        counter(out, "pages_extended", &self.pages_extended);
+        counter(out, "pages_retire", &self.pages_retire);
+        counter(out, "page_searches", &self.page_searches);
+        counter(out, "page_searches_count", &self.page_searches_count);
+        count_value(out, "segments", &self.segments);
+        count_value(out, "segments_abandoned", &self.segments_abandoned);
+        count_value(out, "segments_cache", &self.segments_cache);
+        count_value(out, "_segments_reserved", &self.segments_reserved);
+        count_value(out, "heaps", &self.heaps);
+        count_value(out, "theaps", &self.theaps);
+        counter(out, "pages_reclaim_on_alloc", &self.pages_reclaim_on_alloc);
+        counter(out, "pages_reclaim_on_free", &self.pages_reclaim_on_free);
+        counter(out, "pages_reabandon_full", &self.pages_reabandon_full);
+        counter(out, "pages_unabandon_busy_wait", &self.pages_unabandon_busy_wait);
+        counter(out, "heaps_delete_wait", &self.heaps_delete_wait);
+
+        // `mi_json_buf_print_count_bin`: the bin's block size and page kind.
+        let bins = |out: &mut JsonBuffer<'_>, name: &[u8], stats: &[StatCount; STAT_BIN_COUNT]| {
+            out.print(b"  \"");
+            out.print(name);
+            out.print(b"\": [\n");
+            for (bin, stat) in stats.iter().enumerate() {
+                let block_size = crate::size_class::bin_size(bin).unwrap_or(0);
+                let page_size = if block_size <= crate::config::SMALL_MAX_OBJ_SIZE {
+                    crate::config::SMALL_PAGE_SIZE
+                } else if block_size <= crate::config::MEDIUM_MAX_OBJ_SIZE {
+                    crate::config::MEDIUM_PAGE_SIZE
+                } else if block_size <= crate::config::LARGE_MAX_OBJ_SIZE {
+                    crate::config::LARGE_PAGE_SIZE
+                } else {
+                    0
+                };
+                let mut suffix = JsonLine::new();
+                let _ = write!(suffix, ", \"block_size\": {block_size}, \"page_size\": {page_size}");
+                // SAFETY: `write!` above wrote only ASCII.
+                let suffix = unsafe { core::str::from_utf8_unchecked(suffix.as_bytes()) };
+                count(out, "    ", stat, suffix, bin != BIN_HUGE);
+            }
+            out.print(b"  ],\n");
+        };
+        bins(out, b"malloc_bins", &self.malloc_bins);
+        bins(out, b"page_bins", &self.page_bins);
+        out.print(b"  \"chunk_bins\": [\n");
+        for (bin, stat) in self.chunk_bins.iter().enumerate() {
+            // `mi_chunkbin_t`: SMALL, OTHER, MEDIUM, LARGE, HUGE, NONE.
+            let name = ["S", "X", "M", "L", "H", " "][bin];
+            let mut suffix = JsonLine::new();
+            let _ = write!(suffix, ", \"bin\": \"{name}\"");
+            // SAFETY: ASCII only.
+            let suffix = unsafe { core::str::from_utf8_unchecked(suffix.as_bytes()) };
+            count(out, "    ", stat, suffix, bin != STAT_CHUNK_BIN_COUNT - 1);
+        }
+        out.print(b"  ]\n");
+        out.print(b"}\n");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

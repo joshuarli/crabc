@@ -6661,6 +6661,28 @@ impl Theap {
         true
     }
 
+    /// `mi_thread_stats_print_out`'s read of the calling thread's default
+    /// Theap (`src/stats.c:532-538`): its Heap's `heap_seq` and its own
+    /// unmerged statistics, or `None` while it is uninitialized.
+    ///
+    /// # Safety
+    /// `pointer` is the calling thread's current default-Theap root and no
+    /// whole-Theap reference overlaps this call; its initialized Heap
+    /// outlives it.
+    pub(crate) unsafe fn final_statistics_at(
+        pointer: NonNull<Self>,
+    ) -> Option<(usize, crate::statistics::FinalStatisticsSnapshot)> {
+        // SAFETY: the caller's root contract; only atomic fields are read.
+        let heap = unsafe { (*pointer.as_ptr()).heap.load(core::sync::atomic::Ordering::Relaxed) };
+        let heap = NonNull::new(heap)?;
+        // SAFETY: as above; the statistics are relaxed atomics.
+        let statistics = unsafe { &*core::ptr::addr_of!((*pointer.as_ptr()).statistics) };
+        // SAFETY: an initialized Theap's Heap is live, and its sequence is
+        // fixed at Heap initialization.
+        let sequence = unsafe { core::ptr::addr_of!((*heap.as_ptr()).heap_seq).read() };
+        Some((sequence, statistics.final_output_snapshot()))
+    }
+
     /// Read-only source-event observation for focused differential evidence.
     #[inline]
     pub(crate) fn statistics_snapshot(&self) -> HeapTheapStatisticsSnapshot {
