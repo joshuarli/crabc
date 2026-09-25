@@ -101,6 +101,11 @@ impl PreparedInitialDebugger {
         Some(Self { libc_slot, dynamic_slot })
     }
 
+    /// The published 8-byte slot addresses [`Self::overlaps`] protects.
+    pub(super) fn slots(&self) -> impl Iterator<Item = u64> {
+        [Some(self.libc_slot), self.dynamic_slot].into_iter().flatten().map(|slot| slot as u64)
+    }
+
     pub(super) fn overlaps(&self, start: u64, length: u64) -> Option<bool> {
         let end = start.checked_add(length)?;
         for slot in [Some(self.libc_slot), self.dynamic_slot].into_iter().flatten() {

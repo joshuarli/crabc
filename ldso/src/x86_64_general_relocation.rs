@@ -552,7 +552,7 @@ unsafe fn copy_relocation(
 }
 
 #[derive(Clone, Copy)]
-struct WriteSpan { start: u64, length: u64 }
+pub(super) struct WriteSpan { pub(super) start: u64, pub(super) length: u64 }
 
 /// Exclusive preflight scratch, sized from already range-checked ELF tables.
 /// It owns only anonymous loader memory: no libc allocator, TLS or callbacks
@@ -721,7 +721,7 @@ unsafe fn preflight_object(scope: &SymbolScope<'_>, objects: &[Object], owner: u
 }
 
 unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], owner: usize, lazy: bool) -> Option<()> {
-    unsafe { preflight_object_guarded(scope, objects, owner, lazy, None) }
+    unsafe { preflight_object_guarded(scope, objects, owner, lazy, None, None) }
 }
 
 /// [`preflight_object_binding`], additionally rejecting a write set that
@@ -730,6 +730,7 @@ unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], 
 unsafe fn preflight_object_guarded(
     scope: &SymbolScope<'_>, objects: &[Object], owner: usize, lazy: bool,
     destination_guard: Option<&dyn Fn(&Object, &[WriteSpan]) -> Option<bool>>,
+    mut resolved: Option<&mut LoaderVec<u64>>,
 ) -> Option<()> {
     let object = &objects[owner];
     preflight_relocation_table_layout(object)?;
@@ -762,7 +763,10 @@ unsafe fn preflight_object_guarded(
                 if table != object.rela { return None; }
                 unsafe { copy_relocation(scope, objects, owner, offset, symbol, addend) }?.length
             } else {
-                unsafe { word_resolution(scope, objects, owner, kind, symbol, addend, lazy) }?;
+                let value = unsafe { word_resolution(scope, objects, owner, kind, symbol, addend, lazy) }?;
+                // A non-lazy caller keeps each word value for application,
+                // which then needs no second symbol lookup.
+                if let Some(resolved) = resolved.as_deref_mut() { resolved.push(value?)?; }
                 8
             };
             *spans.get_mut(count)? = unsafe { admitted_span(object, &mut writable, offset, length, kind != R_COPY) }?;
@@ -870,6 +874,50 @@ unsafe fn spans_overlap_range(object: &Object, spans: &[WriteSpan], record: u64,
     Some(false)
 }
 
+/// Whether an admitted write set (sorted, disjoint) reaches a debugger slot,
+/// with exactly the outcome of calling `debugger.overlaps` on every span:
+/// empty writes never overlap, an overflowing write end rejects, and each
+/// slot is found among the sorted spans by binary search.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(super) unsafe fn debugger_slots_overlap_spans(
+    debugger: &super::x86_64_debugger::PreparedInitialDebugger, object: &Object, spans: &[WriteSpan],
+) -> Option<bool> {
+    let mut any_nonempty = false;
+    for span in spans {
+        runtime_address(object.base, span.start)?.checked_add(span.length)?;
+        any_nonempty |= span.length != 0;
+    }
+    if !any_nonempty { return Some(false); }
+    for slot in debugger.slots() {
+        slot.checked_add(8)?;
+        if unsafe { nonempty_spans_overlap_range(object, spans, slot, 8) }? { return Some(true); }
+    }
+    Some(false)
+}
+
+/// [`spans_overlap_range`] counting only nonempty spans, as
+/// [`super::x86_64_debugger::PreparedInitialDebugger::overlaps`] does.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn nonempty_spans_overlap_range(object: &Object, spans: &[WriteSpan], record: u64, length: u64) -> Option<bool> {
+    let span_address = |span: &WriteSpan| runtime_address(object.base, span.start);
+    let first_at_or_after = |address: u64| -> Option<usize> {
+        let (mut low, mut high) = (0, spans.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if span_address(&spans[middle])? < address { low = middle + 1; } else { high = middle; }
+        }
+        Some(low)
+    };
+    let from_record = first_at_or_after(record)?;
+    let after_record = first_at_or_after(record.checked_add(length)?)?;
+    if spans[from_record..after_record].iter().any(|span| span.length != 0) { return Some(true); }
+    for span in spans[..from_record].iter().rev() {
+        if span.length == 0 { continue; }
+        return ranges_overlap(span_address(span)?, span.length, record, length);
+    }
+    Some(false)
+}
+
 /// The per-object half of [`checked_write_span`]'s table checks for one
 /// complete, sorted, disjoint write set: every span must avoid each ELF table
 /// that relocation or later application rereads (and, with the installed
@@ -957,6 +1005,24 @@ unsafe fn referenced_records_overlap_spans(object: &Object, spans: &[WriteSpan])
     Some(false)
 }
 
+/// [`apply_word_relocations`] with the values preflight already resolved for
+/// `object`'s word relocations, in table order.
+unsafe fn apply_resolved_word_relocations(object: &Object, values: &[u64]) -> Option<()> {
+    let mut values = values.iter();
+    for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
+        for index in 0..bytes / ELF64_RELA_SIZE {
+            let entry = unsafe { table.add(index * ELF64_RELA_SIZE) };
+            let kind = unsafe { read_u64(entry.add(8)) } as u32;
+            if kind == R_NONE || kind == R_COPY { continue; }
+            let value = *values.next()?;
+            let address = runtime_address(object.base, unsafe { read_u64(entry) })?;
+            unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
+        }
+    }
+    if values.next().is_some() { return None; }
+    unsafe { apply_relr_table(object) }
+}
+
 unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], owner: usize) -> Option<()> {
     let object = &objects[owner];
     for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
@@ -1003,6 +1069,9 @@ unsafe fn relocate_initial_graph_inner(
     }
     let initial_scope = InitialSymbolScope::from_graph(graph)?;
     let scope = initial_scope.view();
+    // Every word value preflight resolves, in table order, per owner.
+    let mut resolved = LoaderVec::<u64>::new();
+    let mut resolved_start = LoaderVec::<usize>::new();
     for owner in 0..scope.indices.len() {
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         if let Some(debugger) = debugger {
@@ -1010,23 +1079,22 @@ unsafe fn relocate_initial_graph_inner(
             // admitted RELA/RELR write (a crafted COPY cannot overwrite
             // DT_DEBUG). They are checked against the same admitted write set
             // preflight just built, instead of re-deriving it.
-            let guard = |object: &Object, spans: &[WriteSpan]| -> Option<bool> {
-                for span in spans {
-                    if debugger.overlaps(runtime_address(object.base, span.start)?, span.length)? {
-                        return Some(true);
-                    }
-                }
-                Some(false)
-            };
-            unsafe { preflight_object_guarded(&scope, objects, owner, false, Some(&guard)) }?;
+            let guard = |object: &Object, spans: &[WriteSpan]| unsafe { debugger_slots_overlap_spans(debugger, object, spans) };
+            resolved_start.push(resolved.len())?;
+            unsafe { preflight_object_guarded(&scope, objects, owner, false, Some(&guard), Some(&mut resolved)) }?;
             continue;
         }
-        unsafe { preflight_object(&scope, objects, owner) }?;
+        resolved_start.push(resolved.len())?;
+        unsafe { preflight_object_guarded(&scope, objects, owner, false, None, Some(&mut resolved)) }?;
     }
+    resolved_start.push(resolved.len())?;
     // Libraries first, main last, matching musl. All copies form the final
     // phase so their source data includes ordinary symbol/relative fixups.
+    // Word values come from preflight: they depend only on immutable,
+    // write-protected tables and load bases, which no admitted write reaches.
     for owner in (1..scope.indices.len()).chain(core::iter::once(0)) {
-        unsafe { apply_word_relocations(&scope, objects, owner) }?;
+        let values = &resolved[resolved_start[owner]..resolved_start[owner + 1]];
+        unsafe { apply_resolved_word_relocations(&objects[owner], values) }?;
     }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if let Some(debugger) = debugger { unsafe { debugger.relocate(); } }

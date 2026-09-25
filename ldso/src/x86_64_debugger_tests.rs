@@ -137,3 +137,40 @@ fn relocation_into_a_debugger_slot_rejects_the_graph_before_any_write() {
         }
     }
 }
+
+// The batched slot check agrees with `overlaps` on every span over generated
+// sorted disjoint write sets around both published slots.
+#[test]
+fn batched_debugger_slot_check_matches_the_per_span_scan() {
+    extern crate std;
+    use super::super::x86_64_general_relocation::{debugger_slots_overlap_spans, WriteSpan};
+    let main = Image::new();
+    let libc = Image::new();
+    let objects = [main.object(false), libc.object(true)];
+    let debugger = unsafe { PreparedInitialDebugger::prepare(&objects) }.unwrap();
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = |bound: u64| { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed % bound };
+    let (mut hits, mut misses) = (0, 0);
+    for object in &objects {
+        for _ in 0..4000 {
+            let mut spans = std::vec::Vec::new();
+            let mut cursor = 0x3c0 + next(0x60);
+            for _ in 0..(1 + next(6)) {
+                let length = [0u64, 1, 8, 16, 24][next(5) as usize];
+                spans.push(WriteSpan { start: cursor, length });
+                cursor += length.max(1) + next(0x20);
+            }
+            // Both are rejections unless they report no overlap.
+            let old = (|| -> Option<bool> {
+                for span in &spans {
+                    if debugger.overlaps(object.base + span.start, span.length)? { return Some(true); }
+                }
+                Some(false)
+            })() != Some(false);
+            let new = unsafe { debugger_slots_overlap_spans(&debugger, object, &spans) } != Some(false);
+            assert_eq!(new, old);
+            if old { hits += 1; } else { misses += 1; }
+        }
+    }
+    assert!(hits > 500 && misses > 500, "{hits}/{misses}");
+}
