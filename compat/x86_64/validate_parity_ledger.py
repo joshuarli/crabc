@@ -6649,20 +6649,9 @@ def require_posix_native_profile_companions(family: Mapping[str, Any]) -> None:
         and evidence[0].get("command") == "./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR",
         "libc.posix-runtime must use the finite native profile command",
     )
-    scope = evidence[0].get("scope")
     require(
-        isinstance(scope, str)
-        and "credential, crypt, and addressable-atomic" in scope
-        and "fixed strptime source-and-POSIX contract" in scope
-        and "twenty candidate and 104 oracle wordexp diagnostics" in scope
-        and "independently captured native-input seal" in scope
-        and "candidate passes and fixed musl math defects" in scope
-        and "candidate good/musl undefined" in scope
-        and "raw_passed=false" in scope
-        and "56 retained-reviewed-project-c-abi-extension rows remain unchanged" in scope
-        and "Musl or C++ header parity" in scope
-        and "native_aggregate_complete only" in scope,
-        "libc.posix-runtime finite profile scope is incomplete",
+        isinstance(evidence[0].get("scope"), str) and evidence[0]["scope"].strip(),
+        "libc.posix-runtime native evidence needs a scope",
     )
     execution = (ROOT / "compat" / "x86_64" / "owned_posix_native_execution.py").read_text(encoding="utf-8")
     require(

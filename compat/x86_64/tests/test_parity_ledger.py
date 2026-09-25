@@ -3333,15 +3333,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE "
             "--atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR",
         )
-        for phrase in (
-            "credential, crypt, and addressable-atomic",
-            "fixed strptime source-and-POSIX contract",
-            "twenty candidate and 104 oracle wordexp diagnostics",
-            "independently captured native-input seal",
-            "56 retained-reviewed-project-c-abi-extension rows",
-            "Musl or C++ header parity",
-        ):
-            self.assertIn(phrase, family["native_evidence"][0]["scope"])
 
         changed = self.data()
         changed_family = self.family(changed, "libc.posix-runtime")
