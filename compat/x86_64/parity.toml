@@ -21027,7 +21027,7 @@ aarch64_gates = ["lua"]
 source_owners = ["compat/lua", "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/validate_parity_ledger.py", "scripts/build_x86_64_owned_sysroot.py", "scripts/build_x86_64_owned_dynamic_sysroot.py", "scripts/dev-x86_64.sh", "docs/design/source-build.md"]
 x86_abi_prerequisites = ["x86 compiler-driver, dynamic loader, libc, CRT, and helper archive closure"]
 x86_header_prerequisites = ["Application headers and link flags resolve only from the installed x86 sysroot and explicit application inputs."]
-native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh lua-source-build-admission", scope = "Require current-source physical reports from both `lua-static-source-build` and `lua-dynamic-source-build`; revalidate ET_EXEC/static-PIE and installed/extracted dynamic products, pinned source archive hashes, and owned product manifests before family admission." }]
+native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh lua-source-build-admission", scope = "Require current-source physical reports from both `lua-static-source-build` and `lua-dynamic-source-build`; revalidate ET_EXEC/static-PIE and installed/extracted dynamic products, pinned source archive hashes, and owned product manifests before family admission. `--output NEW_DIR` retains that admission as the gate's `lua-source-build` publication, which rereads only while a fresh admission is identical." }]
 oracle = [{ kind = "source-build", source = "Pinned upstream application source and musl execution comparison", role = "Application build and runtime evidence." }]
 capabilities = []
 status = "planned"

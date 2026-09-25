@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Admit current native Lua static and dynamic source-build reports."""
+"""Admit current native Lua static and dynamic source-build reports.
+
+Without arguments this validates both latest lane reports and prints the
+admission. ``--output NEW_DIR`` also retains that admission as
+``NEW_DIR/admission.json``: the receipt the ``consumer.source-build``
+qualification gate selects through its ``lua-source-build`` publication.
+The receipt asserts nothing by itself; ``validate_receipt`` reruns the
+admission and requires the identical result, so a replaced lane report, a
+changed product, or a source edit after admission cannot pass.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +18,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 # Qualification cases run with PYTHONSAFEPATH=1, which omits this script's
 # directory from sys.path; name it so sibling imports still resolve.
@@ -24,6 +33,9 @@ import owned_dynamic_qualification as QUALIFICATION
 STATIC_REPORT = LUA.DEFAULT_X86_STATIC_REPORT
 DYNAMIC_REPORT = DYNAMIC.DEFAULT_REPORT
 WORK = ROOT / ".work/x86_64"
+RECEIPT_SCHEMA = "crabc.x86_64-lua-source-build-admission/v1"
+RECEIPT_NAME = "admission.json"
+GATE = "consumer.source-build"
 
 
 def require(condition: bool, message: str) -> None:
@@ -275,14 +287,62 @@ def validate() -> dict[str, object]:
     return {"source_identity": source, "static": admit_static(), "dynamic": admit_dynamic()}
 
 
-def main() -> int:
-    argparse.ArgumentParser(description=__doc__).parse_args()
+def write_receipt(output: Path) -> Path:
+    """Admit both lanes now and retain that admission below a fresh directory."""
+
+    output = Path(os.path.abspath(output))
+    require(output.is_relative_to(ROOT / ".work"), "Lua admission output must be below this checkout's .work")
+    require(not output.exists() and not output.is_symlink(), f"Lua admission output is not fresh: {output}")
+    LUA.require_physical_directory(output.parent, "Lua admission output parent")
+    receipt = {"schema": RECEIPT_SCHEMA, "gate": GATE, "admission": validate()}
+    output.mkdir()
+    path = output / RECEIPT_NAME
+    LUA.write_json_atomic(path, receipt)
+    return path
+
+
+def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
+    """Reread one retained admission: it must equal a fresh admission now."""
+
+    require(Path(root).resolve() == ROOT, "Lua admission receipt must be read by this checkout")
+    path = physical_file(path, "Lua admission receipt")
+    require(path.name == RECEIPT_NAME and path.is_relative_to(ROOT / ".work"),
+            f"Lua admission receipt must be a .work {RECEIPT_NAME}")
     try:
-        report = validate()
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise LUA.RunnerError(f"Lua admission receipt is invalid JSON: {path}") from error
+    require(
+        isinstance(record, dict)
+        and set(record) == {"schema", "gate", "admission"}
+        and record["schema"] == RECEIPT_SCHEMA
+        and record["gate"] == GATE,
+        "Lua admission receipt does not match its schema",
+    )
+    current = validate()
+    require(
+        record["admission"] == current,
+        "Lua admission receipt differs from a fresh admission of the current source, reports and products",
+    )
+    return record
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--output", type=Path, help="fresh .work directory that retains admission.json")
+    arguments = parser.parse_args(argv)
+    try:
+        if arguments.output is not None:
+            receipt = write_receipt(arguments.output)
+            report = json.loads(receipt.read_text(encoding="utf-8"))["admission"]
+        else:
+            report = validate()
     except (LUA.RunnerError, QUALIFICATION.QualificationError, OSError, ValueError) as error:
         print(f"Lua source-build admission: FAIL: {error}", file=sys.stderr)
         return 1
     print(json.dumps({"result": "pass", **report}, sort_keys=True))
+    if arguments.output is not None:
+        print(f"Lua source-build admission receipt: {receipt}")
     return 0
 
 

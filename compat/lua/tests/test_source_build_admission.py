@@ -116,5 +116,42 @@ class SourceBuildAdmissionTests(unittest.TestCase):
                     ADMISSION.admit_static()
 
 
+    def test_retained_admission_passes_only_while_a_fresh_admission_is_identical(self) -> None:
+        admitted = {
+            "source_identity": {"revision": "1" * 40, "source_sha256": "1" * 64},
+            "static": {"report_sha256": "2" * 64, "product_sha256": "3" * 64},
+            "dynamic": {"report_sha256": "4" * 64, "installed": "5" * 64, "extracted": "5" * 64},
+        }
+        ADMISSION.WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="receipt-", dir=ADMISSION.WORK) as temporary:
+            output = Path(temporary) / "admission"
+            with mock.patch.object(ADMISSION, "validate", return_value=admitted):
+                receipt = ADMISSION.write_receipt(output)
+                self.assertEqual(receipt, output / "admission.json")
+                self.assertEqual(ADMISSION.validate_receipt(ROOT, receipt)["admission"], admitted)
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "not fresh"):
+                    ADMISSION.write_receipt(output)
+
+            replaced = {**admitted, "dynamic": {**admitted["dynamic"], "report_sha256": "6" * 64}}
+            with mock.patch.object(ADMISSION, "validate", return_value=replaced):
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "differs from a fresh admission"):
+                    ADMISSION.validate_receipt(ROOT, receipt)
+
+            failure = ADMISSION.LUA.RunnerError("Lua source-build report was produced from stale source")
+            with mock.patch.object(ADMISSION, "validate", side_effect=failure):
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "stale source"):
+                    ADMISSION.validate_receipt(ROOT, receipt)
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "stale source"):
+                    ADMISSION.write_receipt(Path(temporary) / "second")
+                self.assertFalse((Path(temporary) / "second").exists())
+
+            record = json.loads(receipt.read_text(encoding="utf-8"))
+            record["gate"] = "consumer.rust-std-lto"
+            receipt.write_text(json.dumps(record), encoding="utf-8")
+            with mock.patch.object(ADMISSION, "validate", return_value=admitted):
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "schema"):
+                    ADMISSION.validate_receipt(ROOT, receipt)
+
+
 if __name__ == "__main__":
     unittest.main()

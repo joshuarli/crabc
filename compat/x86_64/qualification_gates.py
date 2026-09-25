@@ -170,6 +170,19 @@ def _validate_rust_std_lto(path: Path) -> Mapping[str, Any]:
     return _import_compat("consumer_rust_std_lto").validate_receipt(ROOT, path)
 
 
+def _lua_source_build_admission() -> Any:
+    directory = str(ROOT / "compat" / "lua")
+    if directory not in sys.path:
+        sys.path.insert(0, directory)
+    import source_build_admission
+
+    return source_build_admission
+
+
+def _validate_lua_source_build(path: Path) -> Mapping[str, Any]:
+    return _lua_source_build_admission().validate_receipt(ROOT, path)
+
+
 RUST_STD_LTO_COMMAND = (
     "./scripts/dev-x86_64.sh consumer-rust-std-lto run --static-preparation PREP.json "
     "--dynamic-qualification QUAL.json --provider-vendor VENDOR --dependency-vendor VENDOR --output NEW_DIR"
@@ -199,6 +212,14 @@ PUBLICATIONS: dict[str, Publication] = {
             "receipt.json",
             RUST_STD_LTO_COMMAND,
             _validate_rust_std_lto,
+        ),
+        Publication(
+            "lua-source-build",
+            "consumer.source-build",
+            "admission.json",
+            "./scripts/dev-x86_64.sh lua-source-build-admission --output NEW_DIR "
+            "(after lua-static-source-build and lua-dynamic-source-build)",
+            _validate_lua_source_build,
         ),
         Publication(
             "loader-family",
@@ -486,14 +507,10 @@ def _abi_evidence_reader(leaf: str) -> Callable[[Evaluation], str]:
 
 
 def _read_lua_source_build(evaluation: Evaluation) -> str:
-    del evaluation
-    directory = str(ROOT / "compat" / "lua")
-    if directory not in sys.path:
-        sys.path.insert(0, directory)
-    import source_build_admission
-
-    result = source_build_admission.validate()
-    return "current-source Lua static and dynamic reports admitted: " + ", ".join(sorted(result))
+    # The receipt reader reruns the admission: both current-source lane
+    # reports, their pinned inputs and the installed/extracted products.
+    record = evaluation.published("consumer.source-build", "lua-source-build")
+    return "published Lua admission: static and dynamic lanes at " + record["admission"]["source_identity"]["revision"]
 
 
 def _read_parity_ledger(evaluation: Evaluation) -> str:
@@ -563,8 +580,8 @@ READERS: dict[tuple[str, str], EvidenceReader] = {
         EvidenceReader(
             "consumer.source-build",
             "./scripts/dev-x86_64.sh lua-source-build-admission",
-            "report",
-            "compat/lua/source_build_admission.py",
+            "publication",
+            "lua-source-build",
             _read_lua_source_build,
         ),
         EvidenceReader(

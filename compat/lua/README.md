@@ -17,7 +17,7 @@ Run it through the architecture-specific Docker entry point:
 ./scripts/dev.sh lua --offline
 ./scripts/dev-x86_64.sh lua-static-source-build
 ./scripts/dev-x86_64.sh lua-dynamic-source-build
-./scripts/dev-x86_64.sh lua-source-build-admission
+./scripts/dev-x86_64.sh lua-source-build-admission [--output NEW_DIR]
 python3 -m unittest discover -s compat/lua/tests -p 'test_*.py'
 ```
 
@@ -52,7 +52,11 @@ copy, binds both reports to the current checkout source identity and pinned Lua
 archive, revalidates the static and dynamic sysroot manifests, and checks the
 dynamic products against their current source seal. The parity ledger calls
 this same reader before accepting `consumer.source-build` as
-`foundation-verified`.
+`foundation-verified`. `lua-source-build-admission --output NEW_DIR` also
+retains the admission as `NEW_DIR/admission.json`; the qualification gate's
+`lua-source-build` publication selects it and passes only while a fresh
+admission is identical, so a later lane report, product change, or source
+edit invalidates it.
 
 ## Ordered qualification case
 
