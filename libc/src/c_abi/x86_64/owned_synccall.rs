@@ -107,7 +107,10 @@ unsafe fn futex_wake(word: &AtomicI32, count: c_int) {
 /// `SIGSYNCCALL`, does not already hold the lock, and pairs this with one
 /// [`unlock_thread_list`] before it restores its mask.
 pub(super) unsafe fn lock_thread_list() {
-    let tid = current_linux_thread_id();
+    // Musl's `__tl_lock` owner value is the caller's recorded
+    // `__pthread_self()->tid`; the kernel is asked only when no record exists.
+    let tid = super::pthread_create_join::current_runtime_task_linux_id()
+        .unwrap_or_else(current_linux_thread_id);
     loop {
         match THREAD_LIST_LOCK.compare_exchange(0, tid, Ordering::Acquire, Ordering::Relaxed) {
             Ok(_) => return,

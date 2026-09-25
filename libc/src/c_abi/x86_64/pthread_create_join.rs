@@ -1559,14 +1559,21 @@ pub(super) unsafe fn with_selected_pthread_signal_target(
 
 /// Withdraw the current target TID before the task can reach Linux exit.
 /// Cancellation is disabled and application signals are blocked by the caller.
+///
+/// # Safety
+///
+/// `control` is the calling worker's own record, and the caller has already
+/// blocked the application signals (both exit paths do so for their locked
+/// final-task decision and keep them blocked through `SYS_exit`). That is
+/// musl's `killlock` discipline: only an application handler could re-enter
+/// `pthread_kill` against this task and spin on the lock held here, and the
+/// runtime's own signals 32-34 cannot be given such handlers. So no further
+/// mask change is needed around this short critical section.
 unsafe fn retire_selected_worker_signal_target(control: *mut ThreadControl) {
-    let mut saved_mask = 0_u64;
     unsafe {
-        super::signal_execution::block_all_signals(&mut saved_mask);
         lock_selected_worker_signal_target(control);
         (*control).worker_tid.store(0, Ordering::Release);
         unlock_selected_worker_signal_target(control);
-        super::signal_execution::restore_application_signals(&saved_mask);
     }
 }
 
@@ -2039,38 +2046,39 @@ fn reap_finished_detached_selected_workers() {
 
 /// Resolve the current admitted selected worker's private control record.
 ///
-/// The exact `%fs:0`, Linux-TID, and live-child-TID match rejects a foreign
-/// task that copied an owned TLS base. A positive child-TID then prevents join
-/// or detached reaping from withdrawing this current mapping before it exits.
+/// As musl's `__pthread_self()`, the `%fs:0` thread pointer selects the
+/// caller: no gettid is issued, so TSD, robust-mutex and cancellation paths
+/// stay syscall-free. The worker must have published its TID and still be
+/// live (its kernel child-TID word equals it). A raw task that copies a
+/// worker's owned TLS base is indistinguishable from that worker, exactly as
+/// under musl, and may use only the async-signal-safe subset. A positive
+/// child-TID prevents join or detached reaping from withdrawing this current
+/// mapping before it exits.
 #[inline(always)]
 fn current_selected_worker_control() -> Option<*mut ThreadControl> {
     let thread_pointer = pthread_identity::current_thread_pointer() as usize;
-    let thread_id = current_linux_thread_id()?;
     if thread_pointer == 0 {
         return None;
     }
     lock_selected_worker_registry();
-    let current = current_selected_worker_control_locked(thread_pointer, thread_id);
+    let current = current_selected_worker_control_locked(thread_pointer);
     unlock_selected_worker_registry();
     current
 }
 
 /// Resolve one current selected control while the caller owns the registry.
 ///
-/// Keeping the `%fs:0`/Linux-TID/positive-child-TID proof in this helper lets
+/// Keeping the `%fs:0`/published-TID/live-child-TID proof in this helper lets
 /// a condition waiter withdraw its published barrier in the same critical
 /// section as a canceller's target lookup and wake-lease increment.
-fn current_selected_worker_control_locked(
-    thread_pointer: usize,
-    thread_id: c_int,
-) -> Option<*mut ThreadControl> {
+fn current_selected_worker_control_locked(thread_pointer: usize) -> Option<*mut ThreadControl> {
     selected_worker_by_thread_pointer_locked(thread_pointer).filter(|control| {
         // SAFETY: lock-protected membership makes this identity observation
         // valid; the positive child-TID retains the current mapping after the
         // lock is released.
         unsafe {
-            (**control).worker_tid.load(Ordering::Acquire) == thread_id
-                && (**control).child_tid.load(Ordering::Acquire) == thread_id
+            let worker_tid = (**control).worker_tid.load(Ordering::Acquire);
+            worker_tid > 0 && (**control).child_tid.load(Ordering::Acquire) == worker_tid
         }
     })
 }
@@ -2119,15 +2127,12 @@ pub(super) fn current_selected_pthread_condition_waiter(
 /// outside the lock for all earlier cancellers to finish their CAS/wake.
 pub(super) fn withdraw_current_selected_pthread_condition_waiter(barrier: *mut c_int) {
     let thread_pointer = pthread_identity::current_thread_pointer() as usize;
-    let Some(thread_id) = current_linux_thread_id() else {
-        return;
-    };
     if thread_pointer == 0 {
         return;
     }
 
     lock_selected_worker_registry();
-    let control = current_selected_worker_control_locked(thread_pointer, thread_id).filter(|control| {
+    let control = current_selected_worker_control_locked(thread_pointer).filter(|control| {
         // SAFETY: the registry lock keeps this matching control mapped for
         // its start-mode observation and atomic active-barrier withdrawal.
         unsafe { matches!((**control).start, SelectedWorkerStart::Pthread(_)) }
@@ -2194,9 +2199,20 @@ pub(super) fn current_selected_worker_robust_list(
 /// caller-owned list links outside this selected lifecycle.
 pub(super) fn current_selected_runtime_thread_id() -> Option<c_int> {
     if static_tls::is_initial_thread_pointer(pthread_identity::current_thread_pointer()) {
+        // Owned startup and every process-child adoption record the initial
+        // task's TID (musl's `self->tid`); the bare roster asks the kernel.
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            let tid = INITIAL_SIGNAL_TARGET_TID.load(Ordering::Acquire);
+            if tid > 0 {
+                return Some(tid);
+            }
+        }
         return current_linux_thread_id();
     }
-    current_selected_worker_control().and_then(|_| current_linux_thread_id())
+    // SAFETY: current-worker resolution keeps the control mapped and proved
+    // its published TID positive.
+    current_selected_worker_control().map(|control| unsafe { (*control).worker_tid.load(Ordering::Acquire) })
 }
 
 /// Clear one key in every still-registry-published selected worker.
@@ -2554,7 +2570,10 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             }
         }
     }
-    let Some(worker_tid) = current_linux_thread_id() else {
+    // CLONE_PARENT_SETTID stored this task's TID in the shared child-TID word
+    // before Linux first scheduled the child, so no gettid is needed.
+    let parent_written = unsafe { (*control).child_tid.load(Ordering::Acquire) };
+    let Some(worker_tid) = (parent_written > 0).then_some(parent_written).or_else(current_linux_thread_id) else {
         // This cannot occur for Linux 5.10 SYS_gettid, but completing the
         // admitted result handoff avoids leaving a joiner to spin forever if
         // a hostile syscall filter violates that kernel precondition.
@@ -2927,29 +2946,24 @@ unsafe fn create_selected_worker_with_attributes(
         } else { 0xffff_fffc_7fff_ffff | (1_u64 << 32) }
     } else { 1_u64 << 32 };
     let mut creator_signal_mask = 0_u64;
-    // Owned creation takes musl's thread-list lock between publication and
-    // clone, so `__synccall` never meets a linked control without a live task.
-    // As in musl, the lock is taken with only application signals blocked;
-    // the rest of the creation mask follows.
-    #[cfg(crabc_x86_owned_runtime)]
-    unsafe {
-        super::signal_execution::block_application_signals(&mut creator_signal_mask);
-        super::owned_synccall::lock_thread_list();
-    }
-    let mut ignored_signal_mask = 0_u64;
+    // One SIG_BLOCK installs the whole creation mask and saves the creator's
+    // mask, as musl's one `__block_app_sigs` does. In the owned runtimes the
+    // creation mask contains musl's application set and always leaves
+    // SIGSYNCCALL deliverable, so the thread-list lock taken next (between
+    // publication and clone, so `__synccall` never meets a linked control
+    // without a live task) is still acquired with application signals blocked
+    // and a pending rendezvous still reachable.
     let _ = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_RT_SIGPROCMASK,
             0, // SIG_BLOCK
             core::ptr::addr_of!(creation_signal_mask) as usize as i64,
-            if cfg!(crabc_x86_owned_runtime) {
-                core::ptr::addr_of_mut!(ignored_signal_mask)
-            } else {
-                core::ptr::addr_of_mut!(creator_signal_mask)
-            } as usize as i64,
+            core::ptr::addr_of_mut!(creator_signal_mask) as usize as i64,
             8,
         )
     };
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe { super::owned_synccall::lock_thread_list() };
     // SAFETY: the private clone seam uses musl's exact x86 argument shuffle.
     // The selected stack is either caller-owned or the writable upper portion
     // of a private guarded map; the separate control and v1 blocks retain the
