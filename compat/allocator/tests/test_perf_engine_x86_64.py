@@ -454,9 +454,17 @@ class HostClassificationTests(unittest.TestCase):
         evidence["cgroup_end"]["cpu_stat"]["nr_throttled"] = 3
         evidence["windows"][1]["active_processes"] = {"42": {"comm": "cc1", "ticks_before": 0, "ticks_after": 50}}
         reasons = engine.classify_host(evidence)
-        for expected in ("CPU 1 governor powersave is not performance", "CPU quota '400000 100000'",
+        for expected in ("do not share one governor across the run: ['performance', 'powersave']",
+                         "CPU quota '400000 100000'",
                          "CPU-throttled 3 time(s)", "process 42 (cc1) used 0.500 CPU"):
             self.assertTrue(any(expected in item for item in reasons), (expected, reasons))
+
+    def test_one_shared_powersave_governor_is_uncontended(self) -> None:
+        evidence = idle_host([0, 1])
+        for key in ("frequency_start", "frequency_end"):
+            for values in evidence[key]["cpus"].values():
+                values["scaling_governor"] = "powersave"
+        self.assertEqual(engine.classify_host(evidence), [])
 
     def test_an_unexposed_cpufreq_interface_is_not_disqualifying(self) -> None:
         evidence = idle_host([0])

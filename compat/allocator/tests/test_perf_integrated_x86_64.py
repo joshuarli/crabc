@@ -99,7 +99,7 @@ class IntegratedReaderTests(unittest.TestCase):
         evidence = idle_host([0])
         evidence["frequency_start"]["cpus"]["0"]["scaling_governor"] = "powersave"
         report["uncontended_host"] = engine.uncontended_host_record(evidence)
-        self.assertTrue(any("governor powersave" in item for item in integrated.integrated_unmet(report)))
+        self.assertTrue(any("do not share one governor" in item for item in integrated.integrated_unmet(report)))
 
     def test_the_source_seal_compares_git_objects_and_dirt(self) -> None:
         current = {"objects": {"libc": "1", "crabc-mimalloc": "2"}, "dirty_paths": []}

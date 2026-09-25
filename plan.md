@@ -52,23 +52,24 @@ are not transferable passes for a different revision.
   `libc.c-abi-compat` has an executable family aggregate
   (`owned-c-abi-compat-family`); its two allocator capabilities admit only on
   the native-default candidate. libc-test and OS-test leave only the finite
-  profile dispositions. Qualified performance runs are blocked by the host's
-  `powersave` CPU governor as well as load. Allocator M10 readiness exists:
+  profile dispositions. Qualified performance runs use the host's
+  `powersave` governor for both lanes and wait only for an uncontended host.
+  Allocator M10 readiness exists:
   `--allocator-backend native` production products pass the C-mimalloc
   absence audit and `allocator-m10 --check` fails closed until M0–M9 and
-  promotion pass; the default stays `accepted-c`. The loader's fail-closed
-  load-time validation keeps startup near 1.5× musl user instructions after
-  preflight rework; the per-row 0.90× CPU gate on startup rows is not
-  reachable without relaxing a fail-closed guarantee (a user decision).
+  promotion pass; the default stays `accepted-c`. The loader's load-time
+  validation beyond musl's (whole hash-table checks, the duplicate
+  `_dl_debug_addr` scan) keeps startup near 1.5× musl user instructions; per
+  the musl-defaults contract it is to be reduced to musl's load-time checks.
   Startup PSS is 0.86× musl (52 of 114 perf-c rows pass PSS); allocator rows
   stay 6.5–8× because the host's THP `always` mode backs mimalloc's arena
-  with huge pages on first touch (a user decision on the qualification host
-  THP mode or the product's `allow_thp` default). `memory.peak` ≤ 0.90
+  with huge pages on first touch; the arena `MADV_NOHUGEPAGE` divergence in
+  the musl-defaults contract is not implemented yet. `memory.peak` ≤ 0.90
   cannot pass where musl charges one 256 KiB cgroup batch.
   `./scripts/dev-x86_64.sh qualification-candidate --work DIR` runs the whole
   chain as one restartable command on a clean candidate revision. The M9 report path measures
   throughput, p99 and peak RSS/PSS for all 38 rows but no report qualifies
-  (contended host, `powersave` governor). The 114-row runtime scorecard runs
+  yet (contended host). The 114-row runtime scorecard runs
   end to end; startup is 32 whole-process syscalls against musl's 11 and ~2×
   PSS fails every row.
 - **Resume here, in order:**
@@ -92,6 +93,11 @@ are not transferable passes for a different revision.
      `7fbcc1b5d`). Next: add the `aio_cancel` oracle disposition, make the
      text family row executable with its admission receipt, then run
      `qualification-candidate --through posix-admission` on a clean checkout.
+     Implement the two musl-defaults changes: reduce the loader's load-time
+     validation to musl's (keep the per-row 0.90× CPU gate), and give the
+     native allocator's arena reservations `MADV_NOHUGEPAGE` with its
+     `known-differences.md` entry, pinned-C differential and performance
+     evidence.
   2. Lanes are wound down (user direction, 2026-09-25); `.work/tmp/lane-agents.txt`
      holds the last map. Unmerged: `lane/abi-closure` `f1c7ddc56` (WIP
      companion-reader refresh, tested but not proven on a cohort). Known
@@ -149,6 +155,23 @@ source-literal tests.
 | Runtime accounting | `compat/x86_64/parity.toml` owns exact capability mappings, family dependencies, and promotion. Every capability and required family occurs exactly once. Export ratchets are not inventories, schedules, or semantic proof. |
 | Allocator source | mimalloc **v3.5.0**, commit `18b08671c9302247bfb682286e6bf3cc1773f801`; archive hash, license, and source provenance in `crabc-mimalloc/UPSTREAM.md`. No silent upgrade or allocator redesign. |
 | Allocator accounting | `compat/allocator/port-map.toml`, applicability inventories, milestone manifests, and `known-differences.md`. Source-unit implementation, bounded evidence, integration, and target qualification are distinct. |
+
+Default behavior matches pinned musl's defaults (user decision, 2026-09-25):
+
+- **Loader validation.** At load time the loader rejects what musl rejects.
+  Up-front checks musl does not perform are not required and must not keep a
+  startup or `dlopen` row off the 0.90× CPU gate.
+- **Transparent huge pages.** The runtime leaves the process THP policy as
+  musl does (no `PR_SET_THP_DISABLE`; upstream `allow_thp` stays 1). The
+  native allocator's own arena reservations opt out of huge pages with
+  `MADV_NOHUGEPAGE`, so first-allocation residency is musl-like. This is a
+  recorded divergence from mimalloc v3.5.0 and carries a
+  `known-differences.md` entry, a pinned-C differential, and performance
+  evidence.
+- **CPU governor.** Qualified measurements run on the host's configured
+  governor (`powersave`). Candidate and reference interleave under the same
+  governor, so it is recorded and must be one consistent governor for the
+  whole run; it is not forced to `performance`.
 
 The accepted `libmimalloc-sys` 0.1.49 backend bundles mimalloc v3.3.2; it is
 **not** the exact v3.5.0 engine oracle. Preserve separate candidate, accepted-C
