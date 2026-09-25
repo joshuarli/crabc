@@ -32,13 +32,22 @@ fn mimalloc_is_power_of_two(value: usize) -> bool {
     value != 0 && (value & (value - 1)) == 0
 }
 
+// Run one backend allocation under musl's errno contract: failure publishes
+// ENOMEM, and success leaves the caller's errno exactly as it was. mallocng
+// never changes errno on success, and POSIX callers rely on that (for
+// example `getpwnam` not-found, `readdir` end-of-directory, `strtol`, and
+// a successful `getaddrinfo` all leave errno untouched). mimalloc's lazy
+// process and thread initialization and its page reclaim issue libc calls
+// that may fail internally, such as the NUMA node `access` probe that ends
+// in ENOENT, so the previous value is restored rather than trusted to
+// survive.
 #[inline]
-unsafe fn mimalloc_failed<T>(ptr: *mut T) -> *mut T {
-    if ptr.is_null() {
-        // libmimalloc-sys intentionally does not own the process errno.  The
-        // C ABI does, so publish the allocator failure at this boundary.
-        cabi_set_allocator_errno(ENOMEM);
-    }
+unsafe fn mimalloc_allocation<T>(allocate: impl FnOnce() -> *mut T) -> *mut T {
+    let errno = cabi_allocator_errno();
+    let ptr = allocate();
+    // libmimalloc-sys intentionally does not own the process errno. The C ABI
+    // does, so publish the allocator outcome at this boundary.
+    cabi_set_allocator_errno(if ptr.is_null() { ENOMEM } else { errno });
     ptr
 }
 
@@ -57,7 +66,7 @@ pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
     // The generic mimalloc entry point need not align zero-sized allocations
     // to the C ABI's 16-byte boundary.  Preserve that boundary for every
     // successful `malloc` result, including a distinct zero-sized object.
-    mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(size, MIMALLOC_MALLOC_ALIGNMENT))
+    mimalloc_allocation(|| unsafe { libmimalloc_sys::mi_malloc_aligned(size, MIMALLOC_MALLOC_ALIGNMENT) })
 }
 
 #[no_mangle]
@@ -103,7 +112,7 @@ pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
         return allocation;
     }
 
-    mimalloc_failed(libmimalloc_sys::mi_zalloc(total))
+    mimalloc_allocation(|| unsafe { libmimalloc_sys::mi_zalloc(total) })
 }
 
 #[no_mangle]
@@ -121,11 +130,9 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_vo
     // The generic mimalloc reallocator may return a word-aligned shrink
     // result. C realloc must remain suitable for every fundamental C type,
     // including after shrink, so retain the wrapper's natural alignment.
-    mimalloc_failed(libmimalloc_sys::mi_realloc_aligned(
-        ptr,
-        new_size,
-        MIMALLOC_MALLOC_ALIGNMENT,
-    ))
+    mimalloc_allocation(|| unsafe {
+        libmimalloc_sys::mi_realloc_aligned(ptr, new_size, MIMALLOC_MALLOC_ALIGNMENT)
+    })
 }
 
 #[no_mangle]
@@ -181,7 +188,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_
         cabi_set_allocator_errno(ENOMEM);
         return null_mut();
     }
-    mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(size, alignment))
+    mimalloc_allocation(|| unsafe { libmimalloc_sys::mi_malloc_aligned(size, alignment) })
 }
 
 #[no_mangle]

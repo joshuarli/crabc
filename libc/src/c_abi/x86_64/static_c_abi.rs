@@ -1205,9 +1205,9 @@ mod allocator {
     /// ownership and allocation lifetime.
     #[cfg(crabc_x86_owned_runtime)]
     pub(super) unsafe fn allocate_internal(size: usize) -> *mut c_void {
-        unsafe { mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(
-            size, MIMALLOC_MALLOC_ALIGNMENT,
-        )) }
+        unsafe { mimalloc_allocation(|| unsafe {
+            libmimalloc_sys::mi_malloc_aligned(size, MIMALLOC_MALLOC_ALIGNMENT)
+        }) }
     }
 
     /// Allocate zero-filled storage through musl's noninterposable
