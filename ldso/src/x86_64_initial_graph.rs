@@ -5447,25 +5447,52 @@ mod owned_dynamic_symbolic_tag_tests {
     }
 }
 
+// The loader's own memory primitives. Forward copies and fills use the
+// string instructions, as musl's x86_64 `memcpy.s`/`memset.s` do for bulk
+// work, so a TLS image copy or pool clear is one instruction rather than a
+// per-byte loop. The System V ABI guarantees DF is clear on entry.
 #[no_mangle]
 pub unsafe extern "C" fn memset(destination: *mut c_void, byte: i32, length: usize) -> *mut c_void {
-    let destination = destination as *mut u8;
-    for index in 0..length { *destination.add(index) = byte as u8; }
-    destination.cast()
+    // SAFETY: the C contract gives `length` writable bytes at `destination`;
+    // `rep stosb` writes exactly that forward range and nothing else.
+    unsafe {
+        core::arch::asm!(
+            "rep stosb",
+            inout("rdi") destination => _,
+            inout("rcx") length => _,
+            in("al") byte as u8,
+            options(nostack, preserves_flags),
+        );
+    }
+    destination
 }
 #[no_mangle]
 pub unsafe extern "C" fn memcpy(destination: *mut c_void, source: *const c_void, length: usize) -> *mut c_void {
-    let destination = destination as *mut u8;
-    let source = source as *const u8;
-    for index in 0..length { *destination.add(index) = *source.add(index); }
-    destination.cast()
+    // SAFETY: the C contract gives nonoverlapping readable and writable
+    // `length`-byte ranges; `rep movsb` copies exactly that forward range.
+    unsafe {
+        core::arch::asm!(
+            "rep movsb",
+            inout("rdi") destination => _,
+            inout("rsi") source => _,
+            inout("rcx") length => _,
+            options(nostack, preserves_flags),
+        );
+    }
+    destination
 }
 #[no_mangle]
 pub unsafe extern "C" fn memmove(destination: *mut c_void, source: *const c_void, length: usize) -> *mut c_void {
+    // A forward copy is exact whenever the destination starts at or before
+    // the source (or the ranges do not overlap), including every overlap
+    // where each source byte is read before the copy reaches it.
+    if (destination as usize).wrapping_sub(source as usize) >= length {
+        // SAFETY: as for memcpy; the forward order is overlap-safe here.
+        return unsafe { memcpy(destination, source, length) };
+    }
     let destination = destination as *mut u8;
     let source = source as *const u8;
-    if (destination as usize) <= (source as usize) { for index in 0..length { *destination.add(index) = *source.add(index); } }
-    else { for index in (0..length).rev() { *destination.add(index) = *source.add(index); } }
+    for index in (0..length).rev() { unsafe { *destination.add(index) = *source.add(index); } }
     destination.cast()
 }
 #[no_mangle]
