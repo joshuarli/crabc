@@ -541,21 +541,25 @@ impl RelocationScratch {
         let bytes = spans.checked_mul(core::mem::size_of::<WriteSpan>())?
             .checked_add(relrs.checked_mul(8)?)?.max(1);
         if bytes > isize::MAX as usize { return None; }
-        let address = unsafe { syscall6(SYS_MMAP, 0, bytes as i64,
-            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
-        if is_linux_error(address) { return None; }
-        Some(Self { mapping: address as *mut u8, bytes, spans, relrs })
+        let mapping = super::x86_64_runtime_memory::allocate(bytes, SCRATCH_ALIGN)?;
+        Some(Self { mapping, bytes, spans, relrs })
     }
     unsafe fn slices(&mut self) -> (&mut [WriteSpan], &mut [u64]) {
-        // The lengths were checked together before mapping. Anonymous pages
-        // initialize every integer field to zero; the two regions are disjoint.
+        // The lengths were checked together before allocation. Loader blocks
+        // are zeroed, so every integer field starts at zero; the two regions
+        // are disjoint.
         unsafe { (core::slice::from_raw_parts_mut(self.mapping.cast(), self.spans),
             core::slice::from_raw_parts_mut(self.mapping.add(self.spans * core::mem::size_of::<WriteSpan>()).cast(), self.relrs)) }
     }
 }
 impl Drop for RelocationScratch {
-    fn drop(&mut self) { unsafe { syscall2(SYS_MUNMAP, self.mapping as i64, self.bytes as i64); } }
+    fn drop(&mut self) {
+        unsafe { super::x86_64_runtime_memory::release(self.mapping, self.bytes, SCRATCH_ALIGN); }
+    }
 }
+// Both scratch regions hold u64-aligned records.
+const SCRATCH_ALIGN: usize = core::mem::align_of::<u64>();
+const _: () = assert!(core::mem::align_of::<WriteSpan>() <= SCRATCH_ALIGN);
 
 /// Reject writes into every ELF table read again during apply, not just the
 /// relocation tables. COPY may be byte-aligned and larger than a machine word.

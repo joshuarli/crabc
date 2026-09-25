@@ -146,26 +146,15 @@ impl GeneralInitialTlsTransaction {
         {
             return None;
         }
-        let mapping = unsafe {
-            syscall6(
-                SYS_MMAP,
-                0,
-                byte_len as i64,
-                PROT_READ | PROT_WRITE,
-                MAP_PRIVATE | MAP_ANONYMOUS,
-                -1,
-                0,
-            )
-        };
-        if is_linux_error(mapping) {
-            return None;
-        }
+        // Temporary loader storage: a pooled block, zeroed like a fresh map.
+        let block = super::x86_64_runtime_memory::allocate(
+            byte_len, core::mem::align_of::<GeneralInitialTlsState>())?;
         let transaction = Self {
-            state: mapping as *mut GeneralInitialTlsState,
+            state: block.cast::<GeneralInitialTlsState>(),
             byte_len,
         };
-        // SAFETY: mmap returned writable, page-aligned storage large enough
-        // for one state. `transaction` owns it exclusively until commit/drop.
+        // SAFETY: the loader pool returned writable, suitably aligned storage
+        // large enough for one state. `transaction` owns it exclusively until commit/drop.
         if unsafe {
             GeneralInitialTlsState::initialize_at(transaction.state, main_identity, main)
         }.is_none() {
@@ -180,7 +169,8 @@ impl GeneralInitialTlsTransaction {
     fn release(&mut self) {
         if !self.state.is_null() {
             unsafe {
-                syscall2(SYS_MUNMAP, self.state as i64, self.byte_len as i64);
+                super::x86_64_runtime_memory::release(self.state.cast(), self.byte_len,
+                    core::mem::align_of::<GeneralInitialTlsState>());
             }
             self.state = core::ptr::null_mut();
             self.byte_len = 0;
