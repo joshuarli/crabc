@@ -433,13 +433,27 @@ unsafe fn constructor_order(snapshot: &ObjectSnapshot, root: *mut RuntimeObject)
 }
 
 unsafe fn initialize_object(node: *mut RuntimeObject) {
-    let tid = unsafe { syscall1(186, 0) } as i32;
+    unsafe { initialize_object_as(node, current_tid()); }
+}
+
+fn current_tid() -> i32 { (unsafe { syscall1(186, 0) }) as i32 }
+
+/// Incremented in each fork child's copy by `runtime_fork_complete`. A
+/// constructor visitor compares it around its callbacks to learn, without a
+/// gettid, whether it is still the task that claimed the object.
+static FORK_GENERATION: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Run `node`'s constructors as the task whose kernel TID is `tid`, and
+/// return the caller's TID afterwards: a constructor that forks leaves the
+/// child continuing with a new TID. A queue of objects thus costs one gettid,
+/// not two per object.
+unsafe fn initialize_object_as(node: *mut RuntimeObject, tid: i32) -> i32 {
     loop {
         let guard = RuntimeGuard::acquire();
         let callbacks = CallbackGuard::acquire();
         let registry = unsafe { &mut *REGISTRY.0.get() };
         let state = unsafe { (*node).callback_state.load(Ordering::Acquire) };
-        if state < 0 || state == tid { return; }
+        if state < 0 || state == tid { return tid; }
         if state > 0 || registry.shutting_down {
             unsafe { (*node).callback_waiters.store(true, Ordering::Relaxed); }
             drop(callbacks);
@@ -452,6 +466,7 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
             unsafe { (*node).fini_next = registry.fini_head; }
             registry.fini_head = node;
         }
+        let generation = FORK_GENERATION.load(Ordering::Relaxed);
         drop(callbacks);
         drop(guard);
         for &address in unsafe { (*node).initializers() } {
@@ -460,13 +475,14 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
         }
         let _callbacks = CallbackGuard::acquire();
         // A constructor may fork recursively. The child translated its visitor
-        // identity while this callback stack was suspended at the raw syscall.
-        let current_tid = unsafe { syscall1(186, 0) } as i32;
+        // identity while this callback stack was suspended at the raw syscall;
+        // only then is this task's TID different from the one it claimed with.
+        let current_tid = if FORK_GENERATION.load(Ordering::Relaxed) == generation { tid } else { current_tid() };
         unsafe {
             let _ = (*node).callback_state.compare_exchange(current_tid, INITIALIZED, Ordering::AcqRel, Ordering::Acquire);
             wake_callback_waiters(node);
         }
-        return;
+        return current_tid;
     }
 }
 
@@ -487,7 +503,8 @@ pub(super) unsafe fn initialize_initial() {
     };
     // This immutable queue was allocated/preflighted before ARCH_SET_FS.
     // Runtime growth cannot replace it; no fallible work follows preinit.
-    for index in 0..count { unsafe { initialize_object(*order.add(index)); } }
+    let mut tid = current_tid();
+    for index in 0..count { tid = unsafe { initialize_object_as(*order.add(index), tid) }; }
 }
 
 pub(super) unsafe fn finalize_process() {
@@ -550,6 +567,8 @@ unsafe extern "C" fn runtime_fork_prepare(callback_lock: i32) -> i32 {
 unsafe extern "C" fn runtime_fork_complete(parent_tid: i32, child: i32, callback_lock: i32) {
     unsafe { super::x86_64_runtime_lock::AllocationGuard::complete_fork(); }
     if child != 0 {
+        // Publish the new process before any suspended visitor resumes.
+        FORK_GENERATION.fetch_add(1, Ordering::Relaxed);
         let tid = unsafe { syscall1(186, 0) } as i32;
         let thread_pointer = unsafe { read_thread_pointer() } as *mut u8;
         let registry = unsafe { &mut *REGISTRY.0.get() };
@@ -951,7 +970,8 @@ unsafe extern "C" fn runtime_open(filename: *const u8, flags: i32, diagnostic: *
     };
     match result {
         Ok((root, snapshot, constructors)) => {
-            for &index in constructors.as_slice() { unsafe { initialize_object(snapshot.nodes.as_slice()[index]); } }
+            let mut tid = current_tid();
+            for &index in constructors.as_slice() { tid = unsafe { initialize_object_as(snapshot.nodes.as_slice()[index], tid) }; }
             root.cast()
         }
         Err(()) => core::ptr::null_mut(),
