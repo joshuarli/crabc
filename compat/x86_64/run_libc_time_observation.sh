@@ -125,6 +125,9 @@ grep -Eq '%fs:0x0|%fs:-' "$work_dir/errno-disassembly" ||
     fail "candidate errno lacks direct fs initial TLS"
 assert_named_syscall clock e4
 assert_named_syscall clock_getres e5
-assert_named_syscall gettimeofday 60
+# Like musl's src/time/gettimeofday.c, gettimeofday is a CLOCK_REALTIME
+# clock_gettime read; this bare archive has no vDSO owner, so that read is
+# the direct clock_gettime syscall rather than SYS_gettimeofday.
+assert_named_syscall gettimeofday e4
 "$candidate" || fail "freestanding time-observation fixture failed"
 printf 'x86 static crabc-libc time observation: PASS\n'
