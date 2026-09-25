@@ -855,6 +855,7 @@ run_static_mode() {
     local -a candidate_arguments=()
     local -a probe_defines=(
         -DCRABC_CRT_STATIC_TLS_CANDIDATE
+        -DCRABC_ATEXIT_BEYOND_32
         -DCRABC_STATIC_STACK_GUARD
         -DCRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE
     )
@@ -1648,7 +1649,8 @@ forged_dependency="$header_consumer/forged.d"
 resolver_reference_fixture="$header_consumer/resolver-reference-fixture"
 printf_matrix_reference="$header_consumer/printf-matrix-reference"
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CRT_STATIC_TLS_MUSL_REFERENCE -DCRABC_STATIC_STACK_GUARD \
+# The same 33rd registration runs first under pinned musl atexit.c.
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CRT_STATIC_TLS_MUSL_REFERENCE -DCRABC_STATIC_STACK_GUARD -DCRABC_ATEXIT_BEYOND_32 \
     -pthread -fno-builtin -fno-stack-protector -ftls-model=local-exec \
     -I"$ROOT_DIR/include" \
     "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_probe.c" \
@@ -1965,7 +1967,7 @@ common_compile=(
     -fno-stack-protector -ftls-model=local-exec -nostdinc
     -isystem "$primary/usr/include"
 )
-"${common_compile[@]}" -DCRABC_CRT_STATIC_TLS_CANDIDATE -MD -MF "$dependency_file" \
+"${common_compile[@]}" -DCRABC_CRT_STATIC_TLS_CANDIDATE -DCRABC_ATEXIT_BEYOND_32 -MD -MF "$dependency_file" \
     -c "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_probe.c" -o "$probe_object"
 "${common_compile[@]}" -MD -MF "$peer_dependency_file" \
     -c "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_peer.c" -o "$peer_object"

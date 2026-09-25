@@ -258,8 +258,21 @@ static int main_values_hold(void)
         crabc_crt_peer_tbss == main_value;
 }
 
+static unsigned int chained_callbacks_completed;
+
+static void chained_exit_handler(void)
+{
+    if (!main_values_hold() || callbacks_completed != 0 || quiet_callbacks_completed != 0)
+        reject(100);
+    ++chained_callbacks_completed;
+}
+
 static void first_exit_handler(void)
 {
+#if defined(CRABC_ATEXIT_BEYOND_32)
+    if (chained_callbacks_completed != 1)
+        reject(101);
+#endif
     if (!main_values_hold() || callbacks_completed != 6)
         reject(89);
     callbacks_completed = 7;
@@ -397,7 +410,15 @@ int main(int argc, char **argv, char **envp)
         if (atexit(quiet_exit_handler) != 0)
             return 94;
     }
-#if defined(CRABC_CRT_STATIC_TLS_CANDIDATE)
+#if defined(CRABC_ATEXIT_BEYOND_32)
+    /* musl atexit.c chains a calloc'd block past its 32 builtin entries, so
+     * this 33rd registration succeeds and runs first at exit; the owned
+     * products chain the same way. */
+    if (atexit(chained_exit_handler) != 0)
+        return 95;
+#elif defined(CRABC_CRT_STATIC_TLS_CANDIDATE)
+    /* The fixed fixture archive keeps one 32-entry block, already holding
+     * the CRT fini registration, 3 ordered and 28 quiet handlers. */
     if (atexit(quiet_exit_handler) != -1)
         return 95;
 #endif
