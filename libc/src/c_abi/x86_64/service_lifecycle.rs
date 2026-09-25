@@ -18,12 +18,16 @@
 
 use core::ffi::{c_int, c_void};
 
-/// Preserve musl's stateless service-enumeration setup boundary.
-#[no_mangle]
-pub extern "C" fn setservent(_stayopen: c_int) {}
+// Musl's `src/network/serv.c` object.
+static_archive_member! { serv_source {
+    /// Preserve musl's stateless service-enumeration setup boundary.
+    #[no_mangle]
+    pub extern "C" fn setservent(_stayopen: c_int) {}
 
-/// Return musl's source-closed absence of service enumeration state.
-#[no_mangle]
-pub extern "C" fn getservent() -> *mut c_void {
-    core::ptr::null_mut()
-}
+    /// Return musl's source-closed absence of service enumeration state.
+    #[no_mangle]
+    pub extern "C" fn getservent() -> *mut c_void {
+        core::ptr::null_mut()
+    }
+}}
+

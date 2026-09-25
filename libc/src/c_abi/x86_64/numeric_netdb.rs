@@ -406,16 +406,19 @@ pub(crate) unsafe fn append_node(
     Ok(())
 }
 
-/// Free a list returned by this leaf's `getaddrinfo`.
-#[no_mangle]
-pub unsafe extern "C" fn freeaddrinfo(mut result: *mut CabiAddrInfo) {
-    while !result.is_null() {
-        // SAFETY: every selected result begins its page with `CabiAddrInfo`.
-        let next = unsafe { (*result).next };
-        unsafe { release_node(result.cast::<NumericAddrInfoNode>()) };
-        result = next;
+// Musl's `src/network/freeaddrinfo.c` object.
+static_archive_member! { freeaddrinfo_source {
+    /// Free a list returned by this leaf's `getaddrinfo`.
+    #[no_mangle]
+    pub unsafe extern "C" fn freeaddrinfo(mut result: *mut CabiAddrInfo) {
+        while !result.is_null() {
+            // SAFETY: every selected result begins its page with `CabiAddrInfo`.
+            let next = unsafe { (*result).next };
+            unsafe { release_node(result.cast::<NumericAddrInfoNode>()) };
+            result = next;
+        }
     }
-}
+}}
 
 /// Resolve a numeric node/service without hosts, resolver configuration, or DNS.
 ///
@@ -492,22 +495,26 @@ pub(crate) unsafe fn numeric_getaddrinfo(
     0
 }
 
-/// Resolve the default selected numeric-only `getaddrinfo` profile.
-///
-/// The feature-gated C resolver runtime replaces this public spelling with
-/// hosts-first and DNS behavior. Keeping the default archive on this direct
-/// wrapper preserves every pre-existing private leaf's no-resolver state
-/// contract while the wider package qualifies independently.
+// Musl's `src/network/getaddrinfo.c` object.
 #[cfg(not(feature = "x86-resolver-runtime"))]
-#[no_mangle]
-pub unsafe extern "C" fn getaddrinfo(
-    name: *const c_char,
-    service: *const c_char,
-    hints: *const CabiAddrInfo,
-    result: *mut *mut CabiAddrInfo,
-) -> c_int {
-    unsafe { numeric_getaddrinfo(name, service, hints, result) }
-}
+static_archive_member! { getaddrinfo_source {
+    /// Resolve the default selected numeric-only `getaddrinfo` profile.
+    ///
+    /// The feature-gated C resolver runtime replaces this public spelling with
+    /// hosts-first and DNS behavior. Keeping the default archive on this direct
+    /// wrapper preserves every pre-existing private leaf's no-resolver state
+    /// contract while the wider package qualifies independently.
+    #[cfg(not(feature = "x86-resolver-runtime"))]
+    #[no_mangle]
+    pub unsafe extern "C" fn getaddrinfo(
+        name: *const c_char,
+        service: *const c_char,
+        hints: *const CabiAddrInfo,
+        result: *mut *mut CabiAddrInfo,
+    ) -> c_int {
+        unsafe { numeric_getaddrinfo(name, service, hints, result) }
+    }
+}}
 
 unsafe fn copy_text(output: *mut c_char, capacity: usize, source: *const c_char) -> c_int {
     if output.is_null() {
@@ -547,70 +554,74 @@ unsafe fn write_decimal(output: *mut c_char, capacity: usize, value: u16) -> c_i
     0
 }
 
-/// Render numeric socket address/service values without reverse DNS or services.
+// Musl's `src/network/getnameinfo.c` object.
 #[cfg(not(crabc_x86_owned_runtime))]
-#[no_mangle]
-pub unsafe extern "C" fn getnameinfo(
-    address: *const CabiSockaddr,
-    address_length: c_uint,
-    host: *mut c_char,
-    host_length: c_uint,
-    service: *mut c_char,
-    service_length: c_uint,
-    flags: c_int,
-) -> c_int {
-    if address.is_null() {
-        return EAI_FAMILY;
-    }
-    if flags & !NI_SUPPORTED != 0 {
-        return EAI_BADFLAGS;
-    }
-    let family = unsafe { (*address).family as c_int };
-    let mut numeric_bytes = [0u8; 16];
-    let port = if family == AF_INET {
-        if address_length < core::mem::size_of::<CabiSockaddrIn>() as c_uint {
+static_archive_member! { getnameinfo_source {
+    /// Render numeric socket address/service values without reverse DNS or services.
+    #[cfg(not(crabc_x86_owned_runtime))]
+    #[no_mangle]
+    pub unsafe extern "C" fn getnameinfo(
+        address: *const CabiSockaddr,
+        address_length: c_uint,
+        host: *mut c_char,
+        host_length: c_uint,
+        service: *mut c_char,
+        service_length: c_uint,
+        flags: c_int,
+    ) -> c_int {
+        if address.is_null() {
             return EAI_FAMILY;
         }
-        let input = address.cast::<CabiSockaddrIn>();
-        unsafe { numeric_bytes[..4].copy_from_slice(&(*input).address) };
-        unsafe { (*input).port }
-    } else if family == AF_INET6 {
-        if address_length < core::mem::size_of::<CabiSockaddrIn6>() as c_uint {
+        if flags & !NI_SUPPORTED != 0 {
+            return EAI_BADFLAGS;
+        }
+        let family = unsafe { (*address).family as c_int };
+        let mut numeric_bytes = [0u8; 16];
+        let port = if family == AF_INET {
+            if address_length < core::mem::size_of::<CabiSockaddrIn>() as c_uint {
+                return EAI_FAMILY;
+            }
+            let input = address.cast::<CabiSockaddrIn>();
+            unsafe { numeric_bytes[..4].copy_from_slice(&(*input).address) };
+            unsafe { (*input).port }
+        } else if family == AF_INET6 {
+            if address_length < core::mem::size_of::<CabiSockaddrIn6>() as c_uint {
+                return EAI_FAMILY;
+            }
+            let input = address.cast::<CabiSockaddrIn6>();
+            unsafe { numeric_bytes.copy_from_slice(&(*input).address) };
+            unsafe { (*input).port }
+        } else {
             return EAI_FAMILY;
+        };
+        if !host.is_null() {
+            if host_length == 0 {
+                return EAI_OVERFLOW;
+            }
+            if flags & NI_NAMEREQD != 0 {
+                return EAI_NONAME;
+            }
+            let mut numeric = [0 as c_char; 46];
+            if unsafe { inet_address::inet_ntop(family, numeric_bytes.as_ptr().cast::<c_void>(), numeric.as_mut_ptr(), numeric.len() as c_uint) }.is_null() {
+                return EAI_SYSTEM;
+            }
+            let status = unsafe { copy_text(host, host_length as usize, numeric.as_ptr()) };
+            if status != 0 {
+                return status;
+            }
         }
-        let input = address.cast::<CabiSockaddrIn6>();
-        unsafe { numeric_bytes.copy_from_slice(&(*input).address) };
-        unsafe { (*input).port }
-    } else {
-        return EAI_FAMILY;
-    };
-    if !host.is_null() {
-        if host_length == 0 {
-            return EAI_OVERFLOW;
+        if !service.is_null() {
+            if service_length == 0 {
+                return EAI_OVERFLOW;
+            }
+            let status = unsafe { write_decimal(service, service_length as usize, u16::from_be(port)) };
+            if status != 0 {
+                return status;
+            }
         }
-        if flags & NI_NAMEREQD != 0 {
-            return EAI_NONAME;
-        }
-        let mut numeric = [0 as c_char; 46];
-        if unsafe { inet_address::inet_ntop(family, numeric_bytes.as_ptr().cast::<c_void>(), numeric.as_mut_ptr(), numeric.len() as c_uint) }.is_null() {
-            return EAI_SYSTEM;
-        }
-        let status = unsafe { copy_text(host, host_length as usize, numeric.as_ptr()) };
-        if status != 0 {
-            return status;
-        }
+        0
     }
-    if !service.is_null() {
-        if service_length == 0 {
-            return EAI_OVERFLOW;
-        }
-        let status = unsafe { write_decimal(service, service_length as usize, u16::from_be(port)) };
-        if status != 0 {
-            return status;
-        }
-    }
-    0
-}
+}}
 
 static EAI_BADFLAGS_TEXT: &[u8] = b"Invalid flags\0";
 static EAI_NONAME_TEXT: &[u8] = b"Name does not resolve\0";
@@ -622,22 +633,25 @@ static EAI_SYSTEM_TEXT: &[u8] = b"System error\0";
 static EAI_OVERFLOW_TEXT: &[u8] = b"Overflow\0";
 static EAI_UNKNOWN_TEXT: &[u8] = b"Unknown error\0";
 
-/// Return the stable error text for the selected numeric `netdb.h` codes.
-#[no_mangle]
-pub unsafe extern "C" fn gai_strerror(error: c_int) -> *const c_char {
-    match error {
-        EAI_BADFLAGS => EAI_BADFLAGS_TEXT.as_ptr(),
-        EAI_NONAME => EAI_NONAME_TEXT.as_ptr(),
-        EAI_FAMILY => EAI_FAMILY_TEXT.as_ptr(),
-        EAI_SOCKTYPE => EAI_SOCKTYPE_TEXT.as_ptr(),
-        EAI_SERVICE => EAI_SERVICE_TEXT.as_ptr(),
-        EAI_MEMORY => EAI_MEMORY_TEXT.as_ptr(),
-        EAI_SYSTEM => EAI_SYSTEM_TEXT.as_ptr(),
-        EAI_OVERFLOW => EAI_OVERFLOW_TEXT.as_ptr(),
-        _ => EAI_UNKNOWN_TEXT.as_ptr(),
+// Musl's `src/network/gai_strerror.c` object.
+static_archive_member! { gai_strerror_source {
+    /// Return the stable error text for the selected numeric `netdb.h` codes.
+    #[no_mangle]
+    pub unsafe extern "C" fn gai_strerror(error: c_int) -> *const c_char {
+        match error {
+            EAI_BADFLAGS => EAI_BADFLAGS_TEXT.as_ptr(),
+            EAI_NONAME => EAI_NONAME_TEXT.as_ptr(),
+            EAI_FAMILY => EAI_FAMILY_TEXT.as_ptr(),
+            EAI_SOCKTYPE => EAI_SOCKTYPE_TEXT.as_ptr(),
+            EAI_SERVICE => EAI_SERVICE_TEXT.as_ptr(),
+            EAI_MEMORY => EAI_MEMORY_TEXT.as_ptr(),
+            EAI_SYSTEM => EAI_SYSTEM_TEXT.as_ptr(),
+            EAI_OVERFLOW => EAI_OVERFLOW_TEXT.as_ptr(),
+            _ => EAI_UNKNOWN_TEXT.as_ptr(),
+        }
+        .cast()
     }
-    .cast()
-}
+}}
 
 /// Sets the scope on an owned IPv6 result while preserving this module's
 /// private page-per-node allocation and freeaddrinfo lifetime.

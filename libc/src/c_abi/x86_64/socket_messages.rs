@@ -282,210 +282,231 @@ unsafe fn recvmsg_result(file_descriptor: c_int, message: *mut MsgHdr, flags: c_
     result
 }
 
-/// Set one caller-owned socket option through Linux `setsockopt(2)`.
-///
-/// # Safety
-///
-/// When `option_length` is nonzero, `option` must designate at least that many
-/// readable bytes in the option-specific representation. The caller owns
-/// descriptor lifetime and socket policy.
-#[no_mangle]
-pub unsafe extern "C" fn setsockopt(
-    file_descriptor: c_int,
-    level: c_int,
-    option_name: c_int,
-    option: *const c_void,
-    option_length: c_uint,
-) -> c_int {
-    let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_SETSOCKOPT,
-            i64::from(file_descriptor),
-            i64::from(level),
-            i64::from(option_name),
-            option as usize as i64,
-            i64::from(option_length),
-        )
-    };
-    c_status(result)
-}
-
-/// Read one caller-owned socket option through Linux `getsockopt(2)`.
-///
-/// # Safety
-///
-/// `option_length` must point to one writable x86 `socklen_t` word. `option`
-/// must designate the writable capacity expressed by that word whenever Linux
-/// needs output storage. The caller owns descriptor lifetime and option policy.
-#[no_mangle]
-pub unsafe extern "C" fn getsockopt(
-    file_descriptor: c_int,
-    level: c_int,
-    option_name: c_int,
-    option: *mut c_void,
-    option_length: *mut c_uint,
-) -> c_int {
-    let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_GETSOCKOPT,
-            i64::from(file_descriptor),
-            i64::from(level),
-            i64::from(option_name),
-            option as usize as i64,
-            option_length as usize as i64,
-        )
-    };
-    c_status(result)
-}
-
-/// Send one padded public message through Linux `sendmsg(2)`.
-///
-/// # Safety
-///
-/// `message` must designate a readable x86 public `msghdr`; every nested
-/// pointer and optional outbound control buffer must remain readable for the
-/// call. The caller owns descriptor lifetime, blocking, SIGPIPE, and message
-/// policy. The owned runtime supplies pthread cancellation.
-#[no_mangle]
-pub unsafe extern "C" fn sendmsg(
-    file_descriptor: c_int,
-    message: *const MsgHdr,
-    flags: c_int,
-) -> isize {
-    c_ssize_status(unsafe { sendmsg_result(file_descriptor, message, flags) })
-}
-
-/// Receive one padded public message through Linux `recvmsg(2)`.
-///
-/// # Safety
-///
-/// `message` must designate a readable/writable x86 public `msghdr`; every
-/// nested output pointer must remain valid for the syscall. The caller owns
-/// descriptor lifetime, blocking, and message/ancillary policy. The owned runtime
-/// supplies pthread cancellation.
-#[no_mangle]
-pub unsafe extern "C" fn recvmsg(
-    file_descriptor: c_int,
-    message: *mut MsgHdr,
-    flags: c_int,
-) -> isize {
-    c_ssize_status(unsafe { recvmsg_result(file_descriptor, message, flags) })
-}
-
-/// Send a bounded batch through musl's padded `sendmsg` loop.
-///
-/// # Safety
-///
-/// If `count` is nonzero, `messages` must designate at least the first
-/// `min(count, IOV_MAX)` writable public `mmsghdr` records and their complete
-/// nested message inputs. The caller owns all descriptor, blocking, and
-/// SIGPIPE policy. The owned runtime supplies cancellation for each message.
-#[no_mangle]
-pub unsafe extern "C" fn sendmmsg(
-    file_descriptor: c_int,
-    messages: *mut MMsgHdr,
-    count: c_uint,
-    flags: c_uint,
-) -> c_int {
-    let bounded_count = core::cmp::min(count, IOV_MAX);
-    let mut index = 0u32;
-    while index < bounded_count {
-        // SAFETY: the caller's count/record-lifetime contract covers this
-        // selected record; `sendmsg_result` prepares the ABI record before its
-        // source-defined cancellation point.
-        let message = unsafe { messages.add(index as usize) };
+// Musl's `src/network/setsockopt.c` object.
+static_archive_member! { setsockopt_source {
+    /// Set one caller-owned socket option through Linux `setsockopt(2)`.
+    ///
+    /// # Safety
+    ///
+    /// When `option_length` is nonzero, `option` must designate at least that many
+    /// readable bytes in the option-specific representation. The caller owns
+    /// descriptor lifetime and socket policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn setsockopt(
+        file_descriptor: c_int,
+        level: c_int,
+        option_name: c_int,
+        option: *const c_void,
+        option_length: c_uint,
+    ) -> c_int {
         let result = unsafe {
-            sendmsg_result(
-                file_descriptor,
-                core::ptr::addr_of!((*message).header),
-                flags as c_int,
+            raw_syscall::syscall5(
+                raw_syscall::SYS_SETSOCKOPT,
+                i64::from(file_descriptor),
+                i64::from(level),
+                i64::from(option_name),
+                option as usize as i64,
+                i64::from(option_length),
             )
         };
-        if result < 0 {
-            let _ = c_ssize_status(result);
-            return if index == 0 { -1 } else { index as c_int };
-        }
-        // Linux caps an individual sendmsg result to INT_MAX, matching musl's
-        // safe conversion to the public unsigned message-length word.
-        unsafe { (*message).length = result as c_uint };
-        index += 1;
+        c_status(result)
     }
-    index as c_int
-}
+}}
 
-/// Receive a batch through Linux `recvmmsg(2)` after clearing every public
-/// message header's invisible native-width padding.
-///
-/// # Safety
-///
-/// If `count` is nonzero, `messages` must designate that many readable and
-/// writable public `mmsghdr` records plus all nested output storage. `timeout`
-/// is either null or writable x86 `timespec` storage. The caller owns socket,
-/// blocking, timeout, and message policy. The owned runtime supplies
-/// pthread cancellation.
-#[no_mangle]
-pub unsafe extern "C" fn recvmmsg(
-    file_descriptor: c_int,
-    messages: *mut MMsgHdr,
-    count: c_uint,
-    flags: c_uint,
-    timeout: *mut c_void,
-) -> c_int {
-    let mut index = 0u32;
-    while index < count {
-        // SAFETY: the caller owns all message records and their nested output
-        // storage. Only the public ABI padding is written before Linux sees
-        // each record.
-        let header = unsafe { &mut (*messages.add(index as usize)).header };
-        header.iov_padding = 0;
-        header.control_padding = 0;
-        index += 1;
-    }
-    let result = unsafe {
-        #[cfg(crabc_x86_owned_runtime)]
-        {
-            super::pthread_cancel::syscall_cp(
-                raw_syscall::SYS_RECVMMSG,
-                i64::from(file_descriptor),
-                messages as usize as i64,
-                i64::from(count),
-                i64::from(flags),
-                timeout as usize as i64,
-                0,
-            )
-        }
-        #[cfg(not(crabc_x86_owned_runtime))]
-        {
+// Musl's `src/network/getsockopt.c` object.
+static_archive_member! { getsockopt_source {
+    /// Read one caller-owned socket option through Linux `getsockopt(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `option_length` must point to one writable x86 `socklen_t` word. `option`
+    /// must designate the writable capacity expressed by that word whenever Linux
+    /// needs output storage. The caller owns descriptor lifetime and option policy.
+    #[no_mangle]
+    pub unsafe extern "C" fn getsockopt(
+        file_descriptor: c_int,
+        level: c_int,
+        option_name: c_int,
+        option: *mut c_void,
+        option_length: *mut c_uint,
+    ) -> c_int {
+        let result = unsafe {
             raw_syscall::syscall5(
-                raw_syscall::SYS_RECVMMSG,
+                raw_syscall::SYS_GETSOCKOPT,
                 i64::from(file_descriptor),
-                messages as usize as i64,
-                i64::from(count),
-                i64::from(flags),
-                timeout as usize as i64,
+                i64::from(level),
+                i64::from(option_name),
+                option as usize as i64,
+                option_length as usize as i64,
             )
-        }
-    };
-    c_status(result)
-}
-
-/// Query a stream socket's urgent-data mark through musl's `SIOCATMARK` form.
-#[no_mangle]
-pub extern "C" fn sockatmark(file_descriptor: c_int) -> c_int {
-    let mut at_mark = 0 as c_int;
-    // SAFETY: `at_mark` is a live writable x86 int for Linux's ioctl output;
-    // the fixed request takes exactly one pointer word in rdx.
-    let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_IOCTL,
-            i64::from(file_descriptor),
-            i64::from(SIOCATMARK),
-            core::ptr::addr_of_mut!(at_mark) as usize as i64,
-        )
-    };
-    if c_status(result) < 0 {
-        -1
-    } else {
-        at_mark
+        };
+        c_status(result)
     }
-}
+}}
+
+// Musl's `src/network/sendmsg.c` object.
+static_archive_member! { sendmsg_source {
+    /// Send one padded public message through Linux `sendmsg(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `message` must designate a readable x86 public `msghdr`; every nested
+    /// pointer and optional outbound control buffer must remain readable for the
+    /// call. The caller owns descriptor lifetime, blocking, SIGPIPE, and message
+    /// policy. The owned runtime supplies pthread cancellation.
+    #[no_mangle]
+    pub unsafe extern "C" fn sendmsg(
+        file_descriptor: c_int,
+        message: *const MsgHdr,
+        flags: c_int,
+    ) -> isize {
+        c_ssize_status(unsafe { sendmsg_result(file_descriptor, message, flags) })
+    }
+}}
+
+// Musl's `src/network/recvmsg.c` object.
+static_archive_member! { recvmsg_source {
+    /// Receive one padded public message through Linux `recvmsg(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `message` must designate a readable/writable x86 public `msghdr`; every
+    /// nested output pointer must remain valid for the syscall. The caller owns
+    /// descriptor lifetime, blocking, and message/ancillary policy. The owned runtime
+    /// supplies pthread cancellation.
+    #[no_mangle]
+    pub unsafe extern "C" fn recvmsg(
+        file_descriptor: c_int,
+        message: *mut MsgHdr,
+        flags: c_int,
+    ) -> isize {
+        c_ssize_status(unsafe { recvmsg_result(file_descriptor, message, flags) })
+    }
+}}
+
+// Musl's `src/network/sendmmsg.c` object.
+static_archive_member! { sendmmsg_source {
+    /// Send a bounded batch through musl's padded `sendmsg` loop.
+    ///
+    /// # Safety
+    ///
+    /// If `count` is nonzero, `messages` must designate at least the first
+    /// `min(count, IOV_MAX)` writable public `mmsghdr` records and their complete
+    /// nested message inputs. The caller owns all descriptor, blocking, and
+    /// SIGPIPE policy. The owned runtime supplies cancellation for each message.
+    #[no_mangle]
+    pub unsafe extern "C" fn sendmmsg(
+        file_descriptor: c_int,
+        messages: *mut MMsgHdr,
+        count: c_uint,
+        flags: c_uint,
+    ) -> c_int {
+        let bounded_count = core::cmp::min(count, IOV_MAX);
+        let mut index = 0u32;
+        while index < bounded_count {
+            // SAFETY: the caller's count/record-lifetime contract covers this
+            // selected record; `sendmsg_result` prepares the ABI record before its
+            // source-defined cancellation point.
+            let message = unsafe { messages.add(index as usize) };
+            let result = unsafe {
+                sendmsg_result(
+                    file_descriptor,
+                    core::ptr::addr_of!((*message).header),
+                    flags as c_int,
+                )
+            };
+            if result < 0 {
+                let _ = c_ssize_status(result);
+                return if index == 0 { -1 } else { index as c_int };
+            }
+            // Linux caps an individual sendmsg result to INT_MAX, matching musl's
+            // safe conversion to the public unsigned message-length word.
+            unsafe { (*message).length = result as c_uint };
+            index += 1;
+        }
+        index as c_int
+    }
+}}
+
+// Musl's `src/network/recvmmsg.c` object.
+static_archive_member! { recvmmsg_source {
+    /// Receive a batch through Linux `recvmmsg(2)` after clearing every public
+    /// message header's invisible native-width padding.
+    ///
+    /// # Safety
+    ///
+    /// If `count` is nonzero, `messages` must designate that many readable and
+    /// writable public `mmsghdr` records plus all nested output storage. `timeout`
+    /// is either null or writable x86 `timespec` storage. The caller owns socket,
+    /// blocking, timeout, and message policy. The owned runtime supplies
+    /// pthread cancellation.
+    #[no_mangle]
+    pub unsafe extern "C" fn recvmmsg(
+        file_descriptor: c_int,
+        messages: *mut MMsgHdr,
+        count: c_uint,
+        flags: c_uint,
+        timeout: *mut c_void,
+    ) -> c_int {
+        let mut index = 0u32;
+        while index < count {
+            // SAFETY: the caller owns all message records and their nested output
+            // storage. Only the public ABI padding is written before Linux sees
+            // each record.
+            let header = unsafe { &mut (*messages.add(index as usize)).header };
+            header.iov_padding = 0;
+            header.control_padding = 0;
+            index += 1;
+        }
+        let result = unsafe {
+            #[cfg(crabc_x86_owned_runtime)]
+            {
+                crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                    raw_syscall::SYS_RECVMMSG,
+                    i64::from(file_descriptor),
+                    messages as usize as i64,
+                    i64::from(count),
+                    i64::from(flags),
+                    timeout as usize as i64,
+                    0,
+                )
+            }
+            #[cfg(not(crabc_x86_owned_runtime))]
+            {
+                raw_syscall::syscall5(
+                    raw_syscall::SYS_RECVMMSG,
+                    i64::from(file_descriptor),
+                    messages as usize as i64,
+                    i64::from(count),
+                    i64::from(flags),
+                    timeout as usize as i64,
+                )
+            }
+        };
+        c_status(result)
+    }
+}}
+
+// Musl's `src/network/sockatmark.c` object.
+static_archive_member! { sockatmark_source {
+    /// Query a stream socket's urgent-data mark through musl's `SIOCATMARK` form.
+    #[no_mangle]
+    pub extern "C" fn sockatmark(file_descriptor: c_int) -> c_int {
+        let mut at_mark = 0 as c_int;
+        // SAFETY: `at_mark` is a live writable x86 int for Linux's ioctl output;
+        // the fixed request takes exactly one pointer word in rdx.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_IOCTL,
+                i64::from(file_descriptor),
+                i64::from(SIOCATMARK),
+                core::ptr::addr_of_mut!(at_mark) as usize as i64,
+            )
+        };
+        if c_status(result) < 0 {
+            -1
+        } else {
+            at_mark
+        }
+    }
+}}

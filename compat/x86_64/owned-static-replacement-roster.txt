@@ -109,3 +109,12 @@ sigsuspend stat statx symlink symlinkat tcflow tcflush tcgetattr tcgetsid
 tcgetwinsize tcsendbreak tcsetattr tcsetwinsize tdelete tdestroy telldir
 tempnam tfind tmpnam truncate ttyname twalk unlink utime utimensat utimes
 versionsort write writev
+
+# Sockets, address conversion, netdb and resolver
+accept accept4 bind connect dn_comp freeaddrinfo gai_strerror getaddrinfo
+gethostbyaddr gethostbyaddr_r gethostbyname gethostbyname2 gethostbyname2_r
+gethostbyname_r getnameinfo getpeername getservbyname getservbyname_r
+getservbyport getservbyport_r getsockname getsockopt hstrerror htonl htons
+inet_addr inet_ntop inet_pton listen ntohl ntohs recv recvfrom recvmmsg
+recvmsg res_query res_querydomain send sendmmsg sendmsg sendto setsockopt
+shutdown sockatmark socket socketpair

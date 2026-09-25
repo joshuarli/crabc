@@ -20,8 +20,11 @@
 
 use core::ffi::c_int;
 
-/// Return musl's successful legacy resolver-initializer no-op.
-#[no_mangle]
-pub extern "C" fn res_init() -> c_int {
-    0
-}
+// Musl's `src/network/res_init.c` object.
+static_archive_member! { res_init_source {
+    /// Return musl's successful legacy resolver-initializer no-op.
+    #[no_mangle]
+    pub extern "C" fn res_init() -> c_int {
+        0
+    }
+}}

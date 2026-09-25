@@ -111,88 +111,95 @@ unsafe fn c_strings_equal(left: *const c_char, right: *const c_char) -> bool {
     }
 }
 
-/// Reset musl's shared protocol enumeration index.
-///
-/// # Safety
-///
-/// The legacy protocol database has one shared mutable cursor and result
-/// record. Callers must externally serialize this call with every other
-/// selected protocol-database entry point.
-#[no_mangle]
-pub unsafe extern "C" fn endprotoent() {
-    unsafe { PROTOCOL_INDEX = 0 };
-}
-
-/// Reset musl's shared protocol enumeration index, ignoring `stayopen`.
-///
-/// # Safety
-///
-/// The legacy protocol database has one shared mutable cursor and result
-/// record. Callers must externally serialize this call with every other
-/// selected protocol-database entry point.
-#[no_mangle]
-pub unsafe extern "C" fn setprotoent(_stayopen: c_int) {
-    unsafe { PROTOCOL_INDEX = 0 };
-}
-
-/// Return the next entry from musl's fixed shared protocol table.
-///
-/// # Safety
-///
-/// The returned `protoent` and its name/alias pointer slots are process-global
-/// storage overwritten by the next selected protocol-database call. Callers
-/// must externally serialize access and must not retain the result across a
-/// later call to this non-reentrant legacy API.
-#[no_mangle]
-pub unsafe extern "C" fn getprotoent() -> *mut CabiProtoent {
-    let index = unsafe { PROTOCOL_INDEX };
-    if index >= PROTOCOLS.len() {
-        return core::ptr::null_mut();
+// Musl's `src/network/proto.c` object.
+static_archive_member! { proto_source {
+    /// Reset musl's shared protocol enumeration index.
+    ///
+    /// # Safety
+    ///
+    /// The legacy protocol database has one shared mutable cursor and result
+    /// record. Callers must externally serialize this call with every other
+    /// selected protocol-database entry point.
+    #[no_mangle]
+    pub unsafe extern "C" fn endprotoent() {
+        unsafe { PROTOCOL_INDEX = 0 };
     }
 
-    let entry = unsafe { PROTOCOLS.as_ptr().add(index) };
-    let name = unsafe { entry.add(1) };
-    let name_length = unsafe { c_string_length(name) };
-    unsafe {
-        PROTOCOL_RESULT.p_proto = entry.read() as c_int;
-        PROTOCOL_RESULT.p_name = name.cast::<c_char>() as *mut c_char;
-        PROTOCOL_RESULT.p_aliases = core::ptr::addr_of_mut!(PROTOCOL_ALIASES);
-        PROTOCOL_INDEX = index + name_length + 2;
-        core::ptr::addr_of_mut!(PROTOCOL_RESULT)
+    /// Reset musl's shared protocol enumeration index, ignoring `stayopen`.
+    ///
+    /// # Safety
+    ///
+    /// The legacy protocol database has one shared mutable cursor and result
+    /// record. Callers must externally serialize this call with every other
+    /// selected protocol-database entry point.
+    #[no_mangle]
+    pub unsafe extern "C" fn setprotoent(_stayopen: c_int) {
+        unsafe { PROTOCOL_INDEX = 0 };
     }
-}
 
-/// Search musl's fixed protocol table by exact, case-sensitive name.
-///
-/// # Safety
-///
-/// `name` must designate a readable NUL-terminated C string. The returned
-/// shared result has the same externally serialized, next-call-overwritten
-/// lifetime as `getprotoent`.
-#[no_mangle]
-pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut CabiProtoent {
-    unsafe { endprotoent() };
-    loop {
-        let entry = unsafe { getprotoent() };
-        if entry.is_null() || unsafe { c_strings_equal(name, (*entry).p_name) } {
-            return entry;
+    /// Return the next entry from musl's fixed shared protocol table.
+    ///
+    /// # Safety
+    ///
+    /// The returned `protoent` and its name/alias pointer slots are process-global
+    /// storage overwritten by the next selected protocol-database call. Callers
+    /// must externally serialize access and must not retain the result across a
+    /// later call to this non-reentrant legacy API.
+    #[no_mangle]
+    pub unsafe extern "C" fn getprotoent() -> *mut CabiProtoent {
+        let index = unsafe { PROTOCOL_INDEX };
+        if index >= PROTOCOLS.len() {
+            return core::ptr::null_mut();
+        }
+
+        let entry = unsafe { PROTOCOLS.as_ptr().add(index) };
+        let name = unsafe { entry.add(1) };
+        let name_length = unsafe { c_string_length(name) };
+        unsafe {
+            PROTOCOL_RESULT.p_proto = entry.read() as c_int;
+            PROTOCOL_RESULT.p_name = name.cast::<c_char>() as *mut c_char;
+            PROTOCOL_RESULT.p_aliases = core::ptr::addr_of_mut!(PROTOCOL_ALIASES);
+            PROTOCOL_INDEX = index + name_length + 2;
+            core::ptr::addr_of_mut!(PROTOCOL_RESULT)
         }
     }
-}
 
-/// Search musl's fixed protocol table by its numeric protocol value.
-///
-/// # Safety
-///
-/// The returned shared result has the same externally serialized,
-/// next-call-overwritten lifetime as `getprotoent`.
-#[no_mangle]
-pub unsafe extern "C" fn getprotobynumber(number: c_int) -> *mut CabiProtoent {
-    unsafe { endprotoent() };
-    loop {
-        let entry = unsafe { getprotoent() };
-        if entry.is_null() || unsafe { (*entry).p_proto == number } {
-            return entry;
+    /// Search musl's fixed protocol table by exact, case-sensitive name.
+    ///
+    /// # Safety
+    ///
+    /// `name` must designate a readable NUL-terminated C string. The returned
+    /// shared result has the same externally serialized, next-call-overwritten
+    /// lifetime as `getprotoent`.
+    #[no_mangle]
+    pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut CabiProtoent {
+        unsafe { endprotoent() };
+        loop {
+            let entry = unsafe { getprotoent() };
+            if entry.is_null() || unsafe { c_strings_equal(name, (*entry).p_name) } {
+                return entry;
+            }
         }
     }
-}
+
+    /// Search musl's fixed protocol table by its numeric protocol value.
+    ///
+    /// # Safety
+    ///
+    /// The returned shared result has the same externally serialized,
+    /// next-call-overwritten lifetime as `getprotoent`.
+    #[no_mangle]
+    pub unsafe extern "C" fn getprotobynumber(number: c_int) -> *mut CabiProtoent {
+        unsafe { endprotoent() };
+        loop {
+            let entry = unsafe { getprotoent() };
+            if entry.is_null() || unsafe { (*entry).p_proto == number } {
+                return entry;
+            }
+        }
+    }
+}}
+
+
+
+

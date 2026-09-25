@@ -67,15 +67,18 @@ fn message_offset(error: c_int) -> usize {
     }
 }
 
-/// Return musl's immutable h_errno message for the selected locale profiles.
-///
-/// The returned pointer stays valid for the process lifetime and designates
-/// immutable NUL-terminated storage. It is independent of the current value
-/// of `h_errno` and does not modify `errno`.
-#[no_mangle]
-pub extern "C" fn hstrerror(error: c_int) -> *const c_char {
-    let offset = message_offset(error);
-    // SAFETY: `message_offset` returns either a start inside `MESSAGES` or
-    // `UNKNOWN_OFFSET`, which is the start of its final NUL-terminated entry.
-    unsafe { MESSAGES.as_ptr().add(offset).cast() }
-}
+// Musl's `src/network/hstrerror.c` object.
+static_archive_member! { hstrerror_source {
+    /// Return musl's immutable h_errno message for the selected locale profiles.
+    ///
+    /// The returned pointer stays valid for the process lifetime and designates
+    /// immutable NUL-terminated storage. It is independent of the current value
+    /// of `h_errno` and does not modify `errno`.
+    #[no_mangle]
+    pub extern "C" fn hstrerror(error: c_int) -> *const c_char {
+        let offset = message_offset(error);
+        // SAFETY: `message_offset` returns either a start inside `MESSAGES` or
+        // `UNKNOWN_OFFSET`, which is the start of its final NUL-terminated entry.
+        unsafe { MESSAGES.as_ptr().add(offset).cast() }
+    }
+}}

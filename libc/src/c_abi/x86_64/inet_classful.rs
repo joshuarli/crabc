@@ -29,32 +29,36 @@ pub struct InAddr {
     s_addr: c_uint,
 }
 
-/// Construct musl's legacy classful IPv4 raw address word.
-///
-/// This intentionally preserves musl's OR rather than masking `host`: callers
-/// observe all caller-provided bits that overlap the selected classful prefix.
-#[no_mangle]
-pub extern "C" fn inet_makeaddr(network: c_uint, mut host: c_uint) -> InAddr {
-    if network < 256 {
-        host |= network << 24;
-    } else if network < 65_536 {
-        host |= network << 16;
-    } else {
-        host |= network << 8;
+// Musl's `src/network/inet_legacy.c` object.
+static_archive_member! { inet_legacy_source {
+    /// Construct musl's legacy classful IPv4 raw address word.
+    ///
+    /// This intentionally preserves musl's OR rather than masking `host`: callers
+    /// observe all caller-provided bits that overlap the selected classful prefix.
+    #[no_mangle]
+    pub extern "C" fn inet_makeaddr(network: c_uint, mut host: c_uint) -> InAddr {
+        if network < 256 {
+            host |= network << 24;
+        } else if network < 65_536 {
+            host |= network << 16;
+        } else {
+            host |= network << 8;
+        }
+        InAddr { s_addr: host }
     }
-    InAddr { s_addr: host }
-}
 
-/// Return musl's legacy classful local-address part from a raw IPv4 word.
-#[no_mangle]
-pub extern "C" fn inet_lnaof(address: InAddr) -> c_uint {
-    let host = address.s_addr;
+    /// Return musl's legacy classful local-address part from a raw IPv4 word.
+    #[no_mangle]
+    pub extern "C" fn inet_lnaof(address: InAddr) -> c_uint {
+        let host = address.s_addr;
 
-    if host >> 24 < 128 {
-        host & 0x00ff_ffff
-    } else if host >> 24 < 192 {
-        host & 0x0000_ffff
-    } else {
-        host & 0x0000_00ff
+        if host >> 24 < 128 {
+            host & 0x00ff_ffff
+        } else if host >> 24 < 192 {
+            host & 0x0000_ffff
+        } else {
+            host & 0x0000_00ff
+        }
     }
-}
+}}
+

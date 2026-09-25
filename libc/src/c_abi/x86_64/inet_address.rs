@@ -430,275 +430,293 @@ unsafe fn inet_pton_ipv6(mut source: *const u8, destination: *mut u8) -> c_int {
     1
 }
 
-/// Convert one numeric IPv4 or IPv6 address into network-order bytes.
-///
-/// # Safety
-///
-/// `source` must designate a readable NUL-terminated C string. For `AF_INET`,
-/// `destination` must designate four writable bytes; for `AF_INET6`, it must
-/// designate sixteen. Unsupported families do not dereference either pointer.
-/// Failed parses may retain musl's prior partial destination writes.
-#[no_mangle]
-pub unsafe extern "C" fn inet_pton(
-    address_family: c_int,
-    source: *const c_char,
-    destination: *mut c_void,
-) -> c_int {
-    match address_family {
-        AF_INET => unsafe { inet_pton_ipv4(source.cast::<u8>(), destination.cast::<u8>()) },
-        AF_INET6 => unsafe { inet_pton_ipv6(source.cast::<u8>(), destination.cast::<u8>()) },
-        _ => {
-            // SAFETY: this is the selected C ABI error boundary.
-            unsafe { errno::set_errno(EAFNOSUPPORT) };
-            -1
-        }
-    }
-}
-
-/// Convert an IPv4 or IPv6 address to musl's canonical numeric text.
-///
-/// # Safety
-///
-/// `address` must designate four readable bytes for `AF_INET` or sixteen for
-/// `AF_INET6`. On a successful result, `destination` must have room for the
-/// returned NUL-terminated string. For IPv4, a nonzero short `length` permits
-/// musl's `snprintf`-style truncated write before `ENOSPC`; for IPv6 a short
-/// length performs no destination write. Unsupported families do not
-/// dereference either pointer.
-#[no_mangle]
-pub unsafe extern "C" fn inet_ntop(
-    address_family: c_int,
-    address: *const c_void,
-    destination: *mut c_char,
-    length: c_uint,
-) -> *const c_char {
-    let destination_bytes = destination.cast::<u8>();
-    let capacity = length as usize;
-
-    match address_family {
-        AF_INET => {
-            let mut buffer = [0u8; 16];
-            let buffer_ptr = buffer.as_mut_ptr();
-            // SAFETY: AF_INET supplies four input bytes and the local buffer
-            // holds the fifteen rendered bytes plus its terminator.
-            let rendered_length = unsafe {
-                let end = write_ipv4_text(buffer_ptr, address.cast::<u8>());
-                end.write(0);
-                end.offset_from(buffer_ptr) as usize
-            };
-            // SAFETY: this exactly models the preceding musl `snprintf`.
-            unsafe {
-                snprintf_ipv4_copy(
-                    destination_bytes,
-                    capacity,
-                    buffer_ptr.cast_const(),
-                    rendered_length,
-                )
-            };
-            if rendered_length < capacity {
-                return destination_bytes.cast::<c_char>().cast_const();
+// Musl's `src/network/inet_pton.c` object.
+static_archive_member! { inet_pton_source {
+    /// Convert one numeric IPv4 or IPv6 address into network-order bytes.
+    ///
+    /// # Safety
+    ///
+    /// `source` must designate a readable NUL-terminated C string. For `AF_INET`,
+    /// `destination` must designate four writable bytes; for `AF_INET6`, it must
+    /// designate sixteen. Unsupported families do not dereference either pointer.
+    /// Failed parses may retain musl's prior partial destination writes.
+    #[no_mangle]
+    pub unsafe extern "C" fn inet_pton(
+        address_family: c_int,
+        source: *const c_char,
+        destination: *mut c_void,
+    ) -> c_int {
+        match address_family {
+            AF_INET => unsafe { inet_pton_ipv4(source.cast::<u8>(), destination.cast::<u8>()) },
+            AF_INET6 => unsafe { inet_pton_ipv6(source.cast::<u8>(), destination.cast::<u8>()) },
+            _ => {
+                // SAFETY: this is the selected C ABI error boundary.
+                unsafe { errno::set_errno(EAFNOSUPPORT) };
+                -1
             }
         }
-        AF_INET6 => {
-            let mut buffer = [0u8; 100];
-            let buffer_ptr = buffer.as_mut_ptr();
-            let mut output = buffer_ptr;
-            let address_bytes = address.cast::<u8>();
+    }
+}}
 
-            // SAFETY: `address_bytes` supplies the full sixteen-byte IPv6 input.
-            if unsafe { ipv4_mapped(address_bytes) } {
-                for word_index in 0..6 {
-                    if word_index != 0 {
+// Musl's `src/network/inet_ntop.c` object.
+static_archive_member! { inet_ntop_source {
+    /// Convert an IPv4 or IPv6 address to musl's canonical numeric text.
+    ///
+    /// # Safety
+    ///
+    /// `address` must designate four readable bytes for `AF_INET` or sixteen for
+    /// `AF_INET6`. On a successful result, `destination` must have room for the
+    /// returned NUL-terminated string. For IPv4, a nonzero short `length` permits
+    /// musl's `snprintf`-style truncated write before `ENOSPC`; for IPv6 a short
+    /// length performs no destination write. Unsupported families do not
+    /// dereference either pointer.
+    #[no_mangle]
+    pub unsafe extern "C" fn inet_ntop(
+        address_family: c_int,
+        address: *const c_void,
+        destination: *mut c_char,
+        length: c_uint,
+    ) -> *const c_char {
+        let destination_bytes = destination.cast::<u8>();
+        let capacity = length as usize;
+
+        match address_family {
+            AF_INET => {
+                let mut buffer = [0u8; 16];
+                let buffer_ptr = buffer.as_mut_ptr();
+                // SAFETY: AF_INET supplies four input bytes and the local buffer
+                // holds the fifteen rendered bytes plus its terminator.
+                let rendered_length = unsafe {
+                    let end = write_ipv4_text(buffer_ptr, address.cast::<u8>());
+                    end.write(0);
+                    end.offset_from(buffer_ptr) as usize
+                };
+                // SAFETY: this exactly models the preceding musl `snprintf`.
+                unsafe {
+                    snprintf_ipv4_copy(
+                        destination_bytes,
+                        capacity,
+                        buffer_ptr.cast_const(),
+                        rendered_length,
+                    )
+                };
+                if rendered_length < capacity {
+                    return destination_bytes.cast::<c_char>().cast_const();
+                }
+            }
+            AF_INET6 => {
+                let mut buffer = [0u8; 100];
+                let buffer_ptr = buffer.as_mut_ptr();
+                let mut output = buffer_ptr;
+                let address_bytes = address.cast::<u8>();
+
+                // SAFETY: `address_bytes` supplies the full sixteen-byte IPv6 input.
+                if unsafe { ipv4_mapped(address_bytes) } {
+                    for word_index in 0..6 {
+                        if word_index != 0 {
+                            // SAFETY: the fixed 100-byte local buffer is ample.
+                            unsafe { output.write(b':') };
+                            // SAFETY: this follows the byte just written.
+                            output = unsafe { output.add(1) };
+                        }
+                        // SAFETY: `word_index` stays inside the IPv6 input.
+                        let word = unsafe { ipv6_word(address_bytes, word_index) };
                         // SAFETY: the fixed 100-byte local buffer is ample.
-                        unsafe { output.write(b':') };
-                        // SAFETY: this follows the byte just written.
-                        output = unsafe { output.add(1) };
+                        output = unsafe { write_hex_word(output, word) };
                     }
-                    // SAFETY: `word_index` stays inside the IPv6 input.
-                    let word = unsafe { ipv6_word(address_bytes, word_index) };
                     // SAFETY: the fixed 100-byte local buffer is ample.
-                    output = unsafe { write_hex_word(output, word) };
+                    unsafe { output.write(b':') };
+                    // SAFETY: this follows the byte just written.
+                    output = unsafe { output.add(1) };
+                    // SAFETY: the last four bytes are the mapped IPv4 input.
+                    output = unsafe { write_ipv4_text(output, address_bytes.add(12)) };
+                } else {
+                    for word_index in 0..8 {
+                        if word_index != 0 {
+                            // SAFETY: the fixed 100-byte local buffer is ample.
+                            unsafe { output.write(b':') };
+                            // SAFETY: this follows the byte just written.
+                            output = unsafe { output.add(1) };
+                        }
+                        // SAFETY: `word_index` stays inside the IPv6 input.
+                        let word = unsafe { ipv6_word(address_bytes, word_index) };
+                        // SAFETY: the fixed 100-byte local buffer is ample.
+                        output = unsafe { write_hex_word(output, word) };
+                    }
                 }
                 // SAFETY: the fixed 100-byte local buffer is ample.
-                unsafe { output.write(b':') };
-                // SAFETY: this follows the byte just written.
-                output = unsafe { output.add(1) };
-                // SAFETY: the last four bytes are the mapped IPv4 input.
-                output = unsafe { write_ipv4_text(output, address_bytes.add(12)) };
-            } else {
-                for word_index in 0..8 {
-                    if word_index != 0 {
-                        // SAFETY: the fixed 100-byte local buffer is ample.
-                        unsafe { output.write(b':') };
-                        // SAFETY: this follows the byte just written.
-                        output = unsafe { output.add(1) };
-                    }
-                    // SAFETY: `word_index` stays inside the IPv6 input.
-                    let word = unsafe { ipv6_word(address_bytes, word_index) };
-                    // SAFETY: the fixed 100-byte local buffer is ample.
-                    output = unsafe { write_hex_word(output, word) };
-                }
-            }
-            // SAFETY: the fixed 100-byte local buffer is ample.
-            unsafe { output.write(0) };
+                unsafe { output.write(0) };
 
-            let mut cursor = 0usize;
-            let mut best = 0usize;
-            let mut max = 2usize;
-            loop {
-                // SAFETY: the rendered local buffer has a terminator below 100.
-                let byte = unsafe { buffer_ptr.add(cursor).read() };
-                if byte == 0 {
-                    break;
+                let mut cursor = 0usize;
+                let mut best = 0usize;
+                let mut max = 2usize;
+                loop {
+                    // SAFETY: the rendered local buffer has a terminator below 100.
+                    let byte = unsafe { buffer_ptr.add(cursor).read() };
+                    if byte == 0 {
+                        break;
+                    }
+                    if cursor == 0 || byte == b':' {
+                        // SAFETY: this follows musl's bounded `strspn(buf+i, ":0")`.
+                        let span = unsafe { colon_zero_span(buffer_ptr.add(cursor)) };
+                        if span > max + usize::from(best == 0) {
+                            best = cursor;
+                            max = span;
+                        }
+                    }
+                    cursor += 1;
                 }
-                if cursor == 0 || byte == b':' {
-                    // SAFETY: this follows musl's bounded `strspn(buf+i, ":0")`.
-                    let span = unsafe { colon_zero_span(buffer_ptr.add(cursor)) };
-                    if span > max + usize::from(best == 0) {
-                        best = cursor;
-                        max = span;
+                if max > 3 {
+                    // SAFETY: a span greater than three establishes both positions.
+                    unsafe { buffer_ptr.add(best).write(b':') };
+                    // SAFETY: see the preceding bounded-span invariant.
+                    unsafe { buffer_ptr.add(best + 1).write(b':') };
+                    let moved_bytes = cursor - best - max + 1;
+                    for moved in 0..moved_bytes {
+                        // SAFETY: this is leftward `memmove` within the known local
+                        // string, including its terminator.
+                        let byte = unsafe { buffer_ptr.add(best + max + moved).read() };
+                        // SAFETY: this destination is inside the same local string.
+                        unsafe { buffer_ptr.add(best + 2 + moved).write(byte) };
                     }
                 }
-                cursor += 1;
-            }
-            if max > 3 {
-                // SAFETY: a span greater than three establishes both positions.
-                unsafe { buffer_ptr.add(best).write(b':') };
-                // SAFETY: see the preceding bounded-span invariant.
-                unsafe { buffer_ptr.add(best + 1).write(b':') };
-                let moved_bytes = cursor - best - max + 1;
-                for moved in 0..moved_bytes {
-                    // SAFETY: this is leftward `memmove` within the known local
-                    // string, including its terminator.
-                    let byte = unsafe { buffer_ptr.add(best + max + moved).read() };
-                    // SAFETY: this destination is inside the same local string.
-                    unsafe { buffer_ptr.add(best + 2 + moved).write(byte) };
+                // SAFETY: the compression keeps a NUL-terminated local string.
+                let rendered_length = unsafe { c_string_length(buffer_ptr.cast_const()) };
+                if rendered_length < capacity {
+                    // SAFETY: the successful length check proves destination room
+                    // through the source terminator, matching musl's `strcpy`.
+                    unsafe { copy_c_string(destination_bytes, buffer_ptr.cast_const()) };
+                    return destination_bytes.cast::<c_char>().cast_const();
                 }
             }
-            // SAFETY: the compression keeps a NUL-terminated local string.
-            let rendered_length = unsafe { c_string_length(buffer_ptr.cast_const()) };
-            if rendered_length < capacity {
-                // SAFETY: the successful length check proves destination room
-                // through the source terminator, matching musl's `strcpy`.
-                unsafe { copy_c_string(destination_bytes, buffer_ptr.cast_const()) };
-                return destination_bytes.cast::<c_char>().cast_const();
+            _ => {
+                // SAFETY: this is the selected C ABI error boundary.
+                unsafe { errno::set_errno(EAFNOSUPPORT) };
+                return core::ptr::null();
             }
         }
-        _ => {
-            // SAFETY: this is the selected C ABI error boundary.
-            unsafe { errno::set_errno(EAFNOSUPPORT) };
-            return core::ptr::null();
-        }
+
+        // SAFETY: this is the selected C ABI error boundary for either short case.
+        unsafe { errno::set_errno(ENOSPC) };
+        core::ptr::null()
     }
-
-    // SAFETY: this is the selected C ABI error boundary for either short case.
-    unsafe { errno::set_errno(ENOSPC) };
-    core::ptr::null()
-}
+}}
 
 // Musl's `weak_alias(__inet_aton, inet_aton)` requires equal symbol values,
 // not a Rust forwarding wrapper. Mark the strong helper hidden and define the
 // public weak spelling as an assembler alias so archive consumers retain the
 // same link-time override and address contract.
-core::arch::global_asm!(
-    ".hidden __inet_aton",
-    ".weak inet_aton",
-    ".set inet_aton, __inet_aton",
-);
 
-/// Parse musl's historical one- through four-component IPv4 grammar.
-///
-/// # Safety
-///
-/// `source` must designate a readable NUL-terminated C string. On a successful
-/// input, `destination` must designate four writable bytes. As in musl, a
-/// range failure in a later component can leave the earlier output bytes
-/// written, and the selected `strtoul` scanner owns its ordinary `errno`
-/// effects.
-#[no_mangle]
-pub unsafe extern "C" fn __inet_aton(
-    source: *const c_char,
-    destination: *mut c_void,
-) -> c_int {
-    let mut cursor = source;
-    let mut values = [0 as c_ulong; 4];
-    let values_ptr = values.as_mut_ptr();
-    let mut components = 0usize;
+// Musl's `src/network/inet_aton.c` object.
+static_archive_member! { inet_aton_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __inet_aton",
+    );
 
-    while components < 4 {
-        let mut end = core::ptr::null_mut::<c_char>();
-        // SAFETY: the caller supplies the C string and this local end slot.
-        let value = unsafe { integer_parse::strtoul(cursor, &mut end, 0) };
-        // SAFETY: `strtoul` returns an in-string end pointer for valid input.
-        let end_byte = unsafe { end.cast::<u8>().read() };
-        // SAFETY: the caller's C-string contract supplies its first byte.
-        let first = unsafe { cursor.cast::<u8>().read() };
-        if end.cast_const() == cursor
-            || (end_byte != 0 && end_byte != b'.')
-            || !decimal_digit(first)
-        {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak inet_aton",
+        ".set inet_aton, __inet_aton",
+    );
+
+    /// Parse musl's historical one- through four-component IPv4 grammar.
+    ///
+    /// # Safety
+    ///
+    /// `source` must designate a readable NUL-terminated C string. On a successful
+    /// input, `destination` must designate four writable bytes. As in musl, a
+    /// range failure in a later component can leave the earlier output bytes
+    /// written, and the selected `strtoul` scanner owns its ordinary `errno`
+    /// effects.
+    #[no_mangle]
+    pub unsafe extern "C" fn __inet_aton(
+        source: *const c_char,
+        destination: *mut c_void,
+    ) -> c_int {
+        let mut cursor = source;
+        let mut values = [0 as c_ulong; 4];
+        let values_ptr = values.as_mut_ptr();
+        let mut components = 0usize;
+
+        while components < 4 {
+            let mut end = core::ptr::null_mut::<c_char>();
+            // SAFETY: the caller supplies the C string and this local end slot.
+            let value = unsafe { integer_parse::strtoul(cursor, &mut end, 0) };
+            // SAFETY: `strtoul` returns an in-string end pointer for valid input.
+            let end_byte = unsafe { end.cast::<u8>().read() };
+            // SAFETY: the caller's C-string contract supplies its first byte.
+            let first = unsafe { cursor.cast::<u8>().read() };
+            if end.cast_const() == cursor
+                || (end_byte != 0 && end_byte != b'.')
+                || !decimal_digit(first)
+            {
+                return 0;
+            }
+            // SAFETY: `components` is one of the four local value slots.
+            unsafe { values_ptr.add(components).write(value) };
+            if end_byte == 0 {
+                break;
+            }
+            // SAFETY: the accepted period is non-NUL, so its successor is readable.
+            cursor = unsafe { end.add(1) };
+            components += 1;
+        }
+        if components == 4 {
             return 0;
         }
-        // SAFETY: `components` is one of the four local value slots.
-        unsafe { values_ptr.add(components).write(value) };
-        if end_byte == 0 {
-            break;
+
+        if components == 0 {
+            // SAFETY: all accessed locations are the four local value slots.
+            let first = unsafe { values_ptr.read() };
+            unsafe { values_ptr.add(1).write(first & 0x00ff_ffff) };
+            unsafe { values_ptr.write(first >> 24) };
         }
-        // SAFETY: the accepted period is non-NUL, so its successor is readable.
-        cursor = unsafe { end.add(1) };
-        components += 1;
-    }
-    if components == 4 {
-        return 0;
-    }
-
-    if components == 0 {
-        // SAFETY: all accessed locations are the four local value slots.
-        let first = unsafe { values_ptr.read() };
-        unsafe { values_ptr.add(1).write(first & 0x00ff_ffff) };
-        unsafe { values_ptr.write(first >> 24) };
-    }
-    if components <= 1 {
-        // SAFETY: all accessed locations are the four local value slots.
-        let second = unsafe { values_ptr.add(1).read() };
-        unsafe { values_ptr.add(2).write(second & 0x0000_ffff) };
-        unsafe { values_ptr.add(1).write(second >> 16) };
-    }
-    if components <= 2 {
-        // SAFETY: all accessed locations are the four local value slots.
-        let third = unsafe { values_ptr.add(2).read() };
-        unsafe { values_ptr.add(3).write(third & 0x0000_00ff) };
-        unsafe { values_ptr.add(2).write(third >> 8) };
-    }
-
-    let destination = destination.cast::<u8>();
-    for component in 0..4 {
-        // SAFETY: `component` is one of the four local value slots.
-        let value = unsafe { values_ptr.add(component).read() };
-        if value > 255 {
-            return 0;
+        if components <= 1 {
+            // SAFETY: all accessed locations are the four local value slots.
+            let second = unsafe { values_ptr.add(1).read() };
+            unsafe { values_ptr.add(2).write(second & 0x0000_ffff) };
+            unsafe { values_ptr.add(1).write(second >> 16) };
         }
-        // SAFETY: each iteration writes one of the four caller output bytes.
-        unsafe { destination.add(component).write(value as u8) };
-    }
-    1
-}
+        if components <= 2 {
+            // SAFETY: all accessed locations are the four local value slots.
+            let third = unsafe { values_ptr.add(2).read() };
+            unsafe { values_ptr.add(3).write(third & 0x0000_00ff) };
+            unsafe { values_ptr.add(2).write(third >> 8) };
+        }
 
-/// Parse an IPv4 address and return its stored network-order `in_addr_t`.
-///
-/// # Safety
-///
-/// `source` must designate a readable NUL-terminated C string. This follows
-/// musl by calling the hidden strong `__inet_aton` implementation directly.
-/// Keep this C ABI boundary materialized for the separate legacy
-/// `inet_network` wrapper, whose exact musl source dependency is `inet_addr`.
-#[inline(never)]
-#[no_mangle]
-pub unsafe extern "C" fn inet_addr(source: *const c_char) -> u32 {
-    let mut address = [0u8; 4];
-    // SAFETY: the local array supplies the four writable `struct in_addr` bytes.
-    if unsafe { __inet_aton(source, address.as_mut_ptr().cast::<c_void>()) } == 0 {
-        return u32::MAX;
+        let destination = destination.cast::<u8>();
+        for component in 0..4 {
+            // SAFETY: `component` is one of the four local value slots.
+            let value = unsafe { values_ptr.add(component).read() };
+            if value > 255 {
+                return 0;
+            }
+            // SAFETY: each iteration writes one of the four caller output bytes.
+            unsafe { destination.add(component).write(value as u8) };
+        }
+        1
     }
-    u32::from_ne_bytes(address)
-}
+}}
+
+// Musl's `src/network/inet_addr.c` object.
+static_archive_member! { inet_addr_source {
+    /// Parse an IPv4 address and return its stored network-order `in_addr_t`.
+    ///
+    /// # Safety
+    ///
+    /// `source` must designate a readable NUL-terminated C string. This follows
+    /// musl by calling the hidden strong `__inet_aton` implementation directly.
+    /// Keep this C ABI boundary materialized for the separate legacy
+    /// `inet_network` wrapper, whose exact musl source dependency is `inet_addr`.
+    #[inline(never)]
+    #[no_mangle]
+    pub unsafe extern "C" fn inet_addr(source: *const c_char) -> u32 {
+        let mut address = [0u8; 4];
+        // SAFETY: the local array supplies the four writable `struct in_addr` bytes.
+        if unsafe { __inet_aton(source, address.as_mut_ptr().cast::<c_void>()) } == 0 {
+            return u32::MAX;
+        }
+        u32::from_ne_bytes(address)
+    }
+}}

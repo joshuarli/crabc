@@ -24,26 +24,38 @@
 //! `bswap_32` route. `swap_bytes` is the direct scalar equivalent without
 //! introducing a portability abstraction or an ambient endian probe.
 
-/// Convert a 32-bit host-order value to network byte order.
-#[no_mangle]
-pub extern "C" fn htonl(value: u32) -> u32 {
-    value.swap_bytes()
-}
+// Musl's `src/network/htonl.c` object.
+static_archive_member! { htonl_source {
+    /// Convert a 32-bit host-order value to network byte order.
+    #[no_mangle]
+    pub extern "C" fn htonl(value: u32) -> u32 {
+        value.swap_bytes()
+    }
+}}
 
-/// Convert a 16-bit host-order value to network byte order.
-#[no_mangle]
-pub extern "C" fn htons(value: u16) -> u16 {
-    value.swap_bytes()
-}
+// Musl's `src/network/htons.c` object.
+static_archive_member! { htons_source {
+    /// Convert a 16-bit host-order value to network byte order.
+    #[no_mangle]
+    pub extern "C" fn htons(value: u16) -> u16 {
+        value.swap_bytes()
+    }
+}}
 
-/// Convert a 32-bit network-order value to host byte order.
-#[no_mangle]
-pub extern "C" fn ntohl(value: u32) -> u32 {
-    value.swap_bytes()
-}
+// Musl's `src/network/ntohl.c` object.
+static_archive_member! { ntohl_source {
+    /// Convert a 32-bit network-order value to host byte order.
+    #[no_mangle]
+    pub extern "C" fn ntohl(value: u32) -> u32 {
+        value.swap_bytes()
+    }
+}}
 
-/// Convert a 16-bit network-order value to host byte order.
-#[no_mangle]
-pub extern "C" fn ntohs(value: u16) -> u16 {
-    value.swap_bytes()
-}
+// Musl's `src/network/ntohs.c` object.
+static_archive_member! { ntohs_source {
+    /// Convert a 16-bit network-order value to host byte order.
+    #[no_mangle]
+    pub extern "C" fn ntohs(value: u16) -> u16 {
+        value.swap_bytes()
+    }
+}}

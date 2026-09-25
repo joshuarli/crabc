@@ -26,12 +26,15 @@ pub(super) struct CabiEtherAddr {
     pub(super) octets: [u8; 6],
 }
 
-/// Return musl's fixed unsupported legacy Ethernet-line result.
-#[no_mangle]
-pub extern "C" fn ether_line(
-    _line: *const c_char,
-    _address: *mut CabiEtherAddr,
-    _hostname: *mut c_char,
-) -> c_int {
-    -1
-}
+// Musl's `src/network/ether.c` object.
+static_archive_member! { ether_source {
+    /// Return musl's fixed unsupported legacy Ethernet-line result.
+    #[no_mangle]
+    pub extern "C" fn ether_line(
+        _line: *const c_char,
+        _address: *mut CabiEtherAddr,
+        _hostname: *mut c_char,
+    ) -> c_int {
+        -1
+    }
+}}

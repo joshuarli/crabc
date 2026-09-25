@@ -52,41 +52,44 @@ unsafe fn write_decimal_octet(mut output: *mut c_char, value: u8) -> *mut c_char
     unsafe { output.add(1) }
 }
 
-/// Return musl's shared dotted-decimal presentation buffer for one IPv4 value.
-///
-/// The x86-64 C ABI passes `struct in_addr` as its single 32-bit `in_addr_t`
-/// word in `edi`. `to_ne_bytes` recovers the four in-memory network-order
-/// bytes held by that C record on this little-endian target. The return is the
-/// process-global scratch address and the next call overwrites it.
-///
-/// # Safety
-///
-/// Concurrent callers must externally synchronize access to the one shared
-/// C presentation buffer. This is musl's non-reentrant C contract; the leaf
-/// does not add locking, TLS, or a caller-owned alternative.
-#[no_mangle]
-pub unsafe extern "C" fn inet_ntoa(address: c_uint) -> *mut c_char {
-    let bytes = address.to_ne_bytes();
-    let input = bytes.as_ptr();
-    let buffer = core::ptr::addr_of_mut!(INET_NTOA_BUFFER).cast::<c_char>();
-    let mut output = buffer;
-    let mut index = 0usize;
+// Musl's `src/network/inet_ntoa.c` object.
+static_archive_member! { inet_ntoa_source {
+    /// Return musl's shared dotted-decimal presentation buffer for one IPv4 value.
+    ///
+    /// The x86-64 C ABI passes `struct in_addr` as its single 32-bit `in_addr_t`
+    /// word in `edi`. `to_ne_bytes` recovers the four in-memory network-order
+    /// bytes held by that C record on this little-endian target. The return is the
+    /// process-global scratch address and the next call overwrites it.
+    ///
+    /// # Safety
+    ///
+    /// Concurrent callers must externally synchronize access to the one shared
+    /// C presentation buffer. This is musl's non-reentrant C contract; the leaf
+    /// does not add locking, TLS, or a caller-owned alternative.
+    #[no_mangle]
+    pub unsafe extern "C" fn inet_ntoa(address: c_uint) -> *mut c_char {
+        let bytes = address.to_ne_bytes();
+        let input = bytes.as_ptr();
+        let buffer = core::ptr::addr_of_mut!(INET_NTOA_BUFFER).cast::<c_char>();
+        let mut output = buffer;
+        let mut index = 0usize;
 
-    while index < 4 {
-        if index != 0 {
-            // SAFETY: a dotted IPv4 rendering has exactly three separators.
-            unsafe { output.write(b'.' as c_char) };
-            // SAFETY: this follows one byte written inside the fixed buffer.
-            output = unsafe { output.add(1) };
+        while index < 4 {
+            if index != 0 {
+                // SAFETY: a dotted IPv4 rendering has exactly three separators.
+                unsafe { output.write(b'.' as c_char) };
+                // SAFETY: this follows one byte written inside the fixed buffer.
+                output = unsafe { output.add(1) };
+            }
+            // SAFETY: `index` stays in the four-byte local input array.
+            let octet = unsafe { input.add(index).read() };
+            // SAFETY: the maximum dotted IPv4 rendering consumes fifteen bytes.
+            output = unsafe { write_decimal_octet(output, octet) };
+            index += 1;
         }
-        // SAFETY: `index` stays in the four-byte local input array.
-        let octet = unsafe { input.add(index).read() };
-        // SAFETY: the maximum dotted IPv4 rendering consumes fifteen bytes.
-        output = unsafe { write_decimal_octet(output, octet) };
-        index += 1;
-    }
 
-    // SAFETY: the maximum fifteen-byte rendering leaves the terminator slot.
-    unsafe { output.write(0) };
-    buffer
-}
+        // SAFETY: the maximum fifteen-byte rendering leaves the terminator slot.
+        unsafe { output.write(0) };
+        buffer
+    }
+}}

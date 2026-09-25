@@ -245,11 +245,14 @@ pub(super) unsafe fn resolver_worker_h_errno_location() -> *mut c_int {
     core::ptr::addr_of_mut!(RESOLVER_RES_STATE.res_h_errno)
 }
 
-/// Return the calling thread's historical resolver state record.
-#[no_mangle]
-pub unsafe extern "C" fn __res_state() -> *mut ResolverResState {
-    core::ptr::addr_of_mut!(RESOLVER_RES_STATE)
-}
+// Musl's `src/network/res_state.c` object.
+static_archive_member! { res_state_source {
+    /// Return the calling thread's historical resolver state record.
+    #[no_mangle]
+    pub unsafe extern "C" fn __res_state() -> *mut ResolverResState {
+        core::ptr::addr_of_mut!(RESOLVER_RES_STATE)
+    }
+}}
 
 #[inline]
 unsafe fn set_errno(value: c_int) {
@@ -633,17 +636,20 @@ unsafe fn parse_resolv_conf() {
     unsafe { snapshot.release() };
 }
 
-/// Initialize the calling thread's bounded C resolver state from
-/// `/etc/resolv.conf`.
-#[no_mangle]
-pub unsafe extern "C" fn res_init() -> c_int {
-    unsafe {
-        reset_state();
-        parse_resolv_conf();
-        set_h_errno(0);
+// Musl's `src/network/res_init.c` object.
+static_archive_member! { res_init_source {
+    /// Initialize the calling thread's bounded C resolver state from
+    /// `/etc/resolv.conf`.
+    #[no_mangle]
+    pub unsafe extern "C" fn res_init() -> c_int {
+        unsafe {
+            reset_state();
+            parse_resolv_conf();
+            set_h_errno(0);
+        }
+        0
     }
-    0
-}
+}}
 
 unsafe fn ensure_initialized() {
     if unsafe { RESOLVER_RES_STATE.options as usize & RES_INIT } == 0 {
@@ -688,93 +694,100 @@ unsafe fn make_query(
 // forwarding wrapper, which would change pointer identity and ordinary weak-
 // override behavior. Resolver-internal callers below use the hidden builder
 // and transport names; C consumers use only spellings declared by `<resolv.h>`.
-core::arch::global_asm!(
-    ".hidden __res_mkquery",
-    ".weak res_mkquery",
-    ".set res_mkquery, __res_mkquery",
-    ".hidden __res_send",
-    ".weak res_send",
-    ".set res_send, __res_send",
-    ".weak res_search",
-    ".set res_search, res_query",
-);
 
-/// Encode one selected recursive Internet DNS question in caller storage.
-///
-/// # Safety
-///
-/// On the accepted `QUERY`/`CLASS_IN` path, `name` must point to a readable
-/// NUL-terminated DNS name of one through 255 bytes. When `answer_length` is
-/// at least 12, `answer` must point to an exclusively writable
-/// `answer_length`-byte range. The implementation copies `name` into a local
-/// 256-byte scratch array before it forms the output slice, so the two ranges
-/// may overlap. `_data` and `_new_record` are ignored by this selected ABI and
-/// need not designate readable storage. Invalid operation, class, type, or
-/// output arguments return the existing `EINVAL` result before `name` is read.
-#[inline(never)]
-#[no_mangle]
-pub unsafe extern "C" fn __res_mkquery(
-    operation: c_int,
-    name: *const c_char,
-    class: c_int,
-    type_: c_int,
-    _data: *const u8,
-    _data_length: c_int,
-    _new_record: *const u8,
-    answer: *mut u8,
-    answer_length: c_int,
-) -> c_int {
-    if answer_length < 0 {
-        unsafe { set_errno(EINVAL) };
-        return -1;
-    }
-    match unsafe { make_query(operation, name, class, type_, answer, answer_length as usize) } {
-        Ok(length) => length,
-        Err(error) => {
-            unsafe { set_errno(error) };
-            -1
-        }
-    }
-}
+// Musl's `src/network/res_mkquery.c` object.
+static_archive_member! { res_mkquery_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __res_mkquery",
+    );
 
-/// Encode one uncompressed DNS name in caller storage.
-#[no_mangle]
-pub unsafe extern "C" fn dn_comp(
-    name: *const c_char,
-    destination: *mut u8,
-    capacity: c_int,
-    _pointers: *mut *mut u8,
-    _last_pointer: *mut *mut u8,
-) -> c_int {
-    if capacity < 0 || destination.is_null() {
-        unsafe { set_errno(EINVAL) };
-        return -1;
-    }
-    let mut text = [0u8; 256];
-    let Some(length) = (unsafe { c_name_bytes(name, &mut text) }) else {
-        unsafe { set_errno(EINVAL) };
-        return -1;
-    };
-    let output = unsafe { core::slice::from_raw_parts_mut(destination, capacity as usize) };
-    // `encode_query` owns the independently evidenced name encoder.  Strip
-    // its fixed header/tail so this C spelling remains caller-buffered.
-    let mut query = [0u8; 512];
-    let written = match resolver::encode_query(&text[..length], TYPE_A, 1, &mut query) {
-        Ok(written) => written,
-        Err(error) => {
-            unsafe { set_errno(error.raw()) };
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak res_mkquery",
+        ".set res_mkquery, __res_mkquery",
+    );
+
+    /// Encode one selected recursive Internet DNS question in caller storage.
+    ///
+    /// # Safety
+    ///
+    /// On the accepted `QUERY`/`CLASS_IN` path, `name` must point to a readable
+    /// NUL-terminated DNS name of one through 255 bytes. When `answer_length` is
+    /// at least 12, `answer` must point to an exclusively writable
+    /// `answer_length`-byte range. The implementation copies `name` into a local
+    /// 256-byte scratch array before it forms the output slice, so the two ranges
+    /// may overlap. `_data` and `_new_record` are ignored by this selected ABI and
+    /// need not designate readable storage. Invalid operation, class, type, or
+    /// output arguments return the existing `EINVAL` result before `name` is read.
+    #[inline(never)]
+    #[no_mangle]
+    pub unsafe extern "C" fn __res_mkquery(
+        operation: c_int,
+        name: *const c_char,
+        class: c_int,
+        type_: c_int,
+        _data: *const u8,
+        _data_length: c_int,
+        _new_record: *const u8,
+        answer: *mut u8,
+        answer_length: c_int,
+    ) -> c_int {
+        if answer_length < 0 {
+            unsafe { set_errno(EINVAL) };
             return -1;
         }
-    };
-    let name_length = written - 16;
-    if name_length > output.len() {
-        // Pinned musl returns -1 for a destination that cannot hold the
-        // complete encoded name without publishing a new errno value.
-        return -1;
+        match unsafe { make_query(operation, name, class, type_, answer, answer_length as usize) } {
+            Ok(length) => length,
+            Err(error) => {
+                unsafe { set_errno(error) };
+                -1
+            }
+        }
     }
-    output[..name_length].copy_from_slice(&query[12..12 + name_length]);
-    name_length as c_int
-}
+}}
+
+// Musl's `src/network/dn_comp.c` object.
+static_archive_member! { dn_comp_source {
+    /// Encode one uncompressed DNS name in caller storage.
+    #[no_mangle]
+    pub unsafe extern "C" fn dn_comp(
+        name: *const c_char,
+        destination: *mut u8,
+        capacity: c_int,
+        _pointers: *mut *mut u8,
+        _last_pointer: *mut *mut u8,
+    ) -> c_int {
+        if capacity < 0 || destination.is_null() {
+            unsafe { set_errno(EINVAL) };
+            return -1;
+        }
+        let mut text = [0u8; 256];
+        let Some(length) = (unsafe { c_name_bytes(name, &mut text) }) else {
+            unsafe { set_errno(EINVAL) };
+            return -1;
+        };
+        let output = unsafe { core::slice::from_raw_parts_mut(destination, capacity as usize) };
+        // `encode_query` owns the independently evidenced name encoder.  Strip
+        // its fixed header/tail so this C spelling remains caller-buffered.
+        let mut query = [0u8; 512];
+        let written = match resolver::encode_query(&text[..length], TYPE_A, 1, &mut query) {
+            Ok(written) => written,
+            Err(error) => {
+                unsafe { set_errno(error.raw()) };
+                return -1;
+            }
+        };
+        let name_length = written - 16;
+        if name_length > output.len() {
+            // Pinned musl returns -1 for a destination that cannot hold the
+            // complete encoded name without publishing a new errno value.
+            return -1;
+        }
+        output[..name_length].copy_from_slice(&query[12..12 + name_length]);
+        name_length as c_int
+    }
+}}
 
 unsafe fn exchange_config() -> Option<ExchangeConfig> {
     unsafe { ensure_initialized() };
@@ -824,78 +837,92 @@ unsafe fn resolver_error(error: crabc_core::Errno) {
     }
 }
 
-/// Send one caller-built query through nameservers in the calling thread's
-/// resolver state.  The shared transport owns only the finite I/O exchange;
-/// this wrapper owns C error publication and state-derived configuration.
-/// # Safety
-/// For admitted positive lengths, non-null query/answer pointers designate
-/// respectively readable query bytes and an exclusive writable answer range,
-/// with no overlap. Owned C callers may be canceled during DNS I/O and must
-/// register cleanup for their own resources that require retirement.
-#[inline(never)]
-#[no_mangle]
-pub unsafe extern "C" fn __res_send(
-    query: *const u8,
-    query_length: c_int,
-    answer: *mut u8,
-    answer_length: c_int,
-) -> c_int {
-    let minimum_answer_length = if cfg!(crabc_x86_owned_runtime) { 0 } else { 12 };
-    if query.is_null() || answer.is_null() || query_length < 12 || answer_length < minimum_answer_length {
-        unsafe {
-            set_errno(EINVAL);
-            set_h_errno(NO_RECOVERY);
-        }
-        return -1;
-    }
-    let Some(config) = (unsafe { exchange_config() }) else {
-        unsafe {
-            set_errno(EAGAIN);
-            set_h_errno(TRY_AGAIN);
-        }
-        return -1;
-    };
-    let query = unsafe { core::slice::from_raw_parts(query, query_length as usize) };
-    let answer = unsafe { core::slice::from_raw_parts_mut(answer, answer_length as usize) };
-    let query_id = u16::from_be_bytes([query[0], query[1]]);
-    #[cfg(crabc_x86_owned_runtime)]
-    let (result, masked_errno) = {
-        // musl's `res_send` receives into 512 local bytes for a shorter caller
-        // range, copies only that range, and still returns the full reply
-        // length. The selected batch always sees its required answer capacity.
-        let mut short_reply = [0u8; 512];
-        let receive = if answer.len() < short_reply.len() { &mut short_reply[..] } else { &mut answer[..] };
-        let request = super::owned_resolver_batch::BatchRequest::new(query, query_id, receive);
-        let batch_config = super::owned_resolver_batch::CResolverBatchConfig::from_c_resolver(&config);
-        let outcome = unsafe { super::owned_resolver_batch::exchange(&batch_config, super::owned_resolver_batch::BatchRequests::one(request)) };
-        let result = outcome.result.and_then(|receipt| receipt.length(0).filter(|length| *length != 0)
-            .ok_or(resolver::ExchangeError::Transport(crabc_core::Errno::TIMEDOUT)))
-            .map_err(|error| match error {
-                resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
-            });
-        if let Ok(&length) = result.as_ref() {
-            if answer.len() < short_reply.len() {
-                let copied = answer.len().min(length);
-                answer[..copied].copy_from_slice(&short_reply[..copied]);
+// Musl's `src/network/res_send.c` object.
+static_archive_member! { res_send_source {
+    // The source keeps this provider hidden; the directive applies to its definition here.
+    core::arch::global_asm!(
+        ".hidden __res_send",
+    );
+
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak res_send",
+        ".set res_send, __res_send",
+    );
+
+    /// Send one caller-built query through nameservers in the calling thread's
+    /// resolver state.  The shared transport owns only the finite I/O exchange;
+    /// this wrapper owns C error publication and state-derived configuration.
+    /// # Safety
+    /// For admitted positive lengths, non-null query/answer pointers designate
+    /// respectively readable query bytes and an exclusive writable answer range,
+    /// with no overlap. Owned C callers may be canceled during DNS I/O and must
+    /// register cleanup for their own resources that require retirement.
+    #[inline(never)]
+    #[no_mangle]
+    pub unsafe extern "C" fn __res_send(
+        query: *const u8,
+        query_length: c_int,
+        answer: *mut u8,
+        answer_length: c_int,
+    ) -> c_int {
+        let minimum_answer_length = if cfg!(crabc_x86_owned_runtime) { 0 } else { 12 };
+        if query.is_null() || answer.is_null() || query_length < 12 || answer_length < minimum_answer_length {
+            unsafe {
+                set_errno(EINVAL);
+                set_h_errno(NO_RECOVERY);
             }
+            return -1;
         }
-        (result, outcome.last_errno)
-    };
-    #[cfg(not(crabc_x86_owned_runtime))]
-    let (result, masked_errno) = (resolver::exchange(&config, query, query_id, answer), None::<c_int>);
-    let result = match result {
-        Ok(length) => length as c_int,
-        Err(error) => {
-            unsafe { resolver_error(error) };
-            -1
-        }
-    };
-    // Raw source syscalls do not publish errno themselves at this Rust ABI
-    // boundary; preserve the batch's actual final syscall residue after any
-    // synthetic resolver status mapping.
-    if let Some(error) = masked_errno { unsafe { set_errno(error); } }
-    result
-}
+        let Some(config) = (unsafe { exchange_config() }) else {
+            unsafe {
+                set_errno(EAGAIN);
+                set_h_errno(TRY_AGAIN);
+            }
+            return -1;
+        };
+        let query = unsafe { core::slice::from_raw_parts(query, query_length as usize) };
+        let answer = unsafe { core::slice::from_raw_parts_mut(answer, answer_length as usize) };
+        let query_id = u16::from_be_bytes([query[0], query[1]]);
+        #[cfg(crabc_x86_owned_runtime)]
+        let (result, masked_errno) = {
+            // musl's `res_send` receives into 512 local bytes for a shorter caller
+            // range, copies only that range, and still returns the full reply
+            // length. The selected batch always sees its required answer capacity.
+            let mut short_reply = [0u8; 512];
+            let receive = if answer.len() < short_reply.len() { &mut short_reply[..] } else { &mut answer[..] };
+            let request = crate::x86_64_static_c_abi::owned_resolver_batch::BatchRequest::new(query, query_id, receive);
+            let batch_config = crate::x86_64_static_c_abi::owned_resolver_batch::CResolverBatchConfig::from_c_resolver(&config);
+            let outcome = unsafe { crate::x86_64_static_c_abi::owned_resolver_batch::exchange(&batch_config, crate::x86_64_static_c_abi::owned_resolver_batch::BatchRequests::one(request)) };
+            let result = outcome.result.and_then(|receipt| receipt.length(0).filter(|length| *length != 0)
+                .ok_or(resolver::ExchangeError::Transport(crabc_core::Errno::TIMEDOUT)))
+                .map_err(|error| match error {
+                    resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
+                });
+            if let Ok(&length) = result.as_ref() {
+                if answer.len() < short_reply.len() {
+                    let copied = answer.len().min(length);
+                    answer[..copied].copy_from_slice(&short_reply[..copied]);
+                }
+            }
+            (result, outcome.last_errno)
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
+        let (result, masked_errno) = (resolver::exchange(&config, query, query_id, answer), None::<c_int>);
+        let result = match result {
+            Ok(length) => length as c_int,
+            Err(error) => {
+                unsafe { resolver_error(error) };
+                -1
+            }
+        };
+        // Raw source syscalls do not publish errno themselves at this Rust ABI
+        // boundary; preserve the batch's actual final syscall residue after any
+        // synthetic resolver status mapping.
+        if let Some(error) = masked_errno { unsafe { set_errno(error); } }
+        result
+    }
+}}
 
 unsafe fn query_response(
     name: *const c_char,
@@ -954,53 +981,65 @@ unsafe fn query_response(
     }
 }
 
-#[inline(never)]
-#[no_mangle]
-pub unsafe extern "C" fn res_query(
-    name: *const c_char,
-    class: c_int,
-    type_: c_int,
-    answer: *mut u8,
-    answer_length: c_int,
-) -> c_int {
-    unsafe { query_response(name, class, type_, answer, answer_length) }
-}
+// Musl's `src/network/res_query.c` object.
+static_archive_member! { res_query_source {
+    // Musl defines this alias beside its target, in the same object.
+    core::arch::global_asm!(
+        ".weak res_search",
+        ".set res_search, res_query",
+    );
 
-#[no_mangle]
-pub unsafe extern "C" fn res_querydomain(
-    name: *const c_char,
-    domain: *const c_char,
-    class: c_int,
-    type_: c_int,
-    answer: *mut u8,
-    answer_length: c_int,
-) -> c_int {
-    if domain.is_null() || unsafe { domain.read() } == 0 {
-        return unsafe { query_response(name, class, type_, answer, answer_length) };
+    #[inline(never)]
+    #[no_mangle]
+    pub unsafe extern "C" fn res_query(
+        name: *const c_char,
+        class: c_int,
+        type_: c_int,
+        answer: *mut u8,
+        answer_length: c_int,
+    ) -> c_int {
+        unsafe { query_response(name, class, type_, answer, answer_length) }
     }
-    let mut combined = [0 as c_char; 256];
-    let Some(name_length) = (unsafe { c_string_length(name, 254) }) else {
-        unsafe { set_errno(EINVAL) };
-        return -1;
-    };
-    let Some(domain_length) = (unsafe { c_string_length(domain, 254) }) else {
-        unsafe { set_errno(EINVAL) };
-        return -1;
-    };
-    let separator = usize::from(name_length != 0 && unsafe { name.add(name_length - 1).read() } != b'.' as c_char);
-    if name_length.saturating_add(separator).saturating_add(domain_length) >= combined.len() {
-        unsafe { set_errno(EMSGSIZE) };
-        return -1;
-    }
-    unsafe {
-        core::ptr::copy_nonoverlapping(name, combined.as_mut_ptr(), name_length);
-        if separator != 0 {
-            combined[name_length] = b'.' as c_char;
+}}
+
+// Musl's `src/network/res_querydomain.c` object.
+static_archive_member! { res_querydomain_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn res_querydomain(
+        name: *const c_char,
+        domain: *const c_char,
+        class: c_int,
+        type_: c_int,
+        answer: *mut u8,
+        answer_length: c_int,
+    ) -> c_int {
+        if domain.is_null() || unsafe { domain.read() } == 0 {
+            return unsafe { query_response(name, class, type_, answer, answer_length) };
         }
-        core::ptr::copy_nonoverlapping(domain, combined.as_mut_ptr().add(name_length + separator), domain_length + 1);
+        let mut combined = [0 as c_char; 256];
+        let Some(name_length) = (unsafe { c_string_length(name, 254) }) else {
+            unsafe { set_errno(EINVAL) };
+            return -1;
+        };
+        let Some(domain_length) = (unsafe { c_string_length(domain, 254) }) else {
+            unsafe { set_errno(EINVAL) };
+            return -1;
+        };
+        let separator = usize::from(name_length != 0 && unsafe { name.add(name_length - 1).read() } != b'.' as c_char);
+        if name_length.saturating_add(separator).saturating_add(domain_length) >= combined.len() {
+            unsafe { set_errno(EMSGSIZE) };
+            return -1;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(name, combined.as_mut_ptr(), name_length);
+            if separator != 0 {
+                combined[name_length] = b'.' as c_char;
+            }
+            core::ptr::copy_nonoverlapping(domain, combined.as_mut_ptr().add(name_length + separator), domain_length + 1);
+        }
+        unsafe { query_response(combined.as_ptr(), class, type_, answer, answer_length) }
     }
-    unsafe { query_response(combined.as_ptr(), class, type_, answer, answer_length) }
-}
+}}
 
 unsafe fn hosts_lookup(
     name: *const c_char,
@@ -1256,86 +1295,90 @@ unsafe fn join_domain(name: *const c_char, suffix: *const c_char, output: &mut [
     true
 }
 
-/// Resolve numeric, `/etc/hosts`, then configured A/AAAA DNS names into the
-/// C-owned `addrinfo` pages released by `freeaddrinfo`.
+// Musl's `src/network/getaddrinfo.c` object.
 #[cfg(not(crabc_x86_owned_runtime))]
-#[no_mangle]
-pub unsafe extern "C" fn getaddrinfo(
-    name: *const c_char,
-    service: *const c_char,
-    hints: *const CabiAddrInfo,
-    result: *mut *mut CabiAddrInfo,
-) -> c_int {
-    if result.is_null() {
-        return EAI_SYSTEM;
-    }
-    unsafe { result.write(core::ptr::null_mut()) };
-    if name.is_null() {
-        return unsafe { numeric_netdb::numeric_getaddrinfo(name, service, hints, result) };
-    }
-    let (flags, family, socktype, protocol) = if hints.is_null() {
-        (0, AF_UNSPEC, 0, 0)
-    } else {
-        unsafe { ((*hints).flags, (*hints).family, (*hints).socktype, (*hints).protocol) }
-    };
-    if flags & !AI_SUPPORTED != 0 {
-        return EAI_BADFLAGS;
-    }
-    if family != AF_UNSPEC && family != AF_INET && family != AF_INET6 {
-        return EAI_FAMILY;
-    }
-    let port = match unsafe { numeric_netdb::parse_numeric_service(service) } {
-        Some(port) => port,
-        None if flags & AI_NUMERICSERV != 0 => return EAI_NONAME,
-        None => return EAI_SERVICE,
-    };
-    let (choices, count) = match numeric_netdb::service_choices(socktype, protocol) {
-        Ok(value) => value,
-        Err(error) => return error,
-    };
-    let choices = &choices[..count];
-    if unsafe { numeric_netdb::parse_numeric_node(name, family, flags) }.is_some() {
-        return unsafe { numeric_netdb::numeric_getaddrinfo(name, service, hints, result) };
-    }
-    if flags & AI_NUMERICHOST != 0 {
-        unsafe { set_h_errno(HOST_NOT_FOUND) };
-        return EAI_NONAME;
-    }
-    if flags & AI_ADDRCONFIG != 0 {
-        // The selected C resolver has no interface snapshot policy.  Keep
-        // this explicit instead of pretending that an ambient route lookup
-        // could decide the public result.
-        return EAI_BADFLAGS;
-    }
-    let mut first = core::ptr::null_mut();
-    let mut last = core::ptr::null_mut();
-    let resolved = unsafe { resolve_symbolic(name, family, choices, port, flags, &mut first, &mut last) };
-    match resolved {
-        Ok(true) => {
-            unsafe { result.write(first) };
-            0
+static_archive_member! { getaddrinfo_source {
+    /// Resolve numeric, `/etc/hosts`, then configured A/AAAA DNS names into the
+    /// C-owned `addrinfo` pages released by `freeaddrinfo`.
+    #[cfg(not(crabc_x86_owned_runtime))]
+    #[no_mangle]
+    pub unsafe extern "C" fn getaddrinfo(
+        name: *const c_char,
+        service: *const c_char,
+        hints: *const CabiAddrInfo,
+        result: *mut *mut CabiAddrInfo,
+    ) -> c_int {
+        if result.is_null() {
+            return EAI_SYSTEM;
         }
-        Ok(false) => {
-            unsafe { numeric_netdb::freeaddrinfo(first) };
-            match unsafe { current_h_errno() } {
-                TRY_AGAIN => EAI_AGAIN,
-                NO_RECOVERY => EAI_FAIL,
-                _ => EAI_NONAME,
+        unsafe { result.write(core::ptr::null_mut()) };
+        if name.is_null() {
+            return unsafe { numeric_netdb::numeric_getaddrinfo(name, service, hints, result) };
+        }
+        let (flags, family, socktype, protocol) = if hints.is_null() {
+            (0, AF_UNSPEC, 0, 0)
+        } else {
+            unsafe { ((*hints).flags, (*hints).family, (*hints).socktype, (*hints).protocol) }
+        };
+        if flags & !AI_SUPPORTED != 0 {
+            return EAI_BADFLAGS;
+        }
+        if family != AF_UNSPEC && family != AF_INET && family != AF_INET6 {
+            return EAI_FAMILY;
+        }
+        let port = match unsafe { numeric_netdb::parse_numeric_service(service) } {
+            Some(port) => port,
+            None if flags & AI_NUMERICSERV != 0 => return EAI_NONAME,
+            None => return EAI_SERVICE,
+        };
+        let (choices, count) = match numeric_netdb::service_choices(socktype, protocol) {
+            Ok(value) => value,
+            Err(error) => return error,
+        };
+        let choices = &choices[..count];
+        if unsafe { numeric_netdb::parse_numeric_node(name, family, flags) }.is_some() {
+            return unsafe { numeric_netdb::numeric_getaddrinfo(name, service, hints, result) };
+        }
+        if flags & AI_NUMERICHOST != 0 {
+            unsafe { set_h_errno(HOST_NOT_FOUND) };
+            return EAI_NONAME;
+        }
+        if flags & AI_ADDRCONFIG != 0 {
+            // The selected C resolver has no interface snapshot policy.  Keep
+            // this explicit instead of pretending that an ambient route lookup
+            // could decide the public result.
+            return EAI_BADFLAGS;
+        }
+        let mut first = core::ptr::null_mut();
+        let mut last = core::ptr::null_mut();
+        let resolved = unsafe { resolve_symbolic(name, family, choices, port, flags, &mut first, &mut last) };
+        match resolved {
+            Ok(true) => {
+                unsafe { result.write(first) };
+                0
+            }
+            Ok(false) => {
+                unsafe { numeric_netdb::freeaddrinfo(first) };
+                match unsafe { current_h_errno() } {
+                    TRY_AGAIN => EAI_AGAIN,
+                    NO_RECOVERY => EAI_FAIL,
+                    _ => EAI_NONAME,
+                }
+            }
+            Err(error) => {
+                unsafe { numeric_netdb::freeaddrinfo(first) };
+                if error == ENOMEM {
+                    EAI_MEMORY
+                } else if error == EINVAL {
+                    EAI_FAIL
+                } else {
+                    unsafe { set_errno(error) };
+                    EAI_SYSTEM
+                }
             }
         }
-        Err(error) => {
-            unsafe { numeric_netdb::freeaddrinfo(first) };
-            if error == ENOMEM {
-                EAI_MEMORY
-            } else if error == EINVAL {
-                EAI_FAIL
-            } else {
-                unsafe { set_errno(error) };
-                EAI_SYSTEM
-            }
-        }
     }
-}
+}}
 
 // Keep the imported CNAME record type in the source-level boundary.  The
 // first package preserves a CNAME's canonical name only when it accompanies

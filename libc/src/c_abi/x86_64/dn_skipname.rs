@@ -15,39 +15,42 @@
 
 use core::ffi::c_int;
 
-/// Advance across one caller-owned encoded DNS name without following pointers.
-///
-/// # Safety
-///
-/// `source..end` must delimit one readable byte range in one allocation. As in
-/// musl's C ABI, the function may read the first byte of each encoded label and
-/// has no ownership, alignment, resolver-state, or packet-I/O contract.
-#[no_mangle]
-#[inline(never)]
-pub unsafe extern "C" fn dn_skipname(source: *const u8, end: *const u8) -> c_int {
-    let start = source as usize;
-    let limit = end as usize;
-    let mut cursor = start;
+// Musl's `src/network/dn_skipname.c` object.
+static_archive_member! { dn_skipname_source {
+    /// Advance across one caller-owned encoded DNS name without following pointers.
+    ///
+    /// # Safety
+    ///
+    /// `source..end` must delimit one readable byte range in one allocation. As in
+    /// musl's C ABI, the function may read the first byte of each encoded label and
+    /// has no ownership, alignment, resolver-state, or packet-I/O contract.
+    #[no_mangle]
+    #[inline(never)]
+    pub unsafe extern "C" fn dn_skipname(source: *const u8, end: *const u8) -> c_int {
+        let start = source as usize;
+        let limit = end as usize;
+        let mut cursor = start;
 
-    while cursor < limit {
-        let label = unsafe { core::ptr::read(cursor as *const u8) };
-        if label == 0 {
-            return cursor.wrapping_sub(start).wrapping_add(1) as c_int;
-        }
-        if label >= 192 {
-            return if cursor.wrapping_add(1) < limit {
-                cursor.wrapping_sub(start).wrapping_add(2) as c_int
-            } else {
-                -1
-            };
+        while cursor < limit {
+            let label = unsafe { core::ptr::read(cursor as *const u8) };
+            if label == 0 {
+                return cursor.wrapping_sub(start).wrapping_add(1) as c_int;
+            }
+            if label >= 192 {
+                return if cursor.wrapping_add(1) < limit {
+                    cursor.wrapping_sub(start).wrapping_add(2) as c_int
+                } else {
+                    -1
+                };
+            }
+
+            let advance = label as usize + 1;
+            if limit.wrapping_sub(cursor) < advance {
+                return -1;
+            }
+            cursor = cursor.wrapping_add(advance);
         }
 
-        let advance = label as usize + 1;
-        if limit.wrapping_sub(cursor) < advance {
-            return -1;
-        }
-        cursor = cursor.wrapping_add(advance);
+        -1
     }
-
-    -1
-}
+}}
