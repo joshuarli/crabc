@@ -70,6 +70,8 @@ pub enum NativeProcessDestroyError {
 enum RetainedDestroyFailure {
     Storage(crabc_core::Errno),
     ChildSubprocess(crate::subproc::lifecycle::NativeSubprocessError),
+    /// A non-main Heap of the main subprocess could not be force-destroyed.
+    MainSubprocessHeaps,
     Subprocess(ProcessMainInitError),
     Heap(MainHeapDestroyError),
     Metadata(crate::meta::MetaCloseError),
@@ -225,6 +227,12 @@ impl NativePreparedProcessDestroy {
         unsafe { crate::subproc::lifecycle::destroy_all_native_children_terminal() }.map_err(|error| {
             owners.failure = Some(RetainedDestroyFailure::ChildSubprocess(error)); NativeProcessDestroyError::Subprocess
         })?;
+        // Source subproc.c:212-225 then force-destroys the main subprocess's
+        // non-main Heaps before its main Heap.
+        if !unsafe { crate::subproc::main_heaps::destroy_all_terminal() } {
+            owners.failure = Some(RetainedDestroyFailure::MainSubprocessHeaps);
+            return Err(NativeProcessDestroyError::Heap);
+        }
         let tracking_len = {
             let mut guard = self.heap.lock_heap().map_err(|_| NativeProcessDestroyError::Heap)?;
             unsafe { guard.heap_mut().terminal_tracking_len() }.map_err(|error| {
@@ -890,6 +898,76 @@ mod tests {
                     stop.store(true, Ordering::Release);
                     worker.join().expect("the member's later calls are refused");
                 });
+            },
+        );
+    }
+
+    /// Source `mi_subproc_unsafe_destroy` force-destroys every non-main Heap
+    /// of the main subprocess before its main Heap. The initial thread keeps
+    /// a Heap with a live arena block and a live OS-backed block; a parked
+    /// worker keeps its own Theap for that Heap with a live block and a
+    /// second Heap of its own. Process destruction destroys both Heaps with
+    /// their pages, main then unlinks as the only list member, and the
+    /// worker's later calls are refused.
+    #[test]
+    fn physical_destroy_destroys_live_main_subprocess_heaps() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::destroy::tests::physical_destroy_destroys_live_main_subprocess_heaps",
+            || {
+                use crate::subproc::main_heaps::{native_heap_allocate, native_heap_new};
+                unsafe { std::env::set_var("mimalloc_destroy_on_exit", "1"); }
+                assert!(test_initialize_process_from_host_environment(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
+                assert!(prepare_native_later_thread_arena());
+                let NativePageAllocationResult::Allocated(first) = native_allocate_aligned(48, 16, false)
+                    else { panic!("initial live client"); };
+                let main = crate::subproc::MainSubprocess::global();
+                let shared = native_heap_new().expect("the initial thread creates a Heap");
+                let arena_block = unsafe { native_heap_allocate(shared, 200, None, false) }.expect("an arena block");
+                let os_block = unsafe { native_heap_allocate(shared, 1 << 20, Some((2 << 20, 0)), false) }
+                    .expect("an OS-backed block");
+                unsafe { arena_block.as_ptr().write_bytes(0x2c, 200); os_block.as_ptr().write_bytes(0x2d, 64); }
+                let shared_address = shared.as_ptr().addr();
+                let before = main.statistics().final_output_snapshot();
+                let descriptor = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+                let ready = core::sync::atomic::AtomicBool::new(false);
+                let stop = core::sync::atomic::AtomicBool::new(false);
+                std::thread::scope(|scope| {
+                    let _release_worker = ReleaseFlag(&stop);
+                    let worker = scope.spawn(|| {
+                        let _publish_failure = ReleaseFlag(&ready);
+                        let current = admission::current_native_allocator_thread_descriptor();
+                        descriptor.store(current.as_ptr(), Ordering::Release);
+                        assert!(unsafe { admission::register_current_native_allocator_worker_descriptor(current) });
+                        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                        let shared = NonNull::new(shared_address as *mut crate::types::Heap).unwrap();
+                        let block = unsafe { native_heap_allocate(shared, 64, None, false) }.expect("the worker's block");
+                        let own = native_heap_new().expect("the worker creates a Heap");
+                        let own_block = unsafe { native_heap_allocate(own, 3000, None, false) }.expect("a block");
+                        unsafe { block.as_ptr().write_bytes(0x3e, 64); own_block.as_ptr().write_bytes(0x3f, 3000); }
+                        ready.store(true, Ordering::Release);
+                        while !stop.load(Ordering::Acquire) { std::thread::yield_now(); }
+                        assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
+                    });
+                    while !ready.load(Ordering::Acquire) { std::thread::yield_now(); }
+                    let request = capture_native_process_destroy_request().expect("source capture precedes registry pin");
+                    let registry = PinnedFixtureRegistry {
+                        initial: admission::native_allocator_initial_thread_descriptor().unwrap(), worker: &descriptor,
+                    };
+                    let prepared = unsafe { prepare_native_process_destroy(request, &registry) }
+                        .expect("both owners transfer");
+                    assert_eq!(unsafe { prepared.finish() }, Ok(()), "the non-main Heaps are destroyed before main");
+                    let after = main.statistics().final_output_snapshot();
+                    // Both non-main Heaps, then main, leave the list.
+                    assert_eq!((after.heaps.total, after.heaps.current), (before.heaps.total + 1, 0));
+                    assert_eq!(main.heap_list().test_counts().0, 0);
+                    let owners = unsafe { &*DESTROY_OWNERS.0.get() };
+                    assert!(owners.failure.is_none());
+                    assert!(owners.arenas.as_ref().unwrap().is_released());
+                    assert!(!crate::process_page_map::ProcessPageMapStorage::global().test_has_published_root());
+                    stop.store(true, Ordering::Release);
+                    worker.join().expect("the worker's later calls are refused");
+                });
+                let _ = first;
             },
         );
     }

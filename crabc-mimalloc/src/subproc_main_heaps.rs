@@ -600,6 +600,90 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     }
 }
 
+/// Pinned `mi_subproc_unsafe_destroy`'s Heap walk (`subproc.c:212-225`) for
+/// the process main subprocess at process destruction: each non-main Heap is
+/// force-destroyed (`_mi_heap_force_destroy`) before the main Heap, then the
+/// destroying thread's thread-locals are released
+/// (`_mi_thread_locals_thread_done`).
+///
+/// The native entry points are closed, so, as for a child at process
+/// destruction, each Heap's per-arena page records and its image are left as
+/// live blocks on the main Heap's pages for the main-Heap destruction that
+/// follows; its Theaps leave their TLDs and Heap and are freed unless a
+/// thread's cached entry still references one (as in source). A failed step
+/// returns `false` and process destruction retains the rest.
+///
+/// # Safety
+/// Permanent terminal admission holds: no native entry point or Heap
+/// operation runs or can start, the process coordinator is still ready, and
+/// no block of a destroyed Heap is used again. The caller destroys the main
+/// Heap next.
+pub(crate) unsafe fn destroy_all_terminal() -> bool {
+    let main_subprocess = MainSubprocess::global();
+    let identity = main_subprocess.identity();
+    let Some(main_heap) = NonNull::new(main_subprocess.ready_main_heap_pointer()) else { return false };
+    let Some(binding) = binding() else { return false };
+    let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), -1);
+    // SAFETY: terminal exclusion leaves these Heaps' pages to this walk.
+    let Ok(page_map) = (unsafe { binding.page_map().page_map_for_owned_ranges() }) else { return false };
+    loop {
+        let mut next = None;
+        let visited = identity.heap_list().visit_heaps(|heap| {
+            if heap == main_heap {
+                return true;
+            }
+            next = Some(heap);
+            false
+        });
+        if visited.is_err() {
+            return false;
+        }
+        let Some(heap) = next else { break };
+        // `mi_heap_free_theaps`.
+        // SAFETY: the Heap and its Theaps are live; no thread runs on them.
+        let detached = unsafe {
+            heap.as_ref().detach_and_take_theaps(identity, |theap| {
+                heap.as_ref().merge_detached_theap_statistics(theap.as_ref());
+                theap_decref(theap);
+            })
+        };
+        // `_mi_heap_destroy_pages`.
+        // SAFETY: every Theap of the Heap is detached above.
+        if detached.is_err()
+            || !unsafe {
+                crate::single_thread::delete_non_main_heap_pages(
+                    heap, None, main_subprocess.arena_backing().registry(), page_map, &backing,
+                )
+            }
+        {
+            return false;
+        }
+        // `mi_heap_free`: the records stay live main-Heap blocks.
+        // SAFETY: the live Heap; its records are dropped, not freed.
+        if !unsafe { heap.as_ref() }.take_non_main_arena_pages(|_| true) {
+            return false;
+        }
+        // SAFETY: the Heap has no Theap or page left; its image stays a
+        // live main-Heap block.
+        if unsafe { crate::types::heap_registry::lifecycle::unlink_non_main_heap(heap, main_heap, identity) }.is_err() {
+            return false;
+        }
+    }
+    // `_mi_thread_locals_thread_done` on the destroying thread.
+    // SAFETY: the current thread's own state.
+    let state = unsafe { thread_heaps() };
+    state.cached = core::ptr::null_mut();
+    if let Some(backing) = state.backing.take() {
+        install_dynamic_backing(backing);
+    }
+    if let Some(mut owner) = state.thread_locals.take() {
+        let torn_down = owner.teardown().is_ok();
+        install_empty_dynamic_backing();
+        return torn_down;
+    }
+    true
+}
+
 /// `mi_thread_theaps_done` (`init.c:377-421`) and
 /// `_mi_thread_locals_thread_done` for the calling thread's Theaps of
 /// non-main Heaps of the process main subprocess, before the thread's own
