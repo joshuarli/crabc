@@ -1715,8 +1715,8 @@ impl<'storage> BitmapView<'storage> {
                     subprocess.bitmap_statistics().busy_wait();
                 }
                 while previous & mask == 0 {
-                    // `sched_yield` is the Linux no-libc equivalent of the
-                    // pinned `_mi_prim_thread_yield` busy-wait backoff. Its
+                    // The pinned `_mi_prim_thread_yield` busy-wait backoff
+                    // (source `sleep(0)`, one zero nanosleep). Its
                     // failure cannot turn a required quiescence wait into a
                     // successful clear, so retain the loop either way.
                     let _ = crate::os::thread_yield();

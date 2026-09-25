@@ -4898,15 +4898,28 @@ pub(crate) fn test_os_numa_node_with_raw(
     os_numa_node_with_raw(cache, raw_count, raw_current)
 }
 
-/// Yields the calling task through Linux's direct scheduler primitive.
+/// Performs the Unix source's `_mi_prim_thread_yield`, which is `sleep(0)`.
 ///
-/// The Unix source's `sleep(0)` is only a best-effort yield request. Linux's
-/// direct `sched_yield` is the corresponding no-libc kernel primitive and
-/// preserves any kernel error for a later synchronization policy owner.
+/// Pinned musl implements `sleep(0)` as one `nanosleep` of a zero interval,
+/// so this issues exactly that direct syscall rather than substituting
+/// `sched_yield`: a zero relative sleep passes through the kernel's timer
+/// path (and its timer slack), which is not the same scheduling request as a
+/// yield. Any kernel error is returned for the caller, which, like the
+/// source's ignored `sleep` result, discards it.
 #[inline]
 pub(crate) fn thread_yield() -> Result<()> {
     fault_before(FaultPoint::ThreadYield)?;
-    crabc_core::thread::sched_yield()
+    let request: [i64; 2] = [0, 0];
+    let mut remaining: [i64; 2] = [0, 0];
+    // SAFETY: both arrays are live, 8-byte aligned, 16-byte Linux
+    // `struct timespec` images for this call; the kernel reads `request` and
+    // writes `remaining` only on EINTR.
+    unsafe {
+        crabc_core::time::nanosleep_raw(
+            request.as_ptr().cast::<u8>(),
+            remaining.as_mut_ptr().cast::<u8>(),
+        )
+    }
 }
 
 /// Fills a caller-owned buffer through Linux `getrandom(GRND_NONBLOCK)`.
@@ -10210,7 +10223,7 @@ mod tests {
         assert!(thread_id() > 0);
         assert_ne!(thread_pointer_identity(), 0);
         let before = monotonic_milliseconds().expect("CLOCK_MONOTONIC");
-        thread_yield().expect("sched_yield");
+        thread_yield().expect("zero nanosleep");
         let after = monotonic_milliseconds().expect("CLOCK_MONOTONIC");
         assert!(after >= before);
 
@@ -10263,7 +10276,7 @@ mod tests {
         mapping.unmap().expect("the selected map is released explicitly");
 
         let clock_before = monotonic_milliseconds().expect("CLOCK_MONOTONIC");
-        thread_yield().expect("the direct Linux yield succeeds");
+        thread_yield().expect("the direct zero nanosleep succeeds");
         let clock_after = monotonic_milliseconds().expect("CLOCK_MONOTONIC");
         let mut zero_entropy = [0u8; 0];
         let mut sixteen_entropy = [0u8; 16];
