@@ -31,6 +31,7 @@ engine = gate.engine
 
 from test_perf_integrated_x86_64 import IntegratedReaderTests  # noqa: E402,F401
 from test_source_convergence import SourceConvergenceTests  # noqa: E402,F401
+from test_divergence_evidence import DivergenceEvidenceTests  # noqa: E402,F401
 from test_perf_engine_x86_64 import (  # noqa: E402,F401
     FixturePeakHookTests, HostClassificationTests, PeakHookABTests, QualifiedReportTests)
 
