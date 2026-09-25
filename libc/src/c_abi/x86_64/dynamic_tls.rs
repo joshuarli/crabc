@@ -54,9 +54,13 @@ pub(super) unsafe fn attach_initial_thread() -> bool {
 
 pub(super) fn is_ready() -> bool { MAIN_POINTER.load(Ordering::Acquire) != 0 }
 
+/// Whether `pointer` (the caller's `%fs:0`) is the initial thread's.
+///
+/// As musl's `pthread_self`, the thread pointer alone identifies the caller;
+/// see the static owner's predicate. No gettid is issued, so TSD and pthread
+/// self-queries stay syscall-free. Fork adoption updates the pointer.
 pub(super) fn is_initial_thread_pointer(pointer: *mut u8) -> bool {
     !pointer.is_null() && pointer as usize == MAIN_POINTER.load(Ordering::Acquire)
-        && unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) } == MAIN_ID.load(Ordering::Relaxed) as i64
 }
 
 /// Copy the recorded initial-task TID for one opaque initial-thread target.

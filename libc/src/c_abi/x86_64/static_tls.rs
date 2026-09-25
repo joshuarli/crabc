@@ -252,29 +252,22 @@ pub(super) fn is_ready() -> bool {
     STATIC_INITIAL_TLS_STATE.load(Ordering::Acquire) == TLS_STATE_READY
 }
 
-/// Whether one `%fs:0`/Linux-TID identity is the bootstrapped process-main thread.
+/// Whether one `%fs:0` identity is the bootstrapped process-main thread.
 ///
 /// This is a private selected-TSD and CPU-clock self discriminator only. The
 /// Static Initial TLS v1 owner still exposes no dereferenceable TCB or general
-/// thread registry. Requiring the task ID prevents a raw foreign task that
-/// inherits or copies the main FS base from accessing the selected main TSD
-/// table or being admitted as the current main CPU-clock caller. The separate
-/// CPU-clock target lookup intentionally resolves only a saved, live main
-/// handle without changing this current-caller predicate.
+/// thread registry. As musl's `pthread_self`, it identifies the caller by its
+/// thread pointer alone: it issues no gettid, so the TSD and pthread paths
+/// that consult it stay syscall-free. A raw `clone` task that shares the
+/// main FS base without `CLONE_SETTLS` is therefore indistinguishable from
+/// the main thread, exactly as it is in musl; such a task may use only the
+/// async-signal-safe subset. Fork adoption updates the recorded pointer. The
+/// separate CPU-clock target lookup resolves only a saved, live main handle.
 #[inline]
 pub(super) fn is_initial_thread_pointer(thread_pointer: *mut u8) -> bool {
-    if thread_pointer.is_null()
-        || !is_ready()
-        || thread_pointer as usize
-            != STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.load(Ordering::Acquire)
-    {
-        return false;
-    }
-    let current_thread_id = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
-    current_thread_id > 0
-        && current_thread_id <= i64::from(c_int::MAX)
-        && current_thread_id as c_int
-            == STATIC_INITIAL_TLS_MAIN_THREAD_ID.load(Ordering::Acquire)
+    !thread_pointer.is_null()
+        && is_ready()
+        && thread_pointer as usize == STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.load(Ordering::Acquire)
 }
 
 /// Copy the recorded initial-task TID for one opaque initial-thread target.
