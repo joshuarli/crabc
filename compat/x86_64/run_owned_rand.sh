@@ -470,8 +470,11 @@ def run(arguments, *, text=True):
 members = run(['ar', 't', str(archive)]).stdout.splitlines()
 if not members or len(set(members)) != len(members):
     raise SystemExit('rand archive member roster is empty or duplicated')
-if any('rand_pcg' in member or 'rand_core' in member for member in members):
-    raise SystemExit('rand dependency escaped the selected fat-LTO CGU as a separate archive member')
+# The installed archive emits one member per codegen unit, so the rand_core
+# and rand_pcg crates keep their own members. The rand provider must still be
+# self-contained: it may not reference anything those members define.
+dependency_members = [member for member in members if 'rand_pcg' in member or 'rand_core' in member]
+owners_dependencies: set[str] = set()
 owners = []
 for index, member in enumerate(members):
     object_path = work / f'rand-provider-member-{index}.o'
@@ -488,11 +491,17 @@ for index, member in enumerate(members):
             types[fields[2]] = fields[1]
     if types:
         owners.append((member, object_path, types))
+    if member in dependency_members:
+        dependency_symbols = {line.split()[-1] for line in defined.splitlines() if line.split()}
+        owners_dependencies.update(dependency_symbols)
 if len(owners) != 1 or owners[0][2] != {'rand': 'T', 'srand': 'T'}:
     raise SystemExit(f'rand exports do not have one strong archive owner: {[(name, types) for name, _, types in owners]!r}')
 member, object_path, _ = owners[0]
 undefined = run(['nm', '--undefined-only', str(object_path)]).stdout
 (work / 'rand-provider-undefined.txt').write_text(undefined, encoding='utf-8')
+escaped = sorted({line.split()[-1] for line in undefined.splitlines() if line.split()} & owners_dependencies)
+if escaped:
+    raise SystemExit(f'rand provider depends on rand_core/rand_pcg archive members: {escaped!r}')
 defined = run(['nm', '-g', '--defined-only', str(object_path)]).stdout
 (work / 'rand-provider-defined.txt').write_text(defined, encoding='utf-8')
 if re.search(r'__rust_(?:alloc|dealloc|realloc)|__rdl_', undefined + defined):

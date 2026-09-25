@@ -167,7 +167,7 @@ class OwnedRandContracts(unittest.TestCase):
             "run_static_concurrency", "run_dynamic_concurrency", "run_dso_shared_stream",
             "ORACLE_SCENARIOS=(core serialized-workers fork)",
             "candidate-concurrency", "rand-provider-rand.objdump", "application_dsos",
-            "rand dependency escaped the selected fat-LTO CGU",
+            "rand provider depends on rand_core/rand_pcg archive members",
         ):
             self.assertIn(boundary, source)
         self.assertNotIn("candidate-concurrency oracle", source)
