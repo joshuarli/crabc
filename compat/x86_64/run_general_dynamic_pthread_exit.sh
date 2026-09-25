@@ -41,7 +41,7 @@ import time
 work = Path(sys.argv[1])
 mode = sys.argv[2]
 expected = (work / 'expected.stdout').read_bytes()
-for scenario, survivors in [('single', 0), ('simultaneous', 8), ('cancel-main', 1), ('cancel-worker', 0), ('orphan-main', 1), ('orphan-worker', 0)]:
+for scenario, survivors in [('single', 0), ('simultaneous', 8), ('cancel-main', 1), ('join-main', 0), ('cancel-worker', 0), ('orphan-main', 1), ('orphan-worker', 0)]:
     for product in ['oracle', 'candidate']:
         command = ([str(work / 'oracle' / f'consumer-{mode}'), scenario] if product == 'oracle'
             else ['chroot', str(work / 'execution-root'), f'/consumer-{mode}', scenario])
@@ -83,4 +83,4 @@ for scenario, survivors in [('single', 0), ('simultaneous', 8), ('cancel-main', 
 PYRUN
 
 done
-printf 'general dynamic pthread exit: PASS (both installed entries, DSO TLS/fini, simultaneous last exit, main/worker cancellation, orphan FILE locks); evidence: %s\n' "$work"
+printf 'general dynamic pthread exit: PASS (both installed entries, DSO TLS/fini, simultaneous last exit, main/worker cancellation, worker join of the exited initial thread, orphan FILE locks); evidence: %s\n' "$work"

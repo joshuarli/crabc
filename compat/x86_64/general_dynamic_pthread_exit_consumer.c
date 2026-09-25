@@ -23,6 +23,7 @@ static int count;
 static int cancel_initial;
 static int cancel_worker;
 static int orphan_only;
+static int join_initial;
 static int channel[2];
 static FILE *orphaned;
 static char orphaned_buffer[128];
@@ -70,11 +71,19 @@ static void *worker(void *opaque)
     }
     if (cancel_initial)
         require(pthread_cancel(initial_thread) == 0);
-    /* The external parent writes only after /proc reports the initial task
-     * as a zombie. Waiting on ordinary stdin preserves a genuine installed
-     * product boundary and requires no /proc mount inside its sealed root. */
-    char release;
-    require(read(STDIN_FILENO, &release, 1) == 1 && release == 'R');
+    if (join_initial) {
+        /* POSIX lets any thread join the joinable initial thread; the join
+         * returns its pthread_exit value once it has terminated. */
+        void *result = &count;
+        require(pthread_join(initial_thread, &result) == 0 && result == (void *)&initial);
+    } else {
+        /* The external parent writes only after /proc reports the initial
+         * task as a zombie. Waiting on ordinary stdin preserves a genuine
+         * installed product boundary and requires no /proc mount inside its
+         * sealed root. */
+        char release;
+        require(read(STDIN_FILENO, &release, 1) == 1 && release == 'R');
+    }
     require(atomic_load(&initial.cleanup) == 1);
     if (orphan_only) {
         require(ftrylockfile(orphaned) != 0);
@@ -106,6 +115,9 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1], "cancel-worker")) {
         count = 1;
         cancel_worker = 1;
+    } else if (!strcmp(argv[1], "join-main")) {
+        count = 1;
+        join_initial = 1;
     } else if (!strcmp(argv[1], "orphan-main")) {
         count = 1;
         orphan_only = 1;
@@ -158,6 +170,6 @@ int main(int argc, char **argv)
         (void)read(channel[0], &byte, 1);
         _Exit(93);
     }
-    pthread_exit(NULL);
+    pthread_exit(join_initial ? (void *)&initial : NULL);
     pthread_cleanup_pop(0);
 }

@@ -143,6 +143,7 @@ const EINTR: c_int = 4;
 const EINVAL: c_int = 22;
 const EBUSY: c_int = 16;
 const ETIMEDOUT: c_int = 110;
+const EDEADLK: c_int = 35;
 const ECANCELED: c_int = 125;
 const ENOTSUP: c_int = 95;
 const LINUX_ERRNO_MAX: i64 = 4_095;
@@ -674,6 +675,18 @@ const SELECTED_WORKER_REGISTRY_WRITER: u32 = 1 << 31;
 // process lifetime, including after this initial Linux task has exited.
 static SELECTED_INITIAL_THREAD_TASK_STATE: AtomicU8 =
     AtomicU8::new(SelectedRuntimeTaskState::ACTIVE);
+
+// Musl's initial thread is joinable like any other: its `detach_state`
+// futex leaves `DT_JOINABLE` for `DT_EXITED` immediately before a non-final
+// pthread_exit reaches SYS_exit, and pthread_join waits on that word. The
+// initial task has no worker control, so its join state lives here: the
+// exit word is 1 until that same point, the claim admits one joiner, and the
+// result carries the pthread_exit or thrd_exit value.
+static SELECTED_INITIAL_THREAD_RUNNING: AtomicI32 = AtomicI32::new(1);
+static SELECTED_INITIAL_THREAD_JOIN_CLAIMED: AtomicU8 = AtomicU8::new(0);
+static SELECTED_INITIAL_THREAD_RESULT: AtomicUsize = AtomicUsize::new(0);
+static SELECTED_INITIAL_THREAD_RESULT_KIND: AtomicU8 = AtomicU8::new(0);
+const FUTEX_WAKE: i64 = 1;
 
 const _: () = {
     assert!(size_of::<AtomicI32>() == size_of::<c_int>());
@@ -3181,6 +3194,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         unsafe { pthread_cancel::orphan_current_stdio_locks() };
         unsafe { pthread_identity::clear_current_selected_cancellation_state() };
         release_thread_list_for_task_exit();
+        publish_selected_initial_thread_exit(result);
         // SAFETY: another selected worker remains. End only this initial task;
         // the final worker takes the ordinary process-exit path above.
         unsafe { exit_selected_linux_task() }
@@ -3406,6 +3420,29 @@ unsafe fn timed_selected_worker_futex_wait(
     child_tid: c_int,
     absolute_timeout: *const RawTimespec,
 ) -> c_int {
+    // SAFETY: the claimed control keeps this exact child-TID word mapped.
+    unsafe {
+        timed_selected_futex_wait(
+            core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>(),
+            child_tid,
+            absolute_timeout,
+        )
+    }
+}
+
+/// [`timed_selected_worker_futex_wait`] over any shared futex word; a null
+/// deadline is the untimed cancellable wait.
+///
+/// # Safety
+///
+/// `word` stays mapped for the call, and `absolute_timeout`, when non-null,
+/// names readable native x86-64 `struct timespec` storage.
+#[inline(always)]
+unsafe fn timed_selected_futex_wait(
+    word: *mut c_int,
+    expected: c_int,
+    absolute_timeout: *const RawTimespec,
+) -> c_int {
     let mut relative_timeout = RawTimespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -3447,15 +3484,15 @@ unsafe fn timed_selected_worker_futex_wait(
         core::ptr::addr_of!(relative_timeout)
     };
 
-    // SAFETY: the claimed control keeps this exact child-TID word mapped,
-    // while the local relative timeout remains live for the syscall duration.
+    // SAFETY: the caller keeps this exact futex word mapped, while the
+    // local relative timeout remains live for the syscall duration.
     #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         pthread_cancel::syscall_cp(
             raw_syscall::SYS_FUTEX,
-            core::ptr::addr_of_mut!((*control).child_tid) as usize as i64,
+            word as usize as i64,
             FUTEX_WAIT,
-            i64::from(child_tid),
+            i64::from(expected),
             timeout as usize as i64,
             0,
             0,
@@ -3465,9 +3502,9 @@ unsafe fn timed_selected_worker_futex_wait(
     let result = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_FUTEX,
-            core::ptr::addr_of_mut!((*control).child_tid) as usize as i64,
+            word as usize as i64,
             FUTEX_WAIT,
-            i64::from(child_tid),
+            i64::from(expected),
             timeout as usize as i64,
         )
     };
@@ -3482,6 +3519,85 @@ unsafe fn timed_selected_worker_futex_wait(
     }
 }
 
+/// Publish the non-final initial task's result, then leave its joinable state
+/// and wake a joiner, as musl's pthread_exit stores `DT_EXITED` and wakes its
+/// `detach_state` futex just before SYS_exit. Nothing after this touches
+/// state a joiner may observe.
+fn publish_selected_initial_thread_exit(result: SelectedWorkerResult) {
+    SELECTED_INITIAL_THREAD_RESULT.store(result.encode(), Ordering::Relaxed);
+    SELECTED_INITIAL_THREAD_RESULT_KIND.store(result.kind().encode(), Ordering::Relaxed);
+    SELECTED_INITIAL_THREAD_RUNNING.store(0, Ordering::Release);
+    // SAFETY: the static word stays mapped for the process lifetime.
+    unsafe {
+        raw_syscall::syscall3(
+            raw_syscall::SYS_FUTEX,
+            SELECTED_INITIAL_THREAD_RUNNING.as_ptr() as usize as i64,
+            FUTEX_WAKE,
+            i64::from(c_int::MAX),
+        )
+    };
+}
+
+/// Cancellation of a joiner waiting for the initial thread leaves it joinable.
+#[cfg(crabc_x86_owned_runtime)]
+unsafe extern "C" fn cancel_selected_initial_thread_join(_argument: *mut c_void) {
+    SELECTED_INITIAL_THREAD_JOIN_CLAIMED.store(0, Ordering::Release);
+}
+
+/// Join the initial thread: claim it, wait on its exit word with the same
+/// cancellable (or GNU-timed) futex shape as a worker join, and return its
+/// exit result. The initial task's stack and TLS stay mapped for the process
+/// lifetime, so nothing is reclaimed.
+#[inline(always)]
+unsafe fn join_selected_initial_thread(
+    wait: SelectedWorkerJoinWait,
+    #[cfg(crabc_x86_owned_runtime)] cleanup: *mut pthread_cancel::CleanupNode,
+    #[cfg(crabc_x86_owned_runtime)] registered: &mut bool,
+    #[cfg(crabc_x86_owned_runtime)] original_state: c_int,
+) -> Result<SelectedWorkerJoinResult, c_int> {
+    if current_is_selected_initial_thread() {
+        return Err(EDEADLK);
+    }
+    if SELECTED_INITIAL_THREAD_JOIN_CLAIMED
+        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(EINVAL);
+    }
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe {
+        pthread_cancel::_pthread_cleanup_push(cleanup, Some(cancel_selected_initial_thread_join), core::ptr::null_mut());
+        *registered = true;
+        if original_state == JOIN_CANCEL_ENABLE { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_ENABLE, core::ptr::null_mut()); }
+    }
+    let word = SELECTED_INITIAL_THREAD_RUNNING.as_ptr();
+    while SELECTED_INITIAL_THREAD_RUNNING.load(Ordering::Acquire) != 0 {
+        let absolute_timeout = match wait {
+            SelectedWorkerJoinWait::Blocking => core::ptr::null(),
+            SelectedWorkerJoinWait::Timed(absolute_timeout) => absolute_timeout,
+        };
+        // SAFETY: the static word stays mapped; a null deadline blocks.
+        let error = unsafe { timed_selected_futex_wait(word, 1, absolute_timeout) };
+        if matches!(wait, SelectedWorkerJoinWait::Timed(_)) && (error == ETIMEDOUT || error == EINVAL) {
+            #[cfg(crabc_x86_owned_runtime)]
+            unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
+            SELECTED_INITIAL_THREAD_JOIN_CLAIMED.store(0, Ordering::Release);
+            return Err(error);
+        }
+    }
+    #[cfg(crabc_x86_owned_runtime)]
+    unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
+    let kind = match SELECTED_INITIAL_THREAD_RESULT_KIND.load(Ordering::Relaxed) {
+        SelectedWorkerResultKind::PTHREAD => SelectedWorkerResultKind::Pthread,
+        SelectedWorkerResultKind::C11_TAG => SelectedWorkerResultKind::C11,
+        _ => SelectedWorkerResultKind::Invalid,
+    };
+    Ok(SelectedWorkerJoinResult {
+        encoded_result: SELECTED_INITIAL_THREAD_RESULT.load(Ordering::Relaxed),
+        kind,
+    })
+}
+
 #[inline(always)]
 unsafe fn join_selected_worker_inner(
     thread: *mut c_void,
@@ -3492,6 +3608,17 @@ unsafe fn join_selected_worker_inner(
 ) -> Result<SelectedWorkerJoinResult, c_int> {
     if thread.is_null() {
         return Err(EINVAL);
+    }
+    if static_tls::is_initial_thread_pointer(thread.cast()) {
+        // SAFETY: forwarded join cleanup storage and cancellation state.
+        return unsafe {
+            join_selected_initial_thread(
+                wait,
+                #[cfg(crabc_x86_owned_runtime)] cleanup,
+                #[cfg(crabc_x86_owned_runtime)] registered,
+                #[cfg(crabc_x86_owned_runtime)] original_state,
+            )
+        };
     }
     // A later join boundary may reclaim already-finished detached workers,
     // but never touches a joinable worker or the handle this caller is about
