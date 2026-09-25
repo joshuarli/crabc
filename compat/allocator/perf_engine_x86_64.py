@@ -80,7 +80,10 @@ SCHEMA = 3
 KIND = "crabc-mimalloc-x86_64-engine-development-performance"
 RUST_TARGET = "x86_64-unknown-linux-musl"
 LANES = ("pinned_c", "rust_engine")
-ROW_SETS = ("architecture", "matrix")
+# `destruction` measures first-class heap and child-subprocess destruction
+# through the optional engine-api.h entries; it is separate from the matrix
+# until every backend defines them.
+ROW_SETS = ("architecture", "matrix", "destruction")
 TIMED_WORKLOADS = frozenset(
     {
         "alloc_free",
@@ -95,6 +98,8 @@ TIMED_WORKLOADS = frozenset(
         "local_scaling",
         "remote_free",
         "thread_churn",
+        "heap_destroy",
+        "subproc_destroy",
     }
 )
 MEMORY_WORKLOADS = frozenset({"memory_live", "memory_churn"})

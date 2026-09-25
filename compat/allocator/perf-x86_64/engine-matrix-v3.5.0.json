@@ -128,6 +128,8 @@
     {"name": "remote_free_2", "workload": "remote_free", "params": {"size": 256, "workers": 2, "iterations": 20000, "batches": 16}, "sets": ["matrix"], "measures": "cross-thread free publication and owner collection, two pairs"},
     {"name": "remote_free_4", "workload": "remote_free", "params": {"size": 256, "workers": 4, "iterations": 20000, "batches": 16}, "sets": ["matrix"], "measures": "cross-thread free publication and owner collection, four pairs"},
     {"name": "thread_churn_4", "workload": "thread_churn", "params": {"size": 64, "count": 256, "workers": 4, "batches": 32}, "sets": ["matrix"], "measures": "thread attach, owner exit, abandonment and post-exit free"},
+    {"name": "heap_destroy_4x256", "workload": "heap_destroy", "params": {"size": 64, "count": 4, "live": 256, "batches": 16}, "sets": ["destruction"], "measures": "mi_heap_destroy of four main-subprocess heaps holding 256 live blocks each"},
+    {"name": "subproc_destroy_4x256", "workload": "subproc_destroy", "params": {"size": 64, "count": 4, "live": 256, "batches": 16}, "sets": ["destruction"], "measures": "mi_subproc_destroy force-destroying a finished member thread's four heaps of 256 live blocks each"},
     {"name": "thread_churn_8", "workload": "thread_churn", "params": {"size": 64, "count": 256, "workers": 8, "batches": 32}, "sets": ["matrix"], "measures": "thread attach, owner exit, abandonment and post-exit free on eight concurrent threads"}
   ],
   "memory_rows": [

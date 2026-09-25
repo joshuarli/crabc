@@ -546,6 +546,28 @@ size_t crabc_allocator_engine_usable_size(const void *block) { return malloc_usa
 """
 
 
+HEAP_STUB = """
+#include <stdlib.h>
+#include "engine-api.h"
+struct node { struct node *next; };
+struct crabc_allocator_engine_heap { struct node *blocks; };
+struct crabc_allocator_engine_subproc { int members; };
+crabc_allocator_engine_heap *crabc_allocator_engine_heap_new(void) { return calloc(1, sizeof(crabc_allocator_engine_heap)); }
+void *crabc_allocator_engine_heap_malloc(crabc_allocator_engine_heap *heap, size_t size) {
+  struct node *block = malloc(sizeof(struct node) + size);  /* link header, then the client bytes */
+  if (block == NULL) return NULL;
+  block->next = heap->blocks; heap->blocks = block; return block + 1;
+}
+void crabc_allocator_engine_heap_destroy(crabc_allocator_engine_heap *heap) {
+  while (heap->blocks != NULL) { struct node *next = heap->blocks->next; free(heap->blocks); heap->blocks = next; }
+  free(heap);
+}
+crabc_allocator_engine_subproc *crabc_allocator_engine_subproc_new(void) { return calloc(1, sizeof(crabc_allocator_engine_subproc)); }
+int crabc_allocator_engine_subproc_add_current_thread(crabc_allocator_engine_subproc *subproc) { subproc->members++; return 0; }
+void crabc_allocator_engine_subproc_destroy(crabc_allocator_engine_subproc *subproc) { free(subproc); }
+"""
+
+
 class FixturePeakHookTests(unittest.TestCase):
     """The real fixture's READY_PEAK pause, linked with a libc-malloc stub backend."""
 
@@ -557,24 +579,37 @@ class FixturePeakHookTests(unittest.TestCase):
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
         (root / "stub.c").write_text(STUB_BACKEND, encoding="utf-8")
+        (root / "heap-stub.c").write_text(HEAP_STUB, encoding="utf-8")
         cls.binary = root / "fixture"
-        completed = engine.subprocess.run(
-            [compiler, "-std=gnu11", "-O2", "-pthread", "-I", str(engine.FIXTURE_ROOT), str(engine.FIXTURE),
-             str(root / "stub.c"), "-o", str(cls.binary)], capture_output=True, text=True)
-        if completed.returncode != 0:
-            raise AssertionError(completed.stderr)
+        cls.heap_binary = root / "heap-fixture"
+        for binary, extra in ((cls.binary, []), (cls.heap_binary, [str(root / "heap-stub.c")])):
+            completed = engine.subprocess.run(
+                [compiler, "-std=gnu11", "-O2", "-pthread", "-I", str(engine.FIXTURE_ROOT), str(engine.FIXTURE),
+                 str(root / "stub.c"), *extra, "-o", str(binary)], capture_output=True, text=True)
+            if completed.returncode != 0:
+                raise AssertionError(completed.stderr)
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.directory.cleanup()
 
-    def run_row(self, row: dict, *, peak_hook: bool) -> dict:
+    def test_destruction_rows_run_with_heap_entries_and_are_unavailable_without(self) -> None:
+        for workload in ("heap_destroy", "subproc_destroy"):
+            row = {"workload": workload, "params": {"size": 64, "count": 2, "live": 16, "batches": 3}}
+            with self.subTest(workload=workload):
+                sample = self.run_row(row, peak_hook=True, binary=self.heap_binary)
+                self.assertEqual([batch["ops"] for batch in sample["batches"]], [32, 32, 32])
+                self.assertIn("peak_state", sample)
+                with self.assertRaisesRegex(engine.HarnessError, "backend lacks the heap"):
+                    self.run_row(row, peak_hook=False)
+
+    def run_row(self, row: dict, *, peak_hook: bool, binary: Path | None = None) -> dict:
         cpus = sorted(os.sched_getaffinity(0))[: engine.row_thread_count(row)]
         if len(cpus) < engine.row_thread_count(row):
             self.skipTest("too few CPUs")
         with tempfile.TemporaryDirectory() as scratch:
             try:
-                return engine.run_timed_sample(self.binary, row, batch_divisor=1, cpus=cpus, timeout=60.0,
+                return engine.run_timed_sample(binary or self.binary, row, batch_divisor=1, cpus=cpus, timeout=60.0,
                                                scratch=Path(scratch), sample_name="s", peak_hook=peak_hook)
             except engine.HarnessError as error:
                 if "Operation not permitted" in str(error):

@@ -4,26 +4,68 @@
   "statement": "AGENTS.md requires an algorithmic divergence to carry a durable rationale plus differential and performance evidence. Each port-map row classified algorithmic has exactly one entry: its differential command (or why none can apply), its performance rows in the qualified engine or integrated reports (or why none can apply), or the owner porting it back to the source algorithm.",
   "rows": {
     "src/random.c": {
-      "differential": {"command": ["python3", "compat/allocator/run.py", "--m1", "--offline"], "scope": "exact address-independent Theap random state for split, zero-result retry, forced weak initialization and strong reinitialization against pinned C"},
-      "performance": {"integrated_rows": ["static/startup_first_alloc", "dynamic/startup_first_alloc"], "scope": "Theap random initialization on the first allocation of every installed product"}
+      "differential": {
+        "command": [
+          "python3",
+          "compat/allocator/run.py",
+          "--m1",
+          "--offline"
+        ],
+        "scope": "exact address-independent Theap random state for split, zero-result retry, forced weak initialization and strong reinitialization against pinned C"
+      },
+      "performance": {
+        "integrated_rows": [
+          "static/startup_first_alloc",
+          "dynamic/startup_first_alloc"
+        ],
+        "scope": "Theap random initialization on the first allocation of every installed product"
+      }
     },
     "src/random.c:original-chacha-context-state-and-output-contract": {
-      "differential": {"command": ["python3", "compat/allocator/run.py", "--m1", "--offline"], "scope": "the same M1 random state trace"},
-      "performance": {"integrated_rows": ["static/startup_first_alloc", "dynamic/startup_first_alloc"], "scope": "Theap random initialization on the first allocation"}
+      "differential": {
+        "command": [
+          "python3",
+          "compat/allocator/run.py",
+          "--m1",
+          "--offline"
+        ],
+        "scope": "the same M1 random state trace"
+      },
+      "performance": {
+        "integrated_rows": [
+          "static/startup_first_alloc",
+          "dynamic/startup_first_alloc"
+        ],
+        "scope": "Theap random initialization on the first allocation"
+      }
     },
     "src/heap.c:child-thread-empty-non-main-heap-lifecycle": {
-      "differential": {"command": ["python3", "compat/allocator/heap_lifecycle.py"], "scope": "108 ordered heap-list, count, statistics and key fields of mi_heap_new/delete/destroy on a child-subprocess thread"},
-      "performance": {"blocked": "no equivalent opaque C/Rust boundary measures mi_heap_destroy or subprocess destruction: engine-api.h has no heap or subprocess entries, and its Rust backend (engine-rust-backend.rs, owned by alloc-perf) would need matching ones"}
+      "differential": {
+        "command": [
+          "python3",
+          "compat/allocator/heap_lifecycle.py"
+        ],
+        "scope": "108 ordered heap-list, count, statistics and key fields of mi_heap_new/delete/destroy on a child-subprocess thread"
+      },
+      "performance": {
+        "blocked": "the engine destruction row subproc_destroy_4x256 (allocator-perf-engine --set destruction) measures mi_subproc_destroy through engine-api.h's optional heap and subprocess entries, but engine-rust-backend.rs (owned by alloc-perf) does not yet define crabc_allocator_engine_heap_new/heap_malloc/heap_destroy/subproc_new/subproc_add_current_thread/subproc_destroy, so its Rust lane is unavailable"
+      }
     },
     "src/arena.c:os-fallback-commit-on-demand-initially-committed-correction": {
-      "differential": {"not_applicable": "pinned C faults on this path (its oracle exits with SIGSEGV writing the first free-list link into PROT_NONE), so no equivalence differential exists; the Rust unit tests prove the corrected commit order"},
-      "performance": {"not_applicable": "reached only with the non-default disallow_arena_alloc and page_commit_on_demand options, which no measured or qualified configuration selects"}
+      "differential": {
+        "not_applicable": "pinned C faults on this path (its oracle exits with SIGSEGV writing the first free-list link into PROT_NONE), so no equivalence differential exists; the Rust unit tests prove the corrected commit order"
+      },
+      "performance": {
+        "not_applicable": "reached only with the non-default disallow_arena_alloc and page_commit_on_demand options, which no measured or qualified configuration selects"
+      }
     },
     "src/page-map.c:mi-page-map-init-once-process-publication": {
-      "owner": "m2-vm-arenas", "disposition": "port the source cold-root recovery back to pinned C behavior"
+      "owner": "m2-vm-arenas",
+      "disposition": "port the source cold-root recovery back to pinned C behavior"
     },
     "src/heap.c:main-subprocess-non-main-heap-lifecycle": {
-      "owner": "m6", "disposition": "port the source main-Heap in-place realloc reuse back to pinned C behavior"
+      "owner": "m6",
+      "disposition": "port the source main-Heap in-place realloc reuse back to pinned C behavior"
     }
   }
 }

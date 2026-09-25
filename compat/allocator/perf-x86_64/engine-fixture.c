@@ -989,6 +989,136 @@ static int run_thread_churn(const struct params *params)
   return 0;
 }
 
+/* ---- heap and subprocess destruction ------------------------------------ */
+
+/* Optional backend entries (engine-api.h): weak, so a backend without them
+ * still links and only these two workloads report unavailable. */
+#pragma weak crabc_allocator_engine_heap_new
+#pragma weak crabc_allocator_engine_heap_malloc
+#pragma weak crabc_allocator_engine_heap_destroy
+#pragma weak crabc_allocator_engine_subproc_new
+#pragma weak crabc_allocator_engine_subproc_add_current_thread
+#pragma weak crabc_allocator_engine_subproc_destroy
+
+static int heap_entries_present(int subprocess)
+{
+  if (crabc_allocator_engine_heap_new == NULL || crabc_allocator_engine_heap_malloc == NULL
+      || crabc_allocator_engine_heap_destroy == NULL) return 0;
+  return !subprocess || (crabc_allocator_engine_subproc_new != NULL
+                         && crabc_allocator_engine_subproc_add_current_thread != NULL
+                         && crabc_allocator_engine_subproc_destroy != NULL);
+}
+
+/* Fill `count` fresh heaps with `live` touched blocks of `size` each. */
+static void fill_heaps(const struct params *params, crabc_allocator_engine_heap **heaps)
+{
+  size_t heap;
+  for (heap = 0; heap < params->count; heap++) {
+    size_t block;
+    heaps[heap] = crabc_allocator_engine_heap_new();
+    if (heaps[heap] == NULL) die("heap_new returned null");
+    for (block = 0; block < params->live; block++) {
+      touch(checked(crabc_allocator_engine_heap_malloc(heaps[heap], params->size)), params->size, (unsigned)block);
+    }
+  }
+}
+
+/*
+ * heap_destroy: on the initial thread (the main subprocess), each batch
+ * creates `count` heaps holding `live` blocks each and destroys them; the
+ * timed interval covers only the `count` heap_destroy calls, and ops counts
+ * the blocks they free.
+ */
+static int run_heap_destroy(const struct params *params)
+{
+  crabc_allocator_engine_heap *heaps[MAX_WORKERS];
+  size_t batch;
+  if (!heap_entries_present(0)) {
+    fail("backend lacks the heap entries of engine-api.h");
+    return 69;
+  }
+  if (params->size == 0 || params->count == 0 || params->count > MAX_WORKERS || params->live == 0) {
+    fail("unsupported heap_destroy parameters");
+    return 64;
+  }
+  for (batch = 0; batch < params->batches; batch++) {
+    uint64_t before, before_cpu;
+    size_t heap;
+    fill_heaps(params, heaps);
+    before_cpu = thread_cpu_ns();
+    before = now_ns();
+    for (heap = 0; heap < params->count; heap++) crabc_allocator_engine_heap_destroy(heaps[heap]);
+    print_batch(now_ns() - before, thread_cpu_ns() - before_cpu, (uint64_t)params->count * params->live);
+  }
+  if (peak_hook(params)) {
+    size_t heap;
+    fill_heaps(params, heaps);
+    if (barrier_parent(params, "READY_PEAK\n") != 0) return 65;
+    for (heap = 0; heap < params->count; heap++) crabc_allocator_engine_heap_destroy(heaps[heap]);
+  }
+  return 0;
+}
+
+struct subproc_member {
+  const struct params *params;
+  crabc_allocator_engine_subproc *subproc;
+};
+
+static void *subproc_member_main(void *raw)
+{
+  struct subproc_member *member = raw;
+  crabc_allocator_engine_heap *heaps[MAX_WORKERS];
+  if (crabc_allocator_engine_subproc_add_current_thread(member->subproc) != 0) die("subproc_add_current_thread failed");
+  fill_heaps(member->params, heaps);
+  if (crabc_allocator_engine_thread_done() != 0) die("backend subprocess member thread_done failed");
+  return NULL;
+}
+
+/*
+ * subproc_destroy: each batch creates a child subprocess, runs one member
+ * thread that joins it and leaves `count` heaps holding `live` blocks each,
+ * joins that thread, and destroys the subprocess.  The timed interval covers
+ * only subproc_destroy, which force-destroys those heaps with their pages;
+ * ops counts their blocks.
+ */
+static crabc_allocator_engine_subproc *filled_subproc(const struct params *params)
+{
+  struct subproc_member member;
+  pthread_t thread;
+  member.params = params;
+  member.subproc = crabc_allocator_engine_subproc_new();
+  if (member.subproc == NULL) die("subproc_new returned null");
+  if (pthread_create(&thread, NULL, subproc_member_main, &member) != 0) die("pthread_create failed");
+  if (pthread_join(thread, NULL) != 0) die("pthread_join failed");
+  return member.subproc;
+}
+
+static int run_subproc_destroy(const struct params *params)
+{
+  size_t batch;
+  if (!heap_entries_present(1)) {
+    fail("backend lacks the heap and subprocess entries of engine-api.h");
+    return 69;
+  }
+  if (params->size == 0 || params->count == 0 || params->count > MAX_WORKERS || params->live == 0) {
+    fail("unsupported subproc_destroy parameters");
+    return 64;
+  }
+  for (batch = 0; batch < params->batches; batch++) {
+    crabc_allocator_engine_subproc *subproc = filled_subproc(params);
+    const uint64_t before_cpu = thread_cpu_ns();
+    const uint64_t before = now_ns();
+    crabc_allocator_engine_subproc_destroy(subproc);
+    print_batch(now_ns() - before, thread_cpu_ns() - before_cpu, (uint64_t)params->count * params->live);
+  }
+  if (peak_hook(params)) {
+    crabc_allocator_engine_subproc *subproc = filled_subproc(params);
+    if (barrier_parent(params, "READY_PEAK\n") != 0) return 65;
+    crabc_allocator_engine_subproc_destroy(subproc);
+  }
+  return 0;
+}
+
 /* ---- memory workloads --------------------------------------------------- */
 
 static int write_line(int descriptor, const char *text)
@@ -1274,6 +1404,8 @@ int main(int argc, char **argv)
     status = run_independent_workers(&params);
   else if (strcmp(params.workload, "remote_free") == 0) status = run_remote_free(&params);
   else if (strcmp(params.workload, "thread_churn") == 0) status = run_thread_churn(&params);
+  else if (strcmp(params.workload, "heap_destroy") == 0) status = run_heap_destroy(&params);
+  else if (strcmp(params.workload, "subproc_destroy") == 0) status = run_subproc_destroy(&params);
   else status = run_initial_thread(&params);
   if (status != 0) return status;
   printf("ok\n");
