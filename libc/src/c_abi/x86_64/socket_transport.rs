@@ -292,35 +292,10 @@ static_archive_member! { send_source {
         count: usize,
         flags: c_int,
     ) -> isize {
-        // SAFETY: the caller supplies the complete raw send buffer contract;
-        // Linux x86 receives its final peer-address words in r8/r9.
-        let result = unsafe {
-            #[cfg(crabc_x86_owned_runtime)]
-            {
-                crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
-                    raw_syscall::SYS_SENDTO,
-                    i64::from(file_descriptor),
-                    buffer as usize as i64,
-                    count as i64,
-                    i64::from(flags),
-                    0,
-                    0,
-                )
-            }
-            #[cfg(not(crabc_x86_owned_runtime))]
-            {
-                raw_syscall::syscall6(
-                    raw_syscall::SYS_SENDTO,
-                    i64::from(file_descriptor),
-                    buffer as usize as i64,
-                    count as i64,
-                    i64::from(flags),
-                    0,
-                    0,
-                )
-            }
-        };
-        c_ssize_status(result)
+        // Musl's `send` is `sendto(fd, buf, len, flags, 0, 0)`, calling the
+        // public entry an application definition can replace.
+        // SAFETY: the caller supplies the complete raw send buffer contract.
+        unsafe { sendto(file_descriptor, buffer, count, flags, core::ptr::null(), 0) }
     }
 }}
 
@@ -342,35 +317,10 @@ static_archive_member! { recv_source {
         count: usize,
         flags: c_int,
     ) -> isize {
-        // SAFETY: the caller supplies the complete raw receive buffer contract;
-        // Linux x86 receives its final source-address words in r8/r9.
-        let result = unsafe {
-            #[cfg(crabc_x86_owned_runtime)]
-            {
-                crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
-                    raw_syscall::SYS_RECVFROM,
-                    i64::from(file_descriptor),
-                    buffer as usize as i64,
-                    count as i64,
-                    i64::from(flags),
-                    0,
-                    0,
-                )
-            }
-            #[cfg(not(crabc_x86_owned_runtime))]
-            {
-                raw_syscall::syscall6(
-                    raw_syscall::SYS_RECVFROM,
-                    i64::from(file_descriptor),
-                    buffer as usize as i64,
-                    count as i64,
-                    i64::from(flags),
-                    0,
-                    0,
-                )
-            }
-        };
-        c_ssize_status(result)
+        // Musl's `recv` is `recvfrom(fd, buf, len, flags, 0, 0)`, calling the
+        // public entry an application definition can replace.
+        // SAFETY: the caller supplies the complete raw receive buffer contract.
+        unsafe { recvfrom(file_descriptor, buffer, count, flags, core::ptr::null_mut(), core::ptr::null_mut()) }
     }
 }}
 
@@ -385,6 +335,7 @@ static_archive_member! { sendto_source {
     /// them. The caller owns descriptor lifetime, blocking state, and SIGPIPE or
     /// cancellation policy. The owned runtime supplies the cancellation point.
     #[no_mangle]
+    #[inline(never)]
     pub unsafe extern "C" fn sendto(
         file_descriptor: c_int,
         buffer: *const c_void,
@@ -438,6 +389,7 @@ static_archive_member! { recvfrom_source {
     /// source-address omission form. The caller owns descriptor lifetime and
     /// blocking/cancellation policy.
     #[no_mangle]
+    #[inline(never)]
     pub unsafe extern "C" fn recvfrom(
         file_descriptor: c_int,
         buffer: *mut c_void,

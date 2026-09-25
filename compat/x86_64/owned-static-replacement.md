@@ -76,6 +76,17 @@ through those never-inlined `v` forms. Musl's `vsscanf` also scans through
 the public `vfscanf` over a string FILE; the candidate's `vsscanf` scans the
 string directly, so the `SCANF` role does not call `sscanf`.
 
+## Leaf-family roles
+
+`WIDE` defines counting `wcwidth`, `wcslen`, `mbsrtowcs` and `wcsrtombs`;
+musl's `wcswidth`, `wcsdup`, `mbstowcs` and `wcstombs` reach them. `SYSTEM`
+defines counting `nanosleep`, `open`, `unlink`, `rmdir`, `sendto` and
+`recvfrom` that perform the plain system call; musl's `sleep`, `usleep`,
+`creat`, `send` and `recv` reach them, while its `remove` issues the
+`unlink` system call directly. `creat` (`descriptor_entry.rs`) calls the
+never-inlined `open`, and `send`/`recv` (`socket_transport.rs`) call the
+public `sendto`/`recvfrom`, as musl's sources do.
+
 ## Allocator roles
 
 The allocator roles define a bump arena whose `free` terminates the program

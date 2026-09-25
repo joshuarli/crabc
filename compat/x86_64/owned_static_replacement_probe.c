@@ -495,7 +495,7 @@ static int run_string_clients(void)
 #endif
 
 #if defined(CRABC_REPLACE_PRINTF) || defined(CRABC_REPLACE_VSNPRINTF) || defined(CRABC_REPLACE_SCANF) \
-    || defined(CRABC_REPLACE_MATH)
+    || defined(CRABC_REPLACE_MATH) || defined(CRABC_REPLACE_WIDE) || defined(CRABC_REPLACE_SYSTEM)
 static unsigned long replacement_calls;
 
 static void report_replacement(const char *operation, unsigned long mark)
@@ -740,6 +740,167 @@ static int run_math_clients(void)
 }
 #endif
 
+#ifdef CRABC_REPLACE_WIDE
+/*
+ * Counting `wcwidth`, `wcslen`, `mbsrtowcs` and `wcsrtombs` over ASCII.
+ * Musl's wcswidth calls wcwidth, wcsdup wcslen, mbstowcs mbsrtowcs and
+ * wcstombs wcsrtombs.
+ */
+int wcwidth(wchar_t character)
+{
+    replacement_calls++;
+    return character ? 1 : 0;
+}
+
+size_t wcslen(const wchar_t *string)
+{
+    size_t length = 0;
+    replacement_calls++;
+    while (string[length]) length++;
+    return length;
+}
+
+size_t mbsrtowcs(wchar_t *restrict destination, const char **restrict source, size_t count, mbstate_t *restrict state)
+{
+    size_t index = 0;
+    (void)state;
+    replacement_calls++;
+    for (; (*source)[index] && (!destination || index < count); index++)
+        if (destination) destination[index] = (unsigned char)(*source)[index];
+    if (destination && index < count) {
+        destination[index] = 0;
+        *source = 0;
+    }
+    return index;
+}
+
+size_t wcsrtombs(char *restrict destination, const wchar_t **restrict source, size_t count, mbstate_t *restrict state)
+{
+    size_t index = 0;
+    (void)state;
+    replacement_calls++;
+    for (; (*source)[index] && (!destination || index < count); index++)
+        if (destination) destination[index] = (char)(*source)[index];
+    if (destination && index < count) {
+        destination[index] = 0;
+        *source = 0;
+    }
+    return index;
+}
+
+static int run_wide_clients(void)
+{
+    unsigned long mark;
+    wchar_t wide[8];
+    char narrow[8];
+    wchar_t *copy;
+
+    mark = replacement_calls;
+    emit_flag("wcswidth", "value", wcswidth(L"abc", 3) == 3);
+    report_replacement("wcswidth", mark);
+    mark = replacement_calls;
+    copy = wcsdup(L"abc");
+    emit_flag("wcsdup", "value", copy && copy[2] == L'c' && !copy[3]);
+    report_replacement("wcsdup", mark);
+    free(copy);
+    mark = replacement_calls;
+    emit_flag("mbstowcs", "value", mbstowcs(wide, "abc", 8) == 3 && wide[1] == L'b');
+    report_replacement("mbstowcs", mark);
+    mark = replacement_calls;
+    emit_flag("wcstombs", "value", wcstombs(narrow, L"abc", 8) == 3 && narrow[1] == 'b');
+    report_replacement("wcstombs", mark);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_SYSTEM
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <time.h>
+/*
+ * Counting `nanosleep`, `open`, `unlink`, `rmdir`, `sendto` and `recvfrom`
+ * that perform the plain system call. Musl's sleep and usleep call
+ * nanosleep, creat calls open, remove calls unlink then rmdir, send calls
+ * sendto, and recv calls recvfrom.
+ */
+int nanosleep(const struct timespec *request, struct timespec *remaining)
+{
+    replacement_calls++;
+    return (int)syscall(SYS_nanosleep, request, remaining);
+}
+
+int open(const char *path, int flags, ...)
+{
+    va_list args;
+    int mode;
+
+    replacement_calls++;
+    va_start(args, flags);
+    mode = va_arg(args, int);
+    va_end(args);
+    return (int)syscall(SYS_open, path, flags, mode);
+}
+
+int unlink(const char *path)
+{
+    replacement_calls++;
+    return (int)syscall(SYS_unlink, path);
+}
+
+int rmdir(const char *path)
+{
+    replacement_calls++;
+    return (int)syscall(SYS_rmdir, path);
+}
+
+ssize_t sendto(int fd, const void *buffer, size_t length, int flags, const struct sockaddr *address, socklen_t size)
+{
+    replacement_calls++;
+    return syscall(SYS_sendto, fd, buffer, length, flags, address, size);
+}
+
+ssize_t recvfrom(int fd, void *buffer, size_t length, int flags, struct sockaddr *restrict address, socklen_t *restrict size)
+{
+    replacement_calls++;
+    return syscall(SYS_recvfrom, fd, buffer, length, flags, address, size);
+}
+
+static int run_system_clients(void)
+{
+    unsigned long mark;
+    int pair[2];
+    char byte = 0;
+
+    mark = replacement_calls;
+    emit_flag("sleep", "value", sleep(0) == 0);
+    report_replacement("sleep", mark);
+    mark = replacement_calls;
+    emit_flag("usleep", "value", usleep(1) == 0);
+    report_replacement("usleep", mark);
+    mark = replacement_calls;
+    {
+        int fd = creat("/replacement-created", 0600);
+        emit_flag("creat", "value", fd >= 0);
+        if (fd >= 0) close(fd);
+    }
+    report_replacement("creat", mark);
+    mark = replacement_calls;
+    emit_flag("remove", "value", remove("/replacement-created") == 0);
+    report_replacement("remove", mark);
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, pair)) return 50;
+    mark = replacement_calls;
+    emit_flag("send", "value", send(pair[0], "x", 1, 0) == 1);
+    report_replacement("send", mark);
+    mark = replacement_calls;
+    emit_flag("recv", "value", recv(pair[1], &byte, 1, 0) == 1 && byte == 'x');
+    report_replacement("recv", mark);
+    close(pair[0]);
+    close(pair[1]);
+    return 0;
+}
+#endif
+
 int main(void)
 {
 #ifdef CRABC_REPLACE_MALLOC
@@ -760,6 +921,14 @@ int main(void)
 #endif
 #ifdef CRABC_REPLACE_SCANF
     int status = run_scanf_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_WIDE
+    int status = run_wide_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_SYSTEM
+    int status = run_system_clients();
     if (status) return status;
 #endif
 #ifdef CRABC_REPLACE_MATH

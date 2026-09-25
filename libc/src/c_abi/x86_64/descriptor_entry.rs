@@ -65,6 +65,7 @@ static_archive_member! { open_source {
     /// and the meaning of all raw Linux open flags. The owned runtime supplies
     /// musl's pthread cancellation point before creating a descriptor.
     #[no_mangle]
+    #[inline(never)]
     pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: c_uint) -> c_int {
         // SAFETY: the caller owns the raw pathname contract. Linux x86-64 takes
         // the old open syscall's pathname/flags/mode words in rdi/rsi/rdx.

@@ -207,8 +207,16 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
 assert_named_syscall socket 29
 assert_named_syscall connect 2a
 assert_named_syscall accept 2b
-assert_named_syscall send 2c
-assert_named_syscall recv 2d
+# Musl's send and recv call the public sendto and recvfrom entries.
+assert_public_forward() {
+    local symbol="$1" target="$2"
+    local disassembly="$work_dir/${symbol}-disassembly"
+    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
+    grep -Eq "(call|jmp)[[:space:]]+[0-9a-f]+ <${target}>" "$disassembly" \
+        || fail "${symbol} does not reach the public ${target}"
+}
+assert_public_forward send sendto
+assert_public_forward recv recvfrom
 assert_named_syscall sendto 2c
 assert_named_syscall recvfrom 2d
 assert_named_syscall shutdown 30
