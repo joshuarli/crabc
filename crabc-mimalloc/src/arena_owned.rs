@@ -1160,6 +1160,31 @@ impl ProcessArenaBacking {
         unsafe { self.try_find_free(search, slice_count, alignment, commit) }
     }
 
+    /// The reservation step of [`Self::try_allocate_slices_with_random`] for
+    /// an unrequested search over an empty registry, without claiming slices.
+    ///
+    /// That source search/reserve/search reaches `mi_arena_reserve` only when
+    /// no published arena can serve the request; with no arena at all this
+    /// performs exactly that reservation under the same lock and policy
+    /// gates, then leaves every slice free (and clean). A refused reservation
+    /// is not an error here: the later claim retries the complete source
+    /// sequence, including its OS fallback.
+    ///
+    /// # Safety
+    /// Same obligations as [`Self::try_allocate_slices_with_random`].
+    pub(crate) unsafe fn reserve_first_arena_with_random(
+        &self, process: VmProcess<'_>, config: MemoryConfig, requested_size: usize,
+        allow_pinned: bool, random: crate::os::OsRandom<'_>,
+    ) {
+        if self.registry.count() != 0 || process.policy().disallow_os_alloc() {
+            return;
+        }
+        let Ok(_guard) = self.reserve_lock.lock() else { return };
+        if self.registry.count() == 0 {
+            let _ = unsafe { self.reserve_locked(process, config, requested_size, allow_pinned, random) };
+        }
+    }
+
     /// Source `_mi_arenas_alloc_aligned` (and `_mi_arenas_alloc`, its
     /// slice-aligned form) for a requested arena.
     ///

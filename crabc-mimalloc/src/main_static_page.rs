@@ -1329,6 +1329,63 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     pub(crate) fn prepare_dormant_page_pair(&mut self) -> bool {
         match &self.state {
             MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. } => true,
+            // A source-process owner reaches its dormant pair without a page:
+            // it reserves the first arena as its first small claim would and
+            // claims nothing. Priming it with a private allocate/free left
+            // that page's slice dirty, so the owner's real first page was
+            // published with `free_is_zero == false` where pinned mimalloc's
+            // first page (`arena.c:1065`, from a clean slice) is zero.
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
+                reservation: MainStaticRuntimeFirstArenaReservation::Process { .. },
+                ..
+            } => {
+                let (mut session, backing, arena_storage) = match core::mem::replace(
+                    &mut self.state,
+                    MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+                ) {
+                    MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
+                        session,
+                        reservation: MainStaticRuntimeFirstArenaReservation::Process { backing },
+                        arena_storage,
+                    } => (session, backing, arena_storage),
+                    other => {
+                        self.state = other;
+                        return false;
+                    }
+                };
+                if !backing.is_allocation_ready() {
+                    session.retain_terminal();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return false;
+                }
+                let Ok(config) = backing.page_map().memory_config() else {
+                    session.retain_terminal();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return false;
+                };
+                // Reserve the first arena as the first small page claim would,
+                // leaving its slices free and clean.
+                let process = backing.process();
+                if !process.policy().disallow_arena_alloc() {
+                    use crate::bootstrap::TheapPageSession;
+                    session.with_os_random_source(|random| {
+                        // SAFETY: the process binding keeps its registry and
+                        // policy live for the process; this reserves only.
+                        unsafe {
+                            process.subprocess().arena_backing().reserve_first_arena_with_random(
+                                process, config, SMALL_PAGE_SIZE, true, Some(random),
+                            )
+                        }
+                    });
+                }
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
+                    session,
+                    page_map: backing.page_map(),
+                    arena_storage,
+                    route: MainStaticRuntimeFirstArenaRoute::SourceProcess(backing),
+                };
+                true
+            }
             MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. } => {
                 let Some(block) = self.allocate(WORD_SIZE, false) else {
                     return false;

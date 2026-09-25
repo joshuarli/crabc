@@ -229,12 +229,12 @@ def run_differential(offline: bool, profile: str | None = None) -> dict[str, Any
             c_lines = profile_section(c_output.read_text(encoding="utf-8").splitlines(), profile)
             rust_lines = profile_section(rust_output.read_text(encoding="utf-8").splitlines(), profile)
             profile_divergences: dict[str, int] = {}
-            profile = "-"
+            section = "-"
             for c_line, rust_line in zip(c_lines, rust_lines):
                 if c_line.startswith("profile "):
-                    profile = c_line.split()[1]
+                    section = c_line.split()[1]
                 if c_line != rust_line:
-                    profile_divergences[profile] = profile_divergences.get(profile, 0) + 1
+                    profile_divergences[section] = profile_divergences.get(section, 0) + 1
             results[label] = {
                 "operations": text.count("\n") - 1,
                 "trace_lines": len(c_lines),
