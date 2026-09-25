@@ -44,6 +44,23 @@ fn native_mimalloc_is_power_of_two(value: usize) -> bool {
     value != 0 && (value & (value - 1)) == 0
 }
 
+// Run one native allocation under musl's errno contract: failure publishes
+// ENOMEM and success leaves the caller's errno exactly as it was, as
+// mallocng does. The engine's lazy process/thread setup and page reclaim may
+// reach errno-writing libc calls, so the prior value is restored rather than
+// trusted to survive.
+#[inline]
+unsafe fn native_mimalloc_allocation(
+    allocate: impl FnOnce() -> NativePageAllocationResult,
+) -> *mut c_void {
+    let saved_errno = unsafe { cabi_allocator_errno() };
+    let allocation = unsafe { native_mimalloc_allocation_result(allocate()) };
+    if !allocation.is_null() {
+        unsafe { cabi_set_allocator_errno(saved_errno) };
+    }
+    allocation
+}
+
 #[inline]
 unsafe fn native_mimalloc_allocation_result(result: NativePageAllocationResult) -> *mut c_void {
     match result {
@@ -62,7 +79,7 @@ unsafe fn native_mimalloc_allocation_result(result: NativePageAllocationResult) 
 
 #[inline]
 unsafe fn native_mimalloc_allocate(size: usize, alignment: usize, zero: bool) -> *mut c_void {
-    unsafe { native_mimalloc_allocation_result(native_allocate_aligned(size, alignment, zero)) }
+    unsafe { native_mimalloc_allocation(|| unsafe { native_allocate_aligned(size, alignment, zero) }) }
 }
 
 /// Release one private selected-native allocation without a public C symbol
@@ -234,7 +251,7 @@ unsafe extern "C" fn libc_realloc(pointer: *mut c_void, new_size: SizeT) -> *mut
         return unsafe { native_mimalloc_allocate(new_size, NATIVE_MIMALLOC_MALLOC_ALIGNMENT, false) };
     }
     let block = unsafe { core::ptr::NonNull::new_unchecked(pointer.cast::<u8>()) };
-    unsafe { native_mimalloc_allocation_result(native_reallocate(Some(block), new_size)) }
+    unsafe { native_mimalloc_allocation(|| unsafe { native_reallocate(Some(block), new_size) }) }
 }
 
 unsafe extern "C" fn libc_reallocarray(
