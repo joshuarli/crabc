@@ -200,24 +200,13 @@ impl PageMapRoot {
 
 /// A PageMap bootstrap failure before the map can become a published owner.
 ///
-/// The source's `_mi_os_free` does not return a release error. Rust's
-/// [`Mapping::unmap`] does, and a failed release leaves the mapping live.
-/// The retained branch therefore carries that exact mapping to the
-/// process-lifetime caller instead of letting a non-RAII owner leave scope.
-/// Callers must either move it into a final retained-owner slot or prove their
-/// selected initialization shape cannot produce this branch.
-#[must_use = "a retained PageMap initialization mapping must remain with an explicit owner"]
+/// Pinned `mi_page_map_init_once` releases its private mapping through
+/// `_mi_os_free` after a failed initial or trailing-submap commit. A failed
+/// `munmap` there is warned and the mapping leaks, so no mapping survives
+/// any initialization failure.
 pub(crate) enum PageMapInitializationError {
-    /// No mapping remains after the failed initialization attempt.
+    /// Initialization failed; no mapping remains owned.
     Failed { error: Errno },
-    /// The initialization failed and its private mapping could not be
-    /// released. `mapping` remains the sole exact owner and must not be
-    /// discarded.
-    Retained {
-        initialization: Errno,
-        cleanup: Errno,
-        mapping: Mapping,
-    },
 }
 
 impl PageMapInitializationError {
@@ -225,18 +214,18 @@ impl PageMapInitializationError {
     fn failed(error: Errno) -> Self { Self::Failed { error } }
 
     /// Releases a private bootstrap mapping after a later initialization
-    /// transition failed. A failed release transfers the still-live mapping
-    /// into the error rather than silently forgetting it.
+    /// transition failed. As source `mi_os_prim_free` does, a failed release
+    /// is warned through the process output route and the mapping leaks.
     #[inline]
     fn after_private_mapping_failure(mut mapping: Mapping, initialization: Errno) -> Self {
-        match mapping.unmap() {
-            Ok(()) => Self::Failed { error: initialization },
-            Err(cleanup) => Self::Retained {
-                initialization,
-                cleanup,
-                mapping,
-            },
+        let address = mapping.base().map_or(0, |base| base as usize);
+        let length = mapping.length().unwrap_or(0);
+        if let Err(cleanup) = mapping.unmap() {
+            crate::process_init::process_warning_message(
+                crate::diagnostic_output::SourceFormattedMessage::os_free_failure(
+                    cleanup, length, address));
         }
+        Self::Failed { error: initialization }
     }
 }
 
@@ -247,15 +236,6 @@ impl fmt::Debug for PageMapInitializationError {
                 .debug_struct("PageMapInitializationError::Failed")
                 .field("error", error)
                 .finish(),
-            Self::Retained {
-                initialization,
-                cleanup,
-                ..
-            } => formatter
-                .debug_struct("PageMapInitializationError::Retained")
-                .field("initialization", initialization)
-                .field("cleanup", cleanup)
-                .finish_non_exhaustive(),
         }
     }
 }
@@ -1245,6 +1225,53 @@ mod tests {
     /// remains the exact retry owner, then retries the one pending extension.
     /// It deliberately excludes cold initialization, range rollback, submap
     /// map failure, release failure, and concurrent publication.
+    /// Rust half of `compat/allocator/m2_page_map_init_cleanup_x86_64.c`:
+    /// source `mi_page_map_init_once` with its initial (1) or trailing-submap
+    /// (2) commit failing and the cleanup unmap failing too. Initialization
+    /// fails and the mapping leaks, exactly as the pinned C leaks it.
+    #[cfg(not(miri))]
+    #[test]
+    fn emit_m2_page_map_init_cleanup_c_rust_trace() {
+        let page = memory_config(false).page_size().bytes();
+        let mut field = 0usize;
+        let mut emit = |value: usize| {
+            std::println!("m2.page_map.init_cleanup.{field}={value}");
+            field += 1;
+        };
+        for ordinal in 1..=2usize {
+            let fault = fault::install(fault::Plan::at_pair(
+                fault::Point::Commit, ordinal, fault::Point::Unmap, 1, Errno::NOMEM,
+            ));
+            let capture = fault.capture_unmap_ranges();
+            let result = PageMap::initialize(memory_config(false), MAX_VABITS, false);
+            let failed = matches!(result, Err(PageMapInitializationError::Failed { .. }));
+            let commit_calls = fault.observed();
+            let failed_releases = fault.secondary_observed();
+            let leaked = capture.all().and_then(|(ranges, count)| (count != 0).then(|| ranges[count - 1]));
+            drop(capture);
+            fault.set(fault::Plan::disabled());
+            if let Ok(mut page_map) = result {
+                // SAFETY: this unpublished fixture map has no other user.
+                let _ = unsafe { page_map.destroy() };
+            }
+            let mut residency = 0u8;
+            // SAFETY: `mincore` only reads the page tables of this range.
+            let leaked_live = leaked.is_some_and(|(address, _)| unsafe {
+                crabc_core::mm::mincore_raw(address as *mut u8, page, &mut residency)
+            }.is_ok());
+            emit(ordinal);
+            emit(usize::from(failed));
+            emit(commit_calls);
+            emit(failed_releases);
+            emit(usize::from(leaked_live));
+            if let Some((address, length)) = leaked {
+                // SAFETY: the leaked mapping is represented by no owner.
+                unsafe { crabc_core::mm::munmap_raw(address as *mut u8, length) }
+                    .expect("fixture teardown of the leaked PageMap mapping");
+            }
+        }
+    }
+
     #[test]
     fn emit_m2_page_map_lazy_commit_failure_c_rust_trace() {
         let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)

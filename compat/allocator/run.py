@@ -326,8 +326,8 @@ M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
     "cold-page-map-initialization-failure",
-    "process-page-map-paired-initial-cleanup-owner",
-    "process-page-map-paired-trailing-submap-cleanup-owner",
+    "page-map-initialization-cleanup-leak-c-rust-differential",
+    "process-page-map-initialization-cleanup-leak",
     "page-map-lazy-extension-commit-owner",
     "page-map-lazy-submap-map-owner",
     "page-map-destroy-lazy-submap-release-owner",
@@ -437,15 +437,15 @@ M2_X86_64_PAGE_MAP_CHECKS = (
     },
     {
         "expected_passed_test_count": 1,
-        "id": "process-page-map-paired-initial-cleanup-owner",
-        "kind": "rust-unit",
-        "target": "process_page_map::tests::paired_initial_commit_and_cleanup_unmap_failure_retains_the_exact_mapping",
+        "id": "page-map-initialization-cleanup-leak-c-rust-differential",
+        "kind": "c-rust-page-map-init-cleanup-differential",
+        "target": "page_map::tests::emit_m2_page_map_init_cleanup_c_rust_trace",
     },
     {
         "expected_passed_test_count": 1,
-        "id": "process-page-map-paired-trailing-submap-cleanup-owner",
+        "id": "process-page-map-initialization-cleanup-leak",
         "kind": "rust-unit",
-        "target": "process_page_map::tests::paired_initial_trailing_submap_commit_and_cleanup_unmap_failure_retains_the_exact_mapping",
+        "target": "process_page_map::tests::paired_initialization_commit_and_cleanup_unmap_failure_leaks_the_mapping",
     },
     {
         "expected_passed_test_count": 1,
@@ -12696,6 +12696,50 @@ def _m2_x86_64_arena_lifecycle_producer() -> Any:
     return producer
 
 
+def _m2_x86_64_page_map_init_cleanup_producer() -> Any:
+    """Load the pinned C/Rust PageMap initialization-cleanup producer."""
+
+    path = ALLOCATOR_ROOT / "m2_page_map_init_cleanup_x86_64.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_page_map_init_cleanup", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 PageMap init-cleanup producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _run_m2_x86_64_page_map_init_cleanup_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the PageMap init-cleanup producer against the aggregate's binary."""
+
+    return _m2_x86_64_page_map_init_cleanup_producer().run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+    )
+
+
+def _m2_x86_64_page_map_init_cleanup_check_record(
+    check: Mapping[str, Any], evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Record the executed PageMap init-cleanup differential."""
+
+    if (
+        evidence.get("status") != "passed"
+        or evidence.get("comparison", {}).get("status") != "matched"
+        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+    ):
+        raise HarnessError("native x86 M2 PageMap init-cleanup receipt is invalid")
+    return {
+        "comparison_status": "matched",
+        "component": "page-map",
+        "command": list(evidence["rust_command"]),
+        "evidence_scope": "pinned-c-rust-page-map-initialization-commit-failure-cleanup-leak",
+        "id": check["id"],
+        "passed_test_count": evidence["rust_passed_test_count"],
+        "target": check["target"],
+    }
+
+
 def _m2_x86_64_recursion_producer() -> Any:
     """Load the pinned C/Rust recursive diagnostic-output producer."""
 
@@ -13105,6 +13149,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-page-map-success-differential",
                     "c-rust-page-map-lazy-commit-failure-differential",
                     "c-rust-page-map-cold-init-differential",
+                    "c-rust-page-map-init-cleanup-differential",
                     "c-rust-native-bitmaps",
                     "c-rust-vm-primitives-fixed-lifecycle",
                     "c-rust-vm-primitives-source-profile-matrix",
@@ -14540,6 +14585,7 @@ def m2_x86_64_memory_substrate_report(
                 "successful-page-map-lifecycle": "matched",
                 "lazy-page-map-commit-failure": "matched",
                 "cold-page-map-initialization-failure": "modeled-safety-divergence",
+                "page-map-initialization-cleanup-leak-c-rust-differential": "matched",
             }:
                 raise HarnessError("native x86 M2 PageMap differential result inventory changed")
         elif component_id == "bitmaps":
@@ -14770,6 +14816,17 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
             ),
         ),
     ]
+    _, page_map_cleanup_check = _m2_x86_64_check_by_id(
+        summary, "page-map-initialization-cleanup-leak-c-rust-differential"
+    )
+    page_map_cleanup_checks = [
+        _m2_x86_64_page_map_init_cleanup_check_record(
+            page_map_cleanup_check,
+            _run_m2_x86_64_page_map_init_cleanup_evidence(
+                offline=offline, test_program=test_program, check=page_map_cleanup_check
+            ),
+        )
+    ]
     _, recursion_check = _m2_x86_64_check_by_id(
         summary, "recursive-diagnostic-output-c-rust-differential"
     )
@@ -14804,6 +14861,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         *metadata_checks,
         *arena_owned_checks,
         *recursion_checks,
+        *page_map_cleanup_checks,
         _m2_x86_64_differential_check_record(success_component, success_check, success),
         _m2_x86_64_differential_check_record(lazy_component, lazy_check, lazy),
         _m2_x86_64_differential_check_record(cold_component, cold_check, cold),
@@ -14822,6 +14880,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
                     *(check["id"] for check in metadata_checks),
                     *(check["id"] for check in arena_owned_checks),
                     *(check["id"] for check in recursion_checks),
+                    *(check["id"] for check in page_map_cleanup_checks),
                 }
             ),
             gate_name="native x86 M2 focused source evidence",

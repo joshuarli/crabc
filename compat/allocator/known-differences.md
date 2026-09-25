@@ -866,12 +866,11 @@ are compared.
   ownership, differential, and performance review. This entry does not waive
   the remaining M2 concurrent-lifetime or allocator-integration conditions.
   The M2 PageMap component's cold-root difference is separately and explicitly
-  closed only as the bounded safety divergence above. The previously open paired initial
-  commit/cleanup-release owner is now explicit: `PageMapInitializationError`
-  carries the live `Mapping`, `ProcessPageMapStorage` retains it before
-  terminal poison for both initial commit branches, and `MetaAllocator` uses
-  a distinct terminal slot for its caller path. The paired regressions release
-  that exact owner only after the injected cleanup fault is disabled.
+  closed only as the bounded safety divergence above. A failed initial or trailing-submap commit
+  whose cleanup release also fails is no longer a difference: like pinned
+  `mi_os_prim_free`, Rust warns, leaks the mapping, and fails initialization
+  (`m2_page_map_init_cleanup_x86_64.c` against
+  `page_map::tests::emit_m2_page_map_init_cleanup_c_rust_trace`).
   The new direct C/Rust trace and
   `page_map::tests::lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry`
   cover only the initialized lazy `Commit` boundary. The Rust-only

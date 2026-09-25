@@ -2421,7 +2421,7 @@ class ContractTests(unittest.TestCase):
                     "kind": "rust-unit",
                     "target": (
                         "meta::tests::paired_page_map_initial_commit_and_cleanup_failure_"
-                        "retains_the_exact_mapping"
+                        "leaks_the_mapping"
                     ),
                 },
                 {
@@ -2622,8 +2622,8 @@ class ContractTests(unittest.TestCase):
                 "id": "process-page-map-paired-initial-cleanup-owner",
                 "kind": "rust-unit",
                 "target": (
-                    "process_page_map::tests::paired_initial_commit_and_cleanup_unmap_"
-                    "failure_retains_the_exact_mapping"
+                    "process_page_map::tests::paired_initialization_commit_and_cleanup_unmap_"
+                    "failure_leaks_the_mapping"
                 ),
             },
         )
@@ -2634,8 +2634,8 @@ class ContractTests(unittest.TestCase):
                 "id": "process-page-map-paired-trailing-submap-cleanup-owner",
                 "kind": "rust-unit",
                 "target": (
-                    "process_page_map::tests::paired_initial_trailing_submap_commit_and_"
-                    "cleanup_unmap_failure_retains_the_exact_mapping"
+                    "process_page_map::tests::paired_initialization_commit_and_cleanup_unmap_"
+                    "failure_leaks_the_mapping"
                 ),
             },
         )

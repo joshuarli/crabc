@@ -392,13 +392,6 @@ pub(crate) struct ProcessPageMapStorage {
     config: UnsafeCell<MaybeUninit<MemoryConfig>>,
     subprocess: AtomicPtr<MainSubprocess>,
     page_map: UnsafeCell<MaybeUninit<PageMap>>,
-    /// The exact unpublished mapping retained when PageMap bootstrap's
-    /// cleanup `munmap` fails. It is distinct from `page_map`: no PageMap was
-    /// formed on this branch, and overwriting this slot would lose a live VM
-    /// owner. Process lifetime is the production terminal owner until the
-    /// source main-subprocess destruction lifecycle is ported.
-    retained_initialization_mapping: UnsafeCell<MaybeUninit<Mapping>>,
-    has_retained_initialization_mapping: AtomicBool,
     root: PageMapRoot,
 }
 
@@ -420,8 +413,6 @@ impl ProcessPageMapStorage {
             config: UnsafeCell::new(MaybeUninit::uninit()),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
             page_map: UnsafeCell::new(MaybeUninit::uninit()),
-            retained_initialization_mapping: UnsafeCell::new(MaybeUninit::uninit()),
-            has_retained_initialization_mapping: AtomicBool::new(false),
             root: PageMapRoot::empty(),
         }
     }
@@ -486,54 +477,6 @@ impl ProcessPageMapStorage {
     #[cfg(test)]
     pub(crate) fn test_has_published_root(&self) -> bool {
         self.root.load().is_some()
-    }
-
-    /// Test-only observation of the retained private bootstrap owner. It
-    /// grants neither a mapping reference nor a retry path.
-    #[cfg(test)]
-    pub(crate) fn test_has_retained_initialization_mapping(&self) -> bool {
-        self.has_retained_initialization_mapping.load(Ordering::Acquire)
-    }
-
-    /// Releases the exact retained bootstrap mapping after a test removes its
-    /// injected cleanup fault. A failed retry writes the same owner back into
-    /// the final slot before returning.
-    #[cfg(test)]
-    pub(crate) fn test_release_retained_initialization_mapping(
-        &'static self,
-    ) -> Result<(), Errno> {
-        let guard = self.initialization_lock.lock()?;
-        if !self.has_retained_initialization_mapping.load(Ordering::Acquire) {
-            return match guard.unlock() {
-                Ok(()) => Err(Errno::INVAL),
-                Err(error) => Err(error),
-            };
-        }
-        // SAFETY: the initialization lock excludes every other slot access,
-        // and the Acquire flag proves the initialization path wrote one live
-        // mapping before it poisoned this storage.
-        let mut mapping = unsafe {
-            (*self.retained_initialization_mapping.get()).assume_init_read()
-        };
-        let release = match mapping.unmap() {
-            Ok(()) => {
-                self.has_retained_initialization_mapping
-                    .store(false, Ordering::Release);
-                Ok(())
-            }
-            Err(error) => {
-                // SAFETY: the same lock still excludes another owner, and
-                // failed `unmap` leaves this exact Mapping live.
-                unsafe { self.write_retained_initialization_mapping(mapping) };
-                Err(error)
-            }
-        };
-        let unlock = guard.unlock();
-        match (release, unlock) {
-            (Err(error), _) => Err(error),
-            (Ok(()), Err(error)) => Err(error),
-            (Ok(()), Ok(())) => Ok(()),
-        }
     }
 
     /// Initializes or obtains the process-global map for `subprocess`.
@@ -604,24 +547,6 @@ impl ProcessPageMapStorage {
                 self.state.store(POISONED, Ordering::Release);
                 return Err(ProcessPageMapError::Initialization(error));
             }
-            Err(PageMapInitializationError::Retained {
-                initialization,
-                cleanup,
-                mapping,
-            }) => {
-                // SAFETY: the initialization lock is held, COLD excludes all
-                // readers, and no PageMap/root was formed. The failed cleanup
-                // left this exact mapping live, so it must enter its final
-                // terminal owner before POISONED is published.
-                unsafe { self.write_retained_initialization_mapping(mapping) };
-                self.has_retained_initialization_mapping
-                    .store(true, Ordering::Release);
-                self.state.store(POISONED, Ordering::Release);
-                return Err(ProcessPageMapError::InitializationRetained {
-                    initialization,
-                    cleanup,
-                });
-            }
         };
         // SAFETY: the initialization lock is held, COLD excludes every
         // reader, and this process-static slot is the page map's final
@@ -637,18 +562,6 @@ impl ProcessPageMapStorage {
         unsafe { self.root.publish(self.page_map_ref()) };
         self.state.store(READY, Ordering::Release);
         Ok(ProcessPageMapRoot { storage: self })
-    }
-
-    /// Writes the exact private PageMap bootstrap mapping into its terminal
-    /// process-static owner.
-    ///
-    /// # Safety
-    ///
-    /// The caller holds `initialization_lock`, the state is COLD, no root was
-    /// published, and the slot has not previously been initialized.
-    #[inline]
-    unsafe fn write_retained_initialization_mapping(&self, mapping: Mapping) {
-        unsafe { (*self.retained_initialization_mapping.get()).write(mapping) };
     }
 
     fn lease_if_matches(
@@ -1991,9 +1904,6 @@ pub(crate) enum ProcessPageMapError {
     /// lock acquisition.
     LifecycleBusy,
     Initialization(Errno),
-    /// Bootstrap failed and its private PageMap mapping could not be released.
-    /// The process-static owner retains that exact mapping terminally.
-    InitializationRetained { initialization: Errno, cleanup: Errno },
     ConfigurationMismatch,
     SubprocessMismatch,
     Poisoned,
@@ -3002,66 +2912,37 @@ mod tests {
         ));
     }
 
+    /// Source `mi_page_map_init_once`: a failed initial (ordinal 1) or
+    /// trailing-submap (ordinal 2) commit whose `_mi_os_free` cleanup unmap
+    /// also fails leaks the mapping; initialization fails, the once owner is
+    /// consumed, and no owner remains.
     #[test]
-    fn paired_initial_commit_and_cleanup_unmap_failure_retains_the_exact_mapping() {
-        let storage = ProcessPageMapStorage::test_static_owner();
-        let subprocess = MainSubprocess::test_static_owner();
-        let fault = fault::install(fault::Plan::at_pair(
-            fault::Point::Commit,
-            1,
-            fault::Point::Unmap,
-            1,
-            Errno::NOMEM,
-        ));
-
-        assert!(matches!(
-            storage.initialize(memory_config(), subprocess),
-            Err(ProcessPageMapError::InitializationRetained {
-                initialization: Errno::NOMEM,
-                cleanup: Errno::NOMEM,
-            })
-        ));
-        assert!(storage.test_has_retained_initialization_mapping());
-        assert!(!storage.test_has_published_root());
-
-        fault.set(fault::Plan::disabled());
-        assert!(matches!(
-            storage.initialize(memory_config(), subprocess),
-            Err(ProcessPageMapError::Poisoned)
-        ));
-        storage
-            .test_release_retained_initialization_mapping()
-            .expect("the retained exact mapping releases after the injected fault is removed");
-        assert!(!storage.test_has_retained_initialization_mapping());
-    }
-
-    #[test]
-    fn paired_initial_trailing_submap_commit_and_cleanup_unmap_failure_retains_the_exact_mapping() {
-        let storage = ProcessPageMapStorage::test_static_owner();
-        let subprocess = MainSubprocess::test_static_owner();
-        let fault = fault::install(fault::Plan::at_pair(
-            fault::Point::Commit,
-            2,
-            fault::Point::Unmap,
-            1,
-            Errno::NOMEM,
-        ));
-
-        assert!(matches!(
-            storage.initialize(memory_config(), subprocess),
-            Err(ProcessPageMapError::InitializationRetained {
-                initialization: Errno::NOMEM,
-                cleanup: Errno::NOMEM,
-            })
-        ));
-        assert!(storage.test_has_retained_initialization_mapping());
-        assert!(!storage.test_has_published_root());
-
-        fault.set(fault::Plan::disabled());
-        storage
-            .test_release_retained_initialization_mapping()
-            .expect("the retained trailing-submap mapping releases after the injected fault is removed");
-        assert!(!storage.test_has_retained_initialization_mapping());
+    fn paired_initialization_commit_and_cleanup_unmap_failure_leaks_the_mapping() {
+        for ordinal in 1..=2 {
+            let storage = ProcessPageMapStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let fault = fault::install(fault::Plan::at_pair(
+                fault::Point::Commit, ordinal, fault::Point::Unmap, 1, Errno::NOMEM,
+            ));
+            let capture = fault.capture_unmap_ranges();
+            assert!(matches!(
+                storage.initialize(memory_config(), subprocess),
+                Err(ProcessPageMapError::Initialization(Errno::NOMEM))
+            ));
+            let (ranges, count) = capture.all().expect("bounded releases");
+            drop(capture);
+            assert_eq!(fault.secondary_observed(), 1, "the cleanup release failed");
+            assert!(!storage.test_has_published_root());
+            fault.set(fault::Plan::disabled());
+            assert!(matches!(
+                storage.initialize(memory_config(), subprocess),
+                Err(ProcessPageMapError::Poisoned)
+            ));
+            let (leaked, leaked_length) = ranges[count - 1];
+            // SAFETY: the leaked mapping is represented by no owner.
+            unsafe { crabc_core::mm::munmap_raw(leaked as *mut u8, leaked_length) }
+                .expect("fixture teardown of the leaked PageMap mapping");
+        }
     }
 
     #[test]

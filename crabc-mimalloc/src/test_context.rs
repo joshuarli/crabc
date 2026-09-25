@@ -668,17 +668,11 @@ impl TestAllocatorContext {
         let config = MemoryConfig::detect(StartupInput::new(page_size));
         let mut page_map = Box::new(match PageMap::initialize(config, 0, true) {
             Ok(page_map) => page_map,
+            // A failed initialization cleanup leaks its mapping, as the
+            // source does, so no PageMap owner survives this branch.
             Err(PageMapInitializationError::Failed { .. }) => {
                 return Err(TestContextInitFailure::released(
                     TestContextInitError::PageMapInitialization,
-                ));
-            }
-            Err(PageMapInitializationError::Retained { mapping, .. }) => {
-                return Err(TestContextInitFailure::cleanup_or_retain(
-                    TestContextInitError::PageMapInitialization,
-                    None,
-                    None,
-                    Some(mapping),
                 ));
             }
         });

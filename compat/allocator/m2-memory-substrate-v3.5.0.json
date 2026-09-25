@@ -98,7 +98,7 @@
           "expected_passed_test_count": 1,
           "id": "meta-page-map-paired-cleanup-owner",
           "kind": "rust-unit",
-          "target": "meta::tests::paired_page_map_initial_commit_and_cleanup_failure_retains_the_exact_mapping"
+          "target": "meta::tests::paired_page_map_initial_commit_and_cleanup_failure_leaks_the_mapping"
         },
         {
           "expected_passed_test_count": 1,
@@ -268,13 +268,13 @@
           "expected_passed_test_count": 1,
           "id": "process-page-map-paired-initial-cleanup-owner",
           "kind": "rust-unit",
-          "target": "process_page_map::tests::paired_initial_commit_and_cleanup_unmap_failure_retains_the_exact_mapping"
+          "target": "process_page_map::tests::paired_initialization_commit_and_cleanup_unmap_failure_leaks_the_mapping"
         },
         {
           "expected_passed_test_count": 1,
           "id": "process-page-map-paired-trailing-submap-cleanup-owner",
           "kind": "rust-unit",
-          "target": "process_page_map::tests::paired_initial_trailing_submap_commit_and_cleanup_unmap_failure_retains_the_exact_mapping"
+          "target": "process_page_map::tests::paired_initialization_commit_and_cleanup_unmap_failure_leaks_the_mapping"
         },
         {
           "expected_passed_test_count": 1,

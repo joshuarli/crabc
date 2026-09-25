@@ -1429,6 +1429,24 @@ pub(crate) fn process_source_option(option: crate::config::SourceOption) -> i64 
     option.default_value()
 }
 
+/// `_mi_warning_message(...)` for one source warning site, delivered through
+/// the process output owner's `verbose`/`show_errors`/`max_warnings` gate.
+/// Before x86 startup has installed the table (and on the paused AArch64
+/// process) no output owner exists and the release defaults suppress it.
+///
+/// The caller must hold no page-engine, owner, TLD, or Theap projection: a
+/// registered output callback may reenter the allocator, as it may in C.
+pub(crate) fn process_warning_message(message: crate::diagnostic_output::SourceFormattedMessage) {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(output) = ProcessMainInitializationStorage::global().published_source_options() {
+        // SAFETY: a published owner has an installed table; the caller holds
+        // no allocator projection across this warning's delivery.
+        unsafe { output.warning_from_source_options(message) };
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = message;
+}
+
 /// `_mi_error_message(err, ...)` for one release-live allocation site,
 /// reported through the process output owner's `show_errors`/`verbose`/
 /// `max_errors` gate and error handler.
