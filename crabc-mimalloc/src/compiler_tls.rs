@@ -260,6 +260,17 @@ pub(crate) fn install_empty_dynamic_backing() {
     unsafe { DYNAMIC_BACKING_ROOT = empty_dynamic_backing_ptr() };
 }
 
+/// Restores every source root of the calling thread to its pristine image
+/// without reading what it named: a thread whose child subprocess was
+/// destroyed under it (`mi_subproc_destroy`) finishes with roots that name
+/// released child memory.
+pub(crate) fn reset_roots_after_destroyed_child() {
+    install_empty_dynamic_backing();
+    set_fast_slot(None);
+    set_default_theap(NonNull::from(crate::bootstrap::empty_default_theap()));
+    set_cached_theap(NonNull::from(crate::bootstrap::empty_default_theap()));
+}
+
 /// Clears only the regular dynamic-backing root after its lifecycle owner has
 /// attempted source-ordered metadata release. This intentionally leaves the
 /// fast/default/cached/helper roots untouched; their lifecycle is separate.

@@ -17,6 +17,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
 
 #include "mimalloc.h"
 #include "mimalloc-stats.h"
@@ -505,6 +507,52 @@ static void subproc_section(void) {
   print_messages("subproc.messages");
 }
 
+
+/* A child destroyed under a thread that still belongs to it. Source
+   destroys the child's Heaps, Theaps, pages, and arenas under the thread;
+   the thread makes no allocator call afterwards and never exits before the
+   process does (its thread-done would reach released child memory). */
+static mi_subproc_id_t doomed;
+static volatile int doomed_ready;
+
+static void* doomed_worker(void* argument) {
+  (void)argument;
+  mi_subproc_add_current_thread(doomed);
+  void* p = mi_malloc(200);
+  memset(p, 0x55, 200);
+  mi_heap_t* h = mi_heap_new();
+  void* q = mi_heap_malloc(h, 64);
+  memset(q, 0x66, 64);
+  __atomic_store_n(&doomed_ready, 1, __ATOMIC_RELEASE);
+  for (;;) pause();
+  return NULL;
+}
+
+static void subproc_destroy_live_section(void) {
+  doomed = mi_subproc_new();
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, doomed_worker, NULL) != 0) {
+    printf("subproc.live.run=0\n");
+    return;
+  }
+  while (!__atomic_load_n(&doomed_ready, __ATOMIC_ACQUIRE)) sched_yield();
+  printf("subproc.live.visit=%d\n", visit(doomed, 0, NULL));
+  mi_stats_t before = stats_now();
+  mi_subproc_destroy(doomed);
+  mi_stats_t after = stats_now();
+  printf("subproc.live.destroyed.threads=%lld,%lld\n", (long long)(after.threads.total - before.threads.total),
+         (long long)(after.threads.current - before.threads.current));
+  printf("subproc.live.destroyed.heaps=%lld,%lld\n", (long long)(after.heaps.total - before.heaps.total),
+         (long long)(after.heaps.current - before.heaps.current));
+  printf("subproc.live.destroyed.theaps=%lld,%lld\n", (long long)(after.theaps.total - before.theaps.total),
+         (long long)(after.theaps.current - before.theaps.current));
+  printf("subproc.live.current=%d\n", mi_subproc_current()._mi_subproc_id == mi_subproc_main()._mi_subproc_id ? 1 : 0);
+  void* p = mi_malloc(64);
+  printf("subproc.live.main_malloc=%d\n", p != NULL ? 1 : 0);
+  mi_free(p);
+  print_messages("subproc.live.messages");
+}
+
 int main(void) {
   /* Unbuffered, so a failing side's trace ends at its failing step. */
   setvbuf(stdout, NULL, _IONBF, 0);
@@ -523,6 +571,7 @@ int main(void) {
   delete_section();
   thread_section();
   subproc_section();
+  subproc_destroy_live_section();
   print_messages("final.messages");
   printf("CRABC_MI_M6_ADAPTER_TRACE_END\n");
   return 0;

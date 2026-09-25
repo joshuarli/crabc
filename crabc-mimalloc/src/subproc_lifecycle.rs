@@ -352,7 +352,7 @@ pub(crate) unsafe fn destroy_child<'main, 'tracking>(
     unsafe {
         destroy_child_with(
             child, registry, binding, tracking, metadata, config,
-            ChildHeapRelease::Parent { heap_owner, attachment },
+            ChildHeapRelease::Parent { heap_owner, attachment }, false,
         )
     }
 }
@@ -370,9 +370,11 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
     metadata: core::pin::Pin<&'static crate::meta::MetaAllocator>,
     config: crate::os::MemoryConfig,
     release: ChildHeapRelease<'_, 'heap>,
+    under_threads: bool,
 ) -> Result<(), ChildSubprocessDestroyFailure<'heap, 'tracking>> {
-    // Process destruction destroys a child that threads may still belong to.
-    let terminal = matches!(release, ChildHeapRelease::Terminal);
+    // Process destruction, and `mi_subproc_destroy` of a child that threads
+    // still belong to, destroy the child under those threads.
+    let terminal = under_threads || matches!(release, ChildHeapRelease::Terminal);
     let mut release = Some(release);
     loop {
         let step = match child.stage() {
@@ -699,6 +701,10 @@ pub(crate) struct NativeChildSubprocess {
     /// This record's own parent-metadata block, moved out to free it.
     storage: core::cell::UnsafeCell<Option<crate::meta::MetaAllocation<'static>>>,
     registry: &'static SourceSubprocessRegistry,
+    /// Threads that still belonged to the child when `mi_subproc_destroy`
+    /// destroyed it under them. The record outlives the child until the
+    /// last of them finishes, so that each finds the child gone.
+    orphans: core::cell::UnsafeCell<usize>,
 }
 
 // SAFETY: every access to the two cells happens with `lock` held, except the
@@ -824,6 +830,7 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
             owner: core::cell::UnsafeCell::new(Some(child)),
             storage: core::cell::UnsafeCell::new(Some(storage)),
             registry,
+            orphans: core::cell::UnsafeCell::new(0),
         });
     }
     // SAFETY: the record was written whole above and nothing else can reach
@@ -977,11 +984,23 @@ pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadD
     // SAFETY: this is the admitted thread; its caller has ended every use of
     // its allocations (thread exit), and the record lock excludes every
     // other context operation.
+    let mut orphaned_last = None;
     let done = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
             Some(child) => unsafe { member.thread_done(child, binding) }
                 .map_err(NativeChildThreadDoneError::Done),
-            None => Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Gone)),
+            None => {
+                // The child was destroyed under this thread. Its member,
+                // TLD, Theaps, and roots name released child memory.
+                // SAFETY: the held record lock serializes the count.
+                let orphans = unsafe { &mut *id.record().orphans.get() };
+                if *orphans == 0 {
+                    return Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Gone));
+                }
+                *orphans -= 1;
+                orphaned_last = Some(*orphans == 0);
+                Ok(())
+            }
         })
     };
     let result = match done {
@@ -989,6 +1008,21 @@ pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadD
         Err(error) => Err(NativeChildThreadDoneError::Subprocess(error)),
     };
     if result.is_ok() {
+        if let Some(last) = orphaned_last {
+            // Nothing of the destroyed child is touched: the member is
+            // forgotten and the compiler-TLS roots return to their pristine
+            // images before the thread's own teardown reads them.
+            if let Some(current) = slot.take() {
+                core::mem::forget(current);
+            }
+            crate::compiler_tls::reset_roots_after_destroyed_child();
+            if last {
+                // SAFETY: the child is gone and this was its last thread, so
+                // no operation on the record can run or start.
+                let _ = unsafe { free_record(id.record()) };
+            }
+            return Some(Ok(()));
+        }
         *slot = None;
     }
     Some(result)
@@ -1252,14 +1286,17 @@ pub(crate) unsafe fn native_subproc_visit_heaps(
 /// Production pinned `mi_subproc_destroy` for a child from
 /// [`native_subproc_new`], on any runtime thread that may free.
 ///
-/// It refuses, leaving the id valid, while a thread still belongs to the
-/// child (source would destroy it under that thread). After success the id
-/// is invalid. A failure after the first irreversible step retains the
-/// remaining owners and returns `Retained`.
+/// A child that threads still belong to is destroyed under them, as source
+/// does; each of them later finishes without touching the child, and the
+/// last one frees the record. After success the id is invalid. A failure
+/// after the first irreversible step retains the remaining owners and
+/// returns `Retained`.
 ///
 /// # Safety
 /// The id is live, no other operation on this id runs concurrently with
-/// the call, and no block of the child is used again.
+/// the call, no block of the child is used again, and a thread that still
+/// belongs to the child makes no allocator call during or after the call
+/// other than its own thread finish.
 pub(crate) unsafe fn native_subproc_destroy(id: NativeSubprocessId) -> Result<(), NativeSubprocessError> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
         .ok_or(NativeSubprocessError::Closed)?;
@@ -1325,14 +1362,23 @@ unsafe fn destroy_record(
     let record = unsafe { id.record() };
     let destroyed = unsafe {
         id.with_owner(|owner| {
-            let child = owner.take().ok_or(NativeSubprocessError::Gone)?;
+            let mut child = owner.take().ok_or(NativeSubprocessError::Gone)?;
+            // Source destroys a child under the threads that still belong
+            // to it (`subproc.c:201-257`); they keep the record alive.
+            let live = child
+                .with_child_image(|image| image.get_ref().identity().live_thread_count())
+                .unwrap_or(0);
             // SAFETY: the record lock excludes thread admission and finish,
             // the unlink step refuses while a thread belongs to the child,
             // and the caller never uses a child block again.
             match destroy_child_with(
-                child, record.registry, binding, &mut [], metadata, config, release,
+                child, record.registry, binding, &mut [], metadata, config, release, live != 0,
             ) {
-                Ok(()) => Ok(()),
+                Ok(()) => {
+                    // SAFETY: the held record lock serializes the count.
+                    unsafe { *record.orphans.get() = live };
+                    Ok(live)
+                }
                 Err(ChildSubprocessDestroyFailure::Retained { owner: child, error }) => {
                     let refused = child.stage() == ChildMainHeapStage::HeapReady;
                     *owner = Some(child);
@@ -1353,11 +1399,24 @@ unsafe fn destroy_record(
             }
         })
     }??;
+    if destroyed != 0 {
+        // The orphaned threads free the record as the last one finishes.
+        return Ok(());
+    }
     // The child is gone and the lock is released; no other operation on this
     // id may run (caller contract), so the record can be taken apart.
     // SAFETY: exclusive by the id contract; the owner cell is empty.
+    unsafe { free_record(record) }
+}
+
+/// Frees a record whose child is gone.
+///
+/// # Safety
+/// No operation on the record runs or can start.
+unsafe fn free_record(record: &'static NativeChildSubprocess) -> Result<(), NativeSubprocessError> {
+    // SAFETY: forwarded exclusivity; the owner cell is empty.
     let mut storage = unsafe { (*record.storage.get()).take() }.ok_or(NativeSubprocessError::Retained)?;
-    metadata.free(&mut storage).map_err(|_| NativeSubprocessError::Retained)
+    crate::meta::MetaAllocator::global().free(&mut storage).map_err(|_| NativeSubprocessError::Retained)
 }
 
 #[cfg(test)]
@@ -1762,6 +1821,65 @@ pub(crate) mod tests {
     /// frees one block (the page stays abandoned) and the only block of
     /// another page (the page is released), and `native_subproc_destroy`
     /// then destroys the child with its last block still live.
+    /// Pinned `mi_subproc_destroy` destroys a child under a thread that still
+    /// belongs to it (`subproc.c:201-257`): the member keeps a live block and
+    /// a non-main Heap with a cached Theap and a live block, and stays idle.
+    /// The child's statistics merge into main with the member still counted
+    /// and its cached Theap for the Heap still live, and the member's later
+    /// thread finish touches nothing of the destroyed child.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_subproc_destroy_destroys_a_child_under_its_live_thread() {
+        use crate::runtime_lifecycle::{
+            finish_current_thread_native_after_user_destructors, native_allocate_aligned,
+            prepare_native_later_thread_arena, test_initialize_process_from_host_environment,
+            NativePageAllocationResult, ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_subproc_destroy_destroys_a_child_under_its_live_thread",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("the initial thread creates a child");
+                let main = crate::subproc::MainSubprocess::global();
+                let before = main.statistics().final_output_snapshot();
+                let (ready_send, ready_receive) = std::sync::mpsc::channel();
+                let (stop_send, stop_receive) = std::sync::mpsc::channel::<()>();
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: the fresh thread registers its own descriptor once.
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    // SAFETY: a fresh thread owns its pristine roots.
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(200, 16, false)
+                        else { panic!("child allocation"); };
+                    unsafe { block.as_ptr().write_bytes(0x55, 200) };
+                    let heap = native_child_heap_new().expect("a member").expect("a live record").expect("a Heap");
+                    let heap_block = unsafe { native_child_heap_allocate(heap, 64) }.expect("a member").expect("a block");
+                    unsafe { heap_block.as_ptr().write_bytes(0x66, 64) };
+                    ready_send.send(()).unwrap();
+                    stop_receive.recv().unwrap();
+                    // The destroyed child is not reached again.
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                    assert!(!current_thread_is_child_member());
+                });
+                ready_receive.recv().unwrap();
+                // SAFETY: the member is idle and never uses a child block again.
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+                let after = main.statistics().final_output_snapshot();
+                assert_eq!((after.threads.total - before.threads.total, after.threads.current - before.threads.current), (1, 1));
+                assert_eq!((after.heaps.total - before.heaps.total, after.heaps.current - before.heaps.current), (2, 0));
+                assert_eq!((after.theaps.total - before.theaps.total, after.theaps.current - before.theaps.current), (2, 1));
+                stop_send.send(()).unwrap();
+                worker.join().expect("the orphaned member finishes");
+            },
+        );
+    }
+
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn native_child_thread_finishes_with_live_blocks_and_the_child_is_destroyed() {
@@ -1921,14 +2039,6 @@ pub(crate) mod tests {
                     exchanged.wait();
                     free(core::ptr::NonNull::new(to_main.swap(core::ptr::null_mut(), Ordering::AcqRel)).unwrap());
                     holding.wait();
-                    // SAFETY: the id is live; this is the only destroy.
-                    assert_eq!(
-                        unsafe { native_subproc_destroy(id) },
-                        Err(NativeSubprocessError::DestroyRefused(
-                            ChildSubprocessDestroyError::Registry(ChildMetadataPageEngineError::LiveThreads),
-                        )),
-                        "a child with live threads is not destroyed",
-                    );
                     release.wait();
                 });
 

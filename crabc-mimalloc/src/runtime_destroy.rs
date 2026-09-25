@@ -889,9 +889,12 @@ mod tests {
                     // The child main and non-main Heaps, then main's own, are freed.
                     assert_eq!((after.heaps.total, after.heaps.current), (before.heaps.total + 2, 0));
                     // The member's main-Heap Theap and its Theap for the
-                    // non-main Heap are counted and freed in the child.
+                    // non-main Heap are counted in the child. The Heap's
+                    // page-record allocation left the member's cache on its
+                    // main-Heap Theap, whose cached reference keeps it
+                    // counted, as `_mi_theap_decref` does.
                     assert_eq!((after.theaps.total, after.theaps.current),
-                        (before.theaps.total + 2, before.theaps.current));
+                        (before.theaps.total + 2, before.theaps.current + 1));
                     let owners = unsafe { &*DESTROY_OWNERS.0.get() };
                     assert!(owners.failure.is_none());
                     assert!(owners.arenas.as_ref().unwrap().is_released());

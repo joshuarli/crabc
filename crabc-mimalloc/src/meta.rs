@@ -3812,9 +3812,11 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// (`theap.c:381-411`, `heap.c:162-182`) for the child-thread Theaps
     /// still on the child main Heap at process destruction: each leaves the
     /// Heap list and its TLD's list, merges its statistics into the Heap, and
-    /// is counted out of the child's `theaps` statistic, as `_mi_theap_decref`
-    /// frees it (a main-Heap Theap is never cached, so its count reaches
-    /// zero). The Theap and TLD blocks are not freed one by one: they are
+    /// drops the Heap's reference as `_mi_theap_decref` does: it is counted
+    /// out of the child's `theaps` statistic only when that was its last
+    /// reference (the thread's cached entry may hold another, after the
+    /// nested page-record allocation of `mi_arena_pages_alloc` moved the
+    /// cache to it). The Theap and TLD blocks are not freed one by one: they are
     /// live child metadata blocks, released with the child arenas. The TLDs
     /// keep their live registration, as source never runs `mi_tld_free` for
     /// them. The metadata Theap is detached next, as before.
@@ -3840,7 +3842,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             let detached = storage.with_heap(|mut heap| {
                 // SAFETY: terminal quiescence (caller contract).
                 let Some((theap, tld)) = (unsafe { heap.first_theap_other_than_quiescent(metadata_theap) }) else {
-                    return Ok(false);
+                    return Ok(None);
                 };
                 let Some(tld) = NonNull::new(tld) else { return Err(()) };
                 // SAFETY: the listed TLD is allocated and, under quiescence,
@@ -3850,18 +3852,24 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 let heap = unsafe { heap.as_mut().get_unchecked_mut() };
                 tld.detach_one_theap_from_heap(heap, theap.as_ptr()).map_err(|_| ())?;
                 tld.detach_one_theap_from_tld(theap.as_ptr()).map_err(|_| ())?;
-                // heap.c:173-181, then theap.c:350-352.
+                // heap.c:173-181, then `_mi_theap_decref` (theap.c:350-370):
+                // the Theap is counted out only when that was its last
+                // reference; a thread's cached entry can still hold one.
                 // SAFETY: the detached Theap stays allocated in child metadata.
                 heap.merge_detached_theap_statistics(unsafe { theap.as_ref() });
-                Ok(true)
+                // SAFETY: as above; the reference-count field is atomic.
+                let last = unsafe { Theap::decref_at(theap) && !Theap::is_detached_at(theap) };
+                Ok(Some(last))
             });
             match detached {
-                Some(Ok(true)) => {
-                    self.context.with_image(|image| {
-                        image.get_ref().identity().record_statistics_theap_unlinked();
-                    });
+                Some(Ok(Some(last))) => {
+                    if last {
+                        self.context.with_image(|image| {
+                            image.get_ref().identity().record_statistics_theap_unlinked();
+                        });
+                    }
                 }
-                Some(Ok(false)) => return Ok(()),
+                Some(Ok(None)) => return Ok(()),
                 Some(Err(())) | None => {
                     self.stage = ChildMainHeapStage::Terminal;
                     return Err(ChildMainHeapReleaseError::InvalidTransition);

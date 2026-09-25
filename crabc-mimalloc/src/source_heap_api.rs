@@ -692,13 +692,14 @@ pub fn subproc_new() -> *mut c_void {
     crate::subproc::lifecycle::native_subproc_new().map_or(null_mut(), NativeSubprocessId::as_ptr)
 }
 
-/// `mi_subproc_destroy(id)`: the main subprocess and null are ignored.
-/// `false` when the child could not be destroyed: a thread still belongs to
-/// it (source destroys it under that thread), or a later step retained it.
+/// `mi_subproc_destroy(id)`: the main subprocess and null are ignored; a
+/// child that threads still belong to is destroyed under them. `false` when
+/// a step retained the child.
 ///
 /// # Safety
 /// `id` is null, the main id, or a live child id from [`subproc_new`]; no
-/// block of the child is used again.
+/// block of the child is used again, and a thread that still belongs to it
+/// makes no allocator call afterwards other than its own thread finish.
 pub unsafe fn subproc_destroy(id: *mut c_void) -> bool {
     let Some(pointer) = NonNull::new(id) else { return true };
     if pointer.as_ptr() == main_id() {
