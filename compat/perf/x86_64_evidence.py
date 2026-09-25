@@ -2413,6 +2413,85 @@ def collector_scorecard(attempts: Sequence[Mapping[str, Mapping[str, Any]]]) -> 
     }
 
 
+# The measuring-host load policy this adapter applies (plan.md: qualifying
+# benchmarks need an uncontended host). Each attempt retains raw
+# `/proc/loadavg` and `/proc/stat` captures before its build and after its
+# last measurement. A snapshot is uncontended when the host-wide one-minute
+# load average is at most HOST_LOAD_1MIN_MAX and at most
+# HOST_PROCS_RUNNING_MAX tasks are runnable (the adapter's own sampling task
+# is one of them). Both files are host-global, not container-scoped.
+HOST_LOAD_1MIN_MAX = 1.0
+HOST_PROCS_RUNNING_MAX = 2
+HOST_LOAD_POLICY = {
+    "load_average_1min_max": HOST_LOAD_1MIN_MAX,
+    "procs_running_max": HOST_PROCS_RUNNING_MAX,
+    "sources": ["/proc/loadavg", "/proc/stat"],
+}
+
+
+def host_load_facts(loadavg_raw: bytes, stat_raw: bytes) -> dict[str, Any]:
+    """Parse the raw host-load observations one snapshot retains."""
+
+    fields = loadavg_raw.decode("ascii", errors="replace").split()
+    require(len(fields) >= 4 and "/" in fields[3], "raw /proc/loadavg is malformed")
+    try:
+        averages = [float(value) for value in fields[:3]]
+        runnable, total = (int(value) for value in fields[3].split("/", 1))
+    except ValueError as error:
+        raise EvidenceError("raw /proc/loadavg is malformed") from error
+    running = None
+    online = 0
+    for line in stat_raw.decode("ascii", errors="replace").splitlines():
+        name, _, value = line.partition(" ")
+        if name == "procs_running":
+            running = int(value.strip())
+        elif name.startswith("cpu") and name != "cpu":
+            online += 1
+    require(running is not None and online > 0, "raw /proc/stat lacks procs_running or per-CPU lines")
+    return {
+        "load_average": averages, "loadavg_runnable": runnable, "loadavg_tasks": total,
+        "procs_running": running, "online_cpus": online,
+        "uncontended": averages[0] <= HOST_LOAD_1MIN_MAX and running <= HOST_PROCS_RUNNING_MAX,
+    }
+
+
+def verify_host_load_snapshot(checkout: Path, record: object, label: str) -> dict[str, Any]:
+    """Replay one retained snapshot: its facts must derive from its raw files."""
+
+    require(isinstance(record, dict) and set(record) == {"loadavg", "stat", "facts"}, f"{label} host load record differs")
+    loadavg = retained_file_identity(checkout, SOURCE_MOUNT, record["loadavg"], f"{label} raw /proc/loadavg")
+    stat_raw = retained_file_identity(checkout, SOURCE_MOUNT, record["stat"], f"{label} raw /proc/stat")
+    facts = host_load_facts(loadavg.read_bytes(), stat_raw.read_bytes())
+    require(record["facts"] == facts, f"{label} host load facts do not derive from their raw captures")
+    return facts
+
+
+def verify_attempt_host_load(checkout: Path, attempt: Mapping[str, Any], index: int) -> dict[str, Any]:
+    record = attempt.get("host_load")
+    require(isinstance(record, dict) and set(record) == {"before", "after"}, f"attempt {index} host load record differs")
+    return {
+        "index": index,
+        "before": verify_host_load_snapshot(checkout, record["before"], f"attempt {index} before"),
+        "after": verify_host_load_snapshot(checkout, record["after"], f"attempt {index} after"),
+    }
+
+
+def uncontended_host_record(snapshots: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The `performance.release` gate's host record, derived from snapshots.
+
+    `uncontended` only when every retained snapshot meets the policy; any
+    contended or missing observation fails closed as `contended`.
+    """
+
+    uncontended = bool(snapshots) and all(
+        item["before"]["uncontended"] and item["after"]["uncontended"] for item in snapshots
+    )
+    return {
+        "status": "uncontended" if uncontended else "contended",
+        "evidence": {"policy": HOST_LOAD_POLICY, "attempts": list(snapshots)},
+    }
+
+
 def release_blockers(
     *,
     admission: Mapping[str, Any],
@@ -2422,6 +2501,7 @@ def release_blockers(
     workloads: Sequence[str],
     canonical_workloads: Sequence[str],
     failing_rows: Sequence[str],
+    uncontended_host: Mapping[str, Any],
 ) -> list[str]:
     """Name every unmet release condition; an empty list is the only pass."""
 
@@ -2441,6 +2521,11 @@ def release_blockers(
         blockers.append(f"{len(omitted)} canonical rows are absent: {', '.join(omitted)}")
     if failing_rows:
         blockers.append(f"{len(failing_rows)} of {len(workloads)} rows fail a per-workload gate: {', '.join(failing_rows)}")
+    if uncontended_host.get("status") != "uncontended":
+        blockers.append(
+            "measuring host was contended: a retained snapshot exceeds one-minute load "
+            f"{HOST_LOAD_1MIN_MAX} or {HOST_PROCS_RUNNING_MAX} runnable tasks (see uncontended_host)"
+        )
     blockers.extend(f"acceptance policy {key}: {value}" for key, value in ACCEPTANCE_POLICY_BLOCKERS.items())
     return blockers
 
@@ -2660,8 +2745,8 @@ def _verify_collector_roster(
 
 
 ATTEMPT_FIELDS = frozenset({
-    "schema", "kind", "status", "source_mount", "attempt", "source", "product", "tools", "build", "execution",
-    "measurement", "release",
+    "schema", "kind", "status", "source_mount", "attempt", "source", "product", "tools", "host_load", "build",
+    "execution", "measurement", "release",
 })
 
 
@@ -2728,6 +2813,7 @@ def validate_attempt_report(checkout: Path, report_path: Path) -> CheckedReport:
         work_dir=work_dir,
     )
     failing = [name for name, row in scorecard.items() if row["gate"] != "pass"]
+    host = uncontended_host_record([verify_attempt_host_load(checkout, attempt, int(info.get("index", 1)))])
     blockers = release_blockers(
         admission=correctness_admission(checkout),
         dynamic_product={"status": "unavailable"},
@@ -2736,21 +2822,26 @@ def validate_attempt_report(checkout: Path, report_path: Path) -> CheckedReport:
         workloads=list(scorecard),
         canonical_workloads=list(canonical_workload_invocations(checkout)),
         failing_rows=failing,
+        uncontended_host=host,
     )
     return CheckedReport(True, False, tuple(blockers), {"budget": budget, "rows": scorecard, "failing_rows": failing})
 
 
 COLLECTOR_REPORT_FIELDS = frozenset({
-    "schema", "kind", "status", "source_mount", "collector", "attempts", "scorecard", "release",
+    "schema", "kind", "status", "source_mount", "collector", "attempts", "uncontended_host", "scorecard",
+    "release",
 })
 
 
-def replay_collection(checkout: Path, report: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Replay a collector's three attempts and derive its scorecard/release.
+def replay_collection(
+    checkout: Path, report: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Replay a collector's three attempts; derive scorecard, release and host.
 
     The collector writer and the independent reader both call this; the
     reader additionally requires the recorded values to equal the derivation.
-    Qualification is exactly an empty blocker list.
+    The third value is the `uncontended_host` record the `performance.release`
+    gate reads. Qualification is exactly an empty blocker list.
     """
 
     require(set(report) == COLLECTOR_REPORT_FIELDS, "collector report fields drifted")
@@ -2793,6 +2884,7 @@ def replay_collection(checkout: Path, report: Mapping[str, Any]) -> tuple[dict[s
     seen_nonces: set[str] = set()
     image_ids: set[str] = set()
     scorecards: list[dict[str, dict[str, Any]]] = []
+    host_snapshots: list[dict[str, Any]] = []
     for expected_order, entry in enumerate(attempts, start=1):
         require(isinstance(entry, dict) and set(entry) == {"index", "report"}, "collector attempt entry differs")
         index = entry["index"]
@@ -2839,6 +2931,7 @@ def replay_collection(checkout: Path, report: Mapping[str, Any]) -> tuple[dict[s
         )
         require(attempt_product_path == product_path, f"attempt {index} used a different supplied product")
         scorecards.append(scorecard)
+        host_snapshots.append(verify_attempt_host_load(checkout, attempt, index))
         fingerprint = (
             attempt_info["docker_image_id"],
             attempt_info["invocation_nonce"],
@@ -2849,6 +2942,7 @@ def replay_collection(checkout: Path, report: Mapping[str, Any]) -> tuple[dict[s
     require(seen_indices == {1, 2, 3}, "collector omitted an attempt index")
     require(len(image_ids) == 1, "collector attempts used different Docker images")
     scorecard = {"budget": budget, **collector_scorecard(scorecards)}
+    host = uncontended_host_record(host_snapshots)
     blockers = release_blockers(
         admission=admission,
         dynamic_product=dynamic,
@@ -2857,15 +2951,17 @@ def replay_collection(checkout: Path, report: Mapping[str, Any]) -> tuple[dict[s
         workloads=list(scorecard["rows"]),
         canonical_workloads=list(canonical_workload_invocations(checkout)),
         failing_rows=scorecard["failing_rows"],
+        uncontended_host=host,
     )
-    return scorecard, {"qualified": not blockers, "blockers": blockers}
+    return scorecard, {"qualified": not blockers, "blockers": blockers}, host
 
 
 def validate_collector_report(checkout: Path, report_path: Path) -> CheckedReport:
     """Replay all retained paths and reject a partial/favourably selected trio."""
 
     report = load_json(report_path, "native performance collector report")
-    scorecard, release = replay_collection(checkout, report)
+    scorecard, release, host = replay_collection(checkout, report)
+    require(report["uncontended_host"] == host, "collector uncontended_host does not derive from its attempts")
     require(report["scorecard"] == scorecard, "collector scorecard does not derive from its replayed attempts")
     require(report["release"] == release, "collector release decision does not derive from its evidence")
     return CheckedReport(True, release["qualified"], tuple(release["blockers"]), scorecard)

@@ -689,22 +689,38 @@ class ScorecardDerivationTests(unittest.TestCase):
         available = {"status": "available", "owner": evidence.CORRECTNESS_OWNER, "unmet": []}
         validated = {"status": "validated-product-prerequisite"}
         policy = [f"acceptance policy {key}: {value}" for key, value in evidence.ACCEPTANCE_POLICY_BLOCKERS.items()]
+        quiet = {"status": "uncontended", "evidence": {"attempts": []}}
         self.assertEqual(evidence.release_blockers(
             admission=available, dynamic_product=validated, budget=evidence.FULL_BUDGET, attempts=3,
-            workloads=canonical, canonical_workloads=canonical, failing_rows=[],
+            workloads=canonical, canonical_workloads=canonical, failing_rows=[], uncontended_host=quiet,
         ), policy)
         blockers = evidence.release_blockers(
             admission={"status": "unavailable", "owner": evidence.CORRECTNESS_OWNER, "unmet": ["a: planned"]},
             dynamic_product={"status": "unavailable"}, budget=evidence.SMOKE_BUDGET, attempts=1,
             workloads=canonical[1:], canonical_workloads=canonical, failing_rows=["getpid"],
+            uncontended_host={"status": "contended", "evidence": {}},
         )
-        self.assertEqual(len(blockers), 6 + len(policy))
+        self.assertEqual(len(blockers), 7 + len(policy))
+        self.assertIn("contended", blockers[6])
         self.assertIn("a: planned", blockers[0])
         self.assertIn("owned-dynamic-qualification", blockers[1])
         self.assertIn("implementation-smoke", blockers[2])
         self.assertIn("1 attempt(s)", blockers[3])
         self.assertIn(canonical[0], blockers[4])
         self.assertIn("getpid", blockers[5])
+
+
+class HostLoadTests(unittest.TestCase):
+    def test_host_load_policy_fails_closed_on_load_or_runnable_tasks(self) -> None:
+        stat = b"cpu  1 2\ncpu0 1 2\ncpu1 1 2\nprocs_running %d\n"
+        quiet = evidence.host_load_facts(b"1.00 0.5 0.2 1/300 99\n", stat % 2)
+        self.assertEqual((quiet["load_average"], quiet["procs_running"], quiet["online_cpus"]), ([1.0, 0.5, 0.2], 2, 2))
+        self.assertTrue(quiet["uncontended"])
+        self.assertFalse(evidence.host_load_facts(b"1.01 0.5 0.2 1/300 99\n", stat % 1)["uncontended"])
+        self.assertFalse(evidence.host_load_facts(b"0.10 0.5 0.2 3/300 99\n", stat % 3)["uncontended"])
+        with self.assertRaisesRegex(evidence.EvidenceError, "procs_running"):
+            evidence.host_load_facts(b"0.10 0.5 0.2 1/300 99\n", b"cpu0 1 2\n")
+        self.assertEqual(evidence.uncontended_host_record([])["status"], "contended")
 
 
 class CorrectnessAdmissionTests(unittest.TestCase):
@@ -768,6 +784,14 @@ class CollectorCompositionTests(unittest.TestCase):
             roster_path.write_text(json.dumps(roster), encoding="utf-8")
             attempt_paths: list[Path] = []
             image_id = "sha256:" + "d" * 64
+            def host_load(index: int, when: str, load: str) -> dict[str, object]:
+                raw = directory / f"attempt-{index}" / f"load-{when}"
+                raw.mkdir()
+                (raw / "loadavg.raw").write_bytes(f"{load} 0.20 0.10 1/180 4242\n".encode())
+                (raw / "stat.raw").write_bytes(b"cpu  1 2 3\ncpu0 1 2 3\ncpu1 1 2 3\nprocs_running 1\n")
+                return {"loadavg": identity(raw / "loadavg.raw"), "stat": identity(raw / "stat.raw"),
+                        "facts": evidence.host_load_facts((raw / "loadavg.raw").read_bytes(), (raw / "stat.raw").read_bytes())}
+
             for index, request in enumerate(requests, start=1):
                 attempt_path = directory / f"attempt-{index}" / "report.json"
                 prior = None if index == 1 else identity(attempt_paths[index - 2])
@@ -781,6 +805,10 @@ class CollectorCompositionTests(unittest.TestCase):
                     },
                     "source": {}, "product": {"before": product, "after": copy.deepcopy(product)},
                     "tools": {}, "build": {}, "execution": {},
+                    # The second attempt ends on a busy host: the collection
+                    # must record it as contended and block release.
+                    "host_load": {"before": host_load(index, "before", "0.05"),
+                                  "after": host_load(index, "after", "3.50" if index == 2 else "0.05")},
                     "measurement": {"attempt-marker": index},
                     "release": {"qualified": False, "reason": evidence.RELEASE_QUALIFICATION_REASON},
                 }
@@ -797,7 +825,7 @@ class CollectorCompositionTests(unittest.TestCase):
                 "schema": evidence.SCHEMA, "kind": evidence.KIND, "status": evidence.SMOKE_BUDGET,
                 "source_mount": evidence.SOURCE_MOUNT, "collector": collector,
                 "attempts": [{"index": index, "report": identity(path)} for index, path in enumerate(attempt_paths, start=1)],
-                "scorecard": {}, "release": {},
+                "uncontended_host": {}, "scorecard": {}, "release": {},
             }
             broken_roster = copy.deepcopy(roster)
             broken_roster["attempts"][1]["predecessor_report"] = None
@@ -834,7 +862,11 @@ class CollectorCompositionTests(unittest.TestCase):
                  patch.object(evidence, "_verify_attempt_execution"), \
                  patch.object(evidence, "validate_measurement_attempt", side_effect=measurement_replay), \
                  patch.object(evidence, "attempt_scorecard", side_effect=scorecards):
-                scorecard, release = evidence.replay_collection(ROOT, report)
+                scorecard, release, host = evidence.replay_collection(ROOT, report)
+                self.assertEqual(host["status"], "contended")
+                self.assertEqual([item["after"]["uncontended"] for item in host["evidence"]["attempts"]],
+                                 [True, False, True])
+                self.assertTrue(any("measuring host was contended" in item for item in release["blockers"]))
                 self.assertEqual(len(seen), evidence.COLLECTOR_ATTEMPTS)
                 self.assertEqual([entry[:2] for entry in replayed],
                                  [(1, evidence.SMOKE_BUDGET), (2, evidence.SMOKE_BUDGET), (3, evidence.SMOKE_BUDGET)])
@@ -846,20 +878,25 @@ class CollectorCompositionTests(unittest.TestCase):
                 self.assertTrue(any(item.startswith("correctness admission") for item in release["blockers"]))
 
                 report_path = directory / "collector.json"
-                report_path.write_text(json.dumps({**report, "scorecard": scorecard, "release": release}), encoding="utf-8")
+                report_path.write_text(json.dumps({**report, "uncontended_host": host, "scorecard": scorecard, "release": release}), encoding="utf-8")
                 checked = evidence.validate_collector_report(ROOT, report_path)
                 self.assertTrue(checked.evidence_valid)
                 self.assertFalse(checked.release_qualified)
                 self.assertEqual(list(checked.blockers), release["blockers"])
 
-                forged_release = {**report, "scorecard": scorecard, "release": {"qualified": True, "blockers": []}}
+                forged_release = {**report, "uncontended_host": host, "scorecard": scorecard, "release": {"qualified": True, "blockers": []}}
                 report_path.write_text(json.dumps(forged_release), encoding="utf-8")
                 with self.assertRaisesRegex(evidence.EvidenceError, "release decision"):
                     evidence.validate_collector_report(ROOT, report_path)
                 forged_scorecard = copy.deepcopy(scorecard)
                 forged_scorecard["failing_rows"] = []
-                report_path.write_text(json.dumps({**report, "scorecard": forged_scorecard, "release": release}), encoding="utf-8")
+                report_path.write_text(json.dumps({**report, "uncontended_host": host, "scorecard": forged_scorecard, "release": release}), encoding="utf-8")
                 with self.assertRaisesRegex(evidence.EvidenceError, "scorecard does not derive"):
+                    evidence.validate_collector_report(ROOT, report_path)
+                quiet_claim = {**report, "uncontended_host": {**host, "status": "uncontended"},
+                               "scorecard": scorecard, "release": release}
+                report_path.write_text(json.dumps(quiet_claim), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "uncontended_host does not derive"):
                     evidence.validate_collector_report(ROOT, report_path)
                 full_label = copy.deepcopy(report)
                 full_label["status"] = "complete-evidence"

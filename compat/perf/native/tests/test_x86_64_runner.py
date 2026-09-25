@@ -724,5 +724,33 @@ class ProvenanceTests(unittest.TestCase):
                 native_x86.verify_file_identity(source, identity, "frozen route source")
 
 
+    def test_host_load_record_derives_from_raw_snapshots_and_full_mode_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary_text:
+            invocation = Path(temporary_text)
+            (invocation / "logs").mkdir()
+            snapshots = {}
+            for when, load in (("before", b"0.05 0.1 0.1 1/200 7\n"), ("after", b"4.00 2.0 1.0 3/200 7\n")):
+                records = {}
+                for name, raw in (("loadavg", load), ("stat", b"cpu  1\ncpu0 1\nprocs_running 1\n")):
+                    path = invocation / "logs" / f"host-load-{when}-{name}.raw"
+                    path.write_bytes(raw)
+                    records[name] = native_x86._identity_at(ROOT, path)
+                owner = native_x86._host_load_owner()
+                records["facts"] = owner.host_load_facts(
+                    (invocation / "logs" / f"host-load-{when}-loadavg.raw").read_bytes(),
+                    (invocation / "logs" / f"host-load-{when}-stat.raw").read_bytes(),
+                )
+                snapshots[when] = records
+            host = owner.uncontended_host_record(
+                [{"index": 1, "before": snapshots["before"]["facts"], "after": snapshots["after"]["facts"]}])
+            self.assertEqual(host["status"], "contended")
+            report = {"mode": "smoke", "host_load": snapshots, "uncontended_host": host}
+            native_x86._validate_host_load(ROOT, report)
+            with self.assertRaisesRegex(native_x86.RunnerError, "does not derive"):
+                native_x86._validate_host_load(ROOT, {**report, "uncontended_host": {**host, "status": "uncontended"}})
+            with self.assertRaisesRegex(native_x86.RunnerError, "contended host"):
+                native_x86._validate_host_load(ROOT, {**report, "mode": "full"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -106,6 +106,16 @@ attempt compensates for another. `perf-c check REPORT` independently replays a
 collector or a single attempt, recomputes the scorecard, and prints it with
 every release blocker. Qualification is exactly an empty blocker list.
 
+Each attempt retains raw host-wide `/proc/loadavg` and `/proc/stat`
+snapshots before its build and after its last measurement. The collector
+derives the `uncontended_host` record the `performance.release` gate reads:
+`uncontended` only when every snapshot has a one-minute load average of at
+most 1.0 and at most two runnable tasks (`HOST_LOAD_POLICY` in
+`x86_64_evidence.py`), otherwise `contended` with a named release blocker.
+A full-budget attempt refuses to start on a contended host; `check` rederives
+the record from the raw files. The Rust-facade companion's report carries the
+same record under the same policy, and its full mode fails closed likewise.
+
 Correctness admission is read from the ordered qualification chain
 (`compat/x86_64/qualification_manifest.json`): every gate before
 `performance.release` must have left `incomplete_gates`. A roster records the

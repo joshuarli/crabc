@@ -10,7 +10,9 @@ path whose mutable state stays below this checkout's ``.work/x86_64`` boundary.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -1391,6 +1393,59 @@ def _cpu_diagnostics(invocation: Path, cpu: int, allowed_affinity: Sequence[int]
     }
 
 
+@functools.lru_cache(maxsize=1)
+def _host_load_owner() -> Any:
+    """The runtime C adapter's evidence module, owner of the host-load policy.
+
+    Both performance companions apply its one uncontended-host policy and
+    raw-snapshot parser, so the `performance.release` gate sees one meaning.
+    """
+
+    path = Path(__file__).resolve().parents[1] / "x86_64_evidence.py"
+    spec = importlib.util.spec_from_file_location("crabc_perf_x86_evidence_host_load", path)
+    if spec is None or spec.loader is None:
+        raise RunnerError("cannot load the host-load policy owner")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _capture_host_load(root: Path, invocation: Path, when: str) -> dict[str, Any]:
+    """Retain raw host-wide load files for one snapshot and derive its facts."""
+
+    logs = invocation / "logs"
+    raws = {}
+    record: dict[str, Any] = {}
+    for name, source in (("loadavg", Path("/proc/loadavg")), ("stat", Path("/proc/stat"))):
+        path = logs / f"host-load-{when}-{name}.raw"
+        raws[name] = source.read_bytes()
+        _write_new_bytes(path, raws[name])
+        record[name] = _identity_at(root, path)
+    record["facts"] = _host_load_owner().host_load_facts(raws["loadavg"], raws["stat"])
+    return record
+
+
+def _validate_host_load(root: Path, report: Mapping[str, Any]) -> None:
+    """Replay host snapshots from raw files and rederive `uncontended_host`."""
+
+    owner = _host_load_owner()
+    host_load = _require_exact_keys(report["host_load"], {"before", "after"}, "report host load")
+    facts = {}
+    for when in ("before", "after"):
+        record = _require_exact_keys(host_load[when], {"loadavg", "stat", "facts"}, f"report host load {when}")
+        loadavg = _verify_retained_file(root, record["loadavg"], f"retained {when} /proc/loadavg")
+        stat_raw = _verify_retained_file(root, record["stat"], f"retained {when} /proc/stat")
+        facts[when] = owner.host_load_facts(loadavg.read_bytes(), stat_raw.read_bytes())
+        if record["facts"] != facts[when]:
+            raise RunnerError(f"report host load {when} facts do not derive from their raw captures")
+    expected = owner.uncontended_host_record([{"index": 1, **facts}])
+    if report["uncontended_host"] != expected:
+        raise RunnerError("report uncontended_host does not derive from its host snapshots")
+    if report["mode"] == "full" and expected["status"] != "uncontended":
+        raise RunnerError("full-mode report was measured on a contended host")
+
+
 def _identity_at(root: Path, path: Path, identity: Mapping[str, Any] | None = None) -> dict[str, Any]:
     return {"path": _work_relative(root, path), **(dict(identity) if identity is not None else file_identity(path))}
 
@@ -2062,6 +2117,14 @@ def run_mode(
         invocation, cargo_home, offline=True
     )
     diagnostics = _cpu_diagnostics(invocation, cpu, allowed_affinity)
+    host_before = _capture_host_load(root, invocation, "before")
+    # A full comparison fails closed on a contended host before any build;
+    # a smoke run only records the observation.
+    if mode == "full" and not host_before["facts"]["uncontended"]:
+        raise RunnerError(
+            "native facade full run refused: the measuring host is contended "
+            f"(policy {_host_load_owner().HOST_LOAD_POLICY}, observed {host_before['facts']})"
+        )
     tools = _capture_tool_versions(invocation, build_environment, cpu)
     builds: dict[str, Any] = {}
     correctness_records: dict[str, dict[str, Any]] = {}
@@ -2092,6 +2155,7 @@ def run_mode(
             client_environment=client_environment,
         ))
         rounds[backend] += 1
+    host_after = _capture_host_load(root, invocation, "after")
     after = capture_source_state(root, profile, rustybench_source, rustix_source)
     _require_same(after, before, f"source inputs after native facade {mode}")
     normal = _require_mapping(profile.get("normal"), "normal profile")
@@ -2159,6 +2223,10 @@ def run_mode(
         "tools": {name: _serialise_tool_record(root, value) for name, value in tools.items()},
         "builds": {name: _serialise_build(root, value) for name, value in builds.items()},
         "invocations": [_serialise_invocation(root, value) for value in invocation_records],
+        "host_load": {"before": host_before, "after": host_after},
+        "uncontended_host": _host_load_owner().uncontended_host_record(
+            [{"index": 1, "before": host_before["facts"], "after": host_after["facts"]}]
+        ),
     }
     _atomic_write_json(root, report_path, report)
     validate_report(root, report_path, rustybench_source=rustybench_source, rustix_source=rustix_source)
@@ -2577,6 +2645,7 @@ def validate_report(
         {
             "schema", "status", "mode", "profile", "work", "admission", "plan", "source_before",
             "source_after", "rendered", "environment", "diagnostics", "tools", "builds", "invocations",
+            "host_load", "uncontended_host",
         },
         "native facade report",
     )
@@ -2672,6 +2741,7 @@ def validate_report(
             raise RunnerError("retained CPU frequency path differs")
     elif set(frequency) != {"status"} or frequency["status"] != "unavailable":
         raise RunnerError("frequency diagnostic status differs")
+    _validate_host_load(root, report)
     tools = _require_exact_keys(report["tools"], {"rustc", "cargo", "rustup"}, "report tools")
     for name in ("rustc", "cargo", "rustup"):
         _validate_tool_record(root, tools[name], cpu=cpu, name=name)

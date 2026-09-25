@@ -527,6 +527,26 @@ def capture_cpuinfo_diagnostic(root: Path, retained: Path) -> dict[str, Any]:
     }
 
 
+def capture_host_load(root: Path, retained: Path) -> dict[str, Any]:
+    """Retain raw host-wide `/proc/loadavg` and `/proc/stat` for one snapshot.
+
+    The facts, including the uncontended verdict, derive from the raw bytes
+    through the evidence reader, which `check` replays.
+    """
+
+    retained.mkdir(parents=True, exist_ok=True)
+    record: dict[str, Any] = {}
+    for name, source in (("loadavg", Path("/proc/loadavg")), ("stat", Path("/proc/stat"))):
+        require(source.is_file(), f"native performance image lacks readable {source}")
+        path = retained / f"{name}.raw"
+        path.write_bytes(source.read_bytes())
+        record[name] = retained_identity(root, path)
+    record["facts"] = evidence.host_load_facts(
+        (retained / "loadavg.raw").read_bytes(), (retained / "stat.raw").read_bytes(),
+    )
+    return record
+
+
 def host_snapshot(cpu: int, allowed_affinity: Sequence[int], peer_cpu: int | None) -> dict[str, Any]:
     governors: dict[str, Any] = {}
     for name in ("scaling_governor", "scaling_available_governors"):
@@ -3346,6 +3366,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         "source": {},
         "product": {},
         "tools": {},
+        "host_load": {},
         "build": {},
         "execution": {},
         "measurement": {},
@@ -3377,6 +3398,15 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         }
         report["product"] = {"before": record_product(root, product), "after": {}}
         report["attempt"]["roster"] = bind_attempt_roster(args, root, work, report["product"]["before"])
+        report["host_load"] = {
+            "before": capture_host_load(root, raw_root / "host" / "load-before"),
+            "after": None,
+        }
+        # A qualifying (full-budget) attempt fails closed on a contended host
+        # before any build or timed child; smoke attempts only record it.
+        require(args.implementation_smoke or report["host_load"]["before"]["facts"]["uncontended"],
+                "full native performance attempt refused: the measuring host is contended "
+                f"(policy {evidence.HOST_LOAD_POLICY}, observed {report['host_load']['before']['facts']})")
         report["tools"] = {
             "before": tool_snapshot(
                 root, product, musl_cc, cpu, allowed_affinity, peer_cpu,
@@ -3494,6 +3524,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         report["tools"]["host_cpuinfo_diagnostics"]["after"] = capture_cpuinfo_diagnostic(
             root, raw_root / "host" / "cpuinfo.after.raw",
         )
+        report["host_load"]["after"] = capture_host_load(root, raw_root / "host" / "load-after")
         require(report["tools"]["before"] == report["tools"]["after"], "tool/image identity changed during performance attempt")
         require(git_clean(root), "source became dirty during performance attempt")
         require(git_revision(root) == report["attempt"]["source_revision"],
@@ -3592,10 +3623,11 @@ def collect(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
             "product": product,
         },
         "attempts": attempts,
+        "uncontended_host": {},
         "scorecard": {},
         "release": {},
     }
-    report["scorecard"], report["release"] = evidence.replay_collection(root, report)
+    report["scorecard"], report["release"], report["uncontended_host"] = evidence.replay_collection(root, report)
     path = output / "collector.json"
     write_json(path, report)
     # The persisted bytes, not the in-memory derivation, are the handoff.
