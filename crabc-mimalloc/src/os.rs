@@ -2117,7 +2117,7 @@ impl Mapping {
     /// The failed direct candidate or trimmed prefix/suffix is therefore
     /// leaked exactly as pinned C leaks it, and the aligned middle is still
     /// returned as a success. Only a failed overmap has no result.
-    fn map_aligned_for_process(
+    pub(crate) fn map_aligned_for_process(
         process: VmProcess<'_>,
         config: MemoryConfig,
         length: usize,

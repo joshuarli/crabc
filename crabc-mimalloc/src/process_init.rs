@@ -815,7 +815,13 @@ impl ProcessMainInitializationStorage {
         debug_assert!(core::ptr::eq(metadata_bound.subprocess().as_ptr(), subprocess.as_ptr()));
         debug_assert_eq!(metadata_bound.memory_config(), config);
 
-        let page_map = match page_map_storage.initialize(config, subprocess) {
+        // The policy-bound process maps through its source aligned OS
+        // sequence; explicit-config fixtures keep their direct private map.
+        let page_map = match vm_process {
+            Some(process) => page_map_storage.initialize_for_process(config, subprocess, process),
+            None => page_map_storage.initialize(config, subprocess),
+        };
+        let page_map = match page_map {
             Ok(page_map) => page_map,
             Err(error) => {
                 selection.retain();

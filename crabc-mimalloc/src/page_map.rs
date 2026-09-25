@@ -313,11 +313,41 @@ impl PageMap {
             PageMapStatistics(Some(subprocess)))
     }
 
+    /// Reserves and initializes the process page map through `process`.
+    ///
+    /// Pinned `mi_page_map_init_once` maps through
+    /// `_mi_os_alloc_aligned(subproc, extra_reserve_size, 1, commit, true)`:
+    /// a failed direct map warns and falls back to the source aligned
+    /// over-allocation and trim, so a first failed map attempt still
+    /// initializes the map. That sequence (with its statistics and
+    /// warnings) is `Mapping::map_aligned_for_process`; the later commits,
+    /// lazy submaps, and releases account to the same subprocess.
+    pub(crate) fn initialize_for_process(
+        config: MemoryConfig,
+        configured_virtual_bits: usize,
+        force_commit: bool,
+        process: crate::os::VmProcess<'static>,
+    ) -> core::result::Result<Self, PageMapInitializationError> {
+        Self::initialize_with_statistics_and_process(config, configured_virtual_bits, force_commit,
+            PageMapStatistics(Some(process.subprocess())), Some(process))
+    }
+
     fn initialize_with_statistics(
         config: MemoryConfig,
         configured_virtual_bits: usize,
         force_commit: bool,
         statistics: PageMapStatistics,
+    ) -> core::result::Result<Self, PageMapInitializationError> {
+        Self::initialize_with_statistics_and_process(config, configured_virtual_bits, force_commit,
+            statistics, None)
+    }
+
+    fn initialize_with_statistics_and_process(
+        config: MemoryConfig,
+        configured_virtual_bits: usize,
+        force_commit: bool,
+        statistics: PageMapStatistics,
+        process: Option<crate::os::VmProcess<'_>>,
     ) -> core::result::Result<Self, PageMapInitializationError> {
         let virtual_bits = effective_virtual_address_bits(
             configured_virtual_bits,
@@ -363,9 +393,16 @@ impl PageMap {
         // `_mi_os_alloc_aligned(subproc, extra_reserve_size, 1, commit, ...)`
         // maps (and accounts) `_mi_os_good_alloc_size(extra_reserve_size)`.
         let mapped_size = config.good_alloc_size(extra_reserve_size);
-        let mapping = match statistics.map(Mapping::map_for_allocator(config, mapped_size, access),
-            mapped_size, commit_all)
-        {
+        let mapping = match process {
+            // `mi_os_prim_alloc_aligned` accounts its own attempts, trims, and
+            // warnings to the process subprocess.
+            Some(process) => Mapping::map_aligned_for_process(process, config, mapped_size,
+                config.page_size().bytes(), access, true, None)
+                .map_err(|failure| failure.error()),
+            None => statistics.map(Mapping::map_for_allocator(config, mapped_size, access),
+                mapped_size, commit_all),
+        };
+        let mapping = match mapping {
             Ok(mapping) => mapping,
             Err(error) => {
                 // `src/page-map.c:302-305`. Process startup holds no

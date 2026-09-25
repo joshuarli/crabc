@@ -42,7 +42,7 @@ use crabc_core::Errno;
 
 use crate::abandoned::{AdoptedPage, RetainedAdoptFailure};
 use crate::lock::{PrivateLock, PrivateLockGuard};
-use crate::os::{Mapping, MemoryConfig};
+use crate::os::{Mapping, MemoryConfig, VmProcess};
 use crate::page_map::{PageMap, PageMapHeader, PageMapInitializationError, PageMapRoot};
 use crate::subproc::MainSubprocess;
 use crate::types::{
@@ -489,6 +489,29 @@ impl ProcessPageMapStorage {
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<ProcessPageMapRoot, ProcessPageMapError> {
+        self.initialize_with_process(config, subprocess, None)
+    }
+
+    /// [`Self::initialize`] for the policy-bound process: a cold body maps
+    /// the top-level extent through that process's source
+    /// `_mi_os_alloc_aligned` sequence (warnings, the over-allocation
+    /// fallback after a failed direct map, and trim accounting), so a first
+    /// failed map attempt recovers exactly as pinned C does.
+    pub(crate) fn initialize_for_process(
+        &'static self,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        process: VmProcess<'static>,
+    ) -> Result<ProcessPageMapRoot, ProcessPageMapError> {
+        self.initialize_with_process(config, subprocess, Some(process))
+    }
+
+    fn initialize_with_process(
+        &'static self,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        process: Option<VmProcess<'static>>,
+    ) -> Result<ProcessPageMapRoot, ProcessPageMapError> {
         // Source `_mi_atomic_once_enter` has a completed fast path.  Preserve
         // that no-lock read for the common process-ready case; a cold caller
         // still takes the private lock so only one final slot can be formed.
@@ -501,7 +524,7 @@ impl ProcessPageMapStorage {
             .map_err(ProcessPageMapError::Lock)?;
 
         let result = match self.state.load(Ordering::Acquire) {
-            COLD => self.initialize_cold(config, subprocess),
+            COLD => self.initialize_cold(config, subprocess, process),
             READY => self.lease_if_matches(config, subprocess),
             POISONED | _ => Err(ProcessPageMapError::Poisoned),
         };
@@ -531,14 +554,21 @@ impl ProcessPageMapStorage {
         &'static self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
+        process: Option<VmProcess<'static>>,
     ) -> Result<ProcessPageMapRoot, ProcessPageMapError> {
         use crate::config::{SourceOption, MAX_VABITS};
         use crate::process_init::process_source_option;
         let configured_vabits = process_source_option(SourceOption::MaxVabits).clamp(0, MAX_VABITS as i64) as usize;
         let force_commit = process_source_option(SourceOption::PagemapCommit) != 0;
-        let page_map = match PageMap::initialize_for_subprocess(
-            config, configured_vabits, force_commit, subprocess.identity(),
-        ) {
+        let initialized = match process {
+            Some(process) if core::ptr::eq(process.subprocess(), subprocess.identity()) =>
+                PageMap::initialize_for_process(config, configured_vabits, force_commit, process),
+            // A foreign process pair never reaches the once body.
+            Some(_) => return Err(ProcessPageMapError::SubprocessMismatch),
+            None => PageMap::initialize_for_subprocess(
+                config, configured_vabits, force_commit, subprocess.identity()),
+        };
+        let page_map = match initialized {
             Ok(page_map) => page_map,
             Err(PageMapInitializationError::Failed { error }) => {
                 // `_mi_page_map_init` runs its body through source
@@ -2819,6 +2849,62 @@ mod tests {
             storage.initialize(memory_config(), subprocess),
             Err(ProcessPageMapError::Poisoned)
         ));
+    }
+
+    /// Rust half of the M2 PageMap first-map fallback differential
+    /// (`compat/allocator/m2_page_map_first_map_fallback_x86_64.c`): the
+    /// runtime startup's first page-map map fails, the source aligned
+    /// over-allocation fallback maps and trims it, and the process starts and
+    /// allocates. Prints the joined TID-normalized startup output as hex, the
+    /// main-subprocess VM statistics, and the first allocation result.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_page_map_first_map_fallback_c_rust_trace() {
+        static CAPTURE: std::sync::Mutex<std::vec::Vec<u8>> = std::sync::Mutex::new(std::vec::Vec::new());
+        unsafe extern "C" fn capture(message: *const core::ffi::c_char) {
+            // SAFETY: the output owner passes a non-null NUL-terminated fragment.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            CAPTURE.lock().unwrap().extend_from_slice(bytes);
+        }
+        crate::test_process::run_in_fresh_process(
+            "process_page_map::tests::emit_m2_page_map_first_map_fallback_c_rust_trace",
+            || {
+                // The fresh child strips inherited source options; this one
+                // is its own fixture input, set before startup reads it.
+                std::env::set_var("mimalloc_show_errors", "1");
+                let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+                let started = crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(capture)
+                });
+                let failed_maps = fault.observed();
+                drop(fault);
+                assert!(started, "a failed first page-map map still starts the process");
+                // The failed direct map, then the successful over-allocation.
+                assert_eq!(failed_maps, 2);
+                let thread = std::format!("0x{:02X}", crate::os::thread_pointer_identity());
+                let output = std::string::String::from_utf8(core::mem::take(&mut *CAPTURE.lock().unwrap()))
+                    .expect("source messages are ASCII")
+                    .replace(&thread, "0xTID");
+                let hex: std::string::String = output.bytes().map(|byte| std::format!("{byte:02x}")).collect();
+                std::println!("m2.page_map.first_map_fallback.output={hex}");
+                let initialized = PROCESS_PAGE_MAP.state.load(Ordering::Acquire) == READY
+                    && PROCESS_PAGE_MAP.root.load().is_some();
+                std::println!("m2.page_map.first_map_fallback.initialized={}", usize::from(initialized));
+                let stats = MainSubprocess::global().identity().vm_statistics().snapshot();
+                std::println!("m2.page_map.first_map_fallback.reserved={}", stats.reserved_current);
+                std::println!("m2.page_map.first_map_fallback.committed={}", stats.committed_current);
+                std::println!("m2.page_map.first_map_fallback.mmap_calls={}", stats.mmap_calls);
+                std::println!("m2.page_map.first_map_fallback.commit_calls={}", stats.commit_calls);
+                let allocated = match crate::runtime_lifecycle::native_allocate_aligned(16, 16, false) {
+                    crate::runtime_lifecycle::NativePageAllocationResult::Allocated(block) => {
+                        unsafe { crate::runtime_lifecycle::native_free(block) };
+                        true
+                    }
+                    _ => false,
+                };
+                std::println!("m2.page_map.first_map_fallback.allocated={}", usize::from(allocated));
+            },
+        );
     }
 
     /// Emits the Rust half of the failed-first PageMap initialization record.

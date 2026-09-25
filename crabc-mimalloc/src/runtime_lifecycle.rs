@@ -19409,13 +19409,16 @@ mod tests {
             "runtime_lifecycle::tests::page_map_failure_at_first_allocation_start_continues_without_page_map",
             || {
                 assert!(publish_native_process_startup_facts(host_startup_facts()));
-                // The first raw mapping in the once body reserves the PageMap.
-                let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+                // The first raw mappings in the once body reserve the
+                // PageMap: fail both the direct map and the source aligned
+                // over-allocation fallback that recovers from a lone failure.
+                let fault = fault::install(fault::Plan::at_pair(
+                    fault::Point::Map, 1, fault::Point::Map, 1, Errno::NOMEM));
                 // Pinned `mi_process_init_once` ignores the failed page map
                 // (`src/init.c:549`) and the allocation fails as C's does.
                 assert!(matches!(native_allocate_aligned(48, 16, false),
                     NativePageAllocationResult::AllocationFailed));
-                assert_eq!(fault.observed(), 1);
+                assert_eq!((fault.observed(), fault.secondary_observed()), (2, 1));
                 assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_PAGE_MAP_UNAVAILABLE);
                 // Observe every later primitive without failing any.
                 fault.set(fault::Plan::any_nth(usize::MAX, Errno::NOMEM));

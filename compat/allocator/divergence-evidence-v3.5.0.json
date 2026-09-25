@@ -64,10 +64,6 @@
         ],
         "known_difference": "CRABC-MI-OS-ON-DEMAND-ARENA-REFUSAL"
       }
-    },
-    "src/page-map.c:mi-page-map-init-once-process-publication": {
-      "owner": "m2-vm-arenas",
-      "disposition": "port the source cold-root recovery back to pinned C behavior"
     }
   }
 }

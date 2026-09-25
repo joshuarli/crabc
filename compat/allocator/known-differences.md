@@ -775,7 +775,7 @@ are compared.
   remains a separate scope; source callback differential and coherent native
   integration are required before this transition closes general recursion.
 
-### `CRABC-MI-PROCESS-PAGE-MAP-COLD-ROOT` — accepted bounded cold-root safety divergence
+### `CRABC-MI-PROCESS-PAGE-MAP-COLD-ROOT` — accepted cold-root representation boundary
 
 - **Port map:** `src/page-map.c:mi-page-map-init-once-process-publication`
 - **Upstream/Rust:** `src/page-map.c:228-365`, especially static
@@ -800,13 +800,17 @@ are compared.
   nonrecursive private lock for one complete engine and joined scoped-producer
   lifetime, so no second Rust route may overlap plain map entries. That is a
   deliberate bounded substitute for neither C's empty root nor its general
-  concurrent consumers. C's once helper consumes an allocation failure yet
-  later calls cannot report that failed body through a typed result; Rust
-  instead terminally poisons the unpublished owner and rejects later
-  initialization. A later PageMap-only retry could not safely restart the
-  Rust process coordinator after its Heap and detached-metadata predecessors
-  have run. Dropping an unfinished mutation lease likewise poisons the root
-  rather than allowing a later owner to treat retained entries as a fresh map.
+  concurrent consumers. The valid-program startup outcome matches pinned C:
+  the policy-bound process maps the top-level extent through the source
+  `_mi_os_alloc_aligned` sequence, so a failed direct map warns, falls back
+  to the aligned over-allocation, trims, and initializes; when the whole
+  reservation fails, the once body is consumed without replay and the
+  process continues with every allocation failing
+  (`CRABC-MI-STARTUP-PAGE-MAP-FAILURE`). Only the storage owner's
+  representation differs: it records the consumed body as a typed poison
+  instead of keeping C's lookup-only sentinel. Dropping an unfinished
+  mutation lease likewise poisons the root rather than allowing a later
+  owner to treat retained entries as a fresh map.
 - **Evidence:**
   `process_page_map::tests::process_map_publishes_one_stable_root_for_its_selected_main_subprocess`
   proves frozen identity/configuration and stable root reuse;
@@ -825,8 +829,11 @@ are compared.
   proves the coordinator observes that terminal PageMap boundary only after
   its Heap and detached-metadata predecessors, retains startup, leaves
   ticket-zero roots unpublished, and rejects later generic-thread admission.
-  This is a safety-divergence witness, not a C ABI or full-process-lifecycle
-  comparison.
+  `process_page_map::tests::emit_m2_page_map_first_map_fallback_c_rust_trace`
+  and its pinned-C fixture `m2_page_map_first_map_fallback_x86_64.c` fail the
+  first map at runtime startup and match C's startup output, initialization,
+  VM statistics, and first allocation (`allocator-m2`,
+  `page-map-first-map-fallback-c-rust-differential`).
   `process_init::tests::process_main_initialization_orders_heap_metadata_map_then_ticket_zero_roots`
   proves the coordinator publishes this distinct root before ticket-zero TLS
   roots. `main_static_page::tests::unfinished_static_page_engine_poison_retains_the_page_and_process_map_owner`
@@ -834,11 +841,9 @@ are compared.
   additionally prove that a poisoned root retains a live registration rather
   than erasing it. General process-lifecycle and allocator-ABI comparison
   remain inapplicable until their owners exist.
-- **Decision/removal:** this is an intentionally accepted bounded M2 PageMap
-  safety divergence, not source-equivalent cold-root parity. It closes only
-  the M2 component's documented cold-root condition: Rust must not fabricate a
-  live `PageMap` or successful process continuation from C's lookup-only
-  sentinel. A future public C allocator ABI or complete process lifecycle that
+- **Decision/removal:** this is an accepted representation boundary: the
+  valid-program startup behavior follows pinned C, while Rust does not
+  fabricate a live `PageMap` from C's lookup-only sentinel. A future public C allocator ABI or complete process lifecycle that
   needs cold `free(NULL)` semantics must reopen this boundary with a distinct
   cold-sentinel owner, a lookup-only API, and lifecycle tests. It does not
   authorize a null-root lookup, a retryable global mapping owner, a private
@@ -3102,19 +3107,20 @@ reports C's thread-local-data failure on every allocation.
 
 The retained state has no page map, no arena, and no page engine, so Rust
 does not repeat C's attempts to allocate a fresh page that cannot be
-registered. It therefore emits none of C's warnings. At startup pinned C
-warns three times (two failed OS allocations and the fall-back to
-over-allocation of `_mi_os_alloc_aligned`), where the Rust page map maps
-its page-aligned reservation directly and warns nothing. Then, for each
-allocation, C warns once for each failed page-map commit
+registered. It therefore emits none of C's per-allocation warnings. At
+startup both sides warn three times (two failed OS allocations and the
+fall-back to over-allocation of `_mi_os_alloc_aligned`), since the Rust page
+map maps through the same aligned OS sequence. Then, for each allocation, C
+warns once for each failed page-map commit
 (`unable to commit the allocation page-map on-demand`) in each fresh-page
 attempt. A small request makes three such attempts (the counted queue
 search, `mi_find_page` in `mi_malloc_generic_fallback`, and the forced
 retry), the same sequence whose six-versus-four fresh-page count difference
 f135998ba closed under a sustained metadata-publication failure. The
 reproducer `python3 compat/allocator/x86_64_m7_gate.py --offline
---page-map-differential` measures 33 warnings in C and none in Rust over
-16 allocations; its compared trace (error reports, results, and errno)
+--page-map-differential` measured 33 warnings in C and none in Rust over
+16 allocations before the three startup warnings were ported to Rust; the
+remaining difference is C's per-allocation commit warnings. Its compared trace (error reports, results, and errno)
 is identical.
 
 Warnings are advisory: they carry no errno, reach no error handler, and are
