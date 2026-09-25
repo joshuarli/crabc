@@ -13,11 +13,10 @@ semantics.
   AArch64 implementation and qualification are paused: preserve its behavior,
   selected allocator, frozen baseline, and target-qualified evidence. Do not
   run or emulate its suites for the x86 goal.
-- No new architectures, 32-bit/big-endian targets, non-Linux libc, speculative
-  portability layers, or CI-workflow work in the active campaign. A future
-  macOS/AArch64 libSystem backend for `crabc-rs` is separately scoped.
-  Downstream LLVM/C++ SDK notes do not extend the active runtime goal or
-  authorize ambient compiler-helper or unwinder inputs.
+- No new architectures, 32-bit/big-endian targets, non-Linux libc, or
+  speculative portability layers in the active campaign. A future
+  macOS/AArch64 libSystem backend for `crabc-rs` is separately scoped, and
+  LLVM/Clang integration (`llvm.md`) waits until `plan.md` is complete.
 - Pinned musl **1.2.6** is the C/POSIX compatibility oracle. Use the applicable
   Linux and System V AMD64 ABI contracts for target boundaries. Rustix is a
   pinned test oracle, never a production dependency. Glibc is neither an oracle
@@ -136,9 +135,9 @@ primitives remain in reviewed dependencies, including vectorized ones.
   use those Claude lane instructions directly; current user orchestration
   instructions still govern models.
   Keep 16 lane agents occupied while `plan.md` has open work, alongside
-  continuous integration: when a lane finishes, integrate it and start its
-  successor in the same pass. Each lane gets one well-defined, difficult,
-  nontrivial deliverable with a proving command and an exclusive file
+  ongoing integration to `main`: when a lane finishes, integrate it and
+  start its successor in the same pass. Each lane gets one well-defined,
+  difficult, nontrivial deliverable with a proving command and an exclusive file
   boundary that does not overlap another running lane; give shared state one
   owner. No scheduling board, handoff schema, or wave ceremony. Do not
   throttle builds within a lane; qualifying benchmarks need an uncontended
@@ -170,7 +169,6 @@ primitives remain in reviewed dependencies, including vectorized ones.
 Use `./scripts/dev-x86_64.sh --help` and `campaign-status` for active runtime
 work; use `./compat/allocator/run-x86_64.sh` for the separate allocator lane.
 Direct Cargo belongs inside the relevant pinned native environment. The
-AArch64 `scripts/dev.sh` route is paused, and `scripts/local-ci.sh` is not a
-substitute for native qualification. Harness READMEs own detailed options;
+AArch64 `scripts/dev.sh` route is paused. Harness READMEs own detailed options;
 `docs/README.md` is an optional reference index. `COMPATIBILITY.md` is generated,
 never hand-edited.

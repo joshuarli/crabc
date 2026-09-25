@@ -1743,7 +1743,7 @@ def report_for_success(
     watchdog_seconds: int,
     rss_threshold_bytes: int,
 ) -> dict[str, Any]:
-    """Create the durable report that a CI caller can consume directly."""
+    """Create the durable report that a caller can consume directly."""
 
     executions = run.get("executions")
     if not isinstance(executions, list):

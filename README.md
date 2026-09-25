@@ -51,8 +51,7 @@ the execution route for active x86 work.
 The recorded AArch64 owned-sysroot and Lua source-build results are scoped
 artifacts, not whole-runtime C-free claims or x86 evidence. Existing AArch64
 experimental sysroot snapshots are commit-pinned and make no cross-version
-ABI/API/header/layout guarantee; no released downstream LLVM/C++ SDK is a
-prerequisite for crabc's own artifact tests.
+ABI/API/header/layout guarantee.
 
 ## License
 

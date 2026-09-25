@@ -94,5 +94,5 @@ fn public_aarch64_layout_matches_pinned_musl() {
 #[test]
 fn public_aarch64_layout_probe_is_native_only() {
     // The probe must execute on AArch64 because the target's long and pointer
-    // ABI is part of what it measures. CI runs it through scripts/dev.sh.
+    // ABI is part of what it measures. It runs through scripts/dev.sh.
 }
