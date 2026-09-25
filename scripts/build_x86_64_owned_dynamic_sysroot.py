@@ -53,6 +53,8 @@ SHARED_LIBC_MIMALLOC_HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_
 # native C performance rows execute are placed together so a process maps
 # few 64 KiB fault-around windows of libc text. See the file's header.
 SHARED_LIBC_SYMBOL_ORDER = ROOT / "libc/src/c_abi/x86_64/owned_dynamic_hot.order"
+# Both runtime images discard their unused unwind tables, as musl's do.
+RUNTIME_DISCARD_UNWIND_SCRIPT = ROOT / "libc/src/c_abi/x86_64/owned_discard_unwind.ld"
 COMPILER_HELPER_CONTRACT = ROOT / "builtins/x86_64-helper-contract.toml"
 SHARED_LIBC_COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
 SHARED_LIBC_COMPILER_HELPER_MEMBER = "crabc-builtins.o"
@@ -316,12 +318,86 @@ def shared_libc_symbol_order(nm: str, inputs: list[Path], stage: Path) -> dict[s
     }
 
 
+HOT_RODATA_OUTPUT_SECTION = ".rodata.crabc.hot"
+_ELF_SECTION_ROW = re.compile(r"\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+[0-9a-f]+\s+[0-9a-f]+\s+([0-9a-f]+)")
+_LINKER_SCRIPT_NAME = re.compile(r"[A-Za-z0-9_.$]+")
+
+
+def shared_libc_hot_rodata(objects: list[Path], stage: Path) -> dict[str, object]:
+    """Place the read-only data of the ordered hot functions beside the headers.
+
+    Every process touches libc.so's dynamic symbol, hash and string tables at
+    load. The constants its hot text reads were scattered over the following
+    148 KiB of .rodata, so their fault-around windows kept most of it
+    resident. This follows each hot function's relocations (through the data
+    sections it points at, up to three levels) to the .rodata input sections
+    they reach and emits an INSERT script that gathers exactly those inputs
+    into one output section in front of .rodata. It changes only layout.
+    """
+
+    hot = set((stage / "libc-hot.order").read_text(encoding="utf-8").split())
+    chosen: dict[str, int] = {}
+    for path in objects:
+        sections: dict[int, tuple[str, int]] = {}
+        for line in common.run(["/usr/bin/readelf", "-SW", str(path)]).decode().splitlines():
+            match = _ELF_SECTION_ROW.match(line)
+            if match:
+                sections[int(match.group(1))] = (match.group(2), int(match.group(3), 16))
+        sizes = dict(sections.values())
+        symbol_section: dict[str, str] = {}
+        roots: set[str] = set()
+        for line in common.run(["/usr/bin/readelf", "-sW", str(path)]).decode().splitlines():
+            fields = line.split()
+            if len(fields) >= 8 and fields[6].isdigit() and int(fields[6]) in sections:
+                section = sections[int(fields[6])][0]
+                symbol_section.setdefault(fields[7], section)
+                if fields[3] == "FUNC" and fields[7] in hot:
+                    roots.add(section)
+        references: dict[str, list[str]] = {}
+        current = None
+        for line in common.run(["/usr/bin/readelf", "-rW", str(path)]).decode().splitlines():
+            header = re.match(r"Relocation section '\.rela([^']+)'", line)
+            if header:
+                current = header.group(1)
+                continue
+            fields = line.split()
+            if current is not None and len(fields) >= 5 and fields[2].startswith("R_X86_64_"):
+                target = fields[4] if fields[4] in sizes else symbol_section.get(fields[4])
+                if target:
+                    references.setdefault(current, []).append(target)
+        frontier, seen = sorted(roots), set(roots)
+        for _ in range(3):
+            following = []
+            for section in frontier:
+                for target in references.get(section, []):
+                    if target in seen:
+                        continue
+                    seen.add(target)
+                    if target.startswith(".rodata") and _LINKER_SCRIPT_NAME.fullmatch(target):
+                        chosen.setdefault(target, sizes.get(target, 0))
+                        following.append(target)
+                    elif target.startswith((".data", ".tdata")):
+                        following.append(target)
+            frontier = following
+    script = stage / "libc-hot-rodata.ld"
+    script.write_text(f"SECTIONS {{ {HOT_RODATA_OUTPUT_SECTION} : {{\n"
+                      + "".join(f"  *({name})\n" for name in chosen)
+                      + "} } INSERT BEFORE .rodata;\n", encoding="utf-8")
+    script.chmod(0o600)
+    return {
+        "input_section_count": len(chosen),
+        "input_section_bytes": sum(chosen.values()),
+        "linker_script_sha256": common.sha256_file(script),
+    }
+
+
 def shared_libc_link_command(
     lld: Path,
     dynamic_list: Path,
     mimalloc_hidden_exports: Path | None,
     errno_private_aliases: Path,
     symbol_order: Path,
+    hot_rodata: Path,
     objects: Path,
     selected: tuple[str, ...],
     builtins: Path,
@@ -343,7 +419,8 @@ def shared_libc_link_command(
         # loader reads at every start) become a 264-byte bitmap stream.
         "-z", "pack-relative-relocs",
         f"--symbol-ordering-file={symbol_order}", "--no-warn-symbol-ordering",
-        *(str(objects / item) for item in selected), str(builtins), "-o", str(library / "libc.so"),
+        *(str(objects / item) for item in selected), str(builtins), str(RUNTIME_DISCARD_UNWIND_SCRIPT), str(hot_rodata),
+        "-o", str(library / "libc.so"),
     ]
 
 
@@ -442,6 +519,7 @@ def loader_provenance(
         _source_file_identity(ROOT / "rust-toolchain.toml", "pinned Rust toolchain configuration"),
         _source_file_identity(ROOT / ".cargo/config.toml", "workspace Cargo configuration"),
         _source_file_identity(ROOT / "ldso/Cargo.toml", "loader Cargo configuration"),
+        _source_file_identity(RUNTIME_DISCARD_UNWIND_SCRIPT, "runtime unwind-table discard script"),
     ]
     installed = {
         "path": LOADER_ARTIFACT,
@@ -644,9 +722,11 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # has resolved.
     shared_symbol_order = shared_libc_symbol_order(
         nm, [*(objects / item for item in selected), builtins], stage)
+    shared_hot_rodata = shared_libc_hot_rodata([objects / item for item in selected], stage)
     libc_shared_link_command = shared_libc_link_command(
         lld, SHARED_LIBC_DYNAMIC_LIST, (stage / "libc-mimalloc-hidden.exports" if accepted_c else None),
-        stage / "libc-errno-private.exports", stage / "libc-hot.order", objects, selected, builtins, library
+        stage / "libc-errno-private.exports", stage / "libc-hot.order", stage / "libc-hot-rodata.ld",
+        objects, selected, builtins, library
     )
     run(libc_shared_link_command)
     # The sealed dynamic product gives its one shared-library link role an
@@ -696,7 +776,8 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     common.copy_artifact(builtins, library / builtins.name)
     loader_env = common.deterministic_environment()
     loader_env["CARGO_BUILD_JOBS"] = "2"
-    loader_env["RUSTFLAGS"] = "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
+    loader_env["RUSTFLAGS"] = ("-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
+                              f" -C link-arg=-Wl,-T,{RUNTIME_DISCARD_UNWIND_SCRIPT}")
     # Every process touches nearly all interpreter text, so it is optimized
     # for size: opt-level s cuts it from 135 to 81 KiB (54 KiB of PSS per
     # process) for about 2% more fork+exec CPU and 8% slower dlsym.
@@ -764,6 +845,8 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                   "shared_compiler_helper_archive": shared_compiler_helper_policy,
                   "shared_errno_private_aliases": shared_errno_private_aliases,
                   "shared_symbol_order": shared_symbol_order,
+                  "shared_hot_rodata": shared_hot_rodata,
+                  "discard_unwind_script": _source_file_identity(RUNTIME_DISCARD_UNWIND_SCRIPT, "runtime unwind-table discard script"),
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
     payload_files = {path.relative_to(output).as_posix(): common.sha256_file(path)
