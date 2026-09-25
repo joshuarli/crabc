@@ -607,7 +607,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(records[0]["id"], "native-vm-fixed-lifecycle-differential")
         self.assertEqual(records[1]["id"], "aligned-hint-source-profile-and-direct-caller-matrix")
         self.assertEqual(records[2]["id"], "aligned-overmap-cleanup-c-rust-boundary-matrix")
-        self.assertEqual(records[2]["comparison_status"], "expected-divergence-verified")
+        self.assertEqual(records[2]["comparison_status"], "matched")
 
     def test_rust_binary_binding_accepts_both_cargo_profile_layouts_only(self):
         """The pinned nightly's per-unit test executable remains gate-owned."""

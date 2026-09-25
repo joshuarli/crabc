@@ -14052,10 +14052,10 @@ def _m2_x86_64_vm_check_records(
             "target": profile_check["target"],
         },
         {
-            "comparison_status": "expected-divergence-verified",
+            "comparison_status": "matched",
             "component": "vm-primitives",
             "command": list(aligned_overmap_command),
-            "evidence_scope": "bounded-native-c-rust-aligned-overmap-cleanup-owner-boundary",
+            "evidence_scope": "bounded-native-c-rust-aligned-overmap-leak-and-continue-equality",
             "id": aligned_overmap_check["id"],
             "passed_test_count": aligned_overmap_check["expected_passed_test_count"],
             "target": aligned_overmap_check["target"],
