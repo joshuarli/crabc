@@ -88,8 +88,13 @@
       "scope": "The native adapter builds as a static library whose defined `mi_*` globals include every M4 external function and only functions the pinned header declares, that defines no libc allocator entry and no C mimalloc `_mi_*` internal, and against which alone a C probe naming every function through the pinned `include/mimalloc.h` prototypes links and runs on native x86-64."
     },
     "upstream:test-api": {
-      "command": null,
-      "scope": "Unmodified pinned `test/test-api.c` with `testhelper.h` compiles against the pinned headers, links against the native adapter only, and every M4-owned check reports `ok.` (the heap-os1, heap-os2, heap-many, and arena_reserve checks belong to M6)."
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--offline",
+        "--upstream-test-api"
+      ],
+      "scope": "Unmodified pinned `test/test-api.c` with `testhelper.h` compiles against the pinned headers, links against the native adapter only (with its M6 Heap/reservation and M7 option/statistics exports), and every check, the M6 heap-os1, heap-os2, heap-many, and arena_reserve ones included, reports `ok.`."
     },
     "differential:threads": {
       "command": [
@@ -299,9 +304,7 @@
       "evidence": [
         "upstream:test-api"
       ],
-      "blocked_by": [
-        "The unmodified file cannot link against a native adapter: beyond the M4 exports it references `mi_option_disable` (M7), `mi_reserve_os_memory`, `mi_heap_new`, `mi_heap_malloc`, `mi_heap_malloc_aligned`, `mi_heap_delete`, `mi_heap_destroy` (M6), and `mi_stats_get` (M7)."
-      ]
+      "blocked_by": []
     }
   ]
 }

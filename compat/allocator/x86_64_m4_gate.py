@@ -493,6 +493,53 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# upstream:test-api
+# ---------------------------------------------------------------------------
+
+TEST_API_CHECK = re.compile(r"test: (.+?)\.\.\.  (ok\.|\n  FAILED: [^\n]*)", re.DOTALL)
+
+
+def run_upstream_test_api(offline: bool) -> dict[str, Any]:
+    """Link the unmodified pinned `test/test-api.c` against the native adapter only.
+
+    Its checks print to stderr; each must report `ok.` and the summary must
+    report no failure. The file needs the M6 Heap/reservation and M7
+    option/statistics exports as well as the M4 ones.
+    """
+
+    harness.require_native_x86_64()
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m4-test-api-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        library = build_adapter_library(temporary)
+        binary = temporary / "test-api"
+        link = harness.command_record(
+            [
+                harness.require_tool("musl-gcc"), "-std=c11", *harness.CONFIGURATION_PROFILES["release"],
+                "-I", str(source / "include"), "-I", str(source / "test"),
+                str(source / "test/test-api.c"), str(library), "-pthread", "-o", str(binary),
+            ],
+            cwd=source,
+        )
+        harness.require_success(link, "upstream test-api link against the native adapter")
+        execution = harness.command_record((str(binary),), cwd=temporary, env={}, timeout_seconds=600)
+    output = str(execution["stderr"])
+    checks = [(name, verdict == "ok.") for name, verdict in TEST_API_CHECK.findall(output)]
+    failed = [name for name, passed in checks if not passed]
+    report = {"checks": dict(checks), "status": "passed"}
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    (ARTIFACTS / "test-api.log").write_text(str(execution["stdout"]) + output)
+    if execution["status"] != 0 or not checks or failed or f"failed   : 0\n" not in output:
+        raise harness.HarnessError(
+            f"upstream test-api failed (status {execution['status']}): {failed or output[-400:]}"
+        )
+    harness.write_json(ARTIFACTS / "test-api.json", report)
+    return report
+
+
+# ---------------------------------------------------------------------------
 # adapter:export-boundary
 # ---------------------------------------------------------------------------
 
@@ -613,6 +660,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="audit the native adapter's export boundary and header linkage")
     mode.add_argument("--differential", choices=DIFFERENTIAL_SCENARIOS,
         help="run one shared-driver pinned-C/native-adapter differential scenario")
+    mode.add_argument("--upstream-test-api", action="store_true",
+        help="link the unmodified pinned test-api.c against the native adapter and run it")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     arguments = parser.parse_args(argv)
     if arguments.native_tests:
@@ -622,6 +671,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.adapter_boundary:
         report = run_adapter_boundary(arguments.offline)
         print(f"M4 adapter boundary passed: {len(report['exported_functions'])} functions")
+        return 0
+    if arguments.upstream_test_api:
+        report = run_upstream_test_api(arguments.offline)
+        print(f"upstream test-api passed: {len(report['checks'])} checks")
         return 0
     if arguments.differential is not None:
         report = run_operations_differential(arguments.offline, arguments.differential)

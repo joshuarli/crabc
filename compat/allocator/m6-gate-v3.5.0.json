@@ -91,7 +91,7 @@
       "scope": "Focused Rust subprocess regressions."
     },
     "upstream:test-api-heaps": {
-      "runner": null,
+      "runner": "compat/allocator/x86_64_m6_test_api.py",
       "scope": "Unmodified test-api.c heap-os1, heap-os2, heap-many, and arena_reserve."
     },
     "upstream:test-stress-heaps": {
@@ -356,7 +356,7 @@
         "upstream:test-stress-subprocs"
       ],
       "blocked_by": [
-        "No adapter binds the upstream Heap, arena, or subprocess entry points to the Rust engine."
+        "The native adapter binds the Heap and reservation entries test-api.c uses, whose checks pass; test-stress-heaps.c and test-stress-subprocs.c need the subprocess entries and the remaining Heap entries, which the adapter does not export."
       ]
     }
   ]

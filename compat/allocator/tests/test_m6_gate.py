@@ -46,6 +46,7 @@ class M6GateContractTests(unittest.TestCase):
             "differential:public-heap-adapter": "compat/allocator/x86_64_m6_adapter.py",
             "differential:public-heap-lifecycle": "compat/allocator/heap_lifecycle.py",
             "differential:subprocess-lifecycle": "compat/allocator/subprocess_lifecycle.py",
+            "upstream:test-api-heaps": "compat/allocator/x86_64_m6_test_api.py",
         })
         # Every gate still names a reviewed blocker.
         self.assertEqual(summary["blocked_gate_ids"], list(gate.GATE_IDS))
