@@ -58,6 +58,14 @@ C_ALLOCATOR_PIN = {
 # two spellings here makes the product builder, rather than an ambient Cargo
 # invocation, the authority for this coupled lifecycle profile.
 MIMALLOC_LIFECYCLE_C_FLAG = "-DMI_PRIM_HAS_PROCESS_ATTACH=1"
+# Musl's allocator maps memory through its internal __mmap family
+# (src/malloc/mallocng/glue.h `#define mmap __mmap` and likewise madvise and
+# mremap; it never calls mprotect), so an application's own definition of
+# those public names never sees libc-internal allocation. Compile the C
+# backend the same way against the hidden bodies that
+# libc/src/c_abi/x86_64/memory_mapping.rs and owned_vm_mechanisms.rs define.
+# Musl's free still unmaps through the public munmap; so does this backend.
+MIMALLOC_INTERNAL_VM_C_FLAGS = ("-Dmmap=__mmap", "-Dmadvise=__madvise", "-Dmremap=__mremap", "-Dmprotect=__mprotect")
 MIMALLOC_LIFECYCLE_RUST_CFG = "crabc_owned_mimalloc_lifecycle"
 MIMALLOC_LIFECYCLE_INIT_SYMBOL = "__crabc_x86_owned_mimalloc_process_initializer"
 MIMALLOC_LIFECYCLE_FINI_SYMBOL = "__crabc_x86_owned_mimalloc_process_finalizer"
@@ -1021,7 +1029,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
         "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong",
         # The Rust libc owns the matching init/fini entries.  Do not let the
         # fixed C backend install a second hidden constructor.
-        MIMALLOC_LIFECYCLE_C_FLAG,
+        MIMALLOC_LIFECYCLE_C_FLAG, *MIMALLOC_INTERNAL_VM_C_FLAGS,
         f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file),
     ]
     environment = deterministic_environment()

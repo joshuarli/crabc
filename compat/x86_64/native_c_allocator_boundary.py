@@ -41,9 +41,8 @@ SCENARIOS = ("asprintf", "passwd", "lio")
 C_RUNTIME_IMPORTS = (
     ("__errno_location", "GLOBAL"), ("abort", "GLOBAL"), ("clock_gettime", "WEAK"),
     ("fputs", "GLOBAL"), ("free", "GLOBAL"), ("getenv", "GLOBAL"),
-    ("getrusage", "GLOBAL"), ("madvise", "WEAK"), ("memcpy", "GLOBAL"),
-    ("memset", "GLOBAL"), ("mmap", "WEAK"), ("mprotect", "WEAK"),
-    ("munmap", "WEAK"), ("pathconf", "GLOBAL"), ("prctl", "GLOBAL"),
+    ("getrusage", "GLOBAL"), ("memcpy", "GLOBAL"),
+    ("memset", "GLOBAL"), ("munmap", "WEAK"), ("pathconf", "GLOBAL"), ("prctl", "GLOBAL"),
     ("pthread_key_create", "WEAK"), ("pthread_key_delete", "WEAK"),
     ("pthread_mutex_destroy", "GLOBAL"), ("pthread_mutex_lock", "WEAK"),
     ("pthread_mutex_unlock", "WEAK"), ("pthread_setspecific", "GLOBAL"),

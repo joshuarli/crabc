@@ -47,6 +47,11 @@ symbol instead, as musl's objects do. The `MATH` role defines counting
 `hypot` and `log1p` and requires musl's result: `cabs` reaches `hypot` and
 `acosh` reaches `log1p`.
 
+Two groups stay candidate-divergent: `getopt_long`/`getopt_long_only` and
+the `if_*`/`getifaddrs`/`freeifaddrs` interface entries. Their x86 sources
+are shared with the paused AArch64 target, whose behavior and evidence this
+campaign preserves, so their members are not split here.
+
 ## String role
 
 `STRINGS` defines counting `strlen` and `getenv`. Musl reaches them from
@@ -96,6 +101,25 @@ and `getservbyname`. `ACCOUNTS` defines counting `getgrouplist` and
 `pthread_mutex_lock`/`unlock` and requires that `mtx_lock`/`mtx_unlock` do
 not reach them: musl's C11 mutexes call its hidden `__pthread_mutex_*`
 bodies.
+
+`PROCESS` defines counting `atexit`, `pthread_atfork`, `getlogin`,
+`sem_timedwait`, `strtod` and `longjmp`. Musl's `exit.c` and `fork.c` carry
+weak dummy `__funcs_on_exit` and `__fork_handler`, so neither registry is
+linked or run; `static_startup.rs` and `pthread_atfork.rs` give `exit` and
+`fork` the same weak dummies in the installed archive, `exit` its own member,
+and the atexit lock that fork holds its own member. Musl's `getlogin_r`,
+`sem_wait`, `atof` and `siglongjmp` reach the replacements; `wcstod` does
+not. The float-parse translations take one member per musl object (the
+entry file through `musl_object_assembly!`). `EXIT` defines `exit`, which
+`__libc_start_main` reaches when `main` returns. `PUSHBACK` defines an
+`ungetc` that pushes nothing back: musl's scanner steps its own buffer
+position back, and so does the owned scanner (`unread_scanned_byte`), so
+`fscanf` still sees every delimiter. `MAPPING` defines a counting `mmap`
+and requires that no allocation from process start reaches it: musl's
+allocator maps through its internal `__mmap`, and the builders compile the C
+mimalloc backend with the same `mmap`/`madvise`/`mremap`/`mprotect`
+redirection (`MIMALLOC_INTERNAL_VM_C_FLAGS`). Musl frees individual mappings
+through the public `munmap`, and so does the backend.
 
 ## Standard I/O roles
 

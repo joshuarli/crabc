@@ -499,7 +499,8 @@ static int run_string_clients(void)
 #if defined(CRABC_REPLACE_PRINTF) || defined(CRABC_REPLACE_VSNPRINTF) || defined(CRABC_REPLACE_SCANF) \
     || defined(CRABC_REPLACE_MATH) || defined(CRABC_REPLACE_WIDE) || defined(CRABC_REPLACE_SYSTEM) \
     || defined(CRABC_REPLACE_FILES) || defined(CRABC_REPLACE_NETWORK) || defined(CRABC_REPLACE_ACCOUNTS) \
-    || defined(CRABC_REPLACE_THREADS)
+    || defined(CRABC_REPLACE_THREADS) || defined(CRABC_REPLACE_PROCESS) || defined(CRABC_REPLACE_PUSHBACK) \
+    || defined(CRABC_REPLACE_MAPPING)
 static unsigned long replacement_calls;
 
 static void report_replacement(const char *operation, unsigned long mark)
@@ -1430,6 +1431,237 @@ static int run_thread_clients(void)
 }
 #endif
 
+#ifdef CRABC_REPLACE_PROCESS
+#include <pthread.h>
+#include <semaphore.h>
+#include <setjmp.h>
+#include <sys/wait.h>
+/*
+ * Counting replacements of entries whose musl objects other libc objects
+ * reach only by public symbol or not at all. Musl's exit.c and fork.c carry
+ * weak dummy `__funcs_on_exit` and `__fork_handler`, so replacing `atexit`
+ * or `pthread_atfork` links neither registry. Its getlogin_r calls getlogin,
+ * sem_wait sem_timedwait, atof strtod, and siglongjmp longjmp;
+ * wcstod scans internally and stays uncounted.
+ */
+static void (*registered_exit_handler)(void);
+
+int atexit(void (*function)(void))
+{
+    replacement_calls++;
+    registered_exit_handler = function;
+    return 0;
+}
+
+int pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void))
+{
+    (void)prepare;
+    (void)parent;
+    (void)child;
+    replacement_calls++;
+    return 0;
+}
+
+char *getlogin(void)
+{
+    static char name[] = "replaced";
+
+    replacement_calls++;
+    return name;
+}
+
+int sem_timedwait(sem_t *restrict semaphore, const struct timespec *restrict deadline)
+{
+    (void)deadline;
+    replacement_calls++;
+    return sem_trywait(semaphore);
+}
+
+double strtod(const char *restrict text, char **restrict end)
+{
+    replacement_calls++;
+    if (end) *end = (char *)text + strlen(text);
+    return 42.0;
+}
+
+/* Musl's x86_64 longjmp.s, behind a counting C entry. */
+_Noreturn void crabc_probe_jump(jmp_buf buffer, int value);
+__asm__(
+    ".text\n"
+    ".type crabc_probe_jump,@function\n"
+    "crabc_probe_jump:\n"
+    "\txor %eax,%eax\n"
+    "\tcmp $1,%esi\n"
+    "\tadc %esi,%eax\n"
+    "\tmov (%rdi),%rbx\n"
+    "\tmov 8(%rdi),%rbp\n"
+    "\tmov 16(%rdi),%r12\n"
+    "\tmov 24(%rdi),%r13\n"
+    "\tmov 32(%rdi),%r14\n"
+    "\tmov 40(%rdi),%r15\n"
+    "\tmov 48(%rdi),%rsp\n"
+    "\tjmp *56(%rdi)\n"
+    ".size crabc_probe_jump, .-crabc_probe_jump\n");
+
+_Noreturn void longjmp(jmp_buf buffer, int value)
+{
+    replacement_calls++;
+    crabc_probe_jump(buffer, value);
+}
+
+static void unexpected_exit_handler(void)
+{
+    emit("atexit handler ran\n");
+}
+
+static int run_process_clients(void)
+{
+    unsigned long mark;
+    char name[16];
+    sigjmp_buf jump;
+    volatile int jumped = 0;
+    sem_t semaphore;
+    pid_t child;
+    int status = 0;
+
+    mark = replacement_calls;
+    emit_flag("atexit", "value", atexit(unexpected_exit_handler) == 0 && registered_exit_handler);
+    report_replacement("atexit", mark);
+    mark = replacement_calls;
+    emit_flag("pthread_atfork", "value", pthread_atfork(0, 0, 0) == 0);
+    report_replacement("pthread_atfork", mark);
+    mark = replacement_calls;
+    child = fork();
+    if (child == 0) _exit(7);
+    emit_flag("fork", "value", child > 0 && waitpid(child, &status, 0) == child
+        && WIFEXITED(status) && WEXITSTATUS(status) == 7);
+    report_replacement("fork", mark);
+    mark = replacement_calls;
+    emit_flag("getlogin_r", "value", getlogin_r(name, sizeof name) == 0 && !strcmp(name, "replaced"));
+    report_replacement("getlogin_r", mark);
+    if (sem_init(&semaphore, 0, 1)) return 80;
+    mark = replacement_calls;
+    emit_flag("sem_wait", "value", sem_wait(&semaphore) == 0);
+    report_replacement("sem_wait", mark);
+    sem_destroy(&semaphore);
+    mark = replacement_calls;
+    emit_flag("atof", "value", atof("1.5") == 42.0);
+    report_replacement("atof", mark);
+    mark = replacement_calls;
+    emit_flag("wcstod", "value", wcstod(L"1.5", 0) == 1.5);
+    report_replacement("wcstod", mark);
+    mark = replacement_calls;
+    if (!sigsetjmp(jump, 0)) {
+        jumped = 1;
+        siglongjmp(jump, 1);
+    }
+    emit_flag("siglongjmp", "value", jumped);
+    report_replacement("siglongjmp", mark);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_EXIT
+/* Musl's __libc_start_main reaches the application's `exit` when main returns. */
+_Noreturn void exit(int status)
+{
+    emit_flag("exit", "replacement", 1);
+    _exit(status);
+}
+#endif
+
+#ifdef CRABC_REPLACE_PUSHBACK
+/*
+ * A counting `ungetc` that pushes nothing back. Musl's scanner steps its own
+ * buffer position back instead of calling ungetc, so fscanf still sees each
+ * delimiter and this stays uncounted.
+ */
+int ungetc(int character, FILE *stream)
+{
+    (void)character;
+    (void)stream;
+    replacement_calls++;
+    return EOF;
+}
+
+static int run_pushback_clients(void)
+{
+    unsigned long mark;
+    FILE *stream;
+    int first = 0, second = 0;
+    char word[8];
+
+    stream = fopen("/replacement-pushback", "w+");
+    if (!stream || fputs("12 34x\n", stream) < 0 || fseek(stream, 0, SEEK_SET)) return 85;
+    mark = replacement_calls;
+    emit_flag("fscanf", "value", fscanf(stream, "%d %d%2s", &first, &second, word) == 3
+        && first == 12 && second == 34 && !strcmp(word, "x"));
+    report_replacement("fscanf", mark);
+    if (fclose(stream)) return 86;
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_MAPPING
+#include <search.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+/*
+ * A counting `mmap` over the raw system call. Musl's allocator maps through
+ * its internal __mmap, so no allocation from process start, including one
+ * large enough for its own mapping, and no libc caller that allocates
+ * reaches it; a direct call does. (Musl's mallocng does free individual
+ * mappings through the public munmap, so that one is not compared.)
+ */
+void *mmap(void *address, size_t length, int protection, int flags, int descriptor, off_t offset)
+{
+    replacement_calls++;
+    return (void *)syscall(SYS_mmap, address, length, protection, flags, descriptor, offset);
+}
+
+static void ignore_node(void *node)
+{
+    (void)node;
+}
+
+static int compare_keys(const void *left, const void *right)
+{
+    return strcmp(left, right);
+}
+
+static int run_mapping_clients(void)
+{
+    static const size_t sizes[] = {16, 4096, 300000, 8u << 20, 64u << 20};
+    unsigned long mark;
+    void *root = 0, *mapping;
+    size_t index;
+    int ok = 1;
+
+    /* Count from process start: startup allocation is libc-internal too. */
+    mark = 0;
+    for (index = 0; index < sizeof sizes / sizeof sizes[0]; index++) {
+        char *block = malloc(sizes[index]), *grown;
+        if (!block) return 95;
+        block[0] = block[sizes[index] - 1] = 1;
+        grown = realloc(block, sizes[index] * 2);
+        if (!grown) return 96;
+        ok &= grown[0] == 1;
+        free(grown);
+    }
+    emit_flag("malloc", "value", ok);
+    report_replacement("malloc", mark);
+    mark = replacement_calls;
+    emit_flag("tsearch", "value", tsearch("key", &root, compare_keys) != 0);
+    report_replacement("tsearch", mark);
+    tdestroy(root, ignore_node);
+    mark = replacement_calls;
+    mapping = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    emit_flag("mmap", "value", mapping != MAP_FAILED && munmap(mapping, 4096) == 0);
+    report_replacement("mmap", mark);
+    return 0;
+}
+#endif
+
 int main(void)
 {
 #ifdef CRABC_REPLACE_MALLOC
@@ -1482,6 +1714,18 @@ int main(void)
 #endif
 #ifdef CRABC_REPLACE_STDIO
     int status = run_stdio_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_PROCESS
+    int status = run_process_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_PUSHBACK
+    int status = run_pushback_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_MAPPING
+    int status = run_mapping_clients();
     if (status) return status;
 #endif
     emit("owned-static-replacement-ok\n");

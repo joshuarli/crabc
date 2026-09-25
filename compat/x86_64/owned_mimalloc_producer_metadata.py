@@ -341,11 +341,13 @@ def _validate_contract(value: object) -> dict[str, Any]:
     require(static_flags == [
         "-nostdinc", "-isystem", "$CRABC_SOURCE/include", "-fPIC", "-ftls-model=initial-exec",
         "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-Dmmap=__mmap", "-Dmadvise=__madvise", "-Dmremap=__mremap", "-Dmprotect=__mprotect",
         "-ffile-prefix-map=$CRABC_SOURCE=/crabc", "-MD", "-MF", "$CRABC_X86_BUILD/allocator.d",
     ], "static allocator build flags differ")
     require(shared_flags == [
         "-nostdinc", "-isystem", "$SOURCE/include", "-fPIC", "-ftls-model=initial-exec",
         "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-Dmmap=__mmap", "-Dmadvise=__madvise", "-Dmremap=__mremap", "-Dmprotect=__mprotect",
         "-ffile-prefix-map=$SOURCE=/crabc", "-MD", "-MF", "$BUILD/allocator.d",
     ], "shared allocator build flags differ")
     lifecycle = mapping(

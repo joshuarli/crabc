@@ -67,8 +67,8 @@ weak_fallback_source = { path = "libmimalloc-sys/c_src/mimalloc/v3/src/alloc.c",
 "include/pthread.h" = "ee74865628a1315b833253a507b14e4e8d703735b8e280a69bad8f60061d69d0"
 
 [build]
-static_target_flags = ["-nostdinc", "-isystem", "$CRABC_SOURCE/include", "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-ffile-prefix-map=$CRABC_SOURCE=/crabc", "-MD", "-MF", "$CRABC_X86_BUILD/allocator.d"]
-shared_allocator_flags = ["-nostdinc", "-isystem", "$SOURCE/include", "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-ffile-prefix-map=$SOURCE=/crabc", "-MD", "-MF", "$BUILD/allocator.d"]
+static_target_flags = ["-nostdinc", "-isystem", "$CRABC_SOURCE/include", "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-Dmmap=__mmap", "-Dmadvise=__madvise", "-Dmremap=__mremap", "-Dmprotect=__mprotect", "-ffile-prefix-map=$CRABC_SOURCE=/crabc", "-MD", "-MF", "$CRABC_X86_BUILD/allocator.d"]
+shared_allocator_flags = ["-nostdinc", "-isystem", "$SOURCE/include", "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-Dmmap=__mmap", "-Dmadvise=__madvise", "-Dmremap=__mremap", "-Dmprotect=__mprotect", "-ffile-prefix-map=$SOURCE=/crabc", "-MD", "-MF", "$BUILD/allocator.d"]
 
 [build.lifecycle_profile]
 backend_implicit_attach_detach = "absent"

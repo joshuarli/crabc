@@ -14,7 +14,9 @@ global_entries = ["calloc", "realloc", "reallocarray", "free", "aligned_alloc", 
 rust_c_imports = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"]
 # The selected C static translation unit imports these public Rust libc
 # providers.  This is a finite installed link boundary, not an allocator API
-# behavior or source-semantics claim.
+# behavior or source-semantics claim. Its mmap, madvise and mprotect calls
+# reach libc's internal bodies instead, as musl's allocator does, so they
+# are not public imports.
 c_runtime_imports = [
   { name = "__errno_location", binding = "GLOBAL" },
   { name = "abort", binding = "GLOBAL" },
@@ -23,11 +25,8 @@ c_runtime_imports = [
   { name = "free", binding = "GLOBAL" },
   { name = "getenv", binding = "GLOBAL" },
   { name = "getrusage", binding = "GLOBAL" },
-  { name = "madvise", binding = "WEAK" },
   { name = "memcpy", binding = "GLOBAL" },
   { name = "memset", binding = "GLOBAL" },
-  { name = "mmap", binding = "WEAK" },
-  { name = "mprotect", binding = "WEAK" },
   { name = "munmap", binding = "WEAK" },
   { name = "pathconf", binding = "GLOBAL" },
   { name = "prctl", binding = "GLOBAL" },

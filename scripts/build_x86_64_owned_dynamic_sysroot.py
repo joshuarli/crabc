@@ -641,7 +641,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                "-ftls-model=initial-exec", "-fstack-protector-strong",
                # The Rust libc owns the matching init/fini entries.  Do not
                # let the fixed C backend install a second hidden constructor.
-               common.MIMALLOC_LIFECYCLE_C_FLAG,
+               common.MIMALLOC_LIFECYCLE_C_FLAG, *common.MIMALLOC_INTERNAL_VM_C_FLAGS,
                f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file)]
     if accepted_c:
         environment.update({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",

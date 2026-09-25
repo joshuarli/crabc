@@ -51,39 +51,6 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                     with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "C allocator selection differs"):
                         BOUNDARY._validate_default_c_allocator_selection(changed)
 
-    def test_contract_declares_the_finite_inverse_c_runtime_import_roster(self) -> None:
-        contract = BOUNDARY.load_contract(ROOT)
-
-        self.assertEqual(contract["scope"]["c_runtime_imports"], [
-            {"name": "__errno_location", "binding": "GLOBAL"},
-            {"name": "abort", "binding": "GLOBAL"},
-            {"name": "clock_gettime", "binding": "WEAK"},
-            {"name": "fputs", "binding": "GLOBAL"},
-            {"name": "free", "binding": "GLOBAL"},
-            {"name": "getenv", "binding": "GLOBAL"},
-            {"name": "getrusage", "binding": "GLOBAL"},
-            {"name": "madvise", "binding": "WEAK"},
-            {"name": "memcpy", "binding": "GLOBAL"},
-            {"name": "memset", "binding": "GLOBAL"},
-            {"name": "mmap", "binding": "WEAK"},
-            {"name": "mprotect", "binding": "WEAK"},
-            {"name": "munmap", "binding": "WEAK"},
-            {"name": "pathconf", "binding": "GLOBAL"},
-            {"name": "prctl", "binding": "GLOBAL"},
-            {"name": "pthread_key_create", "binding": "WEAK"},
-            {"name": "pthread_key_delete", "binding": "WEAK"},
-            {"name": "pthread_mutex_destroy", "binding": "GLOBAL"},
-            {"name": "pthread_mutex_lock", "binding": "WEAK"},
-            {"name": "pthread_mutex_unlock", "binding": "WEAK"},
-            {"name": "pthread_setspecific", "binding": "GLOBAL"},
-            {"name": "realpath", "binding": "GLOBAL"},
-            {"name": "sleep", "binding": "GLOBAL"},
-            {"name": "strtol", "binding": "GLOBAL"},
-            {"name": "syscall", "binding": "GLOBAL"},
-            {"name": "sysconf", "binding": "GLOBAL"},
-            {"name": "sysinfo", "binding": "WEAK"},
-        ])
-
     def test_interposition_runner_derives_owned_dynamic_link_receipts(self) -> None:
         runner = (ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh").read_text(
             encoding="utf-8"
