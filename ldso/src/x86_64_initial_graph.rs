@@ -3204,7 +3204,9 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
 
 unsafe fn apply_relr_target(object: &Object, virtual_address: u64) -> Option<()> {
     let slot = runtime_address(object.base, virtual_address)? as *mut u64;
-    *slot = (*slot).checked_add(object.base)?;
+    // musl adds the load base with wrapping word arithmetic; the fixed-graph
+    // preflight rejects an overflowing addend before this runs.
+    *slot = (*slot).wrapping_add(object.base);
     Some(())
 }
 
@@ -4881,10 +4883,13 @@ impl SymbolLookupTable {
     }
 }
 
-/// Decode the complete fixed portion of a System V hash table.  Its `nchain`
-/// is a certified iteration extent, but relocation code still uses
-/// `direct_symbol` so an ELF index is never accepted merely because it is
-/// below an unrelated table's count.
+/// Decode the fixed portion of a System V hash table.  Like musl, the loader
+/// does not audit bucket and chain words at load time: the table and its
+/// `nchain` dynsym records only have to lie in readable file-backed memory,
+/// and `lookup_exported` bounds every index and every chain walk, so a
+/// malformed word fails that one lookup instead of the load.  Relocation
+/// code still uses `direct_symbol`, so an ELF index is never accepted merely
+/// because it is below an unrelated table's count.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn decode_sysv_hash(
     phdr: *const u8,
@@ -4912,33 +4917,6 @@ unsafe fn decode_sysv_hash(
     }
     let buckets = unsafe { table.add(8).cast::<u32>() };
     let chains = unsafe { buckets.add(bucket_count) };
-    // The ELF hash words are 4-byte aligned in any linker output; read them
-    // as slices then (tight, vectorizable scans), else word by word.
-    let word = |pointer: *const u32, index: usize| unsafe { read_u32(pointer.add(index).cast()) } as usize;
-    let aligned = buckets as usize % core::mem::align_of::<u32>() == 0;
-    let in_range = |value: u32| (value as usize) < symbol_count || value == 0;
-    if aligned {
-        // SAFETY: the readable file-backed range above covers both arrays.
-        let (bucket_words, chain_words) = unsafe {
-            (core::slice::from_raw_parts(buckets, bucket_count), core::slice::from_raw_parts(chains, symbol_count))
-        };
-        if !bucket_words.iter().all(|&value| in_range(value)) || !chain_words.iter().all(|&value| in_range(value)) {
-            return None;
-        }
-    } else {
-        if !(0..bucket_count).all(|index| in_range(word(buckets, index) as u32)) { return None; }
-        if !(0..symbol_count).all(|index| in_range(word(chains, index) as u32)) { return None; }
-    }
-    // A valid SysV chain terminates at index zero. Bound every bucket walk so
-    // a cycle cannot turn a later name lookup into unbounded loader work.
-    for bucket in 0..bucket_count {
-        let mut index = word(buckets, bucket);
-        for _ in 0..symbol_count {
-            if index == 0 { break; }
-            index = word(chains, index);
-        }
-        if index != 0 { return None; }
-    }
     Some(SymbolLookupTable::Sysv { bucket_count, buckets, chains, symbol_count })
 }
 

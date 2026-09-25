@@ -47,10 +47,12 @@ unsupported; this slice does not add GNU-unique/common/versioned/IFUNC scope.
 Undefined weak ordinary references resolve to zero; TLS references require
 a real retained module, including valid symbol type and full symbol extent.
 
-All objects are preflighted before any relocation writes. Each object's
-complete destination spans must be disjoint and writable and must not
-overlap its program headers, symbol/string tables, or relocation tables.
-Word destinations retain the existing eight-byte alignment rule. COPY is a
+All objects are preflighted before any relocation writes: every record's
+type and symbol resolve, and each destination lies inside one writable
+PT_LOAD. Like musl's `do_relocs`, destinations are not audited against each
+other or against the object's ELF tables; records apply in table order, so a
+repeated destination keeps the last write. Word destinations retain the
+existing eight-byte alignment rule. COPY is a
 byte operation and admits unaligned storage. It requires a main-image
 OBJECT definition at the destination, zero addend, an exported non-protected
 DSO OBJECT source, and checked source/destination ranges. Undefined, local,
@@ -106,7 +108,7 @@ and compare/mutate the same addresses. Provider size 16/80 against main COPY
 size 64 and removal of the consumer STATIC_TLS flag remain musl differentials.
 Twenty-one ELF mutations must exit 127 before any FS installation or callback.
 Unit tests additionally prove no earlier graph writes on a later failure,
-byte alignment, overlapping/metadata writes, exact symbol scopes and signed
+byte alignment, table-order repeated writes, exact symbol scopes and signed
 TLS bounds. The negative tracer now kills/reaps a fatal stopped child rather
 than suppressing its fault forever; a trap regression checks that cleanup.
 

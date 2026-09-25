@@ -403,8 +403,8 @@ zero immediately. This is retry-on-later-dlopen behavior, not a first-call
 PLT resolver. Calling a still-unresolved function is not made safe.
 
 The registry retains validated pending coordinates in raw loader-owned
-storage. New relocation preflight includes deferred destinations in the same
-metadata/overlap proof. Retries use prospective final global scope: LOCAL
+storage. New relocation preflight admits deferred destinations with the same
+writable-load check as immediate ones. Retries use prospective final global scope: LOCAL
 provider admission leaves a pending word unchanged, while later NOLOAD/GLOBAL
 promotion can resolve it. Failed graph/TLS/relocation preparation cannot alter
 retained pending words, visibility or TLS descriptors. All registered TLS

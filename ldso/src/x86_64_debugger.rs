@@ -101,24 +101,10 @@ impl PreparedInitialDebugger {
         Some(Self { libc_slot, dynamic_slot })
     }
 
-    /// The published 8-byte slot addresses [`Self::overlaps`] protects.
-    pub(super) fn slots(&self) -> impl Iterator<Item = u64> {
-        [Some(self.libc_slot), self.dynamic_slot].into_iter().flatten().map(|slot| slot as u64)
-    }
-
-    pub(super) fn overlaps(&self, start: u64, length: u64) -> Option<bool> {
-        let end = start.checked_add(length)?;
-        for slot in [Some(self.libc_slot), self.dynamic_slot].into_iter().flatten() {
-            let slot = slot as u64;
-            if length != 0 && start < slot.checked_add(8)? && slot < end { return Some(true); }
-        }
-        Some(false)
-    }
-
     /// # Safety
-    /// Full graph relocation preflight proved these slots disjoint from every
-    /// relocation write. Word relocation is complete, main COPY is next, and
-    /// both mappings are still writable before protection/RELRO publication.
+    /// Word relocation is complete, main COPY is next, and both mappings are
+    /// still writable before protection/RELRO publication. Like musl's
+    /// publication, this write replaces any relocation of either slot.
     pub(super) unsafe fn relocate(&self) {
         unsafe { self.libc_slot.write(address()); }
         if let Some(slot) = self.dynamic_slot { unsafe { slot.write(address()); } }

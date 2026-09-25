@@ -9,11 +9,11 @@ inert WEAK, DEFAULT-visible function. No second object graph, libc-owned
 `x86_64_debugger.rs::PreparedInitialDebugger` accepts only the libc receiver
 already selected by opened-file identity. The selected `_dl_debug_addr` must
 be one unversioned GLOBAL/DEFAULT object of size eight in writable storage,
-with no overlap with ELF metadata. Main `DT_DEBUG`, if present, must be unique
-and writable. The complete relocation preflight rejects RELA, RELR and COPY
-writes overlapping either publication slot. `relocate_initial_graph_with_debugger`
-then seeds the canonical pointer after ordinary word relocations and before
-main COPY relocations. Both libc-handle lookup and an executable COPY receive
+found through libc's export table. Main `DT_DEBUG`, if present, must be
+unique and writable. As in musl, relocations are not audited against the
+publication slots: `relocate_initial_graph_with_debugger` seeds the canonical
+pointer after ordinary word relocations, replacing any relocation of either
+slot, and before main COPY relocations. Both libc-handle lookup and an executable COPY receive
 the same pointer. Protection and RELRO are applied afterward.
 
 `PreparedInitialRegistry::publish` publishes the actual registry's link-map

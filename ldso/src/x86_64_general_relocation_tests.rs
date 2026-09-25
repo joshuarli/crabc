@@ -54,9 +54,6 @@ pub(super) struct Image {
     // genuine page without involving allocator storage.
     storage: *mut u8,
     pub(super) data: ImageData,
-    // This legacy one-header view is only used by the malformed-PHDR case.
-    // `object()` below always points at the real header in `storage`.
-    phdr: [u64; 7],
     symbols: ImageSymbols,
     relocations: ImageRelocations,
     count: usize,
@@ -70,7 +67,6 @@ impl Image {
         unsafe { core::ptr::write_bytes(base, 0, IMAGE_BYTES) };
         let mut image = Self {
             data: ImageData(unsafe { base.add(IMAGE_DATA).cast() }),
-            phdr: [1 | (7 << 32), 0, 0x1000, 0, 512, 512, 4096],
             symbols: ImageSymbols(unsafe { base.add(IMAGE_SYMTAB).cast() }),
             relocations: ImageRelocations(unsafe { base.add(IMAGE_RELA).cast() }),
             storage: base, count: 0,
@@ -447,7 +443,7 @@ fn conventional_startup_import_requires_canonical_libc_and_keeps_owned_mode_null
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
-fn relocation_cannot_mutate_a_later_private_import_record_before_admission() {
+fn relocation_of_a_later_private_import_record_cannot_change_its_admission() {
     const STARTUP: &[u8] = b"__crabc_x86_64_loader_conventional_startup_v1";
     let mut main = MappedImage::new();
     main.rela(R_X86_64_RELATIVE, 0, 0);
@@ -455,8 +451,10 @@ fn relocation_cannot_mutate_a_later_private_import_record_before_admission() {
     libc.set_destination(0xfeed);
     libc.symbol(1, STARTUP, 1, 2, 0, 0);
     // The first relocation targets symbol 1's metadata. The second uses that
-    // same record for the exact private import. Preflight must reject before
-    // either destination changes, including with an empty GNU export table.
+    // same record for the exact private import. Like musl, the loader does
+    // not audit relocation targets against its own tables, but preflight
+    // admits every import from the records as they were before any write, so
+    // the later write cannot change what was admitted.
     libc.rela_at(MappedImage::SYMTAB + 24, R_64, 0, 0);
     libc.rela(R_X86_64_GLOB_DAT, 1, 0);
     let symbol_before = libc.word_at(MappedImage::SYMTAB + 24);
@@ -464,9 +462,11 @@ fn relocation_cannot_mutate_a_later_private_import_record_before_admission() {
     objects[0] = main.object(false);
     objects[1] = libc.object(true);
     objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
-    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none());
-    assert_eq!(libc.word_at(MappedImage::SYMTAB + 24), symbol_before);
-    assert_eq!(libc.destination(), 0xfeed);
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some());
+    assert_ne!(libc.word_at(MappedImage::SYMTAB + 24), symbol_before);
+    // The conventional-startup import was admitted and written even though
+    // the relocation before it rewrote its record.
+    assert_ne!(libc.destination(), 0xfeed);
 }
 
 fn graph(count: usize) -> InitialGraphState {
@@ -480,8 +480,11 @@ fn graph(count: usize) -> InitialGraphState {
     graph
 }
 
+// musl applies every relocation record in table order without auditing the
+// write set: a large table relocates completely, and two records naming one
+// word both apply.
 #[test]
-fn general_relocation_scratch_tracks_elf_size_and_rejects_late_overlap_before_writes() {
+fn general_relocation_applies_every_record_like_musl() {
     let count = 1025;
     let mut data = self::std::vec![0xfeedu64; count];
     let mut relocations: self::std::vec::Vec<[u64; 3]> = (0..count)
@@ -496,12 +499,15 @@ fn general_relocation_scratch_tracks_elf_size_and_rejects_late_overlap_before_wr
     assert!(data.iter().all(|word| *word == data.as_ptr() as u64));
     data.fill(0xfeed);
     relocations[count - 1][0] = 0x1000;
-    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_none());
-    assert!(data.iter().all(|word| *word == 0xfeed));
+    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_some());
+    assert_eq!(data[0], data.as_ptr() as u64);
+    assert_eq!(data[count - 1], 0xfeed);
 }
 
+// Packed RELR has no fixed table or target limit, and like musl each record
+// adds the load base to its word, so a repeated target is relocated twice.
 #[test]
-fn general_relr_scratch_exceeds_legacy_table_and_target_limits_without_weakening_overlap_checks() {
+fn general_relr_exceeds_legacy_table_and_target_limits_like_musl() {
     let count = 600;
     let mut data = self::std::vec![0u64; count];
     let mut relr: self::std::vec::Vec<u64> = (0..count).map(|index| 0x1000 + index as u64 * 8).collect();
@@ -514,10 +520,9 @@ fn general_relr_scratch_exceeds_legacy_table_and_target_limits_without_weakening
     assert!(data.iter().all(|word| *word == objects[0].base));
     data.fill(0);
     relr[count - 1] = 0x1000;
-    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_none());
-    assert!(data.iter().all(|word| *word == 0));
-    let oversized = Object { relrsz: usize::MAX, ..EMPTY_OBJECT };
-    assert!(unsafe { RelocationScratch::new(&oversized) }.is_none());
+    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_some());
+    assert_eq!(data[0], objects[0].base.wrapping_mul(2));
+    assert_eq!(data[count - 1], 0);
 }
 
 #[test]
@@ -653,7 +658,7 @@ fn copy_uses_executable_size_with_byte_alignment_and_readable_extent_not_provide
 
 #[test]
 fn malformed_copy_ranges_scope_and_metadata_fail_before_any_graph_write() {
-    for case in 0..13 {
+    for case in 0..11 {
         let mut main = Image::new(); let mut provider = Image::new();
         main.data.fill(0xaaaa); provider.data.fill(0xbbbb);
         main.symbol(1, 1, 1, 0, 1, 0x1000, 24);
@@ -670,15 +675,13 @@ fn malformed_copy_ranges_scope_and_metadata_fail_before_any_graph_write() {
             6 => provider.symbol(1, 1, 0, 0, 1, 0x1000, 24),
             7 => provider.symbol(1, 6, 1, 0, 1, 0x1000, 24),
             8 => main.relocations[0][2] = 1,
-            9 => main.rela(0x1010, R_X86_64_RELATIVE, 0, 0x1000),
-            10 => main.symbol(1, 1, 1, 3, 1, 0x1000, 24),
-            11 | 12 => {},
+            9 => main.symbol(1, 1, 1, 3, 1, 0x1000, 24),
+            10 => {},
             _ => unreachable!(),
         }
         let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
         objects[0] = main.object(false); objects[1] = provider.object(true);
-        if case == 11 { objects[0].role = ObjectRole::Library; }
-        if case == 12 { objects[0].phdr = main.data.as_ptr().cast(); main.data[..7].copy_from_slice(&main.phdr); }
+        if case == 10 { objects[0].role = ObjectRole::Library; }
         let before_main = *main.data; let before_provider = *provider.data;
         assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none(), "case {case}");
         assert_eq!(*main.data, before_main, "case {case}");
@@ -800,122 +803,4 @@ fn initial_exec_and_dynamic_offsets_share_retained_module_coordinates_and_checke
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());
 }
 
-// The batched referenced-record check must agree exactly with the per-span
-// scan it replaces in preflight, including empty spans strictly inside a
-// record, spans reaching in from below, and records at a span boundary.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-#[test]
-fn batched_referenced_record_check_matches_the_per_span_scan() {
-    let mut image = MappedImage::new();
-    for index in [1, 3] { image.symbol(index, b"s", 1, 1, 0, 1); }
-    image.rela(R_64, 1, 0);
-    image.rela(R_64, 3, 0);
-    let object = image.object(true);
-    let records: std::vec::Vec<(u64, u64)> = [1u64, 3].iter()
-        .map(|index| (object.symtab as u64 + 24 * index, 24)).collect();
-    let brute = |spans: &[WriteSpan]| spans.iter().any(|span| records.iter().any(|&(record, length)|
-        ranges_overlap(object.base + span.start, span.length, record, length).unwrap()));
-    let symtab = MappedImage::SYMTAB as u64;
-    let mut candidates = std::vec::Vec::new();
-    for start in (symtab..symtab + 5 * 24).step_by(4) {
-        for length in [0u64, 1, 4, 8, 23, 24, 40] { candidates.push(WriteSpan { start, length }); }
-    }
-    for first in &candidates {
-        let single = [*first];
-        assert_eq!(unsafe { referenced_records_overlap_spans(&object, &single) }, Some(brute(&single)),
-            "span {:#x}+{}", first.start, first.length);
-        // Pair it with a later disjoint span, as sorted preflight spans are.
-        for second in candidates.iter().filter(|second| second.start >= first.start + first.length.max(1)) {
-            let pair = [*first, *second];
-            assert_eq!(unsafe { referenced_records_overlap_spans(&object, &pair) }, Some(brute(&pair)),
-                "spans {:#x}+{} {:#x}+{}", first.start, first.length, second.start, second.length);
-        }
-    }
-}
 
-// The batched preflight (per-span containment plus one sorted pass per table)
-// must accept exactly the write sets the per-span `checked_write_span` scan
-// accepts, over generated sorted disjoint span sets and object layouts that
-// place, omit, null or overflow the relocation, symbol, string, program
-// header, VERSYM and hash tables.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-#[test]
-fn batched_write_set_checks_match_the_per_span_scan() {
-    let mut image = MappedImage::new();
-    for index in [1, 2, 3] { image.symbol(index, b"s", 1, 1, 0, 1); }
-    image.rela(R_64, 1, 0);
-    image.rela(R_64, 3, 0);
-    let base = image.object(true);
-    let at = |offset: usize| unsafe { base.base as *const u8 }.wrapping_add(offset);
-    let mut layouts = std::vec::Vec::new();
-    layouts.push(base);
-    let mut versioned = base;
-    versioned.versym = at(0x2c0);
-    versioned.symcount = 4;
-    layouts.push(versioned);
-    let mut hashed = versioned;
-    hashed.symbol_lookup = SymbolLookupTable::Sysv {
-        bucket_count: 2, buckets: at(0x2e8).cast(), chains: at(0x2f0).cast(), symbol_count: 4,
-    };
-    layouts.push(hashed);
-    let mut relr = base;
-    relr.relr = at(0x3c0);
-    relr.relrsz = 16;
-    relr.jmprel = at(0x3a0);
-    relr.pltrelsz = 0;
-    layouts.push(relr);
-    let mut null_table = base;
-    null_table.relr = core::ptr::null();
-    null_table.relrsz = 8;
-    layouts.push(null_table);
-    let mut overflowing = base;
-    overflowing.symcount = usize::MAX / 8;
-    layouts.push(overflowing);
-    let mut empty = base;
-    empty.symtab = core::ptr::null();
-    empty.symcount = 0;
-    empty.strsz = 0;
-    empty.rela = core::ptr::null();
-    empty.relasz = 0;
-    empty.phnum = 0;
-    layouts.push(empty);
-
-    let old = |object: &Object, spans: &[(WriteSpan, bool)]| -> bool {
-        spans.iter().all(|(span, word)| unsafe {
-            checked_write_span(object, span.start, span.length, *word, None, ReferencedRecords::Deferred)
-        }.is_some())
-            && unsafe { referenced_records_overlap_spans(object, &spans.iter().map(|item| item.0).collect::<std::vec::Vec<_>>()) }
-                == Some(false)
-    };
-    let new = |object: &Object, spans: &[(WriteSpan, bool)]| -> bool {
-        let mut writable = WritableLoadCache::default();
-        spans.iter().all(|(span, word)| unsafe { admitted_span(object, &mut writable, span.start, span.length, *word) }.is_some())
-            && {
-                let set: std::vec::Vec<_> = spans.iter().map(|item| item.0).collect();
-                let tables = unsafe { forbidden_tables_overlap_spans(object, &set) };
-                let records = unsafe { referenced_records_overlap_spans(object, &set) };
-                tables == Some(false) && records == Some(false)
-            }
-    };
-    let mut seed = 0x2545_f491_4f6c_dd1du64;
-    let mut next = |bound: u64| { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed % bound };
-    let mut accepted = 0;
-    let mut rejected = 0;
-    for object in &layouts {
-        for _ in 0..4000 {
-            let mut spans = std::vec::Vec::new();
-            let mut cursor = next(0x80);
-            for _ in 0..(1 + next(5)) {
-                let length = [0u64, 1, 8, 8, 16, 24, 40][next(7) as usize];
-                let word = length == 8 && next(4) != 0;
-                if cursor + length > MappedImage::BYTES as u64 + 16 { break; }
-                spans.push((WriteSpan { start: cursor, length }, word));
-                cursor += length.max(1) + next(0x60);
-            }
-            let (old, new) = (old(object, &spans), new(object, &spans));
-            assert_eq!(new, old, "spans {:?}", spans.iter().map(|(span, word)| (span.start, span.length, *word)).collect::<std::vec::Vec<_>>());
-            if old { accepted += 1; } else { rejected += 1; }
-        }
-    }
-    assert!(accepted > 500 && rejected > 500, "sweep must exercise both outcomes: {accepted}/{rejected}");
-}

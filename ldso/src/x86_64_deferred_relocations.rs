@@ -158,7 +158,7 @@ impl PreparedRetry {
         for &record in old.map_or(&[][..], |old| old.entries()).iter().chain(new.entries()) {
             let object = objects.get(record.owner)?;
             if !matches!(record.kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) || record.symbol == 0 { return None; }
-            unsafe { write_span(object, record.offset, 8, true, Some(record.symbol)) }?;
+            unsafe { write_target(object, record.offset, 8, true) }?;
             match unsafe { word_resolution(&scope, objects, record.owner, record.kind, record.symbol, record.addend, true) }? {
                 None => prepared.pending.push(record)?,
                 Some(value) => {
@@ -269,21 +269,20 @@ mod tests {
     }
 
     #[test]
-    fn lazy_mode_does_not_defer_bad_shape_now_tls_absolute_or_overlapping_writes() {
-        for (kind, binding, visibility, section, bind_now, overlap) in [
-            (R_64, 1, 0, 0, false, false),
-            (R_X86_64_GLOB_DAT, 1, 0, 0, true, false),
-            (R_X86_64_GLOB_DAT, 1, 2, 0, false, false),
-            (R_X86_64_GLOB_DAT, 0, 0, 0, false, false),
-            (R_X86_64_TPOFF64, 1, 0, 0, false, false),
-            (R_X86_64_GLOB_DAT, 1, 0, 0, false, true),
+    fn lazy_mode_does_not_defer_bad_shape_now_tls_or_absolute_writes() {
+        for (kind, binding, visibility, section, bind_now) in [
+            (R_64, 1, 0, 0, false),
+            (R_X86_64_GLOB_DAT, 1, 0, 0, true),
+            (R_X86_64_GLOB_DAT, 1, 2, 0, false),
+            (R_X86_64_GLOB_DAT, 0, 0, 0, false),
+            (R_X86_64_TPOFF64, 1, 0, 0, false),
         ] {
             let main = Image::new();
             let mut plugin = Image::new();
             plugin.data[0] = 0xfeed;
             plugin.symbol(1, 2, binding, visibility, section, 0, 0);
             plugin.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1000);
-            plugin.rela(if overlap { 0x1000 } else { 0x1008 }, kind, 1, 0);
+            plugin.rela(0x1008, kind, 1, 0);
             let objects = [main.object(false), Object { bind_now, ..plugin.object(true) }];
             assert!(unsafe { relocate_new(&objects, &[0, 1], 1, 0, true) }.is_none());
             assert_eq!(plugin.data[0], 0xfeed);

@@ -20,6 +20,11 @@ impl Image {
         image.word(0x220, 0x500);
         image.word(0x228, 8);
         unsafe { core::ptr::copy_nonoverlapping(b"\0_dl_debug_addr\0".as_ptr(), image.0.add(0x300), 16); }
+        // One-bucket SysV table: nbucket 1, nchain 2, bucket[0] = symbol 1,
+        // and both chains terminate.
+        for (offset, value) in [(0x340, 1u32), (0x344, 2), (0x348, 1), (0x34c, 0), (0x350, 0)] {
+            unsafe { image.0.add(offset).cast::<u32>().write(value); }
+        }
         image
     }
     fn word(&self, offset: usize, value: u64) { unsafe { self.0.add(offset).cast::<u64>().write(value); } }
@@ -28,6 +33,10 @@ impl Image {
             dynamic: unsafe { self.0.add(0x400) },
             symtab: unsafe { self.0.add(0x200) }, symcount: 2,
             strtab: unsafe { self.0.add(0x300) }, strsz: 16,
+            symbol_lookup: SymbolLookupTable::Sysv {
+                bucket_count: 1, buckets: unsafe { self.0.add(0x348).cast() },
+                chains: unsafe { self.0.add(0x34c).cast() }, symbol_count: 2,
+            },
             role: if libc { ObjectRole::Library } else { ObjectRole::Main },
             canonical_libc_identity: libc.then_some(ObjectIdentity { device: 1, inode: 2 }),
             ..EMPTY_OBJECT }
@@ -46,11 +55,9 @@ fn debugger_publication_preserves_one_pointer_and_rejects_wrong_receiver_metadat
     unsafe { prepared.relocate(); }
     assert_eq!(unsafe { read_u64(libc.0.add(0x500)) }, address() as u64);
     assert_eq!(unsafe { read_u64(main.0.add(0x408)) }, address() as u64);
-    assert!(prepared.overlaps(libc.0 as u64 + 0x4ff, 2).unwrap());
-    assert!(!prepared.overlaps(libc.0 as u64 + 0x4f8, 8).unwrap());
     for (offset, replacement) in [(0x218, 1 | (0x21u64 << 32) | (1u64 << 48)),
         (0x218, 1 | (0x11u64 << 32) | (2u64 << 40) | (1u64 << 48)),
-        (0x218, 1 | (0x11u64 << 32)), (0x220, 0x501), (0x220, 0x218), (0x228, 40)] {
+        (0x218, 1 | (0x11u64 << 32)), (0x220, 0x501), (0x228, 40)] {
         let saved = unsafe { read_u64(libc.0.add(offset)) };
         libc.word(offset, replacement);
         assert!(unsafe { PreparedInitialDebugger::prepare(&objects) }.is_none(), "offset {offset:#x}");
@@ -97,11 +104,12 @@ fn debugger_add_guard_restores_consistent_on_every_transaction_exit() {
     assert_eq!(unsafe { (*RENDEZVOUS.0.get()).state }, RT_CONSISTENT);
 }
 
-// Relocation preflight checks the debugger slots against the admitted write
-// set it builds: a RELATIVE write into either published slot rejects the
-// whole graph before any write, and one beside the slot does not.
+// As in musl, relocation does not reserve the debugger slots: a RELATIVE
+// write into either published slot is applied, and the debugger publication
+// that follows word relocation replaces it. A write beside a slot keeps its
+// relocated value.
 #[test]
-fn relocation_into_a_debugger_slot_rejects_the_graph_before_any_write() {
+fn debugger_publication_replaces_a_relocation_of_its_slot() {
     use super::super::x86_64_initial_graph_state::{InitialGraphState, ObjectAdmission};
     let graph = || {
         let mut graph = InitialGraphState::new(ObjectIdentity { device: 1, inode: 0 });
@@ -111,8 +119,8 @@ fn relocation_into_a_debugger_slot_rejects_the_graph_before_any_write() {
         graph.finish_discovery(0).unwrap();
         graph
     };
-    for (image_index, slot, target, rejected) in [(1usize, 0x500u64, 0x500u64, true), (1, 0x500, 0x508, false),
-        (0, 0x408, 0x408, true), (0, 0x408, 0x410, false)] {
+    for (image_index, target, published) in [(1usize, 0x500u64, true), (1, 0x508, false),
+        (0, 0x408, true), (0, 0x410, false)] {
         let main = Image::new();
         let libc = Image::new();
         let images = [&main, &libc];
@@ -127,50 +135,11 @@ fn relocation_into_a_debugger_slot_rejects_the_graph_before_any_write() {
         relocated[image_index].relasz = 24;
         // The unit graph has no canonical-libc startup import to validate.
         relocated[1].canonical_libc_identity = None;
-        let before = unsafe { read_u64(images[image_index].0.add(target as usize)) };
         let result = unsafe {
             super::super::x86_64_general_relocation::relocate_initial_graph_with_debugger(&graph(), &relocated, &debugger)
         };
-        assert_eq!(result.is_none(), rejected, "slot {slot:#x} target {target:#x}");
-        if rejected {
-            assert_eq!(unsafe { read_u64(images[image_index].0.add(target as usize)) }, before);
-        }
+        assert!(result.is_some(), "target {target:#x}");
+        let expected = if published { address() as u64 } else { images[image_index].0 as u64 + 0x40 };
+        assert_eq!(unsafe { read_u64(images[image_index].0.add(target as usize)) }, expected, "target {target:#x}");
     }
-}
-
-// The batched slot check agrees with `overlaps` on every span over generated
-// sorted disjoint write sets around both published slots.
-#[test]
-fn batched_debugger_slot_check_matches_the_per_span_scan() {
-    extern crate std;
-    use super::super::x86_64_general_relocation::{debugger_slots_overlap_spans, WriteSpan};
-    let main = Image::new();
-    let libc = Image::new();
-    let objects = [main.object(false), libc.object(true)];
-    let debugger = unsafe { PreparedInitialDebugger::prepare(&objects) }.unwrap();
-    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-    let mut next = |bound: u64| { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed % bound };
-    let (mut hits, mut misses) = (0, 0);
-    for object in &objects {
-        for _ in 0..4000 {
-            let mut spans = std::vec::Vec::new();
-            let mut cursor = 0x3c0 + next(0x60);
-            for _ in 0..(1 + next(6)) {
-                let length = [0u64, 1, 8, 16, 24][next(5) as usize];
-                spans.push(WriteSpan { start: cursor, length });
-                cursor += length.max(1) + next(0x20);
-            }
-            // Both are rejections unless they report no overlap.
-            let old = (|| -> Option<bool> {
-                for span in &spans {
-                    if debugger.overlaps(object.base + span.start, span.length)? { return Some(true); }
-                }
-                Some(false)
-            })() != Some(false);
-            let new = unsafe { debugger_slots_overlap_spans(&debugger, object, &spans) } != Some(false);
-            assert_eq!(new, old);
-            if old { hits += 1; } else { misses += 1; }
-        }
-    }
-    assert!(hits > 500 && misses > 500, "{hits}/{misses}");
 }

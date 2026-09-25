@@ -298,8 +298,8 @@ main's live errno.
 The first actual libc exposed 648 RELA entries, exceeding the legacy 512-write
 scratch buffer. General relocation preflight now owns checked ELF-sized raw
 mmap scratch, with no libc allocation or arbitrary new limit. Regression tests
-cover 1025 RELA writes, 600 RELR entries, size overflow and a late overlapping
-destination rejected before any graph write. Legacy private roots retain their
+cover 1025 RELA writes, 600 RELR entries, and size overflow rejected before
+any graph write. Legacy private roots retain their
 bounded admission. Allocation failure aborts the uncommitted initial graph.
 
 The gate also runs an ordinary ELF memory-interposition consumer through both

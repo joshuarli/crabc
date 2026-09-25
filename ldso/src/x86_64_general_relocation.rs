@@ -191,19 +191,6 @@ unsafe fn symbol_name(object: &Object, index: usize) -> Option<&[u8]> {
     Some(unsafe { core::slice::from_raw_parts(name, length) })
 }
 
-/// `symbol_name(object, index)? == name` for a string table whose final byte
-/// is NUL: the same record and offset checks, then a bounded comparison that
-/// stops at the first differing byte instead of measuring the whole name.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-unsafe fn terminated_symbol_name_is(object: &Object, index: usize, name: &[u8]) -> Option<bool> {
-    if index == 0 { return None; }
-    let symbol = unsafe { direct_symbol(object, index) }?;
-    let offset = unsafe { read_u32(symbol) } as usize;
-    if offset >= object.strsz { return None; }
-    // A terminated table ends every in-range name before its last byte.
-    Some(unsafe { terminated_name_equals(object.strtab.add(offset), object.strsz - offset, name) })
-}
-
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 fn gnu_hash(name: &[u8]) -> u32 {
     name.iter().fold(5381u32, |hash, byte| {
@@ -231,27 +218,35 @@ unsafe fn lookup_exported(
     objects: &[Object], owner: usize, name: &[u8],
 ) -> Option<Option<Definition>> {
     let object = objects.get(owner)?;
-    // Every candidate below is an index the object's hash table certified at
-    // load (decode_gnu_hash/decode_sysv_hash proved each record in
-    // [symbol_offset or 0, symbol_count) readable and file-backed), so the
-    // record is read without repeating that range proof per lookup. With a
-    // NUL-terminated string table no name read can fail, so the name is
+    let Some(index) = (unsafe { exported_index(object, name) })? else { return Some(None); };
+    Some(Some(unsafe { definition_at(owner, object.symtab.add(index.checked_mul(24)?)) }))
+}
+
+/// The dynsym index of `name`'s first externally visible definition in
+/// `object`'s hash table, `Some(None)` when it has none, and `None` when the
+/// walk meets malformed metadata. Every index is bounded by the table's
+/// `symbol_count`, whose dynsym records decode proved readable and
+/// file-backed, and every chain walk is bounded, so a malformed table fails
+/// this lookup rather than reading out of range or looping.
+// Inlined into `lookup_exported`, the dlsym and symbol-resolution hot path.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[inline(always)]
+unsafe fn exported_index(object: &Object, name: &[u8]) -> Option<Option<usize>> {
+    // With a NUL-terminated string table no name read can fail, so the name is
     // compared bytewise up to its first difference instead of being measured.
     let terminated = object.strsz != 0 && unsafe { object.strtab.add(object.strsz - 1).read() } == 0;
-    let candidate_matches = |index: usize| -> Option<Option<Definition>> {
+    let candidate_matches = |index: usize| -> Option<bool> {
         let symbol = unsafe { object.symtab.add(index.checked_mul(24)?) };
-        let definition = unsafe { definition_at(owner, symbol) };
         if !unsafe { exported_symbol_is_visible(object, index) }? {
-            return Some(None);
+            return Some(false);
         }
-        let matches = if terminated {
+        if terminated {
             let offset = unsafe { read_u32(symbol) } as usize;
             if offset >= object.strsz { return None; }
-            unsafe { terminated_name_equals(object.strtab.add(offset), object.strsz - offset, name) }
+            Some(unsafe { terminated_name_equals(object.strtab.add(offset), object.strsz - offset, name) })
         } else {
-            unsafe { symbol_name(object, index) }? == name
-        };
-        Some(matches.then_some(definition))
+            Some(unsafe { symbol_name(object, index) }? == name)
+        }
     };
     match object.symbol_lookup {
         SymbolLookupTable::Gnu {
@@ -269,10 +264,8 @@ unsafe fn lookup_exported(
             if index < symbol_offset || index >= symbol_count { return None; }
             loop {
                 let chain = unsafe { read_u32(chains.add(index.checked_sub(symbol_offset)?).cast()) };
-                if (chain | 1) == (hash | 1) {
-                    if let Some(definition) = candidate_matches(index)? {
-                        return Some(Some(definition));
-                    }
+                if (chain | 1) == (hash | 1) && candidate_matches(index)? {
+                    return Some(Some(index));
                 }
                 if chain & 1 != 0 { return Some(None); }
                 index = index.checked_add(1)?;
@@ -285,8 +278,8 @@ unsafe fn lookup_exported(
             for _ in 0..symbol_count {
                 if index == 0 { return Some(None); }
                 if index >= symbol_count { return None; }
-                if let Some(definition) = candidate_matches(index)? {
-                    return Some(Some(definition));
+                if candidate_matches(index)? {
+                    return Some(Some(index));
                 }
                 index = unsafe { read_u32(chains.add(index).cast()) } as usize;
             }
@@ -551,169 +544,25 @@ unsafe fn copy_relocation(
     Some(CopyRelocation { source, destination: destination_address, length: destination.size })
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct WriteSpan { pub(super) start: u64, pub(super) length: u64 }
-
-/// Exclusive preflight scratch, sized from already range-checked ELF tables.
-/// It owns only anonymous loader memory: no libc allocator, TLS or callbacks
-/// are available at this point. Drop releases it on every validation failure.
-struct RelocationScratch { mapping: *mut u8, bytes: usize, spans: usize, relrs: usize }
-impl RelocationScratch {
-    unsafe fn new(object: &Object) -> Option<Self> {
-        let relrs = (object.relrsz / ELF64_RELR_SIZE).checked_mul(63)?;
-        let spans = (object.relasz / ELF64_RELA_SIZE)
-            .checked_add(object.pltrelsz / ELF64_RELA_SIZE)?.checked_add(relrs)?;
-        let bytes = spans.checked_mul(core::mem::size_of::<WriteSpan>())?
-            .checked_add(relrs.checked_mul(8)?)?.max(1);
-        if bytes > isize::MAX as usize { return None; }
-        let mapping = super::x86_64_runtime_memory::allocate(bytes, SCRATCH_ALIGN)?;
-        Some(Self { mapping, bytes, spans, relrs })
-    }
-    unsafe fn slices(&mut self) -> (&mut [WriteSpan], &mut [u64]) {
-        // The lengths were checked together before allocation. Loader blocks
-        // are zeroed, so every integer field starts at zero; the two regions
-        // are disjoint.
-        unsafe { (core::slice::from_raw_parts_mut(self.mapping.cast(), self.spans),
-            core::slice::from_raw_parts_mut(self.mapping.add(self.spans * core::mem::size_of::<WriteSpan>()).cast(), self.relrs)) }
-    }
-}
-impl Drop for RelocationScratch {
-    fn drop(&mut self) {
-        unsafe { super::x86_64_runtime_memory::release(self.mapping, self.bytes, SCRATCH_ALIGN); }
-    }
-}
-// Both scratch regions hold u64-aligned records.
-const SCRATCH_ALIGN: usize = core::mem::align_of::<u64>();
-const _: () = assert!(core::mem::align_of::<WriteSpan>() <= SCRATCH_ALIGN);
-
-/// Reject writes into every ELF table read again during apply, not just the
-/// relocation tables. COPY may be byte-aligned and larger than a machine word.
-unsafe fn write_span(
-    object: &Object, start: u64, length: u64, word: bool, symbol_index: Option<usize>,
-) -> Option<WriteSpan> {
-    unsafe { checked_write_span(object, start, length, word, symbol_index, ReferencedRecords::Scan) }
-}
-
-/// Whether one write-span check also scans every relocation-referenced
-/// symbol/VERSYM record. That scan is linear in the relocation count, so a
-/// caller that checks every relocation of an object instead defers it to one
-/// sorted pass, [`referenced_records_overlap_spans`], over all its spans.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ReferencedRecords { Scan, Deferred }
-
-unsafe fn checked_write_span(
-    object: &Object, start: u64, length: u64, word: bool, symbol_index: Option<usize>,
-    referenced: ReferencedRecords,
-) -> Option<WriteSpan> {
-    if (word && start & 7 != 0)
-        || !unsafe { virtual_range_in_writable_load(object.phdr, object.phnum, start, length) }
-    { return None; }
-    let address = runtime_address(object.base, start)?;
-    let tables = [
-        (object.rela, object.relasz), (object.jmprel, object.pltrelsz),
-        (object.relr, object.relrsz), (object.symtab, object.symcount.checked_mul(24)?),
-        (object.strtab, object.strsz), (object.phdr, object.phnum.checked_mul(56)?),
-    ];
-    for (table, bytes) in tables {
-        if bytes != 0 && (table.is_null() || ranges_overlap(address, length, table as u64, bytes as u64)?) {
-            return None;
-        }
-    }
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    if unsafe { overlaps_relocation_metadata(object, address, length, referenced) }? {
+/// Admit one relocation or loader-publication target: 8-byte aligned when
+/// `word`, inside one writable PT_LOAD, with a representable runtime address.
+/// Like musl's `do_relocs`, the loader does not audit targets against the
+/// object's ELF tables or against each other; this cached containment test is
+/// the only per-target work, and it keeps a relocation from writing into a
+/// read-only mapping.
+unsafe fn admitted_target(
+    object: &Object, writable: &mut WritableLoadCache, start: u64, length: u64, word: bool,
+) -> Option<()> {
+    if (word && start & 7 != 0) || !unsafe { writable.contains(object.phdr, object.phnum, start, length) } {
         return None;
     }
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    let _ = (referenced, symbol_index);
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    if let Some(index) = symbol_index {
-        let symbol = unsafe { direct_symbol(object, index) }?;
-        if ranges_overlap(address, length, symbol as u64, 24)? {
-            return None;
-        }
-        if !object.versym.is_null() {
-            let version_offset = index.checked_mul(2)?;
-            let version = unsafe { object.versym.add(version_offset) };
-            if ranges_overlap(address, length, version as u64, 2)? {
-                return None;
-            }
-        }
-    }
-    Some(WriteSpan { start, length })
+    runtime_address(object.base, start)?;
+    Some(())
 }
 
-/// Reject a write into any symbol/hash/version record that a later relocation
-/// can consume. `symcount` is an export-iteration extent, not a dynsym
-/// extent: GNU-hash imports can name records after an all-zero bucket table,
-/// so every relocation-selected record is protected independently as well.
-/// This completes preflight before the first write, preventing one relocation
-/// from changing another relocation's requested symbol shape.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-unsafe fn overlaps_relocation_metadata(
-    object: &Object,
-    address: u64,
-    length: u64,
-    referenced: ReferencedRecords,
-) -> Option<bool> {
-    let overlaps = |table: *const u8, bytes: usize| -> Option<bool> {
-        if bytes == 0 { return Some(false); }
-        if table.is_null() { return None; }
-        ranges_overlap(address, length, table as u64, u64::try_from(bytes).ok()?)
-    };
-
-    if overlaps(object.symtab, object.symcount.checked_mul(24)?)? {
-        return Some(true);
-    }
-    if !object.versym.is_null()
-        && overlaps(object.versym, object.symcount.checked_mul(2)?)?
-    {
-        return Some(true);
-    }
-    match object.symbol_lookup {
-        SymbolLookupTable::Sysv { bucket_count, buckets, symbol_count, .. } => {
-            if !(buckets.is_null() && bucket_count == 0 && symbol_count == 0) {
-                // Unit fixtures without an export table still exercise
-                // direct relocation-indexed symbol admission below.
-                let table = (buckets as usize).checked_sub(8)? as *const u8;
-                let words = bucket_count.checked_add(symbol_count)?.checked_add(2)?;
-                if overlaps(table, words.checked_mul(4)?)? { return Some(true); }
-            }
-        }
-        SymbolLookupTable::Gnu {
-            bucket_count, symbol_offset, bloom_count, bloom, symbol_count, ..
-        } => {
-            let table = (bloom as usize).checked_sub(16)? as *const u8;
-            let bytes = 16usize
-                .checked_add(bloom_count.checked_mul(8)?)?
-                .checked_add(bucket_count.checked_mul(4)?)?
-                .checked_add(symbol_count.saturating_sub(symbol_offset).checked_mul(4)?)?;
-            if overlaps(table, bytes)? { return Some(true); }
-        }
-    }
-
-    // Direct dynsym reads deliberately bypass hash iteration. Scan every
-    // relocation request now, while relocation tables are still immutable,
-    // and protect the exact symbol and VERSYM words each later application
-    // may reread. R_NONE is an inert table entry and consumes no symbol.
-    if referenced == ReferencedRecords::Deferred { return Some(false); }
-    for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
-        if bytes == 0 { continue; }
-        if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
-        for offset in 0..bytes / ELF64_RELA_SIZE {
-            let entry = unsafe { table.add(offset * ELF64_RELA_SIZE) };
-            let info = unsafe { read_u64(entry.add(8)) };
-            if info as u32 == R_NONE { continue; }
-            let index = (info >> 32) as usize;
-            if index == 0 { continue; }
-            let symbol = unsafe { direct_symbol(object, index) }?;
-            if ranges_overlap(address, length, symbol as u64, 24)? { return Some(true); }
-            if !object.versym.is_null() {
-                let version = unsafe { object.versym.add(index.checked_mul(2)?) };
-                if ranges_overlap(address, length, version as u64, 2)? { return Some(true); }
-            }
-        }
-    }
-    Some(false)
+/// [`admitted_target`] for a single target outside a relocation pass.
+unsafe fn write_target(object: &Object, start: u64, length: u64, word: bool) -> Option<()> {
+    unsafe { admitted_target(object, &mut WritableLoadCache::default(), start, length, word) }
 }
 
 unsafe fn preflight_object(scope: &SymbolScope<'_>, objects: &[Object], owner: usize) -> Option<()> {
@@ -721,23 +570,22 @@ unsafe fn preflight_object(scope: &SymbolScope<'_>, objects: &[Object], owner: u
 }
 
 unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], owner: usize, lazy: bool) -> Option<()> {
-    unsafe { preflight_object_guarded(scope, objects, owner, lazy, None, None) }
+    unsafe { preflight_object_resolved(scope, objects, owner, lazy, None) }
 }
 
-/// [`preflight_object_binding`], additionally rejecting a write set that
-/// `destination_guard` reports as overlapping protected loader slots; it
-/// sees the object's final sorted, admitted spans (virtual start, length).
-unsafe fn preflight_object_guarded(
+/// Resolve every RELA/JMPREL relocation of `objects[owner]` before any write
+/// and reject what musl's `do_relocs` rejects: an unsupported relocation type
+/// or a missing strong definition, plus crabc's COPY and private-runtime
+/// admission rules. A non-lazy caller keeps each word value, in table order,
+/// for [`apply_resolved_word_relocations`]. RELR words need no symbol and are
+/// applied directly, as in musl.
+unsafe fn preflight_object_resolved(
     scope: &SymbolScope<'_>, objects: &[Object], owner: usize, lazy: bool,
-    destination_guard: Option<&dyn Fn(&Object, &[WriteSpan]) -> Option<bool>>,
     mut resolved: Option<&mut LoaderVec<u64>>,
 ) -> Option<()> {
     let object = &objects[owner];
     preflight_relocation_table_layout(object)?;
-    let mut scratch = unsafe { RelocationScratch::new(object) }?;
-    let (spans, relr_targets) = unsafe { scratch.slices() };
     let mut writable = WritableLoadCache::default();
-    let mut count = 0;
     for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
         if bytes == 0 { continue; }
         if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
@@ -770,240 +618,10 @@ unsafe fn preflight_object_guarded(
                 if let Some(resolved) = resolved.as_deref_mut() { resolved.push(value?)?; }
                 8
             };
-            *spans.get_mut(count)? = unsafe { admitted_span(object, &mut writable, offset, length, kind != R_COPY) }?;
-            count += 1;
+            unsafe { admitted_target(object, &mut writable, offset, length, kind != R_COPY) }?;
         }
-    }
-    // RELR targets need the same containment before their addend is read;
-    // their table checks join every other span's below.
-    let relr_count = unsafe { decode_relr_table(object, relr_targets, 0, |target| {
-        let span = unsafe { admitted_span(object, &mut writable, target, 8, true) }?;
-        let address = runtime_address(object.base, span.start)?;
-        // Packed RELR uses the preexisting pointer word as its addend; check
-        // that arithmetic before any write, as preflight_relr_target does.
-        let _ = unsafe { read_u64(address as *const u8) }.checked_add(object.base)?;
-        Some(())
-    }) }?;
-    // Linkers emit each table in ascending offset order, so the RELA spans and
-    // the RELR targets are usually two sorted runs: merge them from the back
-    // in linear time. Anything else falls back to one sort.
-    let total = count.checked_add(relr_count)?;
-    if spans.len() < total { return None; }
-    let relr = &relr_targets[..relr_count];
-    if !spans[..count].is_sorted_by_key(|span| span.start) {
-        spans[..count].sort_unstable_by_key(|span| span.start);
-    }
-    if relr.is_sorted() {
-        let (mut left, mut right) = (count, relr_count);
-        for slot in (0..total).rev() {
-            let take_left = right == 0 || (left != 0 && spans[left - 1].start > relr[right - 1]);
-            spans[slot] = if take_left {
-                left -= 1;
-                spans[left]
-            } else {
-                right -= 1;
-                WriteSpan { start: relr[right], length: 8 }
-            };
-        }
-        count = total;
-    } else {
-        for &offset in relr {
-            spans[count] = WriteSpan { start: offset, length: 8 };
-            count += 1;
-        }
-        spans[..count].sort_unstable_by_key(|span| span.start);
-    }
-    let mut end = 0;
-    for span in &spans[..count] {
-        if span.length == 0 { continue; }
-        if span.start < end { return None; }
-        end = span.start.checked_add(span.length)?;
-    }
-    if unsafe { forbidden_tables_overlap_spans(object, &spans[..count]) }? { return None; }
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    if unsafe { referenced_records_overlap_spans(object, &spans[..count]) }? { return None; }
-    if let Some(guard) = destination_guard {
-        if guard(object, &spans[..count])? { return None; }
     }
     Some(())
-}
-
-/// The per-span half of [`checked_write_span`]: word alignment, containment
-/// in one writable PT_LOAD, and a representable runtime address. Table
-/// overlap is checked once for the whole set by
-/// [`forbidden_tables_overlap_spans`], and the span's own symbol/VERSYM
-/// record by [`referenced_records_overlap_spans`].
-unsafe fn admitted_span(
-    object: &Object, writable: &mut WritableLoadCache, start: u64, length: u64, word: bool,
-) -> Option<WriteSpan> {
-    if (word && start & 7 != 0) || !unsafe { writable.contains(object.phdr, object.phnum, start, length) } {
-        return None;
-    }
-    runtime_address(object.base, start)?;
-    Some(WriteSpan { start, length })
-}
-
-/// Whether any of `spans` (sorted by start, nonzero spans pairwise disjoint,
-/// runtime addresses admitted) overlaps `[record, record + length)` in
-/// exactly `ranges_overlap`'s sense, including a zero-length span strictly
-/// inside the record; `None` when `record + length` overflows. Binary search
-/// finds the candidates instead of scanning every span.
-unsafe fn spans_overlap_range(object: &Object, spans: &[WriteSpan], record: u64, length: u64) -> Option<bool> {
-    let span_address = |span: &WriteSpan| runtime_address(object.base, span.start);
-    // Index of the first span whose runtime start is at or after `address`.
-    let first_at_or_after = |address: u64| -> Option<usize> {
-        let (mut low, mut high) = (0, spans.len());
-        while low < high {
-            let middle = low + (high - low) / 2;
-            if span_address(&spans[middle])? < address { low = middle + 1; } else { high = middle; }
-        }
-        Some(low)
-    };
-    let from_record = first_at_or_after(record)?;
-    let after_record = first_at_or_after(record.checked_add(length)?)?;
-    // A span starting inside the record overlaps it, except an empty span
-    // exactly at the record start.
-    for span in &spans[from_record..after_record] {
-        if span_address(span)? > record || span.length != 0 { return Some(true); }
-    }
-    // Of the spans starting before the record, only the last nonempty one
-    // can reach into it.
-    for span in spans[..from_record].iter().rev() {
-        if span.length == 0 { continue; }
-        return ranges_overlap(span_address(span)?, span.length, record, length);
-    }
-    Some(false)
-}
-
-/// Whether an admitted write set (sorted, disjoint) reaches a debugger slot,
-/// with exactly the outcome of calling `debugger.overlaps` on every span:
-/// empty writes never overlap, an overflowing write end rejects, and each
-/// slot is found among the sorted spans by binary search.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-pub(super) unsafe fn debugger_slots_overlap_spans(
-    debugger: &super::x86_64_debugger::PreparedInitialDebugger, object: &Object, spans: &[WriteSpan],
-) -> Option<bool> {
-    let mut any_nonempty = false;
-    for span in spans {
-        runtime_address(object.base, span.start)?.checked_add(span.length)?;
-        any_nonempty |= span.length != 0;
-    }
-    if !any_nonempty { return Some(false); }
-    for slot in debugger.slots() {
-        slot.checked_add(8)?;
-        if unsafe { nonempty_spans_overlap_range(object, spans, slot, 8) }? { return Some(true); }
-    }
-    Some(false)
-}
-
-/// [`spans_overlap_range`] counting only nonempty spans, as
-/// [`super::x86_64_debugger::PreparedInitialDebugger::overlaps`] does.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-unsafe fn nonempty_spans_overlap_range(object: &Object, spans: &[WriteSpan], record: u64, length: u64) -> Option<bool> {
-    let span_address = |span: &WriteSpan| runtime_address(object.base, span.start);
-    let first_at_or_after = |address: u64| -> Option<usize> {
-        let (mut low, mut high) = (0, spans.len());
-        while low < high {
-            let middle = low + (high - low) / 2;
-            if span_address(&spans[middle])? < address { low = middle + 1; } else { high = middle; }
-        }
-        Some(low)
-    };
-    let from_record = first_at_or_after(record)?;
-    let after_record = first_at_or_after(record.checked_add(length)?)?;
-    if spans[from_record..after_record].iter().any(|span| span.length != 0) { return Some(true); }
-    for span in spans[..from_record].iter().rev() {
-        if span.length == 0 { continue; }
-        return ranges_overlap(span_address(span)?, span.length, record, length);
-    }
-    Some(false)
-}
-
-/// The per-object half of [`checked_write_span`]'s table checks for one
-/// complete, sorted, disjoint write set: every span must avoid each ELF table
-/// that relocation or later application rereads (and, with the installed
-/// runtime, the symbol/VERSYM/hash metadata of [`overlaps_relocation_metadata`]).
-/// Each table is tested once against the sorted spans rather than every span
-/// against every table. The outcome equals running those per-span checks on
-/// every span: a null table with a nonzero size, an overflowing table or span
-/// extent, or any overlap rejects a nonempty set; an empty set is accepted.
-unsafe fn forbidden_tables_overlap_spans(object: &Object, spans: &[WriteSpan]) -> Option<bool> {
-    if spans.is_empty() { return Some(false); }
-    let mut tables: [(*const u8, Option<usize>); 9] = [
-        (object.rela, Some(object.relasz)), (object.jmprel, Some(object.pltrelsz)),
-        (object.relr, Some(object.relrsz)), (object.symtab, object.symcount.checked_mul(24)),
-        (object.strtab, Some(object.strsz)), (object.phdr, object.phnum.checked_mul(56)),
-        (core::ptr::null(), Some(0)), (core::ptr::null(), Some(0)), (core::ptr::null(), Some(0)),
-    ];
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    {
-        // `overlaps_relocation_metadata`'s tables; the symbol table repeats.
-        if !object.versym.is_null() { tables[6] = (object.versym, object.symcount.checked_mul(2)); }
-        match object.symbol_lookup {
-            SymbolLookupTable::Sysv { bucket_count, buckets, symbol_count, .. } => {
-                if !(buckets.is_null() && bucket_count == 0 && symbol_count == 0) {
-                    let table = (buckets as usize).checked_sub(8)? as *const u8;
-                    let words = bucket_count.checked_add(symbol_count)?.checked_add(2)?;
-                    tables[7] = (table, words.checked_mul(4));
-                }
-            }
-            SymbolLookupTable::Gnu { bucket_count, symbol_offset, bloom_count, bloom, symbol_count, .. } => {
-                let table = (bloom as usize).checked_sub(16)? as *const u8;
-                let bytes = 16usize
-                    .checked_add(bloom_count.checked_mul(8)?)?
-                    .checked_add(bucket_count.checked_mul(4)?)?
-                    .checked_add(symbol_count.saturating_sub(symbol_offset).checked_mul(4)?)?;
-                tables[7] = (table, Some(bytes));
-            }
-        }
-    }
-    let mut any_table = false;
-    for (table, bytes) in tables {
-        let bytes = bytes?;
-        if bytes == 0 { continue; }
-        if table.is_null() { return None; }
-        any_table = true;
-        if unsafe { spans_overlap_range(object, spans, table as u64, u64::try_from(bytes).ok()?) }? {
-            return Some(true);
-        }
-    }
-    // Any table check would have rejected a span whose runtime extent overflows.
-    if any_table {
-        for span in spans {
-            runtime_address(object.base, span.start)?.checked_add(span.length)?;
-        }
-    }
-    Some(false)
-}
-
-/// The deferred half of [`overlaps_relocation_metadata`] for one object's
-/// complete write set: does any span overlap a symbol or VERSYM record that a
-/// relocation names? `spans` is sorted by start and its nonzero spans are
-/// pairwise disjoint, so each record is tested by binary search instead of
-/// rescanning every relocation per span (quadratic in the relocation count).
-/// Overlap has exactly `ranges_overlap`'s meaning, including a zero-length
-/// span strictly inside a record.
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-unsafe fn referenced_records_overlap_spans(object: &Object, spans: &[WriteSpan]) -> Option<bool> {
-    let overlaps = |record: u64, length: u64| unsafe { spans_overlap_range(object, spans, record, length) };
-    for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
-        if bytes == 0 { continue; }
-        if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
-        for offset in 0..bytes / ELF64_RELA_SIZE {
-            let entry = unsafe { table.add(offset * ELF64_RELA_SIZE) };
-            let info = unsafe { read_u64(entry.add(8)) };
-            if info as u32 == R_NONE { continue; }
-            let index = (info >> 32) as usize;
-            if index == 0 { continue; }
-            let symbol = unsafe { direct_symbol(object, index) }?;
-            if overlaps(symbol as u64, 24)? { return Some(true); }
-            if !object.versym.is_null() {
-                let version = unsafe { object.versym.add(index.checked_mul(2)?) };
-                if overlaps(version as u64, 2)? { return Some(true); }
-            }
-        }
-    }
-    Some(false)
 }
 
 /// [`apply_word_relocations`] with the values preflight already resolved for
@@ -1074,25 +692,16 @@ unsafe fn relocate_initial_graph_inner(
     let mut resolved = LoaderVec::<u64>::new();
     let mut resolved_start = LoaderVec::<usize>::new();
     for owner in 0..scope.indices.len() {
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        if let Some(debugger) = debugger {
-            // The loader's two initial publication slots must not overlap any
-            // admitted RELA/RELR write (a crafted COPY cannot overwrite
-            // DT_DEBUG). They are checked against the same admitted write set
-            // preflight just built, instead of re-deriving it.
-            let guard = |object: &Object, spans: &[WriteSpan]| unsafe { debugger_slots_overlap_spans(debugger, object, spans) };
-            resolved_start.push(resolved.len())?;
-            unsafe { preflight_object_guarded(&scope, objects, owner, false, Some(&guard), Some(&mut resolved)) }?;
-            continue;
-        }
         resolved_start.push(resolved.len())?;
-        unsafe { preflight_object_guarded(&scope, objects, owner, false, None, Some(&mut resolved)) }?;
+        unsafe { preflight_object_resolved(&scope, objects, owner, false, Some(&mut resolved)) }?;
     }
     resolved_start.push(resolved.len())?;
     // Libraries first, main last, matching musl. All copies form the final
     // phase so their source data includes ordinary symbol/relative fixups.
-    // Word values come from preflight: they depend only on immutable,
-    // write-protected tables and load bases, which no admitted write reaches.
+    // Word values come from preflight; a linker never points a relocation at
+    // the symbol, string, or hash tables they were resolved from. The
+    // debugger publication follows word relocation, so it overwrites any
+    // relocation of its own slots, as musl's publication does.
     for owner in (1..scope.indices.len()).chain(core::iter::once(0)) {
         let values = &resolved[resolved_start[owner]..resolved_start[owner + 1]];
         unsafe { apply_resolved_word_relocations(&objects[owner], values) }?;
@@ -1114,35 +723,24 @@ unsafe fn relocate_initial_graph_inner(
 
 /// The canonical libc identity grants this one data publication boundary.
 /// Name presence alone never grants another DSO a loader-state receiver.
+/// Like musl's symbol resolution, the slot is libc's hash-table definition of
+/// `_dl_debug_addr`; the loader does not scan every dynsym record for a
+/// second definition.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 pub(super) unsafe fn debugger_pointer_slot(object: &Object) -> Option<*mut usize> {
     if object.canonical_libc_identity.is_none() { return None; }
-    let mut result = None;
-    // With a NUL-terminated string table no name read can fail, so a byte
-    // comparison bounded by the table decides equality without measuring
-    // every name; otherwise keep the measuring read and its failure.
-    let terminated = unsafe { object.strtab.add(object.strsz.checked_sub(1)?).read() } == 0;
-    for index in 1..object.symcount {
-        let matches = if terminated {
-            unsafe { terminated_symbol_name_is(object, index, b"_dl_debug_addr") }?
-        } else {
-            unsafe { symbol_name(object, index) }? == b"_dl_debug_addr"
-        };
-        if !matches { continue; }
-        let symbol = unsafe { direct_symbol(object, index) }?;
-        let value = unsafe { read_u64(symbol.add(8)) };
-        let size = unsafe { read_u64(symbol.add(16)) };
-        let section = unsafe { read_u16(symbol.add(6)) };
-        if result.is_some() || unsafe { *symbol.add(4) } != 0x11
-            || unsafe { *symbol.add(5) } != 0 || section == 0 || section >= 0xff00
-            || size != 8 || (!object.versym.is_null()
-                && unsafe { read_u16(object.versym.add(index.checked_mul(2)?)) } > 1)
-        { return None; }
-        // Reuse the relocation writer's range and immutable-table checks.
-        unsafe { write_span(object, value, 8, true, Some(index)) }?;
-        result = Some(runtime_address(object.base, value)? as *mut usize);
-    }
-    result
+    let index = unsafe { exported_index(object, b"_dl_debug_addr") }??;
+    let symbol = unsafe { direct_symbol(object, index) }?;
+    let value = unsafe { read_u64(symbol.add(8)) };
+    let size = unsafe { read_u64(symbol.add(16)) };
+    let section = unsafe { read_u16(symbol.add(6)) };
+    if unsafe { *symbol.add(4) } != 0x11
+        || unsafe { *symbol.add(5) } != 0 || section == 0 || section >= 0xff00
+        || size != 8 || (!object.versym.is_null()
+            && unsafe { read_u16(object.versym.add(index.checked_mul(2)?)) } > 1)
+    { return None; }
+    unsafe { write_target(object, value, 8, true) }?;
+    Some(runtime_address(object.base, value)? as *mut usize)
 }
 
 
