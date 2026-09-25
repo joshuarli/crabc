@@ -835,6 +835,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 run_m2_x86_64_metadata_lifecycle_differential=metadata_lifecycle_producer,
                 _run_m2_x86_64_metadata_ownership_evidence=mock.Mock(return_value={}),
                 _run_m2_x86_64_initialization_teardown_evidence=mock.Mock(return_value={}),
+                _run_m2_x86_64_exclusive_arena_theap_evidence=mock.Mock(return_value={}),
                 _run_m2_x86_64_arena_destruction_evidence=mock.Mock(return_value={}),
                 _run_m2_x86_64_recursion_evidence=mock.Mock(return_value={}),
                 _run_m2_x86_64_page_map_init_cleanup_evidence=mock.Mock(return_value={}),

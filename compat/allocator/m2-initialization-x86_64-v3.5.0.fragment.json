@@ -298,7 +298,7 @@
     "unqualified_failure_matrix": [
       {
         "id": "exclusive-arena-heap-theap-slice",
-        "source_scope": "The exclusive-arena Heap (`mi_heap_new_in_arena`) Theap slice attach and release of src/heap.c `_mi_heap_theap_get_or_init` and src/arena.c. Main-subprocess non-main Heap later attachment (TLD-list head insertion, regular thread-local key slot, cached Theap and refcount, Theap statistics, cached-root switching, and thread-done release) is compared field for field by `allocator-heap-lifecycle` (heap_lifecycle.c `later` against subproc::main_heaps::tests::source_ordered_main_subprocess_later_thread_heap_trace, 21 values), beside its main-thread and child-subprocess traces; m2_metadata_arena_x86_64.c only self-checks the exclusive-arena producer.",
+        "source_scope": "The exclusive-arena Heap (`mi_heap_new_in_arena`) Theap slice attach and release of src/heap.c `_mi_heap_theap_get_or_init` and src/arena.c. The `initialization-exclusive-arena-theap-slice-c-rust-differential` check now compares this slice's attach, release, and exhaustion against pinned C; the row stays open until the initialization owner reevaluates it. Main-subprocess non-main Heap later attachment (TLD-list head insertion, regular thread-local key slot, cached Theap and refcount, Theap statistics, cached-root switching, and thread-done release) is compared field for field by `allocator-heap-lifecycle` (heap_lifecycle.c `later` against subproc::main_heaps::tests::source_ordered_main_subprocess_later_thread_heap_trace, 21 values), beside its main-thread and child-subprocess traces; m2_metadata_arena_x86_64.c only self-checks the exclusive-arena producer.",
         "required_evidence": [
           "native pinned-C/Rust differential of the exclusive-arena Heap Theap slice attach and release"
         ]
@@ -363,6 +363,12 @@
         "id": "initialization-fork-repair-joined-worker-rust",
         "kind": "rust-teardown-owner",
         "target": "runtime_lifecycle::fork_repair_tests::joined_worker_clients_survive_prepared_fork_in_parent_and_child",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "initialization-exclusive-arena-theap-slice-c-rust-differential",
+        "kind": "c-rust-exclusive-arena-theap-differential",
+        "target": "dynamic_theap::tests::requested_arena_dynamic_owner_collects_live_pages_before_typed_metadata_release",
         "expected_passed_test_count": 1
       }
     ],

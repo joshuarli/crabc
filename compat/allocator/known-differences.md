@@ -174,7 +174,10 @@ terminal provenance rather than granting a second release attempt.
 
 `m2_metadata_arena_x86_64.c` exercises the pinned producer with live pages,
 forced collection preserving clients, final Theap-slice reuse, and requested
-arena exhaustion. The Rust tests use the same generic dynamic engine. This
+arena exhaustion. The two Rust `dynamic_theap` tests print the same fourteen
+measured keys (Theap slice offset/count/claim/release, client placement, and
+the arena's free-slice count at each step), and `allocator-m2` requires them
+to equal the pinned C values. This
 extends real Arena-backed metadata lifetime beyond the earlier page-free
 `RequestedParentArenaTheap` owner. It retains the existing explicit
 non-abandoning option mode; ordinary dynamic abandonment, concurrent heap

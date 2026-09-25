@@ -13150,6 +13150,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-page-map-lazy-commit-failure-differential",
                     "c-rust-page-map-cold-init-differential",
                     "c-rust-page-map-init-cleanup-differential",
+                    "c-rust-exclusive-arena-theap-differential",
                     "c-rust-native-bitmaps",
                     "c-rust-vm-primitives-fixed-lifecycle",
                     "c-rust-vm-primitives-source-profile-matrix",
@@ -14290,7 +14291,8 @@ def _m2_x86_64_metadata_check_records(
 
 
 def _m2_x86_64_initialization_check_records(
-    summary: Mapping[str, Any], evidence: object, teardown_evidence: object = None
+    summary: Mapping[str, Any], evidence: object, teardown_evidence: object = None,
+    exclusive_arena_evidence: object = None,
 ) -> list[dict[str, Any]]:
     """Bind the initialization M2 checks to their closed native receipts."""
 
@@ -14347,7 +14349,60 @@ def _m2_x86_64_initialization_check_records(
             "target": worker["target"],
         },
         *_m2_x86_64_initialization_teardown_check_records(checks, teardown_evidence),
+        _m2_x86_64_exclusive_arena_theap_check_record(
+            checks.get("initialization-exclusive-arena-theap-slice-c-rust-differential"),
+            exclusive_arena_evidence,
+        ),
     ]
+
+
+def _m2_x86_64_exclusive_arena_theap_producer() -> Any:
+    """Load the pinned C/Rust exclusive-arena Theap slice producer."""
+
+    path = ALLOCATOR_ROOT / "m2_exclusive_arena_theap_x86_64.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_exclusive_arena_theap", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 exclusive-arena Theap producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _run_m2_x86_64_exclusive_arena_theap_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the exclusive-arena Theap producer against the aggregate's binary."""
+
+    _, check = _m2_x86_64_check_by_id(
+        summary, "initialization-exclusive-arena-theap-slice-c-rust-differential"
+    )
+    return _m2_x86_64_exclusive_arena_theap_producer().run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+    )
+
+
+def _m2_x86_64_exclusive_arena_theap_check_record(
+    check: Mapping[str, Any] | None, evidence: object
+) -> dict[str, Any]:
+    """Record the executed exclusive-arena Theap slice differential."""
+
+    if (
+        check is None
+        or not isinstance(evidence, Mapping)
+        or evidence.get("status") != "passed"
+        or evidence.get("comparison", {}).get("status") != "matched"
+        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+    ):
+        raise HarnessError("native x86 M2 exclusive-arena Theap receipt is invalid")
+    return {
+        "comparison_status": "matched",
+        "component": "initialization",
+        "command": list(evidence["rust_command"]),
+        "evidence_scope": "pinned-c-rust-exclusive-arena-theap-slice-attach-release-and-exhaustion",
+        "id": check["id"],
+        "passed_test_count": evidence["rust_passed_test_count"],
+        "target": check["target"],
+    }
 
 
 def _m2_x86_64_initialization_teardown_check_records(
@@ -14509,6 +14564,7 @@ def m2_x86_64_memory_substrate_report(
     initialization_evidence: Mapping[str, Any] | None = None,
     fault_evidence: Mapping[str, Any] | None = None,
     initialization_teardown_evidence: Mapping[str, Any] | None = None,
+    exclusive_arena_theap_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render native M2 receipts while keeping every open component partial."""
 
@@ -14525,7 +14581,8 @@ def m2_x86_64_memory_substrate_report(
         summary, vm_evidence, runtime_thp_evidence
     )
     expected_initialization_records = _m2_x86_64_initialization_check_records(
-        summary, initialization_evidence, initialization_teardown_evidence
+        summary, initialization_evidence, initialization_teardown_evidence,
+        exclusive_arena_theap_evidence,
     )
     expected_fault_records = _m2_x86_64_fault_check_records(summary, fault_evidence)
     expected_anchors = {
@@ -14797,6 +14854,9 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     initialization_teardown_evidence = _run_m2_x86_64_initialization_teardown_evidence(
         offline=offline, test_program=test_program
     )
+    exclusive_arena_theap_evidence = _run_m2_x86_64_exclusive_arena_theap_evidence(
+        offline=offline, test_program=test_program, summary=summary
+    )
     fault_evidence = _run_m2_x86_64_fault_evidence(
         offline=offline, test_program=test_program, vm_evidence=vm_evidence
     )
@@ -14850,7 +14910,8 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         )
     )
     initialization_checks = _m2_x86_64_initialization_check_records(
-        summary, initialization_evidence, initialization_teardown_evidence
+        summary, initialization_evidence, initialization_teardown_evidence,
+        exclusive_arena_theap_evidence,
     )
     fault_checks = _m2_x86_64_fault_check_records(summary, fault_evidence)
     focused_checks = [
@@ -14903,6 +14964,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         initialization_evidence=initialization_evidence,
         fault_evidence=fault_evidence,
         initialization_teardown_evidence=initialization_teardown_evidence,
+        exclusive_arena_theap_evidence=exclusive_arena_theap_evidence,
     )
     write_json(M2_X86_64_MEMORY_SUBSTRATE_REPORT, report)
     return report

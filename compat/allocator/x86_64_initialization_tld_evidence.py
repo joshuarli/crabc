@@ -763,6 +763,12 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches", 7),
         ("initialization-explicit-worker-recovery-lifecycle", "c-rust-init-recursion-lifecycle", "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace", 1),
         *((check_id, kind, target, 1) for check_id, kind, target in AUTOMATIC_TEARDOWN_CHECKS),
+        (
+            "initialization-exclusive-arena-theap-slice-c-rust-differential",
+            "c-rust-exclusive-arena-theap-differential",
+            "dynamic_theap::tests::requested_arena_dynamic_owner_collects_live_pages_before_typed_metadata_release",
+            1,
+        ),
     )
     checks = component.get("checks")
     if not isinstance(checks, list) or [

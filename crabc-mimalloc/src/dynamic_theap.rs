@@ -3345,6 +3345,12 @@ mod tests {
             let id = managed.arena_id();
             let arena = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
             let observation = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            let free_slices = || {
+                let free = unsafe { observation.slices_free() }.unwrap();
+                (0..observation.arena().slice_count)
+                    .filter(|&slice| free.is_set_range(slice, 1) == Some(true)).count()
+            };
+            let free_before = free_slices();
             let mut heap = Box::pin(Heap::bootstrap_empty());
             let mut owner = match unsafe { DynamicTheapAttachment::begin_with_components_arena(
                 memory_config(), heap.as_mut(), subprocess, metadata, keys,
@@ -3353,32 +3359,42 @@ mod tests {
             };
             let theap_memory = owner.theap.as_ref().unwrap().dynamic_theap().unwrap().memory_id();
             let theap_span = theap_memory.arena_memory().unwrap();
-            assert_eq!(theap_span.arena, id.as_ptr());
+            let theap_in_exclusive = theap_memory.kind() == MemoryKind::Arena
+                && theap_span.arena == id.as_ptr();
             let free = unsafe { observation.slices_free() }.unwrap();
-            assert_eq!(free.is_clear_range(theap_span.slice_index as usize, theap_span.slice_count as usize), Some(true));
+            let theap_claimed = free.is_clear_range(theap_span.slice_index as usize,
+                theap_span.slice_count as usize) == Some(true);
             let mut page_map = PageMap::initialize(memory_config(), 0, true).unwrap();
             let session = owner.page_session().unwrap();
             let mut engine = DynamicTheapAllocator::activate_dynamic(session,
                 unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap(), ArenaId::none(), &mut page_map);
             let mut blocks = std::vec::Vec::new();
+            let mut in_exclusive = 0usize;
             for index in 0..192 {
                 let size = [37, 1025, 8193, 131073][index % 4];
                 let block = engine.allocate(size, true).expect("ordinary requested-arena page allocation");
                 let page = unsafe { engine.page_for_block(block) };
-                assert_eq!(unsafe { (*page).memid().arena_memory().unwrap().arena }, id.as_ptr());
+                if unsafe { (*page).memid().arena_memory() }.is_some_and(|memory| memory.arena == id.as_ptr()) {
+                    in_exclusive += 1;
+                }
                 assert!(engine.test_dynamic_arena_pages_image(unsafe { (*page).memid() }).unwrap().3);
                 unsafe { core::ptr::write_bytes(block.as_ptr(), 0xa5, size) };
                 blocks.push((block, size));
             }
+            let free_after_alloc = free_slices();
             assert!(engine.collect_retired(true));
             assert_eq!(engine.test_attachment_teardown_preflight(), Err(DynamicTheapError::PageCountNonZero));
+            let mut preserved = true;
             for (block, size) in blocks {
-                assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), size) }.iter().all(|b| *b == 0xa5));
+                preserved &= unsafe { core::slice::from_raw_parts(block.as_ptr(), size) }.iter().all(|b| *b == 0xa5);
                 unsafe { engine.free(block) }.unwrap();
             }
             assert!(engine.finish().is_ok());
+            let free_after_pages = free_slices();
             owner.teardown().unwrap();
-            assert_eq!(free.is_set_range(theap_span.slice_index as usize, theap_span.slice_count as usize), Some(true));
+            let theap_released = free.is_set_range(theap_span.slice_index as usize,
+                theap_span.slice_count as usize) == Some(true);
+            let free_after_theap = free_slices();
             assert!(roots.still_matches());
             assert_eq!(subprocess.live_thread_count(), 0);
             assert_eq!(keys.test_live_lease_count(), 0);
@@ -3386,9 +3402,19 @@ mod tests {
             keys.shutdown().unwrap();
             assert_eq!(metadata.test_allocation_audit().live_capability_count, 0);
             unsafe { page_map.destroy() }.unwrap();
-            std::println!("m2.metadata.arena.live_clients=192");
-            std::println!("m2.metadata.arena.preserved_through_collect=1");
-            std::println!("m2.metadata.arena.typed_release_reusable=1");
+            // The same measured keys as compat/allocator/m2_metadata_arena_x86_64.c.
+            std::println!("m2.metadata.arena.theap_in_exclusive={}", u8::from(theap_in_exclusive));
+            std::println!("m2.metadata.arena.theap_slice_offset={}",
+                theap_span.slice_index as usize - observation.arena().info_slices);
+            std::println!("m2.metadata.arena.theap_slice_count={}", theap_span.slice_count);
+            std::println!("m2.metadata.arena.theap_slice_claimed={}", u8::from(theap_claimed));
+            std::println!("m2.metadata.arena.clients_in_exclusive={in_exclusive}");
+            std::println!("m2.metadata.arena.free_before={free_before}");
+            std::println!("m2.metadata.arena.free_after_alloc={free_after_alloc}");
+            std::println!("m2.metadata.arena.preserved_through_collect={}", u8::from(preserved));
+            std::println!("m2.metadata.arena.free_after_pages={free_after_pages}");
+            std::println!("m2.metadata.arena.theap_slice_released={}", u8::from(theap_released));
+            std::println!("m2.metadata.arena.free_after_theap={free_after_theap}");
         }).join().unwrap();
     }
 
@@ -3410,6 +3436,7 @@ mod tests {
             while let Some(claim) = observation.try_claim_suitable_slices(id, 1, true, 0) {
                 claims.push(claim);
             }
+            let exhausted_claims = claims.len();
             assert!(!claims.is_empty());
             let mut heap = Box::pin(Heap::bootstrap_empty());
             match unsafe { DynamicTheapAttachment::begin_with_components_arena(
@@ -3433,10 +3460,11 @@ mod tests {
             assert!(roots.still_matches());
             assert_eq!(subprocess.live_thread_count(), 0);
             assert_eq!(keys.test_live_lease_count(), 0);
-            std::println!("m2.metadata.arena.disallowed_no_fallback=1");
             keys.shutdown().unwrap();
             assert_eq!(metadata.test_allocation_audit().live_capability_count, 0);
+            std::println!("m2.metadata.arena.exhausted_claims={exhausted_claims}");
             std::println!("m2.metadata.arena.exhausted_no_fallback=1");
+            std::println!("m2.metadata.arena.disallowed_no_fallback=1");
         }).join().unwrap();
     }
 

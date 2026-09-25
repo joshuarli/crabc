@@ -46,6 +46,12 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
                     (check_id, kind, target, 1)
                     for check_id, kind, target in RUNNER._m2_x86_64_initialization_producer().AUTOMATIC_TEARDOWN_CHECKS
                 ),
+                (
+                    "initialization-exclusive-arena-theap-slice-c-rust-differential",
+                    "c-rust-exclusive-arena-theap-differential",
+                    "dynamic_theap::tests::requested_arena_dynamic_owner_collects_live_pages_before_typed_metadata_release",
+                    1,
+                ),
             ],
         )
         self.assertEqual(
