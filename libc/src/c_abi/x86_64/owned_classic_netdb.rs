@@ -155,6 +155,7 @@ static_archive_member! { gethostbyname2_source {
     /// name must be NUL-terminated. Calls sharing the forward result owner must
     /// be serialized, and borrowed results expire on its next call.
     #[no_mangle]
+    #[inline(never)]
     pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut Hostent {
         unsafe { static_host(ptr::addr_of_mut!(FORWARD_HOST), |h,b,n,r,e| gethostbyname2_r(name,af,h,b,n,r,e)) }
     }

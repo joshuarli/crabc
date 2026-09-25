@@ -87,6 +87,16 @@ defines counting `nanosleep`, `open`, `unlink`, `rmdir`, `sendto` and
 never-inlined `open`, and `send`/`recv` (`socket_transport.rs`) call the
 public `sendto`/`recvfrom`, as musl's sources do.
 
+`FILES` defines counting `open`, `mknod` and `fcntl`: musl's `opendir`,
+`mkfifo` and `lockf` reach them, and in the owned runtimes the candidate's
+now call those public entries (never-inlined `mknod`). `NETWORK` defines
+counting `gethostbyname2` and `getservbyname_r`, reached by `gethostbyname`
+and `getservbyname`. `ACCOUNTS` defines counting `getgrouplist` and
+`setgroups`, reached by `initgroups`. `THREADS` defines counting
+`pthread_mutex_lock`/`unlock` and requires that `mtx_lock`/`mtx_unlock` do
+not reach them: musl's C11 mutexes call its hidden `__pthread_mutex_*`
+bodies.
+
 ## Standard I/O roles
 
 `libc/src/c_abi/x86_64/owned_static_stdio.rs` and its stream children

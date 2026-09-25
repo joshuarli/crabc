@@ -444,8 +444,23 @@ static_archive_member! { opendir_source {
     #[inline(never)]
     #[no_mangle]
     pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut DirectoryStream {
+        // Musl's opendir opens through the public `open`, so the owned
+        // runtimes call it; an application definition then reaches this call.
+        #[cfg(crabc_x86_owned_runtime)]
+        let descriptor = {
+            unsafe extern "C" {
+                fn open(path: *const c_char, flags: c_int, ...) -> c_int;
+            }
+            // SAFETY: the caller owns the raw pathname contract.
+            let descriptor = unsafe { open(path, (O_RDONLY | O_DIRECTORY | O_CLOEXEC) as c_int) };
+            if descriptor < 0 {
+                return ptr::null_mut();
+            }
+            i64::from(descriptor)
+        };
         // SAFETY: the caller owns the raw pathname contract; Linux x86's fourth
         // openat word is zero mode and `syscall4` places it in r10.
+        #[cfg(not(crabc_x86_owned_runtime))]
         let descriptor = unsafe {
             raw_syscall::syscall4(
                 raw_syscall::SYS_OPENAT,
@@ -455,14 +470,17 @@ static_archive_member! { opendir_source {
                 0,
             )
         };
-        if is_linux_error(descriptor) {
-            // SAFETY: the result was checked as Linux's errno encoding.
-            unsafe { set_linux_error(descriptor) };
-            return ptr::null_mut();
+        #[cfg(not(crabc_x86_owned_runtime))]
+        {
+            if is_linux_error(descriptor) {
+                // SAFETY: the result was checked as Linux's errno encoding.
+                unsafe { set_linux_error(descriptor) };
+                return ptr::null_mut();
+            }
+            // Musl's `open` follows every O_CLOEXEC descriptor with this fix-up;
+            // O_DIRECTORY has already rejected a non-directory.
+            unsafe { set_close_on_exec(descriptor as c_int) };
         }
-        // Musl's `open` follows every O_CLOEXEC descriptor with this fix-up;
-        // O_DIRECTORY has already rejected a non-directory.
-        unsafe { set_close_on_exec(descriptor as c_int) };
         let stream = unsafe { new_directory_stream(descriptor as c_int) };
         if stream.is_null() {
             // The raw close publishes no errno, so the allocation failure stays

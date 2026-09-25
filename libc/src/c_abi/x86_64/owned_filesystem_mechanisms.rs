@@ -427,6 +427,7 @@ static_archive_member! { mknod_source {
     /// `path` must remain a readable NUL-terminated pathname. The caller owns
     /// node type/device interpretation, umask, permissions, and namespace races.
     #[no_mangle]
+    #[inline(never)]
     pub unsafe extern "C" fn mknod(
         path: *const c_char,
         mode: c_uint,
@@ -662,28 +663,26 @@ static_archive_member! { lockf_source {
             length: size,
             process_id: 0,
         };
-        let pointer = (&mut record as *mut Flock) as usize as i64;
+        // Musl's lockf reaches the public `fcntl` (and `getpid`), so an
+        // application definition of either reaches this caller; F_SETLKW
+        // through `fcntl` is the owned runtime's cancellation point.
+        unsafe extern "C" {
+            fn fcntl(descriptor: c_int, command: c_int, ...) -> c_int;
+            fn getpid() -> c_int;
+        }
+        let pointer = &mut record as *mut Flock;
 
         match operation {
             F_TEST => {
-                record.lock_type = F_RDLCK;
                 // SAFETY: the local complete x86 flock record remains writable
                 // through the selected F_GETLK request.
-                let result = unsafe {
-                    raw_syscall::syscall3(
-                        raw_syscall::SYS_FCNTL,
-                        i64::from(descriptor),
-                        F_GETLK,
-                        pointer,
-                    )
-                };
-                if result < 0 {
-                    return c_status(result);
+                unsafe { (*pointer).lock_type = F_RDLCK };
+                if unsafe { fcntl(descriptor, F_GETLK as c_int, pointer) } < 0 {
+                    return -1;
                 }
-                // SAFETY: getpid has no pointer contract and cannot produce a
-                // Linux error on the selected baseline.
-                let caller_process = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETPID) } as c_int;
-                if record.lock_type == F_UNLCK || record.process_id == caller_process {
+                // SAFETY: the kernel wrote the record through `pointer`.
+                let (lock_type, process_id) = unsafe { ((*pointer).lock_type, (*pointer).process_id) };
+                if lock_type == F_UNLCK || process_id == unsafe { getpid() } {
                     0
                 } else {
                     // SAFETY: this source-specific conflict result owns only the
@@ -693,44 +692,15 @@ static_archive_member! { lockf_source {
                 }
             }
             F_ULOCK => {
-                record.lock_type = F_UNLCK;
                 // SAFETY: Linux reads the complete local flock record.
-                c_status(unsafe {
-                    raw_syscall::syscall3(
-                        raw_syscall::SYS_FCNTL,
-                        i64::from(descriptor),
-                        F_SETLK,
-                        pointer,
-                    )
-                })
+                unsafe { (*pointer).lock_type = F_UNLCK };
+                unsafe { fcntl(descriptor, F_SETLK as c_int, pointer) }
             }
-            F_TLOCK => {
-                // SAFETY: Linux reads the complete local flock record.
-                c_status(unsafe {
-                    raw_syscall::syscall3(
-                        raw_syscall::SYS_FCNTL,
-                        i64::from(descriptor),
-                        F_SETLK,
-                        pointer,
-                    )
-                })
-            }
-            F_LOCK => {
-                // SAFETY: Linux reads the complete local flock record while it
-                // waits. The owned cancellation owner retains the caller's
-                // blocking pointer lifetime contract.
-                c_status(unsafe {
-                    crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
-                        raw_syscall::SYS_FCNTL,
-                        i64::from(descriptor),
-                        F_SETLKW,
-                        pointer,
-                        0,
-                        0,
-                        0,
-                    )
-                })
-            }
+            // SAFETY: Linux reads the complete local flock record.
+            F_TLOCK => unsafe { fcntl(descriptor, F_SETLK as c_int, pointer) },
+            // SAFETY: Linux reads the complete local flock record while it
+            // waits; the caller keeps the blocking frame live.
+            F_LOCK => unsafe { fcntl(descriptor, F_SETLKW as c_int, pointer) },
             _ => {
                 // SAFETY: musl's default switch case owns this one local errno
                 // result and must not issue a fcntl request.

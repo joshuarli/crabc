@@ -497,7 +497,9 @@ static int run_string_clients(void)
 #endif
 
 #if defined(CRABC_REPLACE_PRINTF) || defined(CRABC_REPLACE_VSNPRINTF) || defined(CRABC_REPLACE_SCANF) \
-    || defined(CRABC_REPLACE_MATH) || defined(CRABC_REPLACE_WIDE) || defined(CRABC_REPLACE_SYSTEM)
+    || defined(CRABC_REPLACE_MATH) || defined(CRABC_REPLACE_WIDE) || defined(CRABC_REPLACE_SYSTEM) \
+    || defined(CRABC_REPLACE_FILES) || defined(CRABC_REPLACE_NETWORK) || defined(CRABC_REPLACE_ACCOUNTS) \
+    || defined(CRABC_REPLACE_THREADS)
 static unsigned long replacement_calls;
 
 static void report_replacement(const char *operation, unsigned long mark)
@@ -1249,6 +1251,185 @@ static int run_stdio_clients(void)
 }
 #endif
 
+#ifdef CRABC_REPLACE_FILES
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+/*
+ * Counting `open`, `mknod` and `fcntl` that perform the plain system call.
+ * Musl's opendir calls open, mkfifo calls mknod, and lockf calls fcntl.
+ */
+int open(const char *path, int flags, ...)
+{
+    va_list args;
+    int mode;
+
+    replacement_calls++;
+    va_start(args, flags);
+    mode = va_arg(args, int);
+    va_end(args);
+    return (int)syscall(SYS_open, path, flags, mode);
+}
+
+int mknod(const char *path, mode_t mode, dev_t device)
+{
+    replacement_calls++;
+    return (int)syscall(SYS_mknod, path, mode, device);
+}
+
+int fcntl(int fd, int command, ...)
+{
+    va_list args;
+    long argument;
+
+    replacement_calls++;
+    va_start(args, command);
+    argument = va_arg(args, long);
+    va_end(args);
+    return (int)syscall(SYS_fcntl, fd, command, argument);
+}
+
+static int run_file_clients(void)
+{
+    unsigned long mark;
+    DIR *directory;
+    int fd;
+
+    mark = replacement_calls;
+    directory = opendir("/");
+    emit_flag("opendir", "value", directory != 0);
+    report_replacement("opendir", mark);
+    if (directory) closedir(directory);
+    mark = replacement_calls;
+    emit_flag("mkfifo", "value", mkfifo("/replacement-fifo", 0600) == 0);
+    report_replacement("mkfifo", mark);
+    fd = (int)syscall(SYS_open, "/replacement-lock", O_RDWR | O_CREAT, 0600);
+    if (fd < 0) return 60;
+    mark = replacement_calls;
+    emit_flag("lockf", "value", lockf(fd, F_TLOCK, 0) == 0);
+    report_replacement("lockf", mark);
+    close(fd);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_NETWORK
+#include <netdb.h>
+/*
+ * Counting `gethostbyname2` and `getservbyname_r`. Musl's gethostbyname and
+ * getservbyname call them.
+ */
+struct hostent *gethostbyname2(const char *name, int family)
+{
+    (void)name;
+    (void)family;
+    replacement_calls++;
+    return 0;
+}
+
+int getservbyname_r(const char *name, const char *protocol, struct servent *entry,
+                    char *buffer, size_t size, struct servent **result)
+{
+    (void)name; (void)protocol; (void)entry; (void)buffer; (void)size;
+    replacement_calls++;
+    *result = 0;
+    return ENOENT;
+}
+
+static int run_network_clients(void)
+{
+    unsigned long mark;
+
+    mark = replacement_calls;
+    emit_flag("gethostbyname", "value", gethostbyname("replacement.invalid") == 0);
+    report_replacement("gethostbyname", mark);
+    mark = replacement_calls;
+    emit_flag("getservbyname", "value", getservbyname("replacement", "tcp") == 0);
+    report_replacement("getservbyname", mark);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_ACCOUNTS
+#include <grp.h>
+/*
+ * Counting `getgrouplist` and `setgroups`. Musl's initgroups calls both.
+ */
+int getgrouplist(const char *user, gid_t group, gid_t *groups, int *count)
+{
+    (void)user;
+    replacement_calls++;
+    if (*count < 1) {
+        *count = 1;
+        return -1;
+    }
+    groups[0] = group;
+    *count = 1;
+    return 1;
+}
+
+int setgroups(size_t count, const gid_t *groups)
+{
+    (void)count;
+    (void)groups;
+    replacement_calls++;
+    return 0;
+}
+
+static int run_account_clients(void)
+{
+    unsigned long mark;
+
+    mark = replacement_calls;
+    emit_flag("initgroups", "value", initgroups("replacement", 7) == 0);
+    report_replacement("initgroups", mark);
+    return 0;
+}
+#endif
+
+#ifdef CRABC_REPLACE_THREADS
+#include <pthread.h>
+#include <threads.h>
+/*
+ * Counting `pthread_mutex_lock` and `pthread_mutex_unlock` over libc's
+ * trylock. Musl's mtx_lock and mtx_unlock reach its hidden
+ * __pthread_mutex_* bodies instead, so these stay uncounted.
+ */
+int pthread_mutex_lock(pthread_mutex_t *mutex)
+{
+    int status;
+
+    replacement_calls++;
+    while ((status = pthread_mutex_trylock(mutex)) == EBUSY)
+        ;
+    return status;
+}
+
+int pthread_mutex_unlock(pthread_mutex_t *mutex)
+{
+    (void)mutex;
+    replacement_calls++;
+    return 0;
+}
+
+static int run_thread_clients(void)
+{
+    unsigned long mark;
+    mtx_t mutex;
+
+    if (mtx_init(&mutex, mtx_plain) != thrd_success) return 70;
+    mark = replacement_calls;
+    emit_flag("mtx_lock", "value", mtx_lock(&mutex) == thrd_success);
+    report_replacement("mtx_lock", mark);
+    mark = replacement_calls;
+    emit_flag("mtx_unlock", "value", mtx_unlock(&mutex) == thrd_success);
+    report_replacement("mtx_unlock", mark);
+    mtx_destroy(&mutex);
+    return 0;
+}
+#endif
+
 int main(void)
 {
 #ifdef CRABC_REPLACE_MALLOC
@@ -1277,6 +1458,22 @@ int main(void)
 #endif
 #ifdef CRABC_REPLACE_SYSTEM
     int status = run_system_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_FILES
+    int status = run_file_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_NETWORK
+    int status = run_network_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_ACCOUNTS
+    int status = run_account_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_THREADS
+    int status = run_thread_clients();
     if (status) return status;
 #endif
 #ifdef CRABC_REPLACE_MATH

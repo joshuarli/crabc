@@ -38,16 +38,29 @@ const _: () = {
 /// caller-owned.
 #[no_mangle]
 pub unsafe extern "C" fn mkfifo(path: *const c_char, mode: c_uint) -> c_int {
-    // SAFETY: the caller owns the pathname pointer contract. Linux/x86-64
-    // `mknodat=259` receives dirfd/path/mode/dev in rdi/rsi/rdx/r10.
-    let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_MKNODAT,
-            AT_FDCWD,
-            path as usize as i64,
-            i64::from(mode | S_IFIFO),
-            0,
-        )
-    };
-    c_status(result)
+    // Musl's mkfifo is `mknod(path, mode | S_IFIFO, 0)` through the public
+    // entry, which the owned runtimes provide.
+    #[cfg(crabc_x86_owned_runtime)]
+    {
+        unsafe extern "C" {
+            fn mknod(path: *const c_char, mode: c_uint, device: u64) -> c_int;
+        }
+        // SAFETY: the caller owns the pathname pointer contract.
+        return unsafe { mknod(path, mode | S_IFIFO, 0) };
+    }
+    #[cfg(not(crabc_x86_owned_runtime))]
+    {
+        // SAFETY: the caller owns the pathname pointer contract. Linux/x86-64
+        // `mknodat=259` receives dirfd/path/mode/dev in rdi/rsi/rdx/r10.
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_MKNODAT,
+                AT_FDCWD,
+                path as usize as i64,
+                i64::from(mode | S_IFIFO),
+                0,
+            )
+        };
+        c_status(result)
+    }
 }
