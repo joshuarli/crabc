@@ -923,3 +923,174 @@ pub unsafe extern "C" fn mi_stats_get(stats: *mut c_void) -> bool {
     // SAFETY: the C caller passes null or a `mi_stats_t`.
     unsafe { options::stats_get(stats) }
 }
+
+// ---------------------------------------------------------------------------
+// M6: first-class Heaps and OS reservation (`m6-gate-v3.5.0.json`)
+//
+// Each entry is the same-named `crabc_mimalloc::source_heap_api` function;
+// this section is append-only beside the M4 and M7 entries.
+// ---------------------------------------------------------------------------
+
+use crabc_mimalloc::__crabc_runtime::source_heap_api as heaps;
+
+/// `mi_heap_t*`, opaque to C.
+type HeapPointer = *mut c_void;
+
+#[no_mangle]
+pub extern "C" fn mi_heap_new() -> HeapPointer {
+    bind_thread();
+    heaps::heap_new()
+}
+
+#[no_mangle]
+pub extern "C" fn mi_heap_main() -> HeapPointer {
+    bind_thread();
+    heaps::heap_main()
+}
+
+#[inline]
+fn heap_released(released: bool) {
+    if !released {
+        // SAFETY: a legal Heap release the runtime could not complete is
+        // terminal, as a retained free is.
+        unsafe { abort() }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_delete(heap: HeapPointer) {
+    bind_thread();
+    // SAFETY: the C caller's `mi_heap_delete` contract.
+    heap_released(unsafe { heaps::heap_release(heap, false) });
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_destroy(heap: HeapPointer) {
+    bind_thread();
+    // SAFETY: the C caller's `mi_heap_destroy` contract.
+    heap_released(unsafe { heaps::heap_release(heap, true) });
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_malloc(heap: HeapPointer, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the C caller passes a live Heap.
+    allocation(unsafe { heaps::heap_malloc(heap, size) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_zalloc(heap: HeapPointer, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_zalloc(heap, size) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_malloc_small(heap: HeapPointer, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above; the caller keeps `size <= MI_SMALL_SIZE_MAX`.
+    allocation(unsafe { heaps::heap_malloc(heap, size) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_zalloc_small(heap: HeapPointer, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_zalloc(heap, size) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_calloc(heap: HeapPointer, count: usize, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_calloc(heap, count, size) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_mallocn(heap: HeapPointer, count: usize, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_mallocn(heap, count, size) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_malloc_aligned(heap: HeapPointer, size: usize, alignment: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_malloc_aligned_at(heap, size, alignment, 0, false) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_malloc_aligned_at(
+    heap: HeapPointer,
+    size: usize,
+    alignment: usize,
+    offset: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_malloc_aligned_at(heap, size, alignment, offset, false) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_zalloc_aligned(heap: HeapPointer, size: usize, alignment: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_malloc_aligned_at(heap, size, alignment, 0, true) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_zalloc_aligned_at(
+    heap: HeapPointer,
+    size: usize,
+    alignment: usize,
+    offset: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_malloc_aligned_at(heap, size, alignment, offset, true) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_calloc_aligned(
+    heap: HeapPointer,
+    count: usize,
+    size: usize,
+    alignment: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_calloc_aligned_at(heap, count, size, alignment, 0) })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_calloc_aligned_at(
+    heap: HeapPointer,
+    count: usize,
+    size: usize,
+    alignment: usize,
+    offset: usize,
+) -> *mut c_void {
+    bind_thread();
+    // SAFETY: as above.
+    allocation(unsafe { heaps::heap_calloc_aligned_at(heap, count, size, alignment, offset) })
+}
+
+#[no_mangle]
+pub extern "C" fn mi_reserve_os_memory(size: usize, commit: bool, allow_large: bool) -> c_int {
+    bind_thread();
+    finish(heaps::reserve_os_memory(size, commit, allow_large))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_reserve_os_memory_ex(
+    size: usize,
+    commit: bool,
+    allow_large: bool,
+    exclusive: bool,
+    arena_id: *mut *mut c_void,
+) -> c_int {
+    bind_thread();
+    // SAFETY: the C caller passes null or a writable `mi_arena_id_t*`.
+    finish(unsafe { heaps::reserve_os_memory_ex(size, commit, allow_large, exclusive, arena_id) })
+}

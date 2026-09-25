@@ -35,7 +35,10 @@ use core::cell::UnsafeCell;
 use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
 
-use crate::compiler_tls::{cached_theap, default_theap, set_cached_theap};
+use crate::compiler_tls::{
+    default_theap, dynamic_backing_peek, install_dynamic_backing, install_empty_dynamic_backing,
+    is_empty_dynamic_backing, DynamicThreadLocalBacking,
+};
 use crate::meta::{ChildPageEngineState, MetaAllocation, MetaAllocator};
 use crate::os_page::OsAlignedPageOwner;
 use crate::process_init::{ProcessMainBackingBinding, ProcessMainInitializationStorage};
@@ -57,9 +60,22 @@ pub(crate) struct MainHeapTheapImage {
 }
 
 /// The calling thread's state for its Theaps of non-main Heaps.
+///
+/// Source keeps the slot array and the cached Theap in thread-local roots.
+/// The runtime's main-Heap owner requires the compiler-TLS dynamic-backing
+/// root to hold the empty image and the cached root to hold the empty Theap
+/// whenever it operates (it reaches the main-Heap Theap through the fast
+/// slot). This module therefore keeps both values here: the slot array is
+/// published in the compiler-TLS root only while one of its own slot
+/// operations runs, and `cached` is `_mi_theap_cached` for these Heaps, with
+/// null standing for the main-Heap Theap (or the empty Theap).
 struct ThreadHeaps {
     /// The regular thread-local slot array (`mi_thread_locals_t`).
     thread_locals: Option<ThreadLocalBackingOwner>,
+    /// The slot array's current image while it is not published.
+    backing: Option<NonNull<DynamicThreadLocalBacking>>,
+    /// `_mi_theap_cached` when it names a Theap of a non-main Heap.
+    cached: *mut Theap,
     /// The one retained raw-unmap retry of these Theaps, with the Theap whose
     /// engine it latched (`None` once that Theap is freed).
     pending_os_release: Option<(Option<NonNull<Theap>>, OsAlignedPageOwner)>,
@@ -67,7 +83,12 @@ struct ThreadHeaps {
 
 #[thread_local]
 static THREAD_HEAPS: UnsafeCell<ThreadHeaps> =
-    UnsafeCell::new(ThreadHeaps { thread_locals: None, pending_os_release: None });
+    UnsafeCell::new(ThreadHeaps {
+        thread_locals: None,
+        backing: None,
+        cached: core::ptr::null_mut(),
+        pending_os_release: None,
+    });
 
 /// # Safety
 /// The caller is on the current thread and forms no other reference to the
@@ -129,11 +150,25 @@ fn is_main_subprocess_heap(heap: NonNull<Heap>) -> bool {
     !heap.is_subprocess_main() && core::ptr::eq(heap.subprocess_pointer(), MainSubprocess::global().identity().as_ptr())
 }
 
+/// Runs one operation on this thread's slot array with its image published
+/// in the compiler-TLS root, where `ThreadLocalBackingOwner` keeps it, then
+/// takes the (possibly grown) image back and restores the empty image.
+fn with_published_slots<R>(state: &mut ThreadHeaps, operation: impl FnOnce(&mut ThreadLocalBackingOwner) -> R) -> Option<R> {
+    let owner = state.thread_locals.as_mut()?;
+    if let Some(backing) = state.backing {
+        install_dynamic_backing(backing);
+    }
+    let value = operation(owner);
+    state.backing = dynamic_backing_peek().filter(|backing| !is_empty_dynamic_backing(*backing));
+    install_empty_dynamic_backing();
+    Some(value)
+}
+
 /// `_mi_thread_local_get` on this thread's slot array.
 fn thread_local_get(key: ThreadLocalKey) -> *mut () {
     // SAFETY: the current thread's own state.
     let state = unsafe { thread_heaps() };
-    state.thread_locals.as_mut().and_then(|owner| owner.get(key).ok()).unwrap_or(core::ptr::null_mut())
+    with_published_slots(state, |owner| owner.get(key).ok()).flatten().unwrap_or(core::ptr::null_mut())
 }
 
 /// `_mi_thread_local_set` on this thread's slot array, created on first use.
@@ -143,13 +178,50 @@ fn thread_local_set(key: ThreadLocalKey, value: *mut ()) -> bool {
     let state = unsafe { thread_heaps() };
     if state.thread_locals.is_none() {
         // SAFETY: this module is the only owner of the main-subprocess
-        // thread's regular slot root, which no native owner uses.
+        // thread's regular slot root, which no native owner uses; the root
+        // holds the empty image between this module's slot operations.
         match unsafe { ThreadLocalBackingOwner::begin(config) } {
             Ok(owner) => state.thread_locals = Some(owner),
             Err(_) => return false,
         }
     }
-    state.thread_locals.as_mut().is_some_and(|owner| owner.set(key, value).is_ok())
+    with_published_slots(state, |owner| owner.set(key, value).is_ok()).unwrap_or(false)
+}
+
+/// The number of slots in this thread's array (`mi_thread_locals->count`).
+#[cfg(test)]
+fn thread_local_count() -> i64 {
+    // SAFETY: the current thread's own state.
+    unsafe { thread_heaps() }.backing.map_or(0, |backing| unsafe { backing.as_ref() }.count() as i64)
+}
+
+/// The calling thread's `_mi_theap_cached` for these Heaps.
+fn cached_theap() -> NonNull<Theap> {
+    // SAFETY: the current thread's own state.
+    NonNull::new(unsafe { thread_heaps() }.cached)
+        // SAFETY: the immutable source empty Theap is process-static.
+        .unwrap_or_else(|| unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) })
+}
+
+fn set_cached_theap(theap: NonNull<Theap>) {
+    let stored = if core::ptr::eq(theap.as_ptr(), crate::bootstrap::empty_default_theap_ptr()) {
+        core::ptr::null_mut()
+    } else {
+        theap.as_ptr()
+    };
+    // SAFETY: the current thread's own state.
+    unsafe { thread_heaps() }.cached = stored;
+}
+
+/// `_mi_theap_cached_set(theap_main)` for the calling thread's main-Heap
+/// Theap. The main-Heap owner reaches that Theap through the fast slot, so
+/// the empty value stands for "the main-Heap Theap is cached": the previous
+/// cached Theap is released as source releases it, and the default Theap
+/// takes no cached reference.
+fn cached_set_main() {
+    // SAFETY: the immutable source empty Theap is process-static.
+    let empty = unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) };
+    cached_set(empty);
 }
 
 /// `_mi_theap_cached_set` (`prim-tls.c:211-229`).
@@ -209,6 +281,10 @@ fn heap_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>>
     let theap = match NonNull::new(thread_local_get(key).cast::<Theap>()) {
         Some(theap) => theap,
         None => {
+            // `mi_heap_init_theap`: `mi_thread_init` first.
+            if !crate::runtime_lifecycle::prepare_current_thread_native_owner_for_heap_theaps() {
+                return None;
+            }
             let theap = create_theap(thread, heap)?;
             // `_mi_heap_theap_set`.
             if !thread_local_set(key, theap.as_ptr().cast()) {
@@ -285,7 +361,7 @@ fn with_theap_engine<R>(
     let page_map = unsafe { binding.page_map().page_map_for_owned_ranges() }.ok()?;
     let mut allocate_arena_pages = |size: usize, alignment: usize| -> Option<NonNull<u8>> {
         // `mi_heap_zalloc_aligned(heap_main)` through `_mi_heap_theap`.
-        cached_set(thread.theap);
+        cached_set_main();
         match native_allocate_aligned(size, alignment, true) {
             NativePageAllocationResult::Allocated(block) => Some(block),
             _ => None,
@@ -328,7 +404,7 @@ pub(crate) fn native_heap_new() -> Option<NonNull<Heap>> {
     let thread = current_main_thread()?;
     let binding = binding()?;
     let config = binding.page_map().memory_config().ok()?;
-    cached_set(thread.theap);
+    cached_set_main();
     let block = match native_allocate_aligned(size_of::<NonMainHeapImage>(), align_of::<NonMainHeapImage>(), true) {
         NativePageAllocationResult::Allocated(block) => block,
         _ => return None,
@@ -489,7 +565,7 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
         None
     } else {
         // `mi_heap_delete_pages`: `_mi_heap_theap(heap_target)`.
-        cached_set(thread.theap);
+        cached_set_main();
         Some(crate::single_thread::NonMainHeapPageTarget { heap: main_heap, theap: thread.theap })
     };
     let binding = binding().ok_or(HeapReleaseError::InvalidChild)?;
@@ -535,8 +611,13 @@ pub(crate) fn native_thread_done() -> bool {
     let Some(thread) = current_main_thread() else { return true };
     // SAFETY: the current thread's own state.
     let state = unsafe { thread_heaps() };
+    if let Some(backing) = state.backing.take() {
+        install_dynamic_backing(backing);
+    }
     if let Some(mut owner) = state.thread_locals.take() {
-        if owner.teardown().is_err() {
+        let torn_down = owner.teardown().is_ok();
+        install_empty_dynamic_backing();
+        if !torn_down {
             return false;
         }
     }
@@ -577,6 +658,64 @@ pub(crate) fn native_thread_done() -> bool {
         unsafe { theap_decref(theap) };
     }
     true
+}
+
+/// `mi_heap_get_stats(heap)`'s merge (`stats.c:453-465`) for a non-main Heap
+/// of the process main subprocess: the calling thread's Theap for the Heap,
+/// if it has one (`_mi_heap_theap_peek`), moves its statistics into the
+/// Heap's before `mi_stats_get` adds them.
+///
+/// # Safety
+/// `heap` is a live Heap, kept alive for the call (the caller holds the
+/// subprocess Heap-list lock, which its destruction takes to unlink it).
+pub(crate) unsafe fn merge_current_thread_theap_statistics(heap: NonNull<Heap>) {
+    if !is_main_subprocess_heap(heap) || current_main_thread().is_none() {
+        return;
+    }
+    let Some(theap) = heap_key(heap).and_then(|key| NonNull::new(thread_local_get(key).cast::<Theap>())) else {
+        return;
+    };
+    // SAFETY: this thread's live Theap for `heap`, which only this thread
+    // frees; its statistics are relaxed atomics shared with the Heap's.
+    unsafe { heap.as_ref().merge_attached_theap_statistics_at(theap) };
+}
+
+/// `_mi_heap_theap(heap_main)` on an ordinary thread of the process main
+/// subprocess: the thread's main-Heap Theap becomes the cached Theap before a
+/// `mi_heap_*` entry allocates from the main Heap.
+pub(crate) fn select_main_heap_theap() {
+    if current_main_thread().is_some() {
+        cached_set_main();
+    }
+}
+
+/// Pinned `mi_reserve_os_memory_ex2` (`arena.c:1886-1907`) into the process
+/// main subprocess: `_mi_os_alloc_aligned` then `mi_manage_os_memory_ex2`,
+/// through the process arena group's one source reservation. Every failure
+/// is source `ENOMEM`; it says which step failed.
+pub(crate) fn native_reserve_os_memory(
+    size: usize,
+    commit: bool,
+    allow_large: bool,
+    exclusive: bool,
+) -> Result<crate::arena::ArenaId, crate::arena::ReserveOsMemoryFailure> {
+    use crate::arena::ReserveOsMemoryFailure::Unmanaged;
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter().ok_or(Unmanaged)?;
+    let binding = binding().ok_or(Unmanaged)?;
+    let config = binding.page_map().memory_config().map_err(|_| Unmanaged)?;
+    let access = if commit { crate::os::MapAccess::Committed } else { crate::os::MapAccess::Reserved };
+    // SAFETY: the calling thread's default root names its live Theap or the
+    // empty image for this whole operation, and nothing else borrows its
+    // random field during the reservation.
+    let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
+    // SAFETY: the process main subprocess owns the process's sole arena
+    // group, bound to this ready binding's process and configuration for the
+    // process lifetime; its reserve lock serializes the reservation.
+    unsafe {
+        MainSubprocess::global().arena_backing().reserve_os_memory_reporting_failure(
+            binding.process(), config, size, access, allow_large, exclusive, Some(&mut random),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -649,7 +788,8 @@ pub(crate) mod tests {
 
                 // heap-os2.
                 let h2 = native_heap_new().expect("a second Heap");
-                trace.push(i64::from(cached_theap() == theap));
+                // The empty value stands for the cached main-Heap Theap.
+                trace.push(i64::from(cached_theap().as_ptr() == crate::bootstrap::empty_default_theap_ptr()));
                 trace.push(theaps().current - theaps0.current);
                 let mut failed = 0;
                 for _ in 0..10 {
@@ -674,8 +814,7 @@ pub(crate) mod tests {
                 }
                 trace.push(i64::from(allocated));
                 trace.push(heap_count() - heaps0);
-                let slots = || crate::compiler_tls::dynamic_backing_peek()
-                    .map_or(0, |backing| unsafe { backing.as_ref() }.count() as i64);
+                let slots = thread_local_count;
                 trace.push(slots());
                 trace.push(theaps().current - theaps0.current);
                 let mut on_tld = 0;
@@ -695,10 +834,80 @@ pub(crate) mod tests {
                 trace.push(theaps().current - theaps0.current);
                 trace.push(theaps().total - theaps0.total);
                 trace.push(slots());
+
+                // A Heap on a reused key whose slot holds a stale Theap.
+                let reused = native_heap_new().unwrap();
+                let block = unsafe { native_heap_allocate(reused, 64, None, false) };
+                trace.push(i64::from(block.is_some()));
+                trace.push(theaps().current - theaps0.current);
+                trace.push(slots());
+                if let Some(block) = block {
+                    unsafe { native_free(block) };
+                }
+                assert_eq!(unsafe { native_heap_release(reused, true) }, Ok(HeapReleaseOutcome::Released));
+                trace.push(heap_count() - heaps0);
+                trace.push(theaps().current - theaps0.current);
                 for (index, value) in trace.iter().enumerate() {
                     std::println!("m6.heap.main.{index}={value}");
                 }
             },
         );
     }
+
+    /// A later thread of the process main subprocess allocates from a Heap
+    /// another thread created (an arena block and an OS-backed one), creates
+    /// and deletes its own Heap, and finishes: its Theap's pages pass to the
+    /// Heap, and the creating thread frees one block and destroys the Heap.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn later_thread_finishes_with_live_blocks_on_a_shared_heap() {
+        use crate::runtime_lifecycle::{
+            attach_current_thread, finish_current_thread_native_after_user_destructors, ThreadAttachResult,
+            ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::later_thread_finishes_with_live_blocks_on_a_shared_heap",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let first = match native_allocate_aligned(16, 16, false) {
+                    NativePageAllocationResult::Allocated(block) => block,
+                    _ => panic!("the main thread allocates"),
+                };
+                unsafe { native_free(first) };
+                let shared = native_heap_new().expect("the main thread creates a Heap");
+                let local = unsafe { native_heap_allocate(shared, 64, None, false) }.expect("a local block");
+                let heap_address = shared.as_ptr().addr();
+                let blocks = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: the fresh thread registers its own descriptor once.
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let shared = NonNull::new(heap_address as *mut Heap).unwrap();
+                    let allocate = |size, aligned| unsafe { native_heap_allocate(shared, size, aligned, false) }
+                        .expect("a worker block")
+                        .as_ptr()
+                        .addr();
+                    let blocks = [allocate(64, None), allocate(64, None), allocate(1 << 20, Some((2 << 20, 0)))];
+                    let own = native_heap_new().expect("the worker creates a Heap");
+                    let block = unsafe { native_heap_allocate(own, 100, None, false) }.unwrap();
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    assert_eq!(unsafe { native_heap_release(own, false) }, Ok(HeapReleaseOutcome::Released));
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                    blocks
+                })
+                .join()
+                .expect("the worker finishes with live blocks");
+                let free = |address: usize| unsafe { native_free(NonNull::new(address as *mut u8).unwrap()) };
+                assert_eq!(free(blocks[0]), NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_free(local) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_heap_release(shared, true) }, Ok(HeapReleaseOutcome::Released));
+            },
+        );
+    }
+
 }

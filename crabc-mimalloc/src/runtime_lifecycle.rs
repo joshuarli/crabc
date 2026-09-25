@@ -9294,6 +9294,24 @@ fn begin_current_thread_native_persistent_owner(
 /// never from pthread attach. A failure after the attachment-only TLD/Theap
 /// publication retains that exact owner for source-ordered teardown and
 /// exposes no allocator fallback or replacement owner.
+/// Pinned `mi_heap_init_theap` runs `mi_thread_init` before it creates a
+/// Theap for a non-main Heap (`heap.c:59-68`): make sure the calling thread's
+/// native owner has its page engine before `subproc::main_heaps` links such a
+/// Theap into the thread's TLD, as its first ordinary allocation would.
+pub(crate) fn prepare_current_thread_native_owner_for_heap_theaps() -> bool {
+    if current_thread_has_active_native_initial_persistent_owner() || RUNTIME_PROCESS.is_on_initial_allocation_thread() {
+        return true;
+    }
+    match with_current_thread_native_persistent_owner(|owner| {
+        matches!(owner.state, NativePersistentThreadOwnerExitState::AttachmentOnly)
+    }) {
+        Ok(false) => true,
+        Ok(true) => activate_current_thread_native_persistent_owner().is_ok(),
+        Err(NativePersistentThreadOwnerAccessError::NotInstalled) => begin_current_thread_native_persistent_owner().is_ok(),
+        Err(_) => false,
+    }
+}
+
 fn activate_current_thread_native_persistent_owner(
 ) -> Result<(), NativePersistentThreadOwnerAccessError> {
     let Some(pair) = current_native_process_page_backing() else {
@@ -10503,9 +10521,9 @@ pub fn native_allocate_aligned_at(
 /// Heap. Returns `false`, copying nothing, for a bad header or an inactive
 /// process.
 ///
-/// The calling thread's Theap is its default Theap on the main Heap; the
-/// per-Heap Theaps of a non-main Heap (child subprocesses) are not merged
-/// here, and a child-subprocess thread reports the main subprocess.
+/// The calling thread's Theap for each non-main Heap of the process main
+/// subprocess is merged into that Heap as well; those of child-subprocess
+/// Heaps are not, and a child-subprocess thread reports the main subprocess.
 ///
 /// # Safety
 /// `stats` is valid for reads and writes of the source `mi_stats_t` image
@@ -10529,6 +10547,8 @@ pub unsafe fn native_stats_get(stats: *mut u8) -> bool {
     }
     merge_current_thread_theap_statistics();
     let _ = identity.heap_list().visit_heaps(|heap| {
+        // SAFETY: a visited member is live under the list lock.
+        unsafe { crate::subproc::main_heaps::merge_current_thread_theap_statistics(heap) };
         // SAFETY: a visited member is live under the list lock; the caller
         // image was validated by the copy above.
         unsafe { crate::types::Heap::add_statistics_into_source_image(heap, stats) };

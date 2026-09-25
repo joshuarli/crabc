@@ -1676,9 +1676,8 @@ pub(crate) unsafe fn delete_non_main_heap_pages(
             if release {
                 // SAFETY: as above; a destroy discards the live blocks.
                 unsafe { Page::discard_used_for_heap_destroy(page) };
-                if !heap_ref.record_page_released(statistics_bin) {
-                    return false;
-                }
+                // The terminal release records the Heap's page statistics
+                // (`_mi_arenas_page_free(page, NULL)`) exactly once.
                 let clear_ordinary = |arena: &ArenaView<'static>, slice_index: usize| {
                     clear_child_heap_ordinary_bit(heap, arena, slice_index)
                 };
@@ -1762,11 +1761,9 @@ pub(crate) unsafe fn delete_non_main_heap_pages(
         let memory = unsafe { page.as_ref() }.memid();
         let used = unsafe { Page::used_at_claimed(page) };
         if used == 0 || target.is_none() {
-            // SAFETY: as above; a destroy discards the live blocks.
+            // SAFETY: as above; a destroy discards the live blocks. The
+            // terminal release records the Heap's page statistics once.
             unsafe { Page::discard_used_for_heap_destroy(page) };
-            if !heap_ref.record_page_released(statistics_bin) {
-                return false;
-            }
             // SAFETY: the claimed, list-member, zero-use OS page.
             let released = unsafe {
                 release_claimed_non_arena_singleton_page_with_list_removal(
@@ -40992,6 +40989,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             self.rollback_fresh_os_aligned(claim, page, true, false);
             return None;
         }
+        // `arena.c:1110-1118` records every fresh page, an OS-backed one
+        // included, after its PageMap registration; its terminal release
+        // records the matching decrease.
+        let statistics_bin = unsafe { page_statistics_bin(page.as_ref()) }
+            .expect("fresh source page has one statistics bin");
+        let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
+        debug_assert!(statistics_recorded);
 
         if enqueue_singleton { self.push_regular_page(BIN_HUGE, page); }
         // This is an infallible handoff under `OsAlignedPageClaim`'s private

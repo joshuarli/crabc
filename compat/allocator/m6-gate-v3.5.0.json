@@ -42,6 +42,10 @@
       "runner": "compat/allocator/heap_lifecycle.py",
       "scope": "Pinned-C/Rust traces of non-main Heaps on a child-subprocess thread: mi_heap_new list push order and links, Heap sequence numbers, dynamic thread-local keys and their index reuse, Heap counts and heaps statistics, main-Heap delete/destroy refusal, delete/destroy of Heaps that never allocate, the per-thread Theap a first mi_heap_malloc creates (TLD and Heap list position, dynamic thread-local slot, cached-Theap reference counts moved by the nested per-arena page-record allocation, theaps statistics, arena page records), local frees, mi_heap_destroy with live pages (Theaps leave their TLDs; a cached Theap outlives its Heap until the next main-Heap allocation or thread finish), mi_heap_delete moving live pages to the main Heap as abandoned pages, non-main page abandonment at thread finish (arena and OS-backed pages), reclaim of abandoned child pages on free and on allocation, mi_subproc_destroy of a non-main Heap with an abandoned live page, and, on an ordinary thread of the process main subprocess, first-allocation Theap shapes, huge OS-backed pages moved by mi_heap_delete or released by mi_heap_destroy, and 1000 live Heaps growing the thread-local slot array."
     },
+    "differential:public-heap-adapter": {
+      "runner": "compat/allocator/x86_64_m6_adapter.py",
+      "scope": "Shared-driver pinned-C/native-adapter traces of the exported M6 entries: mi_reserve_os_memory and mi_reserve_os_memory_ex (committed, lazily committed, too-small, exclusive, failing, and over-limit reservations with their statistics and errno), mi_heap_new, mi_heap_main, the mi_heap_malloc/zalloc/calloc/mallocn/small and aligned[_at] allocation entries with their failure errors and messages, main-Heap delete/destroy warnings, test-api.c heap-os1/heap-os2/heap-many with page and Heap statistics, and a second thread allocating from a shared Heap, deleting its own, and finishing before the Heap is destroyed."
+    },
     "differential:public-theap": {
       "runner": null,
       "scope": "Pinned-C/Rust default-Theap switching and direct Theap operation traces."
@@ -117,11 +121,12 @@
       "acceptance": "First-class Heaps follow src/heap.c: parent-main-Heap-allocated Heap images with a dynamic thread-local slot and subprocess list/count membership, lazy per-thread Theap creation, main-Heap delete/destroy refusal warnings, `mi_heap_delete` moving live pages to the main Heap as abandoned pages, `mi_heap_destroy` releasing every page, and exclusive-arena binding.",
       "evidence": [
         "differential:public-heap-lifecycle",
+        "differential:public-heap-adapter",
         "differential:heap-destroy",
         "unit:heap-lifecycle"
       ],
       "blocked_by": [
-        "`types::heap_registry::lifecycle` creates non-main Heaps, allocates from them through per-thread Theaps (`_mi_heap_theap_get_or_init`), destroys them with their pages (`_mi_heap_destroy_pages`), and deletes them moving their pages to the main Heap (`_mi_heap_move_pages`), only on a thread of a child subprocess and crate-privately: exclusive arenas, `mi_heap_set_numa_affinity`, `mi_heap_collect`, `mi_heap_theap`, public symbols, and Heaps of the process main subprocess do not exist."
+        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy) and of child subprocesses (`types::heap_registry::lifecycle`, crate-private): exclusive arenas (`mi_heap_new_in_arena`), `mi_heap_set_numa_affinity`, `mi_heap_collect`, and `mi_heap_theap` do not exist."
       ]
     },
     {
@@ -179,11 +184,12 @@
       "acceptance": "Every Heap-scoped allocation entry resolves the calling thread's Theap for that Heap (`_mi_heap_theap_get_or_init`) and then follows the same M4 allocation, zeroing, overflow, alignment, reallocation, string, and C++ new-handler semantics as the default-Heap entry points.",
       "evidence": [
         "differential:public-heap-lifecycle",
+        "differential:public-heap-adapter",
         "upstream:test-api-heaps",
         "unit:heap-allocation"
       ],
       "blocked_by": [
-        "Heap-scoped allocation depends on the missing non-main Heap lifecycle; per-thread Theap resolution exists only for the one private dynamic binding."
+        "The mi_heap_malloc, zalloc, calloc, mallocn, small, and aligned[_at] entries are exported for main-subprocess threads; the realloc, strdup/strndup/realpath, and new-handler entries are not, and a child-subprocess thread allocates from a non-main Heap only through plain mi_heap_malloc."
       ]
     },
     {
@@ -286,12 +292,13 @@
       "acceptance": "Arena identity, geometry queries, OS and huge-page reservation, exclusive arenas, and caller-managed memory follow src/arena.c and src/os.c for the calling subprocess, including commit-callback behavior, size/alignment refusal, containment, exclusive-Heap binding, and destruction with the owning subprocess.",
       "evidence": [
         "differential:arena-destroy",
+        "differential:public-heap-adapter",
         "differential:public-arena",
         "upstream:test-api-heaps",
         "unit:arena"
       ],
       "blocked_by": [
-        "Arena reservation and managed-memory registration exist as crate-private process/child backing owners; no public-shaped arena identity, reservation, managed-memory, or query entry exists."
+        "mi_reserve_os_memory and mi_reserve_os_memory_ex are exported for main-subprocess threads (a child-subprocess thread is refused with ENOMEM, and the OS-layer and manage warnings of a failed reservation are not rendered); huge-page reservation, managed-memory registration, and the arena query entries have no public entry, and no Heap can bind an exclusive arena."
       ]
     },
     {

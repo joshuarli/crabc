@@ -72,6 +72,18 @@ pub(crate) enum FirstRegularStartupArenaSelection {
     ExistingOutsideFirstRegularCapability,
 }
 
+/// Why a `mi_reserve_os_memory_ex2` reservation failed. Each is source
+/// `ENOMEM`; they differ in the C `errno` the path leaves behind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReserveOsMemoryFailure {
+    /// The size check reported through `_mi_error_message` before any mapping.
+    TooLarge,
+    /// An OS primitive (`mmap`, or the cleanup `munmap`) failed with this code.
+    Os(Errno),
+    /// The mapping was made and released again without a failing primitive.
+    Unmanaged,
+}
+
 /// Allocation-owner slots: one per publishable arena mapping plus one spare.
 /// Source `mi_reserve_os_memory_ex2` maps and initializes a fresh arena (its
 /// metadata commit is counted) before `mi_arenas_add` can report a full
@@ -1282,7 +1294,7 @@ impl ProcessArenaBacking {
             if plan.adjust_committed { stats.committed_adjust_decrease(size); }
             // Pinned `mi_arena_reserve` always reserves a shared arena.
             let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large, false, random.as_deref_mut()) };
-            if let Some(id) = result { return Some(id); }
+            if let Ok(id) = result { return Some(id); }
             if plan.adjust_committed { stats.committed_adjust_increase(size); }
         }
         None
@@ -1306,6 +1318,22 @@ impl ProcessArenaBacking {
         &'static self, process: VmProcess<'static>, config: MemoryConfig, size: usize,
         access: MapAccess, allow_large: bool, exclusive: bool, random: crate::os::OsRandom<'_>,
     ) -> Result<ArenaId, Errno> {
+        // SAFETY: forwarded.
+        unsafe { self.reserve_os_memory_reporting_failure(process, config, size, access, allow_large, exclusive, random) }
+            .map_err(|_| Errno::NOMEM)
+    }
+
+    /// [`Self::reserve_os_memory_for_process`] with the failing step: the
+    /// public entry needs it for the C `errno` the source path leaves (the
+    /// failed OS primitive's code, or none).
+    ///
+    /// # Safety
+    /// As [`Self::reserve_os_memory_for_process`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn reserve_os_memory_reporting_failure(
+        &'static self, process: VmProcess<'static>, config: MemoryConfig, size: usize,
+        access: MapAccess, allow_large: bool, exclusive: bool, random: crate::os::OsRandom<'_>,
+    ) -> Result<ArenaId, ReserveOsMemoryFailure> {
         // `mi_reserve_os_memory_ex2` rounds a representable size up to one
         // slice, then reports a size above `MI_MAX_ALLOC_SIZE` (the rounded
         // one when rounding produced it) and returns `ENOMEM`
@@ -1320,10 +1348,11 @@ impl ProcessArenaBacking {
             let _ = crate::process_init::process_error_message(
                 crate::diagnostic_output::SourceErrorReport::ReservationTooLarge { size },
             );
-            return Err(Errno::NOMEM);
+            return Err(ReserveOsMemoryFailure::TooLarge);
         }
-        let _guard = self.reserve_lock.lock()?;
-        unsafe { self.reserve_one_locked(process, config, size, access, allow_large, exclusive, random) }.ok_or(Errno::NOMEM)
+        let _guard = self.reserve_lock.lock().map_err(|_| ReserveOsMemoryFailure::Unmanaged)?;
+        unsafe { self.reserve_one_locked(process, config, size, access, allow_large, exclusive, random) }
+            .map_err(|error| error.map_or(ReserveOsMemoryFailure::Unmanaged, ReserveOsMemoryFailure::Os))
     }
 
     /// Source `mi_reserve_os_memory_ex2` regular aligned map/manage/free.
@@ -1340,9 +1369,9 @@ impl ProcessArenaBacking {
         &self, process: VmProcess<'_>, config: MemoryConfig,
         size: usize, access: MapAccess, allow_large: bool, exclusive: bool,
         random: crate::os::OsRandom<'_>,
-    ) -> Option<ArenaId> {
+    ) -> Result<ArenaId, Option<Errno>> {
         // Reserve a cleanup slot before acquiring any new OS ownership.
-        self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY)?;
+        self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY).ok_or(None)?;
         let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
             size, ARENA_ALIGNMENT, access, allow_large, random);
         let (mut mapping, memory) = match allocation {
@@ -1350,14 +1379,16 @@ impl ProcessArenaBacking {
                 let (mapping, memory) = allocation.into_mapping_and_memory();
                 match unsafe { self.install_owned_os_mapping_locked(process,
                     StoredVmProcess::from_retained_process(process), config, size, mapping, memory, -1, exclusive) } {
-                    Ok(managed) => return Some(managed.arena_id()),
+                    Ok(managed) => return Ok(managed.arena_id()),
                     Err(failure) => { let (mapping, memory, _) = failure.into_parts(); (mapping, memory) }
                 }
             }
             Err(failure) => {
                 // Only a post-map allocation invariant rejection returns a
-                // mapping here; aligned trim failures already leaked.
-                let mapping = failure.into_mapping()?;
+                // mapping here; aligned trim failures already leaked. A
+                // failed primitive leaves its code in the C `errno`.
+                let error = failure.error();
+                let mapping = failure.into_mapping().ok_or(Some(error))?;
                 let memory = MemoryId::os(mapping.base().expect("a returned OS failure owns an active mapping"),
                     mapping.length().expect("a returned OS failure owns its complete length"),
                     mapping.initially_committed(), mapping.initially_zero(), mapping.is_large());
@@ -1374,8 +1405,9 @@ impl ProcessArenaBacking {
             // source does after its warning.
             process.policy().source_warning(
                 crate::diagnostic_output::SourceFormattedMessage::os_free_failure(error, length, address));
+            return Err(Some(error));
         }
-        None
+        Err(None)
     }
 }
 

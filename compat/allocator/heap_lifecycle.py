@@ -17,7 +17,7 @@ TEST = "types::heap_registry::lifecycle::tests::source_ordered_empty_heap_lifecy
 FIELD_COUNT = 108
 # Heaps of the process main subprocess, each side in its own process.
 MAIN_TEST = "subproc::main_heaps::tests::source_ordered_main_subprocess_heap_trace"
-MAIN_FIELD_COUNT = 27
+MAIN_FIELD_COUNT = 32
 
 
 def trace(output: str, section: str = "lifecycle", count: int = FIELD_COUNT) -> list[int]:

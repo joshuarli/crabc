@@ -311,6 +311,18 @@ static void main_subprocess_heaps(void) {
   mpush(subproc->stats.theaps.current - theaps0);
   mpush(subproc->stats.theaps.total - theaps_total0);
   mpush((int64_t)mi_thread_locals_peek()->count);
+
+  /* A Heap created after those were destroyed reuses a freed key whose slot
+     on this thread still holds the destroyed Heap's stale Theap value. */
+  mi_heap_t* reused = mi_heap_new();
+  void* block = mi_heap_malloc(reused, 64);
+  mpush(block != NULL);
+  mpush(subproc->stats.theaps.current - theaps0);
+  mpush((int64_t)mi_thread_locals_peek()->count);
+  mi_free(block);
+  mi_heap_destroy(reused);
+  mpush((int64_t)mi_atomic_load_relaxed(&subproc->heap_count) - heaps0);
+  mpush(subproc->stats.theaps.current - theaps0);
 }
 
 int main(int argc, char** argv) {

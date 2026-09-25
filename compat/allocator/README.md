@@ -98,10 +98,21 @@ A second oracle process runs the same Heap operations on an ordinary thread
 of the process main subprocess against the Rust `subproc::main_heaps` route:
 the Theap and list shapes of a first allocation, a huge OS-backed block that
 `mi_heap_delete` moves to the process main Heap's OS-abandoned list and a
-later free releases, one that `mi_heap_destroy` releases with its Heap, and
-1000 live Heaps, which grow the thread-local slot array.
+later free releases, one that `mi_heap_destroy` releases with its Heap,
+1000 live Heaps, which grow the thread-local slot array, and a Heap created
+on a key those left behind.
 Logs live under `x86_64/heap-lifecycle` in the allocator artifacts
 directory.
+
+`./compat/allocator/run-x86_64.sh allocator-m6-adapter` links the shared
+driver [`x86_64_m6_adapter_driver.c`](x86_64_m6_adapter_driver.c) once
+against the pinned C sources and once against the native adapter's M6
+exports (`mi_heap_*` allocation and lifecycle entries, `mi_reserve_os_memory`
+and `mi_reserve_os_memory_ex`) and compares the two address-free traces:
+reservations with their statistics and errno, Heap allocation entries with
+their failures and messages, main-Heap refusal warnings, test-api.c's
+heap-os1/heap-os2/heap-many, and a second thread that allocates from a shared
+Heap and finishes. Logs live under `x86_64/m6-adapter`.
 
 `./compat/allocator/run-x86_64.sh allocator-m5` is the fail-closed Milestone 5
 gate. [`m5-gate-x86_64-v3.5.0.json`](m5-gate-x86_64-v3.5.0.json) gives each M5

@@ -75,7 +75,7 @@ impl SourceErrno {
     /// `_mi_error_message(err, ...)`'s errno effect for `err`: with a
     /// registered `mi_register_error` handler the handler, not
     /// `mi_error_default`, receives the code and errno is unchanged.
-    fn error_message(error: Errno) -> Self {
+    pub(crate) fn error_message(error: Errno) -> Self {
         #[cfg(target_arch = "x86_64")]
         if crate::process_init::process_output_owner().is_some_and(|owner| owner.has_error_handler()) {
             return Self::Unchanged;

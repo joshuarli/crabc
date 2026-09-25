@@ -244,6 +244,16 @@ pub(crate) fn install_dynamic_backing(backing: NonNull<DynamicThreadLocalBacking
     unsafe { DYNAMIC_BACKING_ROOT = backing.as_ptr() };
 }
 
+/// Restores the immutable count-zero image as the calling thread's regular
+/// dynamic-backing root. `subproc::main_heaps` publishes its own image only
+/// for the duration of one of its slot operations, so the main-Heap owner's
+/// root checks keep seeing this image between them.
+#[inline(always)]
+pub(crate) fn install_empty_dynamic_backing() {
+    // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
+    unsafe { DYNAMIC_BACKING_ROOT = empty_dynamic_backing_ptr() };
+}
+
 /// Clears only the regular dynamic-backing root after its lifecycle owner has
 /// attempted source-ordered metadata release. This intentionally leaves the
 /// fast/default/cached/helper roots untouched; their lifecycle is separate.
