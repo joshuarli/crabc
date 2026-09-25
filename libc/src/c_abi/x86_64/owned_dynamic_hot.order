@@ -12,10 +12,13 @@
 # One name per line: a C symbol or a hash-free demangled Rust path, as printed
 # by the pinned llvm-nm --demangle. The builder resolves each to the linked
 # object's symbol and records unresolved names in libc-shared provenance.
-# This changes only layout. Derived by single-stepping each row's process and
+# This changes only layout. Derived by single-stepping each row's process (plain
+# and under the memory-observer R/C protocol) and
 # mapping every executed libc.so address to its function; refresh it the same
 # way when startup or hot paths move.
 <core::slice::iter::Iter<&[u8]> as core::iter::traits::iterator::Iterator>::find_map::<usize, crabc_core::vdso::vdso_symbol_offset::{closure#0}>
+read
+__errno_location
 crabc_core::vdso::file_range_at_virtual
 crabc_core::vdso::clock_gettime_symbol_offset
 crabc_core::vdso::virtual_range_to_file_with_permissions
@@ -294,6 +297,10 @@ write
 vfprintf
 vfscanf
 vsscanf
+munmap
+mprotect
+calloc
+mi_zalloc
 # Native-shadow backend: the functions the same rows execute only in the Rust
 # mimalloc product (the fixed-C product records them as unresolved).
 <crabc_mimalloc::main_theap::MainStaticHeapFoundation>::initialize_with_publishing_observer::<<crabc_mimalloc::main_theap::MainStaticHeapFoundation>::initialize::{closure#0}>
