@@ -33,6 +33,8 @@ readonly replaceable_functions=(
     getenv setenv unsetenv clearenv
     printf vprintf fprintf vfprintf sprintf vsprintf snprintf vsnprintf
     dprintf vdprintf asprintf vasprintf scanf vscanf fscanf vfscanf sscanf vsscanf
+    sin cos tan exp log pow acosh acoshf erf erfc lgamma tgamma frexp ldexp
+    cabs cexp csqrt cpow sinl fmal hypotl
 )
 
 [ "$#" -le 1 ] || {

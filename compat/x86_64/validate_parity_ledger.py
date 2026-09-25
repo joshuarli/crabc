@@ -8440,7 +8440,7 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
         "localized",
         "-frounding-math",
         "fenv API or policy",
-        'include_str!("math_log2_musl_x86_64.S")',
+        'musl_object_assembly!("math_log2_musl_x86_64")',
         "public x86 support",
     ):
         require(snippet in leaf, f"math_log2 leaf omits {snippet}")

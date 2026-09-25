@@ -100,7 +100,7 @@ class OwnedStaticMathBinary80ConsumerTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
         self.assertNotIn('-lm -o "$candidate_raw"', runner)
-        self.assertIn('include_str!("math_elementary_long_double_musl_x86_64.S")', elementary_module)
+        self.assertIn('musl_object_assembly!("math_elementary_long_double_musl_x86_64")', elementary_module)
         self.assertIn('"src/math/fmal.c"', elementary_generator)
         self.assertIn('"src/math/hypotl.c"', elementary_generator)
         self.assertIn(".global log1pl", x87_module)

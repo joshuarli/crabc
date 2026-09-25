@@ -36,6 +36,14 @@ the items inline. The roster covers the malloc family, the string, memory and
 environment entries, `strerror`/`perror`, `atoi`/`atol`/`atoll`, `qsort`,
 and the printf/scanf entry points.
 
+The generated musl math translations (`libc/src/c_abi/x86_64/*_musl_x86_64.S`)
+concatenate one compiled musl source file per marker. `libc/build.rs`
+partitions each at those markers, and `musl_object_assembly!` assembles one
+module per musl object in the installed static build, so each math function
+has the member musl gives it; a symbol the generator made local but another
+object references becomes a hidden global of its defining object. Other
+builds assemble the checked translation unchanged.
+
 ## String role
 
 `STRINGS` defines counting `strlen` and `getenv`. Musl reaches them from

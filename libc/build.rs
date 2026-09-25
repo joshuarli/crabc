@@ -38,8 +38,140 @@ fn x86_runtime_capabilities() {
     }
 }
 
+/// Partition each generated musl assembly translation into its source objects.
+///
+/// The checked `src/c_abi/x86_64/*_x86_64.S` translations concatenate one
+/// compiled musl source file per `/* musl-1.2.6/<path> */` marker. Musl's
+/// libc.a keeps each source file in its own member, so a static program may
+/// define one of its functions and link against the rest. The installed
+/// static archive emits one member per Rust module; `musl_object_assembly!`
+/// (`src/c_abi/x86_64/static_archive_member.rs`) therefore includes, in that
+/// build only, one module per source object from
+/// `$OUT_DIR/musl_objects/<stem>.rs`. A symbol a generator made local to the
+/// combined translation but that another object references becomes a hidden
+/// global of its defining object, so the partition links to the same
+/// definitions and exports nothing new. Every other build assembles the
+/// checked translation unchanged.
+fn split_musl_objects() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fmt::Write as _;
+    use std::path::PathBuf;
+
+    const MARKER: &str = "/* musl-1.2.6/";
+    let is_symbol_byte = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$');
+    let tokens = |text: &str| -> BTreeSet<String> {
+        text.split(|character: char| !(character.is_ascii() && is_symbol_byte(character as u8)))
+            .filter(|token| !token.is_empty() && !token.starts_with(".L"))
+            .map(str::to_owned)
+            .collect()
+    };
+    let directive_symbol = |line: &str, directives: &[&str]| -> Option<String> {
+        let trimmed = line.trim_start();
+        directives.iter().find_map(|directive| {
+            let rest = trimmed.strip_prefix(directive)?;
+            if !rest.starts_with([' ', '\t']) {
+                return None;
+            }
+            let name = rest.trim_start().split(|c: char| c == ',' || c.is_whitespace()).next()?;
+            (!name.is_empty()).then(|| name.to_owned())
+        })
+    };
+
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
+    let source_dir = manifest.join("src/c_abi/x86_64");
+    let output_root = PathBuf::from(std::env::var_os("OUT_DIR").expect("output directory")).join("musl_objects");
+    println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed={}", source_dir.display());
+    let mut sources: Vec<PathBuf> = std::fs::read_dir(&source_dir)
+        .expect("x86 source directory")
+        .map(|entry| entry.expect("x86 source entry").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "S"))
+        .collect();
+    sources.sort();
+    for path in sources {
+        println!("cargo::rerun-if-changed={}", path.display());
+        let text = std::fs::read_to_string(&path).expect("musl assembly translation");
+        let stem = path.file_stem().expect("assembly stem").to_str().expect("UTF-8 stem").to_owned();
+        let starts: Vec<usize> = text.match_indices(MARKER).map(|(index, _)| index)
+            .filter(|&index| index == 0 || text.as_bytes()[index - 1] == b'\n')
+            .collect();
+        if starts.is_empty() {
+            continue;
+        }
+        let header = &text[..starts[0]];
+        let trailer = "\n.section .note.GNU-stack,\"\",@progbits\n";
+        let mut chunks: Vec<(String, String)> = Vec::new();
+        for (position, &start) in starts.iter().enumerate() {
+            let end = starts.get(position + 1).copied().unwrap_or(text.len());
+            let body = text[start..end].replace(trailer.trim_start(), "");
+            let source = body[MARKER.len()..].split(" */").next().expect("marker path").to_owned();
+            let tag: String = source.trim_end_matches(".c").trim_end_matches(".s").trim_end_matches(".S")
+                .chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+            chunks.push((tag, body));
+        }
+        // Symbols each object defines, and those it declares global or weak.
+        let mut defined: BTreeMap<String, usize> = BTreeMap::new();
+        let mut exported: BTreeSet<String> = BTreeSet::new();
+        for (index, (_, body)) in chunks.iter().enumerate() {
+            for line in body.lines() {
+                if let Some(name) = directive_symbol(line, &[".globl", ".global", ".weak"]) {
+                    exported.insert(name);
+                }
+                let label = line.strip_suffix(':').filter(|name| {
+                    !name.is_empty() && !name.starts_with(".L") && name.bytes().all(is_symbol_byte)
+                });
+                let set = directive_symbol(line, &[".set", ".equ", ".comm", ".lcomm"]);
+                for name in label.map(str::to_owned).into_iter().chain(set) {
+                    if let Some(previous) = defined.insert(name.clone(), index) {
+                        assert_eq!(previous, index, "{stem}: {name} is defined by two musl objects");
+                    }
+                }
+            }
+        }
+        let mut rust = String::new();
+        let directory = output_root.join(&stem);
+        std::fs::create_dir_all(&directory).expect("musl object directory");
+        for (index, (tag, body)) in chunks.iter().enumerate() {
+            let mut shared: BTreeSet<&String> = BTreeSet::new();
+            for (other, (_, other_body)) in chunks.iter().enumerate() {
+                if other != index {
+                    let used = tokens(other_body);
+                    shared.extend(defined.iter().filter(|(name, owner)| {
+                        **owner == index && !exported.contains(*name) && used.contains(*name)
+                    }).map(|(name, _)| name));
+                }
+            }
+            let mut object = String::from(header);
+            for line in body.lines() {
+                match directive_symbol(line, &[".local"]) {
+                    Some(name) if shared.contains(&name) => {}
+                    _ => {
+                        object.push_str(line);
+                        object.push('\n');
+                    }
+                }
+            }
+            for name in &shared {
+                writeln!(object, "\t.globl\t{name}\n\t.hidden\t{name}").expect("string write");
+            }
+            object.push_str(trailer);
+            let file = directory.join(format!("{tag}.S"));
+            std::fs::write(&file, object).expect("musl object assembly");
+            writeln!(
+                rust,
+                "mod {tag}_source {{ core::arch::global_asm!(include_str!({:?}), options(att_syntax)); }}",
+                file.display().to_string(),
+            ).expect("string write");
+        }
+        std::fs::write(output_root.join(format!("{stem}.rs")), rust).expect("musl object modules");
+    }
+}
+
 fn main() {
     x86_runtime_capabilities();
+    if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64") {
+        split_musl_objects();
+    }
     // The installed static product selects musl's loaderless dlfcn stubs
     // (`static_dlfcn.rs`) rather than carrying a dynamic-loader weak import
     // into a closed ET_EXEC image.

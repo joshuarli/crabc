@@ -12955,7 +12955,7 @@ esac
             "src/math/cbrt.c",
             "src/math/cbrtf.c",
             "-frounding-math",
-            'include_str!("math_cbrt_musl_x86_64.S")',
+            'musl_object_assembly!("math_cbrt_musl_x86_64")',
             "public x86 support",
         ):
             self.assertIn(required, leaf)
@@ -13050,7 +13050,7 @@ esac
             "exp2f_data",
             "WANT_ROUNDING",
             "-ffp-contract=off",
-            'include_str!("math_exp2_musl_x86_64.S")',
+            'musl_object_assembly!("math_exp2_musl_x86_64")',
             "public x86 support",
         ):
             self.assertIn(required, leaf)
@@ -13152,7 +13152,7 @@ esac
             "src/math/expm1f.c",
             "FORCE_EVAL",
             "-ffp-contract=off",
-            'include_str!("math_expm1_musl_x86_64.S")',
+            'musl_object_assembly!("math_expm1_musl_x86_64")',
             "public x86 support",
         ):
             self.assertIn(required, leaf)
@@ -13252,7 +13252,7 @@ esac
             "signed zero",
             "negative finite",
             "-ffp-contract=off",
-            'include_str!("math_log10_musl_x86_64.S")',
+            'musl_object_assembly!("math_log10_musl_x86_64")',
             "public x86 support",
         ):
             self.assertIn(required, leaf)
@@ -13346,7 +13346,7 @@ esac
             "-frounding-math",
             "`toint` add/subtract sequence",
             "`FE_INEXACT`",
-            'include_str!("math_ceil_musl_x86_64.S")',
+            'musl_object_assembly!("math_ceil_musl_x86_64")',
             "public x86 support",
         ):
             self.assertIn(required, leaf)
@@ -13440,7 +13440,7 @@ esac
             "-frounding-math",
             "`toint` add/subtract sequence",
             "`FE_INEXACT`",
-            'include_str!("math_floor_musl_x86_64.S")',
+            'musl_object_assembly!("math_floor_musl_x86_64")',
             "public x86 support",
         ):
             self.assertIn(required, leaf)
@@ -13539,7 +13539,7 @@ esac
             "`toint` add/subtract sequence",
             "half-away correction",
             "`FE_INEXACT`",
-            'include_str!("math_round_musl_x86_64.S")',
+            'musl_object_assembly!("math_round_musl_x86_64")',
             "public x86 support",
         ):
             self.assertIn(required, leaf)
@@ -13647,7 +13647,7 @@ esac
             "src/math/__math_invalidf.c",
             "-frounding-math",
             "localized",
-            'include_str!("math_log2_musl_x86_64.S")',
+            'musl_object_assembly!("math_log2_musl_x86_64")',
             "public x86 support",
         ):
             self.assertIn(required, leaf)

@@ -126,7 +126,7 @@ class OwnedStaticMathScalarConsumerTests(unittest.TestCase):
             "generate_libc_math_scalar_completion.py",
             "pinned musl 1.2.6",
             "binary80 `fmal`, `hypotl`, and `log1pl` ABI is intentionally separate",
-            "include_str!(\"math_scalar_completion_musl_x86_64.S\")",
+            "musl_object_assembly!(\"math_scalar_completion_musl_x86_64\")",
         ):
             self.assertIn(required, module)
         self.assertIn(

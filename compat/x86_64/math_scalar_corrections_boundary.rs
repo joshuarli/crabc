@@ -2,6 +2,8 @@
 //! The installed sysroot test separately proves their runtime integration.
 #![no_std]
 
+include!("../../libc/src/c_abi/x86_64/static_archive_member.rs");
+
 #[path = "../../libc/src/c_abi/x86_64/math_scalar_completion.rs"]
 mod math_scalar_completion;
 #[path = "../../libc/src/c_abi/x86_64/math_pow.rs"]

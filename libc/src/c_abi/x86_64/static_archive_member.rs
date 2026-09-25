@@ -28,3 +28,17 @@ macro_rules! static_archive_member {
         )*
     };
 }
+
+/// Assemble one generated musl translation (`$stem.S` beside this file).
+///
+/// The installed static archive takes one module, hence one member, per musl
+/// source object from the partition `build.rs` writes; every other build
+/// assembles the checked combined translation unchanged.
+macro_rules! musl_object_assembly {
+    ($stem:literal) => {
+        #[cfg(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime)))]
+        include!(concat!(env!("OUT_DIR"), "/musl_objects/", $stem, ".rs"));
+        #[cfg(not(all(crabc_owned_static_sysroot, not(crabc_x86_dynamic_runtime))))]
+        core::arch::global_asm!(include_str!(concat!($stem, ".S")), options(att_syntax));
+    };
+}

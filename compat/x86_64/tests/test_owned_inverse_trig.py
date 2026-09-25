@@ -104,7 +104,7 @@ class OwnedInverseTrigTests(unittest.TestCase):
         self.assertIn("`asin`, `acos`, `atan`, and", module)
         self.assertIn("ambient-libm", module)
         self.assertIn("`fabs` and", module)
-        self.assertIn("include_str!(\"owned_inverse_trig_musl_x86_64.S\")", module)
+        self.assertIn("musl_object_assembly!(\"owned_inverse_trig_musl_x86_64\")", module)
 
     def test_link_and_differential_probes_retain_all_observable_boundaries(self) -> None:
         link_probe = LINK_PROBE_PATH.read_text(encoding="utf-8")

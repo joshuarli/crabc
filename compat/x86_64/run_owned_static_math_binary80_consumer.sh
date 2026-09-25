@@ -92,7 +92,7 @@ for source in \
 	compat/x86_64/generate_libc_math_elementary_long_double.py; do
 	[ -f "$source" ] || fail "missing Rust/provider provenance source $source"
 done
-grep -Fq 'include_str!("math_elementary_long_double_musl_x86_64.S")' \
+grep -Fq 'musl_object_assembly!("math_elementary_long_double_musl_x86_64")' \
 	libc/src/c_abi/x86_64/math_elementary_long_double.rs ||
 	fail "fmal/hypotl are no longer Rust global_asm build input"
 grep -Fq 'src/math/fmal.c' compat/x86_64/generate_libc_math_elementary_long_double.py ||
