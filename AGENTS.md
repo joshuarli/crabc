@@ -130,8 +130,11 @@ primitives remain in reviewed dependencies, including vectorized ones.
   inside the owning checkout's ignored `.work/` boundary. Honor stricter
   launcher paths and existing ignored report locations. No external scratch,
   symlink escapes, or shared mutable build outputs.
-- Use `.claude/skills/lanes` and `.claude/agents/crabc-lane.md` for parallel
-  lane work; current user orchestration instructions still govern models.
+- For Codex lane coordination, use `.agents/skills/lanes/SKILL.md` to map the
+  shared lane process in `.claude/skills/lanes` and
+  `.claude/agents/crabc-lane.md` to Codex collaboration tools. For Claude Code,
+  use those Claude lane instructions directly; current user orchestration
+  instructions still govern models.
   Keep 16 lane agents occupied while `plan.md` has open work, alongside
   continuous integration: when a lane finishes, integrate it and start its
   successor in the same pass. Each lane gets one well-defined, difficult,

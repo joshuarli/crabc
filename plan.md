@@ -72,9 +72,11 @@ are not transferable passes for a different revision.
 
 ## Parallel lanes
 
-Use the `.claude/skills/lanes` skill and `.claude/agents/crabc-lane.md`: at
-most 16 concurrent lane agents, each with one bounded, unique deliverable and
-an exclusive write boundary in `.work/worktrees/lane-<id>`. The parent session
+Use `.agents/skills/lanes/SKILL.md` for Codex coordination, or the
+`.claude/skills/lanes` skill for Claude Code; both use
+`.claude/agents/crabc-lane.md` for lane boundaries and handoffs. Keep at most 16
+concurrent lane agents, each with one bounded, unique deliverable and an
+exclusive write boundary in `.work/worktrees/lane-<id>`. The parent session
 alone integrates to `main`. A failure outside a lane's boundary goes to one
 owner. Nobody uses `git stash`. Qualifying performance measurements wait for an
 uncontended host.
