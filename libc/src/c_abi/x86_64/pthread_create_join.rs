@@ -190,9 +190,13 @@ pub(super) unsafe fn publish_initial_selected_pthread_cancellation_state() {
             pthread_cancel::main_cancellation_state(),
         )
     };
-    INITIAL_SIGNAL_TARGET_TP.store(pthread_identity::current_thread_pointer() as usize, Ordering::Relaxed);
+    let thread_pointer = pthread_identity::current_thread_pointer();
+    INITIAL_SIGNAL_TARGET_TP.store(thread_pointer as usize, Ordering::Relaxed);
     INITIAL_SIGNAL_TARGET_CANCELLATION.store(pthread_cancel::main_cancellation_state() as usize, Ordering::Relaxed);
-    INITIAL_SIGNAL_TARGET_TID.store(current_linux_thread_id().unwrap_or(0), Ordering::Release);
+    // The TLS owner recorded this task's TID when it attached the initial
+    // thread moments ago; reuse it rather than asking the kernel again.
+    let tid = static_tls::selected_initial_thread_id(thread_pointer).or_else(current_linux_thread_id);
+    INITIAL_SIGNAL_TARGET_TID.store(tid.unwrap_or(0), Ordering::Release);
 }
 
 // The initial task has no reclaimable registry mapping. Fork may adopt a
