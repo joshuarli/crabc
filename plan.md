@@ -27,13 +27,13 @@ are not transferable passes for a different revision.
   conditions. `compat.abi-differential` reads all its evidence rows from one
   published set (`abi-differential-evidence assemble`); only the selection
   closure (382 named blockers, mostly companion receipts and unadmitted
-  families) stays unmet. Only `libc.c-abi-compat` still carries a prose
-  evidence row (lane `c-abi-family`). `consumer.rust-std-lto` and
+  families) stays unmet. `libc.c-abi-compat` now runs a physical same-cohort
+  text/math/locale/stdio family admission; its retained receipt is still
+  pending on the final candidate revision. `consumer.rust-std-lto` and
   `consumer.source-build` pass their evidence on development cohorts and
   publish receipts; `performance.release` is a read-only receipt gate whose
   runtime, native-facade and allocator M9 inputs do not exist yet. Allocator
-  M4 passes all but the upstream `test-api.c` link (waits on M6/M7 adapter
-  exports); M5 passes six of ten gates. C mimalloc remains the selected
+  M5 passes six of ten gates. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
@@ -45,9 +45,13 @@ are not transferable passes for a different revision.
   compared against an evidence-only pinned v3.5.0 C product (the selected C
   backend is `libmimalloc-sys` 0.1.49, mimalloc 3.3.2); the port map
   classifies every intentional difference (`difference_kind`). The M8
-  owned-libc integration gate exists; its failing rows trace to an
-  `unown_with` release-then-classify race that returns NULL under load
-  (lane `m5-remote`). Static replacement rejects 23 of 1406 musl-replaceable
+  owned-libc integration gate exists; the named `unown_with`
+  release-then-classify race has a source-bound regression, and the canonical
+  native allocator stress plus three soak seeds pass, while full M8 remains
+  open. All 57 `native_*` integration targets pass; the earlier attachment
+  defect was stale. The M7 options/environment gate passes its source-matched
+  profile and 660-key C/Rust differential; full M7 remains open. Static
+  replacement rejects 23 of 1406 musl-replaceable
   functions; startup PSS is about 600 KiB against musl's ~515 KiB.
   `libc.c-abi-compat` has an executable family aggregate
   (`owned-c-abi-compat-family`); its two allocator capabilities admit only on
@@ -76,8 +80,10 @@ are not transferable passes for a different revision.
   chain as one restartable command on a clean candidate revision. The M9 report path measures
   throughput, p99 and peak RSS/PSS for all 38 rows but no report qualifies
   yet (contended host). The 114-row runtime scorecard runs
-  end to end; startup is 32 whole-process syscalls against musl's 11 and ~2×
-  PSS fails every row.
+  end to end; its older startup measure was 32 whole-process syscalls against
+  musl's 11. A later scoped development smoke on the current loader is 27
+  calls after canonical-alias reuse; full qualified CPU/PSS evidence still
+  waits for an uncontended host and a final candidate revision.
 - **Resume here, in order:**
   1. Family admissions are the critical path: every selected-private
      capability completes when its family is admitted. Admission receipts
