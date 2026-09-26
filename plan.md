@@ -47,8 +47,9 @@ are not transferable passes for a different revision.
   classifies every intentional difference (`difference_kind`). The M8
   owned-libc integration gate exists; the named `unown_with`
   release-then-classify race has a source-bound regression, and the canonical
-  native allocator stress plus three soak seeds pass, while full M8 remains
-  open. All 57 `native_*` integration targets pass; the earlier attachment
+  native allocator stress plus three soak seeds pass. `m8.rust-std` passes on
+  source-built native-shadow products with a rehashed consumer receipt; full
+  M8 remains open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; full M7 remains open. Static
   replacement now has a source-bound installed sweep with zero divergent
