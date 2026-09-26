@@ -57,3 +57,16 @@ for name in caller callee; do
 done
 "$lld" -static -e _start -Map cross-member.map caller.o callee.o -o cross-member
 ```
+
+One selected Rust archive member carries an eight-byte anonymous `GLOBAL HIDDEN`
+object in `.rodata.cst8`. The static link merges that input section and
+localizes the final symbol. The authority admits this form only when the
+relocation names that selected member's source symbol, its bytes occur at one
+place in the mapped constant pool, and the unique final `LOCAL HIDDEN` symbol
+points to that place. Other source bindings, visibility, section shape, source
+positions, final positions, and duplicate final constants remain invalid.
+`OwnedStaticLinkAuthorityMergedConstantTests` replays the selected archive,
+trace, map, and executable supplied through
+`CRABC_STATIC_LINK_AUTHORITY_SYSCALL_RUNNER` and
+`CRABC_STATIC_LINK_AUTHORITY_STATIC_PRODUCT`; it mutates copies of the real ELF
+bytes for rejection cases.

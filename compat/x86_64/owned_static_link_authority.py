@@ -263,17 +263,29 @@ def _require_static_functions(map_path, executable, admitted, functions):
         require(0 < symbol['section'] < len(source.sections), 'unresolved static relocation target')
         section = source.sections[symbol['section']]
         if section[2] & 0x10:  # SHF_MERGE: constant pieces need not keep input order.
+            # A selected Rust member can expose an anonymous constant as
+            # GLOBAL HIDDEN. LLD localizes it after merging, so its final
+            # symbol must identify the sole matching source constant.
+            hidden_anonymous = (
+                symbol['binding'] == 'GLOBAL' and symbol['visibility'] == 'HIDDEN'
+                and symbol['type'] == 'OBJECT' and symbol['version_index'] == 1
+                and section_name(source, section) == '.rodata.cst8'
+                and section[9] == symbol['size'] == 8
+                and re.fullmatch(r'anon\.[0-9a-f]{32}\.[0-9]+\.llvm\.[0-9]+', symbol['name']) is not None
+            )
             require(section[1] == 1 and not section[2] & 0x21 and section[9] > 0
-                    and symbol['binding'] == 'LOCAL' and symbol['type'] == 'OBJECT'
+                    and (symbol['binding'] == 'LOCAL' and symbol['type'] == 'OBJECT'
+                         or hidden_anonymous)
                     and symbol['size'] == section[9] and symbol['value'] % section[9] == 0
                     and symbol['value'] + symbol['size'] <= section[5],
                     'unclassified merged static relocation target')
             key = ('<internal>', section_name(source, section))
             require(key in contributions, 'merged static target lacks its constant pool')
             base, extent, _name = contributions[key]
-            outputs = [s for s in final.sections if section_name(final, s) == '.rodata']
+            outputs = [(index, s) for index, s in enumerate(final.sections)
+                       if section_name(final, s) == '.rodata']
             require(len(outputs) == 1, 'merged static target lacks read-only output')
-            output = outputs[0]
+            output_index, output = outputs[0]
             require(output[1] == 1 and output[2] & 3 == 2 and base % section[9] == 0
                     and extent % section[9] == 0 and output[3] <= base
                     and base + extent <= output[3] + output[5], 'merged static constant pool placement differs')
@@ -283,6 +295,13 @@ def _require_static_functions(map_path, executable, admitted, functions):
             matches = [base + i for i in range(0, extent, section[9])
                        if final.data[offset + i:offset + i + symbol['size']] == constant]
             require(len(matches) == 1, 'merged static target lacks its unique selected constant')
+            if hidden_anonymous:
+                after = final_symbols.get(symbol['name'])
+                require(after is not None and after['type'] == 'OBJECT'
+                        and after['binding'] == 'LOCAL' and after['visibility'] == 'HIDDEN'
+                        and after['section'] == output_index and after['size'] == 8
+                        and after['version_index'] == 1 and after['value'] == matches[0],
+                        'merged static target final symbol placement differs')
             return matches[0], False
         address = placed_section(owner, symbol['section']) + symbol['value']
         require(symbol['value'] + symbol['size'] <= section[5], 'static target exceeds selected section')
