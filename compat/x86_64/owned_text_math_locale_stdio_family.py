@@ -1394,8 +1394,13 @@ def admission_facts(root: Path, receipt_path: Path) -> dict[str, object]:
             "family admission request differs")
     matrix = _require_matrix(_strict_json(matrix_path, "family admission POSIX matrix"))
     require(same(matrix["inputs"].get("source"), source), "family admission POSIX source differs")
+    _matrix_inputs, products = _product_pairs(root, matrix)
     static_preparation = _input_receipt(root, matrix["inputs"], "static_preparation")
     dynamic_qualification = _input_receipt(root, matrix["inputs"], "dynamic_qualification")
+    product_seals = {
+        pair: {kind: _snapshot_identity(root, products[pair][kind]) for kind in ("static", "dynamic")}
+        for pair in PAIRS
+    }
     components = retained.get("components")
     require(isinstance(components, Mapping) and set(components) == set(COMPONENTS),
             "family admission component roster differs")
@@ -1408,12 +1413,33 @@ def admission_facts(root: Path, receipt_path: Path) -> dict[str, object]:
         pairs = component["pairs"]
         require(isinstance(pairs, Mapping) and set(pairs) == set(PAIRS),
                 f"family admission {name} pair roster differs")
+        request_pair = requests[name]
+        retained_inputs = ({"receipt", "evidence_root"} if request_pair.receipt is not None else
+                           {"report", "expected_inputs"} if request_pair.expected_inputs is not None else
+                           {"report"})
         for pair in PAIRS:
             record = pairs[pair]
-            require(isinstance(record, Mapping) and record.get("modes") == list(PAIR_MODES)
+            require(isinstance(record, Mapping)
+                    and set(record) == retained_inputs | {"modes", "products", "rows"}
+                    and record.get("modes") == list(PAIR_MODES)
                     and isinstance(record.get("rows"), Mapping)
                     and set(record["rows"]) == set(specification.rows),
                     f"family admission {name} {pair} modes or rows differ")
+            require(same(record["products"], product_seals[pair]),
+                    f"family admission {name} {pair} product seal differs")
+            if request_pair.receipt is not None:
+                require(same(record["receipt"], _identity(root, request_pair.receipt))
+                        and request_pair.evidence_roots is not None
+                        and same(record["evidence_root"],
+                                 _snapshot_identity(root, request_pair.evidence_roots[pair])),
+                        f"family admission {name} {pair} aggregate evidence changed")
+            else:
+                require(same(record["report"], _identity(root, request_pair.reports[pair])),
+                        f"family admission {name} {pair} report changed")
+                if request_pair.expected_inputs is not None:
+                    require(same(record["expected_inputs"],
+                                 _identity(root, request_pair.expected_inputs[pair])),
+                            f"family admission {name} {pair} expected inputs changed")
     require(same(current_source_identity(root), source), "family admission source changed")
     return {
         "assessment": _identity(root, receipt),

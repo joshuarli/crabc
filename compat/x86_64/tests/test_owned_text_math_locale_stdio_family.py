@@ -311,6 +311,30 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         self.assertEqual(facts["dynamic_qualification"],
                          coordinator.family.file_identity(fixture.root, fixture.dynamic_qualification))
 
+        report = fixture.reports["locale"]["primary"]
+        original_report = report.read_text(encoding="utf-8")
+        report.write_text("changed\n", encoding="utf-8")
+        with patches[0], patches[2]:
+            with self.assertRaisesRegex(coordinator.FamilyError, "locale primary report changed"):
+                coordinator.admission_facts(fixture.root, output)
+        report.write_text(original_report, encoding="utf-8")
+
+        payload = fixture.aggregate_pair_payloads["primary"]
+        original_payload = payload.read_text(encoding="utf-8")
+        payload.write_text("changed\n", encoding="utf-8")
+        with patches[0], patches[2]:
+            with self.assertRaisesRegex(coordinator.FamilyError, "aggregate evidence changed"):
+                coordinator.admission_facts(fixture.root, output)
+        payload.write_text(original_payload, encoding="utf-8")
+
+        product_payload = fixture.products["primary"]["dynamic"] / "payload"
+        original_product = product_payload.read_text(encoding="utf-8")
+        product_payload.write_text("changed\n", encoding="utf-8")
+        with patches[0], patches[2]:
+            with self.assertRaisesRegex(coordinator.FamilyError, "product seal differs"):
+                coordinator.admission_facts(fixture.root, output)
+        product_payload.write_text(original_product, encoding="utf-8")
+
         with mock.patch.multiple(coordinator, ROSTER_PATH=fixture.roster,
                                  current_source_identity=mock.Mock(return_value={**SOURCE, "revision": "c" * 40})):
             with self.assertRaisesRegex(coordinator.FamilyError, "not bound to current source"):
