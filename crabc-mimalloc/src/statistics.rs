@@ -106,7 +106,7 @@ impl StatCount {
 
     /// Adds one selected source record in `mi_stats_add` order.
     ///
-    /// Pinned `src/stats.c:99-114` first adds `total`, then samples and adds
+    /// The pinned source first adds `total`, then samples and adds
     /// source current, and finally samples source peak to raise the
     /// destination peak from that prior destination current plus source peak.
     /// These are deliberately relaxed, non-transactional observations: a
