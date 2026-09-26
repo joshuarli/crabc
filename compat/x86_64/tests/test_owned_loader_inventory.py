@@ -295,6 +295,23 @@ class OwnedLoaderInventoryTests(unittest.TestCase):
             )["entries"],
             2,
         )
+        indexed_relr = (
+            "Relocation section '.relr.dyn' at offset 0x10 contains 2 entries which relocate 3 locations:\n"
+            "Index: Entry            Address           Symbolic Address\n"
+            "0000:  0000000000001000 0000000000001000  .tdata + 0x8\n"
+            "0001:  0000000000000003 0000000000001008  .tdata + 0x10\n"
+            "                        0000000000001010  .tdata + 0x18\n"
+        )
+        indexed = inventory.parse_relocations(indexed_relr)
+        self.assertEqual(indexed["entries"], 3)
+        self.assertEqual(indexed["sections"][0]["declared_entries"], 2)
+        self.assertEqual(indexed["sections"][0]["encoded_entries"], 2)
+        with self.assertRaisesRegex(inventory.InventoryError, "truncated"):
+            inventory.parse_relocations(indexed_relr.replace("3 locations", "4 locations"))
+        with self.assertRaisesRegex(inventory.InventoryError, "truncated"):
+            inventory.parse_relocations(indexed_relr.replace("contains 2 entries", "contains 3 entries"))
+        with self.assertRaisesRegex(inventory.InventoryError, "truncated|malformed"):
+            inventory.parse_relocations(indexed_relr.replace("0001:", "0002:"))
         with self.assertRaisesRegex(inventory.InventoryError, "truncated"):
             inventory.parse_dynamic_symbols(
                 "Symbol table '.dynsym' contains 2 entries:\n"

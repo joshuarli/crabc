@@ -65,10 +65,16 @@ RAW_STREAMS = (
 SUBJECTS = ("musl-loader", "candidate-loader", "candidate-libc")
 MUSL_LOADER_PATH = "lib/ld-musl-x86_64.so.1"
 
-_RELOC_SECTION = re.compile(r"^Relocation section '([^']+)'[^\n]*contains (\d+) entr(?:y|ies):")
+_RELOC_SECTION = re.compile(
+    r"^Relocation section '([^']+)'[^\n]*contains (\d+) entr(?:y|ies)"
+    r"(?: which relocate (\d+) locations)?:$"
+)
 _RELOC_TYPE = re.compile(r"\b(R_[A-Z0-9_]+)\b")
 _RELR_ENTRY = re.compile(r"^\s*(?:0x)?[0-9a-fA-F]+\b")
 _RELR_SUMMARY = re.compile(r"^\s*(\d+)\s+offsets?\s*$")
+_RELR_INDEX_HEADER = re.compile(r"^Index:\s+Entry\s+Address\s+Symbolic Address\s*$")
+_RELR_INDEX_ROW = re.compile(r"^([0-9]+):\s+[0-9a-fA-F]{16}\s+[0-9a-fA-F]{16}(?:\s+.*)?$")
+_RELR_EXPANDED_ROW = re.compile(r"^\s+[0-9a-fA-F]{16}(?:\s+.*)?$")
 _DYNAMIC = re.compile(r"^\s*(0x[0-9a-fA-F]+)\s+\(([^)]+)\)\s+(.*)$")
 _DYNSYM_COUNT = re.compile(r"^Symbol table '([^']+)' contains (\d+) entr(?:y|ies):")
 _RELOC_HEADER = re.compile(r"^\s*Offset\s+Info\s+Type\b")
@@ -433,15 +439,24 @@ def parse_relocations(output: str) -> dict[str, Any]:
         return {"sections": [], "types": {}, "entries": 0}
     sections: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
+    indexed_relr = False
+    relr_header_seen = False
     for line in output.splitlines():
         match = _RELOC_SECTION.match(line)
         if match is not None:
+            indexed_relr = match.group(3) is not None
+            relr_header_seen = False
+            require(not indexed_relr or match.group(1).startswith(".relr"),
+                    "readelf relocation stream is malformed")
             current = {
                 "name": match.group(1),
                 "declared_entries": int(match.group(2)),
                 "observed_entries": 0,
                 "types": {},
             }
+            if indexed_relr:
+                current["encoded_entries"] = 0
+                current["expanded_offsets"] = int(match.group(3))
             sections.append(current)
             continue
         if current is None:
@@ -449,7 +464,23 @@ def parse_relocations(output: str) -> dict[str, Any]:
             continue
         if not line.strip():
             continue
-        if (kind := _RELOC_TYPE.search(line)) is not None:
+        if indexed_relr:
+            if _RELR_INDEX_HEADER.match(line):
+                require(not relr_header_seen and not current["observed_entries"],
+                        "readelf RELR stream is malformed")
+                relr_header_seen = True
+            elif (indexed := _RELR_INDEX_ROW.match(line)) is not None:
+                require(relr_header_seen and int(indexed.group(1)) == current["encoded_entries"],
+                        "readelf RELR stream is malformed")
+                current["encoded_entries"] += 1
+                current["observed_entries"] += 1
+            elif _RELR_EXPANDED_ROW.match(line):
+                require(relr_header_seen and current["encoded_entries"] > 0,
+                        "readelf RELR stream is malformed")
+                current["observed_entries"] += 1
+            else:
+                raise InventoryError("readelf RELR stream is malformed")
+        elif (kind := _RELOC_TYPE.search(line)) is not None:
             relocation = kind.group(1)
             current["observed_entries"] += 1
             current["types"][relocation] = current["types"].get(relocation, 0) + 1
@@ -466,6 +497,9 @@ def parse_relocations(output: str) -> dict[str, Any]:
     require(sections, "readelf relocation stream is malformed")
     for section in sections:
         if section["name"].startswith(".relr"):
+            if "encoded_entries" in section:
+                require(section["encoded_entries"] == section["declared_entries"],
+                        "readelf RELR stream is truncated")
             require(section.get("expanded_offsets") == section["observed_entries"],
                     "readelf RELR stream is truncated")
         else:
