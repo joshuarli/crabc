@@ -6534,6 +6534,41 @@ mod tests {
         assert_eq!(unsafe { page_raw.as_ref() }.abandoned_test_thread_id(), thread_id.get());
     }
 
+    /// A later free can turn a just-unowned full arena page into mapped
+    /// abandonment before the first releaser returns. The first releaser's
+    /// result must still describe the unmapped state that it released.
+    #[test]
+    fn unown_reports_the_unmapped_identity_held_before_racing_reabandonment() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let mut page = mapped_page(&mut arena, 16);
+        let page_raw = abandon_full_unmapped(&mut page);
+        let state = unsafe { Page::abandonment_atomic_state_at(page_raw) };
+        assert_eq!(
+            remote_free::claim_abandoned_owner(unsafe { state.xthread_free.as_ref() }),
+            AbandonedOwnerClaim::ClaimedUnowned,
+        );
+
+        let mut blocks: [TestBlock; 4] = core::array::from_fn(|_| TestBlock([0; 16]));
+        let released = unown_with(page_raw, Some(&map), || {}, || {
+            for block in blocks.iter_mut().take(3) {
+                assert_eq!(
+                    unsafe { free_unmapped_after_failed_reclaim(page_raw, block.pointer(), &map) },
+                    Ok(UnmappedAbandonedFreeResult::UnownedUnmapped),
+                );
+            }
+            assert_eq!(
+                unsafe { free_unmapped_after_failed_reclaim(page_raw, blocks[3].pointer(), &map) },
+                Ok(UnmappedAbandonedFreeResult::ReabandonedMapped),
+            );
+        });
+        assert_eq!(released, Ok(AbandonResult::UnownedUnmapped));
+        assert!(map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+    }
+
     #[test]
     fn adoption_preserves_false_collection_order_across_two_remote_publications() {
         let mut storage = BitmapStorage::uninit();
