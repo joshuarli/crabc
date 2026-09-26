@@ -24,6 +24,7 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import crabc_cc_static as static_driver_contract
+import owned_dynamic_elf
 import owned_dynamic_receipt
 import owned_syscall_alias_authority as authority
 import owned_posix_product_evidence as product_evidence
@@ -75,6 +76,7 @@ COLLECTOR_SOURCES = (
     "compat/x86_64/run_owned_syscall_alias_contract.sh",
     "compat/x86_64/owned_syscall_alias_contract_reader.py",
     "compat/x86_64/owned_syscall_alias_authority.py",
+    "compat/x86_64/owned_dynamic_elf.py",
     "compat/x86_64/owned_static_link_authority.py",
     "compat/x86_64/crabc_cc_static.py",
     "compat/x86_64/owned_posix_product_evidence.py",
@@ -513,6 +515,20 @@ def validate_dynamic_link_receipts(output, runner, inputs, command_runner):
                         "runtime_imports": [], "application_dsos": {}, "application_runpath": "/usr/lib",
                         "application_rpath": None, "application_search_kind": "runpath", "application_hash_style": "sysv", "campaign_complete": False}
             require(all(same(record[key], value) for key, value in expected.items()), f"dynamic final link policy differs: {stem}")
+            inspection = read_json(runner / (stem + ".crabc-elf.json"), "dynamic ELF inspection")
+            owned_dynamic_elf.validate_record(
+                inspection, runner / stem, output_format="crabc-x86-64-owned-dynamic-sysroot-v1",
+                fail=lambda message: require(False, f"dynamic ELF inspection differs: {stem}: {message}"),
+                recorded_path=lambda local: str(command_runner / local.name),
+            )
+            expected_declaration = {
+                "mode": expected["mode"], "interpreter": "/lib/ld-crabc-x86_64.so.1",
+                "needed": ["libc.so"], "soname": None,
+                "search": {"kind": "runpath", "path": "/usr/lib"},
+                "binding": "now", "hash_style": "sysv", "runtime_imports": [],
+            }
+            require(same(inspection["declared"], expected_declaration),
+                    f"dynamic ELF inspection declaration differs: {stem}")
 
 
 def validate_artifact_observations(output, runner, inputs, command_runner):
@@ -600,6 +616,8 @@ def validate_runner_placements(runner):
         "candidate-shared-relocations.txt", "source-public-callers.json",
         *(f"dynamic-{mode}-override.symbols.txt" for mode in ("pie", "non-pie")),
         *(f"dynamic-{mode}-{probe}.crabc-link.json" for mode in ("pie", "non-pie") for probe in ("contract", "override")),
+        *(f"dynamic-{mode}-{probe}.{suffix}" for mode in ("pie", "non-pie")
+          for probe in ("contract", "override") for suffix in ("crabc-elf.json", "crabc-link.map")),
     }
     raw |= {f"{mode}-{probe}.link.{suffix}" for mode in ("static", "static-pie")
             for probe in ("contract", "override") for suffix in ("json", "map", "trace")}

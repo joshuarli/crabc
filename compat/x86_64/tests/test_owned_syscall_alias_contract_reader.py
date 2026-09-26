@@ -179,6 +179,14 @@ class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
         with self.assertRaises(ReceiptError):
             validate_report(report)
 
+    def test_current_driver_outputs_fit_the_exact_runner_roster(self) -> None:
+        value = os.environ.get("CRABC_SYSCALL_ALIAS_TEST_RECEIPT")
+        if not value:
+            self.skipTest("set CRABC_SYSCALL_ALIAS_TEST_RECEIPT to a native component receipt")
+        receipt = json.loads(Path(value).read_text())
+        runner = Path(value).parent / receipt["runner"]["path"]
+        syscall_reader.validate_runner_placements(runner)
+
 
 
 class OwnedSyscallAliasRetainedAuthorityTests(unittest.TestCase):
@@ -300,6 +308,20 @@ class OwnedSyscallAliasRetainedAuthorityTests(unittest.TestCase):
         record = json.loads(path.read_text())
         record["link_command"][0] = "/foreign/ld"
         path.write_text(json.dumps(record))
+        with self.assertRaises(ReceiptError):
+            validate_report(self.path)
+
+    def test_dynamic_elf_inspection_cannot_be_resealed_to_another_output(self) -> None:
+        path = self.runner / "dynamic-pie-contract.crabc-elf.json"
+        record = json.loads(path.read_text())
+        record["facts"]["needed"] = []
+        path.write_text(json.dumps(record))
+        with self.assertRaises(ReceiptError):
+            validate_report(self.path)
+
+    def test_dynamic_link_map_cannot_change_under_its_inspection(self) -> None:
+        path = self.runner / "dynamic-pie-contract.crabc-link.map"
+        path.write_bytes(path.read_bytes() + b"forged\n")
         with self.assertRaises(ReceiptError):
             validate_report(self.path)
 

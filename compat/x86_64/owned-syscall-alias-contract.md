@@ -212,7 +212,11 @@ substituting an oracle or dynamic output and resealing its receipt hash cannot
 stand in for an owned static link.
 
 The four dynamic final-link receipts bind the selected LLD, full command,
-product inputs, correct probe objects, output bytes and link trace. The exact chroot roots contain the selected product
+product inputs, correct probe objects, output bytes and link trace. Each link
+also retains the driver's ELF inspection and link map. Host replay recomputes
+the ELF facts from the linked output, requires the declared interpreter,
+dependency, search path and binding policy, and checks the map's recorded hash
+and original path. The exact chroot roots contain the selected product
 or musl runtime plus the corresponding linked probes and regular input. Host
 replay does not execute a compiler, linker, ELF reader, Git, or any other command.
 
