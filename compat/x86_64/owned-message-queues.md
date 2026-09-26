@@ -104,6 +104,15 @@ fixtures unlink every created queue. A read-only inherited proc descriptor
 allows exact blocked-syscall witnesses and task/descriptor retirement checks.
 Builds, logs, object digest, and output comparisons remain under `.work`.
 
+`owned_message_queues_probe.c` records the process's initial task and descriptor
+counts before transfer tests. It waits for those counts before sampling the
+SIGEV_THREAD retirement baseline: a joined predecessor can remain briefly
+visible in `/proc/self/task`, and including it would make a later correct count
+look like a leak. Each retirement check keeps the same 3,000 one-millisecond
+poll limit and reports its phase, expected and observed counts, and elapsed
+time on failure. The fixture's `--retirement-only` argument runs just the
+notification lifecycle for focused installed-product diagnosis.
+
 The fixture proves name and creation bounds, optional default attributes,
 mode/umask, close-on-exec, attribute replacement, priority and equal-priority
 FIFO ordering, message/receive-buffer bounds, zero-length messages, full/empty

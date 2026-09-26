@@ -51,11 +51,17 @@ static int proc_entries(const char *path) {
     }
     CHECK(bytes==0 && close(fd)==0); return count;
 }
-static void wait_retirement(int tasks,int descriptors) {
+static void wait_retirement(const char *phase,int tasks,int descriptors) {
+    struct timespec started,finished;
+    CHECK(clock_gettime(CLOCK_MONOTONIC,&started)==0);
     for(int i=0;i<3000;i++) {
         if(proc_entries("/proc/self/task")==tasks && proc_entries("/proc/self/fd")==descriptors) return;
         pause_briefly();
     }
+    CHECK(clock_gettime(CLOCK_MONOTONIC,&finished)==0);
+    fprintf(stderr,"message-queues: retirement phase=%s expected tasks=%d fd=%d observed tasks=%d fd=%d elapsed_ms=%lld\n",
+        phase,tasks,descriptors,proc_entries("/proc/self/task"),proc_entries("/proc/self/fd"),
+        (long long)(finished.tv_sec-started.tv_sec)*1000+(finished.tv_nsec-started.tv_nsec)/1000000);
     CHECK(0);
 }
 static void names_attributes_transfer(void) {
@@ -225,18 +231,18 @@ static void thread_notifications(void) {
     struct sigevent copied_event=event; event.sigev_notify_function=unexpected_callback; event.sigev_value.sival_ptr=NULL;
     CHECK(mq_send(queue,"n",1,0)==0); struct timespec deadline=deadline_after(3);
     CHECK(sem_timedwait(&state.completed,&deadline)==0 && atomic_load(&state.calls)==1);
-    wait_retirement(tasks,descriptors); event=copied_event;
-    CHECK(mq_notify(queue,&event)==0 && mq_notify(queue,NULL)==0); wait_retirement(tasks,descriptors);
+    wait_retirement("first-callback",tasks,descriptors); event=copied_event;
+    CHECK(mq_notify(queue,&event)==0 && mq_notify(queue,NULL)==0); wait_retirement("withdraw",tasks,descriptors);
     CHECK(atomic_load(&state.calls)==1);
     CHECK(mq_notify(queue,&event)==0 && mq_close(queue)==0);
-    wait_retirement(tasks,descriptors-1); CHECK(atomic_load(&state.calls)==1);
+    wait_retirement("close",tasks,descriptors-1); CHECK(atomic_load(&state.calls)==1);
     queue=mq_open(queue_name,O_RDWR); CHECK(queue>=0); state.queue=queue;
     for(int i=0;i<8;i++) { errno=0; CHECK(mq_notify(-1,&event)==-1 && errno==EBADF); }
-    wait_retirement(tasks,descriptors);
+    wait_retirement("invalid-queue",tasks,descriptors);
     atomic_store(&state.calls,0); state.rearm=1; event.sigev_notify_attributes=NULL;
     CHECK(mq_notify(queue,&event)==0 && mq_send(queue,"n",1,0)==0); deadline=deadline_after(3);
     CHECK(sem_timedwait(&state.completed,&deadline)==0 && atomic_load(&state.calls)==4);
-    wait_retirement(tasks,descriptors);
+    wait_retirement("rearmed-callback",tasks,descriptors);
     CHECK(pthread_attr_destroy(&attributes)==0 && sem_destroy(&state.completed)==0); destroy_queue(queue);
 }
 static int pending_completed;
@@ -264,7 +270,7 @@ static void creation_failure_cleanup(void) {
         errno=0; CHECK(mq_notify(-1,&event)==-1 && errno==EAGAIN);
         CHECK(pthread_sigmask(SIG_SETMASK,NULL,&after)==0);
         for(int signal=1;signal<=64;signal++) CHECK(sigismember(&original,signal)==sigismember(&after,signal));
-        wait_retirement(tasks,descriptors); _Exit(0);
+        wait_retirement("create-failure",tasks,descriptors); _Exit(0);
     }
     child_ok(child);
 }
@@ -337,14 +343,29 @@ static void direct_error_translation(void) {
     }
     child_ok(child);
 }
-int main(void) {
+int main(int argc,char **argv) {
+    int initial_tasks=proc_entries("/proc/self/task");
+    int initial_descriptors=proc_entries("/proc/self/fd");
+    CHECK(initial_tasks==1);
+    if(argc==2 && !strcmp(argv[1],"--retirement-only")) {
+        thread_notifications();
+        puts("owned-message-queues-ok");
+        return 0;
+    }
+    CHECK(argc==1);
     names_attributes_transfer(); deadline_and_creation_bounds(); inherited_unlinked_queue();
     pending_transfer_cancellation(); direct_error_translation();
     for(int send=0;send<2;send++) for(int timed=0;timed<2;timed++) for(int completion=0;completion<3;completion++) blocking_transfer(send,timed,completion);
-    signal_notifications(); thread_notifications(); creation_failure_cleanup();
+    signal_notifications();
+    /* A joined predecessor can still be visible briefly in proc task state.
+     * Settle its task and descriptor lifetime before using that count as the
+     * notification worker's retirement baseline. A real leak still fails the
+     * same bounded wait. */
+    wait_retirement("before-notify",initial_tasks,initial_descriptors);
+    thread_notifications(); creation_failure_cleanup();
     int tasks=proc_entries("/proc/self/task"),descriptors=proc_entries("/proc/self/fd");
     pthread_t thread; void *result; CHECK(pthread_create(&thread,NULL,pending_cancel,NULL)==0);
     CHECK(pthread_join(thread,&result)==0 && result==PTHREAD_CANCELED && pending_completed==1);
-    wait_retirement(tasks,descriptors);
+    wait_retirement("cancelled-worker",tasks,descriptors);
     puts("owned-message-queues-ok");
 }
