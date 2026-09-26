@@ -362,6 +362,34 @@ static void realloc_section(void) {
   printf("collect.pages=%lld,%lld\n", (long long)(normal.pages.current - before.pages.current),
          (long long)(forced.pages.current - before.pages.current));
   mi_heap_destroy(h);
+
+  /* Even a reusable block from another Heap resolves this Heap's Theap
+     before the aligned realloc kernel decides to return the same pointer. */
+  mi_heap_t* empty_heap = mi_heap_new();
+  unsigned char* foreign = (unsigned char*)mi_malloc_aligned(64, 64);
+  memset(foreign, 0x5a, 64);
+  mi_stats_t empty_before = stats_now();
+  unsigned char* foreign_reused = (unsigned char*)mi_heap_realloc_aligned(empty_heap, foreign, 56, 64);
+  mi_stats_t empty_after = stats_now();
+  printf("realloc.heap.foreign_aligned_theap=%d,%lld,%d\n", foreign_reused == foreign,
+         (long long)(empty_after.theaps.current - empty_before.theaps.current),
+         filled(foreign_reused, 56, 0x5a));
+  mi_free(foreign_reused);
+  mi_heap_destroy(empty_heap);
+
+  /* The public wrapper resolves the Heap's Theap before the count-overflow
+     check, and the failed request leaves the foreign block owned by caller. */
+  mi_heap_t* overflow_heap = mi_heap_new();
+  unsigned char* protected = (unsigned char*)mi_malloc(64);
+  memset(protected, 0x6b, 64);
+  mi_stats_t overflow_before = stats_now();
+  void* overflow_result = mi_heap_recalloc(overflow_heap, protected, SIZE_MAX / 2, 3);
+  mi_stats_t overflow_after = stats_now();
+  printf("realloc.heap.overflow_theap=%d,%lld,%d\n", overflow_result == NULL,
+         (long long)(overflow_after.theaps.current - overflow_before.theaps.current),
+         filled(protected, 64, 0x6b));
+  mi_free(protected);
+  mi_heap_destroy(overflow_heap);
 }
 
 static mi_heap_t* shared_heap;

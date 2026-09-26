@@ -320,6 +320,16 @@ fn heap_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>>
     Some(theap)
 }
 
+/// Resolve the calling thread's Theap for a live non-main Heap before a
+/// reallocation kernel examines its old block or checks request overflow.
+/// The public Heap wrappers make this transition even when no replacement
+/// allocation is needed.
+pub(crate) fn native_heap_select_theap(heap: NonNull<Heap>) -> bool {
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return false };
+    let Some(thread) = current_main_thread() else { return false };
+    is_main_subprocess_heap(heap) && heap_theap(thread, heap).is_some()
+}
+
 /// `_mi_theap_create(heap, tld)` (`theap.c:307-341`).
 fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     let binding = binding()?;
