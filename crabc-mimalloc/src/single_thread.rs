@@ -810,8 +810,8 @@ enum ProcessPostOwnerExitClaimTerminalRetained {
 /// This is private on purpose.  It is the one process-lifetime destination
 /// for W07's non-copy claim, singleton release wrapper, or post-list mapping
 /// owner.  It has no accessor, retry, lookup, or drop surface: the generic
-/// owner-exit rules in `plan.md` require one fail-closed owner after a
-/// one-way source transition, not a replacement post-exit route.
+/// one-way owner-exit transition leaves exactly one fail-closed owner; a
+/// replacement post-exit route could reopen a partially completed map tail.
 #[must_use = "a terminal W03 source owner must be sealed, never reconstructed"]
 enum ProcessPostOwnerExitTerminalRetained {
     /// A claim path retained its W07/source owner and, only when unregister
@@ -1044,8 +1044,8 @@ static PROCESS_POST_OWNER_EXIT_TERMINAL_MARKER: ProcessPostOwnerExitTerminalMark
 ///
 /// The source claim's low bit, OS-list membership, PageMap lease, and backing
 /// token remain mechanically owned by `owner`; this explicit terminal type is
-/// the only value that may be forgotten under `plan.md` (Production
-/// architecture). Each source page has its own low-bit serialization, so
+/// the only value that may be forgotten after this one-way transition.
+/// Each source page has its own low-bit serialization, so
 /// concurrent terminal failures on distinct pages retain distinct exact
 /// owners rather than
 /// contending on a process-wide pre-CAS gate. The marker is published first so
