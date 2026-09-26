@@ -106,8 +106,8 @@ impl StatCount {
 
     /// Adds one selected source record in `mi_stats_add` order.
     ///
-    /// Pinned `src/stats.c:99-114` first adds `total`, then samples the
-    /// source peak and current values, adds current, and finally raises the
+    /// Pinned `src/stats.c:99-114` first adds `total`, then samples and adds
+    /// source current, and finally samples source peak to raise the
     /// destination peak from that prior destination current plus source peak.
     /// These are deliberately relaxed, non-transactional observations: a
     /// concurrent source update may appear in only part of this aggregation,
@@ -118,9 +118,9 @@ impl StatCount {
             return;
         }
         i64_add_from_relaxed(&self.total, &source.total);
-        let source_peak = i64_load_relaxed(&source.peak);
         let source_current = i64_load_relaxed(&source.current);
         let destination_current = i64_add_relaxed(&self.current, source_current);
+        let source_peak = i64_load_relaxed(&source.peak);
         i64_max_relaxed(
             &self.peak,
             destination_current.wrapping_add(source_peak),
@@ -747,8 +747,9 @@ impl HeapTheapStatistics {
         destination.add_from(self);
     }
 
-    /// `mi_stats_add` without the reset: counts and counters in
-    /// declaration order, then the binned tails.
+    /// `mi_stats_add` without the reset: declared fields, optional malloc
+    /// bins, then page bins. The reserved extensions and chunk bins are not
+    /// part of the source merge, although `mi_stats_init` clears them later.
     fn add_from(&self, source: &Self) {
         if core::ptr::eq(self, source) {
             return;
@@ -790,12 +791,6 @@ impl HeapTheapStatistics {
         self.pages_unabandon_busy_wait.add_from(&source.pages_unabandon_busy_wait);
         self.heaps_delete_wait.add_from(&source.heaps_delete_wait);
 
-        for index in 0..self.stat_reserved.len() {
-            self.stat_reserved[index].add_from(&source.stat_reserved[index]);
-        }
-        for index in 0..self.stat_counter_reserved.len() {
-            self.stat_counter_reserved[index].add_from(&source.stat_counter_reserved[index]);
-        }
         // `stats.c` adds malloc bins only at `MI_STAT > 1`; the selected
         // normal-release profile is `MI_STAT == 0`.
         if STAT_LEVEL > 1 {
@@ -805,9 +800,6 @@ impl HeapTheapStatistics {
         }
         for index in 0..self.page_bins.len() {
             self.page_bins[index].add_from(&source.page_bins[index]);
-        }
-        for index in 0..self.chunk_bins.len() {
-            self.chunk_bins[index].add_from(&source.chunk_bins[index]);
         }
     }
 
@@ -1607,6 +1599,27 @@ mod tests {
         });
         assert_eq!(source.size, 4_368);
         assert_eq!(source.version, STAT_VERSION);
+    }
+
+    #[test]
+    fn stats_merge_skips_extension_and_chunk_bins_but_resets_the_source_image() {
+        let destination = HeapTheapStatistics::new();
+        let source = HeapTheapStatistics::new();
+        source.stat_reserved[0].update(5);
+        source.stat_counter_reserved[0].increase(4);
+        source.chunk_bins[0].update(3);
+        source.page_bins[0].update(2);
+
+        destination.merge_from_and_reset(&source);
+
+        assert_eq!(i64_load_relaxed(&destination.stat_reserved[0].total), 0);
+        assert_eq!(i64_load_relaxed(&destination.stat_counter_reserved[0].total), 0);
+        assert_eq!(i64_load_relaxed(&destination.chunk_bins[0].total), 0);
+        assert_eq!(i64_load_relaxed(&destination.page_bins[0].total), 2);
+        assert_eq!(i64_load_relaxed(&source.stat_reserved[0].total), 0);
+        assert_eq!(i64_load_relaxed(&source.stat_counter_reserved[0].total), 0);
+        assert_eq!(i64_load_relaxed(&source.chunk_bins[0].total), 0);
+        assert_eq!(i64_load_relaxed(&source.page_bins[0].total), 0);
     }
 
     #[test]
