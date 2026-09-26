@@ -99,9 +99,10 @@ are not transferable passes for a different revision.
      `7fbcc1b5d`). Next: add the `aio_cancel` oracle disposition, make the
      text family row executable with its admission receipt, then run
      `qualification-candidate --through posix-admission` on a clean checkout.
-  2. Lanes are wound down (user direction, 2026-09-25); `.work/tmp/lane-agents.txt`
-     holds the last map. Unmerged: `lane/abi-closure` `f1c7ddc56` (WIP
-     companion-reader refresh, tested but not proven on a cohort). Known
+  2. Sixteen Codex lanes resumed on 2026-09-26; `.work/tmp/lane-agents.txt`
+     holds the active map, and the parent owns integration to `main`. The
+     `lane/abi-closure` companion-reader refresh is being proven on a current
+     cohort. Known
      open items from the last lane reports: `libc-foundation` fails to compile
      (`foundation.rs` includes `memory.rs` without `static_archive_member!`);
      the static `libc.a` carries a `c.core-*` member exporting `core::*`

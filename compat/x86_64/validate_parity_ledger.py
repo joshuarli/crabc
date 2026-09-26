@@ -6949,6 +6949,69 @@ C_ABI_COMPAT_FAMILY_COMMAND = (
     "--dynamic-qualification FILE --output NEW_DIR"
 )
 
+TEXT_MATH_LOCALE_STDIO_FAMILY_COMMAND = (
+    "./scripts/dev-x86_64.sh owned-text-math-locale-stdio-family assemble "
+    "--family-execution FILE --pthread-family FILE --report COMPONENT:PAIR=FILE ... "
+    "--wordexp-expected-input PAIR=FILE ... --output NEW_DIR"
+)
+
+
+def require_text_math_locale_stdio_family_admission(
+    family: Mapping[str, Any],
+    posix_family: Mapping[str, Any],
+    posix_admission: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Admit complete installed text behavior from one physical POSIX cohort."""
+    require(family.get("id") == "libc.text-math-locale-stdio", "wrong text family for admission")
+    status = family.get("status")
+    require(status in ALLOWED_STATUSES, "text family admission status is invalid")
+    evidence, _ = evidence_records(
+        family.get("native_evidence"), "family[libc.text-math-locale-stdio].native_evidence",
+        unique_commands=True,
+    )
+    rows = [entry for entry in evidence if entry["command"] == TEXT_MATH_LOCALE_STDIO_FAMILY_COMMAND]
+    require(len(rows) == 1, "text family must name its installed family execution command")
+    row = rows[0]
+    if status == "planned":
+        require("receipt" not in row, "planned text family must not attach a family receipt")
+        return None
+
+    require(posix_family.get("status") == "foundation-verified" and posix_admission is not None,
+            "text family foundation requires admitted libc.posix-runtime")
+    require(all(entry.get("state") == "verified" for entry in evidence),
+            "foundation-verified text family requires every native evidence gate")
+    receipt_value = row.get("receipt")
+    require(isinstance(receipt_value, str) and receipt_value,
+            "foundation-verified text family needs its family receipt")
+    receipt_path = Path(receipt_value)
+    require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
+            "text family receipt must be checkout-relative")
+    physical = ROOT / receipt_path
+    require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
+            and physical.is_relative_to(ROOT / ".work"),
+            "text family receipt must be a physical checkout .work file")
+    try:
+        import owned_text_math_locale_stdio_family as text_family
+
+        admission = text_family.admission_facts(ROOT, receipt_path)
+    except (RuntimeError, OSError, ValueError, TypeError) as error:
+        raise LedgerError(f"text family receipt rejected: {error}") from error
+    require_posix_cohort_admission("text family", admission, posix_admission)
+    return admission
+
+
+def text_math_locale_stdio_private_artifact_view(
+    family: Mapping[str, Any], admission: Mapping[str, Any] | None,
+) -> Mapping[str, Any]:
+    """Keep bounded leaf evidence private after complete family admission."""
+    if family.get("status") == "planned":
+        require(admission is None, "planned text family cannot have admission")
+        return family
+    require(admission is not None, "text family leaves need actual family admission")
+    view = dict(family)
+    view["status"] = "planned"
+    return view
+
 
 def require_c_abi_compat_family_admission(
     family: Mapping[str, Any],
@@ -9695,10 +9758,15 @@ def _validate_ledger(
     require_c_abi_compat_family_admission(
         by_id["libc.c-abi-compat"], posix_runtime, posix_runtime_admission
     )
-    require_stdio_installed_file_engine_slice(by_id["libc.text-math-locale-stdio"])
-    require_math_log2_artifact(by_id["libc.text-math-locale-stdio"])
-    require_uchar_stateful_artifact(by_id["libc.text-math-locale-stdio"])
-    require_text_component_slices(by_id["libc.text-math-locale-stdio"])
+    text_family = by_id["libc.text-math-locale-stdio"]
+    text_admission = require_text_math_locale_stdio_family_admission(
+        text_family, posix_runtime, posix_runtime_admission
+    )
+    text_leaf = text_math_locale_stdio_private_artifact_view(text_family, text_admission)
+    require_stdio_installed_file_engine_slice(text_leaf)
+    require_math_log2_artifact(text_leaf)
+    require_uchar_stateful_artifact(text_leaf)
+    require_text_component_slices(text_leaf)
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
