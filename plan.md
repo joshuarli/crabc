@@ -102,9 +102,10 @@ are not transferable passes for a different revision.
      `owned-resolver-family` (cross-member hidden TLS in the static link
      authority, fixed on main by the abi-closure commits), and the static and
      combined sysroots (the 33rd `atexit` expectation, fixed on main by
-     `7fbcc1b5d`). Next: add the `aio_cancel` oracle disposition, make the
-     text family row executable with its admission receipt, then run
-     `qualification-candidate --through posix-admission` on a clean checkout.
+     `7fbcc1b5d`). The `aio_cancel` oracle disposition is being proven in a
+     lane; the text family row is executable, and current-source
+     `qualification-candidate --through posix-admission` is running on a
+     frozen lane revision. These receipts must be rerun on merged `main`.
   2. Sixteen Codex lanes resumed on 2026-09-26; `.work/tmp/lane-agents.txt`
      holds the active map, and the parent owns integration to `main`. The
      `lane/abi-closure` companion-reader refresh is being proven on a current
@@ -126,11 +127,14 @@ are not transferable passes for a different revision.
      upstream reference copies, adapted-upstream-test patch pins, and
      archive/toolchain provenance.
 - **Other open defects:** fourteen runners pin optimizer shape (raw-syscall
-  provider counts, call edges; lane `pattern`); M3's direct-page pop now
-  retains `retire_expire` and its differential trace passes, while full Miri
-  evidence is still running; most `crabc-mimalloc/tests/native_*` integration tests fail to attach on
-  x86 (`m5-remote`). Timing-limited leaves fail under host load averages
-  above ~150; treat those as environment.
+  provider counts, call edges; lane `pattern`). M3's direct-page pop retains
+  `retire_expire` and its differential trace passes. M7 exact statistics
+  receipts isolate first-arena reservation before the baseline snapshot and a
+  worker page whose current count remains +1 after exit; their source owners
+  are investigating. The pinned musl `raise-race` workload itself can fail
+  with the same late-handler-fork `ECHILD` pattern as the candidate, so that
+  report alone is not a runtime defect. Timing-limited leaves under host load
+  need same-oracle comparison and source-bound reruns.
 - **Housekeeping:** superseded branches are archived under
   `refs/archive/branches/`, old stashes under `refs/archive/stash/`, and
   pre-campaign evidence receipts in `.work/archive/*-receipts.tar.gz`. A fresh
