@@ -221,57 +221,79 @@ pub(crate) unsafe fn free(
 ) -> bool {
     // SAFETY: the live client keeps its page registered and initialized.
     // This read-only snapshot ends before the owner mutates ordinary fields.
-    let (owner, page_theap, used, retire_expire, block_size, reserved) = {
+    let (owner, page_theap, used, retire_expire) = {
         let page_ref = unsafe { page.as_ref() };
         (
             page_ref.owner_thread_id(),
             page_ref.theap(),
             page_ref.used(),
             page_ref.retire_expire(),
-            page_ref.block_size(),
-            page_ref.reserved(),
         )
     };
     if owner != current_thread || page_theap != theap.as_ptr() {
         return false;
     }
-    let retire = used == 1 && retire_expire == 0;
-    let mut retire_bin = 0;
-    if retire {
-        // `_mi_page_retire` on an unflagged, non-huge page selects its
-        // ordinary queue: keep it only in the retain branch.
-        let Some(bin) = size_class::bin(block_size) else { return false };
-        if bin >= BIN_HUGE || reserved <= 1 {
-            return false;
-        }
-        // SAFETY: exclusive owner-local Theap, as in `allocate`.
-        let Some(queue) = (unsafe { theap.as_ref() }).queue(bin) else { return false };
-        let count = queue.count();
-        if count > RETIRE_MAX_PAGES || !(count == 1 || block_size < SMALL_SIZE_MAX) {
-            return false;
-        }
-        retire_bin = bin;
-    }
     if used == 0 {
         return false;
+    }
+    if used == 1 && retire_expire == 0 {
+        // SAFETY: this is the same owner-local page and exact live block;
+        // the preflight below leaves the page untouched if it cannot retain.
+        return unsafe { retire_last_local_free(theap, page, block) };
     }
     // SAFETY: the owner exclusively controls the ordinary local-list fields,
     // and the caller consumes exact live `block` of this page.
     unsafe { push_local_free(page, block) };
-    if retire {
-        // SAFETY: a fresh shared projection after the local-list writes; the
-        // flag is the page's atomic `xthread_id` word.
-        unsafe { page.as_ref() }.set_has_interior_pointers(false);
-        // SAFETY: exclusive owner-local Theap, as in `allocate`.
-        unsafe { theap.as_ref() }.record_page_retired();
-        let cycles = if block_size <= SMALL_MAX_OBJ_SIZE { RETIRE_CYCLES } else { RETIRE_CYCLES / 4 };
-        // SAFETY: `used == 0` now, and the owner controls this byte and the
-        // Theap's retirement bounds.
-        unsafe {
-            Page::set_retire_expire_at(page, cycles);
-            let noted = Theap::note_local_retired_bin_at(theap, retire_bin);
-            debug_assert!(noted, "an ordinary queue bin is below BIN_FULL");
-        }
+    true
+}
+
+/// Preflights the source retain branch before the last local free mutates its
+/// page. Keeping this rare queue work out of line leaves the ordinary local
+/// free's owner check and list push in a small inlined body.
+///
+/// # Safety
+///
+/// The caller exclusively owns `theap` and `page`'s ordinary fields; `page`
+/// belongs to `theap`, has exactly one used block, and `block` is that exact
+/// live allocation. The page's retirement countdown is zero.
+#[cold]
+#[inline(never)]
+unsafe fn retire_last_local_free(
+    theap: NonNull<Theap>,
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+) -> bool {
+    // SAFETY: the caller holds the page live and owns its ordinary geometry.
+    let page_ref = unsafe { page.as_ref() };
+    let block_size = page_ref.block_size();
+    let reserved = page_ref.reserved();
+    // `_mi_page_retire` on an unflagged, non-huge page selects its ordinary
+    // queue: keep it only in the retain branch.
+    let Some(bin) = size_class::bin(block_size) else { return false };
+    if bin >= BIN_HUGE || reserved <= 1 {
+        return false;
+    }
+    // SAFETY: exclusive owner-local Theap, as above.
+    let Some(queue) = (unsafe { theap.as_ref() }).queue(bin) else { return false };
+    let count = queue.count();
+    if count > RETIRE_MAX_PAGES || !(count == 1 || block_size < SMALL_SIZE_MAX) {
+        return false;
+    }
+    // SAFETY: this consumes the exact live block after all fallbacks have
+    // been ruled out; the owner controls the page's local-list fields.
+    unsafe { push_local_free(page, block) };
+    // SAFETY: a fresh shared projection after the local-list writes; the
+    // flag is the page's atomic `xthread_id` word.
+    unsafe { page.as_ref() }.set_has_interior_pointers(false);
+    // SAFETY: exclusive owner-local Theap, as above.
+    unsafe { theap.as_ref() }.record_page_retired();
+    let cycles = if block_size <= SMALL_MAX_OBJ_SIZE { RETIRE_CYCLES } else { RETIRE_CYCLES / 4 };
+    // SAFETY: `used == 0` now, and the owner controls this byte and the
+    // Theap's retirement bounds.
+    unsafe {
+        Page::set_retire_expire_at(page, cycles);
+        let noted = Theap::note_local_retired_bin_at(theap, bin);
+        debug_assert!(noted, "an ordinary queue bin is below BIN_FULL");
     }
     true
 }
