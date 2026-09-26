@@ -187,8 +187,29 @@ unsafe fn symbol_name(object: &Object, index: usize) -> Option<&[u8]> {
     let offset = unsafe { read_u32(symbol) } as usize;
     if offset >= object.strsz { return None; }
     let name = unsafe { object.strtab.add(offset) };
-    let length = unsafe { bounded_nul(name, object.strsz - offset) }?;
+    let length = unsafe { bounded_symbol_name_len(name, object.strsz - offset) }?;
     Some(unsafe { core::slice::from_raw_parts(name, length) })
+}
+
+/// Find a dynsym name's terminator without reading beyond DT_STRSZ. The
+/// ordinary ELF table has many import names, so examine eight bytes at a
+/// time; only the final partial word needs a byte loop.
+unsafe fn bounded_symbol_name_len(name: *const u8, available: usize) -> Option<usize> {
+    let mut used = 0usize;
+    while available - used >= 8 {
+        let word = unsafe { core::ptr::read_unaligned(name.add(used).cast::<u64>()) };
+        let zero = word.wrapping_sub(0x0101_0101_0101_0101)
+            & !word & 0x8080_8080_8080_8080;
+        if zero != 0 {
+            return Some(used + zero.trailing_zeros() as usize / 8);
+        }
+        used += 8;
+    }
+    while used < available {
+        if unsafe { *name.add(used) } == 0 { return Some(used); }
+        used += 1;
+    }
+    None
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -296,7 +317,18 @@ unsafe fn lookup(
     scope: &SymbolScope<'_>, objects: &[Object],
     requestor: usize, index: usize, tls: bool, copy: bool,
 ) -> Option<Option<Definition>> {
-    match unsafe { lookup_result(scope, objects, requestor, index, tls, copy) }? {
+    unsafe { lookup_with_name(scope, objects, requestor, index, tls, copy, None) }
+}
+
+/// Reuse a name already checked against the requesting object's string table.
+/// Relocation dispatch must inspect private imports before ordinary lookup;
+/// carrying that slice avoids decoding the same dynsym name twice.
+unsafe fn lookup_with_name(
+    scope: &SymbolScope<'_>, objects: &[Object],
+    requestor: usize, index: usize, tls: bool, copy: bool,
+    requested_name: Option<&[u8]>,
+) -> Option<Option<Definition>> {
+    match unsafe { lookup_result_with_name(scope, objects, requestor, index, tls, copy, requested_name) }? {
         SymbolLookup::Defined(symbol) => Some(Some(symbol)),
         SymbolLookup::UndefinedWeak => Some(None),
         SymbolLookup::MissingStrong => None,
@@ -309,6 +341,14 @@ unsafe fn lookup_result(
     scope: &SymbolScope<'_>, objects: &[Object],
     requestor: usize, index: usize, tls: bool, copy: bool,
 ) -> Option<SymbolLookup> {
+    unsafe { lookup_result_with_name(scope, objects, requestor, index, tls, copy, None) }
+}
+
+unsafe fn lookup_result_with_name(
+    scope: &SymbolScope<'_>, objects: &[Object],
+    requestor: usize, index: usize, tls: bool, copy: bool,
+    requested_name: Option<&[u8]>,
+) -> Option<SymbolLookup> {
     let requested = unsafe { definition(objects, requestor, index) }?;
     if !matches!(requested.binding, 0 | 1 | 2 | STB_GNU_UNIQUE)
         || (requested.binding == 0 && requested.visibility == 3)
@@ -318,7 +358,10 @@ unsafe fn lookup_result(
     if !copy && (requested.binding == 0 || requested.visibility != 0) {
         return (requested.section != 0).then_some(SymbolLookup::Defined(requested));
     }
-    let name = unsafe { symbol_name(&objects[requestor], index) }?;
+    let name = match requested_name {
+        Some(name) => name,
+        None => unsafe { symbol_name(&objects[requestor], index) }?,
+    };
     if name.is_empty() { return None; }
     for &owner in scope.indices {
         if copy && owner == 0 { continue; }
@@ -432,8 +475,7 @@ unsafe fn word_value(
         // before the shared initial-graph evaluator can treat JUMP_SLOT or a
         // nonzero addend as an ordinary word relocation.
         #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
-        if unsafe { symbol_name(object, index) }?
-            == b"__crabc_x86_64_loader_tls_runtime_v1"
+        if requested_name == Some(b"__crabc_x86_64_loader_tls_runtime_v1")
         {
             let requested = unsafe { definition(objects, owner, index) }?;
             if kind != R_X86_64_GLOB_DAT || addend != 0
@@ -445,7 +487,7 @@ unsafe fn word_value(
         }
         if !scope.initial {
             #[cfg(crabc_general_initial_tls_materialization_v1)]
-            if unsafe { symbol_name(object, index) }? == b"__tls_get_addr" {
+            if requested_name == Some(b"__tls_get_addr") {
                 let requested = unsafe { definition(objects, owner, index) }?;
                 return (matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT)
                     && addend == 0 && requested.section == 0 && requested.binding == 1
@@ -462,7 +504,7 @@ unsafe fn word_value(
         R_X86_64_RELATIVE if index == 0 => add_signed(object.base, addend),
         R_64 | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
             let address = if index == 0 { 0 } else {
-                match unsafe { lookup(scope, objects, owner, index, false, false) }? {
+                match unsafe { lookup_with_name(scope, objects, owner, index, false, false, requested_name) }? {
                     Some(symbol) => unsafe { ordinary_address(objects, symbol) }?,
                     None => 0,
                 }

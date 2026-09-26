@@ -772,6 +772,25 @@ fn local_protected_hidden_and_undefined_weak_references_keep_distinct_scopes() {
     assert_eq!(unsafe { word_value(&scope, &objects, 0, R_64, 1, 7) }, Some(7));
 }
 
+#[test]
+fn symbol_name_scan_stops_at_the_string_table_page_boundary() {
+    let bytes = (PAGE * 2) as usize;
+    let mapping = unsafe { syscall6(SYS_MMAP, 0, bytes as i64,
+        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
+    assert!(!is_linux_error(mapping));
+    let guarded = (mapping as usize + PAGE as usize) as *mut u8;
+    assert_eq!(unsafe { syscall3(SYS_MPROTECT, guarded as i64, PAGE as i64, 0) }, 0);
+    let name = unsafe { guarded.sub(24) };
+    for terminator in 0..24 {
+        unsafe { core::ptr::write_bytes(name, 1, 24) };
+        unsafe { *name.add(terminator) = 0 };
+        assert_eq!(unsafe { bounded_symbol_name_len(name, 24) }, Some(terminator));
+    }
+    unsafe { core::ptr::write_bytes(name, 1, 24) };
+    assert_eq!(unsafe { bounded_symbol_name_len(name, 24) }, None);
+    assert_eq!(unsafe { syscall2(SYS_MUNMAP, mapping, bytes as i64) }, 0);
+}
+
 #[cfg(crabc_general_initial_tls_materialization_v1)]
 #[test]
 fn initial_exec_and_dynamic_offsets_share_retained_module_coordinates_and_checked_addends() {
@@ -802,5 +821,4 @@ fn initial_exec_and_dynamic_offsets_share_retained_module_coordinates_and_checke
     objects[1].tls_offset_below_tp = 8192; objects[1].tls_module_id = 0;
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());
 }
-
 
