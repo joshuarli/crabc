@@ -556,33 +556,37 @@ struct CanonicalInitialLibc {
     identity: ObjectIdentity,
 }
 
-/// Open every declared root/prefix alias and reduce the complete set to the
-/// stable library identities already retained by the initial graph. This is
-/// not another library search: an absent alias or an identity outside this
-/// graph has no startup authority. Neither root takes priority. Exactly one
-/// distinct admitted library identity is required across both roots, so two
-/// loaded libc identities fail closed even when one matches the invocation
-/// prefix. Mark the receiver only after the complete scan succeeds.
+/// Select an opened canonical alias directly when it is the graph's only
+/// library. Otherwise resolve every declared root/prefix alias and reduce the
+/// complete set to stable library identities already retained by the graph.
+/// An absent alias or an identity outside the graph has no startup authority.
+/// Neither root takes priority. Two loaded libc identities fail closed even
+/// when one matches the invocation prefix. Mark the receiver only after the
+/// selection succeeds.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn select_canonical_initial_libc(
     graph: &InitialGraphState,
     objects: &mut ObjectTable,
 ) -> Option<CanonicalInitialLibc> {
     let invocation_prefix = unsafe { x86_64_library_search::installation_prefix() };
-    let mut aliases = [None; 2 * CANONICAL_LIBC_ALIAS_SUFFIXES.len()];
-    for (root_index, prefix) in [b"".as_slice(), invocation_prefix].into_iter().enumerate() {
-        if root_index == 1 && prefix.is_empty() {
-            continue;
+    let selected = if let Some(selected) = single_library_opened_canonical_alias(graph, objects, invocation_prefix) {
+        selected
+    } else {
+        let mut aliases = [None; 2 * CANONICAL_LIBC_ALIAS_SUFFIXES.len()];
+        for (root_index, prefix) in [b"".as_slice(), invocation_prefix].into_iter().enumerate() {
+            if root_index == 1 && prefix.is_empty() {
+                continue;
+            }
+            for (alias_index, suffix) in CANONICAL_LIBC_ALIAS_SUFFIXES.into_iter().enumerate() {
+                aliases[root_index * CANONICAL_LIBC_ALIAS_SUFFIXES.len() + alias_index] =
+                    match opened_alias_identity(graph, objects, prefix, suffix) {
+                        Some(identity) => Some(identity),
+                        None => unsafe { canonical_libc_alias_identity(prefix, suffix) }.ok()?,
+                    };
+            }
         }
-        for (alias_index, suffix) in CANONICAL_LIBC_ALIAS_SUFFIXES.into_iter().enumerate() {
-            aliases[root_index * CANONICAL_LIBC_ALIAS_SUFFIXES.len() + alias_index] =
-                match opened_alias_identity(graph, objects, prefix, suffix) {
-                    Some(identity) => Some(identity),
-                    None => unsafe { canonical_libc_alias_identity(prefix, suffix) }.ok()?,
-                };
-        }
-    }
-    let selected = canonical_initial_libc_from_aliases(graph, &aliases)?;
+        canonical_initial_libc_from_aliases(graph, &aliases)?
+    };
     if objects[..graph.object_count()]
         .iter()
         .any(|object| object.canonical_libc_identity.is_some())
@@ -597,6 +601,31 @@ unsafe fn select_canonical_initial_libc(
     Some(selected)
 }
 
+/// A graph with only one admitted library cannot contain a conflicting libc
+/// receiver. If its opened path is a declared alias, the descriptor's fstat
+/// already supplies the only identity an alias scan could select. Other alias
+/// paths may name this library, the main image, or an unloaded file, none of
+/// which changes that selection.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+fn single_library_opened_canonical_alias(
+    graph: &InitialGraphState,
+    objects: &[Object],
+    invocation_prefix: &[u8],
+) -> Option<CanonicalInitialLibc> {
+    if graph.object_count() != 2 || objects.get(1)?.role != ObjectRole::Library {
+        return None;
+    }
+    let identity = graph.identity(1)?;
+    for prefix in [b"".as_slice(), invocation_prefix] {
+        for suffix in CANONICAL_LIBC_ALIAS_SUFFIXES {
+            if opened_alias_identity(graph, objects, prefix, suffix) == Some(identity) {
+                return Some(CanonicalInitialLibc { index: 1, identity });
+            }
+        }
+    }
+    None
+}
+
 /// The identity of a graph library this transaction opened by exactly the
 /// alias path `prefix`+`suffix`: its descriptor's fstat already named the
 /// file that path resolved to, so no second stat is needed. Any other alias
@@ -604,7 +633,7 @@ unsafe fn select_canonical_initial_libc(
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 fn opened_alias_identity(
     graph: &InitialGraphState,
-    objects: &ObjectTable,
+    objects: &[Object],
     prefix: &[u8],
     suffix: &[u8],
 ) -> Option<ObjectIdentity> {
@@ -905,6 +934,50 @@ mod canonical_libc_tests {
             Ok(ObjectAdmission::New { index: 2 })
         ));
         graph
+    }
+
+    fn opened_library(path: &[u8], second_library: bool) -> GeneralInitialLoaderState {
+        let mut state = GeneralInitialLoaderState::new(MAIN, EMPTY_OBJECT).unwrap();
+        let (graph, objects) = state.discovery_mut().unwrap();
+        assert!(matches!(graph.admit_mapped(LIBC), Ok(ObjectAdmission::New { index: 1 })));
+        let name = objects.retain_name(x86_64_library_search::LoadedName::new(path).unwrap()).unwrap();
+        objects.set(1, Object { role: ObjectRole::Library, search_name: name, ..EMPTY_OBJECT }).unwrap();
+        if second_library {
+            assert!(matches!(graph.admit_mapped(OTHER), Ok(ObjectAdmission::New { index: 2 })));
+            objects.set(2, Object { role: ObjectRole::Library, ..EMPTY_OBJECT }).unwrap();
+        }
+        state
+    }
+
+    #[test]
+    fn single_opened_canonical_libc_needs_no_second_alias_lookup() {
+        let state = opened_library(b"/usr/lib/libc.so", false);
+        let graph = state.graph_during_transaction().unwrap();
+        let objects = state.objects_during_transaction().unwrap();
+        let selected = Some(CanonicalInitialLibc { index: 1, identity: LIBC });
+        assert_eq!(single_library_opened_canonical_alias(graph, objects, b""), selected);
+        for other_alias in [None, Some(MAIN), Some(LIBC), Some(OTHER)] {
+            assert_eq!(canonical_initial_libc_from_aliases(graph, &[Some(LIBC), other_alias]), selected);
+        }
+    }
+
+    #[test]
+    fn canonical_alias_shortcut_requires_one_opened_library() {
+        for (path, prefix, second_library, admitted) in [
+            (b"/usr/lib/libc.so".as_slice(), b"".as_slice(), true, false),
+            (b"/app/lib/libc.so", b"".as_slice(), false, false),
+            (b"/opt/crabc/usr/lib/libc.so", b"/opt/crabc".as_slice(), false, true),
+        ] {
+            let state = opened_library(path, second_library);
+            assert_eq!(
+                single_library_opened_canonical_alias(
+                    state.graph_during_transaction().unwrap(),
+                    state.objects_during_transaction().unwrap(),
+                    prefix,
+                ).is_some(),
+                admitted,
+            );
+        }
     }
 
     #[test]
