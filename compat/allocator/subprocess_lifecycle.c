@@ -243,8 +243,32 @@ int main(void) {
   mi_subproc_destroy(_mi_subproc_to_id(fourth));
   push((int64_t)member_count());
 
+  /* Destroying a child releases this thread's regular slots while a Heap
+     in the main subprocess and its previously allocated block stay live. */
+  mi_heap_t* const retained_heap = mi_heap_new();
+  require(retained_heap != NULL);
+  void* const retained_block = mi_heap_malloc(retained_heap, 64);
+  require(retained_block != NULL);
+  const bool slots_before = mi_thread_locals_peek() != NULL && mi_thread_locals_peek()->count > 0;
+  mi_subproc_id_t const slots_child = mi_subproc_new();
+  require(_mi_subproc_from_id(slots_child) != NULL);
+  mi_subproc_destroy(slots_child);
+  const bool slots_released = mi_thread_locals_peek() == NULL;
+  const bool old_block_live = mi_heap_of(retained_block) == retained_heap;
+  void* const next_block = mi_heap_malloc(retained_heap, 64);
+  const bool next_allocation = next_block != NULL && mi_thread_locals_peek() != NULL
+                            && mi_thread_locals_peek()->count > 0;
+  require(next_block != NULL);
+  mi_free(next_block);
+  mi_free(retained_block);
+  mi_heap_destroy(retained_heap);
+
   for (size_t i = 0; i < value_count; i++) {
     printf("m6.subproc.lifecycle.%zu=%lld\n", i, (long long)values[i]);
   }
+  printf("m6.subproc.destroy_slots.0=%d\n", slots_before);
+  printf("m6.subproc.destroy_slots.1=%d\n", slots_released);
+  printf("m6.subproc.destroy_slots.2=%d\n", old_block_live);
+  printf("m6.subproc.destroy_slots.3=%d\n", next_allocation);
   return 0;
 }

@@ -14,6 +14,7 @@ import run as harness
 
 
 TEST = "subproc::lifecycle::tests::source_ordered_child_subprocess_lifecycle_trace"
+SLOT_TEST = "subproc::main_heaps::tests::child_destroy_releases_destroying_threads_regular_slots"
 FIELD_COUNT = 76
 
 
@@ -23,6 +24,13 @@ def trace(output: str) -> list[int]:
         raise harness.HarnessError(
             f"subprocess lifecycle trace requires {FIELD_COUNT} ordered fields"
         )
+    return [int(value) for _, value in rows]
+
+
+def slot_trace(output: str) -> list[int]:
+    rows = re.findall(r"^(?:test \S+ \.\.\. )?m6\.subproc\.destroy_slots\.(\d+)=(-?\d+)$", output, re.MULTILINE)
+    if [int(index) for index, _ in rows] != list(range(4)):
+        raise harness.HarnessError("subprocess destroy-slot trace requires four ordered fields")
     return [int(value) for _, value in rows]
 
 
@@ -51,6 +59,10 @@ def main() -> None:
         cwd=harness.ROOT, timeout_seconds=900)
     (artifacts / "rust.log").write_text(rust["stdout"] + rust["stderr"])
     harness.require_success(rust, "subprocess lifecycle Rust test")
+    slots = harness.command_record(["python3", "compat/allocator/run_unit_x86_64.py", SLOT_TEST],
+        cwd=harness.ROOT, timeout_seconds=900)
+    (artifacts / "rust-destroy-slots.log").write_text(slots["stdout"] + slots["stderr"])
+    harness.require_success(slots, "subprocess destroy-slot Rust test")
     expected = trace(oracle["stdout"])
     observed = trace(rust["stdout"])
     if expected != observed:
@@ -62,7 +74,18 @@ def main() -> None:
         raise harness.HarnessError(
             "pinned C/Rust subprocess lifecycle differs: " + ", ".join(differences)
         )
-    print(f"subprocess lifecycle: {FIELD_COUNT} pinned C/Rust values match; {artifacts}")
+    expected_slots = slot_trace(oracle["stdout"])
+    observed_slots = slot_trace(slots["stdout"])
+    if expected_slots != observed_slots:
+        differences = [
+            f"{index}: C={c_value} Rust={rust_value}"
+            for index, (c_value, rust_value) in enumerate(zip(expected_slots, observed_slots))
+            if c_value != rust_value
+        ]
+        raise harness.HarnessError(
+            "pinned C/Rust subprocess destroy slots differ: " + ", ".join(differences)
+        )
+    print(f"subprocess lifecycle: {FIELD_COUNT} lifecycle and four destroy-slot pinned C/Rust values match; {artifacts}")
 
 
 if __name__ == "__main__":

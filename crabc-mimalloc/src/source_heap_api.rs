@@ -705,8 +705,17 @@ pub unsafe fn subproc_destroy(id: *mut c_void) -> bool {
     if pointer.as_ptr() == main_id() {
         return true;
     }
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return false;
+    };
     // SAFETY: forwarded live-id contract.
-    unsafe { crate::subproc::lifecycle::native_subproc_destroy(NativeSubprocessId::from_ptr(pointer)) }.is_ok()
+    if unsafe { crate::subproc::lifecycle::native_subproc_destroy(NativeSubprocessId::from_ptr(pointer)) }.is_err() {
+        return false;
+    }
+    // Source releases the destroying thread's regular TLS table while
+    // destroying the child's main Heap. Keep the whole public operation
+    // admitted so terminal shutdown cannot pass between these two steps.
+    main_heaps::release_current_thread_locals_after_child_destroy()
 }
 
 /// The source warning of a thread that already belongs to another

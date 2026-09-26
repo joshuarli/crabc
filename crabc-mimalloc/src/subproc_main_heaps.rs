@@ -194,6 +194,28 @@ fn thread_local_count() -> i64 {
     unsafe { thread_heaps() }.backing.map_or(0, |backing| unsafe { backing.as_ref() }.count() as i64)
 }
 
+/// `_mi_thread_locals_thread_done` on the thread calling
+/// `mi_subproc_destroy`: release its regular slot table while leaving its
+/// live Heap/Theap list and cached Theap reference intact. A pre-release
+/// metadata failure keeps the table available for the next operation.
+pub(crate) fn release_current_thread_locals_after_child_destroy() -> bool {
+    // SAFETY: this thread owns its regular TLS table, and the public child
+    // destroy entry keeps native admission open through this transition.
+    let state = unsafe { thread_heaps() };
+    if let Some(backing) = state.backing {
+        install_dynamic_backing(backing);
+    }
+    let released = state.thread_locals.as_mut().is_none_or(|owner| owner.teardown().is_ok());
+    if released {
+        state.thread_locals = None;
+        state.backing = None;
+    } else {
+        state.backing = dynamic_backing_peek().filter(|backing| !is_empty_dynamic_backing(*backing));
+    }
+    install_empty_dynamic_backing();
+    released
+}
+
 /// The calling thread's `_mi_theap_cached` for these Heaps.
 fn cached_theap() -> NonNull<Theap> {
     // SAFETY: the current thread's own state.
@@ -892,6 +914,45 @@ pub(crate) fn native_reserve_os_memory(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// Child subprocess destruction releases the destroying thread's regular
+    /// TLS slot table even when that table belongs to an unrelated live Heap
+    /// of the process main subprocess. The Heap and its Theap remain live.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn child_destroy_releases_destroying_threads_regular_slots() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::child_destroy_releases_destroying_threads_regular_slots",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let heap = native_heap_new().expect("a main-subprocess Heap");
+                let block = unsafe { native_heap_allocate(heap, 64, None, false) }.expect("its first Theap");
+                let slots_before = thread_local_count() > 0;
+                assert!(slots_before);
+                let child = crate::source_heap_api::subproc_new();
+                assert!(!child.is_null());
+                assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
+                let slots_released = thread_local_count() == 0;
+                assert!(slots_released);
+                let old_block_live = unsafe { heap_of_block(block) } == Some(heap);
+                assert!(old_block_live);
+                let next = unsafe { native_heap_allocate(heap, 64, None, false) }
+                    .expect("the Heap allocates after child destruction");
+                let next_allocation = thread_local_count() > 0;
+                assert!(next_allocation);
+                assert_eq!(unsafe { native_free(next) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
+                for (index, value) in [slots_before, slots_released, old_block_live, next_allocation].iter().enumerate() {
+                    std::println!("m6.subproc.destroy_slots.{index}={}", i32::from(*value));
+                }
+            },
+        );
+    }
+
     use std::vec::Vec;
 
     unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
