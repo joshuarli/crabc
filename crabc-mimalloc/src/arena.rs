@@ -1905,10 +1905,10 @@ pub(crate) unsafe fn release_arena_slices(memory: MemoryId) -> bool {
 ///
 /// Normal anonymous external backing is unpinned and therefore schedules the
 /// default 4-second delayed `purge_decommits=1` path. Pinned backing keeps the
-/// source's strict skip. The source clock has no failure return; this port
-/// cannot make optional purge scheduling a terminal ownership transition:
-/// if the direct clock fails or the delay cannot be represented, the caller
-/// returns the slice to the free bitmap without scheduling a purge.
+/// source's strict skip. A failed monotonic query uses the source `clock()`
+/// fallback, so the released span remains eligible for delayed purge.
+/// If the delay cannot be represented, the caller still returns the slice to
+/// the free bitmap without making optional purge terminal.
 fn schedule_arena_purge(arena: &Arena, slice_index: usize, slice_count: usize) -> bool {
     if arena.memid.is_pinned() {
         return true;
@@ -1921,9 +1921,7 @@ fn schedule_arena_purge(arena: &Arena, slice_index: usize, slice_count: usize) -
     }) else {
         return false;
     };
-    let Ok(now) = os::monotonic_milliseconds() else {
-        return true;
-    };
+    let now = os::source_clock_now();
     let Some(expire) = now.checked_add(DEFAULT_ARENA_PURGE_DELAY_MILLISECONDS) else {
         return true;
     };
@@ -2653,9 +2651,7 @@ impl<'arena> ArenaView<'arena> {
             return true;
         }
         if !force {
-            let Ok(now) = os::monotonic_milliseconds() else {
-                return false;
-            };
+            let now = os::source_clock_now();
             if expire > now {
                 return true;
             }
@@ -4190,8 +4186,8 @@ mod tests {
     }
 
     #[test]
-    fn clock_failure_skips_optional_purge_without_losing_the_released_slice() {
-        let _fault = crate::os::fault::install(crate::os::fault::Plan::at(
+    fn clock_failure_uses_source_fallback_for_arena_purge_schedule_and_collection() {
+        let fault = crate::os::fault::install(crate::os::fault::Plan::at(
             crate::os::fault::Point::Clock,
             1,
             crabc_core::Errno::NOMEM,
@@ -4224,11 +4220,20 @@ mod tests {
         let free = unsafe { view.slices_free() }.unwrap();
         let purge = unsafe { view.slices_purge() }.unwrap();
         assert_eq!(free.is_set_range(slice_index, 1), Some(true));
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(purge.is_set_range(slice_index, 1), Some(true));
+        assert_ne!(view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire), 0);
+
+        // An already expired range must still be collected when the preferred
+        // clock fails again. The source low-resolution clock is nonnegative.
+        view.arena().purge_expire.store(-1, core::sync::atomic::Ordering::Release);
+        fault.set(crate::os::fault::Plan::at(
+            crate::os::fault::Point::Clock, 1, crabc_core::Errno::NOMEM,
+        ));
+        assert!(view.collect_scheduled_purge(PageSize::new(4096).unwrap(), false));
+        assert_eq!(fault.observed(), 1);
         assert_eq!(purge.is_clear_range(slice_index, 1), Some(true));
-        assert_eq!(
-            view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
-            0,
-        );
+        assert_eq!(free.is_set_range(slice_index, 1), Some(true));
     }
 
     #[test]

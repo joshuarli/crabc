@@ -3906,7 +3906,7 @@ fn huge_page_address(base: NonNull<u8>, page: usize) -> Option<NonNull<u8>> {
 }
 
 #[inline]
-fn source_clock_now() -> i64 {
+pub(crate) fn source_clock_now() -> i64 {
     source_clock_now_with(monotonic_milliseconds, source_clock_now_lowres)
 }
 

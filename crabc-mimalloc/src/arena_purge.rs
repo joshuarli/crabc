@@ -81,10 +81,10 @@ impl ProcessArenaBacking {
         let delay = arena_purge_delay(process.policy());
         if view.arena().memid.is_pinned() || delay < 0 || process.is_preloading() { return true; }
         if delay == 0 { return purge_claimed(view, owner, start, count).is_some(); }
-        let Ok(now) = os::monotonic_milliseconds() else { return true; };
-        // The source clock is nonnegative and successful native deadlines
-        // remain representable. An unavailable/overflowing clock must not
-        // turn optional purge into ownership loss.
+        let now = os::source_clock_now();
+        // A failed monotonic query uses the source low-resolution clock.
+        // An overflowing deadline must not turn optional purge into
+        // ownership loss.
         let Some(expire) = now.checked_add(delay) else { return true; };
         let mut expected = 0;
         if i64_cas_strong_acq_rel(&view.arena().purge_expire, &mut expected, expire) {
@@ -109,7 +109,7 @@ impl ProcessArenaBacking {
         force: bool, visit_all: bool, thread_sequence: usize) -> bool {
         let delay = arena_purge_delay(process.policy());
         if process.is_preloading() || delay <= 0 { return true; }
-        let Ok(now) = os::monotonic_milliseconds() else { return true; };
+        let now = os::source_clock_now();
         self.collect_purge_at(process, config, force, visit_all, thread_sequence, now, delay)
     }
 

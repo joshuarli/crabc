@@ -3049,6 +3049,34 @@ mod tests {
     }
 
     #[test]
+    fn clock_failure_uses_source_fallback_for_process_arena_purge() {
+        let fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = purge_process(100_000, true);
+        let id = install(backing, process, MapAccess::Reserved);
+        let claim = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap();
+        let start = claim.slice_index();
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+
+        fault.set(fault::Plan::at(fault::Point::Clock, 1, Errno::NOMEM));
+        assert!(claim.release());
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_set_range(start, 1), Some(true));
+        assert!(crate::atomic::i64_load_relaxed(&view.arena().purge_expire) > 0);
+        assert!(crate::atomic::i64_load_relaxed(&backing.purge_expire) > 0);
+
+        crate::atomic::i64_store_release(&view.arena().purge_expire, -1);
+        crate::atomic::i64_store_release(&backing.purge_expire, -1);
+        let before_purges = process.subprocess().arena_statistics().snapshot().arena_purges;
+        fault.set(fault::Plan::at(fault::Point::Clock, 1, Errno::NOMEM));
+        assert!(unsafe { backing.collect_purge(process, config(), false, true, 0) });
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_clear_range(start, 1), Some(true));
+        assert_eq!(unsafe { view.slices_free() }.unwrap().is_set_range(start, 1), Some(true));
+        assert_eq!(process.subprocess().arena_statistics().snapshot().arena_purges, before_purges + 1);
+    }
+
+    #[test]
     fn source_purge_guard_excludes_collection_without_losing_scheduled_work() {
         let _fault = fault::install(fault::Plan::disabled());
         let backing = backing();
