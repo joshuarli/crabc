@@ -57,6 +57,38 @@ pub fn heap_new() -> *mut c_void {
     main_heaps::native_heap_new().map_or(null_mut(), |heap| heap.as_ptr().cast())
 }
 
+/// `mi_heap_of`: the Heap currently named by the page containing `pointer`.
+/// An interior pointer has the same Heap as its containing live block.
+///
+/// # Safety
+/// `pointer` is null, inside a live allocation held through this call, or
+/// inside memory the caller owns that this allocator never mapped. The
+/// caller excludes a concurrent Heap move for the containing page.
+pub unsafe fn heap_of(pointer: *const u8) -> *mut c_void {
+    // SAFETY: forwarded slice and Heap-transition exclusions.
+    unsafe { main_heaps::heap_of_pointer(pointer) }.map_or(null_mut(), |heap| heap.as_ptr().cast())
+}
+
+/// `mi_any_heap_contains`: whether the safe PageMap lookup finds a page.
+///
+/// # Safety
+/// The obligations of [`heap_of`].
+pub unsafe fn any_heap_contains(pointer: *const u8) -> bool {
+    // SAFETY: forwarded PageMap slice-exclusion obligation.
+    unsafe { crate::source_api::check_owned(pointer) }
+}
+
+/// `mi_heap_contains`: a null Heap selects this thread's subprocess main
+/// Heap before comparing it with the pointer's page Heap.
+///
+/// # Safety
+/// The obligations of [`heap_of`]; `heap` is null or a live Heap identity.
+pub unsafe fn heap_contains(heap: *mut c_void, pointer: *const u8) -> bool {
+    let heap = if heap.is_null() { heap_main() } else { heap };
+    // SAFETY: forwarded pointer and Heap-lifetime obligations.
+    heap == unsafe { heap_of(pointer) }
+}
+
 fn is_main_heap(heap: NonNull<Heap>) -> bool {
     core::ptr::eq(heap.as_ptr(), MainSubprocess::global().ready_main_heap_pointer())
 }

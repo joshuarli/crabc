@@ -832,6 +832,26 @@ pub(crate) unsafe fn heap_of_block(block: NonNull<u8>) -> Option<NonNull<Heap>> 
     NonNull::new(unsafe { allocation.page().as_ref() }.heap())
 }
 
+/// The current Heap identity of any registered page containing `pointer`.
+/// The pointer may be inside a live block; no block-start validation or
+/// Theap ownership check is part of source Heap membership.
+///
+/// # Safety
+/// The caller excludes concurrent registration or unregistration of the
+/// pointer's arena slice and any concurrent move of that page to another
+/// Heap through this query. A live block held without a concurrent Heap
+/// transition satisfies these obligations.
+pub(crate) unsafe fn heap_of_pointer(pointer: *const u8) -> Option<NonNull<Heap>> {
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+    let pointer = NonNull::new(pointer.cast_mut())?;
+    let binding = binding()?;
+    // SAFETY: forwarded page-lifetime and slice-exclusion obligations.
+    let page = unsafe { binding.page_map().lookup_registered_page(pointer.as_ptr()) }.ok()??;
+    // SAFETY: the raw page stays registered and its Heap identity is stable
+    // through this immediate field read.
+    NonNull::new(unsafe { page.as_ref() }.heap())
+}
+
 /// Pinned `mi_heap_collect(heap, force)` (`theap.c:123-166`) for a non-main
 /// Heap of the process main subprocess on the calling thread:
 /// `mi_heap_theap` (creating the Theap), `_mi_deferred_free`, then the
@@ -924,6 +944,40 @@ pub(crate) fn native_reserve_os_memory(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// Membership follows the registered page through an ordinary Heap
+    /// delete, which moves live pages to the subprocess main Heap.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn heap_membership_tracks_interior_and_moved_page() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::heap_membership_tracks_interior_and_moved_page",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let heap = native_heap_new().expect("a non-main Heap");
+                let block = unsafe { native_heap_allocate(heap, 64, None, false) }.expect("a live page");
+                let main = MainSubprocess::global().ready_main_heap_pointer().cast();
+                let pointer = block.as_ptr();
+                let interior = pointer.wrapping_add(1);
+                let foreign = 0u8;
+                assert_eq!(unsafe { crate::source_heap_api::heap_of(pointer) }, heap.as_ptr().cast());
+                assert_eq!(unsafe { crate::source_heap_api::heap_of(interior) }, heap.as_ptr().cast());
+                assert!(unsafe { crate::source_heap_api::heap_contains(heap.as_ptr().cast(), pointer) });
+                assert!(!unsafe { crate::source_heap_api::heap_contains(core::ptr::null_mut(), pointer) });
+                assert!(unsafe { crate::source_heap_api::any_heap_contains(interior) });
+                assert!(unsafe { crate::source_heap_api::heap_of(&foreign) }.is_null());
+                assert!(!unsafe { crate::source_heap_api::any_heap_contains(&foreign) });
+                assert!(unsafe { crate::source_heap_api::heap_of(core::ptr::null()) }.is_null());
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                assert_eq!(unsafe { crate::source_heap_api::heap_of(pointer) }, main);
+                assert!(unsafe { crate::source_heap_api::heap_contains(core::ptr::null_mut(), pointer) });
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+            },
+        );
+    }
 
     /// Child subprocess destruction releases the destroying thread's regular
     /// TLS slot table even when that table belongs to an unrelated live Heap

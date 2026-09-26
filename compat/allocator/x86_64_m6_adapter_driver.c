@@ -471,6 +471,8 @@ static void* child_worker(void* argument) {
   child_facts[3] = h != NULL && h != mi_heap_main();
   void* q = mi_heap_malloc(h, 64);
   child_facts[4] = q != NULL;
+  child_facts[11] = mi_heap_of(q) == h && mi_heap_contains(h, q)
+                 && !mi_heap_contains(NULL, q) && mi_any_heap_contains(q);
   bool ok;
   child_facts[5] = visit(child, 0, &ok);
   child_facts[6] = ok;
@@ -528,6 +530,7 @@ static void subproc_section(void) {
   printf("subproc.child.facts=");
   for (int i = 0; i < 11; i++) printf("%s%d", i == 0 ? "" : ",", child_facts[i]);
   printf("\n");
+  printf("subproc.child.membership=%d\n", child_facts[11]);
   mi_subproc_destroy(child);
   mi_stats_t after = stats_now();
   printf("subproc.child.destroyed.threads=%lld\n", (long long)(after.threads.total - before.threads.total));
@@ -581,6 +584,28 @@ static void subproc_destroy_live_section(void) {
   print_messages("subproc.live.messages");
 }
 
+static void membership_section(void) {
+  mi_heap_t* heap = mi_heap_new();
+  unsigned char* block = (unsigned char*)mi_heap_malloc(heap, 64);
+  char foreign = 0;
+  printf("membership.live=%d,%d,%d,%d,%d\n",
+         mi_heap_of(block) == heap,
+         mi_heap_contains(heap, block),
+         mi_any_heap_contains(block),
+         mi_heap_of(block + 1) == heap,
+         mi_heap_contains(NULL, block));
+  printf("membership.unmapped=%d,%d,%d\n",
+         mi_heap_of(NULL) == NULL,
+         !mi_any_heap_contains(&foreign),
+         !mi_heap_contains(heap, &foreign));
+  mi_heap_delete(heap);
+  printf("membership.moved=%d,%d,%d\n",
+         mi_heap_of(block) == mi_heap_main(),
+         mi_heap_contains(NULL, block),
+         mi_any_heap_contains(block));
+  mi_free(block);
+}
+
 int main(void) {
   /* Unbuffered, so a failing side's trace ends at its failing step. */
   setvbuf(stdout, NULL, _IONBF, 0);
@@ -600,6 +625,7 @@ int main(void) {
   thread_section();
   subproc_section();
   subproc_destroy_live_section();
+  membership_section();
   print_messages("final.messages");
   printf("CRABC_MI_M6_ADAPTER_TRACE_END\n");
   return 0;

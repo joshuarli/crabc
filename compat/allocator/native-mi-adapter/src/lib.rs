@@ -1058,6 +1058,27 @@ pub extern "C" fn mi_heap_main() -> HeapPointer {
     heaps::heap_main()
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_of(pointer: *const c_void) -> HeapPointer {
+    bind_thread();
+    // SAFETY: the C caller keeps the queried page stable for this lookup.
+    unsafe { heaps::heap_of(pointer.cast()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_any_heap_contains(pointer: *const c_void) -> bool {
+    bind_thread();
+    // SAFETY: the C caller keeps the queried arena slice stable.
+    unsafe { heaps::any_heap_contains(pointer.cast()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_contains(heap: HeapPointer, pointer: *const c_void) -> bool {
+    bind_thread();
+    // SAFETY: the C caller holds a live Heap and a stable queried page.
+    unsafe { heaps::heap_contains(heap, pointer.cast()) }
+}
+
 #[inline]
 fn heap_released(released: bool) {
     if !released {

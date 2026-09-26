@@ -1261,6 +1261,26 @@ impl ProcessPageMapRoot {
         Ok(!unsafe { self.storage.page_map_ref().checked_lookup(pointer) }.is_null())
     }
 
+    /// Returns the registered page identity for a pointer, including an
+    /// interior pointer, without requiring it to be an allocation start.
+    /// This is the source safe PageMap lookup used by Heap membership queries.
+    ///
+    /// # Safety
+    ///
+    /// The caller must exclude concurrent registration or unregistration of
+    /// the pointer's arena slice through the lookup and every use of the
+    /// returned raw page identity. A live allocation or an address in memory
+    /// the caller owns outside this allocator provides that exclusion.
+    pub(crate) unsafe fn lookup_registered_page(self, pointer: *const u8) -> Result<Option<NonNull<Page>>, ProcessPageMapError> {
+        self.ensure_ready()?;
+        if self.storage.root.load().is_none() {
+            return Err(ProcessPageMapError::Poisoned);
+        }
+        // SAFETY: forwarded slice-exclusion contract; this lookup never
+        // dereferences the client pointer.
+        Ok(NonNull::new(unsafe { self.storage.page_map_ref().checked_lookup(pointer) }))
+    }
+
     /// Looks up one exact live allocation and copies its source dispatch facts.
     ///
     /// This is the source-shaped shared front edge for general `free`,
