@@ -211,23 +211,137 @@ RELOCATION_NAMES = {1: 'R_X86_64_64', 2: 'R_X86_64_PC32', 4: 'R_X86_64_PLT32',
 def require_relocation_stream(path, artifact):
     elf = Elf(physical(artifact))
     expected = []
-    expected_headers = []
+    sections = []
+    loaded_writable = [(program[3], program[3] + program[6]) for program in elf.programs
+                       if program[0] == 1 and program[1] & 2]
     for section in elf.sections:
-        if section[1] != 4:
-            continue
-        require(section[9] == 24 and section[5] % 24 == 0, 'invalid ELF RELA table')
-        expected_headers.append(f"Relocation section '{section_name(elf, section)}' at offset 0x{section[4]:x} contains {section[5] // 24} {'entry' if section[5] == 24 else 'entries'}:")
-        for offset in range(0, section[5], 24):
-            destination, info, addend = elf.unpack('<QQq', section[4] + offset)
-            symbol = elf.symbol_row(section[6], info >> 32)
-            require(info & 0xffffffff in RELOCATION_NAMES, 'unclassified syscall ELF relocation')
-            expected.append((destination, info, RELOCATION_NAMES[info & 0xffffffff], symbol['value'], symbol['name'], addend))
+        if section[1] == 4:
+            require(section[9] == 24 and section[5] % 24 == 0, 'invalid ELF RELA table')
+            header = (f"Relocation section '{section_name(elf, section)}' at offset 0x{section[4]:x} "
+                      f"contains {section[5] // 24} {'entry' if section[5] == 24 else 'entries'}:")
+            sections.append((header, 4, section[5] // 24))
+            for offset in range(0, section[5], 24):
+                destination, info, addend = elf.unpack('<QQq', section[4] + offset)
+                symbol = elf.symbol_row(section[6], info >> 32)
+                require(info & 0xffffffff in RELOCATION_NAMES, 'unclassified syscall ELF relocation')
+                expected.append((destination, info, RELOCATION_NAMES[info & 0xffffffff],
+                                 symbol['value'], symbol['name'], addend))
+        elif section[1] == 19:  # SHT_RELR packs relative destinations into address and bitmap words.
+            require(section[9] == 8 and section[5] > 0 and section[5] % 8 == 0,
+                    'invalid ELF RELR table')
+            rows = []
+            next_address = None
+            previous = -1
+            for index in range(section[5] // 8):
+                word = elf.unpack('<Q', section[4] + index * 8)[0]
+                if word & 1:
+                    require(next_address is not None and word != 1,
+                            'RELR bitmap lacks a preceding address or destinations')
+                    addresses = [next_address + 8 * bit for bit in range(63) if word & (1 << (bit + 1))]
+                    next_address += 63 * 8
+                else:
+                    require(word % 8 == 0, 'unaligned RELR address')
+                    addresses = [word]
+                    next_address = word + 8
+                for number, address in enumerate(addresses):
+                    require(address > previous and any(start <= address and address + 8 <= end
+                                                       for start, end in loaded_writable),
+                            'RELR target is not a unique writable loaded word')
+                    rows.append((index if number == 0 else None,
+                                 word if number == 0 else None, address))
+                    previous = address
+            header = (f"Relocation section '{section_name(elf, section)}' at offset 0x{section[4]:x} "
+                      f"contains {section[5] // 8} entries which relocate {len(rows)} locations:")
+            sections.append((header, 19, rows))
+
+    # GNU readelf annotates a packed destination with a defined symbol or
+    # section base plus an offset. The annotation is evidence too: its base
+    # and destination must both belong to the retained ELF's named section.
+    labels = {}
+    for index, section in enumerate(elf.sections):
+        if section[1] in (2, 11):
+            require(section[9] == 24 and section[5] % 24 == 0, 'invalid ELF symbol table')
+            for number in range(section[5] // 24):
+                symbol = elf.symbol_row(index, number)
+                owner = symbol['section']
+                if symbol['name'] and 0 < owner < len(elf.sections):
+                    target = elf.sections[owner]
+                    labels.setdefault(symbol['name'], []).append((symbol['value'], target[3], target[3] + target[5]))
+        name = section_name(elf, section)
+        if name:
+            labels.setdefault(name, []).append((section[3], section[3], section[3] + section[5]))
+
+    def require_annotation(annotation, address):
+        label, separator, offset_text = annotation.partition(' + 0x')
+        require(label and (not separator or re.fullmatch('[0-9a-f]+', offset_text) is not None),
+                'malformed RELR symbolic address')
+        offset = int(offset_text, 16) if separator else 0
+        require(not separator or offset > 0 and format(offset, 'x') == offset_text,
+                'noncanonical RELR symbolic offset')
+        require(any(base + offset == address and start <= address < end
+                    for base, start, end in labels.get(label, [])),
+                'RELR symbolic address is not derived from retained ELF')
+
     actual = []
-    actual_headers = []
+    active = None
+    section_index = -1
+    relr_index = 0
+    rela_index = 0
+    table_header_seen = False
+    no_relocations_seen = False
     for line in physical(path).read_text().splitlines():
         if line.startswith('Relocation section '):
-            actual_headers.append(line)
+            if active is not None:
+                require(table_header_seen and (active[1] != 19 or relr_index == len(active[2]))
+                        and (active[1] != 4 or rela_index == active[2]),
+                        'truncated raw relocation table')
+            section_index += 1
+            require(section_index < len(sections) and line == sections[section_index][0],
+                    'raw relocation table header differs from ELF')
+            active = sections[section_index]
+            relr_index = 0
+            rela_index = 0
+            table_header_seen = False
+            continue
+        if not line.strip():
+            if active is not None and active[1] == 19:
+                require(relr_index == len(active[2]), 'truncated raw RELR targets')
+            continue
+        if active is None:
+            require(not sections and not no_relocations_seen
+                    and line == 'There are no relocations in this file.',
+                    'unexpected raw relocation text')
+            no_relocations_seen = True
+            continue
+        if active[1] == 19:
+            if line == 'Index: Entry            Address           Symbolic Address':
+                require(not table_header_seen, 'duplicate raw RELR table heading')
+                table_header_seen = True
+                continue
+            require(table_header_seen and relr_index < len(active[2]),
+                    'unexpected raw RELR target')
+            index, word, address = active[2][relr_index]
+            if index is not None:
+                match = re.fullmatch(r'([0-9]{4}):  ([0-9a-f]{16}) ([0-9a-f]{16})  (.+)', line)
+                require(match is not None and int(match[1], 10) == index
+                        and int(match[2], 16) == word and int(match[3], 16) == address,
+                        'raw RELR entry differs from ELF')
+                annotation = match[4]
+            else:
+                match = re.fullmatch(r' {24}([0-9a-f]{16})  (.+)', line)
+                require(match is not None and int(match[1], 16) == address,
+                        'raw RELR target differs from ELF')
+                annotation = match[2]
+            require_annotation(annotation, address)
+            relr_index += 1
+            continue
+        if line.lstrip().startswith('Offset'):
+            require(not table_header_seen, 'duplicate raw RELA table heading')
+            table_header_seen = True
+            continue
+        require(table_header_seen, 'raw RELA row precedes its heading')
         match = re.fullmatch(r'\s*([0-9a-f]+)\s+([0-9a-f]+)\s+(R_X86_64_\w+)\s*(.*)', line)
+        require(match is not None and rela_index < active[2], 'unexpected raw relocation text')
         if match:
             destination, info, kind, tail = match.groups()
             fields = tail.split()
@@ -238,10 +352,13 @@ def require_relocation_stream(path, artifact):
                 value, name = int(fields[0], 16), fields[1].split('@', 1)[0]
                 addend = int(fields[3], 16) * (1 if fields[2] == '+' else -1)
             actual.append((int(destination, 16), int(info, 16), kind, value, name, addend))
-        else:
-            require(not line.strip() or line.startswith('Relocation section ') or line.lstrip().startswith('Offset')
-                    or line == 'There are no relocations in this file.', 'unexpected raw relocation text')
-    require(actual_headers == expected_headers, 'raw relocation table header differs from ELF')
+            rela_index += 1
+    require(section_index + 1 == len(sections) and (active is None or table_header_seen)
+            and (bool(sections) or no_relocations_seen)
+            and (active is None or active[1] != 19 or relr_index == len(active[2])),
+            'raw relocation table roster or targets differ from ELF')
+    require(active is None or active[1] != 4 or rela_index == active[2],
+            'raw RELA row count differs from ELF')
     require(actual == expected, f'raw relocations do not describe retained ELF: {path.name}')
 
 

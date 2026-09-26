@@ -185,7 +185,11 @@ types and interposition scope.
 `owned_syscall_alias_authority.py` binds observations to bytes outside the JSON
 claims. Every symbol row (including archive member, table, index, section and
 size) and every RELA row is compared with the retained ELF/archive bytes using
-`loader_debug_abi_evidence.Elf`. Every candidate endpoint has an installed-driver link receipt. All four
+`loader_debug_abi_evidence.Elf`. For packed RELR, replay expands each retained
+word, checks the displayed entry and every relocated address against writable
+loaded memory, and resolves each symbolic annotation to a defined ELF symbol
+or section at that address. The exact word and location counts reject omitted
+or additional raw rows. Every candidate endpoint has an installed-driver link receipt. All four
 static/static-PIE contract/override links request `--link-receipt` and retain
 its JSON, LLD map and trace. Replay uses `crabc_cc_static`'s exact owned plan,
 mode and six-input roster to bind the selected LLD, CRT, `libc.a`, builtins,
