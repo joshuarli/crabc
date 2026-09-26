@@ -24,12 +24,13 @@
 //!   16-byte tail (about 2x faster for short unaligned copies, 5% for 16 KiB
 //!   unaligned; aligned bulk copies are already at `rep movsq`'s bandwidth).
 //! - `memmove` performs every copy of at most 64 bytes with all loads before
-//!   any store, takes musl's forward `__memcpy_fwd` when that is safe, and
-//!   copies backwards with 16-byte SSE2 blocks instead of `std; rep movsb`
-//!   (about 30x faster), leaving the direction flag untouched.
-//! - `memcmp` compares 16-byte SSE2 blocks and, below 16 bytes, overlapping
-//!   8-byte words, returning musl's first-differing-unsigned-byte
-//!   difference (about 10x faster from 64 bytes up).
+//!   any store, reaches `memcpy` for disjoint large ranges, takes
+//!   musl's forward `__memcpy_fwd` for forward overlap, and copies backwards
+//!   with 16-byte SSE2 blocks while leaving the direction flag untouched.
+//! - `memcmp` scans equal large ranges 64 bytes at a time with SSE2, uses
+//!   16-byte blocks to locate a difference, and uses overlapping 8-byte
+//!   words below 16 bytes. It returns musl's first-differing-unsigned-byte
+//!   difference.
 //!
 //! Every access stays inside the requested ranges; the source-only memory
 //! probe proves that at guard pages for every size, alignment and overlap
@@ -182,6 +183,35 @@ memcmp:
     cmp rdx, 16
     jb .Lcrabc_x86_memcmp_below16
     xor ecx, ecx
+    cmp rdx, 64
+    jb .Lcrabc_x86_memcmp_blocks_start
+    lea r9, [rdx - 64]
+.Lcrabc_x86_memcmp_fast64:
+    cmp rcx, r9
+    ja .Lcrabc_x86_memcmp_blocks_start
+    /* Combine four equality vectors for the common equal-range case. On a
+       mismatch the 16-byte path below finds the first differing byte. */
+    movdqu xmm0, xmmword ptr [rdi + rcx]
+    movdqu xmm1, xmmword ptr [rdi + rcx + 16]
+    movdqu xmm2, xmmword ptr [rdi + rcx + 32]
+    movdqu xmm3, xmmword ptr [rdi + rcx + 48]
+    movdqu xmm4, xmmword ptr [rsi + rcx]
+    movdqu xmm5, xmmword ptr [rsi + rcx + 16]
+    movdqu xmm6, xmmword ptr [rsi + rcx + 32]
+    movdqu xmm7, xmmword ptr [rsi + rcx + 48]
+    pcmpeqb xmm0, xmm4
+    pcmpeqb xmm1, xmm5
+    pcmpeqb xmm2, xmm6
+    pcmpeqb xmm3, xmm7
+    pand xmm0, xmm1
+    pand xmm2, xmm3
+    pand xmm0, xmm2
+    pmovmskb eax, xmm0
+    cmp eax, 0xffff
+    jne .Lcrabc_x86_memcmp_blocks_start
+    add rcx, 64
+    jmp .Lcrabc_x86_memcmp_fast64
+.Lcrabc_x86_memcmp_blocks_start:
     lea r8, [rdx - 16]
 .Lcrabc_x86_memcmp_blocks:
     cmp rcx, r8
@@ -409,10 +439,23 @@ memmove:
 .Lcrabc_x86_memmove_done:
     ret
 .Lcrabc_x86_memmove_large:
+    /* The memcpy path requires disjoint ranges. A destination below an
+       overlapping source must instead advance from low addresses. */
+    cmp rdi, rsi
+    je .Lcrabc_x86_memmove_done
+    jb .Lcrabc_x86_memmove_destination_below
     mov rcx, rdi
     sub rcx, rsi
     cmp rcx, rdx
-    jae __memcpy_fwd
+    jae memcpy
+    jmp .Lcrabc_x86_memmove_backward
+.Lcrabc_x86_memmove_destination_below:
+    mov rcx, rsi
+    sub rcx, rdi
+    cmp rcx, rdx
+    jae memcpy
+    jmp __memcpy_fwd
+.Lcrabc_x86_memmove_backward:
     /* Destination above an overlapping source: copy 16-byte blocks from the
        top down. Each block's source lies below every byte already stored,
        so it is still original; the preloaded head and tail are stored last. */

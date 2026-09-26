@@ -5,8 +5,8 @@
  * isolated crabc x86 object with project headers first. It covers only
  * memcpy/memmove/memset/memcmp/bcmp behavior and ABI invariants, not a
  * crabc-libc artifact. Every size class (register, overlapping-block and
- * bulk paths), source/destination alignment, memmove overlap in both
- * directions, and memcmp difference position runs between PROT_NONE guard
+ * bulk paths), source/destination alignment, disjoint memmove and overlap in
+ * both directions, and memcmp difference position runs between PROT_NONE guard
  * pages on both sides, so an access outside the requested range faults.
  */
 
@@ -244,6 +244,10 @@ static int test_guarded_copy_and_set(void)
 				if (memcpy(destination, source, length) != destination ||
 					!equal(destination, source, length))
 					return 51;
+				fill(destination, length, (unsigned)(length ^ offset ^ 0x5aU));
+				if (memmove(destination, source, length) != destination ||
+					!equal(destination, source, length) || !direction_flag_is_clear())
+					return 57;
 				for (size_t index = 0; index < length; index++)
 					expected[index] = (unsigned char)(length + offset);
 				if (memset(destination, (int)(length + offset), length) != destination ||
@@ -280,7 +284,7 @@ static int test_guarded_copy_and_set(void)
 static int test_guarded_memmove(void)
 {
 	static const long displacements[] = {
-		1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 4095, 4096, 4097,
+		0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 4095, 4096, 4097,
 	};
 	static unsigned char expected[GUARDED_SPAN];
 	struct guarded region;
