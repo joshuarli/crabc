@@ -319,7 +319,7 @@ class NativeObservationsTests(unittest.TestCase):
         with self.assertRaises(native.NativeObservationError):
             native.collect('signal-process', self.leaf, source_mount='/workspace/../workspace', dynamic_product=self.product, root=self.root)
 
-    def os_test_fixture(self, *, profile=False):
+    def os_test_fixture(self, *, profile=False, aio_cancel_oracle_failure=False):
         import owned_os_test as contract
         stage = self.leaf / 'source-stage'
         for suite in native.OS_TEST_SUITES:
@@ -327,6 +327,9 @@ class NativeObservationsTests(unittest.TestCase):
         for name in ('dlopen', 'dlclose', 'dlsym'):
             self.put(stage / 'basic/dlfcn' / (name + '.c'), ('/* ' + name + ' */\n').encode())
         self.put(stage / aio_suspend_source.SOURCE_PATH, aio_suspend_source.FROZEN_SOURCE)
+        if aio_cancel_oracle_failure:
+            self.put(stage / 'basic/aio/aio_cancel.c',
+                     (HERE / 'tests/fixtures/os-test-aio-cancel.c').read_bytes())
         if profile:
             import owned_posix_native_dispositions as dispositions
             for symbol, content in dispositions.OS_ATOMIC_SOURCES.items():
@@ -543,6 +546,8 @@ class NativeObservationsTests(unittest.TestCase):
                     value = b'good\n'
                     if profile and suite == 'include' and name.startswith('stdatomic/'):
                         value = b'undefined\n' if side == 'musl' else b'good\n'
+                    if aio_cancel_oracle_failure and suite == 'basic' and name == 'aio/aio_cancel.out':
+                        value = b'aio_error: EINPROGRESS\n' if side == 'musl' else b'exit: 0\n'
                     path = self.put(root / 'out/linux' / suite / name, value)
                     outcomes[name] = {'sha256': self.binding(path)['sha256'], 'text': value.decode()}
                 command = (contract.musl_make_command(suite, Path(self.recorded(root)), 8) if side == 'musl' else
@@ -608,6 +613,11 @@ class NativeObservationsTests(unittest.TestCase):
                     {'case': name, 'dynamic': row['dynamic']['outcomes'][name], 'musl': row['musl']['outcomes'][name]}
                     for name in expected if name.startswith('stdatomic/')])
                 report['passed'] = False
+            if aio_cancel_oracle_failure and suite == 'basic':
+                row.update(passed=False, difference_count=1, differences=[
+                    {'case': 'aio/aio_cancel.out', 'dynamic': row['dynamic']['outcomes']['aio/aio_cancel.out'],
+                     'musl': row['musl']['outcomes']['aio/aio_cancel.out']}])
+                report['passed'] = False
             report['suites'].append(row)
         report['musl_oracle'] = {'unchanged': True}
         for phase in ('before', 'after'):
@@ -622,6 +632,54 @@ class NativeObservationsTests(unittest.TestCase):
         contract.freeze_tree(stage)
         self.put(self.leaf / 'os-test.json', report)
         return report
+
+    def test_os_test_qualifies_only_the_pinned_aio_cancel_oracle_race(self):
+        report = self.os_test_fixture(profile=True, aio_cancel_oracle_failure=True)
+        proof = self.profile_companions()
+        inputs = self.profile_input_paths()
+        def collect():
+            with patch.object(native, '_load_profile_companions', return_value=proof):
+                return native.collect('os-test', self.leaf, source_mount=self.mount,
+                                      dynamic_product=self.product, root=self.root, profile_inputs=inputs)
+        result = collect()
+        self.assertEqual(result['qualification']['status'], 'profile-qualified')
+        self.assertEqual([item['outcome'] for item in result['qualification']['dispositions']
+                          if item['suite'] == 'basic'], ['aio/aio_cancel.out'])
+        original = (self.leaf / 'os-test.json').read_bytes()
+        for failure in (b'aio_error: EINVAL\n',
+                        b'aio_error: EINPROGRESS\nexit: 0\n',
+                        b'aio_error: EINPROGRESS\nexit: 1\nextra\n'):
+            with self.subTest(failure=failure):
+                path = self.leaf / 'musl/basic/out/linux/basic/aio/aio_cancel.out'
+                self.put(path, failure)
+                changed = json.loads(original)
+                changed['suites'][2]['musl']['outcomes']['aio/aio_cancel.out'] = {
+                    'sha256': self.binding(path)['sha256'], 'text': failure.decode()}
+                changed['suites'][2]['differences'][0]['musl'] = changed['suites'][2]['musl']['outcomes']['aio/aio_cancel.out']
+                self.put(self.leaf / 'os-test.json', changed)
+                with self.assertRaises(native.NativeObservationError):
+                    collect()
+        oracle = self.leaf / 'musl/basic/out/linux/basic/aio/aio_cancel.out'
+        self.put(oracle, b'aio_error: EINPROGRESS\n')
+        candidate = self.leaf / 'suites/basic/out/linux/basic/aio/aio_cancel.out'
+        self.put(candidate, b'aio_error: EINPROGRESS\n')
+        changed = json.loads(original)
+        changed['suites'][2]['dynamic']['outcomes']['aio/aio_cancel.out'] = {
+            'sha256': self.binding(candidate)['sha256'], 'text': candidate.read_text()}
+        changed['suites'][2].update(passed=True, differences=[], difference_count=0)
+        self.put(self.leaf / 'os-test.json', changed)
+        with self.assertRaises(native.NativeObservationError):
+            collect()
+        self.put(candidate, b'exit: 0\n')
+        self.put(oracle, b'exit: 0\n')
+        changed = json.loads(original)
+        changed['suites'][2]['musl']['outcomes']['aio/aio_cancel.out'] = {
+            'sha256': self.binding(oracle)['sha256'], 'text': oracle.read_text()}
+        changed['suites'][2].update(passed=True, differences=[], difference_count=0)
+        self.put(self.leaf / 'os-test.json', changed)
+        normal = collect()
+        self.assertEqual(len(normal['qualification']['dispositions']), 6)
+        self.put(self.leaf / 'os-test.json', original)
 
     def test_os_test_requires_full_attempted_graph_and_sealed_raw_results(self):
         report = self.os_test_fixture()

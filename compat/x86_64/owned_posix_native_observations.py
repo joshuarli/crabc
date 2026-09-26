@@ -1645,8 +1645,9 @@ def _os_test(reader):
     for suite in report['suites']:
         name = suite['suite']
         profiled_suite = profiled and name == 'include'
+        aio_oracle_suite = profiled and name == 'basic'
         expected_differences = []
-        if not profiled_suite:
+        if not profiled_suite and not aio_oracle_suite:
             same([suite['passed'], suite['differences'], suite['difference_count']], [True, [], 0], 'os-test suite comparison')
         expected = sorted(Path(path).relative_to(name).with_suffix('.out').as_posix() for path in files
                           if Path(path).is_relative_to(name) and path.endswith('.c'))
@@ -1667,7 +1668,7 @@ def _os_test(reader):
             same(actual == set(expected), True, 'os-test physical outcome roster')
             # Make creates binaries and reports beside the tracked C inputs.
             # Every source byte must still equal its pristine stage except the
-            # sole sealed basic/aio/aio_suspend.c lifetime derivative above.
+            # sealed basic/aio/aio_suspend.c lifetime derivative above.
             source_files = prepared_basic_files if name == "basic" else files
             for relative, expected_hash in source_files.items():
                 if (stage / relative).is_symlink():
@@ -1683,6 +1684,9 @@ def _os_test(reader):
                 observations.setdefault(name + '/' + relative, {})[side] = reader.identity(path, raw=True)
         for relative in expected:
             row = observations[name + '/' + relative]
+            if aio_oracle_suite and relative == 'aio/aio_cancel.out':
+                require(base64.b64decode(row['dynamic']['base64']) == b'exit: 0\n',
+                        'os-test candidate AIO cancellation did not complete')
             if profiled and name == 'include' and relative in (
                     'stdatomic/atomic_flag_clear.out', 'stdatomic/atomic_flag_clear_explicit.out',
                     'stdatomic/atomic_flag_test_and_set.out', 'stdatomic/atomic_flag_test_and_set_explicit.out',
@@ -1694,12 +1698,24 @@ def _os_test(reader):
                     {'atomic': reader.profile_companions['atomic']}))
                 expected_differences.append({'case': relative, 'dynamic': suite['dynamic']['outcomes'][relative],
                                              'musl': suite['musl']['outcomes'][relative]})
+            elif aio_oracle_suite and relative == 'aio/aio_cancel.out' and row['musl']['base64'] != row['dynamic']['base64']:
+                import owned_posix_native_dispositions as profile_contract
+                source = stage / 'basic/aio/aio_cancel.c'
+                dispositions.append(profile_contract.os_disposition(reader, name, relative, source,
+                    base64.b64decode(row['dynamic']['base64']), base64.b64decode(row['musl']['base64']),
+                    {'atomic': reader.profile_companions['atomic']}))
+                expected_differences.append({'case': relative, 'dynamic': suite['dynamic']['outcomes'][relative],
+                                             'musl': suite['musl']['outcomes'][relative]})
             else:
                 same(row['musl']['base64'], row['dynamic']['base64'], 'os-test exact raw outcome comparison')
         if profiled_suite:
             same([suite['passed'], suite['differences'], suite['difference_count']],
                  [False, expected_differences, 6],
                  'os-test exact selected profile differences')
+        elif aio_oracle_suite:
+            same([suite['passed'], suite['differences'], suite['difference_count']],
+                 [not expected_differences, expected_differences, len(expected_differences)],
+                 'os-test exact pinned AIO oracle difference')
         objects.update(_os_event_graph(reader, name, expected, suite['dynamic'],
                                        prepared_basic_files if name == "basic" else files, contract))
         _os_product_copy(reader, name, suite['dynamic']['execution_control'], product_roster['entries'], contract)
@@ -1723,7 +1739,8 @@ def _os_test(reader):
         same([roster['schema'], identity['include']['path'], identity['include']['entry_count']],
              ['crabc.x86_64-owned-os-test-musl-include-roster/v1', '/opt/musl-1.2.6/include', len(roster['entries'])],
              'os-test pinned musl header roster')
-    require(not profiled or len(dispositions) == 6, 'os-test fixed profile dispositions are missing')
+    require(not profiled or sum(item['suite'] == 'include' for item in dispositions) == 6,
+            'os-test fixed atomic profile dispositions are missing')
     return reader.finish('os-test', 'os-test.json', observations, objects, suite_commands=commands,
         qualification={'status': 'profile-qualified' if profiled else 'passed', 'raw_passed': not profiled,
                        'dispositions': dispositions},

@@ -8,9 +8,9 @@ A qualified profile difference is never an upstream pass or an excluded unit.
 `owned_posix_native_observations.py` still validates every source, object,
 link, execution root, raw outcome and oracle observation.
 
-Only these four source boundaries may have a profile disposition. OS-test
-`basic` has none: owned products apply musl's process-wide credential
-setters, so its setter outcomes are exact raw matches.
+Only these five source boundaries may have a profile disposition. Owned
+products apply musl's process-wide credential setters, so OS-test `basic`
+setter outcomes remain exact raw matches.
 
 * OS-test `include/stdatomic/{atomic_flag_clear,atomic_flag_clear_explicit,
   atomic_flag_test_and_set,atomic_flag_test_and_set_explicit,atomic_signal_fence,
@@ -23,6 +23,19 @@ setters, so its setter outcomes are exact raw matches.
   `extern "C"` spellings and may not introduce a C++ runtime dependency.
   It does not show musl declaration or export availability, a general
   `stdatomic.h` closure, C11 family closure, or a C ABI policy decision.
+* OS-test `basic/aio/aio_cancel.out`: the unchanged source may expose a
+  completion-publication race in pinned musl 1.2.6. Its worker clears the
+  internal `running` flag before publishing the `aiocb` error; `aio_cancel`
+  can return `AIO_ALLDONE` in that interval, leaving the source's immediate
+  `aio_error` observation at `EINPROGRESS`. The only admitted difference is
+  candidate `exit: 0\n` versus pinned musl `aio_error: EINPROGRESS\n`.
+  The source must retain SHA-256
+  `72ec1f0c1c1245c07a68f96c8b434c6e72a448781c8d6722fed3644586954acd`
+  and both original outcome files remain in the full suite report. If musl
+  completes normally, both sides must retain the exact `exit: 0\n` outcome.
+  A candidate failure, another oracle diagnostic, source drift, or a second
+  `basic` mismatch fails admission. The result is
+  `candidate-passed-oracle-defect`, not a candidate compatibility limitation.
 * libc-test `functional/crypt`: all 32 active calls in the fixed pinned source
   remain present. Twelve legacy-format calls and sixteen unsupported SHA
   setting calls require an actual nonnull `*` result. Two invalid-bcrypt

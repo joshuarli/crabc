@@ -61,6 +61,14 @@ Aggregate admission requires this explicit `source_preparation` record.  Earlier
 v1 raw reports without it remain historical observations and are not silently
 upgraded into the prepared-fixture aggregate.
 
+`basic/aio/aio_cancel.c` remains byte-for-byte upstream source. Pinned musl
+1.2.6 can intermittently report `aio_error: EINPROGRESS` after `aio_cancel`
+returns, because its worker clears `running` before publishing the `aiocb`
+error. The runner keeps that raw failed outcome and its comparison. The native
+POSIX reader admits only the exact source-bound candidate success and pinned
+musl failure described in `owned-posix-native-dispositions.md`; all other
+`basic` differences still fail.
+
 The runner creates one `owned-os-test.*` directory directly under `TMPDIR`.
 Its `os-test.json` contains every Make status record, raw stream artifact,
 outcome file, selected-product and staged-source identity, retained adapter

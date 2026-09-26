@@ -1,4 +1,4 @@
-"""Three finite source/profile boundaries: atomics, crypt, and strptime.
+"""Finite source/profile boundaries and pinned oracle exceptions.
 
 This owner does not execute or waive a test. It retains exact upstream raw
 failures and requires the source-specific companion or source contract that
@@ -42,6 +42,10 @@ OS_ATOMIC_SOURCES = {
     'atomic_signal_fence': '#include <stdatomic.h>\n#ifdef atomic_signal_fence\n#undef atomic_signal_fence\n#endif\nvoid (*foo)(memory_order) = atomic_signal_fence;\nint main(void) { return 0; }\n',
     'atomic_thread_fence': '#include <stdatomic.h>\n#ifdef atomic_thread_fence\n#undef atomic_thread_fence\n#endif\nvoid (*foo)(memory_order) = atomic_thread_fence;\nint main(void) { return 0; }\n',
 }
+
+OS_AIO_CANCEL_SOURCE_SHA256 = '72ec1f0c1c1245c07a68f96c8b434c6e72a448781c8d6722fed3644586954acd'
+OS_AIO_CANCEL_ORACLE_FAILURE = b'aio_error: EINPROGRESS\n'
+OS_AIO_CANCEL_CANDIDATE_SUCCESS = b'exit: 0\n'
 
 
 def profile_sources(root):
@@ -188,10 +192,35 @@ def os_atomic_disposition(reader, suite, outcome, source, candidate, oracle, com
             'selected_dynamic_entries': companion['selected_dynamic_entries']}
 
 
+def os_aio_cancel_disposition(reader, suite, outcome, source, candidate, oracle):
+    """Qualify the completion-publication race in pinned musl AIO cancellation.
+
+    The worker clears its running flag before publishing the aiocb error.
+    ``aio_cancel`` can finish its wait in that interval and return ALLDONE;
+    the unchanged test then observes EINPROGRESS. A candidate must complete
+    the request before returning, and every other upstream outcome fails.
+    """
+    native.same([suite, outcome], ['basic', 'aio/aio_cancel.out'], 'OS AIO cancellation outcome')
+    native.require(source == reader.leaf / 'source-stage/basic/aio/aio_cancel.c',
+                   'OS AIO cancellation source path differs')
+    native.same(native.digest(source), OS_AIO_CANCEL_SOURCE_SHA256,
+                'OS AIO cancellation pinned source')
+    native.require(candidate == OS_AIO_CANCEL_CANDIDATE_SUCCESS and oracle == OS_AIO_CANCEL_ORACLE_FAILURE,
+                   'OS AIO cancellation exact raw outcomes differ')
+    return {'schema': SCHEMA, 'suite': suite, 'outcome': outcome,
+            'status': 'candidate-passed-oracle-defect', 'raw_passed': False,
+            'basis': 'pinned-musl-completion-publication-race',
+            'source': reader.identity(source), 'profiles': profile_sources(reader.root),
+            'candidate': {'passed': True, 'outcome': 'exit: 0'},
+            'oracle': {'passed': False, 'outcome': 'aio_error: EINPROGRESS'}}
+
+
 def os_disposition(reader, suite, outcome, source, candidate, oracle, companions):
-    """Admit the OS atomic roster only; every other raw mismatch rejects."""
+    """Admit only the atomic profile and the pinned AIO oracle defect."""
     native.require(isinstance(companions, dict) and set(companions) == {'atomic'},
                    'complete OS companion proofs required')
     if suite == 'include' and outcome in {'stdatomic/' + name + '.out' for name in OS_ATOMIC_SOURCES}:
         return os_atomic_disposition(reader, suite, outcome, source, candidate, oracle, companions['atomic'])
+    if suite == 'basic' and outcome == 'aio/aio_cancel.out':
+        return os_aio_cancel_disposition(reader, suite, outcome, source, candidate, oracle)
     raise native.NativeObservationError('OS outcome has no selected profile disposition')
