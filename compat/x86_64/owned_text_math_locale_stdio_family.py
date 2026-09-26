@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay the non-promoting installed text/math/locale/stdio component set.
+"""Admit the installed text/math/locale/stdio family from one current cohort.
 
 The coordinator admits only immutable component evidence for the current
 three-pair POSIX product matrix. It validates the matrix and pthread boundary,
@@ -8,7 +8,7 @@ and checks each component against the exact static/dynamic pair. Bounded
 locale, numeric, and stdio receipts are required corroboration only; only their
 separately declared complete behavior components can credit the affected
 capabilities. This module neither produces a product nor selects parity rows,
-completes a family, or promotes native x86 support.
+promotes native x86 support. Complete public-reader replay admits the family.
 """
 
 from __future__ import annotations
@@ -1078,7 +1078,7 @@ def collect(root: Path, request_path: Path) -> dict[str, Any]:
     source_after = current_source_identity(root)
     result = {
         "schema": SCHEMA,
-        "status": "immutable-component-coordination-verified",
+        "status": "installed-family-evidence-verified",
         "family": FAMILY,
         "capabilities": list(CAPABILITIES),
         "inputs": {
@@ -1090,8 +1090,8 @@ def collect(root: Path, request_path: Path) -> dict[str, Any]:
             "roster": _roster_identity(root, ROSTER_PATH),
         },
         "components": components,
-        "component_complete": False,
-        "family_completion": False,
+        "component_complete": True,
+        "family_completion": True,
         "promotion_ready": False,
         "public_support": False,
     }
@@ -1351,6 +1351,78 @@ def validate_receipt(root: Path, receipt: Path) -> dict[str, Any]:
     return observed
 
 
+def admission_facts(root: Path, receipt_path: Path) -> dict[str, object]:
+    """Bind a complete retained family receipt to current source and POSIX inputs.
+
+    Component behavior is reconstructed by `validate` in the pinned image.
+    The host ledger checks the finite receipt shape and current input identities
+    without relying on its own ambient tools to rerun those native readers.
+    """
+
+    root = root.resolve(strict=True)
+    receipt = _physical(root, receipt_path, "family admission receipt", below_work=True)
+    require(receipt.name == "receipt.json", "family admission receipt must be named receipt.json")
+    retained = _strict_json(receipt, "family admission receipt")
+    require(retained.get("schema") == SCHEMA and retained.get("family") == FAMILY
+            and retained.get("status") == "installed-family-evidence-verified"
+            and retained.get("component_complete") is True
+            and retained.get("family_completion") is True
+            and retained.get("promotion_ready") is False and retained.get("public_support") is False,
+            "family admission completion boundary differs")
+    require(retained.get("capabilities") == list(CAPABILITIES), "family admission capabilities differ")
+    inputs = retained.get("inputs")
+    require(isinstance(inputs, Mapping) and set(inputs) == {
+        "request", "family_execution", "pthread_family", "source_before", "source_after", "roster",
+    }, "family admission input roster differs")
+    source = current_source_identity(root)
+    require(same(inputs["source_before"], source) and same(inputs["source_after"], source),
+            "family admission is not bound to current source")
+    require(same(inputs["roster"], _roster_identity(root, ROSTER_PATH)),
+            "family admission roster changed")
+    paths: dict[str, Path] = {}
+    for name in ("request", "family_execution", "pthread_family"):
+        record = inputs[name]
+        require(isinstance(record, Mapping) and isinstance(record.get("path"), str),
+                f"family admission {name} identity differs")
+        path = _physical(root, record["path"], f"family admission {name}", below_work=True)
+        require(same(record, _identity(root, path)), f"family admission {name} changed")
+        paths[name] = path
+    request, matrix_path, pthread_path, requests = _request(root, paths["request"].relative_to(root))
+    require(matrix_path == paths["family_execution"] and pthread_path == paths["pthread_family"],
+            "family admission request inputs differ")
+    require(request["schema"] == SCHEMA and set(requests) == set(COMPONENTS),
+            "family admission request differs")
+    matrix = _require_matrix(_strict_json(matrix_path, "family admission POSIX matrix"))
+    require(same(matrix["inputs"].get("source"), source), "family admission POSIX source differs")
+    static_preparation = _input_receipt(root, matrix["inputs"], "static_preparation")
+    dynamic_qualification = _input_receipt(root, matrix["inputs"], "dynamic_qualification")
+    components = retained.get("components")
+    require(isinstance(components, Mapping) and set(components) == set(COMPONENTS),
+            "family admission component roster differs")
+    for name, specification in COMPONENTS.items():
+        component = components[name]
+        require(isinstance(component, Mapping) and set(component) == {"scope", "credits", "pairs"}
+                and component["scope"] == list(specification.scope)
+                and component["credits"] == list(specification.credits),
+                f"family admission {name} component contract differs")
+        pairs = component["pairs"]
+        require(isinstance(pairs, Mapping) and set(pairs) == set(PAIRS),
+                f"family admission {name} pair roster differs")
+        for pair in PAIRS:
+            record = pairs[pair]
+            require(isinstance(record, Mapping) and record.get("modes") == list(PAIR_MODES)
+                    and isinstance(record.get("rows"), Mapping)
+                    and set(record["rows"]) == set(specification.rows),
+                    f"family admission {name} {pair} modes or rows differ")
+    require(same(current_source_identity(root), source), "family admission source changed")
+    return {
+        "assessment": _identity(root, receipt),
+        "source": source,
+        "static_preparation": _identity(root, static_preparation),
+        "dynamic_qualification": _identity(root, dynamic_qualification),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1394,7 +1466,7 @@ def main() -> int:
             ))
         else:
             validate_receipt(ROOT, values.receipt)
-            print("immutable text/math/locale/stdio component coordination valid; family and promotion remain pending")
+            print("installed text/math/locale/stdio family evidence valid; promotion remains independent")
     except (FamilyError, OSError, ValueError) as error:
         parser.exit(1, f"owned text/math/locale/stdio family: {error}\n")
     return 0

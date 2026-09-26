@@ -293,7 +293,34 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
             retained = json.loads(receipt.read_text(encoding="utf-8"))
             replayed = coordinator.validate_receipt(fixture.root, output)
         self.assertEqual(replayed, retained)
-        self.assertFalse(replayed["family_completion"])
+        self.assertTrue(replayed["family_completion"])
+
+    def test_admission_binds_complete_receipt_to_current_source_and_posix_inputs(self) -> None:
+        fixture = self.fixture
+        fixture.matrix_path.write_text(json.dumps(fixture.matrix()) + "\n", encoding="utf-8")
+        patches = fixture.patches(fixture.adapter_results())
+        output = Path(".work/coordinator/receipt.json")
+        (fixture.root / output.parent).mkdir()
+        with patches[0], patches[1], patches[2], patches[3]:
+            receipt = coordinator.execute(fixture.root, fixture.relative(fixture.request_path), output)
+            facts = coordinator.admission_facts(fixture.root, output)
+        self.assertEqual(facts["assessment"], coordinator.family.file_identity(fixture.root, receipt))
+        self.assertEqual(facts["source"], SOURCE)
+        self.assertEqual(facts["static_preparation"],
+                         coordinator.family.file_identity(fixture.root, fixture.static_preparation))
+        self.assertEqual(facts["dynamic_qualification"],
+                         coordinator.family.file_identity(fixture.root, fixture.dynamic_qualification))
+
+        with mock.patch.multiple(coordinator, ROSTER_PATH=fixture.roster,
+                                 current_source_identity=mock.Mock(return_value={**SOURCE, "revision": "c" * 40})):
+            with self.assertRaisesRegex(coordinator.FamilyError, "not bound to current source"):
+                coordinator.admission_facts(fixture.root, output)
+
+        fixture.matrix_path.write_text("{}\n", encoding="utf-8")
+        with mock.patch.multiple(coordinator, ROSTER_PATH=fixture.roster,
+                                 current_source_identity=mock.Mock(return_value=SOURCE)):
+            with self.assertRaisesRegex(coordinator.FamilyError, "family_execution changed"):
+                coordinator.admission_facts(fixture.root, output)
 
     def test_product_pairs_reject_changed_matrix_request_before_product_replay(self) -> None:
         matrix = self.fixture.matrix()
@@ -407,8 +434,8 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         })
         retained = json.loads(receipt.read_text(encoding="utf-8"))
         self.assertEqual(tuple(retained["capabilities"]), coordinator.CAPABILITIES)
-        self.assertFalse(retained["component_complete"])
-        self.assertFalse(retained["family_completion"])
+        self.assertTrue(retained["component_complete"])
+        self.assertTrue(retained["family_completion"])
         self.assertFalse(retained["promotion_ready"])
         self.assertFalse(retained["public_support"])
 
@@ -470,12 +497,12 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         self.assertEqual(coordinator.COMPONENTS["numeric"].credits, ())
         self.assertEqual(coordinator.COMPONENTS["stdio"].credits, ())
 
-    def test_positive_control_records_all_components_without_family_or_promotion_claims(self) -> None:
+    def test_positive_control_admits_all_components_without_promotion(self) -> None:
         record = self.collect()
-        self.assertEqual(record["status"], "immutable-component-coordination-verified")
+        self.assertEqual(record["status"], "installed-family-evidence-verified")
         self.assertEqual(tuple(record["capabilities"]), coordinator.CAPABILITIES)
-        self.assertFalse(record["component_complete"])
-        self.assertFalse(record["family_completion"])
+        self.assertTrue(record["component_complete"])
+        self.assertTrue(record["family_completion"])
         self.assertFalse(record["promotion_ready"])
         self.assertFalse(record["public_support"])
         for component in coordinator.COMPONENTS:
