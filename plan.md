@@ -51,8 +51,10 @@ are not transferable passes for a different revision.
   open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; full M7 remains open. Static
-  replacement rejects 23 of 1406 musl-replaceable
-  functions; startup PSS is about 600 KiB against musl's ~515 KiB.
+  replacement now has a source-bound installed sweep with zero divergent
+  functions among 1,406 musl-replaceable entries and all 831 required entries
+  passing; the final merged candidate must rerun it. Startup PSS is about
+  600 KiB against musl's ~515 KiB.
   `libc.c-abi-compat` has an executable family aggregate
   (`owned-c-abi-compat-family`); its two allocator capabilities admit only on
   the native-default candidate. libc-test and OS-test leave only the finite
@@ -102,8 +104,9 @@ are not transferable passes for a different revision.
      `owned-resolver-family` (cross-member hidden TLS in the static link
      authority, fixed on main by the abi-closure commits), and the static and
      combined sysroots (the 33rd `atexit` expectation, fixed on main by
-     `7fbcc1b5d`). The `aio_cancel` oracle disposition is being proven in a
-     lane; the text family row is executable, and current-source
+     `7fbcc1b5d`). The finite `aio_cancel` oracle disposition is integrated;
+     its full native OS-test replay is still running. The text family row is
+     executable, and current-source
      `qualification-candidate --through posix-admission` is running on a
      frozen lane revision. These receipts must be rerun on merged `main`.
   2. Sixteen Codex lanes resumed on 2026-09-26; `.work/tmp/lane-agents.txt`
