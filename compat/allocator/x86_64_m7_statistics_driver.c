@@ -1,4 +1,4 @@
-/* Shared C driver for the allocator M7 statistics differential.
+/* Shared C driver for the allocator statistics differential.
 
    Linked once against the pinned mimalloc v3.5.0 release sources and once
    against the native Rust adapter, each run as its own process, it drives
@@ -11,10 +11,10 @@
 
    Printed statistics carry counts, sizes, and times that depend on the
    process, so each captured line is recorded with every token containing a
-   digit replaced by `N` (and a unit token directly after it dropped); the
-   line structure, labels, sections, and `ok`/`not all freed` states are
-   compared exactly, as are the callback delivery count and bin sizes.
-   Driven by `compat/allocator/x86_64_m7_gate.py --statistics-differential`. */
+   digit replaced by `N` (and a unit token directly after it dropped). The
+   callback delivery count, bin sizes, allocation and worker counter deltas,
+   and selected absolute arena snapshots are compared exactly. The line
+   structure, labels, sections, and `ok`/`not all freed` states are also exact. */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
 #endif
@@ -114,8 +114,43 @@ int main(void) {
   reset_capture();
   printf("CRABC_MI_M7_STATISTICS_TRACE_BEGIN\n");
 
+  mi_stats_t_decl(allocation_before);
+  if (!mi_stats_get(&allocation_before)) return 4;
+
   void* blocks[4] = { mi_malloc(64), mi_malloc(100000), mi_malloc(3u << 20), mi_malloc(40u << 20) };
   void* live = mi_malloc(200);
+  mi_stats_t_decl(allocation_after);
+  if (!mi_stats_get(&allocation_after)) return 5;
+  printf("arena.before=%lld,%lld,%lld\n", (long long)allocation_before.reserved.total,
+    (long long)allocation_before.mmap_calls.total, (long long)allocation_before.arena_count.total);
+  printf("arena.after=%lld,%lld,%lld\n", (long long)allocation_after.reserved.total,
+    (long long)allocation_after.mmap_calls.total, (long long)allocation_after.arena_count.total);
+#define COUNT_DELTA(name) printf("allocation." #name "=%lld,%lld,%lld\n", \
+    (long long)(allocation_after.name.total - allocation_before.name.total), \
+    (long long)(allocation_after.name.peak - allocation_before.name.peak), \
+    (long long)(allocation_after.name.current - allocation_before.name.current))
+#define COUNTER_DELTA(name) printf("allocation." #name "=%lld\n", \
+    (long long)(allocation_after.name.total - allocation_before.name.total))
+  COUNT_DELTA(pages);
+  COUNT_DELTA(page_committed);
+  COUNT_DELTA(committed);
+  COUNT_DELTA(threads);
+  COUNT_DELTA(heaps);
+  COUNT_DELTA(theaps);
+  COUNTER_DELTA(commit_calls);
+  COUNTER_DELTA(pages_extended);
+  COUNTER_DELTA(page_searches);
+  COUNTER_DELTA(page_searches_count);
+  for (size_t bin = 0; bin <= MI_BIN_HUGE; bin++) {
+    const mi_stat_count_t* before_bin = &allocation_before.page_bins[bin];
+    const mi_stat_count_t* after_bin = &allocation_after.page_bins[bin];
+    printf("allocation.page_bin.%zu=%lld,%lld,%lld\n", bin,
+      (long long)(after_bin->total - before_bin->total),
+      (long long)(after_bin->peak - before_bin->peak),
+      (long long)(after_bin->current - before_bin->current));
+  }
+#undef COUNT_DELTA
+#undef COUNTER_DELTA
 
   mi_stats_print_out(&capture, NULL);
   record_capture("print_out.callback");
@@ -127,8 +162,21 @@ int main(void) {
   record_capture("print.null");
   mi_thread_stats_print_out(&capture, NULL);
   record_capture("initial.thread_stats");
+  mi_stats_t_decl(worker_before);
+  if (!mi_stats_get(&worker_before)) return 6;
   pthread_t thread;
   if (pthread_create(&thread, NULL, worker, NULL) != 0 || pthread_join(thread, NULL) != 0) return 3;
+  mi_stats_t_decl(worker_after);
+  if (!mi_stats_get(&worker_after)) return 7;
+#define WORKER_COUNT_DELTA(name) printf("worker." #name "=%lld,%lld,%lld\n", \
+    (long long)(worker_after.name.total - worker_before.name.total), \
+    (long long)(worker_after.name.peak - worker_before.name.peak), \
+    (long long)(worker_after.name.current - worker_before.name.current))
+  WORKER_COUNT_DELTA(threads);
+  WORKER_COUNT_DELTA(pages);
+  WORKER_COUNT_DELTA(heaps);
+  WORKER_COUNT_DELTA(theaps);
+#undef WORKER_COUNT_DELTA
 
   mi_stats_t_decl(before);
   mi_stats_get(&before);
