@@ -633,7 +633,8 @@ impl PageMap {
         }
 
         let guard = self.header()?.lock.lock()?;
-        let result = if let Some(submap) = self.submap_at(index)? {
+        let mut warn_failed_map = false;
+        let result = (|| if let Some(submap) = self.submap_at(index)? {
             Ok(submap)
         } else {
             #[cfg(any(test, feature = "native-runtime-test-audit"))]
@@ -645,7 +646,11 @@ impl PageMap {
                 self.config,
                 PAGE_MAP_SUB_SIZE,
                 MapAccess::Committed,
-            ), self.config.good_alloc_size(PAGE_MAP_SUB_SIZE), true)?;
+            ), self.config.good_alloc_size(PAGE_MAP_SUB_SIZE), true)
+                .map_err(|error| {
+                    warn_failed_map = true;
+                    error
+                })?;
             let candidate_base = candidate.base()?.cast::<PageEntry>();
             // SAFETY: the candidate mapping is exclusively owned and committed.
             unsafe { initialize_submap(candidate_base) };
@@ -680,8 +685,18 @@ impl PageMap {
                     NonNull::new(winner).ok_or(Errno::NOMEM)
                 }
             }
-        };
-        guard.unlock()?;
+        })();
+        let unlock = guard.unlock();
+        if warn_failed_map {
+            // The output callback may allocate and reenter PageMap. Deliver
+            // the source warning only after releasing its private lock.
+            crate::process_init::process_warning_message(
+                crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                    c"internal error: unable to extend the page map\n",
+                ),
+            );
+        }
+        unlock?;
         result
     }
 
@@ -1652,6 +1667,62 @@ mod tests {
         // SAFETY: this test owns the only PageMap client and has no root or
         // registered range to quiesce before the retryable release.
         unsafe { page_map.destroy() }.expect("the retried map release succeeds");
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn failed_lazy_submap_warns_after_releasing_its_lock_and_retries() {
+        static OUTPUT: std::sync::Mutex<std::vec::Vec<u8>> = std::sync::Mutex::new(std::vec::Vec::new());
+        static MAP: AtomicPtr<PageMap> = AtomicPtr::new(null_mut());
+        static WARNING_LOCK_WAS_FREE: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
+
+        unsafe extern "C" fn capture(message: *const core::ffi::c_char) {
+            // SAFETY: the runtime output owner passes a live NUL-terminated
+            // fragment for the duration of this callback.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if bytes == b"internal error: unable to extend the page map\n" {
+                let map = MAP.load(Ordering::Acquire);
+                if !map.is_null() {
+                    // SAFETY: the child owns this PageMap until after output
+                    // delivery; this callback only probes its private lock.
+                    let map = unsafe { &*map };
+                    if let Ok(header) = map.header() {
+                        WARNING_LOCK_WAS_FREE.store(header.lock.try_lock().is_some(), Ordering::Release);
+                    }
+                }
+            }
+            OUTPUT.lock().unwrap().extend_from_slice(bytes);
+        }
+
+        crate::test_process::run_in_fresh_process(
+            "page_map::tests::failed_lazy_submap_warns_after_releasing_its_lock_and_retries",
+            || {
+                std::env::set_var("mimalloc_show_errors", "1");
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096,
+                    unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(capture) },
+                ));
+                OUTPUT.lock().unwrap().clear();
+                let mut map = PageMap::initialize_for_subprocess(
+                    memory_config(false), MAX_VABITS, false,
+                    crate::subproc::MainSubprocess::global().identity(),
+                ).expect("isolated map reservation");
+                MAP.store(&mut map, Ordering::Release);
+                let target = map.committed_count().unwrap() + 1;
+                let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+                assert_eq!(map.ensure_submap_at(target), Err(Errno::NOMEM));
+                assert_eq!(fault.observed(), 1);
+                assert!(OUTPUT.lock().unwrap().windows(
+                    b"internal error: unable to extend the page map\n".len(),
+                ).any(|window| window == b"internal error: unable to extend the page map\n"));
+                assert!(WARNING_LOCK_WAS_FREE.load(Ordering::Acquire));
+                fault.set(fault::Plan::disabled());
+                map.ensure_submap_at(target).expect("the same map retries");
+                MAP.store(null_mut(), Ordering::Release);
+                unsafe { map.destroy() }.expect("retryable map releases");
+            },
+        );
     }
 
     #[test]
