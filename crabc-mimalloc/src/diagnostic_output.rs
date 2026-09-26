@@ -62,7 +62,7 @@ const WARNING_PREFIX_TAIL: &[u8] = b": ";
 const FINAL_NOT_ALL_FREED: &[u8] = b"not all freed";
 const FINAL_EXPLICIT_EMPTY_NOT_OK: &[u8] = b"";
 
-/// The four descriptors consumed by this intentionally partial M7 owner.
+/// The four descriptors consumed by this bounded diagnostic snapshot.
 ///
 /// This mirrors only `show_errors`, `show_stats`, `verbose`, and `max_warnings` in the
 /// pinned table. It does not parse an environment, mutate options, or claim
@@ -582,7 +582,7 @@ impl FinalProcessDiagnosticView {
 ///
 /// Pinned `mi_vfprintf` has `char buf[992]` and calls `_mi_vsnprintf` with
 /// `sizeof(buf)-1`; that formatter consequently emits at most 990 payload
-/// bytes plus a terminating NUL. A complete M7 formatter must preserve its
+/// bytes plus a terminating NUL. A general formatter must preserve its
 /// format/sanitizing rules before constructing this value. This bounded owner
 /// only receives the resulting message, copies it into this stack value, and
 /// preserves its source truncation boundary without heap storage.
@@ -594,7 +594,7 @@ pub(crate) struct SourceFormattedMessage {
 impl SourceFormattedMessage {
     /// Copies an already source-formatted C string through the pinned 990-byte
     /// payload limit. The current selected callers have static deterministic
-    /// bodies; general variadic formatting remains open with M7.
+    /// bodies; general variadic formatting is outside this constructor.
     #[inline]
     pub(crate) fn from_source_formatted(message: &CStr) -> Self {
         let source = message.to_bytes();
@@ -2224,7 +2224,7 @@ impl OutputOwner {
             // A valid process-private lock cannot fail here. `mi_lock_acquire`
             // reports its own impossible primitive error; this private port
             // drops this best-effort diagnostic rather than inventing a second
-            // error recursion route without the full M7 error owner.
+            // error recursion route while handling this private lock failure.
             return;
         };
         let start = self.out_len.fetch_add(length, Ordering::AcqRel);
@@ -4432,6 +4432,10 @@ mod tests {
         let literal = |entries: &[&[u8]]| terminate(entries.iter().map(|entry| entry.to_vec()).collect());
         std::vec![
             ("empty", literal(&[])),
+            ("show_errors_off", literal(&[
+                b"mimalloc_show_errors=0",
+                b"mimalloc_purge_delay=bogus",
+            ])),
             ("canonical", literal(&[
                 b"MIMALLOC_PURGE_DELAY=250",
                 b"mimalloc_arena_reserve=2MiB",
@@ -4512,7 +4516,7 @@ mod tests {
         ]
     }
 
-    /// Machine-readable Rust half of the M7 options/environment C/Rust
+    /// Machine-readable Rust half of the options/environment C/Rust
     /// differential. The pinned C probe prints the same keys.
     #[test]
     fn source_options_trace_for_pinned_c_comparison() {
@@ -4675,9 +4679,8 @@ mod tests {
         (owner, policy)
     }
 
-    /// Machine-readable Rust half of the M7 option-effects C/Rust
-    /// differential (`x86_64_m7_option_effects_oracle.c` prints the same
-    /// keys). Each decision runs after `mi_option_set` on the process table
+    /// Machine-readable Rust half of the option-effects C/Rust
+    /// differential. Each decision runs after `mi_option_set` on the process table
     /// that the x86 process `VmPolicy` reads, on a fresh table per scenario
     /// where C restores its startup image.
     #[test]
@@ -4881,6 +4884,7 @@ mod tests {
     fn error_trace_scenarios() -> std::vec::Vec<(&'static str, std::vec::Vec<std::vec::Vec<u8>>)> {
         std::vec![
             ("hidden", environment_entries(&[])),
+            ("disabled", environment_entries(&[b"mimalloc_show_errors=0"])),
             ("capped", environment_entries(&[b"mimalloc_show_errors=1", b"mimalloc_max_errors=1"])),
             ("verbose", environment_entries(&[b"mimalloc_verbose=1", b"mimalloc_max_errors=0"])),
         ]

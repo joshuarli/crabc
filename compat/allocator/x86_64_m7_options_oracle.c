@@ -300,6 +300,7 @@ int main(void) {
     printf("scenario.empty.lazy_messages=");
     print_capture(&capture);
   }
+  RUN("show_errors_off", "mimalloc_show_errors=0", "mimalloc_purge_delay=bogus");
   RUN("canonical",
       "MIMALLOC_PURGE_DELAY=250",
       "mimalloc_arena_reserve=2MiB",
@@ -453,6 +454,7 @@ int main(void) {
     print_capture(&capture);
   }
   ERROR_RUN("hidden", NULL);
+  ERROR_RUN("disabled", "mimalloc_show_errors=0");
   ERROR_RUN("capped", "mimalloc_show_errors=1", "mimalloc_max_errors=1");
   ERROR_RUN("verbose", "mimalloc_verbose=1", "mimalloc_max_errors=0");
   RECURSION_RUN("invalid_verbose", "mimalloc_verbose=bogus");

@@ -52,6 +52,15 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--options-differential"],
       "scope": "Separate pinned-C and Rust processes install the same environment images and compare every descriptor's name, legacy spelling, KiB unit, value, init state, and mi_option_get_size; the TID-normalized deprecated/invalid warning fragments in table order; the boolean-versus-mi_option_set store path (guarded coupling); the clamp, size, set_default, enable/disable, and out-of-range results; the complete mi_options_print_out output; the _mi_error_message gate (verbose bypass, show_errors, max_errors cap, error prefix), handler argument and code, and default errno result; and the thread-prefix formatting."
     },
+    "differential:show-errors-profile": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m7_gate.py",
+        "--offline",
+        "--show-errors-profile-differential"
+      ],
+      "scope": "The complete options and diagnostic-output trace runs with pinned C MI_SHOW_ERRORS and the native mi-show-errors feature. The default show_errors descriptor becomes one, environment override and verbose bypass still apply, and warning/error fragments, caps, and printed build configuration match."
+    },
     "differential:adapter": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--adapter-differential"],
       "scope": "One unmodified C driver, linked once against the pinned C sources and once against the native `mi_*` adapter, runs the M7 option accessors and mutators (including invalid `mi_option_t` values and the guarded coupling), `mi_options_print_out`/`mi_options_print` through a registered output, `mi_register_error` with a handled and a default report (codes, argument, errno, and TID-normalized messages), `mi_register_deferred_free` through `mi_collect`, `mi_version`, and `mi_stats_get` (header validation, page counts around allocation, free, and collection, and a thread that has not initialized) and must print identical traces."
@@ -313,10 +322,11 @@
       ],
       "acceptance": "Compile-time debug profiles select their own option defaults (for example `show_errors = 1` under `MI_DEBUG || MI_SHOW_ERRORS`), assertion levels, debug fill, and padding as in the pinned source; `mi_debug_show_arenas`/`mi_arenas_print` print the source arena image; sanitizer and tracking modes carry source-backed applicability decisions.",
       "evidence": [
-        "differential:debug-profile"
+        "differential:debug-profile",
+        "differential:show-errors-profile"
       ],
       "blocked_by": [
-        "The engine selects only `DEBUG_LEVEL = 0` and `PADDING_SIZE = 0`; no debug, show-errors, or padding profile, assertion level, or debug fill exists.",
+        "The engine selects only `DEBUG_LEVEL = 0` and `PADDING_SIZE = 0`; the debug and padding profiles, assertion levels, and debug fill are absent. MI_SHOW_ERRORS has a separate compile-time profile and differential.",
         "`mi_debug_show_arenas` and `mi_arenas_print` are absent, including their prefixed test-adapter mapping.",
         "No applicability decision exists for the TSAN/UBSAN and Valgrind/ASAN/ETW modes."
       ]

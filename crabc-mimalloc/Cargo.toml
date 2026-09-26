@@ -240,6 +240,9 @@ required-features = ["native-runtime-test-audit"]
 
 [features]
 default = []
+# Pinned MI_SHOW_ERRORS changes the initial show_errors descriptor while
+# retaining release allocation layout and algorithms.
+mi-show-errors = []
 # Private, allocation-backed process context used only by the standalone
 # prefixed C adapter's tests. Production builds retain the allocation-free engine.
 test-adapter = []

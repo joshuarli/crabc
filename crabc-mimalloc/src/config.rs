@@ -18,7 +18,7 @@
 // descriptor table, its release defaults, and environment grammar), and
 // `CMakeLists.txt:7-24,161-192,280-340,361-454,647-693,769-774` (selected
 // normal-release switches and the deliberately excluded Armv8.3-a path).
-// The selected M1 branch is LP64, little-endian Linux/AArch64 normal release:
+// The selected baseline is LP64, little-endian Linux/AArch64 release:
 // debug, secure, guarded, padding, tracking, checked-free, free-small, flat
 // page-map, and SIMD branches are all inactive; separate page metadata and
 // large pages are active. `MI_ARENA_SLICE_SHIFT` and
@@ -323,16 +323,16 @@ impl SourceOption {
     }
 
     /// The initial descriptor value of the selected Linux/x86-64 and
-    /// Linux/AArch64 LP64 normal-release profile.
+    /// Linux/AArch64 LP64 release profiles.
     ///
-    /// `MI_DEBUG == 0`, no `MI_SHOW_ERRORS`, no `MI_GUARDED`, non-Android,
-    /// non-Apple, and `MI_INTPTR_SIZE > 4` select the conditional defaults
-    /// in `src/options.c:40-110`. A compile-time guarded or debug profile
-    /// must select its own row rather than mutate this one.
+    /// `MI_DEBUG == 0`, no `MI_GUARDED`, non-Android, non-Apple, and
+    /// `MI_INTPTR_SIZE > 4` select these conditional defaults. The optional
+    /// `MI_SHOW_ERRORS` image changes only the initial `show_errors` value.
+    /// A guarded or debug profile must select its own source defaults.
     pub(crate) const fn default_value(self) -> i64 {
         match self {
-            // `MI_DEBUG || MI_SHOW_ERRORS` is false in the selected profile.
-            Self::ShowErrors => 0,
+            // Source `MI_DEBUG || defined(MI_SHOW_ERRORS)`.
+            Self::ShowErrors => if cfg!(feature = "mi-show-errors") { 1 } else { 0 },
             Self::ShowStats => 0,
             // `MI_DEFAULT_VERBOSE`.
             Self::Verbose => 0,
