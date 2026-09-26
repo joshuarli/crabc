@@ -47,6 +47,8 @@ STATIC_DRIVER_PATH = "bin/crabc-cc"
 PACKAGE_FORMAT = "crabc-x86-64-owned-static-sysroot-package/v1"
 PACKAGE_ARCHIVE_ROOT = "crabc-x86_64-owned-static-sysroot"
 LIBC_MEMBER = re.compile(r"^c\..+\.rcgu\.o$")
+THIN_LTO_RUST_RUNTIME_MEMBER = re.compile(r"^c\.(core|alloc)-([0-9a-f]+)\..+\.rcgu\.o$")
+RUST_ALLOC_SHIM_MEMBER = re.compile(r"^c\.[a-z0-9]+\.rcgu\.o$")
 ALLOCATOR_MEMBER = re.compile(r"^[0-9a-f]+-static\.o$")
 C_ALLOCATOR_PIN = {
     "name": "libmimalloc-sys",
@@ -81,12 +83,13 @@ NATIVE_COMPILER_RT_MEMBER = re.compile(
 # application that defines one libc function must not collide with the rest
 # of libc, as it does not with musl's one-object-per-source-file libc.a. The
 # workspace release profile's fat LTO with one codegen unit fuses all of libc
-# into one object. ThinLTO keeps cross-crate optimization and the stock
-# `core` closure (so no unwinding `core` member or personality escapes into
-# the archive) while emitting one member per codegen unit; a unit ceiling above
-# libc's module count gives each Rust module its own member, and rustc never
-# splits a module to reach it. Member names derive from crate and module
-# names, so their order stays deterministic.
+# into one object. ThinLTO keeps cross-crate optimization while emitting one
+# member per codegen unit; a unit ceiling above libc's module count gives each
+# Rust module its own member, and rustc never splits a module to reach it.
+# ThinLTO also imports core and alloc code into `c.*` members. Their definitions
+# shared with the pinned Rust rlibs must be weak so ordinary C links can use
+# them and a Rust application can supply its own strong runtime definitions.
+# Member names derive from crate and module names, so their order is stable.
 STATIC_ARCHIVE_PROFILE = (
     "--config",
     'profile.release.lto="thin"',
@@ -570,9 +573,26 @@ def archive_defined_symbols(nm: str, archive: Path) -> set[str]:
     return result
 
 
+def global_definitions(nm: str, object_or_archive: Path) -> dict[str, str]:
+    """Read ELF global bindings, ignoring archive member headings and metadata."""
+
+    output = run([nm, "--format=posix", "--defined-only", "--extern-only", str(object_or_archive)])
+    definitions: dict[str, str] = {}
+    for line in output.decode("utf-8", errors="replace").splitlines():
+        fields = line.split()
+        if len(fields) < 2 or len(fields[1]) != 1 or not fields[1].isalpha():
+            continue
+        name, kind = fields[:2]
+        if name in definitions and definitions[name] != kind:
+            raise BuildError(f"global symbol has inconsistent bindings: {name}")
+        definitions[name] = kind
+    return definitions
+
+
 def rebuild_libc_archive(
     source: Path, output: Path, *, llvm_ar: str, llvm_nm: str,
     allocator_archive: Path | None = None,
+    llvm_objcopy: str | None = None, stock_runtime_libdir: Path | None = None,
 ) -> dict[str, object]:
     """Rebuild from the already-attested target LLVM archive tools."""
 
@@ -603,12 +623,57 @@ def rebuild_libc_archive(
         }
     selected, excluded = classify_libc_members(members, allocator_member=allocator_member)
     output.parent.mkdir(parents=True, exist_ok=True)
+    rebound_runtime: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="x86-libc-members.", dir=output.parent) as temporary:
         member_root = Path(temporary)
         run([llvm_ar, "x", str(source), *selected], cwd=member_root)
         selected_paths = tuple(member_root / member for member in selected)
         if any(not path.is_file() for path in selected_paths):
             raise BuildError("llvm-ar did not extract every selected crabc-libc member")
+        for path in selected_paths:
+            imported = THIN_LTO_RUST_RUNTIME_MEMBER.fullmatch(path.name)
+            shim = RUST_ALLOC_SHIM_MEMBER.fullmatch(path.name)
+            if imported is None and shim is None:
+                continue
+            if llvm_objcopy is None or stock_runtime_libdir is None:
+                raise BuildError("ThinLTO Rust runtime member lacks an owned rebinding tool or stock runtime")
+            source_symbols = global_definitions(llvm_nm, path)
+            if imported is not None:
+                runtime, crate_hash = imported.groups()
+                stock = stock_runtime_libdir / f"lib{runtime}-{crate_hash}.rlib"
+            else:
+                shim_names = {"___rust_alloc_error_handler", "___rust_no_alloc_shim_is_unstable_v2"}
+                if len(source_symbols) != 2 or {
+                    suffix for symbol in source_symbols for suffix in shim_names if symbol.endswith(suffix)
+                } != shim_names:
+                    raise BuildError("unclassified Rust allocator shim member")
+                runtime = "std-alloc-shim"
+                stock_candidates = list(stock_runtime_libdir.glob("libstd-*.rlib"))
+                if len(stock_candidates) != 1:
+                    raise BuildError("Rust allocator shim has no unique pinned std rlib")
+                stock = stock_candidates[0]
+            if not stock.is_file() or stock.is_symlink():
+                raise BuildError(f"ThinLTO {runtime} member has no matching pinned Rust rlib")
+            stock_symbols = global_definitions(llvm_nm, stock)
+            duplicates = sorted(name for name, binding in source_symbols.items()
+                                if binding.isupper() and binding not in {"W", "V"}
+                                and stock_symbols.get(name, "").isupper()
+                                and stock_symbols[name] not in {"W", "V"})
+            if not duplicates:
+                raise BuildError(f"ThinLTO {runtime} member has no duplicate strong stock runtime definitions")
+            symbols_file = member_root / f"{path.name}.weaken-symbols"
+            symbols_file.write_text("\n".join(duplicates) + "\n", encoding="ascii")
+            original_hash = sha256_file(path)
+            run([llvm_objcopy, f"--weaken-symbols={symbols_file}", str(path)])
+            rebound = global_definitions(llvm_nm, path)
+            if any(rebound.get(name) not in {"W", "V"} for name in duplicates):
+                raise BuildError(f"ThinLTO {runtime} duplicate symbols did not become weak")
+            if any(rebound.get(name) != binding for name, binding in source_symbols.items()
+                   if name not in duplicates):
+                raise BuildError(f"ThinLTO {runtime} changed a nonduplicate global binding")
+            rebound_runtime.append({"member": path.name, "source_sha256": original_hash,
+                                    "installed_sha256": sha256_file(path), "stock_rlib": stock.name,
+                                    "stock_rlib_sha256": sha256_file(stock), "weakened_symbols": duplicates})
         run([llvm_ar, "rcsD", str(output), *(str(path) for path in selected_paths)])
         rebuilt = tuple(
             line
@@ -639,7 +704,8 @@ def rebuild_libc_archive(
             ],
         },
         "required_defined_symbols": sorted(REQUIRED_LIBC_SYMBOLS),
-        "policy": "crabc objects and the explicitly attested allocator object only; stock core/compiler_builtins and native compiler-rt members are classified then excluded",
+        "rust_runtime_duplicate_bindings": rebound_runtime,
+        "policy": "crabc objects and the explicitly attested allocator object only; duplicate ThinLTO core/alloc and Rust allocation-shim definitions are weak, while stock core/compiler_builtins and native compiler-rt members are excluded",
     }
     if allocator_record is not None:
         result["allocator_backend"] = allocator_record
@@ -786,14 +852,13 @@ def allocator_header_provenance(dependencies: Path, cargo_home: Path) -> dict[st
 
 
 ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow", "pinned-c-evidence", "native")
-# The one compile-time default. Allocator M10 switches it to "native" in this
-# single line once `allocator-m10 --check` passes; nothing else selects it.
+# The one compile-time default. Select the native allocator here only after
+# its production checks pass; no other setting changes ordinary products.
 DEFAULT_ALLOCATOR_BACKEND = "accepted-c"
 # `native` is the production-shaped Rust allocator product: the same Rust
 # selection as the evidence-only `native-shadow` build (so the identical
 # libc Cargo features), but refused together with any test-audit feature and
-# audited for the complete absence of C mimalloc by
-# compat/allocator/x86_64_m10_gate.py.
+# audited for the complete absence of C mimalloc.
 NATIVE_ALLOCATOR_BACKEND = "native"
 NATIVE_ALLOCATOR_BACKENDS = ("native-shadow", NATIVE_ALLOCATOR_BACKEND)
 
@@ -1015,6 +1080,13 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
     llvm_ar = producer_tool_path(producer_tools, "llvm-ar")
     llvm_nm = producer_tool_path(producer_tools, "llvm-nm")
     llvm_objdump = producer_tool_path(producer_tools, "llvm-objdump")
+    rustc_record = producer_tools["rustc"]
+    if not isinstance(rustc_record, dict) or not isinstance(rustc_record.get("sysroot"), str):
+        raise BuildError("pinned producer record lacks Rust sysroot")
+    rust_sysroot = Path(rustc_record["sysroot"])
+    runtime_libdir = rust_sysroot / "lib" / "rustlib" / TARGET / "lib"
+    objcopy = executable_identity(rust_sysroot / "lib" / "rustlib" / TARGET / "bin" / "llvm-objcopy",
+                                  "pinned Rust target llvm-objcopy", within=rust_sysroot)
     python = sys.executable
     cargo_root = stage / "cargo"
     if allocator_backend not in ALLOCATOR_BACKENDS:
@@ -1133,7 +1205,10 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
         llvm_ar=llvm_ar,
         llvm_nm=llvm_nm,
         allocator_archive=allocator_archive,
+        llvm_objcopy=str(objcopy["path"]),
+        stock_runtime_libdir=runtime_libdir,
     )
+    libc_provenance["rust_runtime_duplicate_binding_tool"] = objcopy
     if evidence_c:
         evidence_object, evidence_record = pinned_c_evidence_object(
             stage, c_flags, allocator_archive, llvm_ar=llvm_ar, environment=environment)
