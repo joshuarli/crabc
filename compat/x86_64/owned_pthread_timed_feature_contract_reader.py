@@ -145,7 +145,6 @@ CANDIDATE_STATIC_PROVIDER_SHAPES = {
 FINAL_STATIC_PROVIDER_SHAPES = {
     provider: ("FUNC", "LOCAL", "HIDDEN") for provider in ARCHIVE_HIDDEN
 }
-PTHREAD_STATIC_MEMBER = "c.c.9c0a881dcc98e279-cgu.0.rcgu.o"
 # These ten internal C helpers contain the actual bounded runtime observations;
 # main only dispatches them. Their source and final bytes are separate static
 # contracts so an unchanged main/provider map cannot discharge a replaced body.
@@ -1831,21 +1830,41 @@ def _static_admitted_inputs(
             owner = f"{original}({member})"
             require(owner not in admitted, "static admitted owner is duplicated")
             admitted[owner] = data
-    require(f"{inputs['static_libc']['path']}({PTHREAD_STATIC_MEMBER})" in admitted,
-            "selected static archive omits the pthread provider object")
     return admitted
 
 
+def _static_provider_owners(
+    symbols: Path, archive: Path, admitted: Mapping[str, Path | bytes],
+) -> dict[str, str]:
+    """Bind each timed alias pair to its actual selected archive member.
+
+    Rust codegen may place the four providers in separate objects. The
+    retained symbol stream proves each public alias and hidden provider share
+    one definition, while the admitted archive bytes prove that object exists.
+    """
+
+    _, definitions = _static_symbols(symbols)
+    owners: dict[str, str] = {}
+    prefix = f"{archive}("
+    for public, provider in ALIASES:
+        member = definitions[public]["provider"]["member"]
+        require(member.startswith(prefix) and member.endswith(")")
+                and member in admitted and isinstance(admitted[member], bytes),
+                "selected static archive omits the pthread provider object")
+        owners[provider] = member
+    return owners
+
+
 def _static_function_contracts(
-    work_path: str, binary: str, inputs: Mapping[str, Mapping[str, object]],
+    work_path: str, binary: str, inputs: Mapping[str, Mapping[str, object]], provider_owners: Mapping[str, str],
 ) -> tuple[StaticFunctionContract, ...]:
-    provider_owner = f"{inputs['static_libc']['path']}({PTHREAD_STATIC_MEMBER})"
     entry = "static_crt1" if binary == "static-contract" else "static_rcrt1"
     rows = [
         StaticFunctionContract("main", f"{work_path}/contract.o", "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT"),
         StaticFunctionContract("_start", str(inputs[entry]["path"]), "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT"),
     ]
     for public, provider in ALIASES:
+        provider_owner = provider_owners[provider]
         rows.extend((
             StaticFunctionContract(public, provider_owner, "WEAK", "DEFAULT", "WEAK", "DEFAULT"),
             StaticFunctionContract(provider, provider_owner, "GLOBAL", "HIDDEN", "LOCAL", "HIDDEN"),
@@ -1958,10 +1977,14 @@ def _validate_static_link_receipt(
     require(any(line.startswith(f"{root}/usr/lib/libc.a(") for line in trace),
             f"{binary} static trace does not retain selected archive-member extraction")
     try:
+        admitted = _static_admitted_inputs(work, work_path, binary, inputs)
+        provider_owners = _static_provider_owners(
+            work / "candidate-static-symbols.txt", Path(str(inputs["static_libc"]["path"])), admitted,
+        )
         require_static_functions(
             work / f"{binary}.link.map", work / binary,
-            _static_admitted_inputs(work, work_path, binary, inputs),
-            _static_function_contracts(work_path, binary, inputs),
+            admitted,
+            _static_function_contracts(work_path, binary, inputs, provider_owners),
         )
     except StaticLinkAuthorityError as error:
         raise ReceiptError(f"{binary} selected static function authority differs: {error}") from error

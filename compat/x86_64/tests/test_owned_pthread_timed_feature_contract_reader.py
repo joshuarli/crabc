@@ -5,6 +5,7 @@ import importlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,47 @@ sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
 
 
 class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
+    def test_split_static_provider_members_are_bound_to_selected_archive(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        assembler, archiver, readelf = (shutil.which(tool) for tool in ("as", "ar", "readelf"))
+        if None in (assembler, archiver, readelf):
+            self.skipTest("assembler, archiver, and readelf are required for the archive fixture")
+        parent = ROOT / ".work/x86_64/tmp"
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as scratch:
+            work = Path(scratch)
+            grouped = (
+                (reader.ALIASES[:1], "cond.o"),
+                (reader.ALIASES[1:2], "mutex.o"),
+                (reader.ALIASES[2:], "join.o"),
+            )
+            objects = []
+            for aliases, member in grouped:
+                source = work / member.replace(".o", ".s")
+                source.write_text(".text\n" + "".join(
+                    f".globl {provider}\n.hidden {provider}\n.type {provider}, @function\n"
+                    f"{provider}:\n  ret\n.weak {public}\n.set {public}, {provider}\n"
+                    for public, provider in aliases
+                ), encoding="utf-8")
+                target = work / member
+                subprocess.run([assembler, str(source), "-o", str(target)], check=True)
+                objects.append(target)
+            archive = work / "libc.a"
+            subprocess.run([archiver, "rcD", str(archive), *(str(path) for path in objects)], check=True)
+            symbols = work / "symbols.txt"
+            symbols.write_bytes(subprocess.check_output([readelf, "--symbols", "--wide", str(archive)]))
+            admitted = {
+                f"{archive}({member})": data
+                for member, data in reader.archive_members(archive.read_bytes())
+            }
+            owners = reader._static_provider_owners(symbols, archive, admitted)
+            self.assertEqual(owners, {
+                provider: f"{archive}({member})"
+                for aliases, member in grouped for _public, provider in aliases
+            })
+            with self.assertRaises(reader.ReceiptError):
+                reader._static_provider_owners(symbols, archive.with_name("other.a"), admitted)
+
     def test_current_image_manifest_uses_selected_toolchain_and_keeps_old_manifest(self) -> None:
         reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
         toolchain = tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
