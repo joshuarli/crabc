@@ -154,7 +154,11 @@ pub(crate) unsafe fn allocate(
     let theap_ref = unsafe { theap.as_ref() };
     let direct = theap_ref.direct_page(direct_index)?;
     if direct != EMPTY_PAGE.as_ptr() {
-        let page = NonNull::new(direct)?;
+        // The initialized direct cache contains only the empty-page
+        // sentinel or a live queue page, as the source direct lookup does.
+        // SAFETY: the owner's published Theap keeps that cache initialized;
+        // the sentinel was excluded above.
+        let page = unsafe { NonNull::new_unchecked(direct) };
         // SAFETY: a direct entry names a live page of this Theap.
         let head = unsafe { page.as_ref() }.free_list_head();
         if !head.is_null() {
