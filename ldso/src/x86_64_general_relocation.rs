@@ -102,10 +102,12 @@ pub(super) enum RuntimeSymbol { Address(u64), Tls { module: usize, offset: usize
 pub(super) unsafe fn find_runtime_symbol<'a>(
     scope: impl IntoIterator<Item = Option<&'a Object>>, name: &[u8],
 ) -> Option<RuntimeSymbol> {
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let mut hashes = SymbolHashes::default();
     for object in scope {
         let objects = core::slice::from_ref(object?);
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        let Some(symbol) = (unsafe { lookup_exported(objects, 0, name) })? else {
+        let Some(symbol) = (unsafe { lookup_exported(objects, 0, name, &mut hashes) })? else {
             continue;
         };
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
@@ -231,16 +233,35 @@ fn sysv_hash(name: &[u8]) -> u32 {
     hash
 }
 
+/// A name's hashes belong to the whole ordered symbol search, rather than to
+/// each object visited by that search. Compute only the table format reached.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[derive(Default)]
+struct SymbolHashes { gnu: Option<u32>, sysv: Option<u32> }
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+impl SymbolHashes {
+    fn gnu(&mut self, name: &[u8]) -> u32 { *self.gnu.get_or_insert_with(|| gnu_hash(name)) }
+    fn sysv(&mut self, name: &[u8]) -> u32 { *self.sysv.get_or_insert_with(|| sysv_hash(name)) }
+}
+
 /// Lookup one externally visible definition through the table that musl
 /// selects for this object. GNU uses its bloom/bucket/chain proof; SysV uses
 /// its bucket chain. Neither route linearly scans a mapped dynsym tail.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn lookup_exported(
-    objects: &[Object], owner: usize, name: &[u8],
+    objects: &[Object], owner: usize, name: &[u8], hashes: &mut SymbolHashes,
 ) -> Option<Option<Definition>> {
     let object = objects.get(owner)?;
-    let Some(index) = (unsafe { exported_index(object, name) })? else { return Some(None); };
+    let Some(index) = (unsafe { exported_index_with_hashes(object, name, hashes) })? else { return Some(None); };
     Some(Some(unsafe { definition_at(owner, object.symtab.add(index.checked_mul(24)?)) }))
+}
+
+/// Standalone lookup for a caller that has no ordered multi-object search.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[inline(always)]
+unsafe fn exported_index(object: &Object, name: &[u8]) -> Option<Option<usize>> {
+    unsafe { exported_index_with_hashes(object, name, &mut SymbolHashes::default()) }
 }
 
 /// The dynsym index of `name`'s first externally visible definition in
@@ -252,7 +273,9 @@ unsafe fn lookup_exported(
 // Inlined into `lookup_exported`, the dlsym and symbol-resolution hot path.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[inline(always)]
-unsafe fn exported_index(object: &Object, name: &[u8]) -> Option<Option<usize>> {
+unsafe fn exported_index_with_hashes(
+    object: &Object, name: &[u8], hashes: &mut SymbolHashes,
+) -> Option<Option<usize>> {
     // With a NUL-terminated string table no name read can fail, so the name is
     // compared bytewise up to its first difference instead of being measured.
     let terminated = object.strsz != 0 && unsafe { object.strtab.add(object.strsz - 1).read() } == 0;
@@ -275,7 +298,7 @@ unsafe fn exported_index(object: &Object, name: &[u8]) -> Option<Option<usize>> 
             buckets, chains, symbol_count,
         } => {
             if bucket_count == 0 || bloom_count == 0 { return None; }
-            let hash = gnu_hash(name);
+            let hash = hashes.gnu(name);
             let bloom_index = ((hash >> 6) as usize) & (bloom_count - 1);
             let word = unsafe { read_u64(bloom.add(bloom_index).cast()) };
             let mask = (1u64 << (hash & 63)) | (1u64 << ((hash >> bloom_shift) & 63));
@@ -295,7 +318,7 @@ unsafe fn exported_index(object: &Object, name: &[u8]) -> Option<Option<usize>> 
         }
         SymbolLookupTable::Sysv { bucket_count, buckets, chains, symbol_count } => {
             if bucket_count == 0 || symbol_count == 0 { return Some(None); }
-            let mut index = unsafe { read_u32(buckets.add((sysv_hash(name) as usize) % bucket_count).cast()) } as usize;
+            let mut index = unsafe { read_u32(buckets.add((hashes.sysv(name) as usize) % bucket_count).cast()) } as usize;
             for _ in 0..symbol_count {
                 if index == 0 { return Some(None); }
                 if index >= symbol_count { return None; }
@@ -363,10 +386,12 @@ unsafe fn lookup_result_with_name(
         None => unsafe { symbol_name(&objects[requestor], index) }?,
     };
     if name.is_empty() { return None; }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let mut hashes = SymbolHashes::default();
     for &owner in scope.indices {
         if copy && owner == 0 { continue; }
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        if let Some(found) = unsafe { lookup_exported(objects, owner, name) }? {
+        if let Some(found) = unsafe { lookup_exported(objects, owner, name, &mut hashes) }? {
             if found.section == 0 || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
                 || !matches!(found.visibility, 0 | 3)
                 || (tls && found.kind != 6)
