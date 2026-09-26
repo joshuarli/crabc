@@ -10356,7 +10356,8 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
     /// It never holds this engine, the attachment, or a whole `Page` borrow.
     /// That separation matters while a valid live client may still retain its
     /// atomic remote-free producer projection into a page being collected or
-    /// abandoned.
+    /// abandoned. After the queue traversal, the current Theap's release
+    /// statistics are merged into its Heap before the Theap is detached.
     pub(crate) fn collect_abandon_owner_exit(mut self) -> Result<Self, Self> {
         if self.thread_exit_route_is_terminal()
             || self.is_collection_poisoned()
@@ -10391,6 +10392,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
         let result = {
             let mut callbacks = ProductionOwnerExitCallbacks {
                 thread,
+                theap,
                 arena: &self.arena,
                 arena_lifetime: PhantomData,
                 page_map: self.page_map,
@@ -10439,6 +10441,26 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
                     .all(|index| theap.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
         };
         if !complete || self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            self.retain_terminal_thread_exit_route();
+            return Err(self);
+        }
+        let mut heap_guard = match main_heap.lock_heap() {
+            Ok(guard) => guard,
+            Err(_) => {
+                self.retain_terminal_thread_exit_route();
+                return Err(self);
+            }
+        };
+        if !core::ptr::eq(heap_guard.heap_mut(), heap.as_ptr()) {
+            let _ = heap_guard.unlock();
+            self.retain_terminal_thread_exit_route();
+            return Err(self);
+        }
+        // SAFETY: the source traversal has ended, the validated current
+        // Theap remains attached, and the Heap lock excludes list teardown.
+        // Only its atomic statistics tail is projected for the final merge.
+        unsafe { heap_guard.heap_mut().merge_attached_theap_statistics_at(theap) };
+        if heap_guard.unlock().is_err() {
             self.retain_terminal_thread_exit_route();
             return Err(self);
         }
@@ -37079,7 +37101,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         let result = {
             let mut callbacks = ProductionOwnerExitCallbacks {
-                thread, arena: &self.arena, arena_lifetime: PhantomData,
+                thread, theap, arena: &self.arena, arena_lifetime: PhantomData,
                 page_map: self.page_map, main_heap: Some(main_heap), heap,
                 pending_os_release: &mut self.pending_os_release,
                 collection_poison: &mut self.collection_poison,
@@ -37143,7 +37165,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         let result = {
             let mut callbacks = ProductionOwnerExitCallbacks {
-                thread, arena: &self.arena, arena_lifetime: PhantomData,
+                thread, theap, arena: &self.arena, arena_lifetime: PhantomData,
                 page_map: self.page_map, main_heap: None, heap,
                 pending_os_release: &mut self.pending_os_release,
                 collection_poison: &mut self.collection_poison,
@@ -42769,6 +42791,7 @@ enum ProductionOwnerExitError {
 /// source `used == 0` proof excludes a live client and its producer.
 struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map, B: PageBacking<'arena>> {
     thread: LiveThreadId,
+    theap: NonNull<Theap>,
     arena: &'state B,
     arena_lifetime: PhantomData<&'arena ()>,
     page_map: &'map PageMap,
@@ -43087,6 +43110,11 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
     }
 
     fn release_detached_arena_page(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: this terminal release is selected only after zero use and
+        // queue detach, so no client can retain a producer projection.
+        let Some(statistics_bin) = page_statistics_bin(unsafe { page.as_ref() }) else {
+            return false;
+        };
         let Some(ReleaseSpan::Arena {
             memory,
             slice_start,
@@ -43130,12 +43158,21 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         if unsafe { (&mut *page.as_ptr()).retire_exclusive() }.is_none() {
             return false;
         }
+        // SAFETY: this exact current Theap registered the page, and source
+        // decrements its bin/pages counts before returning the arena span.
+        if !unsafe { Theap::record_page_released_at(self.theap, statistics_bin) } {
+            return false;
+        }
         // SAFETY: these are the exact arena slices validated above; every
         // visible PageMap/metadata predecessor has completed.
         unsafe { self.arena.release(memory) }
     }
 
     fn release_detached_os_page(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the all-free detached page has no live client or producer.
+        let Some(statistics_bin) = page_statistics_bin(unsafe { page.as_ref() }) else {
+            return false;
+        };
         let Some(ReleaseSpan::Os(published)) = self.release_span(page) else {
             return false;
         };
@@ -43183,6 +43220,11 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
             || retired.initially_committed() != expected_memory.initially_committed()
             || retired.initially_zero() != expected_memory.initially_zero()
         {
+            return false;
+        }
+        // SAFETY: this exact current Theap registered the page; source
+        // decrements its atomic statistics before returning the OS mapping.
+        if !unsafe { Theap::record_page_released_at(self.theap, statistics_bin) } {
             return false;
         }
         // SAFETY: the typed `published` token is now the sole mapping owner.

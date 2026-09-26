@@ -8947,6 +8947,44 @@ pub(crate) mod tests {
         .expect("the repeated owner-local fixture remains current-thread local");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_owner_exit_releases_retired_worker_page_statistics() {
+        with_owner_local_fixture(true, |attachment, mut owner, _pair| {
+            let main_heap = owner.parent_heap;
+            let before = {
+                let mut heap = main_heap.lock_heap().expect("the main Heap remains live");
+                let statistics = heap.heap_mut().statistics_snapshot();
+                heap.unlock().expect("the main Heap statistics projection closes");
+                statistics
+            };
+            let block = owner
+                .with_local_allocator(attachment, |allocator| allocator.allocate(100, false))
+                .expect("the worker reaches its persistent page engine")
+                .expect("the worker allocates one 100-byte block");
+            owner
+                .with_local_allocator(attachment, |allocator| unsafe { allocator.free(block) })
+                .expect("the worker rebinds its page engine")
+                .expect("the worker frees its only block");
+            owner
+                .finish_after_collect_abandon(attachment)
+                .expect("owner exit releases the empty retired page and merges its statistics");
+            let after = {
+                let mut heap = main_heap.lock_heap().expect("the main Heap remains live");
+                let statistics = heap.heap_mut().statistics_snapshot();
+                heap.unlock().expect("the main Heap statistics projection closes");
+                statistics
+            };
+            assert_eq!(after.pages_total - before.pages_total, 1);
+            assert_eq!(after.pages_current - before.pages_current, 0);
+            assert_eq!(
+                after.page_bin_current.iter().sum::<i64>()
+                    - before.page_bin_current.iter().sum::<i64>(),
+                0,
+            );
+        });
+    }
+
     /// The selected later persistent owner publishes the same default-release
     /// Theap option image as ticket zero. Pinned page.c:mi_page_to_full
     /// therefore abandons its exhausted medium arena page instead of linking

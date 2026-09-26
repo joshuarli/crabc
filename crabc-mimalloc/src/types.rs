@@ -6614,6 +6614,21 @@ impl Theap {
         self.statistics.page_released(bin)
     }
 
+    /// Records the current Theap's page release while a field-scoped exit
+    /// collector owns its queues. The statistics tail uses relaxed atomics and
+    /// is disjoint from the collector's queue, count, and Heap-link fields.
+    ///
+    /// # Safety
+    /// `theap` is the live current-thread Theap that registered this page;
+    /// the caller has completed the page's queue detach and records exactly
+    /// one release before the Theap statistics are merged or destroyed.
+    pub(crate) unsafe fn record_page_released_at(theap: NonNull<Self>, bin: usize) -> bool {
+        // SAFETY: the caller keeps the image live; this projects only its
+        // atomic statistics tail and creates no whole-Theap reference.
+        let statistics = unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) };
+        statistics.page_released(bin)
+    }
+
     /// Records the successful mapped abandoned-page claim in
     /// `arena.c:761-765` for this new owning Theap.
     #[inline]
