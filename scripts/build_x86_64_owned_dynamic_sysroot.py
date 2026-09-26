@@ -58,7 +58,7 @@ SHARED_LIBC_SYMBOL_ORDER = ROOT / "libc/src/c_abi/x86_64/owned_dynamic_hot.order
 # checkout records them like every other configuration input.
 _IMPORT_ROOT = ROOT
 RUNTIME_DISCARD_UNWIND_SCRIPT = ROOT / "libc/src/c_abi/x86_64/owned_discard_unwind.ld"
-# The interpreter keeps its small .bss statics on one page before the pool chunk.
+# The interpreter packs small mutable statics into the last .data page.
 LOADER_BSS_LAYOUT_SCRIPT = ROOT / "ldso/x86_64-owned-bss-layout.ld"
 COMPILER_HELPER_CONTRACT = ROOT / "builtins/x86_64-helper-contract.toml"
 SHARED_LIBC_COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
