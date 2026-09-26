@@ -4,6 +4,21 @@
 // without an address).  Keep the wire layouts local: these are Linux UAPI
 // layouts, not the public C `struct ifreq` ABI.
 
+// Each interface-name entry comes from a separate musl object, while
+// getifaddrs and freeifaddrs share one. Give the installed x86 static archive
+// those boundaries without changing AArch64's inline item layout.
+#[cfg(target_arch = "x86_64")]
+macro_rules! interface_source_member {
+    ($name:ident { $($item:item)* }) => {
+        static_archive_member! { $name { $($item)* } }
+    };
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+macro_rules! interface_source_member {
+    ($name:ident { $($item:item)* }) => { $($item)* };
+}
+
 const CABI_IF_NAMESIZE: usize = 16;
 const CABI_IFREQ_SIZE: usize = 40;
 const CABI_IFR_INDEX_OFFSET: usize = 16;
@@ -369,6 +384,7 @@ unsafe fn cabi_if_collect_links(ctx: &mut CabiIfNameMapContext) -> bool {
     }
 }
 
+interface_source_member! { if_nametoindex_source {
 #[no_mangle]
 pub unsafe extern "C" fn if_nametoindex(name: *const c_char) -> c_uint {
     if name.is_null() {
@@ -397,7 +413,9 @@ pub unsafe extern "C" fn if_nametoindex(name: *const c_char) -> c_uint {
     }
     core::ptr::read_unaligned(ifr.as_ptr().add(CABI_IFR_INDEX_OFFSET) as *const c_uint)
 }
+} }
 
+interface_source_member! { if_indextoname_source {
 #[no_mangle]
 pub unsafe extern "C" fn if_indextoname(index: c_uint, name: *mut c_char) -> *mut c_char {
     if name.is_null() {
@@ -429,7 +447,9 @@ pub unsafe extern "C" fn if_indextoname(index: c_uint, name: *mut c_char) -> *mu
     );
     name
 }
+} }
 
+interface_source_member! { if_nameindex_source {
 #[no_mangle]
 pub unsafe extern "C" fn if_nameindex() -> *mut CabiIfNameIndex {
     let mut ctx = CabiIfNameMapContext {
@@ -491,11 +511,14 @@ pub unsafe extern "C" fn if_nameindex() -> *mut CabiIfNameIndex {
     free(ctx.list as *mut c_void);
     result
 }
+} }
 
+interface_source_member! { if_freenameindex_source {
 #[no_mangle]
 pub unsafe extern "C" fn if_freenameindex(index: *mut CabiIfNameIndex) {
     free(index as *mut c_void);
 }
+} }
 
 // getifaddrs/freeifaddrs use the same rtnetlink source as if_nameindex, but
 // retain link and address records separately.  Every pointer exposed through
@@ -1071,6 +1094,7 @@ unsafe fn ifaddrs_dump(
     }
 }
 
+interface_source_member! { freeifaddrs_source {
 #[no_mangle]
 pub unsafe extern "C" fn freeifaddrs(mut ifp: *mut CabiIfAddrs) {
     while !ifp.is_null() {
@@ -1111,3 +1135,4 @@ pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut CabiIfAddrs) -> c_int {
     *ifap = ctx.first;
     0
 }
+} }

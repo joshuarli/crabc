@@ -13,6 +13,7 @@ strpbrk strnlen strstr strcpy strncpy strcat strncat strlcpy strlcat strdup
 strndup strerror_r strsignal strcasecmp strncasecmp strcasestr strtok_r
 strcoll strxfrm dirname memchr memmem memcmp bcmp memset memmove bcopy bzero
 explicit_bzero swab atoi atol atoll qsort getenv setenv unsetenv clearenv
+getopt_long getopt_long_only
 
 # Standard I/O streams, their process and signal reporters
 clearerr fclose feof ferror fflush fgetc fgetln fgetpos fgets fgetws fileno
@@ -120,11 +121,12 @@ tempnam tfind tmpnam truncate ttyname twalk unlink utime utimensat utimes
 versionsort write writev
 
 # Sockets, address conversion, netdb and resolver
-accept accept4 bind connect dn_comp freeaddrinfo gai_strerror getaddrinfo
+accept accept4 bind connect dn_comp freeaddrinfo freeifaddrs gai_strerror getaddrinfo
 gethostbyaddr gethostbyaddr_r gethostbyname gethostbyname2 gethostbyname2_r
-gethostbyname_r getnameinfo getpeername getservbyname getservbyname_r
+gethostbyname_r getifaddrs getnameinfo getpeername getservbyname getservbyname_r
 getservbyport getservbyport_r getsockname getsockopt hstrerror htonl htons
-inet_addr inet_ntop inet_pton listen ntohl ntohs recv recvfrom recvmmsg
+if_freenameindex if_indextoname if_nameindex if_nametoindex inet_addr
+inet_ntop inet_pton listen ntohl ntohs recv recvfrom recvmmsg
 recvmsg res_query res_querydomain send sendmmsg sendmsg sendto setsockopt
 shutdown sockatmark socket socketpair
 

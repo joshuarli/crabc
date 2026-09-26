@@ -6,6 +6,21 @@
 // reset spellings, so code written against either musl declaration resets the
 // parser state.
 
+// The installed x86 static archive extracts one object per Rust module. Keep
+// both long-option entries together in their own source member, matching
+// musl's getopt_long object, while AArch64 retains its inline items.
+#[cfg(target_arch = "x86_64")]
+macro_rules! getopt_source_member {
+    ($name:ident { $($item:item)* }) => {
+        static_archive_member! { $name { $($item)* } }
+    };
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+macro_rules! getopt_source_member {
+    ($name:ident { $($item:item)* }) => { $($item)* };
+}
+
 #[no_mangle]
 pub static mut optarg: *mut c_char = core::ptr::null_mut();
 #[no_mangle]
@@ -450,27 +465,29 @@ unsafe fn cabi_getopt_long_impl(
     result
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn getopt_long(
-    argc: c_int,
-    argv: *const *mut c_char,
-    optstring: *const c_char,
-    longopts: *const CabiGetoptOption,
-    idx: *mut c_int,
-) -> c_int {
-    cabi_getopt_long_impl(argc, argv, optstring, longopts, idx, false)
-}
+getopt_source_member! { getopt_long_source {
+    #[no_mangle]
+    pub unsafe extern "C" fn getopt_long(
+        argc: c_int,
+        argv: *const *mut c_char,
+        optstring: *const c_char,
+        longopts: *const CabiGetoptOption,
+        idx: *mut c_int,
+    ) -> c_int {
+        cabi_getopt_long_impl(argc, argv, optstring, longopts, idx, false)
+    }
 
-#[no_mangle]
-pub unsafe extern "C" fn getopt_long_only(
-    argc: c_int,
-    argv: *const *mut c_char,
-    optstring: *const c_char,
-    longopts: *const CabiGetoptOption,
-    idx: *mut c_int,
-) -> c_int {
-    cabi_getopt_long_impl(argc, argv, optstring, longopts, idx, true)
-}
+    #[no_mangle]
+    pub unsafe extern "C" fn getopt_long_only(
+        argc: c_int,
+        argv: *const *mut c_char,
+        optstring: *const c_char,
+        longopts: *const CabiGetoptOption,
+        idx: *mut c_int,
+    ) -> c_int {
+        cabi_getopt_long_impl(argc, argv, optstring, longopts, idx, true)
+    }
+} }
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
 #[no_mangle]

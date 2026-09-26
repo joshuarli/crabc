@@ -47,10 +47,11 @@ symbol instead, as musl's objects do. The `MATH` role defines counting
 `hypot` and `log1p` and requires musl's result: `cabs` reaches `hypot` and
 `acosh` reaches `log1p`.
 
-Two groups stay candidate-divergent: `getopt_long`/`getopt_long_only` and
-the `if_*`/`getifaddrs`/`freeifaddrs` interface entries. Their x86 sources
-are shared with the paused AArch64 target, whose behavior and evidence this
-campaign preserves, so their members are not split here.
+The shared getopt and interface implementations use source-member wrappers
+only for the installed x86 static archive. Both long-option entries share
+musl's `getopt_long.c` member; `getifaddrs` and `freeifaddrs` share musl's
+`getifaddrs.c` member. Each interface-name entry has its own member. The
+shared AArch64 source expansion keeps the existing inline layout.
 
 ## String role
 
