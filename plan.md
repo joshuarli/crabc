@@ -116,8 +116,9 @@ are not transferable passes for a different revision.
      cohort. The source-built static libc now compiles and links both
      freestanding C and stock Rust std consumers, and automatic exit selects
      the signed native `destroy_on_exit` behavior; their merged-revision
-     qualification remains open. `m8.rust-std` is running on native-shadow
-     products. Known open items from the last lane reports:
+     qualification remains open. `m8.rust-std` passes on source-built
+     native-shadow products; the other M8 leaves and merged-revision
+     qualification remain open. Known open items from the last lane reports:
      `materialized-dynamic-sysroot` still has load-sensitive deadlines (aio
      fresh-signal and behavior, credentials `threads`, message-queues,
      signal-handler-fork `raise-race`). Merge a `[[family.verified_slice]]`
@@ -125,7 +126,7 @@ are not transferable passes for a different revision.
   3. Remaining low-churn repository-file pins (`compat/x86_64/core_image.py`
      now names the core image once): owned `.list` digests in the
      dynamic sysroot builder and the mimalloc visibility, errno-alias and
-     syscall-alias readers, utmpx's link-authority pin, shadow-ABI and churn
+     syscall-alias readers, shadow-ABI and churn
      fixtures, the native perf profile, the Lua admission test, and image-input
      receipts. Keep the frozen AArch64 baseline, pinned-musl header identity,
      upstream reference copies, adapted-upstream-test patch pins, and
@@ -133,9 +134,9 @@ are not transferable passes for a different revision.
 - **Other open defects:** fourteen runners pin optimizer shape (raw-syscall
   provider counts, call edges; lane `pattern`). M3's direct-page pop retains
   `retire_expire` and its differential trace passes. M7 exact statistics
-  receipts isolate first-arena reservation before the baseline snapshot and a
-  worker page whose current count remains +1 after exit; their source owners
-  are investigating. The pinned musl `raise-race` workload itself can fail
+  receipts now match worker page retirement and merge; the remaining mismatch
+  is first-arena reservation before the baseline snapshot. Its source owner
+  is investigating. The pinned musl `raise-race` workload itself can fail
   with the same late-handler-fork `ECHILD` pattern as the candidate, so that
   report alone is not a runtime defect. Timing-limited leaves under host load
   need same-oracle comparison and source-bound reruns.
