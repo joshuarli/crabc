@@ -125,9 +125,7 @@
       "required": true,
       "acceptance": "Rust std, its dependent fixture, LTO, and unwind consumers pass on native-shadow products.",
       "evidence": ["consumer:rust-std-lto"],
-      "blocked_by": [
-        "The static product's `libc.a` carries a `c.core-*` ThinLTO member that defines `core::panicking::*`, `core::fmt::*`, and `core::option::*` globally (accepted-C products since the one-member-per-module split as well), so the unwind matrix's static full Rust cleanup link fails with duplicate symbols against the application's own libcore."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m8.lua",

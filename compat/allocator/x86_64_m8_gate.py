@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Fail-closed native Linux/x86-64 gate for allocator Milestone 8.
+"""Fail-closed native Linux/x86-64 gate for owned-libc allocator integration.
 
-M8 is "complete owned-libc integration: startup/constructors,
-pthread/TSD/cleanup/cancellation/fork, errno/C ABI, weak/interposed symbols,
-static/dynamic products, DSOs/loader, Rust std, Lua, and the selected
-real-program corpus" (plan.md Milestones). The reviewed contract
-`m8-gate-x86_64-v3.5.0.json` names, for each of those rows, the installed
-native-shadow product evidence it requires.
+The required rows cover startup, threads, C ABI, interposition, static and
+dynamic products, loader, Rust std, Lua, and the selected program corpus.
+The evidence registry names each row's native-shadow product commands.
 
 Every evidence entry is an existing `scripts/dev-x86_64.sh` product command.
 One entry, named by the contract's `products` record, builds the native-shadow
@@ -16,10 +13,11 @@ bound from that entry's printed evidence directory. A consumer whose products
 were not built does not run and is recorded as failed.
 
 A gate passes only when it carries no reviewed blocker and every evidence
-entry has a command that executed successfully on this run. Evidence without a
-command is declared missing, and a gate that depends on it must name a
-blocker. Runnable evidence is always executed; its pass never removes a
-blocker by itself.
+entry has a command that executed successfully on this run. The Rust std row
+also rereads its source-bound receipt, product snapshots, and retained files.
+Evidence without a command is declared missing, and a gate that depends on it
+must name a blocker. Runnable evidence is always executed; its pass never
+removes a blocker by itself.
 
 The product commands start their own containers, so this runner executes on
 the native x86-64 host, not inside the allocator evidence image.
@@ -28,11 +26,17 @@ the native x86-64 host, not inside the allocator evidence image.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import run as harness
+
+sys.path.insert(0, str(harness.ROOT / "compat/x86_64"))
+import consumer_rust_std_lto as consumer
+import owned_dynamic_qualification as qualification
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m8-gate-x86_64-v3.5.0.json"
@@ -204,6 +208,144 @@ def ordered_evidence(runnable: Mapping[str, Sequence[str]], producer: str) -> li
     return [producer, *(entry for entry in runnable if entry != producer)]
 
 
+def read_native_shadow_receipt(command: Sequence[str], expected_source: str) -> dict[str, str]:
+    """Bind the completed consumer to current source, its products, and retained bytes."""
+
+    def argument(option: str) -> str:
+        positions = [index for index, value in enumerate(command) if value == option]
+        if len(positions) != 1 or positions[0] + 1 >= len(command):
+            raise harness.HarnessError(f"Rust std consumer must supply one {option}")
+        return command[positions[0] + 1]
+
+    def checkout_path(path: str) -> Path:
+        candidate = Path(path)
+        try:
+            relative = candidate.relative_to(CONTAINER_ROOT / ".work")
+        except ValueError as error:
+            raise harness.HarnessError(f"Rust std receipt path escapes checkout work: {path}") from error
+        host = harness.ROOT / ".work" / relative
+        if not host.exists() or host.is_symlink() or host.resolve() != host:
+            raise harness.HarnessError(f"Rust std receipt path is missing or not physical: {path}")
+        return host
+
+    def checkout_file(path: str) -> Path:
+        host = checkout_path(path)
+        if not host.is_file():
+            raise harness.HarnessError(f"Rust std receipt file is missing: {path}")
+        return host
+
+    if argument("--allocator-evidence") != "native-shadow":
+        raise harness.HarnessError("Rust std consumer did not select native-shadow evidence")
+    roots = {
+        "static": argument("--development-static-sysroot"),
+        "dynamic": argument("--development-dynamic-sysroot"),
+    }
+    receipt_path = checkout_file(f"{argument('--output')}/receipt.json")
+    try:
+        record = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise harness.HarnessError(f"Rust std receipt cannot be read: {error}") from error
+    if not isinstance(record, dict) or any((
+        record.get("schema") != consumer.SCHEMA,
+        record.get("gate") != consumer.GATE,
+        record.get("source_sha256") != expected_source,
+        record.get("allocator_evidence") != "native-shadow",
+        record.get("qualifying") is not False,
+        record.get("cohort") is not None,
+        record.get("passed") is not True,
+        record.get("unmet_conditions") != [],
+    )):
+        raise harness.HarnessError("Rust std receipt status or current source does not match native-shadow evidence")
+    gates = record.get("gates")
+    if (record.get("frozen_gates") != list(consumer.FROZEN_GATES)
+            or not isinstance(gates, dict) or set(gates) != set(consumer.FROZEN_GATES)
+            or any(not isinstance(gate, dict) or not isinstance(gate.get("lanes"), dict)
+                   or not gate["lanes"] or any(not isinstance(lane, dict) or lane.get("unmet") != []
+                                              for lane in gate["lanes"].values())
+                   for gate in gates.values())):
+        raise harness.HarnessError("Rust std receipt lacks a frozen consumer gate")
+    unwind = record.get("unwind")
+    if (not isinstance(unwind, dict) or set(unwind) != {"native-shadow"}
+            or not isinstance(unwind["native-shadow"], dict)
+            or unwind["native-shadow"].get("unmet") != []
+            or not isinstance(unwind["native-shadow"].get("cross_dso"), dict)
+            or set(unwind["native-shadow"]["cross_dso"]) != {"stock-std", "build-std"}
+            or any(not isinstance(lane, dict) or lane.get("unmet") != []
+                   for lane in unwind["native-shadow"]["cross_dso"].values())):
+        raise harness.HarnessError("Rust std receipt lacks the unwind and cross-DSO matrix")
+    regressions = record.get("provider_regressions")
+    if (not isinstance(regressions, dict) or not isinstance(regressions.get("lanes"), dict)
+            or set(regressions["lanes"]) != set(consumer.PROVIDER_REGRESSIONS)
+            or any(not isinstance(lane, dict) or lane.get("unmet") != []
+                   for lane in regressions["lanes"].values())):
+        raise harness.HarnessError("Rust std receipt lacks the provider regressions")
+    products = record.get("products")
+    if not isinstance(products, dict) or set(products) != {"native-shadow"}:
+        raise harness.HarnessError("Rust std receipt lacks the native-shadow products")
+    pair = products["native-shadow"]
+    if not isinstance(pair, dict) or pair.get("label") != "native-shadow":
+        raise harness.HarnessError("Rust std receipt product pair is malformed")
+    for mode, container_root in roots.items():
+        snapshot = pair.get(mode)
+        if not isinstance(snapshot, dict) or snapshot.get("root") != container_root:
+            raise harness.HarnessError(f"Rust std receipt {mode} product does not match the supplied root")
+        host_root = checkout_path(container_root)
+        if not host_root.is_dir():
+            raise harness.HarnessError(f"Rust std receipt {mode} product root is missing")
+        try:
+            current = consumer.owned_cleanup.product_snapshot(host_root, mode)
+            backend = consumer.product_allocator_backend(host_root, mode)
+        except (consumer.owned_cleanup.OwnedCleanupError, OSError, ValueError) as error:
+            raise harness.HarnessError(f"Rust std receipt {mode} product cannot be reread: {error}") from error
+        manifest = snapshot.get("manifest")
+        if (backend != "native-shadow" or snapshot.get("files") != current["files"]
+                or not isinstance(manifest, dict)
+                or manifest.get("path") != str(CONTAINER_ROOT / current["manifest"]["path"]
+                                               .removeprefix(str(harness.ROOT) + "/"))
+                or manifest.get("sha256") != current["manifest"]["sha256"]):
+            raise harness.HarnessError(f"Rust std receipt {mode} product changed")
+        if mode == "dynamic":
+            state_path = checkout_file(f"{container_root}/share/crabc/dynamic-product-state.json")
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                raise harness.HarnessError(f"Rust std dynamic product state cannot be read: {error}") from error
+            if (not isinstance(state, dict) or state.get("source_sha256") != expected_source
+                    or state.get("allocator_backend") != "native-shadow"):
+                raise harness.HarnessError("Rust std receipt dynamic product source does not match")
+    retained = record.get("retained_files")
+    if not isinstance(retained, dict) or not retained:
+        raise harness.HarnessError("Rust std receipt retains no files")
+    toolchain = record.get("toolchain", {})
+    if not isinstance(toolchain, dict):
+        raise harness.HarnessError("Rust std receipt toolchain identity is malformed")
+    toolchain_files = {
+        item["path"]: item["sha256"] for item in toolchain.values()
+        if isinstance(item, dict) and "path" in item and "sha256" in item
+    }
+    for path, digest in retained.items():
+        if not isinstance(path, str) or not isinstance(digest, str):
+            raise harness.HarnessError("Rust std retained file identity is malformed")
+        if path in toolchain_files:
+            # Toolchain files exist only inside the pinned evidence image; the
+            # consumer hashed them during execution. Recheck their recorded
+            # identity here and rehash every checkout-owned retained file.
+            sysroot = toolchain.get("sysroot")
+            if not isinstance(sysroot, str) or not Path(path).is_relative_to(sysroot):
+                raise harness.HarnessError(f"Rust std retained toolchain path escaped its sysroot: {path}")
+            if toolchain_files[path] != digest:
+                raise harness.HarnessError(f"Rust std retained toolchain identity changed: {path}")
+            continue
+        file = checkout_file(path)
+        if consumer.sha256_file(file) != digest:
+            raise harness.HarnessError(f"Rust std retained file changed: {path}")
+    return {
+        "path": harness.relative(receipt_path),
+        "sha256": consumer.sha256_file(receipt_path),
+        "source_sha256": expected_source,
+    }
+
+
 def run_evidence(
     runnable: Mapping[str, Sequence[str]], products: Mapping[str, str], selected: Sequence[str], artifacts: Path,
 ) -> dict[str, dict[str, Any]]:
@@ -233,12 +375,22 @@ def run_evidence(
         if evidence_id == producer and passed:
             directory = product_directory(str(record["stdout"]) + str(record["stderr"]), products["evidence_line"])
             passed = directory is not None
+        receipt: dict[str, str] | None = None
+        if evidence_id == "consumer:rust-std-lto" and passed:
+            try:
+                receipt = read_native_shadow_receipt(command, qualification.source_digest())
+            except harness.HarnessError as error:
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(f"M8 receipt reader: {error}\n")
+                passed = False
         if evidence_id in selected:
             results[evidence_id] = {
                 "command": list(command),
                 "log": harness.relative(log),
                 "status": "passed" if passed else "failed",
             }
+            if receipt is not None:
+                results[evidence_id]["receipt"] = receipt
     return results
 
 
