@@ -241,17 +241,28 @@ unsafe fn direct(name: &[u8]) -> Result<Opened, i32> {
 }
 
 unsafe fn path_open(paths: &[u8], name: &[u8]) -> Result<Option<Opened>, i32> {
+    // Each candidate writes its full pathname and terminator before either
+    // openat or LoadedName reads it. Bytes beyond that terminator are unused.
+    let mut path = [core::mem::MaybeUninit::<u8>::uninit(); SEARCH_BUFFER];
+    let path_ptr = path.as_mut_ptr().cast::<u8>();
     for directory in paths.split(|byte| matches!(byte, b':' | b'\n')).filter(|part| !part.is_empty()) {
         // snprintf(buf, sizeof buf, "%.*s/%s") < sizeof buf: skip what does not fit.
         let length = directory.len().saturating_add(1).saturating_add(name.len());
         if length >= SEARCH_BUFFER { continue; }
-        let mut path = [0; SEARCH_BUFFER];
-        path[..directory.len()].copy_from_slice(directory);
-        path[directory.len()] = b'/';
-        path[directory.len() + 1..length].copy_from_slice(name);
-        let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0x80000, 0) };
+        // SAFETY: the capacity check leaves space for the terminator; these
+        // copies initialize every byte that the syscall or retained name reads.
+        unsafe {
+            core::ptr::copy_nonoverlapping(directory.as_ptr(), path_ptr, directory.len());
+            path_ptr.add(directory.len()).write(b'/');
+            core::ptr::copy_nonoverlapping(name.as_ptr(), path_ptr.add(directory.len() + 1), name.len());
+            path_ptr.add(length).write(0);
+        }
+        let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path_ptr as i64, 0x80000, 0) };
         if fd >= 0 {
-            let Some(stored) = LoadedName::new(&path[..length]) else {
+            // SAFETY: the entire candidate prefix was initialized above and
+            // is copied before the stack buffer is rewritten or dropped.
+            let candidate = unsafe { core::slice::from_raw_parts(path_ptr, length) };
+            let Some(stored) = LoadedName::new(candidate) else {
                 unsafe { syscall1(SYS_CLOSE, fd); }
                 return Err(12);
             };

@@ -2,6 +2,32 @@ use super::*;
 use super::super::x86_64_runtime_lock::{isolated_mapping_probe, RuntimeGuard};
 
 #[test]
+fn library_search_reused_path_buffer_terminates_shorter_successful_candidate() {
+    unsafe fn probe(_: &RuntimeGuard) -> bool {
+        let opened = unsafe { path_open(b"/dev/null/long-component:/dev", b"null") };
+        let Ok(Some((fd, name))) = opened else { return false; };
+        let matched = unsafe { name.view().bytes() } == b"/dev/null";
+        unsafe { syscall1(SYS_CLOSE, fd); }
+        matched
+    }
+    unsafe { isolated_mapping_probe(probe); }
+}
+
+#[test]
+fn library_search_skips_overlong_candidate_before_short_path() {
+    unsafe fn probe(_: &RuntimeGuard) -> bool {
+        let mut paths = [b'a'; SEARCH_BUFFER + 5];
+        paths[SEARCH_BUFFER..].copy_from_slice(b":/dev");
+        let opened = unsafe { path_open(&paths, b"null") };
+        let Ok(Some((fd, name))) = opened else { return false; };
+        let matched = unsafe { name.view().bytes() } == b"/dev/null";
+        unsafe { syscall1(SYS_CLOSE, fd); }
+        matched
+    }
+    unsafe { isolated_mapping_probe(probe); }
+}
+
+#[test]
 fn library_search_secure_auxv_disables_environment_and_untrusted_origin() {
     unsafe fn probe(_: &RuntimeGuard) -> bool {
         let environment = b"LD_LIBRARY_PATH=/application\0";
@@ -69,4 +95,3 @@ fn library_search_origin_expansion_is_sized_to_a_deep_origin() {
     }
     unsafe { isolated_mapping_probe(probe); }
 }
-
