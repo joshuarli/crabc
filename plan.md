@@ -102,12 +102,11 @@ are not transferable passes for a different revision.
   2. Sixteen Codex lanes resumed on 2026-09-26; `.work/tmp/lane-agents.txt`
      holds the active map, and the parent owns integration to `main`. The
      `lane/abi-closure` companion-reader refresh is being proven on a current
-     cohort. Known
-     open items from the last lane reports: `libc-foundation` fails to compile
-     (`foundation.rs` includes `memory.rs` without `static_archive_member!`);
-     the static `libc.a` carries a `c.core-*` member exporting `core::*`
-     globals that collide with an application's libcore (blocks
-     `m8.rust-std`); libc ignores `destroy_on_exit` at automatic exit;
+     cohort. The source-built static libc now compiles and links both
+     freestanding C and stock Rust std consumers, and automatic exit selects
+     the signed native `destroy_on_exit` behavior; their merged-revision
+     qualification remains open. `m8.rust-std` is running on native-shadow
+     products. Known open items from the last lane reports:
      `materialized-dynamic-sysroot` still has load-sensitive deadlines (aio
      fresh-signal and behavior, credentials `threads`, message-queues,
      signal-handler-fork `raise-race`). Merge a `[[family.verified_slice]]`
@@ -121,9 +120,9 @@ are not transferable passes for a different revision.
      upstream reference copies, adapted-upstream-test patch pins, and
      archive/toolchain provenance.
 - **Other open defects:** fourteen runners pin optimizer shape (raw-syscall
-  provider counts, call edges; lane `pattern`); Rust page block pops clear
-  `retire_expire`, which pinned `mi_page_malloc_zero` never touches (`m3`);
-  most `crabc-mimalloc/tests/native_*` integration tests fail to attach on
+  provider counts, call edges; lane `pattern`); M3's direct-page pop now
+  retains `retire_expire` and its differential trace passes, while full Miri
+  evidence is still running; most `crabc-mimalloc/tests/native_*` integration tests fail to attach on
   x86 (`m5-remote`). Timing-limited leaves fail under host load averages
   above ~150; treat those as environment.
 - **Housekeeping:** superseded branches are archived under
