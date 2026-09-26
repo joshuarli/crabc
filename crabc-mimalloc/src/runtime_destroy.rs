@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! Native explicit process destruction: init.c:605,626-647 and subproc.c:202-277.
-//! Default process-done remains the retaining path. This caller is selected
-//! only by the signed source destroy option after full native admission closes.
+//! Native process destruction selected by the signed source exit option.
+//! Default process-done remains the retaining path. Automatic and explicit
+//! callers select this physical path after full native admission closes.
 //! External ownership tracking survives both successful bulk release and every
 //! retained failure; the source main Heap deliberately does not free OS-only
 //! client pages. No registry lock may span this module's physical successor.

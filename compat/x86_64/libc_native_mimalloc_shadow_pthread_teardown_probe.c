@@ -815,10 +815,8 @@ int main(void)
         _Exit(84);
     if (__crabc_x86_native_mimalloc_process_destroy_test_audit() != 1)
         _Exit(85);
-    /* The production automatic finalizer is intentionally still disabled for
-     * physical destruction. Exit directly so this focused explicit probe does
-     * not exercise that retaining `.fini_array` caller after the terminal
-     * process image has been destroyed. */
+    /* Exit directly so this focused explicit probe does not also walk the
+     * automatic finalizer after the terminal process image is destroyed. */
     _Exit(0);
 }
 #elif defined(CRABC_NATIVE_MIMALLOC_SHADOW_NORMAL_MAIN_RETURN_PROBE)

@@ -316,7 +316,7 @@ if [ "${1:-}" = "--probe-regressions" ]; then
 elif [ "${1:-}" = "--physical-process-destroy" ]; then
     [ "$#" -eq 1 ] || fail "--physical-process-destroy takes no additional arguments"
     # Build one owned-static source-runtime closure and execute only the
-    # disabled explicit-destroy audit. This is intentionally narrower than
+    # explicit-destroy audit. This is intentionally narrower than
     # the normal worker-teardown and normal-main evidence family.
     physical_process_destroy_only=1
 elif [ "$#" -ne 0 ]; then
@@ -339,6 +339,7 @@ physical_process_destroy_link_map="$work_dir/physical-process-destroy-link.map"
 physical_process_destroy_link_trace="$work_dir/physical-process-destroy-link.trace"
 normal_main_reference="$work_dir/musl-normal-main-return-reference"
 normal_main_candidate="$work_dir/native-shadow-normal-main-return-candidate"
+auto_process_done_candidate="$work_dir/native-shadow-auto-process-done-candidate"
 archive_symbols="$work_dir/archive-symbols"
 candidate_symbols="$work_dir/candidate-symbols"
 candidate_dynamic="$work_dir/candidate-dynamic"
@@ -431,8 +432,7 @@ done
 # dispatch, and `-1` confirms that nonzero is not flattened to a bool. The
 # audit returns from the pinned descriptor transfer before the allocator's
 # physical Heap/metadata/arena/PageMap successor runs; it then observes the
-# source once no-op and exits without invoking the still-disabled automatic
-# physical finalizer.
+# source once no-op and exits without walking the automatic finalizer.
 if [ "$physical_process_destroy_only" -eq 1 ]; then
     grep -Eq "[[:space:]][TW][[:space:]]__crabc_x86_native_mimalloc_process_destroy_test_audit$" \
         "$archive_symbols" ||
@@ -609,5 +609,48 @@ if ! run_normal_main_return_process_done_probe "$normal_main_candidate" \
     "$work_dir/normal-main-candidate.stderr" "native-normal-main-return"; then
     fail "selected native normal-main-return execution failed"
 fi
+
+# The same installed finalizer runs from ordinary main return with the signed
+# automatic option. Value 1 physically destroys process backing after user
+# atexit; value 2 suppresses process-done and leaves later allocation valid.
+auto_process_done_link_map="$work_dir/auto-process-done-link.map"
+auto_process_done_link_trace="$work_dir/auto-process-done-link.trace"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
+    -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
+    -Wl,--no-undefined -Wl,--gc-sections -Wl,-Map,"$auto_process_done_link_map" \
+    -Wl,--trace-symbol=rust_eh_personality \
+    -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
+    "$fixture_crt1" "$crt_output/crti.o" \
+    compat/x86_64/native_mimalloc_auto_process_done_probe.c \
+    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
+    "$archive" "$crt_output/crtn.o" -o "$auto_process_done_candidate" \
+    >"$auto_process_done_link_trace" 2>&1
+python3 "$source_runtime_helper" audit-final-link \
+    --receipt "$source_runtime_normal_receipt" --candidate "$auto_process_done_candidate" \
+    --link-map "$auto_process_done_link_map" --trace "$auto_process_done_link_trace" \
+    --label selected-native-auto-process-done ||
+    fail "source-built native automatic process-done final link audit failed"
+for destroy_on_exit in 1 2; do
+    case_name="native-auto-process-done-$destroy_on_exit"
+    stderr_log="$work_dir/$case_name.stderr"
+    if env "mimalloc_destroy_on_exit=$destroy_on_exit" timeout "$EXECUTION_TIMEOUT" \
+        "$auto_process_done_candidate" 2>"$stderr_log"; then
+        status=0
+    else
+        status=$?
+    fi
+    if [ "$status" -ne 0 ]; then
+        record_case_exit "$case_name" "$status"
+        fail "selected native automatic process-done failed for destroy_on_exit=$destroy_on_exit"
+    fi
+    if [ "$destroy_on_exit" -eq 1 ]; then expected_trace=AMD; else expected_trace=AD; fi
+    printf '%s' "$expected_trace" >"$stderr_log.expected"
+    if ! cmp -s "$stderr_log.expected" "$stderr_log"; then
+        record_case_exit "$case_name" 1
+        fail "selected native automatic process-done trace differed for destroy_on_exit=$destroy_on_exit"
+    fi
+    record_case_exit "$case_name" 0
+done
 
 printf 'x86 selected native-mimalloc pthread teardown: PASS\n'

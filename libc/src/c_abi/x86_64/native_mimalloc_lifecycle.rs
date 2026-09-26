@@ -3,10 +3,10 @@
 //! Pinned mimalloc v3.5's Unix automatic thread route stores its private
 //! default-Theap key with pthread and invokes `_mi_thread_done` from that key's
 //! destructor.  The Rust engine instead needs libc to retain its compiler-TLS
-//! owner until after user cleanup and pthread TSD destructors.  This bridge
+//! owner until after user cleanup and pthread TSD destructors. This bridge
 //! supplies that real selected-worker boundary; it is not a pthread-key
 //! registry. Process initialization and the same-image ELF finalizer below
-//! retain the source default-release lifecycle for both owned products.
+//! select the source's signed process-done behavior for both owned products.
 
 use core::ffi::{c_char, c_int, c_void};
 #[cfg(any(feature = "native-mimalloc-shadow-process-done-exit-test-audit", feature = "x86-owned-allocator-lifecycle-test-audit"))]
@@ -210,6 +210,7 @@ pub(super) unsafe fn reinitialize_selected_final_worker_for_ordinary_exit() {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum SelectedNativeProcessDoneResult {
     Completed,
+    Destroyed,
     AlreadyCompleted,
     SkippedAutomatic,
     Retained,
@@ -224,11 +225,6 @@ enum SelectedNativeProcessDoneResult {
 /// pinned callback performs only the process-owned terminal admission and TLS
 /// source-owner transfer; `NativePreparedProcessDestroy` then leaves that
 /// scope before its Heap, metadata, arena, PageMap, and OS work begins.
-///
-/// This adapter is deliberately not yet installed in the production
-/// `.fini_array` caller. The existing finalizer remains the retaining route
-/// until this composed native lifecycle has compiler, review, and installed
-/// fixture evidence.
 ///
 /// # Safety
 /// The invocation is at the process-owned finalization boundary, after user
@@ -268,38 +264,52 @@ unsafe fn finish_selected_native_process_after_user_atexit(
             // tracking storage, and perform raw OS teardown without retaining
             // a libc list/control/TLS borrow.
             unsafe { prepared.finish() }?;
-            Ok(SelectedNativeProcessDoneResult::Completed)
+            Ok(SelectedNativeProcessDoneResult::Destroyed)
         }
     }
 }
 
-/// Runs the selected default-release logical process finalizer from the
-/// replacement `.fini_array` entry.
+/// Runs the source-selected automatic process finalizer from the replacement
+/// `.fini_array` entry.
 ///
-/// Pinned `src/prim/prim.c:30-46` installs `_mi_auto_process_done` through a
-/// compiler destructor. The selected C producer defines
+/// Pinned mimalloc installs `_mi_auto_process_done` through a compiler
+/// destructor. The selected C producer defines
 /// `MI_PRIM_HAS_PROCESS_ATTACH=1`, suppressing that exact entry. This bridge
 /// retains that same-image ELF transport: the static CRT walks the executable
 /// array; the dynamic loader walks libc's array at its real dependency-graph
 /// position, after ordinary atexit/main fini and before stdio flush. Independent
-/// DSOs can finalize later than libc. Keep the source process backing and
-/// allocation routes live for their destructors and buffered stream callbacks;
-/// this logical process-done boundary must not be moved after those callbacks.
+/// DSOs can finalize later than libc. The default and automatically suppressed
+/// paths keep source backing available for those callbacks. Physical
+/// destruction follows the signed source option and permanently denies later
+/// native allocator entry.
 unsafe extern "C" fn finish_selected_process_in_fini_array() {
     #[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
     if unsafe { crabc_x86_64_native_mimalloc_shadow_normal_main_user_atexit_observed() } != 1 {
         super::immediate_termination::_Exit(134);
     }
-    match finish_selected_default_release_process_after_user_atexit() {
-        SelectedProcessDoneResult::Completed => {
+    match unsafe { finish_selected_native_process_after_user_atexit(NativeProcessDoneInvocation::Automatic) } {
+        Ok(SelectedNativeProcessDoneResult::Completed) => {
             #[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
             {
                 PROCESS_DONE_FINI_ARRAY_TEST_AUDIT.store(1, Ordering::Release);
                 unsafe { crabc_x86_64_native_mimalloc_shadow_normal_main_process_done_fini_observed() };
             }
         }
-        SelectedProcessDoneResult::AlreadyCompleted => {}
-        SelectedProcessDoneResult::Retained => super::immediate_termination::_Exit(134),
+        Ok(SelectedNativeProcessDoneResult::Destroyed) => {
+            #[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+            {
+                PROCESS_DONE_FINI_ARRAY_TEST_AUDIT.store(2, Ordering::Release);
+                unsafe { crabc_x86_64_native_mimalloc_shadow_normal_main_process_done_fini_observed() };
+            }
+        }
+        Ok(SelectedNativeProcessDoneResult::SkippedAutomatic) => {
+            #[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+            PROCESS_DONE_FINI_ARRAY_TEST_AUDIT.store(3, Ordering::Release);
+        }
+        Ok(SelectedNativeProcessDoneResult::AlreadyCompleted) => {}
+        Ok(SelectedNativeProcessDoneResult::Retained) | Err(_) => {
+            super::immediate_termination::_Exit(134)
+        }
     }
     #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
     ALLOCATOR_LIFECYCLE_PHASE.store(2, Ordering::Release);
@@ -644,21 +654,21 @@ pub extern "C" fn __crabc_x86_native_mimalloc_process_done_test_audit() -> i32 {
     }
 }
 
-/// Test-only request for the disabled explicit physical process-destroy
-/// adapter.
+/// Test-only request for the explicit physical process-destroy adapter.
 ///
 /// This isolated hook is intentionally distinct from the retained-process
 /// probe above and from the production automatic `.fini_array` finalizer. It
 /// lets the installed native fixture validate the capture -> pinned prepare ->
 /// unpinned finish handoff with a fresh selected process and signed nonzero
-/// option, without enabling either existing caller.
+/// option independently of the automatic finalizer.
 #[cfg(feature = "native-mimalloc-shadow-test-audit")]
 #[no_mangle]
 pub extern "C" fn __crabc_x86_native_mimalloc_process_destroy_test_audit() -> i32 {
     match unsafe {
         finish_selected_native_process_after_user_atexit(NativeProcessDoneInvocation::Explicit)
     } {
-        Ok(SelectedNativeProcessDoneResult::Completed) => 0,
+        Ok(SelectedNativeProcessDoneResult::Destroyed)
+        | Ok(SelectedNativeProcessDoneResult::Completed) => 0,
         Ok(SelectedNativeProcessDoneResult::AlreadyCompleted) => 1,
         Ok(SelectedNativeProcessDoneResult::SkippedAutomatic)
         | Ok(SelectedNativeProcessDoneResult::Retained)
