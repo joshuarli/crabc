@@ -3,7 +3,8 @@
 
 The required rows cover startup, threads, C ABI, interposition, static and
 dynamic products, loader, Rust std, Lua, and the selected program corpus.
-The evidence registry names each row's native-shadow product commands.
+The evidence registry names each row's native-shadow product commands. The
+Lua row rereads the private source-build reports inside the pinned image.
 
 Every evidence entry is an existing `scripts/dev-x86_64.sh` product command.
 One entry, named by the contract's `products` record, builds the native-shadow
@@ -58,6 +59,7 @@ EVIDENCE_TIMEOUT_SECONDS = 7200
 # The dispatcher's container sees the checkout at this path.
 CONTAINER_ROOT = Path("/workspace")
 ARTIFACTS = harness.ROOT / ".work/allocator-x86_64/reports/allocator/x86_64/m8-gate"
+CORE_IMAGE = "crabc-core-evidence:x86_64"
 
 
 def _string_list(value: object, subject: str, *, allow_empty: bool = False) -> list[str]:
@@ -346,6 +348,148 @@ def read_native_shadow_receipt(command: Sequence[str], expected_source: str) -> 
     }
 
 
+def read_lua_evidence(lane: str, report_path: Path) -> dict[str, Any]:
+    """Reread one private Lua report and all of its source, workload, and product bytes."""
+
+    if lane not in {"static", "dynamic"}:
+        raise harness.HarnessError("Lua receipt lane must be static or dynamic")
+    # Both Lua readers import their sibling module named `run`; replace the
+    # allocator runner's import only in this short-lived reader process.
+    sys.modules.pop("run", None)
+    sys.path.insert(0, str(harness.ROOT / "compat/lua"))
+    import run as lua
+    import run_x86_dynamic as dynamic
+    import source_build_admission as admission
+
+    expected_parent = harness.ROOT / ".work/x86_64" / f"lua-{lane}-source-build-native-shadow"
+    report_path = Path(report_path)
+    try:
+        state = lua.require_physical_directory(report_path.parent, "native-shadow Lua state")
+        report_path = lua.require_physical_regular_file(report_path, "native-shadow Lua report")
+        if state.parent != expected_parent or not state.name.startswith("run-") or report_path != state / "report.json":
+            raise harness.HarnessError("Lua private report escaped its native-shadow state root")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        runner = ("crabc-lua-native-x86-static-source-build" if lane == "static"
+                  else "crabc-lua-native-x86-dynamic-source-build-dispatch")
+        if (not isinstance(report, dict) or report.get("runner") != runner
+                or report.get("passed") is not True or report.get("result") != "pass"):
+            raise harness.HarnessError("Lua private report did not pass its source-build runner")
+        dispatcher = report.get("dispatcher")
+        source = lua.current_source_identity()
+        if (not isinstance(dispatcher, dict) or dispatcher.get("state_root") != str(state)
+                or dispatcher.get("authoritative_report") != str(report_path)
+                or dispatcher.get("latest_report") is not None
+                or dispatcher.get("allocator_backend") != "native-shadow"
+                or dispatcher.get("source_identity") != source):
+            raise harness.HarnessError("Lua private report is not bound to current native-shadow source")
+        admission.validate_report_records(report)
+        products: dict[str, str] = {}
+        if lane == "static":
+            admission.validate_pinned_input(report)
+            root, _wrapper, _runtime, manifest = lua.owned_static_sysroot(state / "sysroot")
+            environment = report.get("environment")
+            modes = report.get("modes")
+            if (manifest.get("allocator_backend") != "native-shadow"
+                    or not isinstance(environment, dict)
+                    or environment.get("sysroot_manifest") != manifest
+                    or not isinstance(modes, dict)
+                    or set(modes) != {"static-et-exec", "static-pie"}):
+                raise harness.HarnessError("Lua static report or installed product changed")
+            for name, row in modes.items():
+                workloads = row.get("workloads") if isinstance(row, dict) else None
+                if (not isinstance(workloads, dict) or not {"source", "bytecode"} <= set(workloads)
+                        or any(not isinstance(workloads[name], dict)
+                               or workloads[name].get("passed") is not True
+                               for name in ("source", "bytecode"))):
+                    raise harness.HarnessError(f"Lua {name} source or bytecode workload did not pass")
+            products["static"] = lua.sha256_file(root / "share/crabc/manifest.json")
+        else:
+            artifacts: dict[str, dict[str, str]] = {}
+            for name, directory in (("installed", "sysroot"), ("extracted", "extracted")):
+                row = report.get(name)
+                if not isinstance(row, dict) or row.get("passed") is not True:
+                    raise harness.HarnessError(f"Lua dynamic {name} source-build lane did not pass")
+                admission.validate_pinned_input(row)
+                root, _wrapper, _runtime, manifest = dynamic.owned_dynamic_sysroot(state / directory)
+                consumer.owned_cleanup.product_snapshot(root, "dynamic")
+                environment = row.get("environment")
+                workloads = row.get("workloads")
+                provenance = json.loads((root / "share/crabc/libc-shared.provenance.json").read_text())
+                product_state = json.loads((root / "share/crabc/dynamic-product-state.json").read_text())
+                if (provenance.get("allocator_backend") != "native-shadow"
+                        or product_state.get("allocator_backend") != "native-shadow"
+                        or product_state.get("source_sha256") != source["source_sha256"]
+                        or not isinstance(environment, dict)
+                        or environment.get("sysroot_manifest") != manifest
+                        or not isinstance(workloads, dict)
+                        or not {"source", "bytecode"} <= set(workloads)
+                        or any(not isinstance(workloads[workload], dict)
+                               or workloads[workload].get("passed") is not True
+                               for workload in ("source", "bytecode"))):
+                    raise harness.HarnessError(f"Lua dynamic {name} report or product changed")
+                products[name] = lua.sha256_file(root / "share/crabc/manifest.json")
+                artifacts[name] = dynamic.source_artifact_hashes(row)
+            reproducibility = report.get("reproducibility")
+            if (not isinstance(reproducibility, dict) or reproducibility.get("status") != "passed"
+                    or products["installed"] != products["extracted"]
+                    or artifacts["installed"] != artifacts["extracted"]
+                    or reproducibility.get("installed_artifacts") != artifacts["installed"]
+                    or reproducibility.get("extracted_artifacts") != artifacts["extracted"]):
+                raise harness.HarnessError("Lua dynamic installed and extracted artifacts differ")
+        return {"path": str(report_path), "sha256": lua.sha256_file(report_path),
+                "source_identity": source, "products": products}
+    except (lua.RunnerError, consumer.owned_cleanup.OwnedCleanupError,
+            qualification.QualificationError, OSError, ValueError, KeyError, TypeError) as error:
+        raise harness.HarnessError(f"Lua private report is not physically valid: {error}") from error
+
+
+def run_lua_receipt_reader(lane: str, output: str) -> dict[str, Any]:
+    """Check the emitted private report inside the image that owns its root-only state."""
+
+    lines = output.splitlines()
+    if len(lines) != 1:
+        raise harness.HarnessError("Lua source-build command did not emit one private report summary")
+    try:
+        summary = json.loads(lines[0])
+    except ValueError as error:
+        raise harness.HarnessError(f"Lua source-build summary is invalid JSON: {error}") from error
+    parent = CONTAINER_ROOT / ".work/x86_64" / f"lua-{lane}-source-build-native-shadow"
+    if (not isinstance(summary, dict)
+            or set(summary) != {"state_root", "report", "latest_report", "passed"}
+            or summary["passed"] is not True or summary["latest_report"] is not None
+            or not isinstance(summary["state_root"], str)
+            or not isinstance(summary["report"], str)):
+        raise harness.HarnessError("Lua source-build summary did not name a private passing report")
+    state = Path(summary["state_root"])
+    if state.parent != parent or not state.name.startswith("run-") or summary["report"] != str(state / "report.json"):
+        raise harness.HarnessError("Lua source-build summary names a foreign report")
+    git_directory = Path(qualification.git("rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
+    command = [
+        "docker", "run", "--rm", "--init", "--network", "none", "--platform", "linux/amd64",
+        "--volume", f"{harness.ROOT}:{CONTAINER_ROOT}",
+        "--volume", f"{git_directory}:{git_directory}:ro", "--workdir", str(CONTAINER_ROOT),
+        "--env", "GIT_OPTIONAL_LOCKS=0", "--env", "GIT_CONFIG_COUNT=1",
+        "--env", "GIT_CONFIG_KEY_0=safe.directory", "--env", f"GIT_CONFIG_VALUE_0={CONTAINER_ROOT}",
+        CORE_IMAGE, "python3", "-B", str(CONTAINER_ROOT / "compat/allocator/x86_64_m8_gate.py"),
+        "--read-lua-evidence", lane, summary["report"],
+    ]
+    result = harness.command_record(command, cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+    if result["status"] != 0:
+        raise harness.HarnessError("Lua physical receipt reader failed: " + str(result["stderr"])[-1000:])
+    try:
+        identity = json.loads(str(result["stdout"]))
+    except ValueError as error:
+        raise harness.HarnessError(f"Lua physical receipt reader returned invalid JSON: {error}") from error
+    source = {"revision": qualification.git("rev-parse", "HEAD").decode().strip(),
+              "source_sha256": qualification.source_digest()}
+    if (not isinstance(identity, dict) or identity.get("path") != summary["report"]
+            or identity.get("source_identity") != source
+            or not isinstance(identity.get("sha256"), str)
+            or not isinstance(identity.get("products"), dict)):
+        raise harness.HarnessError("Lua physical receipt identity does not match this checkout")
+    return identity
+
+
 def run_evidence(
     runnable: Mapping[str, Sequence[str]], products: Mapping[str, str], selected: Sequence[str], artifacts: Path,
 ) -> dict[str, dict[str, Any]]:
@@ -383,6 +527,14 @@ def run_evidence(
                 with log.open("a", encoding="utf-8") as stream:
                     stream.write(f"M8 receipt reader: {error}\n")
                 passed = False
+        if evidence_id in {"consumer:lua-static", "consumer:lua-dynamic"} and passed:
+            try:
+                receipt = run_lua_receipt_reader(
+                    evidence_id.removeprefix("consumer:lua-"), str(record["stdout"]))
+            except harness.HarnessError as error:
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(f"M8 Lua receipt reader: {error}\n")
+                passed = False
         if evidence_id in selected:
             results[evidence_id] = {
                 "command": list(command),
@@ -400,6 +552,11 @@ def load_summary() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if len(argv) == 3 and argv[0] == "--read-lua-evidence":
+        print(json.dumps(read_lua_evidence(argv[1], Path(argv[2])), sort_keys=True))
+        return 0
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true",

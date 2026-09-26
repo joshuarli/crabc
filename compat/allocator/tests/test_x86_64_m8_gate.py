@@ -233,5 +233,30 @@ class M8RustStdReceiptTests(unittest.TestCase):
                 read()
 
 
+class M8LuaEvidenceTests(unittest.TestCase):
+    def test_successful_lua_commands_without_private_reports_fail(self) -> None:
+        products = {"evidence": "product:p", "evidence_line": "p evidence: ",
+                    "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
+        for lane in ("static", "dynamic"):
+            for claim in ({"latest_report": None, "passed": True,
+                           "report": "/workspace/.work/x86_64/missing/report.json",
+                           "state_root": "/workspace/.work/x86_64/missing"},
+                          {"latest_report": "/workspace/compat/reports/lua/latest.json", "passed": True,
+                           "report": "/workspace/.work/x86_64/missing/report.json",
+                           "state_root": "/workspace/.work/x86_64/elsewhere"}):
+                with self.subTest(lane=lane, claim=claim), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+                    evidence_id = f"consumer:lua-{lane}"
+                    runnable = {
+                        "product:p": ["scripts/dev-x86_64.sh", "produce"],
+                        evidence_id: ["scripts/dev-x86_64.sh", f"lua-{lane}-source-build",
+                                      "--allocator-backend", "native-shadow"],
+                    }
+                    with mock.patch.object(harness, "command_record", return_value={
+                        "status": 0, "stdout": json.dumps(claim) + "\n", "stderr": "",
+                    }):
+                        result = gate.run_evidence(runnable, products, [evidence_id], Path(directory))
+                    self.assertEqual(result[evidence_id]["status"], "failed")
+
+
 if __name__ == "__main__":
     unittest.main()
