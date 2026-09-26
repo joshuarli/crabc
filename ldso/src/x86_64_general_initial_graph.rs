@@ -770,8 +770,7 @@ unsafe fn load_initial_library(
         if let Some(index) = objects[..graph.object_count()].iter().position(|object| {
             if !object.search_short_name { return false; }
             let stored = object.search_name.bytes();
-            let start = stored.iter().rposition(|byte| *byte == b'/').map_or(0, |n| n + 1);
-            &stored[start..] == name
+            loaded_path_matches_short_name(stored, name)
         }) { return Ok(Some(index)); }
     }
     let mut ancestor = requester;
@@ -815,6 +814,35 @@ unsafe fn load_initial_library(
         return Err(());
     }
     Ok(Some(index))
+}
+
+/// Compare a slash-free requested name with a retained path's final component.
+/// The caller has already excluded slashes from `name`, so its length locates
+/// the only possible component boundary without searching the whole path.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+fn loaded_path_matches_short_name(path: &[u8], name: &[u8]) -> bool {
+    let Some(prefix_len) = path.len().checked_sub(name.len()) else { return false; };
+    (prefix_len == 0 || path[prefix_len - 1] == b'/') && &path[prefix_len..] == name
+}
+
+#[cfg(all(test, feature = "x86_64-owned-dynamic-runtime"))]
+mod short_name_tests {
+    use super::loaded_path_matches_short_name;
+
+    #[test]
+    fn retained_path_matches_only_its_final_short_component() {
+        for (path, name, expected) in [
+            (b"/app/lib/libfoo.so".as_slice(), b"libfoo.so".as_slice(), true),
+            (b"libfoo.so", b"libfoo.so", true),
+            (b"/app/lib//libfoo.so", b"libfoo.so", true),
+            (b"/app/lib/libfoo.so", b"foo.so", false),
+            (b"/app/lib/libfoo.so", b"libfoo.s", false),
+            (b"/app/lib/libfoo.so", b"libfoobar.so", false),
+            (b"/app/lib/other.so", b"libfoo.so", false),
+        ] {
+            assert_eq!(loaded_path_matches_short_name(path, name), expected);
+        }
+    }
 }
 
 // Legacy source roots retain their original depth-first, explicit-RUNPATH
