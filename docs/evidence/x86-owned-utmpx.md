@@ -105,10 +105,11 @@ python3 -B compat/x86_64/owned_utmpx_receipt.py collect \
 ```
 
 It is invoked only from the pinned native `/workspace` mount. The image is the
-fixed `crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d`.
-`owned_utmpx_image_inputs.json` is a finite generated manifest of that image's
+fixed `crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`.
+`owned_utmpx_current_image_inputs.json` is a finite generated manifest of that image's
 runner commands, compiler support programs, musl oracle inputs, Rust compiler,
-and LLD. Collection regenerates the manifest inside that exact image before
+and LLD. The older image's `owned_utmpx_image_inputs.json` remains frozen.
+Collection regenerates the current manifest inside the exact image before
 and after the runner; the collector refuses a mismatch. It also refuses a
 dirty source revision, same or symlinked product inputs, a static preparation
 outside the physical checkout work tree, a pre-existing private evidence leaf,
@@ -164,15 +165,16 @@ existing bounded retained-link parser on all four copied links; and for the
 two static links re-derives every traced object/member from copied product
 bytes before joining `main`, `_start`, seven global providers, and nine weak
 providers to their fully relocated final ELF bytes. That last finite map and
-relocation proof is the byte-identical reviewed
-`compat/x86_64/owned_static_link_authority.py` extraction from commit
-`a28c5934f8664687b5bfe9a70ad28cf9b476e76c` (SHA-256
-`48a3e80d8a05c737178254549ab4af329317db11c76d598f105c7ba841c7011a`).
+relocation proof uses the reviewed
+`compat/x86_64/owned_static_link_authority.py` revision from commit
+`f76844d9fb49465691b88ad4ebb76e1e3b2b04b4` (SHA-256
+`2d5143260e9105dd08fd8c2610a741a0c5c5f0791159bb4e4f6f385dcfa8eafe`).
 That reviewed helper admits TLS-free static links only when selected inputs and
 the final ELF have no TLS geometry to prove, and proves the exact RuntimeV1
 weak-descriptor zero-GOT absence form, and joins an undefined hidden target to
 its sibling archive-member definition. Those generic static-link authority
-checks do not add utmpx semantics; the utmpx reader still admits the exact
+checks also prove a selected hidden merged constant's final placement.
+They do not add utmpx semantics; the utmpx reader still admits the exact
 shared source byte and derives its eight-alias component projection itself.
 
 The same source roster admits the exact

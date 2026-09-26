@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
@@ -131,12 +132,18 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "unowned archive member"):
             receipt.retained_static_admitted_inputs(self.workspace, product, raw, "static")
 
-    def test_shared_static_authority_is_the_reviewed_extraction(self) -> None:
-        self.assertEqual(receipt.STATIC_LINK_AUTHORITY_COMMIT, "a28c5934f8664687b5bfe9a70ad28cf9b476e76c")
-        self.assertEqual(receipt.STATIC_LINK_AUTHORITY_SHA256,
-                         "48a3e80d8a05c737178254549ab4af329317db11c76d598f105c7ba841c7011a")
-        self.assertEqual(receipt.digest(ROOT / "compat/x86_64/owned_static_link_authority.py"),
-                         receipt.STATIC_LINK_AUTHORITY_SHA256)
+    def test_shared_static_authority_requires_reviewed_bytes(self) -> None:
+        for name in receipt.SOURCES:
+            receipt.copy_regular(ROOT / name, self.workspace / name)
+        records = {name: receipt.identity(self.workspace, self.workspace / name) for name in receipt.SOURCES}
+        tree = {"revision": receipt.local_git_head(ROOT), "entries": {
+            name: {"git_mode": f"100{(ROOT / name).stat().st_mode & 0o777:03o}",
+                   "git_blob": receipt.git_blob_id(self.workspace / name)} for name in receipt.SOURCES
+        }}
+        receipt.validate_selected_source(self.workspace, records, tree)
+        with mock.patch.object(receipt, "STATIC_LINK_AUTHORITY_SHA256", "0" * 64):
+            with self.assertRaisesRegex(receipt.ReceiptError, "shared static function authority"):
+                receipt.validate_selected_source(self.workspace, records, tree)
 
     def product_mode_fixture(self, family: str) -> Path:
         """Build one minimal physical product for the shared retained reader."""

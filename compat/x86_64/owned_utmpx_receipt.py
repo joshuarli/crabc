@@ -85,12 +85,12 @@ ALIASES = (
 )
 STRONG = ("endutxent", "setutxent", "getutxent", "getutxid", "getutxline", "pututxline", "updwtmpx")
 WEAK = ("endutent", "setutent", "getutent", "getutid", "getutline", "pututline", "updwtmp", "utmpname", "utmpxname")
-# The generic selected-input-to-final-static-function relation is copied
-# byte-for-byte from this reviewed extraction. Its TLS-free static-link and
-# exact weak RuntimeV1 zero-GOT cases are authority checks only; this component
+# The generic selected-input-to-final-static-function relation is admitted
+# only at this reviewed helper revision. Its TLS-free static-link and exact
+# weak RuntimeV1 zero-GOT cases are authority checks only; this component
 # still supplies its own finite function roster and trace/member admission.
-STATIC_LINK_AUTHORITY_COMMIT = "a28c5934f8664687b5bfe9a70ad28cf9b476e76c"
-STATIC_LINK_AUTHORITY_SHA256 = "48a3e80d8a05c737178254549ab4af329317db11c76d598f105c7ba841c7011a"
+STATIC_LINK_AUTHORITY_COMMIT = "f76844d9fb49465691b88ad4ebb76e1e3b2b04b4"
+STATIC_LINK_AUTHORITY_SHA256 = "2d5143260e9105dd08fd8c2610a741a0c5c5f0791159bb4e4f6f385dcfa8eafe"
 TRUSTED_READER_SOURCES = (
     "compat/x86_64/owned_utmpx_receipt.py",
     "compat/x86_64/owned_posix_product_evidence.py",
