@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import sys
@@ -14,6 +15,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 import build_x86_64_owned_dynamic_sysroot as producer
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+import owned_loader_inventory as inventory
 
 
 class OwnedLoaderProvenanceTests(unittest.TestCase):
@@ -82,6 +85,8 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             "-p",
             "crabc-ldso",
             "--release",
+            "--config",
+            'profile.release.opt-level="s"',
             "--target",
             producer.common.TARGET,
             "--target-dir",
@@ -93,7 +98,9 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
         return producer.loader_provenance(
             stage,
             command,
-            "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic",
+            "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
+            f" -C link-arg=-Wl,-T,{self.root / 'libc/src/c_abi/x86_64/owned_discard_unwind.ld'}"
+            f" -C link-arg=-Wl,-T,{self.root / 'ldso/x86_64-owned-bss-layout.ld'}",
             compiler_artifact,
             installed_artifact,
         )
@@ -114,7 +121,9 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
         self.assertEqual(cargo["argv"][cargo["argv"].index("--target-dir") + 1], "$BUILD/loader")
         self.assertEqual(
             cargo["rustflags"],
-            "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic",
+            "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
+            f" -C link-arg=-Wl,-T,{self.root / 'libc/src/c_abi/x86_64/owned_discard_unwind.ld'}"
+            f" -C link-arg=-Wl,-T,{self.root / 'ldso/x86_64-owned-bss-layout.ld'}",
         )
         dependencies = record["compiler_dependencies"]
         self.assertEqual([entry["path"] for entry in dependencies], [
@@ -208,6 +217,45 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
         self.installed_artifact.write_bytes(b"substituted loader\n")
         with self.assertRaisesRegex(producer.common.BuildError, "differs from its compiler artifact"):
             self.collect()
+
+    def test_inventory_accepts_selected_loader_cargo_and_rejects_tampering(self) -> None:
+        record = self.collect()
+        metadata = self.installed_artifact.parents[1] / "share/crabc"
+        metadata.mkdir(parents=True)
+        provenance = metadata / "loader.provenance.json"
+        (metadata / "producer-tools.json").write_text(
+            json.dumps({"rustup": {"path": "/opt/pinned/rustup"}}), encoding="utf-8"
+        )
+        product = self.installed_artifact.parents[1]
+
+        def read(selected: dict[str, object]) -> None:
+            provenance.write_text(json.dumps(selected), encoding="utf-8")
+            manifest = {"files": {inventory.LOADER_PROVENANCE_PATH: inventory.digest(provenance)}}
+            with mock.patch.object(inventory, "ROOT", self.root), \
+                 mock.patch.object(inventory.installed_driver, "validate", return_value=manifest), \
+                 mock.patch.object(inventory.qualification, "product_identity", return_value="sealed"):
+                inventory.load_loader_provenance(product)
+
+        read(record)
+        cargo = record["cargo"]
+        argv = cargo["argv"]
+        rustflags = cargo["rustflags"]
+        tampered = (
+            ("missing size profile", argv[:argv.index("--config")] + argv[argv.index("--target"):], rustflags),
+            ("changed size profile", [
+                'profile.release.opt-level="z"' if arg == 'profile.release.opt-level="s"' else arg
+                for arg in argv
+            ], rustflags),
+            ("extra Cargo option", argv + ["--offline"], rustflags),
+            ("missing linker script", argv, rustflags.split(" -C link-arg=")[0]),
+            ("changed linker script", argv, rustflags.replace("x86_64-owned-bss-layout.ld", "other.ld")),
+        )
+        for name, command, flags in tampered:
+            changed = json.loads(json.dumps(record))
+            changed["cargo"] = {"argv": command, "rustflags": flags}
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(inventory.InventoryError, "Cargo command or RUSTFLAGS differ"):
+                    read(changed)
 
 
 if __name__ == "__main__":

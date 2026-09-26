@@ -39,6 +39,11 @@ LIBC_PATH = "usr/lib/libc.so"
 LOADER_PROVENANCE_PATH = "share/crabc/loader.provenance.json"
 LOADER_FEATURE = "x86_64-owned-dynamic-runtime"
 LOADER_RUSTFLAGS = "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
+# Both scripts affect the installed loader and belong to its compiler input roster.
+LOADER_LINKER_SCRIPTS = (
+    "libc/src/c_abi/x86_64/owned_discard_unwind.ld",
+    "ldso/x86_64-owned-bss-layout.ld",
+)
 PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 CONFIGURATION_PATHS = (
     "scripts/build_x86_64_owned_dynamic_sysroot.py",
@@ -48,6 +53,7 @@ CONFIGURATION_PATHS = (
     "rust-toolchain.toml",
     ".cargo/config.toml",
     "ldso/Cargo.toml",
+    *LOADER_LINKER_SCRIPTS,
 )
 RAW_STREAMS = (
     ("header", ("-hW",)),
@@ -191,9 +197,13 @@ def load_loader_provenance(product: Path) -> tuple[dict[str, Any], dict[str, Any
     require(isinstance(rustup_path, str) and rustup_path, "producer tool identity lacks rustup path")
     expected_argv = [
         rustup_path, "run", PINNED_TOOLCHAIN, "cargo", "build", "--locked", "-p", "crabc-ldso", "--release",
+        "--config", 'profile.release.opt-level="s"',
         "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
     ]
-    require(cargo == {"argv": expected_argv, "rustflags": LOADER_RUSTFLAGS},
+    expected_rustflags = LOADER_RUSTFLAGS + "".join(
+        f" -C link-arg=-Wl,-T,{ROOT / script}" for script in LOADER_LINKER_SCRIPTS
+    )
+    require(cargo == {"argv": expected_argv, "rustflags": expected_rustflags},
             "loader Cargo command or RUSTFLAGS differ")
 
     dependencies = record["compiler_dependencies"]
