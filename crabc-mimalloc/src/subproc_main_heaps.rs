@@ -28,8 +28,7 @@
 //! and thread exit, which collects and abandons the thread's non-main Theaps
 //! before the thread's own teardown.
 //!
-//! Not yet covered: exclusive arenas, `mi_heap_collect`, and process
-//! destruction with non-main main-subprocess Heaps alive.
+//! Exclusive-arena binding remains outside this module.
 
 use core::cell::UnsafeCell;
 use core::mem::{align_of, size_of};
@@ -287,9 +286,11 @@ fn heap_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>>
             }
             let theap = create_theap(thread, heap)?;
             // `_mi_heap_theap_set`.
-            if !thread_local_set(key, theap.as_ptr().cast()) {
-                return None;
-            }
+            // The source ignores a failed regular-slot expansion here: the
+            // newly linked Theap still serves this call and its cached root
+            // keeps it live. A later call can create another Theap if the
+            // slot remains empty.
+            let _ = thread_local_set(key, theap.as_ptr().cast());
             theap
         }
     };
@@ -1076,6 +1077,81 @@ pub(crate) mod tests {
                 assert_eq!(free(blocks[0]), NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_free(local) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_heap_release(shared, true) }, Ok(HeapReleaseOutcome::Released));
+            },
+        );
+    }
+
+    /// Destroy a shared Heap after its worker stops allocating but before the
+    /// worker exits. Its cached Theap reference must remain valid through the
+    /// worker's thread teardown even though the Heap list no longer owns it.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn destroy_shared_heap_while_worker_theap_is_cached() {
+        use crate::runtime_lifecycle::{
+            attach_current_thread, finish_current_thread_native_after_user_destructors,
+            ThreadAttachResult, ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::destroy_shared_heap_while_worker_theap_is_cached",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let heap = native_heap_new().expect("a shared Heap");
+                let heap_address = heap.as_ptr().addr();
+                let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+                let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker registers its live descriptor once.
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let heap = NonNull::new(heap_address as *mut Heap).unwrap();
+                    let block = unsafe { native_heap_allocate(heap, 64, None, false) }.expect("worker allocation");
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    let current = current_main_thread().expect("the attached worker owns a TLD");
+                    let cached = heap_theap(current, heap).expect("the worker selects the Heap Theap");
+                    assert_eq!(unsafe { Theap::heap_at(cached) }, heap.as_ptr());
+                    ready_tx.send(()).unwrap();
+                    resume_rx.recv().unwrap();
+                    assert_eq!(unsafe { Theap::heap_at(cached) }, heap.as_ptr());
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                ready_rx.recv().unwrap();
+                assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
+                resume_tx.send(()).unwrap();
+                worker.join().expect("the worker finishes after Heap destruction");
+            },
+        );
+    }
+
+    /// `_mi_heap_theap_set` can fail while growing regular thread-local
+    /// storage. The source still returns and caches the new Theap, allowing
+    /// this allocation to proceed; a later call may create another Theap.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn heap_theap_survives_first_regular_slot_allocation_failure() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::heap_theap_survives_first_regular_slot_allocation_failure",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                let heap = native_heap_new().expect("a Heap");
+                let count = crate::thread_local::expanded_slot_count(0, heap_key(heap).unwrap().index().get()).unwrap();
+                let size = DynamicThreadLocalBacking::allocation_size(count).unwrap();
+                MetaAllocator::global().test_fail_next_direct_zeroed_size(size);
+                let thread = current_main_thread().expect("the main thread has its default Theap");
+                let theap = heap_theap(thread, heap).expect("the newly linked Theap remains usable");
+                assert_eq!(cached_theap(), theap);
+                assert_eq!(unsafe { Theap::heap_at(theap) }, heap.as_ptr());
+                let block = unsafe { native_heap_allocate(heap, 64, None, false) }
+                    .expect("a Heap allocation uses the cached Theap after slot failure");
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
             },
         );
     }
