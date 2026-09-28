@@ -108,6 +108,9 @@ are not transferable passes for a different revision.
   including the pinned decommit warning and its callback order.
   A failed second-arena MADV_FREE reset regression matches 20 of 23 fields;
   its remaining three fields isolate the missing reset warning.
+  A failed second-arena committed-slice claim and same-slice retry match 24
+  C/Rust fields after the regular mapping uses the warning-preserving commit
+  path; two additional pinned-C fields bind the attempted `mprotect` range.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
