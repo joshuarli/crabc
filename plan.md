@@ -328,7 +328,11 @@ are not transferable passes for a different revision.
      combined sysroots (the 33rd `atexit` expectation, fixed on main by
      `7fbcc1b5d`). The finite `aio_cancel` oracle disposition is integrated;
      a clean `80724223a` native OS-test replay profile-qualifies 5,395 outcome
-     pairs with exactly six selected `stdatomic` dispositions. The text family row is
+     pairs with exactly six selected `stdatomic` dispositions. A full libc-test
+     component on clean `02b6fa8a6` profile-qualifies
+     all 434 cases with 428 raw passes and six finite dispositions; its reader
+     and an independent reread verify all 682 runtime sidecars and 2,046 raw files.
+     The text family row is
      executable, and current-source
      direct `posix-admission` passed on frozen `83e365c7c`, binding the
      54-cell POSIX family matrix and five native aggregate components.
