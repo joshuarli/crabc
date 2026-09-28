@@ -23,6 +23,7 @@ EXPECTED_VM_CHECK_IDS = (
     "process-thp-madvise-success-c-rust-differential",
     "process-thp-madvise-failure-c-rust-differential",
     "process-thp-disabled-policy-c-rust-differential",
+    "process-thp-inherited-disable-advice-c-rust-differential",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "legacy-os-page-suffix-trim-and-raw-release",
@@ -671,6 +672,16 @@ class NativeVmAssemblyTests(unittest.TestCase):
              "process-thp-disabled-policy-c-rust-differential"),
             ("branch_matrix", "unix-regular-map-large-page-and-thp-routing",
              "process-thp-disabled-policy-c-rust-differential"),
+            ("bounded_source_definitions", "unix-thp-disable-process-policy",
+             "process-thp-inherited-disable-advice-c-rust-differential"),
+            ("bounded_source_definitions", "os-regular-and-aligned-map-owners",
+             "process-thp-inherited-disable-advice-c-rust-differential"),
+            ("bounded_source_definitions", "os-free-and-full-memory-id-release",
+             "process-thp-inherited-disable-advice-c-rust-differential"),
+            ("branch_matrix", "unix-configuration-and-thp-process-policy",
+             "process-thp-inherited-disable-advice-c-rust-differential"),
+            ("branch_matrix", "unix-regular-map-large-page-and-thp-routing",
+             "process-thp-inherited-disable-advice-c-rust-differential"),
         )
         for section, row_id, check_id in bindings:
             with self.subTest(section=section, row_id=row_id):
@@ -1154,6 +1165,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "process-thp-madvise-success-c-rust-differential",
                 "process-thp-madvise-failure-c-rust-differential",
                 "process-thp-disabled-policy-c-rust-differential",
+                "process-thp-inherited-disable-advice-c-rust-differential",
             },
             {record["id"] for record in vm_records},
         )

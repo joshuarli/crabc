@@ -117,6 +117,11 @@ CHECKS = (
         "compat/allocator/m2_thp_disabled_x86_64.py",
     ),
     (
+        "process-thp-inherited-disable-advice-c-rust-differential",
+        "c-rust-process-thp-madvise-differential",
+        "compat/allocator/m2_thp_enable_existing_disable_x86_64.py",
+    ),
+    (
         "aligned-hint-source-profile-and-direct-caller-matrix",
         "c-rust-vm-primitives-source-profile-matrix",
         "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
@@ -262,6 +267,7 @@ THP_PROCESS_CHECK_IDS = (
     "process-thp-madvise-success-c-rust-differential",
     "process-thp-madvise-failure-c-rust-differential",
     "process-thp-disabled-policy-c-rust-differential",
+    "process-thp-inherited-disable-advice-c-rust-differential",
 )
 TRACE_CHECK_ID = CHECKS[0][0]
 TRACE_TARGET = CHECKS[0][2]

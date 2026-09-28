@@ -12883,6 +12883,21 @@ M2_X86_64_THP_PROCESS_RECEIVERS = {
         "c_extra": set(),
         "scope": "pinned-c-rust-process-owned-disabled-thp-policy-and-exact-release",
     },
+    "process-thp-inherited-disable-advice-c-rust-differential": {
+        "artifact": "m2-thp-enable-existing-disable",
+        "kind": "c-rust-process-thp-madvise-differential",
+        "target": "compat/allocator/m2_thp_enable_existing_disable_x86_64.py",
+        "fields": {"selected_allow_thp_raw", "selected_allow_large_os_pages_raw",
+            "config_has_transparent_huge_pages", "process_ready", "thp_prctl_count",
+            "thp_disabled_before", "thp_disabled_after", "mapping_owned", "mapping_length",
+            "advice_count", "advice_address_is_mapping", "advice_length", "advice_kind",
+            "advice_succeeded", "vmflags_hg", "mapping_survived", "mmap_calls_delta",
+            "reserved_live_delta", "committed_live_delta", "release_count",
+            "release_exact_range", "release_result", "reserved_after_release_delta",
+            "committed_after_release_delta"},
+        "c_extra": {"advice_result"},
+        "scope": "pinned-c-rust-process-owned-inherited-disable-advice-and-exact-release",
+    },
 }
 
 

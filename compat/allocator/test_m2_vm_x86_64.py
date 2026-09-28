@@ -272,6 +272,18 @@ class NativeM2VmFragmentTests(unittest.TestCase):
         branch = next(item for item in disabled_unbound["component"]["branch_matrix"]
                       if item["id"] == "unix-configuration-and-thp-process-policy")
         branch["evidence_check_ids"].remove("process-thp-disabled-policy-c-rust-differential")
+        inherited_missing_target = copy.deepcopy(self.fragment)
+        inherited_check = next(item for item in inherited_missing_target["component"]["checks"]
+                               if item["id"] == "process-thp-inherited-disable-advice-c-rust-differential")
+        inherited_check["target"] = "compat/allocator/missing-thp-inherited-receiver.py"
+        inherited_wrong_kind = copy.deepcopy(self.fragment)
+        inherited_check = next(item for item in inherited_wrong_kind["component"]["checks"]
+                               if item["id"] == "process-thp-inherited-disable-advice-c-rust-differential")
+        inherited_check["kind"] = "c-rust-process-thp-policy-differential"
+        inherited_unbound = copy.deepcopy(self.fragment)
+        branch = next(item for item in inherited_unbound["component"]["branch_matrix"]
+                      if item["id"] == "unix-configuration-and-thp-process-policy")
+        branch["evidence_check_ids"].remove("process-thp-inherited-disable-advice-c-rust-differential")
         for name, changed in (
             ("duplicate", duplicate),
             ("missing_target", missing_target),
@@ -279,6 +291,9 @@ class NativeM2VmFragmentTests(unittest.TestCase):
             ("disabled_missing_target", disabled_missing_target),
             ("disabled_wrong_kind", disabled_wrong_kind),
             ("disabled_unbound", disabled_unbound),
+            ("inherited_missing_target", inherited_missing_target),
+            ("inherited_wrong_kind", inherited_wrong_kind),
+            ("inherited_unbound", inherited_unbound),
         ):
             with self.subTest(changed=name), self.assertRaises(ValueError):
                 load_fragment(self.write_fragment(changed))
