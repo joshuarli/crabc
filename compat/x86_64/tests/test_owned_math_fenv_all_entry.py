@@ -29,6 +29,42 @@ DRIVER = ROOT / "compat/x86_64/owned_math_fenv_all_entry_driver.c"
 
 
 class OwnedMathFenvAllEntryTests(unittest.TestCase):
+    def test_rehashed_transplanted_product_source_cannot_reseal(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="owned-math-fenv-source.", dir=scratch) as temporary:
+            work = Path(temporary)
+            static = work / "static"
+            dynamic = work / "dynamic"
+            static.mkdir()
+            dynamic.mkdir()
+            static_manifest = static / "manifest.json"
+            dynamic_manifest = dynamic / "manifest.json"
+            static_manifest.write_text("static\n")
+            dynamic_manifest.write_text("dynamic\n")
+            state_path = dynamic / "share/crabc/dynamic-product-state.json"
+            state_path.parent.mkdir(parents=True)
+            state = {"schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+                     "status": "materialized-unqualified", "source_sha256": "a" * 64}
+            state_path.write_text(json.dumps(state) + "\n")
+            with mock.patch.object(receipt.product_evidence, "_validate_static_product", return_value=(static_manifest, {})), \
+                 mock.patch.object(receipt.product_evidence, "_validate_dynamic_product", return_value=(dynamic_manifest, {})), \
+                 mock.patch.object(catalog, "source_digest", return_value="a" * 64):
+                sealed = receipt.expected_source_product_seal(ROOT, static, dynamic)
+                self.assertEqual(sealed["dynamic"]["tree"], receipt.family.snapshot(dynamic))
+
+                state["source_sha256"] = "b" * 64
+                state_path.write_text(json.dumps(state) + "\n")
+                sealed["dynamic"]["tree"] = receipt.family.snapshot(dynamic)
+                for phase in ("before", "after"):
+                    path = work / f"source-product-{phase}.json"
+                    path.write_text(json.dumps(sealed, sort_keys=True, separators=(",", ":")) + "\n")
+                    retained = json.loads(path.read_text())
+                    self.assertEqual(retained["dynamic"]["tree"]["share/crabc/dynamic-product-state.json"]["sha256"],
+                                     receipt.digest(state_path))
+                with self.assertRaisesRegex(receipt.ReceiptError, "dynamic product source differs"):
+                    receipt.expected_source_product_seal(ROOT, static, dynamic)
+
     def assert_usage(self, *arguments: str) -> None:
         result = subprocess.run(
             ["bash", str(RUNNER), *arguments], cwd=ROOT, capture_output=True,

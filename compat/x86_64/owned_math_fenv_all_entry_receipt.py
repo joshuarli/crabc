@@ -22,6 +22,7 @@ from typing import Any
 import owned_math_fenv_all_entry_contract as contract
 import owned_math_fenv_all_entry_evidence as providers
 import owned_crypt_runtime_evidence as payload_evidence
+import owned_dynamic_qualification as qualification
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as product_evidence
 import validate_owned_math_fenv_all_entry as stream
@@ -175,6 +176,18 @@ def product_identity(root: Path, product: Path, kind: str) -> dict[str, object]:
 
 
 def expected_source_product_seal(root: Path, static: Path, dynamic: Path) -> dict[str, object]:
+    require(root.resolve(strict=True) == qualification.ROOT,
+            "math/fenv checkout differs from reader source checkout")
+    state_path = physical(root, (dynamic / "share/crabc/dynamic-product-state.json").relative_to(root).as_posix())
+    state = read(state_path)
+    require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
+            and state.get("status") == "materialized-unqualified", "dynamic product state differs")
+    try:
+        current_source = qualification.source_digest()
+    except Exception as error:
+        raise ReceiptError("current math/fenv source digest is unreadable") from error
+    require(state.get("source_sha256") == current_source,
+            "dynamic product source differs from current checkout")
     sources = {path.name: source_identity(root, root / path) for path in direct_sources()}
     require(len(sources) == len(direct_sources()), "math/fenv direct source basenames collide")
     return {"sources": sources, "dynamic": product_identity(root, dynamic, "dynamic"),
