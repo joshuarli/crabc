@@ -49,16 +49,18 @@ are not transferable passes for a different revision.
   classifies every intentional difference (`difference_kind`). The M8
   owned-libc integration gate exists; the named `unown_with`
   release-then-classify race has a source-bound regression, and the canonical
-  native allocator stress plus three soak seeds pass. `m8.rust-std` and
-  `m8.lua` pass on source-built native-shadow products with physically reread
-  consumer receipts on their respective source revisions; full M8 and the
+  native allocator stress plus three soak seeds pass. `m8.rust-std`,
+  `m8.lua`, and `m8.corpus` pass on source-built native-shadow products with
+  physically reread consumer receipts on their respective source revisions;
+  the corpus covers all 34 frozen cases. Full M8 and the
   merged-revision qualification remain open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; full M7 remains open. Static
   replacement now has a source-bound installed sweep with zero divergent
   functions among 1,406 musl-replaceable entries and all 831 required entries
-  passing; the final merged candidate must rerun it. Startup PSS is about
-  600 KiB against musl's ~515 KiB.
+  passing; the final merged candidate must rerun it. A scoped current-source
+  development observer measured crabc startup PSS below musl for both simple
+  and dependency-graph rows; qualified scorecard evidence is still needed.
   `libc.c-abi-compat` has an executable family aggregate
   (`owned-c-abi-compat-family`); its two allocator capabilities admit only on
   the native-default candidate. libc-test and OS-test leave only the finite
@@ -119,8 +121,8 @@ are not transferable passes for a different revision.
      cohort. The source-built static libc now compiles and links both
      freestanding C and stock Rust std consumers, and automatic exit selects
      the signed native `destroy_on_exit` behavior; their merged-revision
-     qualification remains open. `m8.rust-std` and `m8.lua` pass on source-built
-     native-shadow products; the other M8 leaves and merged-revision
+     qualification remains open. `m8.rust-std`, `m8.lua`, and `m8.corpus` pass
+     on source-built native-shadow products; the other M8 leaves and merged-revision
      qualification remain open. Known open items from the last lane reports:
      `materialized-dynamic-sysroot` still has load-sensitive deadlines (aio
      fresh-signal and behavior, credentials `threads`, message-queues,
