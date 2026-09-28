@@ -18,6 +18,7 @@ import os
 import shutil
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -675,6 +676,16 @@ class CodegenTests(GateFixture):
 
 
 class CorrectnessTests(GateFixture):
+    def test_corpus_receipt_reader_ignores_unrelated_run_x86_module(self) -> None:
+        entry = {
+            "command": ["runner", "--dynamic-sysroot", "/workspace/.work/missing-product"],
+            "receipt": {"path": "/workspace/.work/missing-corpus-report.json"},
+        }
+        with patch.dict(sys.modules, {"run_x86": types.ModuleType("run_x86")}):
+            with self.assertRaisesRegex(gate.harness.HarnessError,
+                                        "corpus physical receipt reader failed"):
+                gate.read_m8_receipt("product:package-corpus", entry, "")
+
     def test_gate_producers_record_their_raw_evidence_files(self) -> None:
         log = self.root / "gate.log"
         log.write_text("raw evidence output", encoding="utf-8")

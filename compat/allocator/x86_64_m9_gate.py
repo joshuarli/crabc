@@ -19,6 +19,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -688,7 +689,26 @@ def read_m8_receipt(name: str, entry: Mapping[str, Any], output: str) -> dict[st
         return m8.read_lua_evidence(name.removeprefix("consumer:lua-"), Path(receipt["path"]))
     if name == "product:package-corpus":
         position = command.index("--dynamic-sysroot")
-        return m8.read_corpus_evidence(Path(receipt["path"]), Path(command[position + 1]))
+        # The loader reader may already have imported a different run_x86 module.
+        # A fresh interpreter gives the corpus reader its own module namespace.
+        try:
+            result = subprocess.run(
+                [sys.executable, "-B", str(Path(m8.__file__).resolve()), "--read-corpus-evidence",
+                 receipt["path"], command[position + 1]],
+                cwd=harness.ROOT, capture_output=True, text=True,
+                timeout=m8.EVIDENCE_TIMEOUT_SECONDS, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise harness.HarnessError(f"corpus physical receipt reader failed: {error}") from error
+        if result.returncode != 0:
+            raise harness.HarnessError("corpus physical receipt reader failed: " + result.stderr[-1000:])
+        try:
+            reread = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise harness.HarnessError(f"corpus physical receipt reader returned invalid JSON: {error}") from error
+        if not isinstance(reread, dict):
+            raise harness.HarnessError("corpus physical receipt reader returned no receipt")
+        return reread
     if name in {"product:native-worker-lifecycle", "product:native-allocator-fork",
                 "product:native-allocator-stress"}:
         return m8.read_threads_fork_receipt(name, command, output)
