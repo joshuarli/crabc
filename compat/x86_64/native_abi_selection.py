@@ -3431,11 +3431,32 @@ def ordinary_declaration_abi_adapter(
     }
 
 
+def installed_declaration_header_joins(
+    report: Mapping[str, Any], paths: Mapping[str, Path],
+) -> list[dict[str, Any]]:
+    """Bind compiler declarations to the headers applications actually receive."""
+    retained = report['inputs']['selection_source']['candidate_include_tree_sha256']
+    require(type(retained) is str and len(retained) == 64
+            and all(character in '0123456789abcdef' for character in retained),
+            'public declaration include tree digest differs')
+    joins = []
+    for kind, key in (('static', 'static_product'), ('dynamic', 'dynamic_product')):
+        root = paths[key] / 'usr/include'
+        try:
+            observed = declaration_inventory.abi_matrix.header_tree_digest(root)
+        except (ValueError, OSError) as error:
+            raise SelectionError(f'installed {kind} header tree rejected: {error}') from error
+        require(observed == retained, f'installed {kind} header tree differs from public declaration inventory')
+        joins.append({'product': kind, 'include_root': str(root), 'include_tree_sha256': observed})
+    return joins
+
+
 def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[Mapping[str, Any]],
                         provider_names: Sequence[str], deferred: Mapping[str, Any],
                         abi_only_callables: Sequence[Mapping[str, Any]],
                         callable_matrix_projection: Mapping[str, Any],
-                        ordinary_declaration_abi_report: Path | None = None) -> dict[str, Any] | None:
+                        ordinary_declaration_abi_report: Path | None = None,
+                        product_paths: Mapping[str, Path] | None = None) -> dict[str, Any] | None:
     if report_path is None:
         require(ordinary_declaration_abi_report is None,
                 'ordinary declaration ABI report requires the public declaration report')
@@ -3461,6 +3482,7 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
         require(source['matches_retained'] is True and not source['differences'],
                 'ordinary declaration ABI report requires a current public declaration envelope')
     report = envelope['report']
+    installed_header_joins = installed_declaration_header_joins(report, product_paths) if product_paths is not None else []
     account = account_object_declarations(report, selected_objects)
     # Reuse this one public replay for the finite data contract. Its type and
     # profile checks do not establish callable declarations, record layout or
@@ -3507,7 +3529,8 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
     require(same(report_before, file_identity(report_path)),
             'public declaration report changed during companion attachment')
     return {'report': report_before, 'reader': file_identity(module_path),
-            'current_selecting_source': source, 'physical_status': report['status'], **account}
+            'current_selecting_source': source, 'physical_status': report['status'],
+            'installed_header_joins': installed_header_joins, **account}
 
 
 def _public_data_declaration_runtime_reader_report(
@@ -11411,6 +11434,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         abi_only_callables=inputs['abi_only_callables'],
         callable_matrix_projection=inputs['callable_declaration_matrix'],
         ordinary_declaration_abi_report=ordinary_declaration_abi_report,
+        product_paths=paths,
     )
     public_data_linkage_companion = _admit(rejected, 'loader_debug_report', lambda: public_data_linkage_adapter(
         ordinary_link_report, loader_debug_report, contract=contract,

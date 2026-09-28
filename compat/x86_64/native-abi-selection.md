@@ -131,6 +131,10 @@ provider/deferred/ABI-only partitions.  It preserves every selected raw
 type/linker-spelling-pair agreement where a pinned declaration is comparable.
 It first requires the complete derived header envelope and binds each selected
 raw declaration to its retained AST job and physical-header dependency.  Its
+candidate include-tree digest must also equal both selected products' physical
+`usr/include` trees. The selector records the static and dynamic digest joins;
+an installed header change rejects the declaration attachment even when the
+retained compiler receipt itself still replays. Its
 sole candidate-only native extension is the existing exact `tgkill` record.
 It does not infer language linkage, select a provider, use macro or GCC
 fallback records as declarations, prove runtime behavior, or close any family.

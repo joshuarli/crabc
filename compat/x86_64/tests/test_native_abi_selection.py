@@ -728,6 +728,26 @@ class PhysicalAccountingTests(unittest.TestCase):
 
 
 class ClosureTests(unittest.TestCase):
+    def test_declaration_headers_must_match_both_installed_product_trees(self):
+        work = ROOT / '.work/x86_64/native-abi-selection-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            roots = {kind: Path(temporary) / kind for kind in ('static_product', 'dynamic_product')}
+            for root in roots.values():
+                include = root / 'usr/include'
+                include.mkdir(parents=True)
+                (include / 'example.h').write_text('int selected(void);\n')
+            expected = selection.declaration_inventory.abi_matrix.header_tree_digest(
+                roots['static_product'] / 'usr/include')
+            declaration = {'inputs': {'selection_source': {'candidate_include_tree_sha256': expected}}}
+            joins = selection.installed_declaration_header_joins(declaration, roots)
+            self.assertEqual({row['product'] for row in joins}, {'static', 'dynamic'})
+            self.assertTrue(all(row['include_tree_sha256'] == expected for row in joins))
+
+            (roots['dynamic_product'] / 'usr/include/example.h').write_text('int foreign(void);\n')
+            with self.assertRaisesRegex(selection.SelectionError, 'installed dynamic header tree differs'):
+                selection.installed_declaration_header_joins(declaration, roots)
+
     def test_unresolved_record_blocks_closure_even_if_complete_flag_is_true(self):
         report = {'closure': {'complete': True, 'blockers': [{'code': 'unresolved-owner', 'subject': 'random'}]},
                   'status': {'family_completion': False, 'promotion_ready': False, 'public_support': False}}
