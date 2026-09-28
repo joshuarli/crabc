@@ -103,7 +103,7 @@
     },
     "differential:statistics": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-differential"],
-      "scope": "Pinned-C/Rust mi_stats_* and mi_process_info values, JSON, and printed output for the selected MI_STAT level, normalized for addresses and times."
+      "scope": "Pinned-C/Rust mi_stats_* and mi_process_info API behavior, printed and JSON structure, exact allocation and worker count deltas, 74 page-bin deltas, arena snapshots, bin sizes, and callback deliveries; variable numeric tokens in printed and JSON text are normalized."
     },
     "differential:visitation-profiles": {
       "command": null,
@@ -280,7 +280,6 @@
         "differential:adapter"
       ],
       "blocked_by": [
-        "The statistics differential compares `mi_stats_print_out`, `mi_stats_print`, `mi_thread_stats_print_out`, the JSON entries, and the `mi_process_info` family by output structure, with every numeric token normalized, plus exact bin sizes, delivery counts, and a truncated fixed JSON buffer; the exact values of the `MI_STAT == 0` producers are compared only as the page and thread deltas of the adapter differential.",
         "Statistics producers gated on `MI_STAT > 0` are absent."
       ]
     },
