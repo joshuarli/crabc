@@ -19,10 +19,12 @@
 //! for a Theap published by `main_heap_thread::owner_local_fast_theap`, and
 //! only for the source's common case. Every other case returns without
 //! mutating anything, and the caller continues on the complete path, which
-//! makes the identical source decision. In particular the fast paths never
-//! reach `_mi_malloc_generic`'s fallback (administration, queue search,
-//! extension, fresh pages), `_mi_page_free`, `_mi_page_unfull`, or remote
-//! frees.
+//! makes the identical source decision. They never perform generic
+//! administration, queue search beyond the first head, page extension,
+//! fresh-page allocation, `_mi_page_free`, `_mi_page_unfull`, or remote frees.
+//! For a regular medium queue head, the source's generic fallback performs
+//! the same quick collect after administration has no work to do; this path
+//! declines before a pop that would move the page to its full queue.
 //!
 //! They keep the checks the normal-release C build performs and no others:
 //! as in `mi_block_next` without `MI_ENCODE_FREELIST`, list links are
@@ -32,8 +34,8 @@
 use core::ptr::NonNull;
 
 use crate::config::{
-    BIN_HUGE, PAGE_MAX_START_BLOCK_ALIGN2, PAGE_OSPAGE_BLOCK_ALIGN2, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
-    SMALL_SIZE_MAX, WORD_SIZE,
+    BIN_HUGE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_START_BLOCK_ALIGN2, PAGE_OSPAGE_BLOCK_ALIGN2,
+    PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
 };
 #[cfg(feature = "mi-stat-1")]
 use crate::config::LARGE_MAX_OBJ_SIZE;
@@ -114,18 +116,21 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
     )
 }
 
-/// Allocates one small block from `theap`'s own pages, or returns `None`
-/// having changed nothing.
+/// Allocates one small direct or regular medium queue-head block from
+/// `theap`'s own pages, or returns `None` having changed nothing.
 ///
 /// `alignment` is `None` for the ordinary entry (`_mi_theap_malloc_zero`)
 /// and the requested alignment for the aligned entry at offset zero
 /// (`mi_theap_malloc_zero_aligned_at`). Both take the source order: the
 /// direct page's immediate head (`_mi_page_malloc_zero`, which leaves
 /// `retire_expire` alone), when aligned entries find it suitably aligned;
-/// otherwise, for an ordinary or naturally aligned request,
+/// otherwise, for an ordinary or naturally aligned small request,
 /// `_mi_malloc_generic`'s counter step and its queue-head
 /// `mi_page_free_quick_collect`, which clears `retire_expire` before the
-/// pop.
+/// pop. A medium ordinary request reaches that queue-head step through
+/// `mi_malloc_generic_fallback` after its administration check. The fast
+/// branch is equivalent while the counter remains below its threshold and
+/// the pop cannot make the page full.
 ///
 /// # Safety
 ///
@@ -141,51 +146,66 @@ pub(crate) unsafe fn allocate(
     alignment: Option<usize>,
     zero: bool,
 ) -> Option<NonNull<u8>> {
+    let regular_medium = size > SMALL_MAX_OBJ_SIZE && size <= MEDIUM_MAX_OBJ_SIZE && alignment.is_none();
     if size < WORD_SIZE
-        || size > SMALL_SIZE_MAX
+        || (size > SMALL_SIZE_MAX && !regular_medium)
         || alignment.is_some_and(|alignment| !alignment.is_power_of_two() || alignment > size)
     {
-        return None;
-    }
-    let direct_index = invariants::word_count(size)?;
-    if direct_index >= PAGES_DIRECT {
         return None;
     }
     // SAFETY: the caller's contract makes this the exclusively owned live
     // Theap; the shared projection is the one page sessions use for reads.
     let theap_ref = unsafe { theap.as_ref() };
-    let direct = theap_ref.direct_page(direct_index)?;
-    if direct != EMPTY_PAGE.as_ptr() {
-        // The initialized direct cache contains only the empty-page
-        // sentinel or a live queue page, as the source direct lookup does.
-        // SAFETY: the owner's published Theap keeps that cache initialized;
-        // the sentinel was excluded above.
-        let page = unsafe { NonNull::new_unchecked(direct) };
-        // SAFETY: a direct entry names a live page of this Theap.
-        let head = unsafe { page.as_ref() }.free_list_head();
-        if !head.is_null() {
-            if alignment.is_some_and(|alignment| head.addr() & (alignment - 1) != 0) {
+    if !regular_medium {
+        let direct_index = invariants::word_count(size)?;
+        if direct_index >= PAGES_DIRECT {
+            return None;
+        }
+        let direct = theap_ref.direct_page(direct_index)?;
+        if direct != EMPTY_PAGE.as_ptr() {
+            // The initialized direct cache contains only the empty-page
+            // sentinel or a live queue page, as the source direct lookup does.
+            // SAFETY: the owner's published Theap keeps that cache initialized;
+            // the sentinel was excluded above.
+            let page = unsafe { NonNull::new_unchecked(direct) };
+            // SAFETY: a direct entry names a live page of this Theap.
+            let head = unsafe { page.as_ref() }.free_list_head();
+            if !head.is_null() {
+                if alignment.is_some_and(|alignment| head.addr() & (alignment - 1) != 0) {
+                    return None;
+                }
+                // SAFETY: the owner exclusively controls this live page's
+                // ordinary local-list fields and its non-null immediate head.
+                let block = unsafe { pop_immediate(page, zero) };
+                #[cfg(feature = "mi-stat-1")]
+                theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
+                return Some(block);
+            }
+        }
+        if let Some(alignment) = alignment {
+            if !is_naturally_aligned_small(size, alignment)? {
                 return None;
             }
-            // SAFETY: the owner exclusively controls this live page's
-            // ordinary local-list fields and its non-null immediate head.
-            let block = unsafe { pop_immediate(page, zero) };
-            #[cfg(feature = "mi-stat-1")]
-            theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
-            return Some(block);
-        }
-    }
-
-    if let Some(alignment) = alignment {
-        if !is_naturally_aligned_small(size, alignment)? {
-            return None;
         }
     }
     let bin = size_class::bin(size)?;
     let first = NonNull::new(theap_ref.queue(bin)?.first())?;
     // SAFETY: the queue head is a live page of this Theap.
     let first_ref = unsafe { first.as_ref() };
-    if first_ref.block_size() > SMALL_MAX_OBJ_SIZE || !first_ref.has_owner_exit_collectable_local_free() {
+    if regular_medium {
+        if first_ref.block_size() <= SMALL_MAX_OBJ_SIZE
+            || first_ref.block_size() > MEDIUM_MAX_OBJ_SIZE
+            || first_ref.used() + 1 >= usize::from(first_ref.reserved())
+        {
+            // `mi_malloc_generic_fallback` moves a newly full medium page
+            // to the full queue after its pop, which belongs to the complete
+            // owner path.
+            return None;
+        }
+    } else if first_ref.block_size() > SMALL_MAX_OBJ_SIZE {
+        return None;
+    }
+    if !first_ref.has_owner_exit_collectable_local_free() {
         // An empty head needs `mi_page_queue_find_free_ex`.
         return None;
     }
