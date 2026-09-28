@@ -25,6 +25,7 @@ import ctypes
 import errno
 import hashlib
 import json
+import lzma
 import os
 import shutil
 import stat
@@ -64,6 +65,8 @@ RENAME_NOREPLACE = 1
 MAX_ARCHIVE_MEMBER_COUNT = 4096
 MAX_ARCHIVE_MEMBER_BYTES = 128 * 1024 * 1024
 MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
+XZ_PRESET = 6
+XZ_COMPARE_CHUNK_BYTES = 1024 * 1024
 
 
 class PackageError(RuntimeError):
@@ -319,7 +322,7 @@ def create_archive(source: Path, archive: Path) -> None:
             prefix=".crabc-x86-static-package.", suffix=".tar.xz", dir=parent, delete=False
         ) as temporary:
             staged_archive = Path(temporary.name)
-        with tarfile.open(staged_archive, "w:xz", format=tarfile.PAX_FORMAT) as output:
+        with tarfile.open(staged_archive, "w:xz", format=tarfile.PAX_FORMAT, preset=XZ_PRESET) as output:
             output.addfile(deterministic_info(ARCHIVE_ROOT, directory=True, mode=0o755))
             for relative, path in entries:
                 name = archive_member(relative)
@@ -406,7 +409,7 @@ def checked_archive_members(
 def require_canonical_tar_encoding(
     input_archive: tarfile.TarFile,
     members: list[tuple[tarfile.TarInfo, Path]],
-) -> None:
+) -> int:
     """Require the exact tar member records emitted by the deterministic writer."""
 
     paths = [relative for _, relative in members]
@@ -447,6 +450,31 @@ def require_canonical_tar_encoding(
     trailer = stream.read(expected_size - offset + 1)
     if len(trailer) != expected_size - offset or any(trailer):
         raise PackageError("archive encoding has an altered trailer")
+    return expected_size
+
+
+def require_canonical_xz_encoding(archive: Path, input_archive: tarfile.TarFile, tar_size: int) -> None:
+    """Compare the bounded decoded TAR stream with the writer's exact XZ bytes."""
+
+    stream = input_archive.fileobj
+    stream.seek(0)
+    encoder = lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=XZ_PRESET)
+    remaining = tar_size
+    try:
+        with archive.open("rb") as physical:
+            while remaining:
+                block = stream.read(min(remaining, XZ_COMPARE_CHUNK_BYTES))
+                if not block:
+                    raise PackageError("archive xz encoding has a short TAR stream")
+                expected = encoder.compress(block)
+                if physical.read(len(expected)) != expected:
+                    raise PackageError("archive xz encoding differs from the writer")
+                remaining -= len(block)
+            expected = encoder.flush()
+            if physical.read(len(expected)) != expected or physical.read(1):
+                raise PackageError("archive xz encoding differs from the writer")
+    except (lzma.LZMAError, EOFError) as error:
+        raise PackageError("archive xz encoding is unreadable") from error
 
 
 def materialize_checked_members(
@@ -487,7 +515,8 @@ def extract_archive(archive: Path, destination: Path) -> Path:
     try:
         with tarfile.open(archive, "r:xz") as input_archive:
             members = checked_archive_members(input_archive)
-            require_canonical_tar_encoding(input_archive, members)
+            tar_size = require_canonical_tar_encoding(input_archive, members)
+            require_canonical_xz_encoding(archive, input_archive, tar_size)
             with tempfile.TemporaryDirectory(
                 prefix=".crabc-x86-static-package.", dir=parent
             ) as temporary:

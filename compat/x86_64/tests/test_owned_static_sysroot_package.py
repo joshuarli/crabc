@@ -215,6 +215,29 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
                         package.extract_archive(forged, destination)
                     self.assertFalse(destination.exists())
 
+    def test_extraction_rejects_noncanonical_xz_wrapper(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            workspace = Path(temporary)
+            source = workspace / "source"
+            self.populate_tree(source)
+            control = workspace / "control.tar.xz"
+            package.create_archive(source, control)
+            compressed = control.read_bytes()
+            tar_bytes = lzma.decompress(compressed)
+            for variant, encoded in (("trailing", compressed + b"trailing xz bytes"),
+                                     ("preset9", lzma.compress(tar_bytes, format=lzma.FORMAT_XZ, preset=9))):
+                with self.subTest(variant=variant):
+                    self.assertNotEqual(encoded, compressed)
+                    self.assertEqual(lzma.decompress(encoded), tar_bytes)
+                    forged = workspace / f"{variant}.tar.xz"
+                    forged.write_bytes(encoded)
+                    destination = workspace / f"rejected-{variant}"
+                    with self.assertRaisesRegex(package.PackageError, "xz encoding"):
+                        package.extract_archive(forged, destination)
+                    self.assertFalse(destination.exists())
+
     def test_writer_pax_long_path_remains_extractable(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
