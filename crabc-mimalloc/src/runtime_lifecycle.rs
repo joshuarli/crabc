@@ -488,9 +488,8 @@ pub enum TicketZeroPageFreeResult {
 /// The result deliberately names neither the ticket-zero implementation nor
 /// a worker session. A returned block remains in the one current native owner
 /// and must later re-enter this same friend boundary; it is never eligible for
-/// C-mimalloc fallback. The current worker branch is intentionally bounded to
-/// the existing parked TLS owner and its explicit client ledger while the
-/// general M5 allocation/remote-free/owner-exit router is completed.
+/// C-mimalloc fallback. The current worker branch uses its parked TLS owner
+/// and explicit client ledger so each allocation keeps a single source owner.
 #[doc(hidden)]
 pub enum NativePageAllocationResult {
     Allocated(core::ptr::NonNull<u8>),
@@ -5665,8 +5664,8 @@ impl NativePostExitRouteStorage {
                 parked
             }
         };
-        // SAFETY: see `restore_active`; retained entries are never moved back
-        // through an active route operation.
+        // SAFETY: this cell is the sole route entry under the source registry
+        // lock; a retained entry never moves through an active operation.
         unsafe {
             (*self.entry.get()).write(NativePostExitRouteEntry::RetainedRoute(
                 NativePostExitRoute { parked, route },
@@ -6433,8 +6432,8 @@ fn native_process_backing_first_arena_policy_audit(
     native_process_backing_canonical_root_arena_audit(process_backing)
 }
 
-/// Process facts decided by source options at startup, for the M7
-/// option-profile differential.
+/// Process facts decided by source options before allocator startup, retained
+/// as scalar observations so the selected option profile can be compared.
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -6920,8 +6919,8 @@ pub fn native_runtime_current_thread_attachment_test_audit(
     }
 }
 
-/// Walks the calling thread's persistent owner's default Theap for the M3
-/// persistent-owner local-trace differential (`crate::theap_trace_audit`).
+/// Walks the calling thread's persistent owner's default Theap for a scalar
+/// local-operation trace without changing the owner's page state.
 ///
 /// The initial thread's promoted static owner and an attached later thread's
 /// compiler-TLS owner are both reached exactly as ordinary local operations
@@ -13333,8 +13332,8 @@ impl PreparedOwnerExitClients {
         let Some(overflow) = self.overflow.as_mut() else {
             return &mut [];
         };
-        // SAFETY: see `overflow_slots`; this exclusive borrow also excludes
-        // metadata resize or release until the returned slice ends.
+        // SAFETY: this exclusive borrow keeps the metadata allocation stable
+        // and excludes its resize or release until the returned slice ends.
         unsafe {
             core::slice::from_raw_parts_mut(
                 overflow
@@ -20836,6 +20835,18 @@ mod tests {
                     page_map.page_map().unwrap().checked_lookup(medium[1] as *mut u8)
                 }.is_null(), "the last medium free releases its regular page");
                 assert!(native_round_trip(64), "the surviving owner remains usable");
+                std::println!("CRABC_MI_MIXED_OWNER_EXIT_BEGIN");
+                std::println!("full_retain=-1");
+                std::println!("medium_capacity={}", medium.len());
+                std::println!("medium_full=1");
+                std::println!("singleton_os_full=1");
+                std::println!("remote_collected=1");
+                std::println!("singleton_live_after_exit=1");
+                std::println!("singleton_released=1");
+                std::println!("medium_retained=1");
+                std::println!("medium_released=1");
+                std::println!("survivor_usable=1");
+                std::println!("CRABC_MI_MIXED_OWNER_EXIT_END");
             },
         );
     }

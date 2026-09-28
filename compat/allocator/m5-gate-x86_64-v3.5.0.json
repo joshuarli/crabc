@@ -97,6 +97,15 @@
       ],
       "scope": "Pinned C and Rust agree on mi_abandoned_page_try_reclaim for an own full page, a foreign page with an empty and a nonempty bin queue, and a large page."
     },
+    "differential:nonabandoning-mixed-owner-exit": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_nonabandoning_mixed_owner_exit_evidence.py",
+        "--report",
+        "{scratch}/nonabandoning-mixed-owner-exit.json"
+      ],
+      "scope": "Pinned C and native Rust each retain a full regular medium page and OS singleton with page_full_retain=-1; a surviving thread remotely frees one medium client before owner exit, then independently releases the singleton and remaining medium clients after exit."
+    },
     "lifecycle:bounded-laboratory": {
       "command": [
         "python3",
@@ -178,7 +187,8 @@
       "required": true,
       "acceptance": "One source owner-exit traversal handles every page shape and late publication, and surviving pages are freeable by any thread after the owner's TLD/Theap is released.",
       "evidence": [
-        "native:generic-exit"
+        "native:generic-exit",
+        "differential:nonabandoning-mixed-owner-exit"
       ],
       "blocked_by": []
     },
