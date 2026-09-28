@@ -956,6 +956,10 @@ STATISTICS_LEVEL_TWO_BINS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_statistic
 STATISTICS_LEVEL_TWO_BINS_TEST = "diagnostic_output::tests::level_two_bins_trace_for_pinned_c_comparison"
 STATISTICS_LEVEL_TWO_BINS_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_BINS_TRACE_BEGIN"
 STATISTICS_LEVEL_TWO_BINS_TRACE_END = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_BINS_TRACE_END"
+STATISTICS_LEVEL_TWO_PAGE_HUGE_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_level_two_page_huge_oracle.c"
+STATISTICS_LEVEL_TWO_PAGE_HUGE_TEST = "diagnostic_output::tests::level_two_page_huge_trace_for_pinned_c_comparison"
+STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_BEGIN"
+STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_END"
 
 
 def require_statistics_level_one(trace: Mapping[str, str], description: str) -> None:
@@ -1071,6 +1075,41 @@ def require_statistics_level_two_bins(trace: Mapping[str, str], description: str
         raise harness.HarnessError(f"{description} lost the source bin merge or final row behavior: {trace}")
 
 
+def require_statistics_level_two_page_huge(trace: Mapping[str, str], description: str) -> None:
+    """Require separate section guards, owner resets, and live/freed rows."""
+
+    scenarios = ("empty", "huge", "live", "freed")
+    rows = ("order", "huge", "touched", "pages", "abandoned")
+    counts = ("huge.source_reset", "huge.process", "live.source_huge_reset",
+              "live.source_pages_reset", "live.process_huge", "live.process_pages",
+              "live.process_touched", "live.process_abandoned", "freed.source_huge_reset",
+              "freed.source_pages_reset", "freed.process_huge", "freed.process_pages",
+              "freed.process_touched", "freed.process_abandoned")
+    expected = {"profile.level", *(f"{scenario}.{row}" for scenario in scenarios for row in rows), *counts}
+    if set(trace) != expected or trace["profile.level"] != "2":
+        raise harness.HarnessError(f"{description} lacks the level-two huge/page trace fields: {trace}")
+    values = {
+        "huge.process": "4096,8192,4096", "live.process_huge": "10240,20480,6144",
+        "live.process_pages": "4,6,3", "live.process_touched": "16384,24576,12288",
+        "live.process_abandoned": "2,3,1", "freed.process_huge": "10240,20480,0",
+        "freed.process_pages": "4,6,0", "freed.process_touched": "16384,24576,0",
+        "freed.process_abandoned": "2,3,0",
+    }
+    if (any(trace[key] != "0,0,0" for key in counts if key.endswith("reset"))
+            or any(trace[key] != value for key, value in values.items())
+            or [trace[f"{scenario}.order"] for scenario in scenarios]
+            != ["none", "blocks", "blocks,pages", "blocks,pages"]
+            or any(trace[f"empty.{row}"] != "absent" for row in rows[1:])
+            or any(trace[f"huge.{row}"] != "absent" for row in ("touched", "pages", "abandoned"))
+            or "not all freed" not in trace["live.huge"]
+            or "not all freed" in trace["live.touched"]
+            or any("not all freed" in trace[f"live.{row}"] or trace[f"live.{row}"].endswith("ok")
+                   for row in ("pages", "abandoned"))
+            or any(not trace[f"freed.{row}"].endswith("  ok") for row in ("huge", "touched"))
+            or any("ok" in trace[f"freed.{row}"] for row in ("pages", "abandoned"))):
+        raise harness.HarnessError(f"{description} lost a huge/page merge or display state: {trace}")
+
+
 def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
     """Build the same public statistics driver with pinned C level one and Rust."""
 
@@ -1157,6 +1196,17 @@ def run_statistics_level_two_bins_differential(offline: bool) -> dict[str, Any]:
         test=STATISTICS_LEVEL_TWO_BINS_TEST, begin=STATISTICS_LEVEL_TWO_BINS_TRACE_BEGIN,
         end=STATISTICS_LEVEL_TWO_BINS_TRACE_END, require_complete=require_statistics_level_two_bins,
         report_name="statistics-level-two-bins.json", compile_defines=("-DMI_STAT=2",),
+        rust_features=("mi-stat-2",),
+    )
+
+
+def run_statistics_level_two_page_huge_differential(offline: bool) -> dict[str, Any]:
+    return run_trace_differential(
+        offline, subject="statistics-level-two-page-huge", oracle=STATISTICS_LEVEL_TWO_PAGE_HUGE_ORACLE,
+        test=STATISTICS_LEVEL_TWO_PAGE_HUGE_TEST, begin=STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_BEGIN,
+        end=STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_END,
+        require_complete=require_statistics_level_two_page_huge,
+        report_name="statistics-level-two-page-huge.json", compile_defines=("-DMI_STAT=2",),
         rust_features=("mi-stat-2",),
     )
 
@@ -1293,6 +1343,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust level-two requested-size final-output differential")
     mode.add_argument("--statistics-level-two-bins-differential", action="store_true",
         help="run the pinned-C/Rust level-two nonzero-bin final-output differential")
+    mode.add_argument("--statistics-level-two-page-huge-differential", action="store_true",
+        help="run the pinned-C/Rust level-two huge/page final-output differential")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1352,6 +1404,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_level_two_bins_differential:
         report = run_statistics_level_two_bins_differential(arguments.offline)
         print(f"M7 level-two bins differential passed: {report['compared_key_count']} keys")
+        print(json.dumps(report["trace"], sort_keys=True))
+        return 0
+    if arguments.statistics_level_two_page_huge_differential:
+        report = run_statistics_level_two_page_huge_differential(arguments.offline)
+        print(f"M7 level-two huge/page differential passed: {report['compared_key_count']} keys")
         print(json.dumps(report["trace"], sort_keys=True))
         return 0
     if arguments.adapter_differential:

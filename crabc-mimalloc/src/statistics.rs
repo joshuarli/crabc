@@ -965,6 +965,23 @@ impl HeapTheapStatistics {
         final_stat_count(&self.malloc_bins[bin])
     }
 
+    /// Seeds synthetic huge and page owner records to compare the source
+    /// merge and final renderer without relying on allocation producers.
+    #[cfg(all(test, feature = "mi-stat-2"))]
+    pub(crate) fn seed_level_two_page_huge_counts(
+        &self, huge: FinalStatCount, pages: FinalStatCount,
+        touched: FinalStatCount, abandoned: FinalStatCount,
+    ) {
+        for (destination, value) in [
+            (&self.malloc_huge, huge), (&self.pages, pages),
+            (&self.page_committed, touched), (&self.pages_abandoned, abandoned),
+        ] {
+            i64_store_relaxed(&destination.peak, value.peak);
+            i64_store_relaxed(&destination.total, value.total);
+            i64_store_relaxed(&destination.current, value.current);
+        }
+    }
+
     /// `page.c:_mi_page_retire`'s `mi_theap_stat_counter_increase`; only a
     /// Theap owner records it (see [`StatCounter::increase_owner_local`]).
     #[inline]

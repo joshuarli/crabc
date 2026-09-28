@@ -129,6 +129,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-two-bins-differential"],
       "scope": "Pinned C MI_STAT=2 and Rust merge two synthetic owner bin records, reset each source, and compare nonzero rows, order, size units, peak/current arithmetic, empty-bin suppression, and freed presentation. Production bin producers remain outside this fixture."
     },
+    "differential:statistics-level-two-page-huge": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-two-page-huge-differential"],
+      "scope": "Pinned C MI_STAT=2 and Rust merge synthetic huge and page owner records, reset sources, and compare independent section guards, final row order, size units, peak/current arithmetic, and freed presentation. Production huge and page producers remain outside this fixture."
+    },
     "differential:visitation-profiles": {
       "command": null,
       "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
@@ -312,10 +316,11 @@
         "differential:statistics-level-one-output-merge",
         "differential:statistics-level-two-requested",
         "differential:statistics-level-two-bins",
+        "differential:statistics-level-two-page-huge",
         "differential:adapter"
       ],
       "blocked_by": [
-        "The selected `MI_STAT=1` binned allocation, reset/merge, free, and final-output path is proven; page extension/commit, huge allocation, nonlocal free, and other level-one producers remain unproved. `MI_STAT=2` requested-size, allocation-count, and bin producers remain unproved; synthetic owner merge/reset and final requested-size and nonzero-bin output are proven."
+        "The selected `MI_STAT=1` binned allocation, reset/merge, free, and final-output path is proven; page extension/commit, huge allocation, nonlocal free, and other level-one producers remain unproved. `MI_STAT=2` requested-size, allocation-count, bin, huge, and page producers remain unproved; synthetic owner merge/reset and final requested-size, nonzero-bin, huge, and page output are proven."
       ]
     },
     {

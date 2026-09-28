@@ -60,6 +60,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-level-one",
             "differential:statistics-level-one-output-merge",
             "differential:statistics-level-two-bins",
+            "differential:statistics-level-two-page-huge",
             "differential:statistics-level-two-requested",
             "differential:thread-init-failure",
         ])
@@ -207,6 +208,40 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_level_two_bins({**trace, "merged.order": "40,8"}, "wrong order")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_level_two_bins({**trace, "merged.process_bin8": "4,8,3"}, "lost peak")
+
+    def test_statistics_level_two_page_huge_requires_source_built_differential(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-level-two-page-huge", statistics["evidence"])
+        self.assertIn("differential:statistics-level-two-page-huge", summary["runnable_evidence"])
+
+    def test_statistics_level_two_page_huge_reader_rejects_order_and_merge_loss(self) -> None:
+        scenarios = ("empty", "huge", "live", "freed")
+        labels = ("huge", "touched", "pages", "abandoned")
+        trace = {f"{scenario}.{label}": "absent" if scenario == "empty" or
+                 (scenario == "huge" and label != "huge") else "  row: not all freed"
+                 for scenario in scenarios for label in labels}
+        trace.update({"profile.level": "2", "empty.order": "none", "huge.order": "blocks",
+                      "live.order": "blocks,pages", "freed.order": "blocks,pages",
+                      "huge.source_reset": "0,0,0", "huge.process": "4096,8192,4096",
+                      "live.source_huge_reset": "0,0,0", "live.source_pages_reset": "0,0,0",
+                      "live.process_huge": "10240,20480,6144", "live.process_pages": "4,6,3",
+                      "live.process_touched": "16384,24576,12288", "live.process_abandoned": "2,3,1",
+                      "freed.source_huge_reset": "0,0,0", "freed.source_pages_reset": "0,0,0",
+                      "freed.process_huge": "10240,20480,0", "freed.process_pages": "4,6,0",
+                      "freed.process_touched": "16384,24576,0", "freed.process_abandoned": "2,3,0"})
+        trace["live.touched"] = "  touched   : live"
+        trace["live.pages"] = "  pages     : 3 "
+        trace["live.abandoned"] = "  abandoned : 1 "
+        for label in ("huge", "touched"):
+            trace[f"freed.{label}"] = "  row:  ok"
+        trace["freed.pages"] = "  pages     : 0 "
+        trace["freed.abandoned"] = "  abandoned : 0 "
+        gate.require_statistics_level_two_page_huge(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_level_two_page_huge({**trace, "live.order": "pages,blocks"}, "wrong order")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_level_two_page_huge({**trace, "live.process_huge": "6144,20480,6144"}, "lost peak")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:

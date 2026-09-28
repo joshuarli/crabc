@@ -3374,6 +3374,104 @@ mod tests {
         std::println!("CRABC_MI_M7_STATISTICS_LEVEL_TWO_BINS_TRACE_END");
     }
 
+    #[cfg(feature = "mi-stat-2")]
+    fn level_two_page_huge_output(
+        name: &str, process: &HeapTheapStatistics, owner: &OutputOwner, capture: &Capture,
+    ) {
+        capture.reset();
+        let view = FinalProcessDiagnosticView::new(
+            7, process.final_output_snapshot(), FinalProcessInfo::new(0, 0, 0, 0, 0, 0),
+        );
+        // SAFETY: registration and rendering are serial, and the capture
+        // remains live through the synchronous final output call.
+        unsafe {
+            super::render_final_statistics(
+                super::StatisticsOutput::default_route(owner), b"subproc", view, 0,
+            )
+        };
+        let header = |prefix: &[u8]| (0..capture.count())
+            .find(|&index| capture.message(index).starts_with(prefix));
+        let order = match (header(b" blocks    "), header(b" pages     ")) {
+            (None, None) => "none",
+            (Some(_), None) => "blocks",
+            (None, Some(_)) => "pages",
+            (Some(blocks), Some(pages)) if blocks < pages => "blocks,pages",
+            (Some(_), Some(_)) => "pages,blocks",
+        };
+        std::println!("{name}.order={order}");
+        for label in ["huge", "touched", "pages", "abandoned"] {
+            let prefix = std::format!("  {label:<10}:");
+            let row = header(prefix.as_bytes());
+            match row {
+                Some(index) => {
+                    let line = std::str::from_utf8(capture.message(index)).expect("source output is ASCII");
+                    std::println!("{name}.{label}={}", line.strip_suffix('\n').expect("one line"));
+                }
+                None => std::println!("{name}.{label}=absent"),
+            }
+        }
+    }
+
+    #[cfg(feature = "mi-stat-2")]
+    #[test]
+    fn level_two_page_huge_trace_for_pinned_c_comparison() {
+        let mut owner = output_owner();
+        let capture = Capture::new();
+        // SAFETY: the callback registration and all renders stay on this
+        // test thread; the capture outlives every call.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        let process = HeapTheapStatistics::new();
+        let huge_owner = HeapTheapStatistics::new();
+        let page_owner = HeapTheapStatistics::new();
+        let freed_owner = HeapTheapStatistics::new();
+
+        std::println!("CRABC_MI_M7_STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_BEGIN");
+        std::println!("profile.level=2");
+        level_two_page_huge_output("empty", &process, &owner, &capture);
+
+        huge_owner.seed_level_two_page_huge_counts(
+            final_stat_count(4096, 8192, 4096), final_stat_count(0, 0, 0),
+            final_stat_count(0, 0, 0), final_stat_count(0, 0, 0),
+        );
+        huge_owner.seed_level_two_requested_count(final_stat_count(0, 0, 0), 0, 2);
+        process.merge_from_and_reset(&huge_owner);
+        level_one_merge_count("huge.source_reset", huge_owner.final_output_snapshot().malloc_huge);
+        level_one_merge_count("huge.process", process.final_output_snapshot().malloc_huge);
+        level_two_page_huge_output("huge", &process, &owner, &capture);
+
+        page_owner.seed_level_two_page_huge_counts(
+            final_stat_count(6144, 12288, 2048), final_stat_count(4, 6, 3),
+            final_stat_count(16384, 24576, 12288), final_stat_count(2, 3, 1),
+        );
+        page_owner.seed_level_two_requested_count(final_stat_count(0, 0, 0), 0, 1);
+        process.merge_from_and_reset(&page_owner);
+        let source = page_owner.final_output_snapshot();
+        let live = process.final_output_snapshot();
+        level_one_merge_count("live.source_huge_reset", source.malloc_huge);
+        level_one_merge_count("live.source_pages_reset", source.pages);
+        level_one_merge_count("live.process_huge", live.malloc_huge);
+        level_one_merge_count("live.process_pages", live.pages);
+        level_one_merge_count("live.process_touched", live.page_committed);
+        level_one_merge_count("live.process_abandoned", live.pages_abandoned);
+        level_two_page_huge_output("live", &process, &owner, &capture);
+
+        freed_owner.seed_level_two_page_huge_counts(
+            final_stat_count(0, 0, -6144), final_stat_count(0, 0, -3),
+            final_stat_count(0, 0, -12288), final_stat_count(0, 0, -1),
+        );
+        process.merge_from_and_reset(&freed_owner);
+        let source = freed_owner.final_output_snapshot();
+        let freed = process.final_output_snapshot();
+        level_one_merge_count("freed.source_huge_reset", source.malloc_huge);
+        level_one_merge_count("freed.source_pages_reset", source.pages);
+        level_one_merge_count("freed.process_huge", freed.malloc_huge);
+        level_one_merge_count("freed.process_pages", freed.pages);
+        level_one_merge_count("freed.process_touched", freed.page_committed);
+        level_one_merge_count("freed.process_abandoned", freed.pages_abandoned);
+        level_two_page_huge_output("freed", &process, &owner, &capture);
+        std::println!("CRABC_MI_M7_STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_END");
+    }
+
     fn final_statistics_fixture() -> FinalStatisticsSnapshot {
         FinalStatisticsSnapshot {
             #[cfg(feature = "mi-stat-1")]
