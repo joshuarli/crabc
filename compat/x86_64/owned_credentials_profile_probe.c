@@ -426,7 +426,7 @@ static void *parked_worker_main(void *argument)
     worker->read_result = 0;
     if (worker->index == 0) {
         pthread_mutex_lock(&park_mutex);
-        ++park_parked;
+        __atomic_add_fetch(&park_parked, 1, __ATOMIC_SEQ_CST);
         while (!park_open)
             pthread_cond_wait(&park_condition, &park_mutex);
         pthread_mutex_unlock(&park_mutex);

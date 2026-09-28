@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -16,6 +17,45 @@ RUNNER = ROOT / "compat/x86_64/run_owned_credentials_profile.sh"
 
 
 class OwnedCredentialsProfileTests(unittest.TestCase):
+    def test_parked_workers_publish_arrival_without_a_data_race(self) -> None:
+        clang = shutil.which("clang")
+        if clang is None:
+            self.skipTest("Clang ThreadSanitizer is unavailable")
+        temporary_root = ROOT / ".work" / "x86_64" / "tmp"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="owned-credentials-parked-race.", dir=temporary_root
+        ) as temporary:
+            source = Path(temporary) / "rendezvous.c"
+            executable = Path(temporary) / "rendezvous"
+            source.write_text(
+                "#define main credentials_profile_main\n"
+                '#include "owned_credentials_profile_probe.c"\n'
+                "#undef main\n"
+                "int main(void) {\n"
+                "    if (!park_workers()) return 2;\n"
+                "    release_and_report_workers();\n"
+                "    return 0;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [clang, "-fsanitize=thread", "-g", "-O1", "-pthread", "-I",
+                 str(PROBE.parent), str(source), "-o", str(executable)],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            environment = dict(os.environ)
+            environment["TSAN_OPTIONS"] = "halt_on_error=1:exitcode=66"
+            result = subprocess.run(
+                [str(executable)], cwd=ROOT, env=environment,
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("credentials-threads worker-read: read=1 byte=r", result.stdout)
+
     def run_namespace_capture_harness(self, child_status: int) -> tuple[int, str, str, str]:
         source = RUNNER.read_text(encoding="utf-8")
         start = source.index("run_in_user_namespace_root() {")
