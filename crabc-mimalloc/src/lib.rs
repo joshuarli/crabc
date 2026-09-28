@@ -75,6 +75,8 @@ mod invariants;
 mod local_fast_path;
 #[cfg(all(test, target_arch = "x86_64"))]
 mod native_local_trace;
+#[cfg(all(test, target_arch = "x86_64", feature = "native-runtime-test-audit"))]
+mod mapped_large_owner_exit;
 mod lock;
 mod main_theap;
 mod main_heap_thread;

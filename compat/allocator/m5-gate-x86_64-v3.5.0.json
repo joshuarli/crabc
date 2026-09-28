@@ -124,6 +124,15 @@
       ],
       "scope": "Pinned C and native Rust keep an active survivor while a full medium page and independent OS singleton finish owner exit before the first remote medium free; the late free reclaims the abandoned page, whose final free retires it until forced collection."
     },
+    "differential:nonabandoning-mapped-large-owner-exit": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_nonabandoning_mapped_large_owner_exit_evidence.py",
+        "--report",
+        "{scratch}/nonabandoning-mapped-large-owner-exit.json"
+      ],
+      "scope": "Pinned C observes mapped and unowned post-exit large and medium regular pages. Native Rust proves each source PageMap prefix survives exit; the large page stays nonlocal after its first free and releases on its final free, while the active survivor requeues the medium page and retains it until forced collection."
+    },
     "lifecycle:bounded-laboratory": {
       "command": [
         "python3",
@@ -208,7 +217,8 @@
         "native:generic-exit",
         "differential:nonabandoning-mixed-owner-exit",
         "differential:nonabandoning-active-survivor-owner-exit",
-        "differential:nonabandoning-late-remote-owner-exit"
+        "differential:nonabandoning-late-remote-owner-exit",
+        "differential:nonabandoning-mapped-large-owner-exit"
       ],
       "blocked_by": []
     },
