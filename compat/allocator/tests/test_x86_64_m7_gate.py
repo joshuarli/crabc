@@ -59,6 +59,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics",
             "differential:statistics-level-one",
             "differential:statistics-level-one-output-merge",
+            "differential:statistics-level-two-bins",
             "differential:statistics-level-two-requested",
             "differential:thread-init-failure",
         ])
@@ -182,6 +183,30 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_level_two_requested({**trace, "live.malloc_req": "absent"}, "missing row")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_level_two_requested({**trace, "freed.process_requested": "3070,4280,10"}, "live free")
+
+    def test_statistics_level_two_bins_requires_source_built_differential(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-level-two-bins", statistics["evidence"])
+        self.assertIn("differential:statistics-level-two-bins", summary["runnable_evidence"])
+
+    def test_statistics_level_two_bins_reader_rejects_order_and_peak_loss(self) -> None:
+        rows = {f"{scenario}.{label}": "absent" if scenario == "empty" or label == "bin9" else "  bin row: not all freed"
+                for scenario in ("empty", "first", "merged", "freed")
+                for label in ("bin8", "bin9", "bin40")}
+        rows.update({"empty.order": "none", "first.order": "8", "merged.order": "8,40", "freed.order": "8,40",
+                     "first.bin40": "absent", "freed.bin8": "  bin row:  ok", "freed.bin40": "  bin row:  ok"})
+        counts = {"first.source_bin8_reset": "0,0,0", "first.process_bin8": "2,3,1",
+                  "merged.source_bin8_reset": "0,0,0", "merged.source_bin40_reset": "0,0,0",
+                  "merged.process_bin8": "5,8,3", "merged.process_bin40": "2,3,1",
+                  "freed.source_bin8_reset": "0,0,0", "freed.source_bin40_reset": "0,0,0",
+                  "freed.process_bin8": "5,8,0", "freed.process_bin40": "2,3,0"}
+        trace = {"profile.level": "2", **rows, **counts}
+        gate.require_statistics_level_two_bins(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_level_two_bins({**trace, "merged.order": "40,8"}, "wrong order")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_level_two_bins({**trace, "merged.process_bin8": "4,8,3"}, "lost peak")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:

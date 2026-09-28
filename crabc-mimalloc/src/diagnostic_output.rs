@@ -9,7 +9,7 @@
 // `%tx` formatter route at `src/libc.c:254-261,285-307,313-397`, and Linux
 // thread identity at `include/mimalloc/prim-tls.h:170-190` /
 // `src/prim/prim-tls.c:34-38`, the warning gate's C11 fetch-add at
-// `include/mimalloc/atomic.h:88,98`, final MI_STAT=0 formatting and process
+// `include/mimalloc/atomic.h:88,98`, selected final statistics formatting and process
 // information at `src/stats.c:151-430,568-597`, and its retained/physical
 // process ordering at `src/init.c:633-650` / `src/subproc.c:241-245`.
 //
@@ -2730,9 +2730,28 @@ unsafe fn render_final_statistics(
     if statistics.malloc_normal.total.wrapping_add(statistics.malloc_huge.total) != 0 {
         #[cfg(feature = "mi-stat-2")]
         {
-            // The source always prints this header above level one. Bin
-            // rows remain absent while their producer fields are zero.
+            // The source scans bins in index order and omits every bin whose
+            // total is nonpositive, independent of its peak and current.
             emit_final_header(output, b"blocks");
+            let mut found = false;
+            for (bin, count) in statistics.malloc_bins.iter().copied().enumerate() {
+                if count.total <= 0 {
+                    continue;
+                }
+                found = true;
+                let unit = crate::size_class::bin_size(bin).expect("source bin index is in range");
+                let kind = if unit <= crate::config::SMALL_MAX_OBJ_SIZE { "S" }
+                    else if unit <= crate::config::MEDIUM_MAX_OBJ_SIZE { "M" }
+                    else if unit <= crate::config::LARGE_MAX_OBJ_SIZE { "L" } else { "H" };
+                let mut label = FinalOutputLine::new();
+                let _ = write!(label, "bin{kind:>2}  {bin:>3}");
+                emit_final_stat(output, count, &label.bytes[..label.length], unit as i64, FINAL_NOT_ALL_FREED);
+            }
+            if found {
+                let mut separator = FinalOutputLine::new();
+                separator.append_bytes(b"\n");
+                unsafe { emit_final_statistics_line(output, &separator) };
+            }
         }
         #[cfg(feature = "mi-stat-2")]
         let (normal_unit, huge_unit) = (
@@ -3269,6 +3288,92 @@ mod tests {
         std::println!("CRABC_MI_M7_STATISTICS_LEVEL_TWO_REQUESTED_TRACE_END");
     }
 
+    #[cfg(feature = "mi-stat-2")]
+    fn level_two_bin_output(
+        name: &str, process: &HeapTheapStatistics, owner: &OutputOwner, capture: &Capture,
+    ) {
+        capture.reset();
+        let view = FinalProcessDiagnosticView::new(
+            7, process.final_output_snapshot(), FinalProcessInfo::new(0, 0, 0, 0, 0, 0),
+        );
+        // SAFETY: the local owner serializes its callback and the capture
+        // remains live through this synchronous final output call.
+        unsafe {
+            super::render_final_statistics(
+                super::StatisticsOutput::default_route(owner), b"subproc", view, 0,
+            )
+        };
+        let positions: [Option<usize>; 3] = [8usize, 9, 40].map(|bin| {
+            let unit = crate::size_class::bin_size(bin).expect("selected bin is source-defined");
+            let kind = if unit <= crate::config::SMALL_MAX_OBJ_SIZE { "S" }
+                else if unit <= crate::config::MEDIUM_MAX_OBJ_SIZE { "M" }
+                else if unit <= crate::config::LARGE_MAX_OBJ_SIZE { "L" } else { "H" };
+            let prefix = std::format!("  bin{kind:>2}  {bin:>3}:");
+            let row = (0..capture.count()).find(|&index| capture.message(index).starts_with(prefix.as_bytes()));
+            match row {
+                Some(index) => {
+                    let line = std::str::from_utf8(capture.message(index)).expect("source output is ASCII");
+                    std::println!("{name}.bin{bin}={}", line.strip_suffix('\n').expect("one line"));
+                }
+                None => std::println!("{name}.bin{bin}=absent"),
+            }
+            row
+        });
+        let order = match (positions[0], positions[2]) {
+            (None, None) => "none",
+            (Some(_), None) => "8",
+            (None, Some(_)) => "40",
+            (Some(first), Some(second)) if first < second => "8,40",
+            (Some(_), Some(_)) => "40,8",
+        };
+        std::println!("{name}.order={order}");
+    }
+
+    #[cfg(feature = "mi-stat-2")]
+    #[test]
+    fn level_two_bins_trace_for_pinned_c_comparison() {
+        let mut owner = output_owner();
+        let capture = Capture::new();
+        // SAFETY: registration and every render stay on this test thread;
+        // the capture outlives all source output calls.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        let process = HeapTheapStatistics::new();
+        let first_owner = HeapTheapStatistics::new();
+        let second_owner = HeapTheapStatistics::new();
+        let freed_owner = HeapTheapStatistics::new();
+
+        std::println!("CRABC_MI_M7_STATISTICS_LEVEL_TWO_BINS_TRACE_BEGIN");
+        std::println!("profile.level=2");
+        level_two_bin_output("empty", &process, &owner, &capture);
+
+        first_owner.seed_level_one_malloc_counts(final_stat_count(64, 64, 64), final_stat_count(0, 0, 0));
+        first_owner.seed_level_two_bin_count(8, final_stat_count(2, 3, 1));
+        process.merge_from_and_reset(&first_owner);
+        level_one_merge_count("first.source_bin8_reset", first_owner.level_two_bin_count(8));
+        level_one_merge_count("first.process_bin8", process.level_two_bin_count(8));
+        level_two_bin_output("first", &process, &owner, &capture);
+
+        second_owner.seed_level_two_bin_count(8, final_stat_count(4, 5, 2));
+        second_owner.seed_level_two_bin_count(40, final_stat_count(2, 3, 1));
+        process.merge_from_and_reset(&second_owner);
+        level_one_merge_count("merged.source_bin8_reset", second_owner.level_two_bin_count(8));
+        level_one_merge_count("merged.source_bin40_reset", second_owner.level_two_bin_count(40));
+        level_one_merge_count("merged.process_bin8", process.level_two_bin_count(8));
+        level_one_merge_count("merged.process_bin40", process.level_two_bin_count(40));
+        level_two_bin_output("merged", &process, &owner, &capture);
+
+        freed_owner.seed_level_one_malloc_counts(final_stat_count(0, 0, -64), final_stat_count(0, 0, 0));
+        freed_owner.seed_level_two_bin_count(8, final_stat_count(0, 0, -3));
+        freed_owner.seed_level_two_bin_count(40, final_stat_count(0, 0, -1));
+        process.merge_from_and_reset(&freed_owner);
+        level_one_merge_count("freed.source_bin8_reset", freed_owner.level_two_bin_count(8));
+        level_one_merge_count("freed.source_bin40_reset", freed_owner.level_two_bin_count(40));
+        level_one_merge_count("freed.process_bin8", process.level_two_bin_count(8));
+        level_one_merge_count("freed.process_bin40", process.level_two_bin_count(40));
+        level_two_bin_output("freed", &process, &owner, &capture);
+        std::println!("CRABC_MI_M7_STATISTICS_LEVEL_TWO_BINS_TRACE_END");
+    }
+
     fn final_statistics_fixture() -> FinalStatisticsSnapshot {
         FinalStatisticsSnapshot {
             #[cfg(feature = "mi-stat-1")]
@@ -3281,6 +3386,8 @@ mod tests {
             malloc_normal_count: 0,
             #[cfg(feature = "mi-stat-2")]
             malloc_huge_count: 0,
+            #[cfg(feature = "mi-stat-2")]
+            malloc_bins: [final_stat_count(0, 0, 0); crate::config::BIN_HUGE + 1],
             pages: final_stat_count(5, 7, 2),
             page_committed: final_stat_count(6_144, 5_120, 4_096),
             pages_abandoned: final_stat_count(1, 2, 0),

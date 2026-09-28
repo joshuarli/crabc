@@ -952,6 +952,10 @@ STATISTICS_LEVEL_TWO_REQUESTED_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_stat
 STATISTICS_LEVEL_TWO_REQUESTED_TEST = "diagnostic_output::tests::level_two_requested_trace_for_pinned_c_comparison"
 STATISTICS_LEVEL_TWO_REQUESTED_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_REQUESTED_TRACE_BEGIN"
 STATISTICS_LEVEL_TWO_REQUESTED_TRACE_END = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_REQUESTED_TRACE_END"
+STATISTICS_LEVEL_TWO_BINS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_level_two_bins_oracle.c"
+STATISTICS_LEVEL_TWO_BINS_TEST = "diagnostic_output::tests::level_two_bins_trace_for_pinned_c_comparison"
+STATISTICS_LEVEL_TWO_BINS_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_BINS_TRACE_BEGIN"
+STATISTICS_LEVEL_TWO_BINS_TRACE_END = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_BINS_TRACE_END"
 
 
 def require_statistics_level_one(trace: Mapping[str, str], description: str) -> None:
@@ -1037,6 +1041,36 @@ def require_statistics_level_two_requested(trace: Mapping[str, str], description
         raise harness.HarnessError(f"{description} lost a requested merge or display state: {trace}")
 
 
+def require_statistics_level_two_bins(trace: Mapping[str, str], description: str) -> None:
+    """Require two ordered, merged bin rows and suppress an empty middle bin."""
+
+    scenarios = ("empty", "first", "merged", "freed")
+    row_keys = ("order", "bin8", "bin9", "bin40")
+    counts = ("first.source_bin8_reset", "first.process_bin8", "merged.source_bin8_reset",
+              "merged.source_bin40_reset", "merged.process_bin8", "merged.process_bin40",
+              "freed.source_bin8_reset", "freed.source_bin40_reset", "freed.process_bin8",
+              "freed.process_bin40")
+    expected = {"profile.level", *(f"{scenario}.{key}" for scenario in scenarios for key in row_keys), *counts}
+    if set(trace) != expected or trace["profile.level"] != "2":
+        raise harness.HarnessError(f"{description} lacks the level-two bin trace fields: {trace}")
+    if (any(trace[key] != "0,0,0" for key in counts if key.endswith("reset"))
+            or trace["first.process_bin8"] != "2,3,1"
+            or trace["merged.process_bin8"] != "5,8,3"
+            or trace["merged.process_bin40"] != "2,3,1"
+            or trace["freed.process_bin8"] != "5,8,0"
+            or trace["freed.process_bin40"] != "2,3,0"
+            or [trace[f"{scenario}.order"] for scenario in scenarios] != ["none", "8", "8,40", "8,40"]
+            or any(trace[f"{scenario}.bin9"] != "absent" for scenario in scenarios)
+            or trace["empty.bin8"] != "absent" or trace["empty.bin40"] != "absent"
+            or trace["first.bin8"] == "absent" or trace["first.bin40"] != "absent"
+            or any(trace[f"{scenario}.bin8"] == "absent" or trace[f"{scenario}.bin40"] == "absent"
+                   for scenario in ("merged", "freed"))
+            or "not all freed" not in trace["merged.bin8"]
+            or not trace["freed.bin8"].endswith("  ok")
+            or not trace["freed.bin40"].endswith("  ok")):
+        raise harness.HarnessError(f"{description} lost the source bin merge or final row behavior: {trace}")
+
+
 def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
     """Build the same public statistics driver with pinned C level one and Rust."""
 
@@ -1113,6 +1147,16 @@ def run_statistics_level_two_requested_differential(offline: bool) -> dict[str, 
         end=STATISTICS_LEVEL_TWO_REQUESTED_TRACE_END,
         require_complete=require_statistics_level_two_requested,
         report_name="statistics-level-two-requested.json", compile_defines=("-DMI_STAT=2",),
+        rust_features=("mi-stat-2",),
+    )
+
+
+def run_statistics_level_two_bins_differential(offline: bool) -> dict[str, Any]:
+    return run_trace_differential(
+        offline, subject="statistics-level-two-bins", oracle=STATISTICS_LEVEL_TWO_BINS_ORACLE,
+        test=STATISTICS_LEVEL_TWO_BINS_TEST, begin=STATISTICS_LEVEL_TWO_BINS_TRACE_BEGIN,
+        end=STATISTICS_LEVEL_TWO_BINS_TRACE_END, require_complete=require_statistics_level_two_bins,
+        report_name="statistics-level-two-bins.json", compile_defines=("-DMI_STAT=2",),
         rust_features=("mi-stat-2",),
     )
 
@@ -1247,6 +1291,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust level-one final-output merge differential")
     mode.add_argument("--statistics-level-two-requested-differential", action="store_true",
         help="run the pinned-C/Rust level-two requested-size final-output differential")
+    mode.add_argument("--statistics-level-two-bins-differential", action="store_true",
+        help="run the pinned-C/Rust level-two nonzero-bin final-output differential")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1301,6 +1347,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_level_two_requested_differential:
         report = run_statistics_level_two_requested_differential(arguments.offline)
         print(f"M7 level-two requested differential passed: {report['compared_key_count']} keys")
+        print(json.dumps(report["trace"], sort_keys=True))
+        return 0
+    if arguments.statistics_level_two_bins_differential:
+        report = run_statistics_level_two_bins_differential(arguments.offline)
+        print(f"M7 level-two bins differential passed: {report['compared_key_count']} keys")
         print(json.dumps(report["trace"], sort_keys=True))
         return 0
     if arguments.adapter_differential:
