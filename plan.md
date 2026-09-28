@@ -50,7 +50,10 @@ are not transferable passes for a different revision.
   Rust providers in both static link forms; its exact C allocator companion
   lowers selector blockers from 757 to 724, with 705 identities, 17 family
   admissions, one declaration companion, and one semantic receipt open. Full
-  closure remains open. `libc.c-abi-compat` now runs a physical same-cohort
+  closure remains open. A later sealed cohort binds all six static C allocator
+  `__errno_location` callers to the final TLS accessor in ET_EXEC, static PIE,
+  and shared libc; its selector has 721 blockers after that ordinary-import
+  reason is discharged. `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
   backend. Independent physical replay is pending. `consumer.rust-std-lto` passes its
@@ -97,6 +100,9 @@ are not transferable passes for a different revision.
   remains revision-bound. A later clean `ce1b3d556` M1 run also passes with
   the pinned-C bit arithmetic differential matching 71,190 records and
   120,816 results across zero, boundaries, rotations, and word geometry.
+  A clean `9e7e7f3bd` M8 run passes all nine consumer and runtime leaves and
+  all 16 evidence commands, with 13 physical receipts independently reread;
+  final-candidate replay remains revision-bound.
   A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
   static-PIE PageMap high-water spike, and left codegen/performance blocked;
@@ -416,8 +422,10 @@ are not transferable passes for a different revision.
   `MI_STAT=1` match 29 C/Rust state and output values; its extended `MI_STAT=2`
   payload, allocation/page bins, requested bytes, and selected output rows also
   match. Source-faithful peak adjustment now matches the physical VM
-  reserved, committed, and process-commit peak rows. The main static Theap
-  count remains lower before worker start and across teardown.
+  reserved, committed, and process-commit peak rows. Counting the successful
+  initial static Theap attachment makes all four worker-reset Theap stages
+  and the full `MI_STAT=2` output match pinned C on a clean source; static
+  teardown retains that count as pinned C does.
   The prior 16 statistics evidence
   rows pass on a clean source, and the focused differentials pass; the
   source-built OS-large remote-free probe matches 35 statistics payload keys;
