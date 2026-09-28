@@ -102,7 +102,9 @@ are not transferable passes for a different revision.
   differential matches 28 C/Rust fields. A default-off `MI_STAT=2` requested-size
   merge/final-output trace also matches pinned C. Nonzero level-two allocation
   bin output matches 27 C/Rust fields for bin order, size units, merge peaks,
-  freed rows, and empty-bin suppression; page, huge, nonlocal, and
+  freed rows, and empty-bin suppression. Synthetic huge/page merge and final
+  rows match 35 more C/Rust fields; all seven statistics evidence rows pass
+  on a clean source. Page, huge, nonlocal, and
   higher-level production statistics producers remain unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
