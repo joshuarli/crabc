@@ -403,7 +403,7 @@ impl OwnedArenaAllocation {
         match &self.allocation {
             ArenaBacking::Regular(mapping) => {
                 if mapping
-                    .commit_for_process(self.process(), offset, size, already_committed)
+                    .commit_for_process_with_warning(self.process(), offset, size, already_committed)
                     .is_ok()
                 {
                     ArenaCommitOutcome::committed(false)
