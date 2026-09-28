@@ -36,7 +36,9 @@ are not transferable passes for a different revision.
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` and
   `consumer.source-build` pass their evidence on development cohorts and
-  publish receipts; `performance.release` is a read-only receipt gate whose
+  publish receipts; a clean `0bb16e482` Lua source-build admission makes the
+  latter evidence condition met while 14 prerequisite families remain open.
+  `performance.release` is a read-only receipt gate whose
   runtime, native-facade and allocator M9 inputs do not exist yet. The pinned
   standalone unwinder now returns a phase error for faulting CFI
   register or expression memory reads; a guarded source-built regression and
@@ -128,13 +130,12 @@ are not transferable passes for a different revision.
   including local-free reuse and page spill. The 8 KiB regular small
   queue-head path falls from 809 to 161 instructions and 13 to three calls;
   its 23-event C/Rust trace covers reuse, page spill, and `calloc` zeroing.
-  Contended timing is not
-  qualifying. Allocator M3 passes every own
+  Contended timing is not qualifying. Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
-  and the quiescent page-utilization query; twelve
+  and the quiescent page-utilization query; thirteen
   runnable evidence rows pass, including fresh-process Heap membership
   regressions and a ten-case source-built main-Heap population differential
   across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
@@ -146,7 +147,9 @@ are not transferable passes for a different revision.
   regular-page and OS-singleton visitor preserves their source traversal order.
   A process-main abandoned regular page is selected from its arena bitmap
   while a same-size live main-thread page is excluded; six callback rows
-  match pinned C.
+  match pinned C. A process-main abandoned OS singleton follows the earlier
+  live main-thread OS singleton in source list order, and six more callback
+  rows match pinned C with freed-page omission.
   All ten required gates
   remain blocked by 11 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
@@ -191,9 +194,12 @@ are not transferable passes for a different revision.
   cross-thread normal free records the freeing worker's 8,8,-64 binned row
   and merges to 72,72,0 process bytes. An OS-aligned huge allocation records
   589,824 physical bytes and prints `578.2 KiB` before owner merge; C/Rust
-  agree on release and warning state. All 12 statistics evidence rows pass
-  on a clean source. Other page, requested-size production, and
-  higher-level production statistics producers remain unproved, so full M7
+  agree on release and warning state. `MI_STAT=2` ordinary and OS-aligned
+  allocation/free production matches 43 C/Rust requested-size, bin, and
+  count values, including the source's retained requested count after free.
+  All 13 statistics evidence rows pass on a clean source. Page, fast-path
+  count, remote bin-free, and metadata-Theap statistics producers remain
+  unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
   functions among 1,406 musl-replaceable entries and all 831 required entries
