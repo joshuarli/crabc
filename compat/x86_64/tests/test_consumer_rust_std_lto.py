@@ -207,6 +207,16 @@ class ReceiptReaderTests(unittest.TestCase):
     def test_complete_current_receipt_is_read(self) -> None:
         self.assertTrue(self.validate(self.record)["passed"])
 
+    def test_current_receipt_accepts_reproduction_cohort_product(self) -> None:
+        reproduction = self.receipt.parent / "reproduction"
+        self.product_paths["reproduction"] = {}
+        for mode in ("static", "dynamic"):
+            product = reproduction / mode
+            product.mkdir(parents=True)
+            (product / "manifest.json").write_bytes(f"reproduction {mode}\n".encode())
+            self.product_paths["reproduction"][mode] = product
+        self.assertTrue(self.validate(self.record)["passed"])
+
     def test_rehashed_provider_archive_cannot_replace_selected_archive(self) -> None:
         alternate = self.receipt.parent / "alternate-provider"
         alternate.mkdir()

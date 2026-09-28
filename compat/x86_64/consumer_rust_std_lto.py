@@ -1095,7 +1095,7 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     products = record.get("products")
     require(isinstance(products, dict) and set(products) == set(UNWIND_PRODUCTS),
             "consumer gate receipt lacks an installed/extracted product pair")
-    require(set(cohort_paths) == set(UNWIND_PRODUCTS), "consumer gate cohort has the wrong product roster")
+    require(set(UNWIND_PRODUCTS).issubset(cohort_paths), "consumer gate cohort lacks a selected product")
     for label in UNWIND_PRODUCTS:
         physical_pair = product_pair(label, cohort_paths[label]["static"], cohort_paths[label]["dynamic"])
         require(products[label] == physical_pair, f"consumer gate {label} product differs from the source cohort")
