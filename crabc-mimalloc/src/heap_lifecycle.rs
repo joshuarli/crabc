@@ -602,6 +602,156 @@ mod tests {
     use crate::thread_local::TLS_INDEX_MASK;
     use std::vec::Vec;
 
+    /// The selected Theap's exact arena bitmap span, observed only while both
+    /// workers are paused outside allocator operations.
+    fn selected_theap_slice_is_free(arena: crate::arena::ArenaId, memory: crate::types::MemoryId) -> bool {
+        let span = memory.arena_memory().expect("the selected Theap owns an arena slice");
+        assert_eq!(span.arena, arena.as_ptr());
+        // SAFETY: the child retains this published arena, and the workers do
+        // not mutate its free bitmap during this observation.
+        let view = unsafe { crate::arena::ArenaView::from_ptr(arena.as_ptr()) }.unwrap();
+        let free = unsafe { view.slices_free() }.unwrap();
+        free.is_set_range(span.slice_index as usize, span.slice_count as usize) == Some(true)
+    }
+
+    /// A Heap deletion detaches both workers' selected Theaps, but the last
+    /// cached worker keeps its exact arena slice until it selects its main
+    /// Heap. The child counts follow the same source list/refcount sequence.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn child_selected_arena_two_workers_hold_and_release_exact_theap_slices() {
+        use crate::runtime_lifecycle::{
+            finish_current_thread_native_after_user_destructors, native_free,
+            prepare_native_later_thread_arena, test_initialize_process_from_host_environment,
+            NativePageFreeResult, ThreadFinishResult,
+        };
+        use crate::subproc::lifecycle::{
+            current_child_main_heap, native_child_heap_new_in_arena, native_child_heap_theap,
+            native_child_reserve_os_memory, native_subproc_add_current_thread,
+            native_subproc_destroy, native_subproc_new, NativeChildThreadAdd,
+        };
+        unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+        crate::test_process::run_in_fresh_process(
+            "types::heap_registry::lifecycle::tests::child_selected_arena_two_workers_hold_and_release_exact_theap_slices",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let child = native_subproc_new().expect("a live child");
+                let (created_send, created_receive) = std::sync::mpsc::channel();
+                let (joined_send, joined_receive) = std::sync::mpsc::channel();
+                let (start_second_send, start_second_receive) = std::sync::mpsc::channel();
+                let (second_ready_send, second_ready_receive) = std::sync::mpsc::channel();
+                let (release_second_send, release_second_receive) = std::sync::mpsc::channel();
+                let (second_released_send, second_released_receive) = std::sync::mpsc::channel();
+                let (finish_second_send, finish_second_receive) = std::sync::mpsc::channel();
+
+                let first = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(child) }, Ok(NativeChildThreadAdd::Added));
+                    let main = current_child_main_heap().expect("the child main Heap");
+                    let arena = native_child_reserve_os_memory(128 * 1024 * 1024, true, false, true)
+                        .expect("a child member").expect("a selected arena");
+                    let heap = native_child_heap_new_in_arena(arena).expect("a child member")
+                        .expect("a live child").expect("a selected Heap");
+                    let identity = unsafe { heap.as_ref() }.subprocess_pointer();
+                    created_send.send(heap.as_ptr().addr()).unwrap();
+                    joined_receive.recv().unwrap();
+                    // SAFETY: the child and both main Theaps are live. The
+                    // second worker has joined but has not selected `heap`.
+                    let baseline = unsafe { &*identity }.statistics().final_output_snapshot().theaps;
+                    let first = unsafe { native_child_heap_theap(heap) }.expect("the first selected Theap");
+                    let first_memory = unsafe { first.as_ref() }.memory_id();
+                    let block = unsafe { crate::source_heap_api::heap_malloc(heap.as_ptr().cast(), 64) }
+                        .value.expect("the first selected page");
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    assert_eq!(unsafe { native_child_heap_theap(heap) }, Some(first));
+                    start_second_send.send(()).unwrap();
+                    let second = NonNull::new(second_ready_receive.recv().unwrap() as *mut crate::types::Theap)
+                        .expect("the second selected Theap");
+                    let second_memory = unsafe { second.as_ref() }.memory_id();
+                    let first_span = first_memory.arena_memory().unwrap();
+                    let second_span = second_memory.arena_memory().unwrap();
+                    assert_eq!(first_span.arena, arena.as_ptr());
+                    assert_eq!(second_span.arena, arena.as_ptr());
+                    assert_ne!(first_span.slice_index, second_span.slice_index);
+                    assert!(!selected_theap_slice_is_free(arena, first_memory));
+                    assert!(!selected_theap_slice_is_free(arena, second_memory));
+                    assert_eq!(unsafe { heap.as_ref() }.test_theaps_head(), second.as_ptr());
+                    let (second_next, _, _, _, second_tld) = unsafe { crate::types::Theap::test_list_links(second) };
+                    let (first_next, _, _, _, first_tld) = unsafe { crate::types::Theap::test_list_links(first) };
+                    assert_eq!(second_next, first.as_ptr());
+                    assert!(first_next.is_null());
+                    assert_ne!(first_tld, second_tld);
+                    assert_eq!(unsafe { crate::types::ThreadLocalData::theaps_head_at(NonNull::new(first_tld).unwrap()) }, first.as_ptr());
+                    assert_eq!(unsafe { crate::types::ThreadLocalData::theaps_head_at(NonNull::new(second_tld).unwrap()) }, second.as_ptr());
+                    assert_eq!((unsafe { first.as_ref() }.refcount(), unsafe { second.as_ref() }.refcount()), (2, 2));
+                    let before = unsafe { &*identity }.statistics().final_output_snapshot().theaps;
+                    assert_eq!((before.current - baseline.current, before.total - baseline.total), (2, 2));
+
+                    assert!(unsafe { crate::source_heap_api::heap_release(heap.as_ptr().cast(), false) });
+                    let (_, _, _, _, detached_tld) = unsafe { crate::types::Theap::test_list_links(second) };
+                    assert!(detached_tld.is_null());
+                    assert_eq!(unsafe { second.as_ref() }.refcount(), 1);
+                    assert!(selected_theap_slice_is_free(arena, first_memory));
+                    assert!(!selected_theap_slice_is_free(arena, second_memory));
+                    assert_eq!(unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current, 1);
+                    assert_eq!(unsafe { native_child_heap_theap(main) }, Some(crate::compiler_tls::default_theap()));
+
+                    let probe = native_child_heap_new_in_arena(arena).unwrap().unwrap().unwrap();
+                    let probe_theap = unsafe { native_child_heap_theap(probe) }.expect("a probe Theap");
+                    assert_ne!(probe_theap, second);
+                    assert_eq!(unsafe { probe_theap.as_ref() }.memory_id().arena_memory().unwrap().arena, arena.as_ptr());
+                    assert!(unsafe { crate::source_heap_api::heap_release(probe.as_ptr().cast(), true) });
+                    assert_eq!(unsafe { native_child_heap_theap(main) }, Some(crate::compiler_tls::default_theap()));
+                    assert!(!selected_theap_slice_is_free(arena, second_memory));
+                    assert_eq!(unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current, 1);
+
+                    release_second_send.send(()).unwrap();
+                    second_released_receive.recv().unwrap();
+                    assert!(selected_theap_slice_is_free(arena, second_memory));
+                    assert_eq!(unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current, 0);
+                    let final_heap = native_child_heap_new_in_arena(arena).unwrap().unwrap().unwrap();
+                    let final_theap = unsafe { native_child_heap_theap(final_heap) }.expect("a final selected Theap");
+                    assert_eq!(unsafe { final_theap.as_ref() }.memory_id().arena_memory().unwrap().arena, arena.as_ptr());
+                    assert!(unsafe { crate::source_heap_api::heap_release(final_heap.as_ptr().cast(), true) });
+                    assert_eq!(unsafe { native_child_heap_theap(main) }, Some(crate::compiler_tls::default_theap()));
+                    finish_second_send.send(()).unwrap();
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+
+                let heap_address = created_receive.recv().unwrap();
+                let second = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(child) }, Ok(NativeChildThreadAdd::Added));
+                    let main = current_child_main_heap().expect("the child main Heap");
+                    assert!(unsafe { native_child_heap_theap(main) }.is_some());
+                    joined_send.send(()).unwrap();
+                    start_second_receive.recv().unwrap();
+                    let heap = NonNull::new(heap_address as *mut Heap).unwrap();
+                    let selected = unsafe { native_child_heap_theap(heap) }.expect("the second selected Theap");
+                    let block = unsafe { crate::source_heap_api::heap_malloc(heap.as_ptr().cast(), 96) }
+                        .value.expect("the second selected page");
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    assert_eq!(unsafe { native_child_heap_theap(heap) }, Some(selected));
+                    second_ready_send.send(selected.as_ptr().addr()).unwrap();
+                    release_second_receive.recv().unwrap();
+                    assert_eq!(unsafe { native_child_heap_theap(main) }, Some(crate::compiler_tls::default_theap()));
+                    second_released_send.send(()).unwrap();
+                    finish_second_receive.recv().unwrap();
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                second.join().expect("the second worker finishes");
+                first.join().expect("the first worker finishes");
+                // SAFETY: both workers have finished and no child Heap is used.
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Ok(()));
+            },
+        );
+    }
+
     fn push_counts(trace: &mut Vec<i64>, child: &mut ChildMainHeapContextOwner<'_>) {
         let (live, total, heaps) = child
             .with_child_image(|image| {
@@ -815,9 +965,8 @@ mod tests {
         });
     }
 
-    /// Pinned-C/Rust differential for `mi_heap_new`, `mi_heap_delete`, and
-    /// `mi_heap_destroy` of Heaps that never allocate, on a thread of a child
-    /// subprocess; `compat/allocator/heap_lifecycle.c` prints the same fields.
+    /// Emits the source-ordered state of empty child Heaps across creation,
+    /// deletion, and destruction, including list and count transitions.
     #[test]
     fn source_ordered_empty_heap_lifecycle_trace() {
         with_owner_local_fixture(true, |attachment, mut heap_owner, pair| {

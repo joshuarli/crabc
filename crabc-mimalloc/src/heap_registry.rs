@@ -455,8 +455,9 @@ impl Heap {
 /// 1216-1298, 2531-2644`, `src/prim/prim-tls.c:211-229`). Each operates on
 /// individual fields; callers own the list or page state they change.
 impl super::Theap {
-    /// `_mi_theap_incref` (`theap.c:357-362`): a Theap with a freeable
-    /// image counts each cached reference.
+    /// `_mi_theap_incref` (`theap.c:357-362`): every freeable Theap image,
+    /// including one claimed from a selected arena, counts each cached
+    /// reference.
     ///
     /// # Safety
     /// `theap` is a live Theap image.
@@ -464,7 +465,7 @@ impl super::Theap {
         // SAFETY: forwarded liveness; `refcount` and `memid` are read or
         // updated field by field.
         unsafe {
-            if (*theap.as_ptr()).memid.kind() == super::MemoryKind::Malloc {
+            if !(*theap.as_ptr()).memid.needs_no_free() {
                 (*theap.as_ptr()).refcount.fetch_add(1, Ordering::AcqRel);
             }
         }
@@ -479,7 +480,7 @@ impl super::Theap {
     pub(crate) unsafe fn decref_at(theap: core::ptr::NonNull<Self>) -> bool {
         // SAFETY: as for `incref_at`.
         unsafe {
-            (*theap.as_ptr()).memid.kind() == super::MemoryKind::Malloc
+            !(*theap.as_ptr()).memid.needs_no_free()
                 && (*theap.as_ptr()).refcount.fetch_sub(1, Ordering::AcqRel) == 1
         }
     }
