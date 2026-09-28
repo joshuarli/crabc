@@ -343,10 +343,13 @@ class OwnedResolverFamilyTests(unittest.TestCase):
             with self.assertRaisesRegex(family.ResolverFamilyError, "request changed"):
                 family.admission_facts(ROOT, path.relative_to(ROOT))
 
-    def test_admission_facts_rejects_rehashed_wrong_product_component(self) -> None:
+    def test_admission_facts_rejects_rehashed_component_substitutions(self) -> None:
         import owned_posix_static_products as static
         import owned_resolver_family_cohort as cohort
         import resolver_network_component_receipt as network
+        import owned_classic_netdb_component_receipt as classic
+        import owned_resolver_cancellation_receipt as cancellation
+        import owned_protocol_database as protocol
 
         roots = {
             label: {kind: self._directory(f"{label}-{kind}") for kind in ("static", "dynamic")}
@@ -369,32 +372,49 @@ class OwnedResolverFamilyTests(unittest.TestCase):
             manifest.write_text(f"wrong {kind} product\n", encoding="utf-8")
 
         request_components = self._all_reader_request()
+        network_sources = network.source_snapshot(ROOT)
+        network_report = {"receipt": {"sources": {"before": network_sources, "after": network_sources}}}
+        network_file = self._file("network-source.json", json.dumps(network_report))
+        request_components["resolver-network-physical"]["report"] = self._relative(network_file)
+        classic_sources = {name: classic.tracked_source(ROOT, relative)
+                           for name, relative in classic.SOURCE_PATHS.items()}
         for component in ("resolver-alias-private-bodies", "resolver-cancellation"):
             for kind in ("static", "dynamic"):
                 request_components[component][f"{kind}_product"] = self._relative(roots["primary"][kind])
         classic_report = self._file("classic-source.json", json.dumps({
             "products": {kind: self._relative(path) for kind, path in roots["primary"].items()},
+            "sources": classic_sources,
         }))
         request_components["classic-netdb"]["report"] = self._relative(classic_report)
-        request = self._request(request_components)
         source = {
             "revision": "r" * 40, "content_sha256": "c" * 64,
             "static_preparation": family._identity(ROOT, ROOT / request_components["resolver-family-cohort"]["static_preparation"]),
             "dynamic_qualification": family._identity(ROOT, ROOT / request_components["resolver-family-cohort"]["dynamic_qualification"]),
         }
+        alias_report = {"selected_source": {"revision": source["revision"],
+                                            "source_sha256": source["content_sha256"]}}
+        alias_file = self._file("alias-source.json", json.dumps(alias_report))
+        request_components["resolver-alias-private-bodies"]["report"] = self._relative(alias_file)
+        cancellation_source = cancellation._source_digest(ROOT)
+        cancellation_work = ROOT / request_components["resolver-cancellation"]["work"]
+        (cancellation_work / cancellation.ARTIFACT_AUDIT).write_text(
+            json.dumps({"source_sha256": cancellation_source}), encoding="utf-8")
         protocol_arms = {
             name: products[label]
             for name, label in (("installed", "primary"), ("reproduction", "reproduction"),
                                 ("extracted", "extracted"))
         }
-        protocol_report = {"products": {"before": protocol_arms, "after": protocol_arms}}
+        protocol_sources = protocol.source_records(ROOT)
+        protocol_report = {"products": {"before": protocol_arms, "after": protocol_arms},
+                           "source": {"before": protocol_sources, "after": protocol_sources}}
         (ROOT / request_components["protocol-database-product"]["report"]).write_text(
             json.dumps(protocol_report), encoding="utf-8")
+        request = self._request(request_components)
         results = {
-            "resolver-network-physical": {"report": {}},
+            "resolver-network-physical": {"report": network_report},
             "classic-netdb": {"report": json.loads(classic_report.read_text(encoding="utf-8"))},
-            "resolver-alias-private-bodies": {"report": {}},
-            "resolver-cancellation": {"report": {}},
+            "resolver-alias-private-bodies": {"report": alias_report},
+            "resolver-cancellation": {"report": {"source_sha256": cancellation_source}},
             "protocol-database-product": {"report": protocol_report},
         }
         readers = {name: (lambda _root, _paths, value=value: value) for name, value in results.items()}
@@ -411,6 +431,57 @@ class OwnedResolverFamilyTests(unittest.TestCase):
             self.assertTrue(assessment["family_complete"], assessment["gaps"])
             path = self._file("complete-assessment.json", json.dumps(assessment))
             self.assertEqual(family.admission_facts(ROOT, path)["source"]["revision"], source["revision"])
+
+            source_mutations = (
+                ("resolver-network-physical", network_file, "receipt", "resolver-network source"),
+                ("resolver-alias-private-bodies", alias_file, "selected_source", "resolver alias source"),
+                ("resolver-cancellation", cancellation_work / cancellation.ARTIFACT_AUDIT,
+                 "source_sha256", "resolver cancellation source"),
+                ("protocol-database-product", ROOT / request_components["protocol-database-product"]["report"],
+                 "source", "protocol-database source"),
+            )
+            for identifier, report_file, field, error in source_mutations:
+                original = report_file.read_bytes()
+                changed_report = json.loads(original)
+                if field == "receipt":
+                    changed_report[field]["sources"]["before"] = {"foreign": "different source"}
+                elif field == "selected_source":
+                    changed_report[field]["source_sha256"] = "f" * 64
+                elif field == "source":
+                    changed_report[field]["before"] = {"foreign": "different source"}
+                else:
+                    changed_report[field] = "f" * 64
+                report_file.write_text(json.dumps(changed_report), encoding="utf-8")
+                changed = json.loads(json.dumps(assessment))
+                if identifier == "resolver-cancellation":
+                    changed["components"][identifier]["result"]["report"]["source_sha256"] = "f" * 64
+                    changed["components"][identifier]["inputs"]["work"] = family._input_identity(
+                        ROOT, cancellation_work)
+                else:
+                    changed["components"][identifier]["inputs"]["report"] = family._identity(ROOT, report_file)
+                if identifier not in ("resolver-cancellation", "protocol-database-product"):
+                    changed["components"][identifier]["result"]["report"] = changed_report
+                path.write_text(json.dumps(changed), encoding="utf-8")
+                with self.subTest(component=identifier):
+                    with self.assertRaisesRegex(family.ResolverFamilyError, error):
+                        family.admission_facts(ROOT, path)
+                report_file.write_bytes(original)
+                path.write_text(json.dumps(assessment), encoding="utf-8")
+
+            foreign_report = self._file("classic-foreign-source.json", json.dumps({
+                "products": {kind: self._relative(product) for kind, product in roots["primary"].items()},
+                "sources": {"foreign": "different source"},
+            }))
+            request_components["classic-netdb"]["report"] = self._relative(foreign_report)
+            request.write_text(json.dumps({"schema": family.REQUEST_SCHEMA,
+                                           "components": request_components}), encoding="utf-8")
+            assessment["request"] = family._identity(ROOT, request)
+            assessment["components"]["classic-netdb"]["inputs"]["report"] = family._identity(ROOT, foreign_report)
+            assessment["components"]["classic-netdb"]["result"]["report"] = json.loads(
+                foreign_report.read_text(encoding="utf-8"))
+            path.write_text(json.dumps(assessment), encoding="utf-8")
+            with self.assertRaisesRegex(family.ResolverFamilyError, "classic-netdb source"):
+                family.admission_facts(ROOT, path)
 
             wrong_report = self._file("classic-wrong.json", json.dumps({
                 "products": {kind: self._relative(product) for kind, product in wrong.items()},

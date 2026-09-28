@@ -905,9 +905,9 @@ def plan_execution(root: Path, static_preparation: Path, dynamic_qualification: 
 def _validate_admission_cohort(root: Path, request: Path, components: Mapping[str, object]) -> None:
     """Rebind retained component roots to the current canonical product cohort.
 
-    Behavior replay needs its isolated execution environment. Product paths
-    and manifests can still be checked here, so a rehashed component report
-    from another cohort cannot inherit a completed assessment's admission.
+    Behavior replay needs its isolated execution environment. Product paths,
+    manifests, retained input files, and source claims can still be checked
+    here, so a substituted component cannot inherit a completed assessment.
     """
 
     definitions, _proofs = _roster(root)
@@ -926,6 +926,10 @@ def _validate_admission_cohort(root: Path, request: Path, components: Mapping[st
                         and inputs[name].get("path") == path.relative_to(root).as_posix()
                         for name, path in paths.items()),
                 f"resolver family assessment {identifier} input paths differ")
+        for name, path in paths.items():
+            if path.is_file():
+                require(inputs[name] == _identity(root, path),
+                        f"resolver family assessment {identifier} {name} input changed")
         if identifier == "resolver-family-cohort":
             cohort_paths = paths
         else:
@@ -939,6 +943,67 @@ def _validate_admission_cohort(root: Path, request: Path, components: Mapping[st
         raise ResolverFamilyError(f"resolver family assessment cohort binding differs: {error}") from error
     require(components["resolver-family-cohort"].get("result") == rebound,
             "resolver family assessment cohort binding differs")
+    try:
+        _validate_admission_sources(root, replays, rebound["source"])
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+        raise ResolverFamilyError(f"resolver family assessment source binding differs: {error}") from error
+
+
+def _validate_admission_sources(
+    root: Path, replays: Mapping[str, tuple[Mapping[str, Path], Mapping[str, object]]],
+    source: Mapping[str, object],
+) -> None:
+    """Join retained source claims to the current checkout after behavior replay."""
+
+    network = importlib.import_module("resolver_network_component_receipt")
+    classic = importlib.import_module("owned_classic_netdb_component_receipt")
+    cancellation = importlib.import_module("owned_resolver_cancellation_receipt")
+    protocol = importlib.import_module("owned_protocol_database")
+
+    network_paths, network_result = replays["resolver-network-physical"]
+    network_report = _read_json(network_paths["report"], "resolver-network admission report")
+    require(network_result.get("report") == network_report,
+            "resolver-network assessment report differs from retained bytes")
+    network_sources = network.source_snapshot(root)
+    network_receipt = network_report.get("receipt")
+    require(isinstance(network_receipt, dict), "resolver-network admission receipt differs")
+    require(network_receipt.get("sources") ==
+            {"before": network_sources, "after": network_sources},
+            "resolver-network source identity differs at admission")
+
+    classic_paths, classic_result = replays["classic-netdb"]
+    classic_report = _read_json(classic_paths["report"], "classic-netdb admission report")
+    require(classic_result.get("report") == classic_report,
+            "classic-netdb assessment report differs from retained bytes")
+    classic_sources = {name: classic.tracked_source(root, relative)
+                       for name, relative in classic.SOURCE_PATHS.items()}
+    require(classic_report.get("sources") == classic_sources,
+            "classic-netdb source identity differs at admission")
+
+    alias_paths, alias_result = replays["resolver-alias-private-bodies"]
+    alias_report = _read_json(alias_paths["report"], "resolver alias admission report")
+    require(alias_result.get("report") == alias_report,
+            "resolver alias assessment report differs from retained bytes")
+    selected = alias_report.get("selected_source")
+    require(isinstance(selected, dict) and selected.get("revision") == source["revision"]
+            and selected.get("source_sha256") == source["content_sha256"],
+            "resolver alias source identity differs at admission")
+
+    cancellation_paths, cancellation_result = replays["resolver-cancellation"]
+    audit = _read_json(cancellation_paths["work"] / cancellation.ARTIFACT_AUDIT,
+                       "resolver cancellation admission audit")
+    cancellation_source = cancellation._source_digest(root)
+    cancellation_report = cancellation_result.get("report")
+    require(isinstance(cancellation_report, dict), "resolver cancellation assessment result differs")
+    require(cancellation_report.get("source_sha256") == cancellation_source
+            and audit.get("source_sha256") == cancellation_source,
+            "resolver cancellation source identity differs at admission")
+
+    protocol_paths, _protocol_result = replays["protocol-database-product"]
+    protocol_report = _read_json(protocol_paths["report"], "protocol-database admission report")
+    protocol_sources = protocol.source_records(root)
+    require(protocol_report.get("source") == {"before": protocol_sources, "after": protocol_sources},
+            "protocol-database source identity differs at admission")
 
 
 def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
