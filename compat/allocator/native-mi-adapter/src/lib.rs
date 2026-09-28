@@ -1441,7 +1441,7 @@ pub unsafe extern "C" fn mi_arena_contains(arena_id: *mut c_void, pointer: *cons
 
 #[no_mangle]
 /// # Safety
-/// The external writable range and its true commitment and zero state are
+/// The external mapped range and its true commitment and zero state are
 /// retained by the caller for every arena owner; `arena_id` is null or writable.
 pub unsafe extern "C" fn mi_manage_os_memory_ex(
     start: *mut c_void,
@@ -1458,6 +1458,24 @@ pub unsafe extern "C" fn mi_manage_os_memory_ex(
     unsafe { heaps::manage_os_memory_ex(
         start, size, is_committed, is_pinned, is_zero, numa_node, exclusive, arena_id,
     ) }
+}
+
+#[no_mangle]
+/// # Safety
+/// The caller retains the external mapped range through all arena, Heap,
+/// Theap and page uses; commitment and zero flags describe its initial state.
+pub unsafe extern "C" fn mi_manage_os_memory(
+    start: *mut c_void,
+    size: usize,
+    is_committed: bool,
+    is_pinned: bool,
+    is_zero: bool,
+    numa_node: c_int,
+) -> bool {
+    bind_thread();
+    // SAFETY: the C caller retains the range; source selects a nonexclusive
+    // arena and no arena-ID output through this public form.
+    unsafe { heaps::manage_os_memory(start, size, is_committed, is_pinned, is_zero, numa_node) }
 }
 
 // ---------------------------------------------------------------------------

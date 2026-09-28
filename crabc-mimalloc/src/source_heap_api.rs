@@ -199,6 +199,89 @@ pub unsafe fn manage_os_memory_ex(
     true
 }
 
+/// `mi_manage_os_memory` forwards to the managed-memory entry with ordinary
+/// nonexclusive arena selection and no arena-ID output.
+///
+/// # Safety
+/// `start..start + size` remains one live caller-owned mapping through every
+/// arena, Heap, Theap and page that uses it. The initial commitment and zero
+/// flags are truthful; uncommitted pages may be inaccessible until committed.
+pub unsafe fn manage_os_memory(
+    start: *mut c_void,
+    size: usize,
+    is_committed: bool,
+    is_pinned: bool,
+    is_zero: bool,
+    numa_node: c_int,
+) -> bool {
+    // SAFETY: the public caller retains the same mapping and true flags;
+    // source selects a nonexclusive arena and requests no arena-ID output.
+    unsafe { manage_os_memory_ex(
+        start, size, is_committed, is_pinned, is_zero, numa_node, false, null_mut(),
+    ) }
+}
+
+#[cfg(test)]
+mod manage_os_alias_tests {
+    extern crate std;
+
+    use super::*;
+    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
+    use crate::types::MemoryKind;
+
+    unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn public_manage_os_memory_uses_nonexclusive_external_owner() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::manage_os_alias_tests::public_manage_os_memory_uses_nonexclusive_external_owner",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                // SAFETY: this test owns the raw reservation and trims only
+                // the unobserved prefix and suffix outside its arena span.
+                let raw = unsafe { crabc_core::mm::mmap_raw(
+                    core::ptr::null_mut(), ARENA_MIN_SIZE + ARENA_ALIGNMENT,
+                    0, 0x22, -1, 0,
+                ) }.expect("caller reservation");
+                let aligned = (raw as usize + ARENA_ALIGNMENT - 1) & !(ARENA_ALIGNMENT - 1);
+                let prefix = aligned - raw as usize;
+                let suffix = ARENA_ALIGNMENT - prefix;
+                if prefix != 0 {
+                    // SAFETY: the prefix is outside the managed range and
+                    // no arena or page can reference it yet.
+                    unsafe { crabc_core::mm::munmap_raw(raw, prefix) }.unwrap();
+                }
+                if suffix != 0 {
+                    // SAFETY: the suffix is outside the managed range and
+                    // no arena or page can reference it yet.
+                    unsafe { crabc_core::mm::munmap_raw((aligned + ARENA_MIN_SIZE) as *mut u8, suffix) }.unwrap();
+                }
+                let area = aligned as *mut core::ffi::c_void;
+                assert!(unsafe { manage_os_memory(area, ARENA_MIN_SIZE, false, false, true, -1) });
+                let registry = MainSubprocess::global().arena_backing().registry();
+                let arena = (0..registry.count()).find_map(|index| {
+                    // SAFETY: this isolated process has no concurrent arena
+                    // destruction, and every published slot is stable.
+                    unsafe { registry.arena_at(index) }.filter(|arena| arena.start == aligned as *mut u8)
+                }).expect("alias publishes an arena for its external range");
+                assert_eq!(arena.memid.kind(), MemoryKind::External);
+                assert!(!arena.is_exclusive);
+                assert!(arena.commit_function.is_none());
+                assert_eq!(arena.subprocess, MainSubprocess::global().identity().as_ptr());
+                assert!(!unsafe { manage_os_memory(area, ARENA_MIN_SIZE - 1, false, false, true, -1) });
+                let mut residency = 0u8;
+                // SAFETY: the allocator retained only the arena metadata;
+                // the caller's raw mapping is still live through this query.
+                assert!(unsafe { crabc_core::mm::mincore_raw(aligned as *mut u8, 4096, &mut residency) }.is_ok());
+            },
+        );
+    }
+}
+
 /// The initialized default Theap of the calling thread. A cold main-subprocess
 /// thread attaches its owner; a child member already retains its own owner.
 pub fn theap_get_default() -> *mut c_void {
