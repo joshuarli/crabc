@@ -401,7 +401,13 @@ are not transferable passes for a different revision.
   query before remote free now leaves its default Theap unattached, matching
   21 source-built C/Rust statistics keys. The prior 16 statistics evidence
   rows pass on a clean source, and the focused differentials pass; the
-  full current-source gate remains blocked by named unproved producers. Other
+  source-built OS-large remote-free probe matches 35 statistics payload keys;
+  its full 50-key stage trace remains unproved because a 64 KiB PageMap submap
+  can be charged at different stages under different address placement. A
+  source-built `MI_DEBUG=1`/`MI_PADDING=1` probe records a real gap: pinned C
+  fills the requested bytes, returns the logical 17-byte usable size, and
+  reports a corrupted padding byte; native Rust currently does none of these.
+  The full current-source gate remains blocked by named unproved producers. Other
   page and fast-path shapes, other remote bin-free, and other metadata-Theap
   statistics producers remain unproved, so full M7
   stays open. Static
