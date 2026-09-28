@@ -117,15 +117,16 @@ environment.update({
 })
 command = [
     str(rustup), "run", builder.PINNED_TOOLCHAIN, "cargo", "rustc", "--locked",
-    "-p", "crabc-libc", "--lib", "--release", "--features",
+    "-p", "crabc-libc", "--lib", "--release", "--no-default-features", "--features",
     "x86-owned-static-runtime", "--target", builder.TARGET, "--target-dir",
-    str(target_dir), "--",
+    str(target_dir), *builder.STATIC_ARCHIVE_PROFILE, "--",
     "--cfg", "crabc_owned_static_sysroot",
     "--cfg", builder.MIMALLOC_LIFECYCLE_RUST_CFG,
     "--cfg", "crabc_owned_wordexp_process_private_test",
     "--check-cfg", "cfg(crabc_owned_wordexp_process_private_test)",
     "-C", "relocation-model=pic", "-C", "code-model=small", "-C", "panic=abort",
-    "-Ztls-model=initial-exec", "--remap-path-prefix", f"{root}=/crabc",
+    "-Ztls-model=initial-exec", "-Zmerge-functions=disabled",
+    "--remap-path-prefix", f"{root}=/crabc",
 ]
 completed = subprocess.run(
     command, cwd=root, env=environment, stdin=subprocess.DEVNULL,
