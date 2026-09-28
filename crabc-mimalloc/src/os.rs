@@ -5359,7 +5359,8 @@ pub(crate) mod fault {
         AtomicUsize::new(0),
     ];
 
-    /// The finite direct control-flow cases from `prim.c:267-274`.
+    /// The finite direct process THP cases, plus a tuple-checked kernel call
+    /// for a fresh process owner.
     ///
     /// `QueryNonzeroThree` is deliberately a raw nonzero return-class witness,
     /// not a claim that Linux 5.10 documents `3` as a kernel result. The two
@@ -5376,6 +5377,8 @@ pub(crate) mod fault {
         SetSuccess,
         SetPerm,
         SetInval,
+        /// Records the exact source calls and forwards them to the kernel.
+        RealPassthrough,
     }
 
     impl ThpDirectPolicyCase {
@@ -5384,7 +5387,7 @@ pub(crate) mod fault {
             match self {
                 Self::AllowEnabled => 0,
                 Self::QueryPerm | Self::QueryInval | Self::QueryNonzeroOne | Self::QueryNonzeroThree => 1,
-                Self::SetSuccess | Self::SetPerm | Self::SetInval => 2,
+                Self::SetSuccess | Self::SetPerm | Self::SetInval | Self::RealPassthrough => 2,
             }
         }
 
@@ -5404,6 +5407,7 @@ pub(crate) mod fault {
                 raw if raw == Self::SetSuccess as usize => Some(Self::SetSuccess),
                 raw if raw == Self::SetPerm as usize => Some(Self::SetPerm),
                 raw if raw == Self::SetInval as usize => Some(Self::SetInval),
+                raw if raw == Self::RealPassthrough as usize => Some(Self::RealPassthrough),
                 _ => None,
             }
         }
@@ -6142,7 +6146,8 @@ pub(crate) mod fault {
 
     /// Test-only raw THP policy receiver for the finite direct source matrix.
     /// It uses no generic answer callback: each case accepts only its literal
-    /// GET/SET tuple and directly returns the one fixed result.
+    /// GET/SET tuple. The selected process owner can pass valid tuples to the
+    /// kernel after recording them, while synthetic cases return fixed results.
     #[inline]
     pub(crate) fn thp_policy_prctl_raw(
         option: i32, argument0: usize, argument1: usize, argument2: usize, argument3: usize,
@@ -6172,6 +6177,14 @@ pub(crate) mod fault {
         let set_tuple = option == super::PR_SET_THP_DISABLE
             && argument0 == 1 && argument1 == 0 && argument2 == 0 && argument3 == 0;
         match (selected_case, index, get_tuple, set_tuple) {
+            (Some(ThpDirectPolicyCase::RealPassthrough), 0, true, _)
+            | (Some(ThpDirectPolicyCase::RealPassthrough), 1, _, true) => {
+                // SAFETY: the tuple is one of the two validated Linux THP
+                // process-policy calls owned by this isolated test process.
+                unsafe {
+                    crabc_core::process::prctl_raw(option, argument0, argument1, argument2, argument3)
+                }
+            }
             (Some(ThpDirectPolicyCase::QueryPerm), 0, true, _) => Err(Errno::PERM),
             (Some(ThpDirectPolicyCase::QueryInval), 0, true, _) => Err(Errno::INVAL),
             (Some(ThpDirectPolicyCase::QueryNonzeroOne), 0, true, _) => Ok(1),
@@ -6901,7 +6914,7 @@ mod tests {
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    fn selected_mapping_has_explicit_thp_advice(address: *mut u8) -> bool {
+    fn selected_mapping_has_vm_flag(address: *mut u8, selected_flag: &str) -> bool {
         let smaps = std::fs::read_to_string("/proc/self/smaps")
             .expect("the selected Linux process exposes mapping flags");
         let target = address.addr();
@@ -6920,7 +6933,7 @@ mod tests {
                 }
             }
             if selected && line.starts_with("VmFlags:") {
-                return line.split_whitespace().any(|flag| flag == "hg");
+                return line.split_whitespace().any(|flag| flag == selected_flag);
             }
         }
         false
@@ -7010,7 +7023,7 @@ mod tests {
         let advice_range = advice.range().expect("one THP advisory was selected");
         assert_eq!(advice_range, (base.addr(), length, MADV_HUGEPAGE));
         drop(advice);
-        let vmflags_hg = selected_mapping_has_explicit_thp_advice(base);
+        let vmflags_hg = selected_mapping_has_vm_flag(base, "hg");
         assert!(vmflags_hg, "the kernel accepted the selected THP advice");
         let live = process.subprocess().vm_statistics().snapshot();
         let release = fault.capture_unmap_ranges();
@@ -7133,7 +7146,7 @@ mod tests {
         assert_eq!(advice_range, (base.addr(), length, MADV_HUGEPAGE));
         drop(advice);
         assert_eq!(fault.observed(), 1, "one selected advice attempt fails");
-        let vmflags_hg = selected_mapping_has_explicit_thp_advice(base);
+        let vmflags_hg = selected_mapping_has_vm_flag(base, "hg");
         assert!(!vmflags_hg, "failed advice leaves the regular mapping unadvised");
         // SAFETY: the process still owns a committed, writable mapping at base.
         let mapping_survived = unsafe {
@@ -7168,6 +7181,152 @@ mod tests {
         std::println!("advice_errno={}", Errno::IO.raw());
         std::println!("advice_succeeded=0");
         std::println!("vmflags_hg={}", usize::from(vmflags_hg));
+        std::println!("mapping_survived={}", usize::from(mapping_survived));
+        std::println!("mmap_calls_delta={}", live.mmap_calls - before.mmap_calls);
+        std::println!("reserved_live_delta={}", live.reserved_current - before.reserved_current);
+        std::println!("committed_live_delta={}", live.committed_current - before.committed_current);
+        std::println!("release_count={}", released.1);
+        std::println!("release_exact_range={}", usize::from(released.0[0] == (base.addr(), length)));
+        std::println!("release_result=0");
+        std::println!("reserved_after_release_delta={}", after_release.reserved_current - before.reserved_current);
+        std::println!("committed_after_release_delta={}", after_release.committed_current - before.committed_current);
+        std::println!("{END}");
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_thp_disabled_process_trace() {
+        use crate::diagnostic_output::ProcessDiagnosticInputs;
+        use crate::process_init::ProcessMainInitializationStorage;
+
+        const CHILD: &str = "CRABC_M2_THP_DISABLED_CHILD";
+        const BEGIN: &str = "CRABC_M2_THP_DISABLED_RUST_TRACE_BEGIN";
+        const END: &str = "CRABC_M2_THP_DISABLED_RUST_TRACE_END";
+        if std::env::var_os(CHILD).is_none() {
+            let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+                .arg("os::tests::emit_m2_thp_disabled_process_trace")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD, "1")
+                .output()
+                .expect("fresh source-process child runs");
+            assert!(child.status.success(), "the isolated process-owned mapping completes");
+            assert!(child.stderr.is_empty(), "disabled THP policy emits no diagnostics");
+            let output = std::str::from_utf8(&child.stdout).expect("child trace is ASCII");
+            let start = output.find(BEGIN).expect("child emits its THP advice trace");
+            let end = output.find(END).expect("child closes its THP advice trace") + END.len();
+            std::println!("{}", &output[start..end]);
+            return;
+        }
+
+        unsafe extern "C" {
+            static mut stderr: *mut c_void;
+            fn fputs(message: *const c_char, stream: *mut c_void) -> i32;
+        }
+
+        unsafe extern "C" fn selected_stderr(message: *const c_char) {
+            // SAFETY: the selected musl FILE remains live in this isolated
+            // process, and fputs owns its stream locking and buffering.
+            let stream = unsafe { core::ptr::read(core::ptr::addr_of!(stderr)) };
+            let _ = unsafe { fputs(message, stream) };
+        }
+
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            c"mimalloc_allow_thp=0".as_ptr(),
+            c"mimalloc_allow_large_os_pages=0".as_ptr(),
+            core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        // SAFETY: this fresh test child owns its THP process setting before
+        // running the source initializer; both transitions use Linux scalars.
+        unsafe { crabc_core::process::prctl_raw(PR_SET_THP_DISABLE, 0, 0, 0, 0) }
+            .expect("reset THP policy before selected source initialization");
+        let thp_disabled_before = unsafe {
+            crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0)
+        }.expect("read starting THP process setting");
+        assert_eq!(thp_disabled_before, 0);
+        let fault = fault::install(fault::Plan::disabled());
+        let thp_capture = fault.capture_thp_direct_policy_case(fault::ThpDirectPolicyCase::RealPassthrough);
+        let config = MemoryConfig::detect(current_startup());
+        // SAFETY: this exact-test child is the sole process-start owner; its
+        // leaked environment vector and selected musl FILE live until exit.
+        let inputs = unsafe {
+            ProcessDiagnosticInputs::new(
+                vm_policy_source_environment_for_test,
+                RuntimeStderrOutput::new(selected_stderr).into_default_stderr_output(),
+            )
+        };
+        let storage = ProcessMainInitializationStorage::global();
+        // SAFETY: this fresh process owns its initial thread and retains the
+        // source process while its mapping is live and through release.
+        let owner = unsafe { storage.initialize_from_source_environment(config, inputs) }
+            .expect("disabled THP policy reaches process readiness");
+        let ready = owner.ready().expect("source process remains ready");
+        let ready_config = ready.memory_config().expect("ready configuration is retained");
+        let process = ready.vm_process().expect("ready VM process is retained");
+        let (prctl_calls, prctl_count) = thp_capture.attempts().expect("policy calls are captured");
+        assert_eq!(prctl_count, 2);
+        assert_eq!(prctl_calls[0], (PR_GET_THP_DISABLE, [0, 0, 0, 0]));
+        assert_eq!(prctl_calls[1], (PR_SET_THP_DISABLE, [1, 0, 0, 0]));
+        drop(thp_capture);
+        let thp_disabled_after = unsafe {
+            crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0)
+        }.expect("read selected THP process setting");
+        assert_eq!(thp_disabled_after, 1);
+        assert_eq!(process.policy().source_option_value(VmOption::AllowThp.source()), 0);
+        assert_eq!(process.policy().source_option_value(VmOption::AllowLargeOsPages.source()), 0);
+        let length = ready_config.large_page_size();
+        assert!(!ready_config.has_transparent_huge_pages());
+        assert_eq!(length, 2 * 1024 * 1024);
+        let before = process.subprocess().vm_statistics().snapshot();
+        let mut random = TheapRandomImage::empty_weak();
+        random.initialize_weak();
+        let advice = fault.capture_advice_range();
+        let mut mapping = Mapping::map_for_process(
+            process, ready_config, length, length, MapAccess::Committed, true,
+            Some(&mut random),
+        ).expect("the source process retains one regular mapping without advice");
+        let base = mapping.base().expect("the selected mapping has one base");
+        assert!(advice.range().is_none(), "disabled THP policy skips map advice");
+        drop(advice);
+        let vmflags_hg = selected_mapping_has_vm_flag(base, "hg");
+        let vmflags_nh = selected_mapping_has_vm_flag(base, "nh");
+        assert!(!vmflags_hg, "disabled THP policy has no explicit huge advice");
+        // SAFETY: the process still owns a committed writable mapping at base.
+        let mapping_survived = unsafe {
+            (base.addr() as *mut u8).write_volatile(0x5a);
+            (base.addr() as *const u8).read_volatile() == 0x5a
+        };
+        let live = process.subprocess().vm_statistics().snapshot();
+        let release = fault.capture_unmap_ranges();
+        mapping.unmap_for_process(process, length, false)
+            .expect("the exact process mapping releases");
+        let released = release.all().expect("the selected unmap fits its bounded capture");
+        assert_eq!(released.1, 1);
+        assert_eq!(released.0[0], (base.addr(), length));
+        let after_release = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_release.reserved_current, before.reserved_current);
+        assert_eq!(after_release.committed_current, before.committed_current);
+
+        std::println!("{BEGIN}");
+        std::println!("selected_allow_thp_raw=0");
+        std::println!("selected_allow_large_os_pages_raw=0");
+        std::println!("config_has_transparent_huge_pages={}", usize::from(ready_config.has_transparent_huge_pages()));
+        std::println!("process_ready=1");
+        std::println!("thp_prctl_count={prctl_count}");
+        std::println!("thp_get_option={}", prctl_calls[0].0);
+        std::println!("thp_get_argument={}", prctl_calls[0].1[0]);
+        std::println!("thp_set_option={}", prctl_calls[1].0);
+        std::println!("thp_set_argument={}", prctl_calls[1].1[0]);
+        std::println!("thp_disabled_before={thp_disabled_before}");
+        std::println!("thp_disabled_after={thp_disabled_after}");
+        std::println!("mapping_owned={}", usize::from(!mapping.is_large()));
+        std::println!("mapping_length={length}");
+        std::println!("advice_count=0");
+        std::println!("vmflags_hg={}", usize::from(vmflags_hg));
+        std::println!("vmflags_nh={}", usize::from(vmflags_nh));
         std::println!("mapping_survived={}", usize::from(mapping_survived));
         std::println!("mmap_calls_delta={}", live.mmap_calls - before.mmap_calls);
         std::println!("reserved_live_delta={}", live.reserved_current - before.reserved_current);
