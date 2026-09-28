@@ -147,14 +147,16 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         shared_got = {
             'artifact_key': 'candidate-shared', 'member': None, 'member_index': None,
             'member_occurrence': None, 'table_section_index': 99,
-            'section': {'name': '.got.plt'},
-            'row': self._row('_GLOBAL_OFFSET_TABLE_', section='18', binding='LOCAL', visibility='HIDDEN'),
+            'section': {'name': '.got.plt', 'index': 18, 'address': '0000000000000900',
+                        'type': 'PROGBITS', 'flags': 'WA'},
+            'row': {**self._row('_GLOBAL_OFFSET_TABLE_', section='18', binding='LOCAL',
+                                visibility='HIDDEN'), 'value': '0000000000000900'},
         }
         observed.append(shared_got)
         occurrences.append({
             'index': len(occurrences), 'artifact_key': 'candidate-shared', 'member_name': None,
             'member_index': None, 'member_occurrence': None, 'table_section_index': 99,
-            'definition_section': {'name': '.got.plt'}, 'role': 'local-definition', 'row': shared_got['row'],
+            'definition_section': shared_got['section'], 'role': 'local-definition', 'row': shared_got['row'],
         })
         companion = {
             'status': 'crt-startup-observed-with-boundaries', 'reader': {}, 'contract': {}, 'report': {},
@@ -180,6 +182,25 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         malformed['account']['occurrences'].pop()
         with self.assertRaisesRegex(selection.SelectionError, 'candidate occurrences differ'):
             selection.attach_native_crt_startup(original_accounting, malformed)
+
+        for change in ('foreign-offset', 'foreign-section-index'):
+            with self.subTest(change=change):
+                forged = copy.deepcopy(companion)
+                forged_accounting = copy.deepcopy(original_accounting)
+                forged_row = next(row for row in forged['account']['occurrences']
+                                  if row['row']['name'] == '_GLOBAL_OFFSET_TABLE_'
+                                  and row['artifact_key'] == 'candidate-shared')
+                joined_row = next(row for row in forged_accounting['occurrences']
+                                  if row['row']['name'] == '_GLOBAL_OFFSET_TABLE_'
+                                  and row['artifact_key'] == 'candidate-shared')
+                if change == 'foreign-offset':
+                    forged_row['row']['value'] = '0000000000000908'
+                    joined_row['row']['value'] = '0000000000000908'
+                else:
+                    forged_row['row']['section_index'] = '19'
+                    joined_row['row']['section_index'] = '19'
+                with self.assertRaisesRegex(selection.SelectionError, 'GOT source metadata differs'):
+                    selection.attach_native_crt_startup(forged_accounting, forged)
 
     def _actual_e8_accounting_and_companion(self):
         """Project retained rows only; this does not admit the historical receipt."""

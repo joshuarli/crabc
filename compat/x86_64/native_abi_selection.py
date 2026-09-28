@@ -7151,6 +7151,7 @@ def _validate_crt_startup_got(rows: Sequence[Mapping[str, Any]]) -> None:
             }, 'CRT startup GOT ownership boundary differs')
     static = next(row for row in rows if row['artifact_key'] == 'candidate-static')
     shared = next(row for row in rows if row['artifact_key'] == 'candidate-shared')
+    section = shared.get('definition_section')
     require({key: static['row'].get(key) for key in ('type', 'binding', 'visibility', 'section_index', 'size_bytes')} == {
                 'type': 'NOTYPE', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': 'UND', 'size_bytes': 0,
             }
@@ -7158,8 +7159,12 @@ def _validate_crt_startup_got(rows: Sequence[Mapping[str, Any]]) -> None:
                 'type': 'NOTYPE', 'binding': 'LOCAL', 'visibility': 'HIDDEN', 'size_bytes': 0,
             }
             and shared['row'].get('section_index') != 'UND'
-            and type(shared.get('definition_section')) is dict
-            and shared['definition_section'].get('name') == '.got.plt',
+            and type(section) is dict
+            and section.get('name') == '.got.plt'
+            and section.get('type') == 'PROGBITS'
+            and section.get('flags') == 'WA'
+            and shared['row'].get('section_index') == str(section.get('index'))
+            and shared['row'].get('value') == section.get('address'),
             'CRT startup GOT source metadata differs')
 
 

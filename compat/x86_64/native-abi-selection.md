@@ -477,7 +477,8 @@ joins every retained named row to exactly one
 complete-ELF occurrence and rejects an added, omitted, duplicated, or
 substituted occurrence. `_GLOBAL_OFFSET_TABLE_` remains the one exact
 link-time boundary: the attachment requires its archive undefined row and the
-shared local `.got.plt` definition with their distinct metadata; it never
+shared local definition at the start of its own `.got.plt` section, with the
+symbol value and section index matching that section; it never
 turns that spelling into a provider rule. The 32-byte owned handoff and the
 88-byte conventional snapshot remain separate from the prepared-worker
 72-byte descriptor. The owner evidence retains a separate finite main-image
