@@ -58,7 +58,9 @@ are not transferable passes for a different revision.
   A mapped-large/medium mixed owner-exit differential matches 20 additional
   C/Rust transition values, including large reabandonment and medium retirement.
   An arena singleton beside a regular medium page matches 18 more owner-exit
-  values and separate arena/PageMap terminal releases. A paired medium-churn
+  values and separate arena/PageMap terminal releases. Two survivor threads
+  independently release split arena singleton claims after owner exit with
+  17 matching C/Rust observations. A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
   while immediate purge releases at collection. The intermittent native RSS
@@ -109,9 +111,11 @@ are not transferable passes for a different revision.
   merge/final-output trace also matches pinned C. Nonzero level-two allocation
   bin output matches 27 C/Rust fields for bin order, size units, merge peaks,
   freed rows, and empty-bin suppression. Synthetic huge/page merge and final
-  rows match 35 more C/Rust fields; all seven statistics evidence rows pass
-  on a clean source. Page, huge, nonlocal, and
-  higher-level production statistics producers remain unproved, so full M7
+  rows match 35 more C/Rust fields. The public JSON buffer contract matches
+  114 C/Rust trace fields at MI_STAT=0/1/2, including truncation and invalid
+  images; all eight statistics evidence rows pass on a clean source. Page,
+  huge, nonlocal, and higher-level production statistics producers remain
+  unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
   functions among 1,406 musl-replaceable entries and all 831 required entries
@@ -150,8 +154,10 @@ are not transferable passes for a different revision.
   the three-call versus pinned-C two-call excess remains. The 114-row runtime scorecard runs
   end to end; its older startup measure was 32 whole-process syscalls against
   musl's 11. A later scoped development smoke on the current loader is 27
-  calls after canonical-alias reuse; full qualified CPU/PSS evidence still
-  waits for an uncontended host and a final candidate revision.
+  calls after canonical-alias reuse; a further same-root SysV header-load
+  reuse lowers development instructions by a paired median 117 across
+  100 rotated samples without changing syscall counts. Full qualified CPU/PSS
+  evidence still waits for an uncontended host and a final candidate revision.
 - **Resume here, in order:**
   1. Family admissions are the critical path: every selected-private
      capability completes when its family is admitted. Admission receipts
