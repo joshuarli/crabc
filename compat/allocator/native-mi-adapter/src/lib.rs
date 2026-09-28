@@ -36,7 +36,7 @@ use crabc_mimalloc::__crabc_runtime::{
     NativeProcessStartupFacts, RuntimeStderrOutput, ThreadAttachResult,
     attach_current_thread, current_native_allocator_thread_descriptor,
     finish_current_thread_native_after_user_destructors, initialize_process,
-    prepare_native_later_thread_arena, publish_native_process_startup_facts,
+    publish_native_process_startup_facts,
     register_current_native_allocator_worker_descriptor,
 };
 
@@ -107,9 +107,9 @@ unsafe fn host_environment() -> *const *const c_char {
     unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
 }
 
-/// Pinned `mi_process_load`: publish the host facts, start the process, and
-/// prepare the arena later threads share, as crabc libc's selected startup
-/// does. Runs once, from the initial thread, before `main`.
+/// Pinned `mi_process_load`: publish the host facts and start the process.
+/// With default options, an arena is reserved later when allocation needs
+/// one. Runs once, from the initial thread, before `main`.
 extern "C" fn process_load() {
     // SAFETY: the loader runs constructors on the initial thread.
     INITIAL_THREAD.store(unsafe { pthread_self() } as usize, Ordering::Release);
@@ -130,7 +130,7 @@ extern "C" fn process_load() {
     };
     let ready = match facts {
         Some(facts) => {
-            publish_native_process_startup_facts(facts) && initialize_process() && prepare_native_later_thread_arena()
+            publish_native_process_startup_facts(facts) && initialize_process()
         }
         None => false,
     };
@@ -1059,6 +1059,10 @@ pub extern "C" fn mi_heap_main() -> HeapPointer {
 }
 
 #[no_mangle]
+/// # Safety
+/// `pointer` is null, lies in a live allocation held through this call, or
+/// lies in caller-owned memory this allocator never mapped. No thread may
+/// move its page to another Heap or unregister its arena slice concurrently.
 pub unsafe extern "C" fn mi_heap_of(pointer: *const c_void) -> HeapPointer {
     bind_thread();
     // SAFETY: the C caller keeps the queried page stable for this lookup.
@@ -1066,6 +1070,8 @@ pub unsafe extern "C" fn mi_heap_of(pointer: *const c_void) -> HeapPointer {
 }
 
 #[no_mangle]
+/// # Safety
+/// The pointer and its arena slice must satisfy [`mi_heap_of`]'s obligations.
 pub unsafe extern "C" fn mi_any_heap_contains(pointer: *const c_void) -> bool {
     bind_thread();
     // SAFETY: the C caller keeps the queried arena slice stable.
@@ -1073,6 +1079,9 @@ pub unsafe extern "C" fn mi_any_heap_contains(pointer: *const c_void) -> bool {
 }
 
 #[no_mangle]
+/// # Safety
+/// The pointer and its arena slice must satisfy [`mi_heap_of`]'s obligations;
+/// `heap` must be null or a live Heap held through this call.
 pub unsafe extern "C" fn mi_heap_contains(heap: HeapPointer, pointer: *const c_void) -> bool {
     bind_thread();
     // SAFETY: the C caller holds a live Heap and a stable queried page.

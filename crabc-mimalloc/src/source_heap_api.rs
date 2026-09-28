@@ -86,7 +86,7 @@ pub unsafe fn any_heap_contains(pointer: *const u8) -> bool {
 pub unsafe fn heap_contains(heap: *mut c_void, pointer: *const u8) -> bool {
     let heap = if heap.is_null() { heap_main() } else { heap };
     // SAFETY: forwarded pointer and Heap-lifetime obligations.
-    heap == unsafe { heap_of(pointer) }
+    !heap.is_null() && heap == unsafe { heap_of(pointer) }
 }
 
 fn is_main_heap(heap: NonNull<Heap>) -> bool {

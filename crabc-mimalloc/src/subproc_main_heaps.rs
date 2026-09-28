@@ -970,6 +970,7 @@ pub(crate) mod tests {
                 assert!(unsafe { crate::source_heap_api::any_heap_contains(interior) });
                 assert!(unsafe { crate::source_heap_api::heap_of(&foreign) }.is_null());
                 assert!(!unsafe { crate::source_heap_api::any_heap_contains(&foreign) });
+                assert!(!unsafe { crate::source_heap_api::heap_contains(core::ptr::null_mut(), &foreign) });
                 assert!(unsafe { crate::source_heap_api::heap_of(core::ptr::null()) }.is_null());
                 assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
                 assert_eq!(unsafe { crate::source_heap_api::heap_of(pointer) }, main);

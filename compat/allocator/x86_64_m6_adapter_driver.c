@@ -594,10 +594,11 @@ static void membership_section(void) {
          mi_any_heap_contains(block),
          mi_heap_of(block + 1) == heap,
          mi_heap_contains(NULL, block));
-  printf("membership.unmapped=%d,%d,%d\n",
+  printf("membership.unmapped=%d,%d,%d,%d\n",
          mi_heap_of(NULL) == NULL,
          !mi_any_heap_contains(&foreign),
-         !mi_heap_contains(heap, &foreign));
+         !mi_heap_contains(heap, &foreign),
+         !mi_heap_contains(NULL, &foreign));
   mi_heap_delete(heap);
   printf("membership.moved=%d,%d,%d\n",
          mi_heap_of(block) == mi_heap_main(),
