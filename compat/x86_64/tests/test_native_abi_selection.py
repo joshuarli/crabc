@@ -1093,6 +1093,145 @@ class StackCheckStaticImportBindingTests(unittest.TestCase):
                 self.assertEqual(len(accounting['blockers']), 1)
 
 
+class LibcStartMainImportBindingTests(unittest.TestCase):
+    """The five CRT objects retain their static or shared startup provider."""
+
+    NAME = '__libc_start_main'
+    RUST_MEMBER = 'static-startup.rcgu.o'
+    CRT_ARTIFACTS = ('static-crt1.o', 'static-Scrt1.o', 'static-rcrt1.o',
+                     'dynamic-crt1.o', 'dynamic-Scrt1.o')
+    SOURCES = ['libc/src/c_abi/x86_64/static_startup.rs',
+               'libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs',
+               'crt/src/x86_64_startup.rs', 'crt/src/x86_64_dynamic_startup.rs']
+
+    @classmethod
+    def symbol(cls, *, section, kind, binding='GLOBAL', size=0):
+        return {'name': cls.NAME, 'version': None, 'version_default': False,
+                'section_index': section, 'type': kind, 'binding': binding,
+                'visibility': 'DEFAULT', 'value': '0000000000000100', 'size_bytes': size}
+
+    @classmethod
+    def occurrence(cls, index, artifact, role, row, *, table='.symtab', member=None):
+        digest = ('a' * 64 if artifact == 'candidate-static' else
+                  'b' * 64 if artifact == 'candidate-shared' else
+                  format(cls.CRT_ARTIFACTS.index(artifact) + 1, '064x'))
+        return {'index': index, 'artifact_key': artifact, 'role': role, 'table': table,
+                'member_name': member, 'member_occurrence': 0 if member else None,
+                'artifact_sha256': digest, 'row': row}
+
+    def accounting(self):
+        ident = selection.identity(self.NAME)
+        rows = [
+            self.occurrence(0, 'candidate-static', 'definition',
+                            self.symbol(section='5', kind='FUNC', size=785), member=self.RUST_MEMBER),
+            self.occurrence(1, 'candidate-shared', 'definition',
+                            self.symbol(section='9', kind='FUNC', size=864), table='.dynsym'),
+            self.occurrence(2, 'candidate-shared', 'definition',
+                            self.symbol(section='9', kind='FUNC', size=864)),
+        ]
+        for index, artifact in enumerate(self.CRT_ARTIFACTS, 3):
+            rows.append(self.occurrence(index, artifact, 'import',
+                                        self.symbol(section='UND', kind='NOTYPE')))
+        record = {'identity': ident,
+                  'selection': {'disposition': 'public-provider', 'owner': 'x86-libc-startup',
+                                'group': 'source-owned-crt-libc-startup-boundary', 'sources': self.SOURCES},
+                  'expected_placements': [{'artifact_key': 'candidate-static'},
+                                          {'artifact_key': 'candidate-shared'}],
+                  'unresolved': [selection.ORDINARY_IMPORT_REASON]}
+        return {'identities': [record], 'occurrences': rows,
+                'placement_joins': [
+                    {'identity': ident, 'artifact_key': 'candidate-static',
+                     'placement_observed': True, 'definition_count': 1, 'occurrence_indices': [0]},
+                    {'identity': ident, 'artifact_key': 'candidate-shared',
+                     'placement_observed': True, 'definition_count': 1, 'occurrence_indices': [1]},
+                ], 'blockers': [{'code': 'identity-unresolved', 'identity': ident,
+                                 'reason': selection.ORDINARY_IMPORT_REASON}]}
+
+    def companion(self):
+        products = {'candidate-static': {'sha256': 'a' * 64},
+                    'candidate-shared': {'sha256': 'b' * 64}}
+        products.update({name: {'sha256': format(index, '064x')}
+                         for index, name in enumerate(self.CRT_ARTIFACTS, 1)})
+        return {'status': 'crt-startup-observed-with-boundaries', 'products': products,
+                'cohort_inputs': {'static_manifest': {'sha256': 'c' * 64},
+                                  'dynamic_manifest': {'sha256': 'd' * 64}},
+                'account': {'runtime_labels': ['static-normal-process', 'static-pie-normal-process',
+                                              'owned-pie-normal-kernel', 'owned-non-pie-normal-kernel']}}
+
+    def observations(self):
+        products = {}
+        for name in self.CRT_ARTIFACTS:
+            products[name] = [{'name': self.NAME, 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
+                               'symbol_section': 0, 'symbol_type': '0',
+                               'kind': 4 if name in ('static-crt1.o', 'dynamic-crt1.o') else 9}]
+        executables = {}
+        facts = {}
+        for name, linkage, needed, section, manifest in (
+                ('static-normal', 'static', [], '5', 'c' * 64),
+                ('static-pie-normal', 'static-pie', [], '9', 'c' * 64),
+                ('owned-pie-normal', 'pie', ['libc.so'], 'UND', 'd' * 64),
+                ('owned-non-pie-normal', 'non-pie', ['libc.so'], 'UND', 'd' * 64)):
+            dynamic = bool(needed)
+            row = self.symbol(section=section, kind='FUNC', size=0 if dynamic else 785)
+            tables = [{'name': '.symtab', 'rows': [row]}]
+            if dynamic:
+                tables.insert(0, {'name': '.dynsym', 'rows': [row.copy()]})
+            facts[name] = {'symbol_tables': tables}
+            executables[name] = {
+                'identity': {'sha256': name}, 'needed': needed,
+                'relocations': ([{'name': self.NAME, 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
+                                  'symbol_section': 0, 'symbol_type': 'FUNC', 'kind': 6 if linkage == 'pie' else 7}]
+                                if dynamic else []),
+                'link': {'validated': {'linkage': linkage, 'product_manifest_sha256': manifest,
+                                       'executable_sha256': name}},
+            }
+        return {'product_relocations': products, 'executables': executables,
+                'complete_elf_facts': facts}
+
+    def bind(self, accounting, companion=None, observations=None):
+        return selection.attach_libc_start_main_imports(
+            accounting, companion or self.companion(), [self.RUST_MEMBER],
+            self.observations() if observations is None else observations)
+
+    def test_owned_crt_imports_bind_their_mode_specific_providers(self):
+        accounting = self.accounting()
+        joins = self.bind(accounting)
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['static_provider_occurrence_index'], 0)
+        self.assertEqual(joins[0]['shared_provider_occurrence_indices'], [1, 2])
+        self.assertEqual(joins[0]['crt_import_occurrence_indices'], [3, 4, 5, 6, 7])
+        self.assertEqual(accounting['identities'][0]['unresolved'], [])
+        self.assertEqual(accounting['blockers'], [])
+
+    def test_foreign_weak_or_unlinked_crt_placement_retains_blocker(self):
+        cases = {
+            'foreign static provider': lambda a, c, o: a['occurrences'][0].update(member_name='foreign.o'),
+            'weak static provider': lambda a, c, o: a['occurrences'][0]['row'].update(binding='WEAK'),
+            'duplicate static provider': lambda a, c, o: a['occurrences'].append(self.occurrence(
+                8, 'candidate-static', 'definition', self.symbol(section='6', kind='FUNC'),
+                member=self.RUST_MEMBER)),
+            'weak shared provider': lambda a, c, o: a['occurrences'][1]['row'].update(binding='WEAK'),
+            'duplicate shared provider': lambda a, c, o: a['occurrences'].append(self.occurrence(
+                8, 'candidate-shared', 'definition', self.symbol(section='10', kind='FUNC', size=864))),
+            'foreign CRT import': lambda a, c, o: a['occurrences'][3].update(artifact_key='foreign-crt1.o'),
+            'weak CRT import': lambda a, c, o: a['occurrences'][3]['row'].update(binding='WEAK'),
+            'duplicate CRT import': lambda a, c, o: a['occurrences'].append(self.occurrence(
+                8, 'static-crt1.o', 'import', self.symbol(section='UND', kind='NOTYPE'))),
+            'foreign CRT product': lambda a, c, o: c['products'].pop('dynamic-Scrt1.o'),
+            'missing CRT relocation': lambda a, c, o: o['product_relocations']['static-Scrt1.o'].clear(),
+            'foreign static link': lambda a, c, o: o['executables']['static-normal']['needed'].append('libc.so'),
+            'foreign dynamic link': lambda a, c, o: o['executables']['owned-pie-normal']['needed'].append('other.so'),
+            'missing dynamic relocation': lambda a, c, o: o['executables']['owned-pie-normal']['relocations'].clear(),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                accounting, companion, observations = self.accounting(), self.companion(), self.observations()
+                alter(accounting, companion, observations)
+                self.assertEqual(self.bind(accounting, companion, observations), [])
+                self.assertEqual(accounting['identities'][0]['unresolved'], [selection.ORDINARY_IMPORT_REASON])
+                self.assertEqual(len(accounting['blockers']), 1)
+
+
 class CompanionRejectionTests(unittest.TestCase):
     """One rejected companion is a named blocker, never an aborted report."""
 

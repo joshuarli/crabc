@@ -7083,6 +7083,191 @@ def attach_native_crt_startup(accounting: Mapping[str, Any], companion: Mapping[
     return joins
 
 
+def _crt_libc_start_main_observations(companion: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Read the already admitted CRT receipt without crossing its byte identity."""
+    report_path = physical_work_path(Path(companion['report']['path']), directory=False)
+    require(same(file_identity(report_path), companion['report']),
+            'CRT startup report changed before libc startup binding')
+    report = read_json(report_path)
+    require(same(file_identity(report_path), companion['report'])
+            and type(report) is dict and type(report.get('observations')) is dict,
+            'CRT startup report changed during libc startup binding')
+    return report['observations']
+
+
+def attach_libc_start_main_imports(accounting: Mapping[str, Any],
+                                   crt_companion: Mapping[str, Any] | None,
+                                   rust_members: Sequence[str],
+                                   observations: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Bind each owned CRT import to the selected static or shared startup body.
+
+    Static and dynamic libc implement distinct startup functions. The five
+    sealed CRT objects retain their undefined calls, while linked static
+    consumers define the archive body and linked dynamic consumers import the
+    shared body from their sole needed libc. A standalone CRT object remains
+    tied to its product mode even when no final executable uses that variant.
+    """
+    if crt_companion is None or observations is None:
+        return []
+    crt_objects = {
+        'static-crt1.o': ('candidate-static', 4),
+        'static-Scrt1.o': ('candidate-static', 9),
+        'static-rcrt1.o': ('candidate-static', 9),
+        'dynamic-crt1.o': ('candidate-shared', 4),
+        'dynamic-Scrt1.o': ('candidate-shared', 9),
+    }
+    products = crt_companion.get('products', {})
+    account = crt_companion.get('account', {})
+    cohort = crt_companion.get('cohort_inputs', {})
+    if (crt_companion.get('status') != 'crt-startup-observed-with-boundaries'
+            or type(products) is not dict
+            or not (set(crt_objects) | {'candidate-static', 'candidate-shared'}) <= set(products)
+            or not all(type(products[name]) is dict and type(products[name].get('sha256')) is str
+                       for name in set(crt_objects) | {'candidate-static', 'candidate-shared'})
+            or type(account) is not dict
+            or not {'static-normal-process', 'static-pie-normal-process',
+                    'owned-pie-normal-kernel', 'owned-non-pie-normal-kernel'} <= set(account.get('runtime_labels', []))
+            or type(cohort) is not dict
+            or not all(type(cohort.get(name)) is dict and type(cohort[name].get('sha256')) is str
+                       for name in ('static_manifest', 'dynamic_manifest'))):
+        return []
+    rust = set(strings(list(rust_members), 'static Rust members', empty=False))
+    records, placements, occurrences = _accounting_indexes(accounting, description='libc startup imports')
+    key = ('__libc_start_main', None, False)
+    record = records.get(key)
+    sources = ['libc/src/c_abi/x86_64/static_startup.rs',
+               'libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs',
+               'crt/src/x86_64_startup.rs', 'crt/src/x86_64_dynamic_startup.rs']
+    if (record is None or ORDINARY_IMPORT_REASON not in record['unresolved']
+            or record['selection'].get('disposition') != 'public-provider'
+            or record['selection'].get('owner') != 'x86-libc-startup'
+            or record['selection'].get('group') != 'source-owned-crt-libc-startup-boundary'
+            or record['selection'].get('sources') != sources
+            or len(record['expected_placements']) != 2
+            or {row.get('artifact_key') for row in record['expected_placements']}
+            != {'candidate-static', 'candidate-shared'}):
+        return []
+    static_placement = placements.get((key, 'candidate-static'))
+    shared_placement = placements.get((key, 'candidate-shared'))
+    if (not static_placement or static_placement.get('placement_observed') is not True
+            or static_placement.get('definition_count') != 1
+            or not shared_placement or shared_placement.get('placement_observed') is not True
+            or shared_placement.get('definition_count') != 1):
+        return []
+    rows = [row for row in occurrences.values() if row.get('role') != 'unnamed'
+            and row['row'].get('name') == '__libc_start_main'
+            and identity_key(row_identity(row['row'])) == key
+            and not row['artifact_key'].startswith('reference-')]
+    static = [row for row in rows if row['artifact_key'] == 'candidate-static']
+    shared = [row for row in rows if row['artifact_key'] == 'candidate-shared']
+    imports = [row for row in rows if row['artifact_key'] in crt_objects]
+    dynsym = [row for row in shared if row['table'] == '.dynsym']
+    if (len(rows) != 8 or len(static) != 1 or len(shared) != 2 or len(imports) != 5
+            or len(dynsym) != 1 or {row['table'] for row in shared} != {'.dynsym', '.symtab'}
+            or {row['artifact_key'] for row in imports} != set(crt_objects)):
+        return []
+    provider = static[0]
+    if (static_placement.get('occurrence_indices') != [provider['index']]
+            or provider['role'] != 'definition' or provider['table'] != '.symtab'
+            or provider['member_name'] not in rust or provider['member_occurrence'] != 0
+            or provider.get('artifact_sha256') != products['candidate-static'].get('sha256')
+            or not re.fullmatch(r'[1-9][0-9]*', provider['row']['section_index'])
+            or provider['row']['type'] != 'FUNC' or provider['row']['binding'] != 'GLOBAL'
+            or provider['row']['visibility'] != 'DEFAULT'
+            or provider['row']['size_bytes'] <= 0):
+        return []
+    if (shared_placement.get('occurrence_indices') != [dynsym[0]['index']]
+            or not all(row['role'] == 'definition' and row['member_name'] is None
+                       and row.get('artifact_sha256') == products['candidate-shared'].get('sha256')
+                       and row['row']['type'] == 'FUNC' and row['row']['binding'] == 'GLOBAL'
+                       and row['row']['visibility'] == 'DEFAULT'
+                       and row['row']['size_bytes'] > 0 for row in shared)
+            or not same_definition_domain(shared[0], shared[1])):
+        return []
+    by_artifact = {row['artifact_key']: row for row in imports}
+    if not all(row['role'] == 'import' and row['table'] == '.symtab'
+               and row['member_name'] is None and row['member_occurrence'] is None
+               and row.get('artifact_sha256') == products[name].get('sha256')
+               and row['row']['section_index'] == 'UND' and row['row']['type'] == 'NOTYPE'
+               and row['row']['binding'] == 'GLOBAL' and row['row']['visibility'] == 'DEFAULT'
+               for name, row in by_artifact.items()):
+        return []
+    relocations = observations.get('product_relocations', {})
+    if type(relocations) is not dict:
+        return []
+    for name, (_provider, kind) in crt_objects.items():
+        physical = relocations.get(name)
+        if type(physical) is not list:
+            return []
+        matching = [row for row in physical if row.get('name') == '__libc_start_main']
+        if not matching or not all(row.get('binding') == 'GLOBAL'
+                                   and row.get('visibility') == 'DEFAULT'
+                                   and row.get('symbol_section') == 0
+                                   and row.get('symbol_type') == '0'
+                                   and row.get('kind') == kind for row in matching):
+            return []
+    executables = observations.get('executables', {})
+    facts = observations.get('complete_elf_facts', {})
+    if type(executables) is not dict or type(facts) is not dict:
+        return []
+    consumer_modes = {
+        'static-normal': ('static', [], 'static_manifest', False),
+        'static-pie-normal': ('static-pie', [], 'static_manifest', False),
+        'owned-pie-normal': ('pie', ['libc.so'], 'dynamic_manifest', True),
+        'owned-non-pie-normal': ('non-pie', ['libc.so'], 'dynamic_manifest', True),
+    }
+    for name, (linkage, needed, manifest, dynamic) in consumer_modes.items():
+        executable = executables.get(name)
+        elf = facts.get(name)
+        if type(executable) is not dict or type(elf) is not dict:
+            return []
+        link = executable.get('link', {}).get('validated', {})
+        if (executable.get('needed') != needed
+                or link.get('linkage') != linkage
+                or link.get('product_manifest_sha256') != cohort[manifest]['sha256']
+                or link.get('executable_sha256') != executable.get('identity', {}).get('sha256')):
+            return []
+        tables = elf.get('symbol_tables', [])
+        if type(tables) is not list:
+            return []
+        named = [(table.get('name'), row) for table in tables for row in table.get('rows', [])
+                 if row.get('name') == '__libc_start_main']
+        expected_tables = {'.dynsym', '.symtab'} if dynamic else {'.symtab'}
+        if len(named) != len(expected_tables) or {table for table, _row in named} != expected_tables:
+            return []
+        if not all(row.get('type') == 'FUNC' and row.get('binding') == 'GLOBAL'
+                   and row.get('visibility') == 'DEFAULT'
+                   and row.get('version') is None and row.get('version_default') is False
+                   and (row.get('section_index') == 'UND' and row.get('size_bytes') == 0 if dynamic
+                        else re.fullmatch(r'[1-9][0-9]*', row.get('section_index', '')) is not None
+                        and row.get('size_bytes') == provider['row']['size_bytes'])
+                   for _table, row in named):
+            return []
+        linked_relocations = [row for row in executable.get('relocations', [])
+                              if row.get('name') == '__libc_start_main']
+        if dynamic:
+            kind = 6 if name == 'owned-pie-normal' else 7
+            if (len(linked_relocations) != 1
+                    or linked_relocations[0].get('kind') != kind
+                    or linked_relocations[0].get('symbol_section') != 0
+                    or linked_relocations[0].get('symbol_type') != 'FUNC'
+                    or linked_relocations[0].get('binding') != 'GLOBAL'
+                    or linked_relocations[0].get('visibility') != 'DEFAULT'):
+                return []
+        elif linked_relocations:
+            return []
+    _remove_identity_requirements(accounting, record, [ORDINARY_IMPORT_REASON],
+                                  description='libc startup CRT imports')
+    return [{'identity': copy.deepcopy(record['identity']), 'owner': record['selection']['owner'],
+             'static_provider_occurrence_index': provider['index'],
+             'static_provider_member': provider['member_name'],
+             'shared_provider_occurrence_indices': sorted(row['index'] for row in shared),
+             'crt_import_occurrence_indices': sorted(row['index'] for row in imports),
+             'crt_import_routes': {name: crt_objects[name][0] for name in sorted(crt_objects)},
+             'linked_consumer_modes': sorted(consumer_modes),
+             'discharged_reason': ORDINARY_IMPORT_REASON}]
+
+
 def attach_native_crt_descriptor_handoff(accounting: Mapping[str, Any],
                                          companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Discharge only the current main-image descriptor transport evidence.
@@ -10346,6 +10531,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         lambda: (attach_native_crt_startup(accounting, crt_startup_companion),
                  attach_native_crt_descriptor_handoff(accounting, crt_startup_companion)),
         empty=([], []))
+    libc_start_main_import_joins = attach_libc_start_main_imports(
+        accounting, crt_startup_companion, archive_map['static_rust_members'],
+        _crt_libc_start_main_observations(crt_startup_companion)
+        if crt_startup_companion is not None else None,
+    )
     # The RuntimeV1 lifecycle join pairs the CRT and prepared-worker receipts;
     # its rejection names the pairing rather than either component.
     runtimev1_descriptor_lifecycle_joins, _paired = _attach(
@@ -10497,6 +10687,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'crt_startup_companion': crt_startup_companion,
             'crt_startup_joins': crt_startup_joins,
             'crt_descriptor_handoff_joins': crt_descriptor_handoff_joins,
+            'libc_start_main_import_joins': libc_start_main_import_joins,
             'runtimev1_descriptor_lifecycle_joins': runtimev1_descriptor_lifecycle_joins,
             'syscall_alias_contract_companion': syscall_alias_contract_companion,
             'syscall_alias_contract_joins': syscall_alias_contract_joins,
