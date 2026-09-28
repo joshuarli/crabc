@@ -3208,11 +3208,18 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
         } else {
             0
         };
-        while bitmap != 0 {
-            let bit = bitmap.trailing_zeros() as u64;
-            let slot = (runtime_start + bit * ELF64_RELR_SIZE as u64) as *mut u64;
-            *slot = (*slot).wrapping_add(object.base);
-            bitmap &= bitmap - 1;
+        if bitmap == u64::MAX >> 1 {
+            for bit in 0..ELF64_RELR_BITMAP_BITS {
+                let slot = (runtime_start + bit * ELF64_RELR_SIZE as u64) as *mut u64;
+                *slot = (*slot).wrapping_add(object.base);
+            }
+        } else {
+            while bitmap != 0 {
+                let bit = bitmap.trailing_zeros() as u64;
+                let slot = (runtime_start + bit * ELF64_RELR_SIZE as u64) as *mut u64;
+                *slot = (*slot).wrapping_add(object.base);
+                bitmap &= bitmap - 1;
+            }
         }
         next_virtual_address = Some(
             start.checked_add(ELF64_RELR_BITMAP_BITS.checked_mul(ELF64_RELR_SIZE as u64)?)?,
@@ -3293,6 +3300,22 @@ mod relr_bitmap_tests {
         assert_eq!(validated_relr_bitmap_start(u64::MAX - 8, 0, 1 << 2), None);
         assert_eq!(validated_relr_bitmap_start(0, u64::MAX - 4, 1 << 1), None);
         assert_eq!(validated_relr_bitmap_start(0, 0, 0), None);
+    }
+
+    #[test]
+    fn full_bitmap_relocates_every_word_and_rejects_overflowed_span() {
+        let mut words = [u64::MAX; 64];
+        let table = [0u64, u64::MAX];
+        let object = Object {
+            base: words.as_mut_ptr() as u64,
+            relr: table.as_ptr().cast::<u8>(),
+            relrsz: table.len() * ELF64_RELR_SIZE,
+            ..EMPTY_OBJECT
+        };
+        assert_eq!(unsafe { apply_relr_table(&object) }, Some(()));
+        assert!(words.iter().all(|word| *word == u64::MAX.wrapping_add(object.base)));
+        assert_eq!(validated_relr_bitmap_start(u64::MAX - 496, 0, u64::MAX >> 1), Some(u64::MAX - 496));
+        assert_eq!(validated_relr_bitmap_start(u64::MAX - 495, 0, u64::MAX >> 1), None);
     }
 }
 
