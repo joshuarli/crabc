@@ -14,6 +14,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly library="$ROOT/compat/x86_64/general_dynamic_fork_library.c"
 readonly consumer="$ROOT/compat/x86_64/general_dynamic_fork_consumer.c"
+readonly constructor_fork="$ROOT/compat/x86_64/general_dynamic_constructor_fork.c"
 
 # Reject a symlinked product before creating any mutable evidence.  A dynamic
 # qualification caller can therefore retain an exact physical product input.
@@ -301,4 +302,51 @@ done
 # the private FS layout to musl.
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_fork_evidence.py" seal-observations \
     --product "$installed" --work "$work"
-printf 'general dynamic fork: PASS (same semantic object against pinned musl and all candidate entries; separately sealed crabc-private FS layout witness; tagged DSO receipt/topology); evidence: %s\n' "$work"
+
+# Fork from an initial DSO constructor.  Each process revisits that same DSO
+# before its constructor returns, so a stale child visitor or changed parent
+# visitor would block or rerun initialization.  Each finalizer runs once.
+"$driver" --dynamic-shared-object -std=c11 -fno-builtin \
+    -DCRABC_CONSTRUCTOR_FORK_LIBRARY -c "$constructor_fork" \
+    -o "$work/objects/constructor-fork-library.o"
+"$driver" --dynamic-pie -std=c11 -fno-builtin -c "$constructor_fork" \
+    -o "$work/objects/constructor-fork-main.o"
+"$driver" --dynamic-shared-object "$work/objects/constructor-fork-library.o" \
+    -o "$work/libconstructor-fork.so"
+"$oracle_cc" -shared "$work/objects/constructor-fork-library.o" \
+    -Wl,-z,now,-soname,libconstructor-fork.so \
+    -o "$work/oracle/libconstructor-fork.so"
+cp "$work/libconstructor-fork.so" "$execution_root/usr/lib/"
+cat >"$work/constructor-fork-expected.stdout" <<'EOF'
+ctor-child
+main-child
+fini-child
+ctor-parent
+main-parent
+fini-parent
+EOF
+for mode in pie non-pie; do
+    oracle_entry=(-fPIE -pie)
+    [ "$mode" = pie ] || oracle_entry=(-fno-pie -no-pie)
+    "$driver" "--dynamic-$mode" "$work/objects/constructor-fork-main.o" \
+        --application-dso "$work/libconstructor-fork.so" \
+        -o "$work/constructor-fork-$mode"
+    "$oracle_cc" -std=c11 "${oracle_entry[@]}" "$work/objects/constructor-fork-main.o" \
+        -L"$work/oracle" -Wl,-rpath,"$work/oracle" -l:libconstructor-fork.so \
+        -o "$work/oracle/constructor-fork-$mode"
+    cp "$work/constructor-fork-$mode" "$execution_root/"
+    (
+        cd "$work/oracle"
+        run_host "$work/oracle-$mode-constructor-fork.stdout" "./constructor-fork-$mode"
+    )
+    cmp "$work/constructor-fork-expected.stdout" "$work/oracle-$mode-constructor-fork.stdout"
+    for entry in kernel direct; do
+        command=("/constructor-fork-$mode")
+        if [ "$entry" = direct ]; then
+            command=(/lib/ld-crabc-x86_64.so.1 "/constructor-fork-$mode")
+        fi
+        run_in_root "$execution_root" "$work/constructor-fork-$mode-$entry.stdout" "${command[@]}"
+        compare_observation "oracle-$mode-constructor-fork" "constructor-fork-$mode-$entry"
+    done
+done
+printf 'general dynamic fork: PASS (same semantic object against pinned musl and all candidate entries; separately sealed crabc-private FS layout witness; tagged DSO receipt/topology; kernel/direct constructor fork and exactly-once finalization); evidence: %s\n' "$work"
