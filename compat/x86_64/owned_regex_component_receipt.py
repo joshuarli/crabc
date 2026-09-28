@@ -34,6 +34,7 @@ import owned_crypt_runtime_evidence as copies
 import installed_compiler_translation as translation_contract
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as products
+import owned_dynamic_qualification as qualification
 
 
 SCHEMA = "crabc.x86_64-owned-regex-products/v2"
@@ -169,11 +170,25 @@ def tracked_source_identity(root: Path, relative: str) -> dict[str, object]:
 
 def source_product_seal(root: Path, static: Path | None, dynamic: Path) -> dict[str, object]:
     root = physical_directory(root, "checkout root")
+    require(root == physical_directory(qualification.ROOT, "reader source checkout"),
+            "regex checkout differs from reader source checkout")
     dynamic = checkout_path(root, dynamic.relative_to(root).as_posix(), "dynamic regex product", directory=True)
     try:
         dynamic_manifest, _ = products._validate_dynamic_product(dynamic)
     except products.ProductEvidenceError as error:
         raise RegexReceiptError(f"dynamic regex product validation failed: {error}") from error
+    state_path = physical_file(dynamic / "share/crabc/dynamic-product-state.json", "dynamic regex product state")
+    state = read_json(state_path, "dynamic regex product state")
+    require(isinstance(state, dict) and
+            state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
+            state.get("status") == "materialized-unqualified",
+            "dynamic regex product state differs")
+    try:
+        current_source = qualification.source_digest()
+    except Exception as error:
+        raise RegexReceiptError("current regex source digest is unreadable") from error
+    require(state.get("source_sha256") == current_source,
+            "dynamic regex product source differs from current checkout")
     result: dict[str, object] = {
         "sources": {name: tracked_source_identity(root, relative) for name, relative in SOURCE_PATHS.items()},
         "dynamic": {"path": dynamic.relative_to(root).as_posix(), "manifest": identity(root, dynamic_manifest),

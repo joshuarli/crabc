@@ -257,6 +257,42 @@ class OwnedRegexComponentReceiptTests(unittest.TestCase):
     def test_full_six_mode_control_reconstructs_before_negative_mutations(self) -> None:
         self.assertEqual(self.validate()["execution_mode"], "full-six-mode")
 
+    def test_rehashed_transplanted_product_source_is_rejected(self) -> None:
+        import owned_dynamic_qualification as qualification
+
+        state_path = self.write(".work/x86_64/dynamic/share/crabc/dynamic-product-state.json",
+                                self.module.canonical({
+                                    "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+                                    "status": "materialized-unqualified", "source_sha256": "a" * 64,
+                                }))
+        with mock.patch.object(self.module.products, "_validate_dynamic_product",
+                               return_value=(self.dynamic / "manifest", {})), \
+             mock.patch.object(self.module.products, "_validate_static_product",
+                               return_value=(self.static / "manifest", {})), \
+             mock.patch.object(qualification, "ROOT", self.root), \
+             mock.patch.object(qualification, "source_digest", return_value="a" * 64), \
+             mock.patch.object(self.module, "tool_roster", return_value=self.tool_roster), \
+             mock.patch.object(self.module.products, "validate_retained_link", side_effect=self.reconstructed_link), \
+             mock.patch.object(self.module.copies, "audit_execution_payload", return_value={}), \
+             mock.patch.object(self.module, "replay_symbol_reader",
+                               side_effect=lambda _root, label, _argv: self.symbol_replay[label]):
+            seal = self.module.source_product_seal(self.root, self.static, self.dynamic)
+            self.assertEqual(seal["dynamic"]["tree"], self.module.family.snapshot(self.dynamic))
+            state = json.loads(state_path.read_text())
+            state["source_sha256"] = "b" * 64
+            state_path.write_bytes(self.module.canonical(state))
+            seal["dynamic"]["tree"] = self.module.family.snapshot(self.dynamic)
+            record = self.report_value()
+            for phase in ("source-product-before", "source-product-after"):
+                path = self.work / f"{phase}.json"
+                path.write_bytes(self.module.canonical(seal))
+                record["seals"][phase] = self.identity(path)
+                self.assertEqual(json.loads(path.read_text())["dynamic"]["tree"]["share/crabc/dynamic-product-state.json"]["sha256"],
+                                 self.module.digest(state_path))
+            self.rewrite_report(record)
+            with self.assertRaisesRegex(self.module.RegexReceiptError, "dynamic regex product source differs"):
+                self.module.validate_report(self.root, self.report, require_static=True)
+
     def test_changed_oracle_bytes_reject_even_when_symbol_rows_still_match(self) -> None:
         self.oracle.write_bytes(b"substituted oracle\n")
         with self.assertRaisesRegex(self.module.RegexReceiptError, "oracle"):
