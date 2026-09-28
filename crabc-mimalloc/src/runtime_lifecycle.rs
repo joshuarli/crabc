@@ -12196,12 +12196,14 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
 
 /// The pointer-first remainder of [`native_free`] after its admission and
 /// local fast-path steps, kept out of line so the fast path does not pay
-/// this path's frame.
+/// this path's frame. The matching-owner branch is the likely source path;
+/// cold placement lets its successful return avoid a jump over this remainder.
 ///
 /// # Safety
 ///
 /// Same exact-live-allocation contract as [`native_free`], under its
 /// admitted operation.
+#[cold]
 #[inline(never)]
 unsafe fn native_free_pointer_first(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
     let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
