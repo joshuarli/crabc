@@ -16,6 +16,20 @@ readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_native_allocator_dso_probe.c"
 readonly library="$ROOT/compat/x86_64/owned_native_allocator_dso_library.c"
 readonly musl_interpreter=/lib/ld-musl-x86_64.so.1
+readonly receipt_runner=owned-native-allocator-dso
+readonly case_timeout=30
+
+source_seal() {
+    python3 -B - "$ROOT" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / 'compat/x86_64'))
+from native_shadow_receipt import source_seal
+print(json.dumps(source_seal(root), sort_keys=True, separators=(',', ':')))
+PY
+}
 
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
 dynamic_sysroot=''
@@ -36,6 +50,40 @@ readonly work
 chmod a+rx "$work"
 printf 'native-allocator-dso evidence: %s\n' "$work"
 
+rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+receipt_cases=()
+receipt_products=()
+source_before="$(source_seal)"
+publish_receipt() {
+    local status=$?
+    trap - EXIT
+    local source_after=''
+    if ! source_after="$(source_seal)" || [ "$source_after" != "$source_before" ]; then
+        printf 'native-allocator-dso: source changed during the run\n' >&2
+        status=1
+    fi
+    printf '%s\n' "$status" >"$work/runner.status"
+    receipt_cases+=("runner=$status:runner.status")
+    local -a arguments=(--runner "$receipt_runner" --work "$work" --canonical yes
+        --parameter "CASE_TIMEOUT=$case_timeout"
+        --parameter 'MODES=pie,non-pie'
+        --parameter 'ENTRIES=kernel,direct'
+        --parameter 'DSOS=initial,dlopen-plugin'
+        --parameter 'ENVIRONMENT=empty-with-pinned-PATH')
+    local entry
+    for entry in "${receipt_cases[@]}"; do arguments+=(--case "$entry"); done
+    for entry in "${receipt_products[@]}"; do arguments+=(--product "$entry"); done
+    if ! python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" write "${arguments[@]}"; then
+        status=1
+    elif [ "$(source_seal)" != "$source_before" ]; then
+        rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+        printf 'native-allocator-dso: source changed while publishing the receipt\n' >&2
+        status=1
+    fi
+    exit "$status"
+}
+trap publish_receipt EXIT
+
 if [ -z "$dynamic_sysroot" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --allocator-backend native-shadow \
         --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
@@ -50,6 +98,17 @@ with open(sys.argv[1], encoding='utf-8') as stream:
 if backend != 'native-shadow':
     raise SystemExit(f'{sys.argv[1]}: allocator_backend is {backend!r}, not native-shadow')
 PY
+receipt_products+=(
+    "dynamic-manifest=$dynamic_sysroot/share/crabc/manifest.json"
+    "dynamic-product-state=$dynamic_sysroot/share/crabc/dynamic-product-state.json"
+    "dynamic-libc-provenance=$dynamic_sysroot/share/crabc/libc-shared.provenance.json"
+    "dynamic-libc=$dynamic_sysroot/usr/lib/libc.so"
+    "dynamic-loader=$dynamic_sysroot/lib/ld-crabc-x86_64.so.1"
+    "dynamic-driver=$driver"
+    "musl-libc=/opt/musl-1.2.6/lib/libc.so"
+    "musl-interpreter=$musl_interpreter"
+)
+if [ -f "$work/dynamic-build.json" ]; then receipt_products+=("dynamic-build=$work/dynamic-build.json"); fi
 
 # The malloc family keeps musl's libc.so type, binding and visibility.
 family='malloc|free|calloc|realloc|reallocarray|aligned_alloc|posix_memalign|memalign|valloc|malloc_usable_size'
@@ -58,6 +117,10 @@ bindings() {
 }
 bindings /opt/musl-1.2.6/lib/libc.so >"$work/musl-family.bindings"
 bindings "$dynamic_sysroot/usr/lib/libc.so" >"$work/candidate-family.bindings"
+receipt_products+=(
+    "musl-family-bindings=$work/musl-family.bindings"
+    "candidate-family-bindings=$work/candidate-family.bindings"
+)
 [ -s "$work/musl-family.bindings" ] || { printf 'native-allocator-dso: musl libc.so defines no malloc family\n' >&2; exit 1; }
 cmp "$work/musl-family.bindings" "$work/candidate-family.bindings" || {
     printf 'native-allocator-dso: libc.so malloc-family bindings differ from musl\n' >&2
@@ -72,15 +135,21 @@ for name in initial plugin; do
     "$driver" --dynamic-shared-object "$work/objects/$name.o" -o "$work/libdso-$name.so"
     "$oracle_cc" -shared "$work/objects/$name.o" -Wl,-z,now,-soname,"libdso-$name.so" \
         -o "$work/oracle/libdso-$name.so"
+    receipt_products+=(
+        "object-$name=$work/objects/$name.o"
+        "oracle-$name-dso=$work/oracle/libdso-$name.so"
+    )
 done
 "$driver" --dynamic-pie -std=c11 -fno-builtin -c "$probe" -o "$work/objects/probe.o"
+receipt_products+=("object-probe=$work/objects/probe.o")
 
 run_case() {
     local name="$1"
     shift
     local status=0
-    timeout 30 env -i PATH="$PATH" "$@" >"$work/$name.stdout" 2>"$work/$name.stderr" || status=$?
+    timeout "$case_timeout" env -i PATH="$PATH" "$@" >"$work/$name.stdout" 2>"$work/$name.stderr" || status=$?
     printf '%s\n' "$status" >"$work/$name.status"
+    receipt_cases+=("$name=$status:$name.stdout,$name.stderr,$name.status")
     if [ "$status" -ne 0 ] || [ -s "$work/$name.stderr" ]; then
         printf 'native-allocator-dso: %s exited %s\n' "$name" "$status" >&2
         cat "$work/$name.stderr" >&2
@@ -91,14 +160,20 @@ run_case() {
 cp -a "$dynamic_sysroot" "$work/execution-root"
 cp "$work/libdso-initial.so" "$work/execution-root/usr/lib/"
 cp "$work/libdso-plugin.so" "$work/execution-root/libdso-plugin.so"
+receipt_products+=(
+    "candidate-initial-dso=$work/execution-root/usr/lib/libdso-initial.so"
+    "candidate-plugin-dso=$work/execution-root/libdso-plugin.so"
+)
 for mode in pie non-pie; do
     oracle_entry=(-fPIE -pie)
     [ "$mode" = pie ] || oracle_entry=(-fno-pie -no-pie)
     "$oracle_cc" "${oracle_entry[@]}" "$work/objects/probe.o" -L"$work/oracle" \
         -Wl,-rpath,"$work/oracle" -l:libdso-initial.so -o "$work/oracle/probe-$mode"
+    receipt_products+=("oracle-probe-$mode=$work/oracle/probe-$mode")
     run_case "oracle-$mode" "$work/oracle/probe-$mode" "$work/oracle/libdso-plugin.so"
     "$driver" "--dynamic-$mode" "$work/objects/probe.o" --application-dso "$work/libdso-initial.so" \
         -o "$work/execution-root/probe-$mode"
+    receipt_products+=("candidate-probe-$mode=$work/execution-root/probe-$mode")
     for entry in kernel direct; do
         loader=()
         [ "$entry" = kernel ] || loader=(/lib/ld-crabc-x86_64.so.1)
