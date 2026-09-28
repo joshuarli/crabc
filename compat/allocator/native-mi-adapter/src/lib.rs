@@ -1406,6 +1406,24 @@ pub unsafe extern "C" fn mi_reserve_os_memory_ex(
 
 #[no_mangle]
 /// # Safety
+/// `arena_id` is null or writable; a returned arena ID remains owned by its
+/// subprocess through every use of the reserved huge backing.
+pub unsafe extern "C" fn mi_reserve_huge_os_pages_at_ex(
+    pages: usize,
+    numa_node: c_int,
+    timeout_milliseconds: usize,
+    exclusive: bool,
+    arena_id: *mut *mut c_void,
+) -> c_int {
+    bind_thread();
+    // SAFETY: the C caller supplies null or a writable arena-ID output.
+    finish(unsafe { heaps::reserve_huge_os_pages_at_ex(
+        pages, numa_node, timeout_milliseconds, exclusive, arena_id,
+    ) })
+}
+
+#[no_mangle]
+/// # Safety
 /// `size` is null or writable; a non-null arena ID names a live parent
 /// arena of this process for the duration of the query.
 pub unsafe extern "C" fn mi_arena_area(arena_id: *mut c_void, size: *mut usize) -> *mut c_void {

@@ -857,6 +857,17 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// The public huge-reservation entry reports an empty primitive result
+    /// after the primitive's own warning, using the requested page count.
+    pub(crate) fn huge_reservation_failure(pages: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length, b"failed to reserve ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, pages as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" GiB huge pages\n");
+        Self { bytes, length }
+    }
+
     /// `"process init: 0x%zx\n"` with `_mi_thread_id()` (`src/init.c:541`);
     /// a widthless `x` has the source minimum width two and uppercase digits.
     fn process_init(thread_identity: usize) -> Self {
@@ -3152,6 +3163,17 @@ mod tests {
         SourceFormattedMessage::from_source_formatted(
             CStr::from_bytes_with_nul(bytes).expect("test messages are NUL-terminated"),
         )
+    }
+
+    #[test]
+    fn huge_reservation_failure_formats_requested_gib_count() {
+        for (pages, expected) in [
+            (1, b"failed to reserve 1 GiB huge pages\n".as_slice()),
+            (123456, b"failed to reserve 123456 GiB huge pages\n".as_slice()),
+        ] {
+            let message = SourceFormattedMessage::huge_reservation_failure(pages);
+            assert_eq!(&message.bytes[..message.length], expected);
+        }
     }
 
     const fn final_stat_count(peak: i64, total: i64, current: i64) -> FinalStatCount {

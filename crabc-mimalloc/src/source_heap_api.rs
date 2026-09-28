@@ -13,7 +13,8 @@
 //   `mi_heap_mallocn`) and `src/alloc-aligned.c:318-340` (the
 //   `mi_heap_*_aligned[_at]` allocation entries);
 // - `src/arena.c:1886-1922` (`mi_reserve_os_memory_ex2`,
-//   `mi_reserve_os_memory_ex`, `mi_reserve_os_memory`).
+//   `mi_reserve_os_memory_ex`, `mi_reserve_os_memory`) and
+//   `src/arena.c:2170-2191` (`mi_reserve_huge_os_pages_at_ex`).
 
 //! Pinned mimalloc first-class Heap and OS-reservation public entries over
 //! the native runtime.
@@ -1203,6 +1204,130 @@ pub unsafe fn reserve_os_memory_ex(
 pub fn reserve_os_memory(size: usize, commit: bool, allow_large: bool) -> Sourced<c_int> {
     // SAFETY: a null output is never written.
     unsafe { reserve_os_memory_ex(size, commit, allow_large, false, null_mut()) }
+}
+
+/// `mi_reserve_huge_os_pages_at_ex` clears its output before the zero-page
+/// return, then reserves physical huge backing in the process-main arena
+/// group. A child member is rejected before selecting any parent backing.
+/// A failed primitive returns `ENOMEM`; the actual failing mapping error
+/// remains the C `errno` effect.
+///
+/// # Safety
+/// `arena_id` is null or writable. A returned non-null arena ID stays live
+/// until its owning subprocess retires the arena.
+pub unsafe fn reserve_huge_os_pages_at_ex(
+    pages: usize,
+    numa_node: c_int,
+    timeout_milliseconds: usize,
+    exclusive: bool,
+    arena_id: *mut *mut c_void,
+) -> Sourced<c_int> {
+    use crate::arena::HugeArenaReserveError;
+    use crate::os::HugeOsAllocationStop;
+    if !arena_id.is_null() {
+        // SAFETY: the caller supplies the writable output.
+        unsafe { arena_id.write(null_mut()) };
+    }
+    if pages == 0 {
+        return Sourced { value: 0, errno: SourceErrno::Unchanged };
+    }
+    // Child admission needs its pinned child VM image and record lock. Do not
+    // publish a child request in the process-main arena group.
+    if crate::subproc::lifecycle::current_thread_is_child_member() {
+        return Sourced { value: Errno::NOMEM.raw(), errno: SourceErrno::Unchanged };
+    }
+    let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs() else {
+            return Sourced { value: Errno::NOMEM.raw(), errno: SourceErrno::Unchanged };
+        };
+    let Ok(config) = binding.page_map().memory_config() else {
+        return Sourced { value: Errno::NOMEM.raw(), errno: SourceErrno::Unchanged };
+    };
+    let Some(_active) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return Sourced { value: Errno::NOMEM.raw(), errno: SourceErrno::Unchanged };
+    };
+    let process = binding.process();
+    let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
+    let backing = MainSubprocess::global().arena_backing();
+    let metadata = crate::meta::MetaAllocator::global();
+    #[cfg(target_arch = "x86_64")]
+    let reserved = if let Some(output) = crate::process_init::process_output_owner() {
+        // SAFETY: the operation guard retains process output, the calling
+        // Theap exclusively owns each random draw, and backing owns arenas.
+        unsafe { backing.reserve_huge_at_with_mbind_warning(process, config, metadata,
+            pages, numa_node, timeout_milliseconds, exclusive, Some(&mut random),
+            crate::diagnostic_output::HugePageWarningRoute::new(output)) }
+    } else {
+        // SAFETY: the same arena and random ownership holds in test startup
+        // without a published diagnostic output owner.
+        unsafe { backing.reserve_huge_at(process, config, metadata, pages, numa_node,
+            timeout_milliseconds, exclusive, Some(&mut random)) }
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let reserved = unsafe { backing.reserve_huge_at(process, config, metadata, pages,
+        numa_node, timeout_milliseconds, exclusive, Some(&mut random)) };
+    match reserved {
+        Ok(arena) => {
+            if let (Some(arena), false) = (arena, arena_id.is_null()) {
+                // SAFETY: the caller supplied the writable output.
+                unsafe { arena_id.write(arena.as_ptr().cast()) };
+            }
+            Sourced { value: 0, errno: SourceErrno::Unchanged }
+        }
+        Err(error) => {
+            if matches!(error, HugeArenaReserveError::Unavailable(_)) {
+                process.policy().source_warning(
+                    SourceFormattedMessage::huge_reservation_failure(pages));
+            }
+            let errno = match error {
+                HugeArenaReserveError::Unavailable(HugeOsAllocationStop::PrimitiveMapFailed(error)) =>
+                    SourceErrno::Store(error),
+                _ => SourceErrno::Unchanged,
+            };
+            Sourced { value: Errno::NOMEM.raw(), errno }
+        }
+    }
+}
+
+#[cfg(test)]
+mod huge_at_ex_tests {
+    extern crate std;
+    use super::*;
+    use crate::os::fault;
+
+    unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn public_huge_at_ex_zero_and_failed_primitive_preserve_arena_owner() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::huge_at_ex_tests::public_huge_at_ex_zero_and_failed_primitive_preserve_arena_owner",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let mut id = 1usize as *mut c_void;
+                // SAFETY: `id` is writable, and zero pages require no backing.
+                let zero = unsafe { reserve_huge_os_pages_at_ex(0, -2, usize::MAX, true, &mut id) };
+                assert_eq!(zero.value, 0);
+                assert_eq!(zero.errno, SourceErrno::Unchanged);
+                assert!(id.is_null());
+                let backing = MainSubprocess::global().arena_backing();
+                let before = backing.registry().count();
+                let _fault = fault::install(fault::Plan::every(fault::Point::HugeMap, Errno::NOMEM));
+                id = 1usize as *mut c_void;
+                // SAFETY: `id` is writable; every huge primitive mapping is
+                // forced to fail before an arena can own physical backing.
+                let failed = unsafe { reserve_huge_os_pages_at_ex(1, -2, 0, true, &mut id) };
+                assert_eq!(failed.value, Errno::NOMEM.raw());
+                assert_eq!(failed.errno, SourceErrno::Store(Errno::NOMEM));
+                assert!(id.is_null());
+                assert_eq!(backing.registry().count(), before);
+                assert!(!backing.huge_cleanup_pending());
+            },
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
