@@ -133,7 +133,10 @@ are not transferable passes for a different revision.
   `./scripts/dev-x86_64.sh qualification-candidate --work DIR` runs the whole
   chain as one restartable command on a clean candidate revision. The M9 report path measures
   throughput, p99 and peak RSS/PSS for all 38 rows but no report qualifies
-  yet (contended host). The 114-row runtime scorecard runs
+  yet (contended host). A source-faithful remote-free cold-claim split improves
+  the native 64-byte remote path from 177 to 176 instructions and its executed
+  stack from 1,920 to 1,184 bytes, with all 42 C/Rust codegen regions replayed;
+  the three-call versus pinned-C two-call excess remains. The 114-row runtime scorecard runs
   end to end; its older startup measure was 32 whole-process syscalls against
   musl's 11. A later scoped development smoke on the current loader is 27
   calls after canonical-alias reuse; full qualified CPU/PSS evidence still
