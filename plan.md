@@ -26,8 +26,8 @@ are not transferable passes for a different revision.
   ordered qualification gates are executable and fail closed on named unmet
   conditions. `compat.abi-differential` reads all its evidence rows from one
   published set (`abi-differential-evidence assemble`); only the selection
-  closure stays unmet: a clean `e7d10c238` assembly named 573 blockers
-  (555 identities, 17 unadmitted families, one missing semantic receipt) and
+  closure stays unmet: a clean `299ca30e3` assembly named 570 blockers
+  (552 identities, 17 unadmitted families, one missing semantic receipt) and
   rejected no companion. `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` and
@@ -78,7 +78,7 @@ are not transferable passes for a different revision.
   `m8.static-dynamic-products` pass on
   source-built native-shadow products with physically reread receipts on their respective source revisions;
   the corpus covers all 34 frozen cases. The complete nine-leaf M8 gate
-  passed again on clean `111d44939` with all 16 evidence entries passing and
+  passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; qualification
   on the merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
