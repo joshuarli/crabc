@@ -60,6 +60,9 @@ are not transferable passes for a different revision.
   companion, and one semantic receipt). A further same-source cohort joins
   both `fputs` archive importers, including the C tail branch, to the final
   provider and reduces the selector to 719 blockers (700 identities).
+  A later sealed cohort joins all 13 `getenv` archive importers and all 16
+  retained source calls in both static modes and shared libc, reducing the
+  selector to 718 blockers.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
