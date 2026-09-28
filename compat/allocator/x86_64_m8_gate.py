@@ -41,6 +41,7 @@ import consumer_rust_std_lto as consumer
 import owned_dynamic_qualification as qualification
 import native_shadow_receipt
 import owned_mimalloc_startup_errno_receipt as startup_errno
+import owned_native_allocator_policy_receipt as policy_reader
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m8-gate-x86_64-v3.5.0.json"
@@ -228,53 +229,37 @@ def read_native_allocator_policy_receipt(command: Sequence[str], output: str) ->
             raise harness.HarnessError("native allocator policy evidence escaped its runner root")
         work = consumer.owned_cleanup.work_child(
             harness.ROOT / ".work/x86_64/tmp" / relative, "native allocator policy evidence", existing=True)
-        receipt = native_shadow_receipt.read_receipt(harness.ROOT, runner)
+        receipt = policy_reader.read_policy_receipt(harness.ROOT)
         raw = json.loads(receipt.path.read_text(encoding="utf-8"))
         if raw.get("work") != work.relative_to(harness.ROOT).as_posix():
             raise harness.HarnessError("native allocator policy receipt names another execution root")
-        expected_parameters = {
-            "CASE_TIMEOUT": "120", "PROGRAMS": "basic,observability,policy",
-            "STATIC_MODES": "static,static-pie",
-            "DYNAMIC_MODES": "kernel-pie,direct-pie,kernel-non-pie,direct-non-pie",
-            "ENVIRONMENT": "empty-with-pinned-PATH",
-        }
-        if dict(receipt.parameters) != expected_parameters:
-            raise harness.HarnessError("native allocator policy receipt has non-canonical workloads")
-        programs = ("basic", "observability", "policy")
-        modes = ("oracle", "static", "static-pie", "kernel-pie", "direct-pie",
-                 "kernel-non-pie", "direct-non-pie")
-        expected_cases = [f"{mode}-{program}" for program in programs for mode in modes]
-        if receipt.case_ids() != [*expected_cases, "runner"]:
-            raise harness.HarnessError("native allocator policy receipt omits a program or product mode")
-        expected_products = {
-            "static-build", "static-manifest", "static-libc-provenance", "static-libc-archive",
-            "dynamic-build", "dynamic-manifest", "dynamic-product-state",
-            "dynamic-libc-provenance", "dynamic-libc", "dynamic-loader",
-            *(f"{mode}-{program}" for program in programs
-              for mode in ("oracle", "static", "static-pie", "dynamic-pie", "dynamic-non-pie")),
-        }
-        if set(receipt.products) != expected_products:
-            raise harness.HarnessError("native allocator policy receipt has an incomplete product roster")
         static = work / "static-sysroot"
         dynamic = work / "dynamic-sysroot"
         consumer.owned_cleanup.product_snapshot(static, "static")
         consumer.owned_cleanup.product_snapshot(dynamic, "dynamic")
         originals = {
-            "static-build": work / "static-build.json",
             "static-manifest": static / "share/crabc/manifest.json",
             "static-libc-provenance": static / "share/crabc/libc-static.provenance.json",
             "static-libc-archive": static / "usr/lib/libc.a",
-            "dynamic-build": work / "dynamic-build.json",
+            "static-driver": static / "bin/crabc-cc",
+            "static-crt1": static / "usr/lib/crt1.o",
+            "static-rcrt1": static / "usr/lib/rcrt1.o",
+            "static-crti": static / "usr/lib/crti.o",
+            "static-crtn": static / "usr/lib/crtn.o",
+            "static-builtins": static / "usr/lib/libcrabc-builtins.a",
             "dynamic-manifest": dynamic / "share/crabc/manifest.json",
             "dynamic-product-state": dynamic / "share/crabc/dynamic-product-state.json",
             "dynamic-libc-provenance": dynamic / "share/crabc/libc-shared.provenance.json",
             "dynamic-libc": dynamic / "usr/lib/libc.so",
             "dynamic-loader": dynamic / "lib/ld-crabc-x86_64.so.1",
+            "dynamic-driver": dynamic / "bin/crabc-cc-dynamic",
+            "dynamic-crt1": dynamic / "usr/lib/crt1.o",
+            "dynamic-scrt1": dynamic / "usr/lib/Scrt1.o",
+            "dynamic-crti": dynamic / "usr/lib/crti.o",
+            "dynamic-crtn": dynamic / "usr/lib/crtn.o",
+            "dynamic-attach": dynamic / "usr/lib/crabc-dynamic-attach.o",
+            "dynamic-builtins": dynamic / "usr/lib/libcrabc-builtins.a",
         }
-        for program in programs:
-            for mode in ("oracle", "static", "static-pie", "dynamic-pie", "dynamic-non-pie"):
-                name = f"{mode}-{program}"
-                originals[name] = work / f"{name}.exe"
         for name, original in originals.items():
             original = consumer.owned_cleanup.physical(original, f"native allocator policy {name}")
             if {"sha256": consumer.owned_cleanup.digest(original),
@@ -289,21 +274,6 @@ def read_native_allocator_policy_receipt(command: Sequence[str], output: str) ->
                 or state.get("allocator_backend") != "native-shadow"
                 or state.get("source_sha256") != source_sha256):
             raise harness.HarnessError("native allocator policy product is not current native-shadow source")
-        logs = receipt.path.parent / "logs"
-        for case in receipt.cases:
-            name = str(case["id"])
-            expected_logs = ({"runner.status"} if name == "runner" else
-                             {f"{name}.status", f"{name}.stdout", f"{name}.stderr"})
-            if set(case["logs"]) != expected_logs or (logs / f"{name}.status").read_bytes() != b"0\n":
-                raise harness.HarnessError(f"native allocator policy {name} lacks its successful raw status")
-            if name == "runner":
-                continue
-            if (logs / f"{name}.stderr").read_bytes():
-                raise harness.HarnessError(f"native allocator policy {name} wrote stderr")
-            if not name.startswith("oracle-"):
-                program = name.rsplit("-", 1)[-1]
-                if (logs / f"{name}.stdout").read_bytes() != (logs / f"oracle-{program}.stdout").read_bytes():
-                    raise harness.HarnessError(f"native allocator policy {name} differs from pinned musl")
         return {"path": str(receipt.path), "sha256": consumer.sha256_file(receipt.path),
                 "source": dict(receipt.source), "source_sha256": source_sha256,
                 "products": {mode: consumer.sha256_file(root / "share/crabc/manifest.json")

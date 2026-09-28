@@ -22,6 +22,7 @@ gate = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = gate
 SPEC.loader.exec_module(gate)
 harness = gate.harness
+import owned_native_allocator_policy_receipt as policy_reader
 
 
 class M8GateContractTests(unittest.TestCase):
@@ -155,6 +156,74 @@ class M8ProductBindingTests(unittest.TestCase):
 
 
 class M8NativeAllocatorPolicyReceiptTests(unittest.TestCase):
+    def test_source_provenance_products_from_dedicated_reader_are_admitted(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp",
+                                         prefix="owned-native-allocator-policy.") as directory:
+            work = Path(directory)
+            relative = work.relative_to(ROOT)
+            receipt_path = work / "receipt.json"
+            receipt_path.write_text(json.dumps({"work": relative.as_posix()}))
+            static = work / "static-sysroot"
+            dynamic = work / "dynamic-sysroot"
+            paths = {
+                "static-manifest": static / "share/crabc/manifest.json",
+                "static-libc-provenance": static / "share/crabc/libc-static.provenance.json",
+                "static-libc-archive": static / "usr/lib/libc.a",
+                "static-driver": static / "bin/crabc-cc",
+                "static-crt1": static / "usr/lib/crt1.o",
+                "static-rcrt1": static / "usr/lib/rcrt1.o",
+                "static-crti": static / "usr/lib/crti.o",
+                "static-crtn": static / "usr/lib/crtn.o",
+                "static-builtins": static / "usr/lib/libcrabc-builtins.a",
+                "dynamic-manifest": dynamic / "share/crabc/manifest.json",
+                "dynamic-product-state": dynamic / "share/crabc/dynamic-product-state.json",
+                "dynamic-libc-provenance": dynamic / "share/crabc/libc-shared.provenance.json",
+                "dynamic-libc": dynamic / "usr/lib/libc.so",
+                "dynamic-loader": dynamic / "lib/ld-crabc-x86_64.so.1",
+                "dynamic-driver": dynamic / "bin/crabc-cc-dynamic",
+                "dynamic-crt1": dynamic / "usr/lib/crt1.o",
+                "dynamic-scrt1": dynamic / "usr/lib/Scrt1.o",
+                "dynamic-crti": dynamic / "usr/lib/crti.o",
+                "dynamic-crtn": dynamic / "usr/lib/crtn.o",
+                "dynamic-attach": dynamic / "usr/lib/crabc-dynamic-attach.o",
+                "dynamic-builtins": dynamic / "usr/lib/libcrabc-builtins.a",
+            }
+            source = "a" * 64
+            values = {
+                "static-manifest": {"allocator_backend": "native-shadow"},
+                "dynamic-libc-provenance": {"allocator_backend": "native-shadow"},
+                "dynamic-product-state": {"allocator_backend": "native-shadow", "source_sha256": source},
+            }
+            products = {}
+            for name, path in paths.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                data = (json.dumps(values[name]).encode() if name in values else name.encode())
+                path.write_bytes(data)
+                products[name] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+            products["source-basic"] = {"sha256": "b" * 64, "size": 1}
+            read = gate.native_shadow_receipt.Receipt(
+                path=receipt_path, runner=policy_reader.RUNNER,
+                source={"revision": "c" * 40, "worktree_sha256": "d" * 64},
+                products=products,
+                cases=tuple({"id": f"{mode}-{program}", "logs": {}, "status": 0}
+                            for program in policy_reader.PROGRAMS for mode in policy_reader.MODES)
+                      + ({"id": "runner", "logs": {}, "status": 0},),
+                parameters=policy_reader.PARAMETERS,
+            )
+            output = f"native-allocator-policy evidence: {gate.CONTAINER_ROOT / relative}\n"
+            with mock.patch.object(policy_reader, "read_policy_receipt", return_value=read) as dedicated, \
+                    mock.patch.object(gate.native_shadow_receipt, "read_receipt", return_value=read), \
+                    mock.patch.object(gate.consumer.owned_cleanup, "product_snapshot"), \
+                    mock.patch.object(gate.qualification, "source_digest", return_value=source):
+                result = gate.read_native_allocator_policy_receipt(
+                    [gate.DISPATCHER, policy_reader.RUNNER], output)
+                paths["static-rcrt1"].write_bytes(b"swapped static PIE startup object")
+                with self.assertRaisesRegex(harness.HarnessError, "original product changed: static-rcrt1"):
+                    gate.read_native_allocator_policy_receipt(
+                        [gate.DISPATCHER, policy_reader.RUNNER], output)
+            self.assertEqual(dedicated.call_args_list, [mock.call(ROOT), mock.call(ROOT)])
+            self.assertEqual(result["case_count"], 22)
+
     def test_successful_products_command_without_its_physical_receipt_fails(self) -> None:
         products = {"evidence": "product:native-allocator-policy",
                     "evidence_line": "native-allocator-policy evidence: ",
@@ -172,7 +241,7 @@ class M8NativeAllocatorPolicyReceiptTests(unittest.TestCase):
                         "stderr": ""}
 
             with mock.patch.object(harness, "command_record", command_record), \
-                    mock.patch.object(gate.native_shadow_receipt, "read_receipt",
+                    mock.patch.object(policy_reader, "read_policy_receipt",
                                       side_effect=gate.native_shadow_receipt.ReceiptError("no receipt")) as reader:
                 result = gate.run_evidence(runnable, products, list(runnable), Path(directory))
         reader.assert_called_once()
