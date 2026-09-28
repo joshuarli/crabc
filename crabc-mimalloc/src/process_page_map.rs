@@ -143,7 +143,6 @@ pub(crate) struct LiveAllocationPointer {
     client: NonNull<u8>,
     canonical_block: NonNull<u8>,
     block_size: usize,
-    usable_size: usize,
     xthread_id: ThreadId,
     page_flags: PageFlags,
     page_state: LiveAllocationPageState,
@@ -169,6 +168,7 @@ pub(crate) struct LiveAllocationPointer {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct LiveAllocationReallocationSource {
     allocation: LiveAllocationPointer,
+    usable_prefix_len: usize,
     copy_prefix_len: usize,
 }
 
@@ -196,7 +196,7 @@ impl LiveAllocationReallocationSource {
     /// the page block size. It excludes aligned-allocation adjustment bytes
     /// before the client pointer.
     #[inline]
-    pub(crate) const fn usable_prefix_len(&self) -> usize { self.allocation.usable_size }
+    pub(crate) const fn usable_prefix_len(&self) -> usize { self.usable_prefix_len }
 
     /// Returns the exact prefix length a replacement may copy.
     ///
@@ -237,8 +237,12 @@ impl LiveAllocationPointer {
     pub(crate) const fn block_size(&self) -> usize { self.block_size }
 
     /// Returns the source usable extent beginning at the exact client pointer.
+    /// Canonical recovery has already bounded the interior adjustment below
+    /// the nonzero block size. Ordinary free does not need this extent.
     #[inline]
-    pub(crate) const fn usable_size(&self) -> usize { self.usable_size }
+    pub(crate) fn usable_size(&self) -> usize {
+        self.block_size - (self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr())
+    }
 
     /// Consumes this observation into a bounded source for one replacement.
     ///
@@ -253,8 +257,9 @@ impl LiveAllocationPointer {
         self,
         replacement_request: usize,
     ) -> LiveAllocationReallocationSource {
-        let copy_prefix_len = core::cmp::min(replacement_request, self.usable_size);
-        LiveAllocationReallocationSource { allocation: self, copy_prefix_len }
+        let usable_prefix_len = self.usable_size();
+        let copy_prefix_len = core::cmp::min(replacement_request, usable_prefix_len);
+        LiveAllocationReallocationSource { allocation: self, usable_prefix_len, copy_prefix_len }
     }
 
     /// Returns the raw source `mi_page_t::xthread_id` atomic snapshot.
@@ -345,18 +350,11 @@ unsafe fn classify_live_allocation_in_page(
     } else {
         client
     };
-    let usable_size = crate::aligned::usable_size(
-        block_size,
-        client_address,
-        canonical_block.as_ptr().addr(),
-    )?;
-
     Some(LiveAllocationPointer {
         page,
         client,
         canonical_block,
         block_size,
-        usable_size,
         xthread_id,
         page_flags,
         page_state,
