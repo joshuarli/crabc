@@ -645,6 +645,45 @@ int crabc_full_dso_close(FILE *stream, int *main_errno)
     return 0;
 }
 
+/* A separate stream reaches the full device for the first time in fclose.
+ * Return the close result and errno directly to the executable.
+ */
+static FILE *pending_close_dso_stream;
+static char pending_close_dso_buffer[64];
+static unsigned pending_close_dso_stage;
+
+FILE *crabc_full_dso_open_pending_close(int *main_errno)
+{
+    if (main_errno != &errno || errno != EDOM || pending_close_dso_stage != 0)
+        return NULL;
+    pending_close_dso_stream = fopen("/dev/full", "w");
+    if (pending_close_dso_stream == NULL ||
+        setvbuf(pending_close_dso_stream, pending_close_dso_buffer, _IOFBF,
+                sizeof(pending_close_dso_buffer)) != 0)
+        return NULL;
+    if (fileno(pending_close_dso_stream) < 0 ||
+        fwrite("closing", 1, 7, pending_close_dso_stream) != 7 ||
+        ferror(pending_close_dso_stream) || feof(pending_close_dso_stream))
+        return NULL;
+    pending_close_dso_stage = 1;
+    errno = ERANGE;
+    return pending_close_dso_stream;
+}
+
+int crabc_full_dso_close_pending(FILE *stream, int *main_errno)
+{
+    int result;
+
+    if (stream == NULL || stream != pending_close_dso_stream ||
+        main_errno != &errno || errno != EDOM || pending_close_dso_stage != 1 ||
+        ferror(stream) || feof(stream))
+        return 1;
+    result = fclose(stream);
+    pending_close_dso_stream = NULL;
+    pending_close_dso_stage = 2;
+    return result;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];

@@ -16,7 +16,7 @@ spec.loader.exec_module(receipt)
 
 
 class FileDsoReceiptTests(unittest.TestCase):
-    def test_path_memory_orientation_and_full_sink_are_reread(self) -> None:
+    def test_path_memory_orientation_and_full_sink_failures_are_reread(self) -> None:
         case = "oracle-static-process"
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             work = Path(temporary)
@@ -50,6 +50,10 @@ class FileDsoReceiptTests(unittest.TestCase):
                 'write(3, "M:dso", 5) = 5\n'
                 'open("/dev/full", O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666) = 3\n'
                 'writev(3, [{iov_base="pending", iov_len=7}], 1) = -1 ENOSPC (No space left on device)\n'
+                'close(3) = 0\n'
+                'open("/dev/full", O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666) = 3\n'
+                'writev(3, [{iov_base="closing", iov_len=7}], 1) = -1 ENOSPC (No space left on device)\n'
+                'close(3) = 0\n'
                 'write(3, "fini-before-flush:fd-live\\n", 26) = 26\n'
                 'write(3, "dso-exit-once\\n", 14) = 14\n')
             with mock.patch.object(receipt, "CASES", (case,)), mock.patch.object(
@@ -108,7 +112,18 @@ class FileDsoReceiptTests(unittest.TestCase):
                 trace_path.write_text(trace.replace(
                     'writev(3, [{iov_base="pending", iov_len=7}], 1) = -1 ENOSPC',
                     'writev(3, [{iov_base="pending", iov_len=7}], 1) = 7'))
-                with self.assertRaisesRegex(receipt.ReceiptError, "full-sink buffered failure differs"):
+                with self.assertRaisesRegex(receipt.ReceiptError, "full-sink buffered failures differ"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                trace_path.write_text(trace.replace(
+                    'writev(3, [{iov_base="closing", iov_len=7}], 1) = -1 ENOSPC',
+                    'writev(3, [{iov_base="closing", iov_len=7}], 1) = 7'))
+                with self.assertRaisesRegex(receipt.ReceiptError, "full-sink buffered failures differ"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                trace_path.write_text(trace.replace(
+                    'writev(3, [{iov_base="closing", iov_len=7}], 1) = -1 ENOSPC (No space left on device)\n'
+                    'close(3) = 0\n',
+                    'writev(3, [{iov_base="closing", iov_len=7}], 1) = -1 ENOSPC (No space left on device)\n'))
+                with self.assertRaisesRegex(receipt.ReceiptError, "full-sink descriptor close differs"):
                     receipt.audit_runtime(work, work / "unused-dynamic")
 
 

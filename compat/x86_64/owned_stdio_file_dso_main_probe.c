@@ -660,6 +660,28 @@ static int full_sink_dso_roundtrip(void)
     return 0;
 }
 
+static int full_sink_dso_pending_close_roundtrip(void)
+{
+    FILE *stream;
+    int descriptor, result;
+
+    errno = EDOM;
+    stream = crabc_full_dso_open_pending_close(&errno);
+    if (stream == NULL || errno != ERANGE || ferror(stream) || feof(stream))
+        return 1;
+    descriptor = fileno(stream);
+    if (descriptor < 0 || fcntl(descriptor, F_GETFD) < 0)
+        return 2;
+    errno = EDOM;
+    result = crabc_full_dso_close_pending(stream, &errno);
+    if (result != EOF || errno != ENOSPC)
+        return 3;
+    errno = 0;
+    if (fcntl(descriptor, F_GETFD) != -1 || errno != EBADF)
+        return 4;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -718,6 +740,9 @@ int main(int argc, char **argv)
     result = full_sink_dso_roundtrip();
     if (result != 0)
         return result;
+    result = full_sink_dso_pending_close_roundtrip();
+    if (result != 0)
+        return result;
     result = prepare_dso_exit_stream(argv[1]);
     if (result != 0)
         return 130 + result;
@@ -733,7 +758,7 @@ int main(int argc, char **argv)
     result = wide_memory_dso_roundtrip();
     if (result != 0)
         return result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-full-sink-ok\n", 28) != 28)
+    if (write(STDOUT_FILENO, "stdio-file-dso-full-close-ok\n", 29) != 29)
         return 11;
     return 0;
 }
