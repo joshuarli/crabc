@@ -1436,8 +1436,9 @@ where
         }
         set_next(thread_free_block_address(previous));
         // The caller checked the raw block or supplied a current allocation's
-        // canonical block. The source head word reserves only its low bit.
-        let replacement = block | usize::from(owner_after_publication(previous));
+        // canonical block. Its low bit is clear, so adding the source owner
+        // bit produces the same `mi_thread_free_t` word without carry.
+        let replacement = block + usize::from(owner_after_publication(previous));
         match head.cas_weak_acq_rel_observed(previous, replacement) {
             Ok(old) => return Ok(is_owned(old)),
             Err(observed) => previous = observed,
