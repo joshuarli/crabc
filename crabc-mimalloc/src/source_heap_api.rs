@@ -24,8 +24,7 @@
 //! child subprocess uses that child's Heap lifecycle. As in [`crate::source_api`], each
 //! allocation reports the errno effect of its source path as data.
 //!
-//! Not provided: reservation from a thread of a child subprocess (refused with
-//! `ENOMEM`), and the `_mi_verbose_message` reservation reports.
+//! The `_mi_verbose_message` reservation reports are not provided.
 
 use core::ffi::{c_int, c_void};
 use core::ptr::{null_mut, NonNull};
@@ -58,7 +57,8 @@ pub fn heap_new() -> *mut c_void {
 /// `mi_heap_new_in_arena`: null selects the ordinary Heap allocation policy.
 ///
 /// # Safety
-/// A non-null `arena` is a live parent arena ID returned by this process.
+/// A non-null `arena` is a live parent arena ID owned by the calling
+/// thread's subprocess.
 /// Its backing must outlive the Heap and every Theap and page it owns. No
 /// concurrent arena destruction may overlap this call.
 pub unsafe fn heap_new_in_arena(arena: *mut c_void) -> *mut c_void {
@@ -69,7 +69,10 @@ pub unsafe fn heap_new_in_arena(arena: *mut c_void) -> *mut c_void {
         return heap_new();
     }
     if crate::subproc::lifecycle::current_thread_is_child_member() {
-        return null_mut();
+        return crate::subproc::lifecycle::native_child_heap_new_in_arena(arena)
+            .and_then(Result::ok)
+            .and_then(Result::ok)
+            .map_or(null_mut(), |heap| heap.as_ptr().cast());
     }
     // SAFETY: forwarded live process-parent ID and lifetime obligations.
     unsafe { main_heaps::native_heap_new_in_arena(arena) }
@@ -990,10 +993,13 @@ pub unsafe fn reserve_os_memory_ex(
         // SAFETY: the caller's writable output.
         unsafe { arena_id.write(null_mut()) };
     }
-    if crate::subproc::lifecycle::current_thread_is_child_member() {
-        return Sourced { value: Errno::NOMEM.raw(), errno: SourceErrno::Unchanged };
-    }
-    match main_heaps::native_reserve_os_memory(size, commit, allow_large, exclusive) {
+    let reserved = if crate::subproc::lifecycle::current_thread_is_child_member() {
+        crate::subproc::lifecycle::native_child_reserve_os_memory(size, commit, allow_large, exclusive)
+            .unwrap_or(Err(crate::arena::ReserveOsMemoryFailure::Unmanaged))
+    } else {
+        main_heaps::native_reserve_os_memory(size, commit, allow_large, exclusive)
+    };
+    match reserved {
         Ok(id) => {
             if !arena_id.is_null() {
                 // SAFETY: as above.

@@ -3612,12 +3612,13 @@ impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> 
         backing: crate::page_backing::ChildMetadataArenaBacking<'child>,
         page_map: &'map PageMap,
         sequence: crate::types::ThreadSequence,
+        requested_arena: ArenaId,
     ) -> Self {
         Self {
             session,
             arena: backing,
             arena_lifetime: PhantomData,
-            requested_arena: ArenaId::none(),
+            requested_arena,
             page_map,
             thread_sequence: sequence.get(),
             pending_os_release: None,

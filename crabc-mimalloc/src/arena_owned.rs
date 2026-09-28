@@ -1367,7 +1367,7 @@ impl ProcessArenaBacking {
     /// As [`Self::reserve_os_memory_for_process`].
     #[allow(clippy::too_many_arguments)]
     pub(crate) unsafe fn reserve_os_memory_reporting_failure(
-        &'static self, process: VmProcess<'static>, config: MemoryConfig, size: usize,
+        &self, process: VmProcess<'_>, config: MemoryConfig, size: usize,
         access: MapAccess, allow_large: bool, exclusive: bool, random: crate::os::OsRandom<'_>,
     ) -> Result<ArenaId, ReserveOsMemoryFailure> {
         // `mi_reserve_os_memory_ex2` rounds a representable size up to one
@@ -4706,10 +4706,9 @@ mod tests {
         trace.marker(24);
     }
 
-    /// Rust half of the M2 failed-reservation warning differential
-    /// (`compat/allocator/m2_reservation_warnings_x86_64.c`): the same three
-    /// `mi_reserve_os_memory_ex2` failures under `show_errors`, printing each
-    /// return code and its TID-normalized output fragments as hex.
+    /// Emits the three `mi_reserve_os_memory_ex2` failure cases with
+    /// `show_errors`, including each return code and its TID-normalized
+    /// output fragments as hex.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn emit_m2_reservation_warnings_c_rust_trace() {

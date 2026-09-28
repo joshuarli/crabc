@@ -46,6 +46,10 @@
       "runner": "compat/allocator/x86_64_m6_heap_in_arena.py",
       "scope": "Source-built pinned-C/native-adapter process-main mi_heap_new_in_arena with one live exclusive parent: Heap list membership, Theap and page placement, requested-arena allocation and OS-fallback refusal, live-page delete move, free/destroy and slice reuse, failed reservation output, null-ID ordinary policy, source Heap binding, and errno."
     },
+    "differential:child-heap-in-arena": {
+      "runner": "compat/allocator/x86_64_m6_child_heap_in_arena.py",
+      "scope": "Source-built pinned-C/native-adapter child-subprocess mi_heap_new_in_arena with a live child-owned exclusive parent: Theap and page placement, requested-arena allocation and OS-fallback refusal, live-page delete move, free/destroy and subsequent selected allocation, failed reservation output, null-ID ordinary policy, source Heap and arena subprocess binding, and errno."
+    },
     "differential:public-heap-adapter": {
       "runner": "compat/allocator/x86_64_m6_adapter.py",
       "scope": "Shared-driver pinned-C/native-adapter traces of the exported M6 entries: mi_reserve_os_memory and mi_reserve_os_memory_ex (committed, lazily committed, too-small, exclusive, failing, and over-limit reservations with their statistics and errno), mi_heap_new, mi_heap_main, the mi_heap_malloc/zalloc/calloc/mallocn/small and aligned[_at] allocation entries with their failure errors and messages, the mi_heap_realloc family (in-place reuse only within the block's own Heap, including from another thread), mi_realloc of a Heap block, mi_heap_strdup/strndup/realpath, mi_heap_alloc_new[_n], mi_heap_collect with its deferred-free callback and page release, Heap PageMap and quiescent utilization queries for null, foreign, interior, moved, and joined-remote-free non-head pages, main-Heap delete/destroy warnings, test-api.c heap-os1/heap-os2/heap-many with page and Heap statistics, a clean forked process-main Heap visitor traversing regular and OS singleton pages with live-block filtering and early stops, and a second thread allocating from a shared Heap, deleting its own, and finishing before the Heap is destroyed, and the subprocess entries: main and current ids, Heap visitation with an early stop, main-id add/destroy being ignored, the other-subprocess warning, a child whose thread allocates, creates, visits, and deletes a Heap and finishes, and destruction of that child with its statistics merged, and a child destroyed under a thread that still belongs to it, with its Heap, Theap, and thread statistics merged into main."
@@ -154,12 +158,13 @@
       "evidence": [
         "differential:public-heap-lifecycle",
         "differential:heap-in-arena",
+        "differential:child-heap-in-arena",
         "differential:public-heap-adapter",
         "differential:heap-destroy",
         "unit:heap-lifecycle"
       ],
       "blocked_by": [
-        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`, crate-private). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. A process-main Heap selected from one live exclusive parent has a source-built allocation, delete, destroy, and failure trace; child-subprocess arena selection and mi_heap_set_numa_affinity remain unproved or absent."
+        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. Heaps selected from one live exclusive parent have source-built allocation, delete, destroy, and failure traces in both subprocesses; mi_heap_set_numa_affinity and broader failure and cross-thread lifetime coverage remain unproved or absent."
       ]
     },
     {
@@ -334,13 +339,14 @@
       "acceptance": "Arena identity, geometry queries, OS and huge-page reservation, exclusive arenas, and caller-managed memory follow src/arena.c and src/os.c for the calling subprocess, including commit-callback behavior, size/alignment refusal, containment, exclusive-Heap binding, and destruction with the owning subprocess.",
       "evidence": [
         "differential:arena-destroy",
+        "differential:child-heap-in-arena",
         "differential:public-heap-adapter",
         "differential:public-arena",
         "upstream:test-api-heaps",
         "unit:arena"
       ],
       "blocked_by": [
-        "mi_reserve_os_memory and mi_reserve_os_memory_ex are exported for main-subprocess threads (a child-subprocess thread is refused with ENOMEM, and the OS-layer and manage warnings of a failed reservation are not rendered); huge-page reservation, managed-memory registration, and the arena query entries have no public entry, and no Heap can bind an exclusive arena."
+        "mi_reserve_os_memory and mi_reserve_os_memory_ex are exported for main and child subprocess threads, with bounded source-built exclusive Heap traces; OS-layer and manage warnings of a failed reservation are not rendered. Huge-page reservation, managed-memory registration, and several arena query entries remain absent or unproved."
       ]
     },
     {
@@ -363,6 +369,7 @@
       "acceptance": "Subprocesses follow src/subproc.c: parent-metadata creation with child main Heap and metadata Theap, registry membership, thread admission refusal for threads already in another subprocess, Heap visitation under the Heap-list lock, statistics merge on destruction, and `mi_subproc_destroy` destroying non-main Heaps, the child main Heap, and the child arenas in source order while refusing the process main subprocess.",
       "evidence": [
         "differential:subprocess-lifecycle",
+        "differential:child-heap-in-arena",
         "differential:public-heap-adapter",
         "differential:arena-destroy",
         "upstream:test-stress-subprocs",

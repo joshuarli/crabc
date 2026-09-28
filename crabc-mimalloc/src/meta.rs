@@ -1755,8 +1755,9 @@ pub(crate) struct ChildThreadOwner {
 /// One child-thread Theap for a non-main Heap: the source `mi_theap_t` at
 /// offset zero, then this Theap's own page-engine state.
 ///
-/// Source `_mi_theap_alloc` takes `sizeof(mi_theap_t)` from the Heap's
-/// subprocess metadata (`theap.c:307-328`). The image also carries the page
+/// Source `_mi_theap_alloc` takes an ordinary Heap's image from its
+/// subprocess metadata and a selected Heap's image from its requested arena.
+/// The Theap's `memid` carries the exact release provenance. The image also carries the page
 /// engine state that the thread's main-Heap Theap keeps in its
 /// [`ChildThreadOwner`], because pinned `mi_arena_pages_alloc`
 /// (`arena.c:1661-1672`) allocates a non-main Heap's per-arena page record
@@ -1947,7 +1948,7 @@ impl ChildThreadOwner {
         // complete operation.
         let mut engine = unsafe {
             crate::single_thread::ChildOrdinaryPageAllocator::activate_child_ordinary(
-                session, backing, page_map, *sequence,
+                session, backing, page_map, *sequence, crate::arena::ArenaId::none(),
             )
         };
         let value = operation(child_ref, &mut engine);
@@ -2076,10 +2077,49 @@ pub(crate) enum ChildHeapTheapError {
     ThreadLocals,
     /// `_mi_theap_alloc` returned null.
     TheapAllocation,
-    /// `_mi_theap_init` failed after the image was allocated; it is retained.
+    /// `_mi_theap_init` failed; an image with a published list edge is retained.
     TheapInitialization(crate::types::TheapDynamicInitError),
     /// A metadata image could not be freed.
     Metadata(FreeError),
+}
+
+/// Transfers an initialized requested-parent image to its stored memory ID,
+/// or returns its exact slice while no intrusive list can name the image.
+///
+/// # Safety
+/// The claimed span contains an initialized `ChildHeapTheapImage`; a successful
+/// initializer stored the claim's exact memory identity in its Theap.
+unsafe fn finish_child_requested_theap_claim(
+    claim: crate::arena::ArenaSliceClaim<'_>,
+    initialized: Result<(), crate::types::TheapDynamicInitError>,
+) -> Result<NonNull<Theap>, ChildHeapTheapError> {
+    let block = NonNull::new(claim.start()).expect("a claimed arena slice has a start");
+    match initialized {
+        Ok(()) => {
+            // The initialized Theap now owns this exact arena span through
+            // its stored source memory identity.
+            core::mem::forget(claim);
+            Ok(block.cast())
+        }
+        Err(error @ (crate::types::TheapDynamicInitError::InvalidInput
+            | crate::types::TheapDynamicInitError::ThreadList(
+                crate::types::ThreadLocalTheapListError::Busy))) => {
+            // Neither failure published a list edge. Return the exact claim
+            // before its image can escape.
+            unsafe { core::ptr::drop_in_place(block.cast::<ChildHeapTheapImage>().as_ptr()) };
+            if claim.release() {
+                Err(ChildHeapTheapError::TheapInitialization(error))
+            } else {
+                Err(ChildHeapTheapError::InvalidTransition)
+            }
+        }
+        Err(error) => {
+            // A list edge may already name this image; retain its arena span
+            // until the child owner is destroyed.
+            core::mem::forget(claim);
+            Err(ChildHeapTheapError::TheapInitialization(error))
+        }
+    }
 }
 
 /// The regular thread-local key a Heap's Theaps use (`heap->theap`).
@@ -2247,6 +2287,19 @@ impl ChildThreadOwner {
         if !unsafe { Theap::is_detached_at(theap) } {
             child.context.with_image(|image| image.identity().record_statistics_theap_unlinked());
         }
+        // SAFETY: the final reference made the initialized Theap exclusive.
+        let memory = unsafe { theap.as_ref() }.memory_id();
+        if memory.arena_memory().is_some() {
+            // SAFETY: all Theap users are gone; destroy its Rust fields before
+            // its source `memid` returns the exact arena slice to this child.
+            unsafe { core::ptr::drop_in_place(theap.as_ptr()) };
+            let released = child.with_child_image(|image| {
+                // SAFETY: the selected slice belongs to this child, remains
+                // published, and no Theap or page still uses the span.
+                unsafe { image.identity().arena_backing().release_slices(memory) }
+            });
+            return if released == Some(true) { Ok(()) } else { Err(ChildHeapTheapError::InvalidTransition) };
+        }
         let mut freed = None;
         child
             .with_metadata_page_engine(binding, |_child, engine| {
@@ -2300,7 +2353,8 @@ impl ChildThreadOwner {
     }
 
     /// `_mi_theap_create(heap, tld)` (`theap.c:307-341`) as a
-    /// [`ChildHeapTheapImage`] from the child metadata.
+    /// [`ChildHeapTheapImage`] from child metadata or the Heap's selected
+    /// parent arena.
     ///
     /// # Safety
     /// As for [`Self::heap_theap`].
@@ -2315,29 +2369,72 @@ impl ChildThreadOwner {
         }
         let tld = self.tld_pointer().ok_or(ChildHeapTheapError::InvalidTransition)?;
         let size = size_of::<ChildHeapTheapImage>();
-        let block = child
-            .with_metadata_page_engine(binding, |_child, engine| engine.allocate_zeroed(size))
-            .map_err(ChildHeapTheapError::PageEngine)?
-            .ok_or(ChildHeapTheapError::TheapAllocation)?;
-        let image = block.cast::<ChildHeapTheapImage>().as_ptr();
-        // SAFETY: a fresh, exclusively owned, zeroed image; the Rust state
-        // fields are written whole before the Theap is published. The TLD
-        // is this thread's and the Heap's lists take their own locks.
-        let initialized = unsafe {
-            core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
-            let theap = &mut (*image).theap;
-            if !theap.set_dynamic_metadata_memid(MemoryId::malloc(block.as_ptr(), size, true)) {
-                Err(crate::types::TheapDynamicInitError::InvalidInput)
-            } else {
-                theap.initialize_dynamic_metadata_on_tld(
-                    &mut *heap.as_ptr(),
-                    &mut *tld.as_ptr(),
-                    crate::types::TheapPageMode::OrdinaryAbandoning,
-                    true,
-                )
+        // SAFETY: the live Heap fixes its requested parent for its lifetime.
+        let requested = unsafe { heap.as_ref() }.exclusive_arena_id()
+            .ok_or(ChildHeapTheapError::InvalidTransition)?;
+        let initialize = |block: NonNull<u8>, memory: MemoryId| {
+            let image = block.cast::<ChildHeapTheapImage>().as_ptr();
+            // SAFETY: a fresh, exclusively owned, zeroed image; the Rust state
+            // fields are written whole before the Theap is published. The TLD
+            // is this thread's and the Heap's lists take their own locks.
+            unsafe {
+                core::ptr::addr_of_mut!((*image).theap).write(Theap::empty());
+                core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
+                let theap = &mut (*image).theap;
+                let provenance = if requested.as_ptr().is_null() {
+                    theap.set_dynamic_metadata_memid(memory)
+                } else {
+                    theap.set_requested_arena_metadata_memid(memory)
+                };
+                if !provenance {
+                    Err(crate::types::TheapDynamicInitError::InvalidInput)
+                } else {
+                    theap.initialize_dynamic_metadata_on_tld(
+                        &mut *heap.as_ptr(),
+                        &mut *tld.as_ptr(),
+                        crate::types::TheapPageMode::OrdinaryAbandoning,
+                        true,
+                    )
+                }
             }
         };
-        initialized.map_err(ChildHeapTheapError::TheapInitialization)?;
+        let block = if requested.as_ptr().is_null() {
+            let block = child
+                .with_metadata_page_engine(binding, |_child, engine| engine.allocate_zeroed(size))
+                .map_err(ChildHeapTheapError::PageEngine)?
+                .ok_or(ChildHeapTheapError::TheapAllocation)?;
+            initialize(block, MemoryId::malloc(block.as_ptr(), size, true))
+                .map_err(ChildHeapTheapError::TheapInitialization)?;
+            block
+        } else {
+            let config = binding.page_map().memory_config()
+                .map_err(|_| ChildHeapTheapError::InvalidTransition)?;
+            // SAFETY: this owner retains the live child image and its arena
+            // backing until the Theap's stored source `memid` returns the
+            // exact claim before child teardown.
+            child.with_child_image(|image| -> Result<NonNull<Theap>, ChildHeapTheapError> {
+                let process = crate::os::ChildVmProcess::new(binding.process(), image)
+                    .map_err(|_| ChildHeapTheapError::InvalidTransition)?;
+                let search = crate::arena::ArenaSearch {
+                    heap_sequence: 0,
+                    heap_count: 1,
+                    thread_sequence: self.sequence.get(),
+                    numa_node: unsafe { tld.as_ref() }.numa_node(),
+                    requested,
+                    allow_pinned: true,
+                };
+                let claim = unsafe { image.identity().arena_backing().try_allocate_requested_arena_object(
+                    process.process(), config, search,
+                    size.next_multiple_of(crate::config::ARENA_MIN_OBJ_SIZE),
+                    crate::config::ARENA_SLICE_SIZE, 0, true,
+                ) }.map_err(|_| ChildHeapTheapError::TheapAllocation)?;
+                let block = NonNull::new(claim.start()).expect("a claimed arena slice has a start");
+                let result = initialize(block, claim.memory_id());
+                // SAFETY: `initialize` wrote the complete image and stored
+                // this claim's memory identity before attempting publication.
+                unsafe { finish_child_requested_theap_claim(claim, result) }
+            }).ok_or(ChildHeapTheapError::InvalidTransition)??.cast()
+        };
         // theap.c:290-292: a non-detached Theap counts in its subprocess.
         child.context.with_image(|image| image.identity().record_statistics_theap_linked());
         Ok(block.cast())
@@ -2424,6 +2521,7 @@ impl ChildThreadOwner {
         let mut engine = unsafe {
             crate::single_thread::ChildOrdinaryPageAllocator::activate_child_ordinary(
                 session, backing, page_map, sequence,
+                unsafe { heap.as_ref() }.exclusive_arena_id().ok_or(ChildMetadataPageEngineError::InvalidTransition)?,
             )
         };
         let value = operation(&mut engine);
@@ -4232,7 +4330,7 @@ unsafe fn detach_child_thread_pages_terminal(
     // complete operation.
     let mut engine = unsafe {
         crate::single_thread::ChildOrdinaryPageAllocator::activate_child_ordinary(
-            session, backing, page_map, sequence,
+            session, backing, page_map, sequence, crate::arena::ArenaId::none(),
         )
     };
     // SAFETY: forwarded quiescence; the child arenas are destroyed next.
@@ -5972,6 +6070,62 @@ mod tests {
 
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
+
+    #[test]
+    fn requested_child_theap_prepublication_errors_return_exact_arena_slice() {
+        let layout = std::alloc::Layout::from_size_align(ARENA_MIN_SIZE, ARENA_ALIGNMENT).unwrap();
+        // SAFETY: the layout is nonzero and page-aligned; the region stays
+        // live until its arena view and registry have gone out of scope.
+        let region = unsafe { std::alloc::alloc_zeroed(layout) };
+        assert!(!region.is_null());
+        {
+            let subprocess = MainSubprocess::test_static_owner();
+            let registry = ArenaRegistry::new(subprocess.as_ptr());
+            // SAFETY: this exclusive zeroed region has the required alignment
+            // and remains live for the registry and every claim below.
+            let managed = unsafe { manage_external_in_place(
+                &registry, region, ARENA_MIN_SIZE, PageSize::new(4096).unwrap(),
+                true, false, true, -1, true, None,
+            ) }.unwrap();
+            // SAFETY: the registry retains the initialized arena and region.
+            let view = unsafe { crate::arena::ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+            let errors = [
+                crate::types::TheapDynamicInitError::InvalidInput,
+                crate::types::TheapDynamicInitError::ThreadList(
+                    crate::types::ThreadLocalTheapListError::Busy),
+            ];
+            let mut first_slice = None;
+            for error in errors {
+                let claim = view.try_claim_suitable_slices(
+                    managed.arena_id(), crate::config::ARENA_MIN_OBJ_SLICES, true, 0,
+                ).expect("the requested parent has a Theap slice");
+                let slice = claim.slice_index();
+                if let Some(first) = first_slice {
+                    assert_eq!(slice, first, "the preceding failure returned its exact slice");
+                } else {
+                    first_slice = Some(slice);
+                }
+                // SAFETY: the live committed claim is large enough for this
+                // image; the rollback helper consumes it before reuse.
+                unsafe { claim.start().cast::<ChildHeapTheapImage>().write(
+                    ChildHeapTheapImage {
+                        theap: Theap::empty(),
+                        page_engine: ChildPageEngineState::Active,
+                    },
+                ) };
+                // SAFETY: the complete image was written into this claim.
+                assert_eq!(
+                    unsafe { finish_child_requested_theap_claim(claim, Err(error)) },
+                    Err(ChildHeapTheapError::TheapInitialization(error)),
+                );
+                // SAFETY: no claim or other mutable bitmap view remains.
+                let free = unsafe { view.slices_free() }.unwrap();
+                assert_eq!(free.is_set_range(slice, crate::config::ARENA_MIN_OBJ_SLICES), Some(true));
+            }
+        }
+        // SAFETY: the arena registry and every view and claim have ended.
+        unsafe { std::alloc::dealloc(region, layout) };
+    }
 
     #[test]
     fn child_page_engine_retry_and_poison_states_keep_teardown_distinct() {

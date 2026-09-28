@@ -128,6 +128,23 @@ pub(crate) unsafe fn child_heap_new(
     binding: ProcessMainBackingBinding,
     keys: HeapKeySource,
 ) -> Result<NonNull<Heap>, HeapNewError> {
+    // SAFETY: forwarded child and current-thread obligations.
+    unsafe { child_heap_new_in_arena(child, member, binding, keys, crate::arena::ArenaId::none()) }
+}
+
+/// The selected-parent form of source `mi_heap_new_in_arena`. A non-null
+/// parent remains owned by this child until its Heap, Theaps, and pages end.
+///
+/// # Safety
+/// As for [`child_heap_new`]; `arena` is null or a live parent arena owned by
+/// this child and retained through every allocation made from the Heap.
+pub(crate) unsafe fn child_heap_new_in_arena(
+    child: &mut ChildMainHeapContextOwner<'_>,
+    member: &mut ChildThreadMember,
+    binding: ProcessMainBackingBinding,
+    keys: HeapKeySource,
+    arena: crate::arena::ArenaId,
+) -> Result<NonNull<Heap>, HeapNewError> {
     let config = binding.page_map().memory_config().map_err(|_| HeapNewError::InvalidChild)?;
     // heap.c:136 `mi_heap_zalloc(heap_main, sizeof(mi_heap_t))` reaches the
     // thread's main-Heap Theap through `_mi_heap_theap(heap_main)`, which
@@ -180,7 +197,7 @@ pub(crate) unsafe fn child_heap_new(
         // and stays pinned in its allocation until `mi_heap_free`.
         let heap = unsafe { &mut *heap.as_ptr() };
         // heap.c:103-114, then the list push at 115-124.
-        heap.initialize_non_main(identity, key, core::ptr::null_mut(), memory);
+        heap.initialize_non_main(identity, key, arena.as_ptr(), memory);
         // SAFETY: the Heap was initialized for this subprocess just above.
         unsafe { identity.heap_list().link_non_main(heap, identity) }
     });
@@ -434,8 +451,8 @@ unsafe fn release_heap(
 /// still belong to the child leave their TLDs; a Theap whose last reference
 /// goes is counted out of `theaps`), `_mi_heap_destroy_pages`, and
 /// `mi_heap_free`. Blocks are not freed one by one: the Theap images and the
-/// Heap's page records and image are live blocks in the child's metadata and
-/// main-Heap pages, which the child's arena destruction releases right after,
+/// Heap's page records and image are live blocks in the child's metadata,
+/// selected arena, and main-Heap pages, which child arena destruction releases right after,
 /// where source frees them with `_mi_meta_free` / `_mi_free_subproc_safe`
 /// (frees with no statistic in the release profile that the arena release
 /// makes unobservable).

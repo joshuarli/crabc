@@ -1323,6 +1323,18 @@ pub(crate) fn native_child_heap_new() -> Option<
         NativeSubprocessError,
     >,
 > {
+    native_child_heap_new_in_arena(crate::arena::ArenaId::none())
+}
+
+/// Source `mi_heap_new_in_arena` on the current child member. A selected
+/// parent must belong to that child; the record lock retains its identity
+/// during Heap publication.
+pub(crate) fn native_child_heap_new_in_arena(arena: crate::arena::ArenaId) -> Option<
+    Result<
+        Result<core::ptr::NonNull<crate::types::Heap>, crate::types::heap_registry::lifecycle::HeapNewError>,
+        NativeSubprocessError,
+    >,
+> {
     // SAFETY: current-thread slot, no other reference live.
     let current = unsafe { current_child_member() }.as_mut()?;
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
@@ -1335,12 +1347,58 @@ pub(crate) fn native_child_heap_new() -> Option<
     // other context operation, in place of source `heaps_lock`.
     Some(unsafe {
         id.with_owner(|owner| match owner.as_mut() {
-            Some(child) => Ok(crate::types::heap_registry::lifecycle::child_heap_new(
-                child, member, binding, keys,
-            )),
+            Some(child) => {
+                let owned = child.identity_pointer().is_some_and(|identity| {
+                    arena.as_ptr().is_null() || unsafe { (*arena.as_ptr()).subprocess == identity }
+                });
+                if !owned {
+                    return Ok(Err(crate::types::heap_registry::lifecycle::HeapNewError::InvalidChild));
+                }
+                Ok(crate::types::heap_registry::lifecycle::child_heap_new_in_arena(
+                    child, member, binding, keys, arena,
+                ))
+            }
             None => Err(NativeSubprocessError::Gone),
         })
     }.and_then(|result| result))
+}
+
+/// Reserve a source arena in the current child subprocess's own arena group.
+/// The child record pins that group through every published arena and its
+/// eventual subprocess teardown.
+pub(crate) fn native_child_reserve_os_memory(
+    size: usize,
+    commit: bool,
+    allow_large: bool,
+    exclusive: bool,
+) -> Option<Result<crate::arena::ArenaId, crate::arena::ReserveOsMemoryFailure>> {
+    use crate::arena::ReserveOsMemoryFailure::Unmanaged;
+    // SAFETY: the current thread alone accesses its membership slot.
+    let current = (unsafe { current_child_member() }).as_mut()?;
+    let result = (|| {
+        let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter().ok_or(Unmanaged)?;
+        let binding = current.binding;
+        let config = binding.page_map().memory_config().map_err(|_| Unmanaged)?;
+        let access = if commit { crate::os::MapAccess::Committed } else { crate::os::MapAccess::Reserved };
+        // SAFETY: the current default Theap belongs to this admitted thread
+        // and no other operation borrows its random image during reservation.
+        let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
+        // SAFETY: the record lock retains the child context and excludes
+        // teardown while the exact child arena backing publishes its owner.
+        unsafe {
+            current.id.with_owner(|owner| {
+                owner.as_mut().and_then(|child| child.with_child_image(|image| {
+                    let process = crate::os::ChildVmProcess::new(binding.process(), image).ok()?;
+                    Some(image.identity().arena_backing().reserve_os_memory_reporting_failure(
+                        process.process(), config, size, access, allow_large, exclusive, Some(&mut random),
+                    ))
+                }).flatten())
+            })
+        }
+        .map_err(|_| Unmanaged)?
+        .ok_or(Unmanaged)?
+    })();
+    Some(result)
 }
 
 /// Production `mi_heap_delete` (or, with `destroy`, `mi_heap_destroy`) on
