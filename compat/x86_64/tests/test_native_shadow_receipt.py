@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -40,13 +41,17 @@ class NativeShadowReceiptTests(unittest.TestCase):
         (self.work / "stress-1-1-1-static-pie.stdout").write_text("ok\n")
         (self.work / "soak-1-static-pie.stdout").write_text("summary rounds=1\n")
         (self.work / "program").write_bytes(b"\x7fELF")
+        (self.work / "provenance.json").write_text('{"backend":"native-shadow"}\n')
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
     def publish(self, *, canonical=True, stress_status=0):
         return receipt.write_receipt(
-            self.root, RUNNER, self.work, {"stress-static-pie": self.work / "program"},
+            self.root, RUNNER, self.work, {
+                "stress-static-pie": self.work / "program",
+                "stress-provenance": self.work / "provenance.json",
+            },
             [
                 ("stress-1-1-1-static-pie", stress_status, [self.work / "stress-1-1-1-static-pie.stdout"]),
                 ("soak-1-static-pie", 0, [self.work / "soak-1-static-pie.stdout"]),
@@ -93,6 +98,41 @@ class NativeShadowReceiptTests(unittest.TestCase):
         log.unlink()
         with self.assertRaisesRegex(receipt.ReceiptError, "is missing"):
             receipt.read_receipt(self.root, RUNNER)
+
+    def test_products_remain_verifiable_after_temporary_work_is_cleaned(self) -> None:
+        path = self.publish()
+        shutil.rmtree(self.work)
+        self.assertEqual((path.parent / "products/stress-static-pie").read_bytes(), b"\x7fELF")
+        self.assertEqual(
+            (path.parent / "products/stress-provenance").read_text(),
+            '{"backend":"native-shadow"}\n',
+        )
+        receipt.read_receipt(self.root, RUNNER)
+
+    def test_a_tampered_or_missing_retained_product_is_rejected(self) -> None:
+        path = self.publish()
+        shutil.rmtree(self.work)
+        product = path.parent / "products/stress-static-pie"
+        product.write_bytes(b"other")
+        with self.assertRaisesRegex(receipt.ReceiptError, "product stress-static-pie does not match its digest"):
+            receipt.read_receipt(self.root, RUNNER)
+        product.unlink()
+        with self.assertRaisesRegex(receipt.ReceiptError, "product stress-static-pie is missing"):
+            receipt.read_receipt(self.root, RUNNER)
+
+    def test_a_symlinked_product_or_unsafe_product_name_is_rejected(self) -> None:
+        path = self.publish()
+        product = path.parent / "products/stress-static-pie"
+        product.unlink()
+        product.symlink_to(self.work / "program")
+        with self.assertRaisesRegex(receipt.ReceiptError, "product stress-static-pie is missing"):
+            receipt.read_receipt(self.root, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "invalid product name"):
+            receipt.write_receipt(
+                self.root, RUNNER, self.work, {"../program": self.work / "program"},
+                [("stress", 0, [self.work / "stress-1-1-1-static-pie.stdout"])],
+                {}, True,
+            )
 
     def test_an_absent_receipt_or_a_rewritten_seal_is_rejected(self) -> None:
         with self.assertRaisesRegex(receipt.ReceiptError, "no receipt"):

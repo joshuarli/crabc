@@ -5,17 +5,19 @@ The runtime-launcher runners that exercise the selected native-mimalloc
 shadow products (`libc-native-mimalloc-shadow-pthread-teardown`,
 `owned-native-allocator-stress`, and any later `owned-native-allocator-*`
 runner) execute only under `scripts/dev-x86_64.sh`, against sysroots and
-candidates they build themselves. A milestone gate in another container can
+candidates they build themselves. A consumer in another container can
 therefore not rerun them; it consumes one receipt per runner instead.
 
 A receipt is a directory `<reports>/native-shadow/<runner>/latest/` holding
-`receipt.json` and a `logs/` copy of every raw log it cites:
+`receipt.json`, a `logs/` copy of every raw log, and a `products/` copy of
+every program and provenance file it cites:
 
 * `source`: the checkout seal: the `HEAD` revision plus the SHA-256 of the
   working tree's difference from it (tracked changes and untracked,
   non-ignored files). A receipt is valid only for the exact tree it names.
-* `products`: SHA-256 and size of every executed program and of the product
-  provenance files that name its inputs.
+* `products`: SHA-256 and size of every retained executed program and product
+  provenance file that names its inputs. Reading works after the runner's
+  temporary build directory is removed.
 * `cases`: one record per executed case with its exit status and the logs it
   produced, in execution order.
 * `parameters` and `canonical`: the runner's workload knobs and whether all
@@ -23,10 +25,9 @@ A receipt is a directory `<reports>/native-shadow/<runner>/latest/` holding
   knobs is recorded honestly but cannot satisfy a gate.
 
 `write` is the producer CLI the runners call after their last case.
-`read_receipt` is the one reader both allocator milestone gates import (M5
-through `compat/allocator/x86_64_m5_gate.py`, M8 through lane m4's gate); it
-fails closed on any stale seal, digest mismatch, missing log, non-canonical
-run, or failed case.
+`read_receipt` validates the source seal, retained logs and products,
+canonical parameters, and case exits for its consumers. It fails closed on
+missing or changed evidence.
 """
 
 from __future__ import annotations
@@ -113,7 +114,7 @@ def write_receipt(
     parameters: Mapping[str, str],
     canonical: bool,
 ) -> Path:
-    """Copy the cited logs and atomically publish the runner's latest receipt."""
+    """Copy cited logs and products before publishing the runner's latest receipt."""
 
     destination = receipt_directory(root, runner)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -134,11 +135,23 @@ def write_receipt(
                 shutil.copyfile(log, target)
                 log_records[relative] = _file_record(target)
             case_records.append({"id": case_id, "logs": log_records, "status": int(status)})
+        product_records = {}
+        products_root = staged / "products"
+        for name, path in sorted(products.items()):
+            if not CASE_RE.match(name):
+                raise ReceiptError(f"invalid product name {name!r}")
+            original = _file_record(path)
+            products_root.mkdir(exist_ok=True)
+            retained = products_root / name
+            shutil.copyfile(path, retained)
+            if _file_record(retained) != original:
+                raise ReceiptError(f"product {name} changed while publishing")
+            product_records[name] = original
         receipt = {
             "canonical": bool(canonical),
             "cases": case_records,
             "parameters": dict(sorted(parameters.items())),
-            "products": {name: _file_record(path) for name, path in sorted(products.items())},
+            "products": product_records,
             "runner": runner,
             "schema": SCHEMA,
             "source": source_seal(root),
@@ -221,11 +234,18 @@ def read_receipt(
         raise ReceiptError(f"{runner}: receipt records a non-canonical development run: {receipt['parameters']}")
     products = receipt["products"]
     if not isinstance(products, dict) or not products or not all(
-        isinstance(record, dict) and set(record) == {"sha256", "size"}
-        and SHA_RE.match(str(record["sha256"])) and isinstance(record["size"], int)
-        for record in products.values()
+        CASE_RE.match(name) and isinstance(record, dict) and set(record) == {"sha256", "size"}
+        and SHA_RE.match(str(record["sha256"]))
+        and type(record["size"]) is int and record["size"] >= 0
+        for name, record in products.items()
     ):
         raise ReceiptError(f"{runner}: receipt lacks product digests")
+    for name, record in products.items():
+        product = directory / "products" / name
+        if not product.is_file() or product.is_symlink():
+            raise ReceiptError(f"{runner}: product {name} is missing")
+        if _file_record(product) != record:
+            raise ReceiptError(f"{runner}: product {name} does not match its digest")
     cases = receipt["cases"]
     if not isinstance(cases, list) or not cases:
         raise ReceiptError(f"{runner}: receipt records no cases")
