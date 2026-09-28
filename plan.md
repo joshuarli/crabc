@@ -73,7 +73,10 @@ are not transferable passes for a different revision.
   retains the OS list ownership until terminal release. A second split-owner
   OS medium survivor matches 23 more C/Rust observations when final unmap
   fails, including exact retained range, PageMap removal, warning and VM
-  counters; the clean M5 generic-exit gate passes all nine evidence rows.
+  counters. An abandoned OS regular medium page survives interleaved reclaim,
+  local reuse, remote publication, collection, and final release across two
+  survivors; 23 shared observations and four direct pinned-C list states pass.
+  The clean M5 generic-exit gate passes all ten evidence rows.
   A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
@@ -119,7 +122,10 @@ are not transferable passes for a different revision.
   worker owners (low-load, not qualifying). A source-matched 32 KiB medium
   queue-head fast path cuts its development malloc codegen from 779 to 157
   instructions and 12 to three calls; its C/Rust trace matches 38 events,
-  including local-free reuse and page spill. Contended timing is not
+  including local-free reuse and page spill. The 8 KiB regular small
+  queue-head path falls from 809 to 161 instructions and 13 to three calls;
+  its 23-event C/Rust trace covers reuse, page spill, and `calloc` zeroing.
+  Contended timing is not
   qualifying. Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
