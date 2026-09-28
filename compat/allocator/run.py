@@ -12838,6 +12838,36 @@ M2_X86_64_PAGE_MAP_PROCESS_RECEIVERS = {
     },
 }
 
+M2_X86_64_THP_PROCESS_RECEIVERS = {
+    "process-thp-madvise-success-c-rust-differential": {
+        "artifact": "m2-thp-madvise-success",
+        "target": "compat/allocator/m2_thp_madvise_success_x86_64.py",
+        "fields": {"selected_allow_thp_raw", "selected_allow_large_os_pages_raw",
+            "config_has_transparent_huge_pages", "process_ready", "thp_prctl_count",
+            "mapping_owned", "mapping_length", "advice_count", "advice_address_is_mapping",
+            "advice_length", "advice_kind", "advice_succeeded", "vmflags_hg",
+            "mmap_calls_delta", "reserved_live_delta", "committed_live_delta",
+            "release_count", "release_exact_range", "release_result",
+            "reserved_after_release_delta", "committed_after_release_delta"},
+        "c_extra": {"advice_result"},
+        "scope": "pinned-c-rust-process-owned-successful-thp-advice-and-exact-release",
+    },
+    "process-thp-madvise-failure-c-rust-differential": {
+        "artifact": "m2-thp-madvise-failure",
+        "target": "compat/allocator/m2_thp_madvise_failure_x86_64.py",
+        "fields": {"selected_allow_thp_raw", "selected_allow_large_os_pages_raw",
+            "config_has_transparent_huge_pages", "process_ready", "thp_prctl_count",
+            "mapping_owned", "mapping_length", "advice_count", "advice_address_is_mapping",
+            "advice_length", "advice_kind", "advice_result", "advice_errno",
+            "advice_succeeded", "vmflags_hg", "mapping_survived", "mmap_calls_delta",
+            "reserved_live_delta", "committed_live_delta", "release_count",
+            "release_exact_range", "release_result", "reserved_after_release_delta",
+            "committed_after_release_delta"},
+        "c_extra": set(),
+        "scope": "pinned-c-rust-process-owned-failed-thp-advice-and-exact-release",
+    },
+}
+
 
 def _m2_x86_64_page_map_first_map_fallback_producer() -> Any:
     """Load the pinned C/Rust PageMap first-map fallback producer."""
@@ -13386,6 +13416,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-legacy-os-page-trim-receiver",
                     "c-rust-process-os-page-trim-receiver",
                     "c-rust-process-os-page-block-commit-receiver",
+                    "c-rust-process-thp-madvise-differential",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
@@ -13555,6 +13586,15 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or not (ROOT / reader).is_file()
                 ):
                     raise HarnessError("native x86 M2 process OS-page block-commit receiver is absent")
+            elif raw_check.get("kind") == "c-rust-process-thp-madvise-differential":
+                receiver = M2_X86_64_THP_PROCESS_RECEIVERS.get(raw_check["id"])
+                if (
+                    component_id != "vm-primitives"
+                    or receiver is None
+                    or raw_check.get("target") != receiver["target"]
+                    or not (ROOT / receiver["target"]).is_file()
+                ):
+                    raise HarnessError("native x86 M2 process THP advice receiver is absent")
             elif raw_check.get("kind") in {
                 "c-rust-page-map-fallback-trim-fault-differential",
                 "c-rust-page-map-lazy-map-rollback-differential",
@@ -13846,6 +13886,19 @@ def _run_m2_x86_64_runtime_thp_configuration_evidence() -> dict[str, Any]:
     return producer.run_runtime_first_arena_policy_evidence(
         producer.RUNTIME_FIRST_ARENA_REPORT
     )
+
+
+def _run_m2_x86_64_thp_process_evidence(*, offline: bool) -> dict[str, dict[str, Any]]:
+    """Execute the source-built process-owned THP advice receivers."""
+
+    results: dict[str, dict[str, Any]] = {}
+    for check_id, receiver in M2_X86_64_THP_PROCESS_RECEIVERS.items():
+        command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
+        execution = command_record(command, cwd=ROOT, timeout_seconds=1800)
+        require_success(execution, "process-owned THP advice C/Rust receiver")
+        evidence = read_json(ARTIFACT_ROOT / "x86_64" / receiver["artifact"] / "evidence.json")
+        results[check_id] = {**evidence, "command": command}
+    return results
 
 
 def _run_m2_x86_64_initialization_evidence(*, offline: bool) -> dict[str, Any]:
@@ -14210,16 +14263,14 @@ def _m2_x86_64_vm_aligned_hint_profile_c_commands_are_bound(
 
 
 def _m2_x86_64_vm_check_records(
-    summary: Mapping[str, Any], evidence: object, runtime_thp_evidence: object | None = None
+    summary: Mapping[str, Any], evidence: object, runtime_thp_evidence: object | None = None,
+    thp_process_evidence: object | None = None,
 ) -> list[dict[str, Any]]:
-    """Turn the four real native C/Rust VM boundaries into their receipts.
+    """Bind source-built VM differentials and direct owner receivers to their receipts.
 
-    The remaining VM receipts are emitted by the aggregate's exact source
-    test batch. This validator binds the lifecycle, source-profile, and
-    named aligned-overmap ownership boundary, and retained runtime THP
-    configuration admission to the immutable fragment, all pinned-C branch
-    anchors, and the component's explicit open frontier so a trace count alone
-    can never stand in for VM qualification.
+    The remaining VM records come from the exact source test batch. Each
+    selected boundary retains its source anchor, complete relation shape,
+    and process ownership evidence while broader VM routes stay partial.
     """
 
     component = next(item for item in summary["components"] if item["id"] == "vm-primitives")
@@ -14582,6 +14633,53 @@ def _m2_x86_64_vm_check_records(
         "passed_test_count": 1,
         "target": block_commit_check["target"],
     })
+    if thp_process_evidence is not None:
+        if not isinstance(thp_process_evidence, Mapping) or set(thp_process_evidence) != set(
+            M2_X86_64_THP_PROCESS_RECEIVERS
+        ):
+            raise HarnessError("native x86 M2 process THP advice receipt inventory is invalid")
+        for check_id, receiver in M2_X86_64_THP_PROCESS_RECEIVERS.items():
+            check = next(check for check in component["checks"] if check["id"] == check_id)
+            observed = thp_process_evidence[check_id]
+            expected_command = ["python3", receiver["target"]]
+            c_trace = observed.get("c") if isinstance(observed, Mapping) else None
+            rust_trace = observed.get("rust") if isinstance(observed, Mapping) else None
+            command = observed.get("command") if isinstance(observed, Mapping) else None
+            if (
+                check.get("kind") != "c-rust-process-thp-madvise-differential"
+                or check.get("target") != receiver["target"]
+                or check.get("expected_passed_test_count") != 1
+                or not isinstance(observed, Mapping)
+                or set(observed) != {"c", "c_commands", "command", "mismatches", "rust",
+                    "rust_commands", "scope", "status"}
+                or observed.get("status") != "matched"
+                or observed.get("mismatches") != []
+                or command not in (expected_command, expected_command + ["--offline"])
+                or not isinstance(c_trace, Mapping)
+                or set(c_trace) != receiver["fields"] | receiver["c_extra"]
+                or not isinstance(rust_trace, Mapping)
+                or set(rust_trace) != receiver["fields"]
+                or any(type(value) is not int for value in (*c_trace.values(), *rust_trace.values()))
+                or any(c_trace[field] != rust_trace[field] for field in receiver["fields"])
+                or any(c_trace[field] != 0 for field in receiver["c_extra"])
+                or not isinstance(observed.get("scope"), str)
+                or not observed["scope"]
+                or any(
+                    not isinstance(observed.get(key), Mapping)
+                    or observed[key] != {"build_status": 0, "run_status": 0, "stderr": ""}
+                    for key in ("c_commands", "rust_commands")
+                )
+            ):
+                raise HarnessError("native x86 M2 process THP advice receipt is invalid")
+            records.append({
+                "comparison_status": "matched",
+                "component": "vm-primitives",
+                "command": list(command),
+                "evidence_scope": receiver["scope"],
+                "id": check_id,
+                "passed_test_count": 1,
+                "target": check["target"],
+            })
     if runtime_thp_evidence is None:
         return records
     runtime_thp_producer = _m2_x86_64_runtime_thp_configuration_producer()
@@ -15036,6 +15134,7 @@ def m2_x86_64_memory_substrate_report(
     metadata_evidence: Mapping[str, Any] | None = None,
     metadata_ownership_evidence: Mapping[str, Any] | None = None,
     runtime_thp_evidence: Mapping[str, Any] | None = None,
+    thp_process_evidence: Mapping[str, Any] | None = None,
     initialization_evidence: Mapping[str, Any] | None = None,
     fault_evidence: Mapping[str, Any] | None = None,
     initialization_teardown_evidence: Mapping[str, Any] | None = None,
@@ -15053,7 +15152,7 @@ def m2_x86_64_memory_substrate_report(
         summary, metadata_evidence, metadata_ownership_evidence or {}
     )
     expected_vm_records = _m2_x86_64_vm_check_records(
-        summary, vm_evidence, runtime_thp_evidence
+        summary, vm_evidence, runtime_thp_evidence, thp_process_evidence
     )
     expected_initialization_records = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence, initialization_teardown_evidence,
@@ -15329,6 +15428,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         offline=offline, test_program=test_program, arena_owned_check=arena_owned_check
     )
     runtime_thp_evidence = _run_m2_x86_64_runtime_thp_configuration_evidence()
+    thp_process_evidence = _run_m2_x86_64_thp_process_evidence(offline=offline)
     initialization_evidence = _run_m2_x86_64_initialization_evidence(offline=offline)
     initialization_teardown_evidence = _run_m2_x86_64_initialization_teardown_evidence(
         offline=offline, test_program=test_program
@@ -15340,7 +15440,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         offline=offline, test_program=test_program, vm_evidence=vm_evidence
     )
     vm_checks = _m2_x86_64_vm_check_records(
-        summary, vm_evidence, runtime_thp_evidence
+        summary, vm_evidence, runtime_thp_evidence, thp_process_evidence
     )
     arena_owned_checks = _m2_x86_64_process_arena_collect_check_records(summary, vm_evidence)
     _, arena_lifecycle_check = _m2_x86_64_check_by_id(
@@ -15483,6 +15583,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         metadata_evidence=metadata_evidence,
         metadata_ownership_evidence=metadata_ownership_evidence,
         runtime_thp_evidence=runtime_thp_evidence,
+        thp_process_evidence=thp_process_evidence,
         initialization_evidence=initialization_evidence,
         fault_evidence=fault_evidence,
         initialization_teardown_evidence=initialization_teardown_evidence,

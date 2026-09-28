@@ -129,7 +129,9 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "thp-direct-policy-outcome-matrix",
-          "runtime-source-environment-thp-ready-configuration-admission"
+          "runtime-source-environment-thp-ready-configuration-admission",
+          "process-thp-madvise-success-c-rust-differential",
+          "process-thp-madvise-failure-c-rust-differential"
         ]
       },
       {
@@ -225,7 +227,9 @@
           "normal-os-offset-full-provenance-and-release-retry",
           "aligned-overmap-cleanup-c-rust-boundary-matrix",
           "legacy-os-page-suffix-trim-and-raw-release",
-          "process-os-page-block-commit-rollback-c-rust-differential"
+          "process-os-page-block-commit-rollback-c-rust-differential",
+          "process-thp-madvise-success-c-rust-differential",
+          "process-thp-madvise-failure-c-rust-differential"
         ]
       },
       {
@@ -247,7 +251,9 @@
           "aligned-map-complete-trim-sequence",
           "aligned-overmap-cleanup-c-rust-boundary-matrix",
           "legacy-os-page-suffix-trim-and-raw-release",
-          "aligned-map-process-os-page-trim-leak"
+          "aligned-map-process-os-page-trim-leak",
+          "process-thp-madvise-success-c-rust-differential",
+          "process-thp-madvise-failure-c-rust-differential"
         ]
       },
       {
@@ -490,7 +496,7 @@
       {
         "id": "unix-configuration-and-thp-process-policy",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch. Child-isolated C and private Rust captures cover one finite direct matrix: allow_thp=1 bypasses both calls; allow_thp=0 selects GET(0,0,0,0) as EPERM, EINVAL, raw nonzero 1, raw nonzero 3, or zero followed by SET(1,0,0,0) success, EPERM, or EINVAL. C records concrete tuple/count, forced disabled configuration only for allow_thp=0, and continuation through its void initializer; it does not compare the ambient allow-enabled detection result. Rust separately records Allowed while preserving synthetic true and false configurations, DisabledQueryFailed(PERM/INVAL), DisabledAlready(1/3), DisabledSet, and DisabledSetFailed(PERM/INVAL). The C/Rust direct comparison does not exercise a process owner. A separate child-isolated explicit Rust ProcessMain traversal covers AllowEnabled, QueryNonzeroOne, and SetPerm through the existing owner helper, preserving exact call shape, READY configuration, and one matching retained VM/process-backing pair. Separately, two clean allow_thp=0/2 source images run normal RuntimeProcessStorage initialization and compare their retained raw option plus READY configuration bit after the first ticket-zero allocation; mode two records the current equal C/Rust observation without a host THP-mode assumption. Raw nonzero 3 is a return-class representative, not a Linux kernel claim.",
+        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch. Child-isolated C and private Rust captures cover one finite direct matrix: allow_thp=1 bypasses both calls; allow_thp=0 selects GET(0,0,0,0) as EPERM, EINVAL, raw nonzero 1, raw nonzero 3, or zero followed by SET(1,0,0,0) success, EPERM, or EINVAL. C records concrete tuple/count, forced disabled configuration only for allow_thp=0, and continuation through its void initializer; it does not compare the ambient allow-enabled detection result. Rust separately records Allowed while preserving synthetic true and false configurations, DisabledQueryFailed(PERM/INVAL), DisabledAlready(1/3), DisabledSet, and DisabledSetFailed(PERM/INVAL). The C/Rust direct comparison does not exercise a process owner. Separate process-owned direct 2-MiB C/Rust receivers compare successful MADV_HUGEPAGE advice with kernel VmFlags hg and failed EIO advice with a surviving mapping, exact live statistics, and terminal release. A separate child-isolated explicit Rust ProcessMain traversal covers AllowEnabled, QueryNonzeroOne, and SetPerm through the existing owner helper, preserving exact call shape, READY configuration, and one matching retained VM/process-backing pair. Separately, two clean allow_thp=0/2 source images run normal RuntimeProcessStorage initialization and compare their retained raw option plus READY configuration bit after the first ticket-zero allocation; mode two records the current equal C/Rust observation without a host THP-mode assumption. Raw nonzero 3 is a return-class representative, not a Linux kernel claim.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -505,10 +511,12 @@
           "thp-direct-policy-outcome-matrix",
           "process-main-thp-policy-owner-traversal",
           "runtime-source-environment-thp-ready-configuration-admission",
-          "process-policy-ticket-zero-live-random"
+          "process-policy-ticket-zero-live-random",
+          "process-thp-madvise-success-c-rust-differential",
+          "process-thp-madvise-failure-c-rust-differential"
         ],
         "missing_conditions": [
-          "Arbitrary source-option syntax or mutation, C/Rust detector implementation parity beyond the two retained clean-image observations, every other production policy caller, real hardware THP/huge-page mapping and arena behavior, and full VM/M2 qualification remain unqualified; this is only child-isolated finite direct branch evidence. The exact pinned THP branch emits no diagnostics."
+          "Arbitrary source-option syntax or mutation, C/Rust detector implementation parity beyond the two retained clean-image observations, every other production policy caller, physical huge-page residency, unselected THP/huge-page mapping callers, and arena behavior, and full VM/M2 qualification remain unqualified; this is only child-isolated finite direct branch evidence. The exact pinned THP branch emits no diagnostics."
         ]
       },
       {
@@ -526,7 +534,9 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "normal-os-offset-full-provenance-and-release-retry",
-          "aligned-overmap-cleanup-c-rust-boundary-matrix"
+          "aligned-overmap-cleanup-c-rust-boundary-matrix",
+          "process-thp-madvise-success-c-rust-differential",
+          "process-thp-madvise-failure-c-rust-differential"
         ],
         "missing_conditions": [
           "The selected normal-offset _mi_os_free_ex failure/retry, finite aligned-overmap source rows, and normal aligned allocation prefix/suffix trim-failure receivers compare full-MemoryId base/size, current/total counter timing, escaped ranges, source warning delivery, and raw-only release cleanup. Warning/error reporting beyond those receivers, huge MemoryId dispatch, unselected allocation transitions, and every other counter/caller route remain unqualified."
@@ -552,7 +562,9 @@
           "aligned-map-os-page-claim-trim-leak",
           "aligned-map-process-os-page-trim-leak",
           "aligned-map-metadata-trim-leak",
-          "aligned-map-process-arena-trim-leak"
+          "aligned-map-process-arena-trim-leak",
+          "process-thp-madvise-success-c-rust-differential",
+          "process-thp-madvise-failure-c-rust-differential"
         ],
         "missing_conditions": [
           "The finite aligned-overmap equality differential covers its named direct/overmap cleanup paths and one normal aligned allocation receiver under prefix/suffix trim and final-free failures; other Rust receivers follow the leak-and-continue rule under unit tests. Pinned-C differentials of the other receiving allocator callers, broader callback/counter/error routes, source large-page/option paths, and runtime policy remain unqualified."
@@ -686,10 +698,12 @@
           "native-vm-fixed-lifecycle-differential",
           "normal-release-large-page-retry-suppression-and-ordinary-fallback",
           "large-only-one-gib-failure-no-regular-owner",
-          "aligned-hint-source-profile-and-direct-caller-matrix"
+          "aligned-hint-source-profile-and-direct-caller-matrix",
+          "process-thp-madvise-success-c-rust-differential",
+          "process-thp-madvise-failure-c-rust-differential"
         ],
         "missing_conditions": [
-          "The bounded first-arena record compares one source high-hint MAP_HUGETLB failure, null-hint retry, regular hinted fallback, and ignored MADV_HUGEPAGE error. Separate child-isolated direct `_mi_prim_alloc` and Rust `Mapping::map_unix_policy` records cover only normal-release failed-large state: the first failed large attempt stores eight, allow_large=false, ineligible geometry, and disabled allow_large_os_pages do not consume it, eight eligible regular fallback mappings are explicitly released, the ninth retries and restores eight, and one real competing decrement makes the ignored source CAS fail. The C direct child has no initialized Theap, so its first selected huge attempt is null-hinted and its reopened retry is high-hint/null-hint; the Rust direct policy supplies its own random image. The release direct-caller record forces its hinted raw map to fail before the unchanged source null retry for an admitted wrapped request and proves no mapping owner is returned. A distinct child-isolated direct C `_mi_os_alloc_huge_os_pages` record and private Rust `HugeOsAllocation::allocate_for_process` record cover only the failure-only first-page `large_only/MAP_HUGE_1GB` route: first claimed one-GiB raw map ENOMEM then same-hint two-MiB ENOMEM, followed by a new claimed hint with only the sticky two-MiB ENOMEM map; all raw maps are huge, terminal outcomes publish neither owner nor statistics, and C observes no MADV_HUGEPAGE call. The first outcome also compares actual C and Rust source-warning order: the one-GiB fallback warning precedes the upper huge-allocation failure warning; the Rust process output route retains the same absent owner and unchanged counters. This does not qualify hardware large-page success, multiple-page/partial-prefix or timeout outcomes, mbind/NUMA placement, other ambient option/warning/error diagnostics, THP success, or allocator/runtime callers beyond those named direct receivers."
+          "The bounded first-arena record compares one source high-hint MAP_HUGETLB failure, null-hint retry, regular hinted fallback, and ignored MADV_HUGEPAGE error. Separate child-isolated direct `_mi_prim_alloc` and Rust `Mapping::map_unix_policy` records cover only normal-release failed-large state: the first failed large attempt stores eight, allow_large=false, ineligible geometry, and disabled allow_large_os_pages do not consume it, eight eligible regular fallback mappings are explicitly released, the ninth retries and restores eight, and one real competing decrement makes the ignored source CAS fail. The C direct child has no initialized Theap, so its first selected huge attempt is null-hinted and its reopened retry is high-hint/null-hint; the Rust direct policy supplies its own random image. The release direct-caller record forces its hinted raw map to fail before the unchanged source null retry for an admitted wrapped request and proves no mapping owner is returned. A distinct child-isolated direct C `_mi_os_alloc_huge_os_pages` record and private Rust `HugeOsAllocation::allocate_for_process` record cover only the failure-only first-page `large_only/MAP_HUGE_1GB` route: first claimed one-GiB raw map ENOMEM then same-hint two-MiB ENOMEM, followed by a new claimed hint with only the sticky two-MiB ENOMEM map; all raw maps are huge, terminal outcomes publish neither owner nor statistics, and C observes no MADV_HUGEPAGE call. The first outcome also compares actual C and Rust source-warning order: the one-GiB fallback warning precedes the upper huge-allocation failure warning; the Rust process output route retains the same absent owner and unchanged counters. Two additional process-owned 2-MiB direct receivers compare successful MADV_HUGEPAGE with kernel VmFlags hg and failed EIO advice with the retained mapping, live counters, and exact terminal release. This does not qualify hardware large-page success or physical huge-page residency, multiple-page/partial-prefix or timeout outcomes, mbind/NUMA placement, other ambient option/warning/error diagnostics, unselected THP callers, or allocator/runtime callers beyond those named direct receivers."
         ]
       },
       {
@@ -883,6 +897,18 @@
         "expected_passed_test_count": 1
       },
       {
+        "id": "process-thp-madvise-success-c-rust-differential",
+        "kind": "c-rust-process-thp-madvise-differential",
+        "target": "compat/allocator/m2_thp_madvise_success_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "process-thp-madvise-failure-c-rust-differential",
+        "kind": "c-rust-process-thp-madvise-differential",
+        "target": "compat/allocator/m2_thp_madvise_failure_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
         "id": "aligned-hint-source-profile-and-direct-caller-matrix",
         "kind": "c-rust-vm-primitives-source-profile-matrix",
         "target": "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
@@ -1054,7 +1080,7 @@
     "remaining_conditions": [
       "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, unmap, and reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, one child-isolated 128-MiB first-arena large-page fallback, and the arena-reservation lifecycle differential's process-owned arena callers (a failed claim commit that reserves a fresh arena and recommits in the first, immediate-purge decommit failure/success/mixed commitment, reset EAGAIN retry/warning-only error/not-fully-committed skip/EINVAL fallback, a failed delayed-purge decommit that consumes its schedule without retry, and a fresh arena whose metadata commit and cleanup `_mi_os_free_ex` unmap both fail, which leaks the mapping while later reservations proceed), the fresh OS page caller beyond the separately qualified on-demand metadata/first-prefix, external callback-refusal, direct failed-metadata-commit successful/failed-cleanup, failed block-commit with failed rollback unmap, successful publication/terminal-free, selected failed lazy PageMap registration after both commits, and selected published terminal-unmap-failure subsets (unselected metadata/PageMap publication failures and other terminal-release callers, each requiring exact accounting and ownership evidence), and the arena-destruction differential's failed parent and huge-kind releases in `_mi_arenas_unsafe_destroy_all`, including pinned-C failure ownership and retry evidence for every source branch. Protect/unprotect have no caller in the selected release profile (only MI_SECURE>=5 guard pages and MI_GUARDED blocks call them); those callers belong to the M7 secure and guarded profiles.",
       "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, and direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, now an equality C/Rust differential of the source `mi_os_prim_free` leak-and-continue rule (fault plan: both sides force a direct candidate, prefix, and suffix release, C through MAP_FIXED_NOREPLACE targets and Rust through its full-trim test geometry, and fail the chosen release ordinal 1, 2, or 3), plus a normal aligned allocation receiver under failed prefix/suffix trim and final free with MemoryId, escaped range, warning order/timing, counters, and raw-only cleanup. The legacy processless OS-page claim now has one source-differentiated failed-suffix and terminal raw-retry receiver with exact mapping, MemoryId, statistics, and warning timing. Other process OS-page cases, metadata backing, and explicit and policy-first arena reservations still need pinned-C caller differentials under trim failure, as do broader callback/counter paths.",
-      "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success behavior, and their native differential evidence.",
+      "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl and production-caller behavior beyond the selected direct process-owned MADV_HUGEPAGE success and EIO receivers, MAP_HUGETLB success, physical huge-page residency, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
       "Complete the unconditional subprocess statistics-event owner beyond its private selected VM fields (`reserved`, `committed`, `reset`, `purged`, `mmap_calls`, `commit_calls`, `reset_calls`, and `purge_calls`), `arena_count` fresh-high-water and `arena_purges` eligible-expiry counters, and their filtered source-order aggregation. Non-main subprocess creation/destruction, merge/reset at its source teardown call site, the full `mi_stats_t` layout/header, heap/Theap aggregation and reset, public statistics, formatting/callback APIs, other source fields, and the allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, main-subprocess PageMap reservation/commitment accounting (top-level map and commits, lazy submaps, and release, whose startup reserved/committed current/total/peak and mmap/commit call counts match pinned C after `mi_process_init`, a first allocation, and its free in the `page-map-startup-statistics-c-rust-differential` check), one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers remain incomplete."
     ]

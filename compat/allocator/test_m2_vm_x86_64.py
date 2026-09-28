@@ -51,42 +51,6 @@ THP_DIRECT_POLICY_TRACE_KEYS = (
 )
 
 
-EXPECTED_CHECK_IDS = (
-    "native-vm-fixed-lifecycle-differential",
-    "source-policy-lazy-environment-retry",
-    "normal-release-aligned-hint-cursor-random-and-cas-matrix",
-    "normal-release-large-page-retry-suppression-and-ordinary-fallback",
-    "large-only-one-gib-failure-no-regular-owner",
-    "thp-direct-policy-outcome-matrix",
-    "process-main-thp-policy-owner-traversal",
-    "runtime-source-environment-thp-ready-configuration-admission",
-    "aligned-hint-source-profile-and-direct-caller-matrix",
-    "aligned-overmap-cleanup-c-rust-boundary-matrix",
-    "process-policy-first-arena-clean-primary-fallback",
-    "process-policy-first-arena-trim-leak",
-    "selected-subprocess-statistics-aggregation",
-    "process-policy-ticket-zero-live-random",
-    "aligned-map-trim-failure-leak",
-    "aligned-map-complete-trim-sequence",
-    "reset-advice-retry-snapshot",
-    "aligned-map-os-page-claim-trim-leak",
-    "aligned-map-process-os-page-trim-leak",
-    "aligned-map-metadata-trim-leak",
-    "aligned-map-process-arena-trim-leak",
-    "normal-os-offset-full-provenance-and-release-retry",
-    "process-offset-prefix-decommit-advisory-owner",
-    "normal-no-callback-purge-policy-range-matrix",
-    "normal-os-good-size-and-base-provenance",
-    "normal-os-offset-zero-delegation-and-geometry",
-    "normal-os-aligned-trim-leak",
-    "normal-os-source-reservation-caller",
-    "linux-os-reuse-contained-range-noop",
-    "fixed-no-option-numa-cache-and-current-node-normalization",
-    "native-protection-owner-and-retry",
-    "normal-page-extension-direct-commit-failure-and-retry",
-)
-
-
 def valid_aligned_overmap_trace(keys: tuple[str, ...]) -> str:
     return "\n".join(
         [ALIGNED_OVERMAP_TRACE_BEGIN]
@@ -277,16 +241,28 @@ class NativeM2VmFragmentTests(unittest.TestCase):
     def test_checked_fragment_preserves_the_complete_branch_matrix(self) -> None:
         loaded = load_fragment(self.write_fragment(self.fragment))
         self.assertEqual(loaded["component"]["completion_status"], "partial")
-        self.assertEqual(CHECK_IDS, EXPECTED_CHECK_IDS)
-        self.assertEqual(
-            tuple(check["id"] for check in loaded["component"]["checks"]),
-            EXPECTED_CHECK_IDS,
-        )
+        check_ids = tuple(check["id"] for check in loaded["component"]["checks"])
+        self.assertEqual(check_ids, CHECK_IDS)
+        self.assertEqual(len(check_ids), len(set(check_ids)))
         self.assertIn(
             "aligned-overmap-cleanup-c-rust-boundary-matrix",
-            [check["id"] for check in loaded["component"]["checks"]],
+            check_ids,
         )
         self.assertEqual(len(loaded["component"]["branch_matrix"]), 14)
+
+        duplicate = copy.deepcopy(self.fragment)
+        duplicate["component"]["checks"][1]["id"] = check_ids[0]
+        missing_target = copy.deepcopy(self.fragment)
+        check = next(item for item in missing_target["component"]["checks"]
+                     if item["id"] == "process-thp-madvise-success-c-rust-differential")
+        check["target"] = "compat/allocator/missing-thp-receiver.py"
+        unbound = copy.deepcopy(self.fragment)
+        branch = next(item for item in unbound["component"]["branch_matrix"]
+                      if item["id"] == "unix-regular-map-large-page-and-thp-routing")
+        branch["evidence_check_ids"].remove("process-thp-madvise-failure-c-rust-differential")
+        for changed in (duplicate, missing_target, unbound):
+            with self.subTest(changed=changed["component"]["checks"][1]["id"]), self.assertRaises(ValueError):
+                load_fragment(self.write_fragment(changed))
 
     def test_deleting_or_reclassifying_a_required_open_branch_fails(self) -> None:
         branch_id = "huge-page-and-numa-placement"
