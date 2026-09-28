@@ -116,7 +116,7 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
     )
 }
 
-/// Allocates one small direct or regular medium queue-head block from
+/// Allocates one small direct or regular queue-head block from
 /// `theap`'s own pages, or returns `None` having changed nothing.
 ///
 /// `alignment` is `None` for the ordinary entry (`_mi_theap_malloc_zero`)
@@ -127,10 +127,12 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
 /// otherwise, for an ordinary or naturally aligned small request,
 /// `_mi_malloc_generic`'s counter step and its queue-head
 /// `mi_page_free_quick_collect`, which clears `retire_expire` before the
-/// pop. A medium ordinary request reaches that queue-head step through
-/// `mi_malloc_generic_fallback` after its administration check. The fast
-/// branch is equivalent while the counter remains below its threshold and
-/// the pop cannot make the page full.
+/// pop. A regular small request above the direct-cache range reaches the
+/// same queue-head step from `_mi_malloc_generic`. A medium ordinary request
+/// reaches it through `mi_malloc_generic_fallback` after its administration
+/// check. Both fast branches require the counter below its threshold; the
+/// medium branch also declines a pop that would move the page to its full
+/// queue.
 ///
 /// # Safety
 ///
@@ -146,9 +148,10 @@ pub(crate) unsafe fn allocate(
     alignment: Option<usize>,
     zero: bool,
 ) -> Option<NonNull<u8>> {
+    let regular_small = size > SMALL_SIZE_MAX && size <= SMALL_MAX_OBJ_SIZE && alignment.is_none();
     let regular_medium = size > SMALL_MAX_OBJ_SIZE && size <= MEDIUM_MAX_OBJ_SIZE && alignment.is_none();
     if size < WORD_SIZE
-        || (size > SMALL_SIZE_MAX && !regular_medium)
+        || (size > SMALL_SIZE_MAX && !regular_small && !regular_medium)
         || alignment.is_some_and(|alignment| !alignment.is_power_of_two() || alignment > size)
     {
         return None;
@@ -156,7 +159,7 @@ pub(crate) unsafe fn allocate(
     // SAFETY: the caller's contract makes this the exclusively owned live
     // Theap; the shared projection is the one page sessions use for reads.
     let theap_ref = unsafe { theap.as_ref() };
-    if !regular_medium {
+    if !regular_small && !regular_medium {
         let direct_index = invariants::word_count(size)?;
         if direct_index >= PAGES_DIRECT {
             return None;
