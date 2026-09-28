@@ -84,7 +84,10 @@ are not transferable passes for a different revision.
   A further OS medium case publishes its first remote free before reclaim,
   crosses the source mostly-used threshold on the second, then reuses and
   releases; 29 shared observations and six direct pinned-C list checks pass.
-  The clean M5 generic-exit gate passes all eleven evidence rows.
+  An arena-backed medium page now matches 41 C/Rust values across remote
+  publication before reclaim, bitmap ownership, PageMap removal, and final
+  slice release. The clean M5 generic-exit gate passes all twelve evidence
+  rows.
   A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
