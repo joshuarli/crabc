@@ -83,4 +83,7 @@ int crabc_orientation_dso_set_wide(FILE *stream, int *main_errno);
 FILE *crabc_orientation_dso_open_byte(const char *path, int *main_errno);
 int crabc_orientation_dso_use_byte(FILE *stream, int *main_errno);
 int crabc_orientation_dso_close_byte(FILE *stream, int *main_errno);
+
+FILE *crabc_full_dso_open(int *main_errno);
+int crabc_full_dso_close(FILE *stream, int *main_errno);
 #endif

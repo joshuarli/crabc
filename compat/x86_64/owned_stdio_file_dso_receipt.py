@@ -19,6 +19,8 @@ called from each image publish both streams before their owners close them.
 The DSO selects wide orientation on a main-owned stream, then main writes and
 reads wide characters. Main selects byte orientation on a DSO-owned stream,
 which the DSO writes and closes after main reads it.
+A DSO-owned fully buffered stream targets an exact full device. Main observes
+its failed flush, and the DSO alone closes the stream and descriptor.
 """
 
 from __future__ import annotations
@@ -56,7 +58,7 @@ MEMSTREAM_FINAL = b"alXYa!\0\0Z"
 WIDE_MEMORY_FINAL = struct.pack("<7I", 0x20AC, 0x03BB, 0x1F600, 0, 0, 0x03A9, 0)
 EXPECTED_STDOUT = (b"memstream-final:" + MEMSTREAM_FINAL +
                    b"\nfixed-final:abcDEFGH\nwide-final:" + WIDE_MEMORY_FINAL +
-                   b"\nstdio-file-dso-orientation-ok\n")
+                   b"\nstdio-file-dso-full-sink-ok\n")
 EXIT_PAYLOAD = b"dso-exit-once\n"
 EXIT_MARKER = b"fini-before-flush:fd-live\n"
 RETAINED_PATHS = ("stream.dso-global", "stream.exit", "stream.fini",
@@ -65,6 +67,7 @@ RETAINED_PATHS = ("stream.dso-global", "stream.exit", "stream.fini",
 RETAINED_BYTES = (b"dso-before\ndso-after\n", EXIT_PAYLOAD, EXIT_MARKER,
                   b"main-before\nmain-after\n", b"replacement!", b"beforetail",
                   b"M:dso", b"\xe2\x82\xac\xce\xbb")
+FULL_SINK = {"kind": "character-device", "mode": 0o666, "major": 1, "minor": 7}
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 ORACLE_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.so")
@@ -296,6 +299,10 @@ def make_root(work: Path, case: str, dynamic: Path) -> None:
             shutil.copy2(work / "oracle/libfile-dso.so", execution / "usr/lib/libfile-dso.so")
     (execution / "scratch").mkdir()
     (execution / "scratch").chmod(0o755)
+    (execution / "dev").mkdir()
+    (execution / "dev").chmod(0o755)
+    os.mknod(execution / "dev/full", stat.S_IFCHR | 0o666, os.makedev(1, 7))
+    (execution / "dev/full").chmod(0o666)
     shutil.copy2(case_program(work, case), execution / "consumer")
 
 
@@ -311,6 +318,10 @@ def tree(path: Path) -> dict[str, object]:
                 result[relative] = {"kind": "symlink", "target": os.readlink(item)}
             elif stat.S_ISDIR(mode):
                 result[relative] = {"kind": "directory", "mode": stat.S_IMODE(mode)}
+            elif stat.S_ISCHR(mode):
+                device = item.lstat().st_rdev
+                result[relative] = {"kind": "character-device", "mode": stat.S_IMODE(mode),
+                                    "major": os.major(device), "minor": os.minor(device)}
             else:
                 require(stat.S_ISREG(mode), f"non-regular evidence artifact: {item}")
                 result[relative] = {"kind": "file", "mode": stat.S_IMODE(mode),
@@ -343,6 +354,8 @@ def expected_root(work: Path, case: str, dynamic: Path) -> dict[str, object]:
     program = case_program(work, case)
     expected["consumer"] = {"kind": "file", "mode": stat.S_IMODE(program.stat().st_mode),
                             "size": program.stat().st_size, "sha256": digest(program)}
+    expected["dev"] = {"kind": "directory", "mode": 0o755}
+    expected["dev/full"] = FULL_SINK
     expected["scratch"] = {"kind": "directory", "mode": 0o755}
     for name, contents in zip(RETAINED_PATHS, RETAINED_BYTES):
         expected["scratch/" + name] = {"kind": "file", "mode": 0o644,
@@ -392,6 +405,13 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
             orientation_writes.append(matches[0].start())
         require(orientation_writes == sorted(orientation_writes),
                 f"{case} orientation write order differs")
+        full_opens = list(re.finditer(
+            r'open(?:at)?\([^\n]*"/dev/full"[^\n]*\)\s+=\s+[0-9]+\b', trace))
+        full_writes = list(re.finditer(
+            r'(?:write|writev|pwrite64)\([^\n]*"pending"[^\n]*\)\s+=\s+-1 ENOSPC\b', trace))
+        require(len(full_opens) == len(full_writes) == 1
+                and full_opens[0].start() < full_writes[0].start(),
+                f"{case} full-sink buffered failure differs")
         marker_writes = list(re.finditer(
             r'(?:write|writev|pwrite64)\([^\n]*"fini-before-flush:fd-live\\n"[^\n]*\)\s+=\s+26\b', trace))
         stream_writes = list(re.finditer(
@@ -445,7 +465,8 @@ def audit_elf(work: Path) -> None:
                           "crabc_global_dso_tail", "crabc_global_dso_after_second",
                           "crabc_global_dso_close", "crabc_orientation_dso_set_wide",
                           "crabc_orientation_dso_open_byte", "crabc_orientation_dso_use_byte",
-                          "crabc_orientation_dso_close_byte"):
+                          "crabc_orientation_dso_close_byte", "crabc_full_dso_open",
+                          "crabc_full_dso_close"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
                         f"{role} lacks {entry}")
         elif dynamic_main:
@@ -464,7 +485,8 @@ def audit_elf(work: Path) -> None:
                           "crabc_global_dso_tail", "crabc_global_dso_after_second",
                           "crabc_global_dso_close", "crabc_orientation_dso_set_wide",
                           "crabc_orientation_dso_open_byte", "crabc_orientation_dso_use_byte",
-                          "crabc_orientation_dso_close_byte"):
+                          "crabc_orientation_dso_close_byte", "crabc_full_dso_open",
+                          "crabc_full_dso_close"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
                         f"{role} does not import {entry}")
         else:

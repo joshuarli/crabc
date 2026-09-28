@@ -16,7 +16,7 @@ spec.loader.exec_module(receipt)
 
 
 class FileDsoReceiptTests(unittest.TestCase):
-    def test_path_memory_flush_and_orientation_bytes_are_reread(self) -> None:
+    def test_path_memory_orientation_and_full_sink_are_reread(self) -> None:
         case = "oracle-static-process"
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             work = Path(temporary)
@@ -48,9 +48,12 @@ class FileDsoReceiptTests(unittest.TestCase):
                 'write(3, "main-after\\n", 11) = 11\n'
                 'write(3, "\\xe2\\x82\\xac\\xce\\xbb", 5) = 5\n'
                 'write(3, "M:dso", 5) = 5\n'
+                'open("/dev/full", O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666) = 3\n'
+                'writev(3, [{iov_base="pending", iov_len=7}], 1) = -1 ENOSPC (No space left on device)\n'
                 'write(3, "fini-before-flush:fd-live\\n", 26) = 26\n'
                 'write(3, "dso-exit-once\\n", 14) = 14\n')
-            with mock.patch.object(receipt, "CASES", (case,)):
+            with mock.patch.object(receipt, "CASES", (case,)), mock.patch.object(
+                    receipt, "expected_root", return_value=receipt.tree(execution)):
                 receipt.audit_runtime(work, work / "unused-dynamic")
                 (raw / f"{case}.stdout").write_bytes(
                     receipt.EXPECTED_STDOUT.replace(b"alXYa!\0\0Z", b"alXYa!\0\0Y"))
@@ -101,6 +104,11 @@ class FileDsoReceiptTests(unittest.TestCase):
                     'write(3, "M:dso", 5) = 5\n'
                     'write(3, "\\xe2\\x82\\xac\\xce\\xbb", 5) = 5\n'))
                 with self.assertRaisesRegex(receipt.ReceiptError, "orientation write order differs"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                trace_path.write_text(trace.replace(
+                    'writev(3, [{iov_base="pending", iov_len=7}], 1) = -1 ENOSPC',
+                    'writev(3, [{iov_base="pending", iov_len=7}], 1) = 7'))
+                with self.assertRaisesRegex(receipt.ReceiptError, "full-sink buffered failure differs"):
                     receipt.audit_runtime(work, work / "unused-dynamic")
 
 

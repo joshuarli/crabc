@@ -599,6 +599,52 @@ int crabc_orientation_dso_close_byte(FILE *stream, int *main_errno)
     return 0;
 }
 
+/* A device that rejects every write keeps failure injection independent of
+ * filesystem capacity. This image owns the buffered FILE through its close.
+ */
+static FILE *full_dso_stream;
+static char full_dso_buffer[64];
+static int full_dso_descriptor;
+static unsigned full_dso_stage;
+
+FILE *crabc_full_dso_open(int *main_errno)
+{
+    if (main_errno != &errno || errno != EDOM || full_dso_stage != 0)
+        return NULL;
+    full_dso_stream = fopen("/dev/full", "w");
+    if (full_dso_stream == NULL ||
+        setvbuf(full_dso_stream, full_dso_buffer, _IOFBF,
+                sizeof(full_dso_buffer)) != 0)
+        return NULL;
+    full_dso_descriptor = fileno(full_dso_stream);
+    if (full_dso_descriptor < 0 ||
+        fwrite("pending", 1, 7, full_dso_stream) != 7 ||
+        ferror(full_dso_stream) || feof(full_dso_stream) ||
+        fcntl(full_dso_descriptor, F_GETFD) < 0)
+        return NULL;
+    full_dso_stage = 1;
+    errno = ERANGE;
+    return full_dso_stream;
+}
+
+int crabc_full_dso_close(FILE *stream, int *main_errno)
+{
+    if (stream == NULL || stream != full_dso_stream ||
+        main_errno != &errno || errno != EDOM || full_dso_stage != 1 ||
+        !ferror(stream) || feof(stream) ||
+        fcntl(full_dso_descriptor, F_GETFD) < 0)
+        return 1;
+    if (fclose(stream) != 0 || errno != EDOM)
+        return 2;
+    full_dso_stream = NULL;
+    full_dso_stage = 2;
+    errno = 0;
+    if (fcntl(full_dso_descriptor, F_GETFD) != -1 || errno != EBADF)
+        return 3;
+    errno = ERANGE;
+    return 0;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];
