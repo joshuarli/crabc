@@ -41,8 +41,11 @@ are not transferable passes for a different revision.
   and static-PIE link controls. Two source-owned private provider classes now
   bind the three complex multiplication helpers and two float scanner helpers
   to retained static imports and shared definitions; the historical b879
-  projection has 544 blockers after 23 are discharged. A current-source full
-  assembly remains open.
+  projection has 544 blockers after 23 are discharged. On a separate clean
+  current-source cohort, the installed CRT receipt resolves `_DYNAMIC` through
+  its weak zero archive import, static null result, and six image-local dynamic
+  tables; selector blockers fall from 770 to 733, with 714 identities and
+  declaration, family, and semantic receipts still open. Full closure remains open.
   `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` passes its
@@ -171,7 +174,10 @@ are not transferable passes for a different revision.
   has 35 checks with five conditions still open. A failed second OS-page block
   commit and failed rollback unmap match pinned C in eleven process-owned
   observations. The PageMap fallback suffix-trim fault is registered in its
-  shared aggregate with ten matching C/Rust observations. A legacy processless aligned
+  shared aggregate with ten matching C/Rust observations; lazy submap rollback
+  adds twelve matched observations in the same aggregate. Selected process
+  startup THP `prctl` GET and SET failures each match eight pinned-C/Rust
+  observations, including READY state and no retry. A legacy processless aligned
   OS-page claim preserves the same MemoryId, live escaped suffix, and raw
   cleanup as pinned C after failed suffix trim and terminal unmap. Its absent
   subprocess accounting and warning callback are recorded as exact source
