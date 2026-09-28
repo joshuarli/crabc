@@ -382,6 +382,10 @@ class M7GateContractTests(unittest.TestCase):
             "worker.medium.requested.hex": medium_worker_requested.encode("ascii").hex(),
         }
         gate.require_statistics_remote_bin(trace, "complete")
+        gate.require_statistics_remote_bin({**trace,
+            "medium.before.arena": "1076166656,3,1",
+            "medium.allocated.arena": "1076166656,3,1",
+            "medium.terminal.arena": "1076166656,3,1"}, "different startup mmap history")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_remote_bin({**trace, "freed.bin": "2,2,1"}, "lost process free")
         with self.assertRaises(harness.HarnessError):

@@ -1542,6 +1542,7 @@ def run_statistics_json_differential(offline: bool) -> dict[str, Any]:
 def run_public_statistics_differential(
     offline: bool, *, subject: str, driver: Path, begin: str, end: str,
     report_name: str, require_complete: Any | None = None, stat_level: int = 1,
+    comparison_excluded_keys: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Run one public statistics driver with pinned C and the selected adapter profile."""
 
@@ -1585,13 +1586,20 @@ def run_public_statistics_differential(
             traces[side] = parse_options_trace(str(execution["stdout"]),
                 f"M7 {subject} {side}", begin, end)
     report = {"status": "failed", "c_trace": traces["c"], "rust_trace": traces["rust"],
-              "c_build": c_build["command"], "rust_build": rust_build["command"]}
+              "c_build": c_build["command"], "rust_build": rust_build["command"],
+              "comparison_excluded_keys": sorted(comparison_excluded_keys)}
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / report_name, report)
     if require_complete is not None:
         require_complete(traces["c"], f"pinned C {subject}")
         require_complete(traces["rust"], f"Rust {subject}")
-    compare_options_traces(traces["c"], traces["rust"])
+    if any(not comparison_excluded_keys <= set(trace) for trace in traces.values()):
+        raise harness.HarnessError(f"M7 {subject} omitted a raw comparison baseline")
+    compared = {side: {key: value for key, value in trace.items()
+                       if key not in comparison_excluded_keys}
+                for side, trace in traces.items()}
+    compare_options_traces(compared["c"], compared["rust"])
+    report["compared_key_count"] = len(compared["c"])
     report["status"] = "passed"
     harness.write_json(ARTIFACTS / report_name, report)
     return report
@@ -1649,11 +1657,15 @@ def run_statistics_fast_allocation_differential(offline: bool) -> dict[str, Any]
 
 
 def run_statistics_remote_bin_differential(offline: bool) -> dict[str, Any]:
+    # Worker setup can change the absolute mmap count. Keep those raw images
+    # and require no arena or OS-mapping growth within the medium transition.
     return run_public_statistics_differential(
         offline, subject="remote-bin", driver=STATISTICS_REMOTE_BIN_DRIVER,
         begin=STATISTICS_REMOTE_BIN_TRACE_BEGIN, end=STATISTICS_REMOTE_BIN_TRACE_END,
         report_name="statistics-remote-bin.json", stat_level=2,
         require_complete=require_statistics_remote_bin,
+        comparison_excluded_keys=frozenset({"medium.before.arena", "medium.allocated.arena",
+                                            "medium.terminal.arena"}),
     )
 
 
@@ -1904,7 +1916,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if arguments.statistics_remote_bin_differential:
         report = run_statistics_remote_bin_differential(arguments.offline)
-        print(f"M7 remote bin statistics differential passed: {len(report['c_trace'])} keys")
+        print(f"M7 remote bin statistics differential passed: {report['compared_key_count']} compared keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)
