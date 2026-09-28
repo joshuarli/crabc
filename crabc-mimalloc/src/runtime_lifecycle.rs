@@ -12430,6 +12430,10 @@ fn native_free_pointer_first_nonlocal(
         if unsafe { theap.as_ref().is_initialized() } {
             if allocation.block_size() <= crate::config::LARGE_MAX_OBJ_SIZE {
                 unsafe { theap.as_ref() }.record_malloc_normal_freed(allocation.block_size());
+                #[cfg(feature = "mi-stat-2")]
+                unsafe { theap.as_ref() }.record_malloc_normal_level_two_freed(
+                    crate::size_class::bin_for_regular_page_block_size(allocation.block_size()),
+                );
             } else {
                 unsafe { theap.as_ref() }.record_malloc_huge_freed(allocation.block_size());
             }
