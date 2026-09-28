@@ -41,8 +41,12 @@ are not transferable passes for a different revision.
   the same binary passed a focused replay. A later diagnostic reproduced one
   breach in sixteen native runs and localized the growth to medium pages;
   pinned v3.5.0 C also breached once in sixteen static-PIE runs of the same
-  workload and PageMap slice metric. The 10% gate remains unchanged while
-  medium-page collection and scheduling are assessed. Source-built C/Rust
+  workload and PageMap slice metric. The PageMap reader now applies the same
+  10% bound to sustained first/last-quarter medians, calibrated against 88
+  pinned-C/native traces and accumulating-page controls. The canonical stress
+  run passes its PageMap checks but fails the unchanged RSS bound for native
+  static PIE on seeds 1 and 3; medium-page collection and RSS remain under
+  assessment. Source-built C/Rust
   differentials pass for both dormant and active survivors of a non-abandoning
   full-medium/OS-singleton owner exit, including reclaim and retirement; a
   late remote free after that exit also matches all 17 retained observations.
@@ -58,9 +62,11 @@ are not transferable passes for a different revision.
   worker owners (low-load, not qualifying). Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
-  quiescent non-main Heap block visitation across 126 adapter keys; six
+  quiescent non-main and isolated process-main Heap block visitation across 134
+  adapter keys; six
   runnable evidence rows pass, while all ten required gates remain blocked
-  by named missing API and lifetime evidence. Integrated products are
+  by named missing API and lifetime evidence. Accumulated mixed-workload
+  main-Heap page-population parity remains unproved. Integrated products are
   compared against an evidence-only pinned v3.5.0 C product (the selected C
   backend is `libmimalloc-sys` 0.1.49, mimalloc 3.3.2); the port map
   classifies every intentional difference (`difference_kind`). The M8
