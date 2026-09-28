@@ -89,6 +89,31 @@ static CALLBACK_NODE: AtomicPtr<RuntimeObject> = AtomicPtr::new(core::ptr::null_
 static INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
 static FINALIZATIONS: AtomicUsize = AtomicUsize::new(0);
 
+#[test]
+fn finalizer_tid_is_queried_only_for_an_active_constructor() {
+    unsafe {
+        let mut nodes = UnpublishedObjects::new();
+        let finished = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(27),
+            0, LoadedName::new(b"finished"), true).unwrap();
+        nodes.append(finished).unwrap();
+        let active = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(28),
+            1, LoadedName::new(b"active"), true).unwrap();
+        nodes.append(active).unwrap();
+        (*finished).callback_state.store(INITIALIZED, Ordering::Release);
+        (*active).callback_state.store(28, Ordering::Release);
+
+        let calls = core::cell::Cell::new(0);
+        let mut query = || { calls.set(calls.get() + 1); 27 };
+        assert_eq!(finalizer_tid(core::ptr::null_mut(), &mut query), 0);
+        assert_eq!(finalizer_tid(finished, &mut query), 0);
+        assert_eq!(calls.get(), 0);
+
+        (*finished).fini_next = active;
+        assert_eq!(finalizer_tid(finished, &mut query), 27);
+        assert_eq!(calls.get(), 1);
+    }
+}
+
 unsafe extern "C" fn recursive_initializer() {
     INITIALIZATIONS.fetch_add(1, Ordering::SeqCst);
     unsafe { initialize_object(CALLBACK_NODE.load(Ordering::SeqCst)); }

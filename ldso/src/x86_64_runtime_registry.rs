@@ -13,8 +13,8 @@
 //! dladdr and dl_iterate_phdr behavior; src/ldso/dlclose.c retains maps and
 //! src/ldso/dlinfo.c admits LINKMAP only. Stable raw nodes, typed rollback and
 //! coherent retained TLS views and deferred relocation journals are crabc
-//! ownership machinery. Shared library search is source-mapped separately;
-//! see compat/x86_64/runtime-dynamic-loader.md for source mapping and evidence.
+//! ownership machinery. Path selection supplies opened descriptors; this
+//! registry retains only admitted identities and mappings.
 
 use super::*;
 use super::x86_64_general_initial_loader_state::GeneralInitialLoaderState;
@@ -507,6 +507,24 @@ pub(super) unsafe fn initialize_initial() {
     for index in 0..count { tid = unsafe { initialize_object_as(*order.add(index), tid) }; }
 }
 
+/// A TID matters only when a constructor still owns a finalizer node. The
+/// callback lock and shutdown flag prevent new claims during this scan. Query
+/// before running any finalizer so a callback that forks cannot change which
+/// original task owned an in-progress constructor later in the list.
+///
+/// # Safety
+/// `node` starts a live finalizer list protected by the callback lock, or is
+/// null. Each nonnull `fini_next` remains live through finalization.
+unsafe fn finalizer_tid(mut node: *mut RuntimeObject, current: impl FnOnce() -> i32) -> i32 {
+    while !node.is_null() {
+        if unsafe { (*node).callback_state.load(Ordering::Acquire) } > 0 {
+            return current();
+        }
+        node = unsafe { (*node).fini_next };
+    }
+    0
+}
+
 pub(super) unsafe fn finalize_process() {
     let guard = RuntimeGuard::acquire();
     let registry = unsafe { &mut *REGISTRY.0.get() };
@@ -516,7 +534,7 @@ pub(super) unsafe fn finalize_process() {
     registry.finalizing = true;
     let mut node = registry.fini_head;
     drop(guard);
-    let tid = unsafe { syscall1(186, 0) } as i32;
+    let tid = unsafe { finalizer_tid(node, current_tid) };
     while !node.is_null() {
         let state = unsafe { (*node).callback_state.load(Ordering::Acquire) };
         if (state > 0 && state != tid) || state == CONSTRUCTOR_ABANDONED {
