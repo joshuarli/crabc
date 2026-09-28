@@ -435,8 +435,13 @@ unsafe fn lookup_result_at(
     if name.is_empty() { return None; }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let mut hashes = SymbolHashes::default();
+    // COPY excludes main; an invalid ordinary owner must still fail lookup.
+    let skipped_owner = if copy { 0 } else { usize::MAX };
     for &owner in scope.indices {
-        if copy && owner == 0 { continue; }
+        if owner == skipped_owner {
+            if copy { continue; }
+            return None;
+        }
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         if let Some(found) = unsafe { lookup_exported(objects, owner, name, &mut hashes) }? {
             if found.section == 0 || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)

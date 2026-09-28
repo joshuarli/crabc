@@ -1081,6 +1081,22 @@ fn symbol_scope_is_breadth_first_and_first_weak_definition_wins() {
 }
 
 #[test]
+fn copy_lookup_skips_main_even_when_main_is_not_first_in_scope() {
+    let mut main = Image::new();
+    let missing = Image::new();
+    let mut provider = Image::new();
+    main.symbol(1, 1, 1, 0, 1, 0x1000, 8);
+    provider.symbol(1, 1, 1, 0, 1, 0x1000, 8);
+    let objects = [main.object(false), missing.object(true), provider.object(true)];
+    let scope = SymbolScope { indices: &[1, 0, 2], module_count: 0,
+        static_tls_count: 0, initial: true };
+    assert_eq!(unsafe { lookup(&scope, &objects, 0, 1, false, true) }.unwrap().unwrap().owner, 2);
+    assert_eq!(unsafe { lookup(&scope, &objects, 0, 1, false, false) }.unwrap().unwrap().owner, 0);
+    let malformed = SymbolScope { indices: &[usize::MAX, 0], ..scope };
+    assert!(unsafe { lookup(&malformed, &objects, 0, 1, false, false) }.is_none());
+}
+
+#[test]
 fn local_protected_hidden_and_undefined_weak_references_keep_distinct_scopes() {
     let mut main = Image::new(); let mut provider = Image::new();
     main.symbol(1, 1, 1, 0, 1, 0x1000, 8);
