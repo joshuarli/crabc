@@ -957,8 +957,11 @@ def require_statistics_level_one(trace: Mapping[str, str], description: str) -> 
     except (KeyError, ValueError) as error:
         raise harness.HarnessError(f"{description} lacks a numeric level-one count: {trace}") from error
     if (set(trace) != {"profile.level", "allocation.usable", "allocated.normal", "merged.normal",
-                       "freed.normal", "print.binned"}
-            or trace["profile.level"] != "1" or trace["print.binned"] != "1"
+                       "freed.normal", "print.live_binned", "print.live_total",
+                       "print.freed_binned", "print.freed_total"}
+            or trace["profile.level"] != "1"
+            or any(trace[key] != "1" for key in ("print.live_binned", "print.live_total",
+                                                   "print.freed_binned", "print.freed_total"))
             or usable < 64 or len(allocated) != 3 or len(merged) != 3 or len(freed) != 3
             or allocated[0] != usable or allocated[2] != usable
             or merged != allocated or freed != (allocated[0], allocated[1], 0)):

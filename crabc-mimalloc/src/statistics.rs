@@ -450,17 +450,21 @@ pub(crate) struct ProcessInfoCommittedDefaults {
     pub(crate) peak_bytes: usize,
 }
 
-/// The exact `MI_STAT == 0` field subset consumed by `stats.c`'s process-end
+/// The selected profile's field subset consumed by `stats.c`'s process-end
 /// display path.
 ///
 /// The renderer never reads a Heap, Theap, subprocess, VM policy, or TLS root.
 /// Its process-state caller captures this scalar image only after it has
-/// completed the source-prescribed merge order.  Fields whose `MI_STAT == 0`
-/// branches cannot print are intentionally absent; this is neither a general
+/// completed the source-prescribed merge order. Fields whose selected branches
+/// cannot print are intentionally absent; this is neither a general
 /// statistics callback API nor a replacement for [`HeapTheapStatistics`]'s
 /// complete private source layout.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FinalStatisticsSnapshot {
+    #[cfg(feature = "mi-stat-1")]
+    pub(crate) malloc_normal: FinalStatCount,
+    #[cfg(feature = "mi-stat-1")]
+    pub(crate) malloc_huge: FinalStatCount,
     pub(crate) pages: FinalStatCount,
     pub(crate) page_committed: FinalStatCount,
     pub(crate) pages_abandoned: FinalStatCount,
@@ -971,8 +975,8 @@ impl HeapTheapStatistics {
         }
     }
 
-    /// Captures only the selected release-profile values that `stats.c` can
-    /// render at final process output.
+    /// Captures only the selected profile's values that `stats.c` can render
+    /// at final process output.
     ///
     /// The caller owns the source lifecycle exclusion and the preceding
     /// Theap/Heap-to-subprocess merges.  Each field remains a separate relaxed
@@ -981,6 +985,10 @@ impl HeapTheapStatistics {
     #[inline]
     pub(crate) fn final_output_snapshot(&self) -> FinalStatisticsSnapshot {
         FinalStatisticsSnapshot {
+            #[cfg(feature = "mi-stat-1")]
+            malloc_normal: final_stat_count(&self.malloc_normal),
+            #[cfg(feature = "mi-stat-1")]
+            malloc_huge: final_stat_count(&self.malloc_huge),
             pages: final_stat_count(&self.pages),
             page_committed: final_stat_count(&self.page_committed),
             pages_abandoned: final_stat_count(&self.pages_abandoned),

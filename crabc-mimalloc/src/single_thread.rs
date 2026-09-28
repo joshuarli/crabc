@@ -36872,8 +36872,8 @@ impl<'arena, 'map, Backing: crate::page_backing::PageBacking<'arena>>
     }
 }
 
-/// The M3 persistent-owner trace image of this engine's Theap
-/// (`crate::theap_trace_audit`); absent from production builds.
+/// A read-only trace of this engine's Theap queue and page facts, available
+/// only to direct allocator audits.
 #[cfg(feature = "native-runtime-test-audit")]
 impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::PageBacking<'arena>>
     PageAllocatorEngine<'arena, 'map, Session, Backing> {
@@ -39827,7 +39827,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         base: NonNull<u8>,
     ) -> Result<(), FreeError> {
 
-        let (in_full, queue_bin, regular_bin) = {
+        let (in_full, queue_bin, regular_bin, block_size) = {
             // SAFETY: this read-only fact snapshot ends before the owner raw-
             // mutates ordinary local-list fields. Live producer accesses are
             // confined to the page's atomic subobjects.
@@ -39836,8 +39836,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 page_is_in_full(page_ref),
                 page_queue_bin(page_ref),
                 size_class::bin(page_ref.block_size()),
+                page_ref.block_size(),
             )
         };
+        #[cfg(feature = "mi-stat-1")]
+        if block_size <= LARGE_MAX_OBJ_SIZE {
+            self.session.theap().record_malloc_normal_freed(block_size);
+        }
+        #[cfg(not(feature = "mi-stat-1"))]
+        let _ = block_size;
         let used = {
             // SAFETY: this lifecycle owns the page block and its ordinary
             // local-list fields; producer capabilities access only atomics.
@@ -40799,10 +40806,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // `retire_expire`; queue selection (`mi_page_queue_find_free`)
             // and `_mi_theap_collect_retired` own that byte.
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
+                self.record_level_one_normal_allocation(page);
                 return Ok(Some(block));
             }
             if free_list.quick_collect().map_err(GenericPathError::Local)? {
                 if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
+                    self.record_level_one_normal_allocation(page);
                     return Ok(Some(block));
                 }
             }
@@ -40818,6 +40827,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
+                self.record_level_one_normal_allocation(page);
                 return Ok(Some(block));
             }
         }
@@ -40842,7 +40852,26 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // Like `mi_page_malloc_zero`, the pop leaves `retire_expire` alone: a
         // retired page reached through the direct cache stays retired until
         // queue selection or `_mi_theap_collect_retired` clears it.
-        free_list.pop(zero)
+        let block = free_list.pop(zero)?;
+        if block.is_some() {
+            self.record_level_one_normal_allocation(page);
+        }
+        Ok(block)
+    }
+
+    #[inline]
+    fn record_level_one_normal_allocation(&self, page: NonNull<Page>) {
+        #[cfg(feature = "mi-stat-1")]
+        {
+            // SAFETY: the selected page is owned by this exact local Theap
+            // throughout the pop, and its immutable block size remains live.
+            let block_size = unsafe { page.as_ref().block_size() };
+            if block_size <= LARGE_MAX_OBJ_SIZE {
+                self.session.theap().record_malloc_normal_allocated(block_size);
+            }
+        }
+        #[cfg(not(feature = "mi-stat-1"))]
+        let _ = page;
     }
 
     /// Performs the `alloc-aligned.c`/`arena.c` fresh OS-singleton sequence.
@@ -43633,7 +43662,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 }
 
-// Deterministic M3 C/Rust local-engine trace driver; see its module header.
+// Deterministic C/Rust trace of local page allocation, free, and queue state.
 #[cfg(test)]
 mod local_trace;
 

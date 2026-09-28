@@ -115,12 +115,14 @@ class M7GateContractTests(unittest.TestCase):
 
     def test_statistics_level_one_reader_requires_merge_and_print(self) -> None:
         trace = {"profile.level": "1", "allocation.usable": "64", "allocated.normal": "64,64,64",
-                 "merged.normal": "64,64,64", "freed.normal": "64,64,0", "print.binned": "1"}
+                 "merged.normal": "64,64,64", "freed.normal": "64,64,0",
+                 "print.live_binned": "1", "print.live_total": "1",
+                 "print.freed_binned": "1", "print.freed_total": "1"}
         gate.require_statistics_level_one(trace, "fixture")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_level_one({**trace, "merged.normal": "0,0,0"}, "lost merge")
         with self.assertRaises(harness.HarnessError):
-            gate.require_statistics_level_one({**trace, "print.binned": "0"}, "missing output")
+            gate.require_statistics_level_one({**trace, "print.live_binned": "0"}, "missing output")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:
