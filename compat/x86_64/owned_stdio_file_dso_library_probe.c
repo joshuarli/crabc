@@ -794,6 +794,102 @@ int crabc_pushback_dso_close(FILE *stream, int *main_errno)
     return 0;
 }
 
+/* The executable's main thread holds this DSO-owned stream while a worker
+ * observes contention. Each thread releases only locks it acquired itself.
+ */
+static FILE *lock_dso_stream;
+static char lock_dso_buffer[64];
+
+FILE *crabc_lock_dso_open(const char *path, int *main_errno)
+{
+    if (path == NULL || main_errno != &errno || errno != EDOM ||
+        lock_dso_stream != NULL)
+        return NULL;
+    lock_dso_stream = fopen(path, "w");
+    if (lock_dso_stream == NULL ||
+        setvbuf(lock_dso_stream, lock_dso_buffer, _IOFBF,
+                sizeof(lock_dso_buffer)) != 0 ||
+        fileno(lock_dso_stream) < 0 ||
+        ferror(lock_dso_stream) || feof(lock_dso_stream))
+        return NULL;
+    errno = ERANGE;
+    return lock_dso_stream;
+}
+
+int crabc_lock_dso_try_busy(FILE *stream, int *worker_errno)
+{
+    int result;
+
+    if (stream == NULL || stream != lock_dso_stream ||
+        worker_errno != &errno || errno != EDOM)
+        return 1;
+    result = ftrylockfile(stream);
+    if (result == 0) {
+        funlockfile(stream);
+        return 2;
+    }
+    if (result != -1 || errno != EDOM)
+        return 3;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_lock_dso_write_unlock(FILE *stream, int *main_errno)
+{
+    struct stat state;
+    int valid;
+
+    if (stream == NULL || stream != lock_dso_stream ||
+        main_errno != &errno || errno != EDOM)
+        return 1;
+    if (ftrylockfile(stream) != 0 || errno != EDOM) {
+        funlockfile(stream);
+        return 2;
+    }
+    valid = fwrite("main-", 1, 5, stream) == 5 &&
+        fstat(fileno(stream), &state) == 0 && state.st_size == 0 &&
+        !ferror(stream) && !feof(stream) && errno == EDOM;
+    funlockfile(stream);
+    funlockfile(stream);
+    if (!valid || errno != EDOM)
+        return 3;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_lock_dso_worker_write(FILE *stream, int *worker_errno)
+{
+    int valid;
+
+    if (stream == NULL || stream != lock_dso_stream ||
+        worker_errno != &errno || errno != EDOM)
+        return 1;
+    if (ftrylockfile(stream) != 0 || errno != EDOM)
+        return 2;
+    valid = fwrite("worker", 1, 6, stream) == 6 &&
+        !ferror(stream) && !feof(stream) && errno == EDOM;
+    funlockfile(stream);
+    if (!valid)
+        return 3;
+    if (fflush(stream) != 0 || ferror(stream) || feof(stream) || errno != EDOM)
+        return 4;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_lock_dso_close(FILE *stream, int *main_errno)
+{
+    if (stream == NULL || stream != lock_dso_stream ||
+        main_errno != &errno || errno != EDOM ||
+        ferror(stream) || feof(stream))
+        return 1;
+    if (fclose(stream) != 0 || errno != EDOM)
+        return 2;
+    lock_dso_stream = NULL;
+    errno = ERANGE;
+    return 0;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];

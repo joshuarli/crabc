@@ -27,6 +27,9 @@ A third DSO-owned stream clears a failed flush, retries with no pending bytes,
 then buffers and fails a new write before clearing its error for close.
 A DSO-owned pathname stream carries main's pushback through a DSO read, then
 main restores its saved position so the DSO reads the original file byte.
+A DSO-owned pathname stream is locked by main while a worker observes a busy
+trylock; the DSO recursively locks and releases on main, then the worker
+acquires, writes, flushes, and releases before the DSO closes the stream.
 """
 
 from __future__ import annotations
@@ -64,15 +67,15 @@ MEMSTREAM_FINAL = b"alXYa!\0\0Z"
 WIDE_MEMORY_FINAL = struct.pack("<7I", 0x20AC, 0x03BB, 0x1F600, 0, 0, 0x03A9, 0)
 EXPECTED_STDOUT = (b"memstream-final:" + MEMSTREAM_FINAL +
                    b"\nfixed-final:abcDEFGH\nwide-final:" + WIDE_MEMORY_FINAL +
-                   b"\nstdio-file-dso-pushback-ok\n")
+                   b"\nstdio-file-dso-lock-ok\n")
 EXIT_PAYLOAD = b"dso-exit-once\n"
 EXIT_MARKER = b"fini-before-flush:fd-live\n"
 RETAINED_PATHS = ("stream.dso-global", "stream.exit", "stream.fini",
-                  "stream.main-global", "stream.new", "stream.old",
+                  "stream.lock", "stream.main-global", "stream.new", "stream.old",
                   "stream.orientation-byte", "stream.orientation-wide",
                   "stream.pushback")
 RETAINED_BYTES = (b"dso-before\ndso-after\n", EXIT_PAYLOAD, EXIT_MARKER,
-                  b"main-before\nmain-after\n", b"replacement!", b"beforetail",
+                  b"main-worker", b"main-before\nmain-after\n", b"replacement!", b"beforetail",
                   b"M:dso", b"\xe2\x82\xac\xce\xbb", b"abcdef")
 FULL_SINK = {"kind": "character-device", "mode": 0o666, "major": 1, "minor": 7}
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
@@ -462,6 +465,22 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
         require(len(pushback_writes) == len(descriptor_writes) == len(pushback_closes) == 1
                 and pushback_writes[0].start() < pushback_closes[0].start(),
                 f"{case} pushback pathname write or close differs")
+        lock_opens = list(re.finditer(
+            r'open(?:at)?\([^\n]*"/scratch/stream\.lock"[^\n]*\)\s+=\s+([0-9]+)\b', trace))
+        require(len(lock_opens) == 2, f"{case} lock pathname opens differ")
+        lock_open = lock_opens[0]
+        lock_span = trace[lock_open.end():lock_opens[1].start()]
+        lock_descriptor = lock_open.group(1)
+        lock_writes = list(re.finditer(
+            r'\b(?:write|writev|pwrite64)\(' + lock_descriptor +
+            r',[^\n]*"main-worker"[^\n]*\)\s+=\s+11\b', lock_span))
+        descriptor_writes = list(re.finditer(
+            r'\b(?:write|writev|pwrite64)\(' + lock_descriptor + r',', lock_span))
+        lock_closes = list(re.finditer(
+            r'\bclose\(' + lock_descriptor + r'\)\s+=\s+0\b', lock_span))
+        require(len(lock_writes) == len(descriptor_writes) == len(lock_closes) == 1
+                and lock_writes[0].start() < lock_closes[0].start(),
+                f"{case} lock pathname write or close differs")
         marker_writes = list(re.finditer(
             r'(?:write|writev|pwrite64)\([^\n]*"fini-before-flush:fd-live\\n"[^\n]*\)\s+=\s+26\b', trace))
         stream_writes = list(re.finditer(
@@ -520,7 +539,9 @@ def audit_elf(work: Path) -> None:
                           "crabc_full_dso_close_pending", "crabc_full_dso_open_recovery",
                           "crabc_full_dso_write_recovery", "crabc_full_dso_close_recovery",
                           "crabc_pushback_dso_open", "crabc_pushback_dso_consume",
-                          "crabc_pushback_dso_close"):
+                          "crabc_pushback_dso_close", "crabc_lock_dso_open",
+                          "crabc_lock_dso_try_busy", "crabc_lock_dso_write_unlock",
+                          "crabc_lock_dso_worker_write", "crabc_lock_dso_close"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
                         f"{role} lacks {entry}")
         elif dynamic_main:
@@ -544,7 +565,9 @@ def audit_elf(work: Path) -> None:
                           "crabc_full_dso_close_pending", "crabc_full_dso_open_recovery",
                           "crabc_full_dso_write_recovery", "crabc_full_dso_close_recovery",
                           "crabc_pushback_dso_open", "crabc_pushback_dso_consume",
-                          "crabc_pushback_dso_close"):
+                          "crabc_pushback_dso_close", "crabc_lock_dso_open",
+                          "crabc_lock_dso_try_busy", "crabc_lock_dso_write_unlock",
+                          "crabc_lock_dso_worker_write", "crabc_lock_dso_close"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
                         f"{role} does not import {entry}")
         else:

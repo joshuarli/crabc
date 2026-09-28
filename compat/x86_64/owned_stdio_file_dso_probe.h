@@ -94,4 +94,9 @@ int crabc_full_dso_close_recovery(FILE *stream, int *main_errno);
 FILE *crabc_pushback_dso_open(const char *path, int *main_errno);
 int crabc_pushback_dso_consume(FILE *stream, int *main_errno);
 int crabc_pushback_dso_close(FILE *stream, int *main_errno);
+FILE *crabc_lock_dso_open(const char *path, int *main_errno);
+int crabc_lock_dso_try_busy(FILE *stream, int *worker_errno);
+int crabc_lock_dso_write_unlock(FILE *stream, int *main_errno);
+int crabc_lock_dso_worker_write(FILE *stream, int *worker_errno);
+int crabc_lock_dso_close(FILE *stream, int *main_errno);
 #endif

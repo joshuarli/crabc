@@ -7,6 +7,8 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <locale.h>
+#include <poll.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -775,6 +777,109 @@ static int pushback_dso_roundtrip(const char *path)
     return 0;
 }
 
+struct lock_worker_context {
+    FILE *stream;
+    int ready_write;
+    int release_read;
+    int result;
+};
+
+static int wait_lock_token(int descriptor, char expected)
+{
+    struct pollfd poll_fd = {descriptor, POLLIN, 0};
+    char observed;
+
+    return poll(&poll_fd, 1, 5000) == 1 &&
+        (poll_fd.revents & POLLIN) != 0 &&
+        read(descriptor, &observed, 1) == 1 && observed == expected;
+}
+
+static void *lock_dso_worker(void *opaque)
+{
+    struct lock_worker_context *context = opaque;
+
+    errno = EDOM;
+    context->result = crabc_lock_dso_try_busy(context->stream, &errno);
+    if (context->result != 0 || errno != ERANGE) {
+        write(context->ready_write, "F", 1);
+        return NULL;
+    }
+    if (write(context->ready_write, "B", 1) != 1 ||
+        !wait_lock_token(context->release_read, 'R')) {
+        context->result = 10;
+        write(context->ready_write, "F", 1);
+        return NULL;
+    }
+    errno = EDOM;
+    context->result = crabc_lock_dso_worker_write(context->stream, &errno);
+    if (context->result != 0 || errno != ERANGE) {
+        write(context->ready_write, "F", 1);
+        return NULL;
+    }
+    write(context->ready_write, "W", 1);
+    return NULL;
+}
+
+static int lock_dso_roundtrip(const char *path)
+{
+    char stream_path[PATH_MAX];
+    struct lock_worker_context context;
+    pthread_t worker;
+    FILE *stream;
+    int ready[2], release_pipe[2];
+    int length, descriptor, result;
+
+    length = snprintf(stream_path, sizeof(stream_path), "%s.lock", path);
+    if (length < 0 || (size_t)length >= sizeof(stream_path))
+        return 1;
+    errno = EDOM;
+    stream = crabc_lock_dso_open(stream_path, &errno);
+    if (stream == NULL || errno != ERANGE)
+        return 2;
+    descriptor = fileno(stream);
+    if (descriptor < 0 || fcntl(descriptor, F_GETFD) < 0 ||
+        pipe(ready) != 0 || pipe(release_pipe) != 0)
+        return 3;
+    context.stream = stream;
+    context.ready_write = ready[1];
+    context.release_read = release_pipe[0];
+    context.result = 0;
+    errno = EDOM;
+    flockfile(stream);
+    if (errno != EDOM || pthread_create(&worker, NULL, lock_dso_worker,
+                                        &context) != 0)
+        return 4;
+    if (!wait_lock_token(ready[0], 'B')) {
+        funlockfile(stream);
+        write(release_pipe[1], "R", 1);
+        pthread_join(worker, NULL);
+        return 5;
+    }
+    errno = EDOM;
+    result = crabc_lock_dso_write_unlock(stream, &errno);
+    if (result != 0 || errno != ERANGE) {
+        write(release_pipe[1], "R", 1);
+        pthread_join(worker, NULL);
+        return 10 + result;
+    }
+    if (write(release_pipe[1], "R", 1) != 1 ||
+        !wait_lock_token(ready[0], 'W') ||
+        pthread_join(worker, NULL) != 0 || context.result != 0)
+        return 20;
+    if (close(ready[0]) != 0 || close(ready[1]) != 0 ||
+        close(release_pipe[0]) != 0 || close(release_pipe[1]) != 0)
+        return 21;
+    errno = EDOM;
+    result = crabc_lock_dso_close(stream, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 30 + result;
+    errno = 0;
+    if (fcntl(descriptor, F_GETFD) != -1 || errno != EBADF ||
+        pathname_readback(stream_path, "main-worker", 11) != 0)
+        return 40;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -842,6 +947,9 @@ int main(int argc, char **argv)
     result = pushback_dso_roundtrip(argv[1]);
     if (result != 0)
         return result;
+    result = lock_dso_roundtrip(argv[1]);
+    if (result != 0)
+        return result;
     result = prepare_dso_exit_stream(argv[1]);
     if (result != 0)
         return 130 + result;
@@ -857,7 +965,7 @@ int main(int argc, char **argv)
     result = wide_memory_dso_roundtrip();
     if (result != 0)
         return result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-pushback-ok\n", 27) != 27)
+    if (write(STDOUT_FILENO, "stdio-file-dso-lock-ok\n", 23) != 23)
         return 11;
     return 0;
 }
