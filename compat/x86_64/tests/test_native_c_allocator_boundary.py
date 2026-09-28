@@ -24,6 +24,55 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_public_weak_import_relocations_keep_c_and_rust_call_forms_distinct(self) -> None:
+        c = ("Relocation section '.rela.text.clock' at offset 0x100 contains 1 entry:\n"
+             "0000000000000001  0000000100000004 R_X86_64_PLT32 0000000000000000 clock_gettime - 4\n")
+        rust = ("Relocation section '.rela.text.ftime' at offset 0x100 contains 1 entry:\n"
+                "0000000000000016  0000000100000009 R_X86_64_GOTPCREL 0000000000000000 clock_gettime - 4\n")
+        self.assertEqual(
+            BOUNDARY._public_weak_relocations(c, "clock_gettime", "R_X86_64_PLT32"),
+            [{"section": ".text.clock", "offset": 1}],
+        )
+        self.assertEqual(
+            BOUNDARY._public_weak_relocations(rust, "clock_gettime", "R_X86_64_GOTPCREL"),
+            [{"section": ".text.ftime", "offset": 22}],
+        )
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "relocation form"):
+            BOUNDARY._public_weak_relocations(c, "clock_gettime", "R_X86_64_GOTPCREL")
+
+    def test_public_weak_final_got_rejects_foreign_and_duplicate_targets(self) -> None:
+        image = bytearray(0x300)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 3)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x100)
+        struct.pack_into("<IIQQQQ", image, 120, 1, 6, 0x200, 0x2000, 0, 0x100)
+        image[0x110:0x112] = b"\xff\x15"
+        struct.pack_into("<i", image, 0x112, 0x2000 - 0x1016)
+        call = {"section": ".text.ftime", "offset": 2}
+        kwargs = {"source_address": 0x1010, "relocation": call, "kind": "rust",
+                  "provider_address": 0x1050, "elf_type": 3}
+        self.assertEqual(BOUNDARY._public_weak_call(
+            bytes(image), **kwargs,
+            relocations="0000000000002000  0000000000000008 R_X86_64_RELATIVE 1050\n",
+        ), {"call_address": 0x1010, "got_slot": 0x2000, "target_address": 0x1050})
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign provider"):
+            BOUNDARY._public_weak_call(bytes(image), **kwargs,
+                relocations="0000000000002000  0000000000000008 R_X86_64_RELATIVE 1060\n")
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign provider"):
+            BOUNDARY._public_weak_call(bytes(image), **kwargs,
+                relocations="0000000000002000  0000000000000008 R_X86_64_RELATIVE 1050\n" * 2)
+        image[0x200:0x208] = struct.pack("<Q", 0x1050)
+        self.assertEqual(BOUNDARY._public_weak_call(
+            bytes(image), **kwargs,
+            relocations="                        0000000000002000  .got + 0x10\n",
+        )["target_address"], 0x1050)
+        image[0x200:0x208] = struct.pack("<Q", 0x1060)
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign provider"):
+            BOUNDARY._public_weak_call(bytes(image), **kwargs,
+                relocations="                        0000000000002000  .got + 0x10\n")
+
     def test_private_vm_final_calls_reject_foreign_and_duplicate_providers(self) -> None:
         archive = "/workspace/.work/x86_64/current/usr/lib/libc.a"
         c_member = f"{archive}(selected-c.o)"
@@ -210,6 +259,7 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 "status": {"family_completion": False, "promotion": False, "public_support": False},
                 "collector_source": source, "component_sources": {}, "inputs": inputs,
                 "startup": {"command": {}, "work": "startup", "observation": {}},
+                "public_weak": {},
                 "interposition": {"command": {}, "work": "interposition", "observation": {}},
             }
             report_path.write_text(json.dumps(report), encoding="utf-8")
@@ -220,6 +270,7 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 mock.patch.object(BOUNDARY, "validate_supplied_products", return_value=inputs),
                 mock.patch.object(BOUNDARY, "_validate_capture"),
                 mock.patch.object(BOUNDARY, "_replay_startup_observations") as replay_startup,
+                mock.patch.object(BOUNDARY, "_replay_public_weak_links"),
                 mock.patch.object(BOUNDARY, "_replay_interposition_observations"),
             ):
                 self.assertEqual(

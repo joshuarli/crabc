@@ -302,6 +302,21 @@ requires those exact occurrences and rejects foreign or duplicate importers
 and providers before removing these three private ordinary-import reasons.
 Public alias imports remain separate from these private C calls.
 
+The same installed C allocator receipt also resolves the public weak
+`clock_gettime` and `sysinfo` providers only when both static importers are
+accounted for. Its focused installed-header workload selects the fixed C
+member and the separate Rust `ftime` and `getloadavg` members in ET_EXEC and
+static PIE. The reader checks the C `PLT32` direct calls and Rust `GOTPCREL`
+calls against the final weak provider address, including the static PIE
+`R_X86_64_RELATIVE` GOT entries. In shared libc, the C calls reach the weak
+definitions directly and the Rust GOT calls use `RELR` slots whose file
+addends name those definitions; neither name remains an external relocation.
+The focused dynamic final links import the public callers through the selected
+libc and carry no direct implementation import. The selector requires the two
+exact archive importer occurrences, unique weak provider placements, and all
+final call targets before discharging either ordinary-import reason. Foreign
+or duplicate importers/providers and foreign final targets reject the join.
+
 `--utmpx-receipt-report REPORT` is independently optional. Its owning
 process-free reader reconstructs the retained eight selected aliases and
 sixteen provider spellings, static executable function proof, dynamic import

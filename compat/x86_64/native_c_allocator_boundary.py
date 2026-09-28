@@ -33,7 +33,7 @@ import owned_posix_static_products as static_products
 
 ROOT = inventory.ROOT
 CONTRACT_PATH = ROOT / "compat/x86_64/native_c_allocator_boundary.toml"
-SCHEMA = "crabc.x86_64-native-c-allocator-boundary/v3"
+SCHEMA = "crabc.x86_64-native-c-allocator-boundary/v4"
 TARGET = "x86_64-unknown-linux-musl"
 RAW = "raw"
 STATIC_MODES = ("static", "static-pie")
@@ -52,6 +52,11 @@ C_RUNTIME_IMPORTS = (
     ("syscall", "GLOBAL"), ("sysconf", "GLOBAL"), ("sysinfo", "WEAK"),
 )
 VM_PRIVATE_IMPORTS = ("__madvise", "__mmap", "__mprotect")
+PUBLIC_WEAK_IMPORTS = {"clock_gettime": "ftime", "sysinfo": "getloadavg"}
+PUBLIC_WEAK_WORKLOAD = ("#define _GNU_SOURCE\n#include <sys/timeb.h>\n#include <stdlib.h>\n"
+                        "int main(void) { struct timeb stamp; double loads[3]; "
+                        "if (ftime(&stamp) != 0) return 1; "
+                        "return getloadavg(loads, 3) < 0 ? 2 : 0; }\n")
 RUNTIME_SOURCES = (
     "libc/src/allocator_mimalloc.rs",
     "libc/src/allocator_observability_mimalloc.rs",
@@ -859,6 +864,30 @@ def _vm_private_relocations(transcript: str) -> dict[str, list[dict[str, object]
     return result
 
 
+def _public_weak_relocations(transcript: str, name: str, kind: str) -> list[dict[str, object]]:
+    """Read the actual C direct-call or Rust GOT-call relocation."""
+    require(name in PUBLIC_WEAK_IMPORTS and kind in {"R_X86_64_PLT32", "R_X86_64_GOTPCREL"},
+            "public weak import role differs")
+    section: str | None = None
+    rows: list[dict[str, object]] = []
+    for line in transcript.splitlines():
+        header = re.match(r"^Relocation section '\.rela(\.text\.[^']+)'", line)
+        if header:
+            section = header.group(1)
+            continue
+        if line.startswith("Relocation section "):
+            section = None
+            continue
+        row = re.match(r"^\s*([0-9a-f]{16})\s+\S+\s+(R_X86_64_\w+)\s+\S+\s+(\S+)\s+([+-])\s+(\d+)\s*$", line)
+        if row is None or row.group(3) != name:
+            continue
+        require(section is not None and row.group(2) == kind and row.group(4) == "-"
+                and row.group(5) == "4", f"public weak {name} relocation form differs")
+        rows.append({"section": section, "offset": int(row.group(1), 16)})
+    require(len(rows) == 1, f"public weak {name} source relocation differs")
+    return rows
+
+
 def _elf_virtual_bytes(image: bytes, address: int, size: int, expected_type: int) -> bytes:
     """Read a final ELF virtual address through its own load segments."""
     require(len(image) >= 64 and image[:6] == b"\x7fELF\x02\x01"
@@ -881,6 +910,74 @@ def _elf_virtual_bytes(image: bytes, address: int, size: int, expected_type: int
             matches.append(image[location:location + size])
     require(len(matches) == 1, "private VM callsite has no unique executable load segment")
     return matches[0]
+
+
+def _public_weak_virtual_bytes(image: bytes, address: int, size: int, expected_type: int,
+                               *, executable: bool) -> bytes:
+    require(len(image) >= 64 and image[:6] == b"\x7fELF\x02\x01"
+            and struct.unpack_from("<H", image, 16)[0] == expected_type,
+            "public weak final ELF type differs")
+    offset = struct.unpack_from("<Q", image, 32)[0]
+    entry_size, count = struct.unpack_from("<HH", image, 54)
+    require(entry_size >= 56 and offset + entry_size * count <= len(image),
+            "public weak final ELF program headers differ")
+    matches = []
+    for index in range(count):
+        header = offset + index * entry_size
+        kind, flags = struct.unpack_from("<II", image, header)
+        file_offset = struct.unpack_from("<Q", image, header + 8)[0]
+        virtual = struct.unpack_from("<Q", image, header + 16)[0]
+        file_size = struct.unpack_from("<Q", image, header + 32)[0]
+        if kind == 1 and bool(flags & 1) == executable and virtual <= address and address + size <= virtual + file_size:
+            location = file_offset + address - virtual
+            require(location + size <= len(image), "public weak final ELF load segment exceeds file")
+            matches.append(image[location:location + size])
+    require(len(matches) == 1, "public weak final address has no unique load segment")
+    return matches[0]
+
+
+def _public_weak_symbol_address(transcript: str, name: str, *, binding: str) -> int:
+    rows = []
+    for line in transcript.splitlines():
+        parts = line.split()
+        if len(parts) >= 8 and parts[-1] == name and parts[0].endswith(":"):
+            require(parts[3] == "FUNC" and parts[4] == binding and parts[6] != "UND",
+                    f"public weak final symbol metadata differs: {name}")
+            rows.append(int(parts[1], 16))
+    require(rows and len(set(rows)) == 1 and len(rows) <= 2,
+            f"public weak final symbol is missing or duplicate: {name}")
+    return rows[0]
+
+
+def _public_weak_call(image: bytes, *, source_address: int, relocation: Mapping[str, object],
+                      kind: str, provider_address: int, relocations: str, elf_type: int) -> dict[str, int]:
+    offset = relocation["offset"]
+    require(type(offset) is int and offset > 0, "public weak source offset differs")
+    if kind == "c":
+        call = source_address + offset - 1
+        instruction = _public_weak_virtual_bytes(image, call, 5, elf_type, executable=True)
+        require(instruction[0] == 0xe8, "public weak C call instruction differs")
+        target = call + 5 + struct.unpack_from("<i", instruction, 1)[0]
+        require(target == provider_address, "public weak C call resolves to a foreign provider")
+        return {"call_address": call, "target_address": target}
+    call = source_address + offset - 2
+    instruction = _public_weak_virtual_bytes(image, call, 6, elf_type, executable=True)
+    require(instruction[:2] == b"\xff\x15", "public weak Rust GOT call instruction differs")
+    slot = call + 6 + struct.unpack_from("<i", instruction, 2)[0]
+    contents = struct.unpack("<Q", _public_weak_virtual_bytes(image, slot, 8, elf_type,
+                                                                executable=False))[0]
+    if elf_type == 2:
+        require(contents == provider_address and not re.search(rf"^0*{slot:x}\s+.*R_X86_64_", relocations, re.MULTILINE),
+                "public weak ET_EXEC GOT resolves to a foreign provider")
+    elif "R_X86_64_RELATIVE" in relocations:
+        rows = re.findall(rf"^0*{slot:x}\s+\S+\s+R_X86_64_RELATIVE\s+([0-9a-f]+)\s*$", relocations, re.MULTILINE)
+        require(len(rows) == 1 and int(rows[0], 16) == provider_address,
+                "public weak static PIE GOT relocation resolves to a foreign provider")
+    else:
+        require(len(re.findall(rf"^\s*0*{slot:x}\s+\.got\b", relocations, re.MULTILINE)) == 1
+                and contents == provider_address,
+                "public weak shared RELR GOT resolves to a foreign provider")
+    return {"call_address": call, "got_slot": slot, "target_address": provider_address}
 
 
 def _vm_final_symbols(transcript: str) -> dict[str, int]:
@@ -1061,6 +1158,167 @@ def private_vm_resolution(report: Mapping[str, Any], *, report_path: Path,
             "shared_private_import_absent": True}
 
 
+def _public_weak_member_relocation(archive: Path, member: Mapping[str, Any], name: str,
+                                   kind: str) -> dict[str, object]:
+    selected = subprocess.run(["/usr/bin/ar", "p", str(archive), member["member"]],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    require(selected.returncode == 0 and selected.stdout, f"public weak {name} archive member is unreadable")
+    with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+        object_path = Path(temporary) / "selected.o"
+        object_path.write_bytes(selected.stdout)
+        observed = subprocess.run(["/usr/bin/readelf", "-rW", str(object_path)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    require(observed.returncode == 0, f"public weak {name} archive relocations are unreadable")
+    return _public_weak_relocations(observed.stdout, name, kind)[0]
+
+
+def _public_weak_map_source(map_text: str, archive_member: str, section: str) -> int:
+    rows = [line for line in map_text.splitlines()
+            if line.rstrip().endswith(f"{archive_member}:({section})")]
+    require(len(rows) == 1, f"public weak selected source section differs: {section}")
+    parts = rows[0].split()
+    require(len(parts) >= 5 and int(parts[2], 16) > 0,
+            f"public weak selected source section is empty: {section}")
+    return int(parts[0], 16)
+
+
+def public_weak_resolution(report: Mapping[str, Any], *, report_path: Path,
+                           static_product: Path, dynamic_product: Path,
+                           elf_facts_report: Path) -> dict[str, object]:
+    """Bind both archive importers to weak providers in every final link domain."""
+    facts = json_object(elf_facts_report, "public weak ELF facts")
+    members = facts["facts"]["candidate-static"]
+    shared = facts["facts"]["candidate-shared"]
+    runtime = report["inputs"]["c_runtime_import_bindings"]
+    c_member = runtime["static_c_member"]
+    archive = physical_file(static_product / "usr/lib/libc.a", "public weak archive")
+    shared_libc = physical_file(dynamic_product / "usr/lib/libc.so", "public weak shared libc")
+    mounted_archive = mounted_path(archive)
+    weak = exact(report["public_weak"], {"work", "source", "object", "links"}, "public weak link receipt")
+    work = physical_directory(report_path.parent / weak["work"], "public weak retained links")
+    require(members[c_member["member_index"]]["member"] == c_member["name"]
+            and members[c_member["member_index"]]["member_occurrence"] == 0,
+            "public weak C archive member differs")
+    try:
+        shared_tables = producer._symbol_tables(shared["symbol_tables"], "public weak shared provider",
+                                                 {".dynsym", ".symtab"})
+    except producer.ProducerMetadataError as error:
+        raise AllocatorBoundaryError(str(error)) from error
+    shared_symbols = subprocess.run(["/usr/bin/readelf", "-Ws", str(shared_libc)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    shared_relocations = subprocess.run(["/usr/bin/readelf", "-rW", str(shared_libc)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    require(shared_symbols.returncode == shared_relocations.returncode == 0,
+            "public weak shared ELF is unreadable")
+    claims = []
+    for name, caller in PUBLIC_WEAK_IMPORTS.items():
+        claim = next((row for row in runtime["imports"] if row["name"] == name), None)
+        require(claim is not None and claim["binding"] == "WEAK", f"public weak runtime claim differs: {name}")
+        rust_importers = []
+        for member in members:
+            if member["member_index"] == c_member["member_index"]:
+                continue
+            try:
+                rows = producer._symbol_tables(member["symbol_tables"], "public weak Rust importer",
+                                               {".symtab"})[".symtab"]
+            except producer.ProducerMetadataError as error:
+                raise AllocatorBoundaryError(str(error)) from error
+            imported = [row for row in rows if row.get("name") == name and row.get("section_index") == "UND"]
+            if imported:
+                require(len(imported) == 1 and len([row for row in rows if row.get("name") == caller
+                        and row.get("section_index") != "UND" and row.get("type") == "FUNC"]) == 1,
+                        f"public weak {name} Rust caller member differs")
+                rust_importers.append((member, imported[0]))
+        require(len(rust_importers) == 1, f"public weak {name} Rust importer is missing or duplicate")
+        rust_member, rust_import = rust_importers[0]
+        require(all(rust_import.get(field) == value for field, value in {
+            "type": "NOTYPE", "binding": "GLOBAL", "visibility": "DEFAULT",
+            "section_index": "UND", "size_bytes": 0, "value": "0000000000000000",
+        }.items()), f"public weak {name} Rust import metadata differs")
+        for table in (".dynsym", ".symtab"):
+            rows = [row for row in shared_tables[table] if row.get("name") == name]
+            require(len(rows) == 1 and rows[0].get("binding") == "WEAK"
+                    and rows[0].get("section_index") != "UND",
+                    f"public weak {name} shared provider differs")
+        c_relocation = _public_weak_member_relocation(
+            archive, {"member": c_member["name"]}, name, "R_X86_64_PLT32")
+        rust_relocation = _public_weak_member_relocation(
+            archive, rust_member, name, "R_X86_64_GOTPCREL")
+        require(not re.search(rf"\b{re.escape(name)}\b", shared_relocations.stdout),
+                f"public weak {name} shared ELF retains an external import")
+        provider_address = _public_weak_symbol_address(shared_symbols.stdout, name, binding="WEAK")
+        shared_callers = {"clock_gettime": "_mi_prim_clock_now",
+                          "sysinfo": "unix_detect_physical_memory.isra.0"}
+        c_address = _public_weak_symbol_address(shared_symbols.stdout, shared_callers[name], binding="LOCAL")
+        rust_address = _public_weak_symbol_address(shared_symbols.stdout, caller, binding="GLOBAL")
+        shared_calls = {
+            "c": _public_weak_call(shared_libc.read_bytes(), source_address=c_address,
+                                   relocation=c_relocation, kind="c", provider_address=provider_address,
+                                   relocations=shared_relocations.stdout, elf_type=3),
+            "rust": _public_weak_call(shared_libc.read_bytes(), source_address=rust_address,
+                                      relocation=rust_relocation, kind="rust", provider_address=provider_address,
+                                      relocations=shared_relocations.stdout, elf_type=3),
+        }
+        final = {}
+        for mode, elf_type in (("static", 2), ("static-pie", 3)):
+            executable = physical_file(work / f"static-{mode}", f"public weak {mode} final ELF")
+            map_text = physical_file(work / f"static-{mode}.crabc-link.map", f"public weak {mode} map").read_text(encoding="utf-8")
+            trace = physical_file(work / f"static-{mode}.crabc-link.trace", f"public weak {mode} trace").read_text(encoding="utf-8")
+            symbols = subprocess.run(["/usr/bin/readelf", "-Ws", str(executable)],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            relocations = subprocess.run(["/usr/bin/readelf", "-rW", str(executable)],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            require(symbols.returncode == relocations.returncode == 0
+                    and not re.search(rf"\b{re.escape(name)}\b", relocations.stdout),
+                    f"public weak {name} {mode} final ELF retains an external import")
+            provider = claim["static_rust_provider_member"]
+            expected = [f"{mounted_archive}({member})" for member in (
+                c_member["name"], rust_member["member"], provider["member"])]
+            require(all(trace.splitlines().count(member) == 1 for member in expected),
+                    f"public weak {name} {mode} importers/provider are not selected exactly once")
+            address = _public_weak_symbol_address(symbols.stdout, name, binding="WEAK")
+            provider_rows = [line for line in map_text.splitlines()
+                             if line.rstrip().endswith(f"{expected[2]}:(.text.__{name})")]
+            if name == "sysinfo":
+                provider_rows = [line for line in map_text.splitlines()
+                                 if line.rstrip().endswith(f"{expected[2]}:(.text.__lsysinfo)")]
+            require(len(provider_rows) == 1 and int(provider_rows[0].split()[0], 16) == address,
+                    f"public weak {name} {mode} provider map differs")
+            image = executable.read_bytes()
+            final[mode] = {
+                "provider_address": address, "provider_member": expected[2],
+                "c": _public_weak_call(image, source_address=_public_weak_map_source(
+                    map_text, expected[0], c_relocation["section"]), relocation=c_relocation,
+                    kind="c", provider_address=address, relocations=relocations.stdout, elf_type=elf_type),
+                "rust": _public_weak_call(image, source_address=_public_weak_map_source(
+                    map_text, expected[1], rust_relocation["section"]), relocation=rust_relocation,
+                    kind="rust", provider_address=address, relocations=relocations.stdout, elf_type=elf_type),
+            }
+        claims.append({"name": name, "caller": caller,
+                       "static_c_member": dict(c_member), "static_rust_importer_member": _member_identity(rust_member),
+                       "static_rust_import": {key: rust_import[key] for key in (
+                           "name", "type", "binding", "visibility", "section_index", "size_bytes", "value")},
+                       "static_provider_member": dict(claim["static_rust_provider_member"]),
+                       "static_provider": dict(claim["static_rust_provider"]),
+                       "shared_dynsym_provider": dict(claim["shared_dynsym_provider"]),
+                       "shared_symtab_provider": dict(claim["shared_symtab_provider"]),
+                       "source_relocations": {"c": c_relocation, "rust": rust_relocation},
+                       "static_final_links": final, "shared_final_calls": shared_calls,
+                       "shared_provider_address": provider_address})
+    for mode in DYNAMIC_MODES:
+        executable = physical_file(work / f"dynamic-{mode}", f"public weak dynamic {mode} final ELF")
+        dynamic = subprocess.run(["/usr/bin/readelf", "-dW", str(executable)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        symbols = subprocess.run(["/usr/bin/readelf", "-Ws", str(executable)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        require(dynamic.returncode == symbols.returncode == 0 and
+                len(re.findall(r"\(NEEDED\).*\[libc\.so\]", dynamic.stdout)) == 1
+                and not any(re.search(rf"\b{re.escape(name)}$", symbols.stdout, re.MULTILINE)
+                            for name in PUBLIC_WEAK_IMPORTS),
+                f"public weak dynamic {mode} final ELF imports a weak implementation")
+    return {"imports": claims, "dynamic_final_import_absent": True}
+
+
 def _startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path,
                           runtime_imports: Mapping[str, Any], *, validate_links: bool = True) -> dict[str, object]:
     captures = {stem: _stream(work, output, stem) for stem in ("oracle-dynamic", "oracle-static", *[f"static-{mode}" for mode in STATIC_MODES], *[f"dynamic-{mode}-{entry}" for mode in DYNAMIC_MODES for entry in ENTRIES])}
@@ -1108,6 +1366,72 @@ def _replay_startup_observations(work: Path, output: Path, static_product: Path,
         _replay_link(work, output, dynamic_product, workload, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode,
                      links[f"dynamic-{mode}"], export_dynamic=False)
     return record
+
+
+def _public_weak_links(output: Path, static_product: Path, dynamic_product: Path) -> dict[str, object]:
+    """Link one installed-header caller that selects both ordinary Rust importers."""
+    work = output / "public-weak"
+    work.mkdir(mode=0o755)
+    source = work / "workload.c"
+    source.write_text(PUBLIC_WEAK_WORKLOAD, encoding="utf-8")
+    object_path = work / "workload.o"
+    command = [str(physical_file(dynamic_product / "bin/crabc-cc-dynamic", "public weak installed compiler")),
+               "--dynamic-pie", "-std=c11", "-fno-builtin", "-c", mounted_path(source),
+               "-o", mounted_path(object_path)]
+    result = subprocess.run(command, cwd=work, env=workload_environment(output),
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    require(result.returncode == 0 and not result.stdout and not result.stderr,
+            "public weak installed-header compilation failed")
+    links = {}
+    for mode in STATIC_MODES:
+        stem = f"static-{mode}"
+        command = [str(physical_file(static_product / "bin/crabc-cc", "public weak static linker")),
+                   f"-{mode}", "--link-receipt", f"{stem}.crabc-link.json",
+                   mounted_path(object_path), "-o", mounted_path(work / stem)]
+        result = subprocess.run(command, cwd=work, env=workload_environment(output),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        require(result.returncode == 0 and not result.stdout and not result.stderr,
+                f"public weak {mode} installed link failed")
+        links[mode] = _link(work, output, static_product, object_path, stem,
+                            f"{stem}.crabc-link.json", mode)
+    for mode in DYNAMIC_MODES:
+        stem = f"dynamic-{mode}"
+        command = [str(physical_file(dynamic_product / "bin/crabc-cc-dynamic", "public weak dynamic linker")),
+                   f"--dynamic-{mode}", mounted_path(object_path), "-o", mounted_path(work / stem)]
+        result = subprocess.run(command, cwd=work, env=workload_environment(output),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        require(result.returncode == 0 and not result.stdout and not result.stderr,
+                f"public weak dynamic {mode} installed link failed")
+        links[stem] = _link(work, output, dynamic_product, object_path, stem,
+                            f"{stem}.crabc-link.json", mode)
+    return {"work": work.relative_to(output).as_posix(),
+            "source": identity(source, logical_path=source.relative_to(output).as_posix()),
+            "object": identity(object_path, logical_path=object_path.relative_to(output).as_posix()),
+            "links": links}
+
+
+def _replay_public_weak_links(output: Path, static_product: Path, dynamic_product: Path,
+                              observed: object) -> dict[str, object]:
+    item = exact(observed, {"work", "source", "object", "links"}, "public weak links")
+    require(item["work"] == "public-weak", "public weak work path differs")
+    work = physical_directory(output / item["work"], "public weak link work")
+    source = physical_file(work / "workload.c", "public weak workload source")
+    object_path = physical_file(work / "workload.o", "public weak workload object")
+    require(source.read_text(encoding="utf-8") == PUBLIC_WEAK_WORKLOAD
+            and same(item["source"], identity(source, logical_path=source.relative_to(output).as_posix()))
+            and same(item["object"], identity(object_path, logical_path=object_path.relative_to(output).as_posix())),
+            "public weak installed workload differs")
+    links = exact(item["links"], {*STATIC_MODES, *(f"dynamic-{mode}" for mode in DYNAMIC_MODES)},
+                  "public weak link roster")
+    for mode in STATIC_MODES:
+        stem = f"static-{mode}"
+        _replay_link(work, output, static_product, object_path, stem,
+                     f"{stem}.crabc-link.json", mode, links[mode], export_dynamic=False)
+    for mode in DYNAMIC_MODES:
+        stem = f"dynamic-{mode}"
+        _replay_link(work, output, dynamic_product, object_path, stem,
+                     f"{stem}.crabc-link.json", mode, links[stem], export_dynamic=False)
+    return item
 
 
 def _interposition_observations(work: Path, output: Path, dynamic_product: Path,
@@ -1177,6 +1501,7 @@ def collect(*, static_preparation: Path, static_product: Path, dynamic_product: 
         startup_work, output, Path(static_product), Path(dynamic_product),
         inputs["c_runtime_import_bindings"],
     )
+    public_weak = _public_weak_links(output, Path(static_product), Path(dynamic_product))
     interposition_before = set(output.glob("owned-c-allocation-interposition.*"))
     interposition_command = _capture(output, "interposition", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), dynamic_mount], environment)
     interposition_work = _new_work(output, "owned-c-allocation-interposition", interposition_before)
@@ -1194,6 +1519,7 @@ def collect(*, static_preparation: Path, static_product: Path, dynamic_product: 
     report = {"schema": SCHEMA, "target": TARGET, "status": {"family_completion": False, "promotion": False, "public_support": False},
               "collector_source": source, "component_sources": source_records(ROOT), "inputs": inputs,
               "startup": {"command": startup_command, "work": startup_work.relative_to(output).as_posix(), "observation": startup},
+              "public_weak": public_weak,
               "interposition": {"command": interposition_command, "work": interposition_work.relative_to(output).as_posix(), "observation": interposition}}
     (output / "report.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     os.chmod(output, 0o755)
@@ -1214,7 +1540,7 @@ def validate_report(report_path: Path, *, static_preparation: Path, static_produ
                     dynamic_product: Path, elf_facts_report: Path) -> dict[str, object]:
     report_path = physical_file(report_path, "allocator boundary report")
     output = physical_directory(report_path.parent, "allocator boundary report root")
-    report = exact(json_object(report_path, "allocator boundary report"), {"schema", "target", "status", "collector_source", "component_sources", "inputs", "startup", "interposition"}, "allocator boundary report")
+    report = exact(json_object(report_path, "allocator boundary report"), {"schema", "target", "status", "collector_source", "component_sources", "inputs", "startup", "public_weak", "interposition"}, "allocator boundary report")
     require(report["schema"] == SCHEMA and report["target"] == TARGET and report["status"] == {"family_completion": False, "promotion": False, "public_support": False},
             "allocator boundary report identity drifted")
     require(same(report["collector_source"], inventory.collector_source_seal()), "collector source changed")
@@ -1233,6 +1559,7 @@ def validate_report(report_path: Path, *, static_preparation: Path, static_produ
         startup_work, output, Path(static_product), Path(dynamic_product),
         inputs["c_runtime_import_bindings"], startup["observation"],
     )
+    _replay_public_weak_links(output, Path(static_product), Path(dynamic_product), report["public_weak"])
     interposition = exact(report["interposition"], {"command", "work", "observation"}, "interposition report")
     interposition_work = physical_directory(output / interposition["work"], "interposition retained work")
     _validate_capture(output, interposition["command"], "interposition", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), dynamic_mount])

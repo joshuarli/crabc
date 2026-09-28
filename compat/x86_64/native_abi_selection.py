@@ -5356,7 +5356,7 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
     contract, import_names = _c_allocator_boundary_contract()
     _runtime_contract, runtime_roles = _c_allocator_runtime_import_contract()
     report = exact(report, {
-        'schema', 'target', 'status', 'collector_source', 'component_sources', 'inputs', 'startup', 'interposition',
+        'schema', 'target', 'status', 'collector_source', 'component_sources', 'inputs', 'startup', 'public_weak', 'interposition',
     }, 'native C allocator boundary reader report')
     require(report['schema'] == native_c_allocator_boundary.SCHEMA
             and report['target'] == native_c_allocator_boundary.TARGET
@@ -5465,6 +5465,13 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
         )
     except (KeyError, TypeError, ValueError, OSError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
         raise SelectionError(f'native C allocator private VM resolution rejected: {error}') from error
+    try:
+        public_weak_resolution = native_c_allocator_boundary.public_weak_resolution(
+            report, report_path=report_path, static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
+        )
+    except (KeyError, TypeError, ValueError, OSError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'native C allocator public weak resolution rejected: {error}') from error
     selected_products = {
         name: copy.deepcopy(current[name]) for name in (
             'static_manifest', 'static_libc', 'static_provenance', 'dynamic_manifest',
@@ -5489,6 +5496,7 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
             'c_runtime_static_links': copy.deepcopy(runtime_static_links),
         },
         'private_vm_resolution': private_vm_resolution,
+        'public_weak_resolution': public_weak_resolution,
         'limits': list(C_ALLOCATOR_BOUNDARY_LIMITS),
     }
 
@@ -9141,7 +9149,7 @@ def attach_native_c_allocator_boundary(accounting: Mapping[str, Any],
         return []
     companion = exact(companion, {
         'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
-        'measurement_reports', 'account', 'private_vm_resolution', 'limits',
+        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'limits',
     }, 'native C allocator boundary companion')
     require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
             and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
@@ -9273,7 +9281,7 @@ def attach_native_c_allocator_runtime_imports(
         return []
     companion = exact(companion, {
         'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
-        'measurement_reports', 'account', 'private_vm_resolution', 'limits',
+        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'limits',
     }, 'native C allocator runtime-import companion')
     require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
             and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
@@ -9409,7 +9417,7 @@ def attach_native_c_allocator_private_vm_imports(
         return []
     companion = exact(companion, {
         'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
-        'measurement_reports', 'account', 'private_vm_resolution', 'limits',
+        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'limits',
     }, 'native C allocator private VM companion')
     require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
             and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
@@ -9524,6 +9532,156 @@ def attach_native_c_allocator_private_vm_imports(
                        'shared_provider_occurrence_index': shared_provider['index'],
                        'static_final_links': final_modes,
                        'discharged_reason': ORDINARY_IMPORT_REASON})
+    return result
+
+
+def attach_native_c_allocator_public_weak_imports(
+        accounting: Mapping[str, Any], companion: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Join both selected archive importers to weak final-image providers."""
+    if companion is None:
+        return []
+    companion = exact(companion, {
+        'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
+        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'limits',
+    }, 'native C allocator public weak companion')
+    require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
+            and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
+            'native C allocator public weak companion differs')
+    projection = exact(companion['public_weak_resolution'], {'imports', 'dynamic_final_import_absent'},
+                       'native C allocator public weak resolution')
+    names = tuple(native_c_allocator_boundary.PUBLIC_WEAK_IMPORTS)
+    require(projection['dynamic_final_import_absent'] is True
+            and type(projection['imports']) is list
+            and [row.get('name') for row in projection['imports'] if type(row) is dict] == list(names),
+            'native C allocator public weak roster differs')
+    runtime = companion['account']['c_runtime_imports']
+    records, placements, occurrences = _accounting_indexes(
+        accounting, description='native C allocator public weak import attachment')
+    selected_c = companion['account']['c_runtime_static_links']['static']['selected_members']['static_c_member']
+    c_member = runtime['static_c_member']
+    require(selected_c.endswith(f"({c_member['name']})"),
+            'native C allocator public weak selected archive differs')
+    archive = selected_c[:-(len(c_member['name']) + 2)]
+    result = []
+    discharged = set()
+    for claim in projection['imports']:
+        claim = exact(claim, {
+            'name', 'caller', 'static_c_member', 'static_rust_importer_member', 'static_rust_import',
+            'static_provider_member', 'static_provider', 'shared_dynsym_provider',
+            'shared_symtab_provider', 'source_relocations', 'static_final_links',
+            'shared_final_calls', 'shared_provider_address',
+        }, 'native C allocator public weak claim')
+        name = claim['name']
+        require(claim['caller'] == native_c_allocator_boundary.PUBLIC_WEAK_IMPORTS[name]
+                and same(claim['static_c_member'], c_member),
+                f'native C allocator public weak source differs: {name}')
+        baseline = next((row for row in runtime['imports'] if row['name'] == name), None)
+        require(baseline is not None and baseline['binding'] == 'WEAK'
+                and same(claim['static_provider_member'], baseline['static_rust_provider_member'])
+                and same(claim['static_provider'], baseline['static_rust_provider'])
+                and all(same(claim[field], baseline[field]) for field in (
+                    'shared_dynsym_provider', 'shared_symtab_provider')),
+                f'native C allocator public weak provider account differs: {name}')
+        member = exact(claim['static_rust_importer_member'],
+                       {'member', 'member_index', 'member_occurrence'},
+                       f'native C allocator public weak {name} Rust importer member')
+        provider = exact(claim['static_provider_member'],
+                         {'member', 'member_index', 'member_occurrence'},
+                         f'native C allocator public weak {name} provider member')
+        require(len({c_member['member_index'], member['member_index'], provider['member_index']}) == 3,
+                f'native C allocator public weak {name} member roles overlap')
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
+                and record['selection'].get('owner') == 'checked-header-provider-routing',
+                f'native C allocator public weak owner differs: {name}')
+        rows = [row for row in occurrences.values() if row.get('artifact_key') in {
+            'candidate-static', 'candidate-shared',
+        } and row.get('row', {}).get('name') == name]
+        imports = [row for row in rows if row.get('role') == 'import']
+        definitions = [row for row in rows if row.get('role') == 'definition']
+        expected_imports = ((c_member, baseline['static_c_import']),
+                            (member, claim['static_rust_import']))
+        def importer_matches(row: Mapping[str, Any], expected: Mapping[str, Any],
+                             metadata: Mapping[str, Any]) -> bool:
+            return (row.get('artifact_key') == 'candidate-static' and row.get('table') == '.symtab'
+                    and row.get('member_name') == expected['name' if 'name' in expected else 'member']
+                    and row.get('member_index') == expected['member_index']
+                    and row.get('member_occurrence') == expected['member_occurrence']
+                    and all(row['row'].get(field) == value for field, value in metadata.items())
+                    and row['row'].get('raw_name') == name and row['row'].get('version') is None
+                    and row['row'].get('version_default') is False)
+        require(len(imports) == 2 and all(
+            sum(importer_matches(row, expected, metadata) for row in imports) == 1
+            for expected, metadata in expected_imports),
+            f'native C allocator public weak has a foreign or duplicate importer: {name}')
+        expected_definitions = (
+            ('candidate-static', '.symtab', claim['static_provider']),
+            ('candidate-shared', '.dynsym', claim['shared_dynsym_provider']),
+            ('candidate-shared', '.symtab', claim['shared_symtab_provider']),
+        )
+        def provider_matches(row: Mapping[str, Any], artifact: str, table: str,
+                             metadata: Mapping[str, Any]) -> bool:
+            return (row.get('artifact_key') == artifact and row.get('table') == table
+                    and (artifact == 'candidate-shared' or (
+                        row.get('member_name') == provider['member']
+                        and row.get('member_index') == provider['member_index']
+                        and row.get('member_occurrence') == provider['member_occurrence']))
+                    and all(row['row'].get(field) == value for field, value in metadata.items()))
+        require(len(definitions) == len(expected_definitions) and len(rows) == 5
+                and all(sum(provider_matches(row, artifact, table, metadata)
+                            for row in definitions) == 1
+                        for artifact, table, metadata in expected_definitions),
+            f'native C allocator public weak has a foreign or duplicate provider: {name}')
+        for artifact in ('candidate-static', 'candidate-shared'):
+            placement = placements.get(((name, None, False), artifact))
+            require(placement is not None and placement.get('placement_observed') is True
+                    and placement.get('definition_count') == 1
+                    and _metadata_difference_rows_are_empty(placement.get('metadata_differences'),
+                                                           f'native C allocator public weak {name} placement')
+                    and same(placement.get('expected_metadata'), {
+                        'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT',
+                    }), f'native C allocator public weak placement differs: {name}')
+        source = exact(claim['source_relocations'], {'c', 'rust'},
+                       f'native C allocator public weak {name} source relocations')
+        require(all(type(source[role]) is dict and set(source[role]) == {'section', 'offset'}
+                    and type(source[role]['offset']) is int and source[role]['offset'] > 0
+                    for role in ('c', 'rust')),
+                f'native C allocator public weak {name} source call differs')
+        final = exact(claim['static_final_links'], {'static', 'static-pie'},
+                      f'native C allocator public weak {name} static links')
+        for mode in ('static', 'static-pie'):
+            link = exact(final[mode], {'provider_address', 'provider_member', 'c', 'rust'},
+                         f'native C allocator public weak {name} {mode} link')
+            require(link['provider_member'] == f"{archive}({provider['member']})"
+                    and type(link['provider_address']) is int and link['provider_address'] > 0
+                    and all(type(link[role]) is dict and link[role].get('target_address') == link['provider_address']
+                            and type(link[role].get('call_address')) is int
+                            and (role == 'c' or type(link[role].get('got_slot')) is int)
+                            for role in ('c', 'rust')),
+                    f'native C allocator public weak {name} {mode} final target differs')
+        shared = exact(claim['shared_final_calls'], {'c', 'rust'},
+                       f'native C allocator public weak {name} shared calls')
+        require(type(claim['shared_provider_address']) is int and claim['shared_provider_address'] > 0
+                and all(type(shared[role]) is dict
+                        and shared[role].get('target_address') == claim['shared_provider_address']
+                        and type(shared[role].get('call_address')) is int
+                        and (role == 'c' or type(shared[role].get('got_slot')) is int)
+                        for role in ('c', 'rust')),
+                f'native C allocator public weak {name} shared target differs')
+        require(ORDINARY_IMPORT_REASON in record['unresolved'],
+                f'native C allocator public weak reason is absent: {name}')
+        record['unresolved'].remove(ORDINARY_IMPORT_REASON)
+        discharged.add((name, None, False))
+        result.append({'identity': copy.deepcopy(record['identity']), 'owner': 'checked-header-provider-routing',
+                       'static_importer_members': [c_member['name'], member['member']],
+                       'static_provider_member': provider['member'],
+                       'occurrence_indices': sorted(row['index'] for row in rows),
+                       'discharged_reason': ORDINARY_IMPORT_REASON})
+    accounting['blockers'][:] = [row for row in accounting['blockers'] if not (
+        row.get('code') == 'identity-unresolved'
+        and identity_key(row.get('identity', {})) in discharged
+        and row.get('reason') == ORDINARY_IMPORT_REASON)]
     return result
 
 
@@ -11660,6 +11818,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'native_c_allocator_private_vm_import_resolution', accounting,
         native_c_allocator_boundary_companion,
         lambda: attach_native_c_allocator_private_vm_imports(accounting, native_c_allocator_boundary_companion))
+    native_c_allocator_public_weak_import_joins, _ = _attach(
+        rejected, 'native_c_allocator_public_weak_import_resolution', accounting,
+        native_c_allocator_boundary_companion,
+        lambda: attach_native_c_allocator_public_weak_imports(accounting, native_c_allocator_boundary_companion))
     rust_allocation_handler_joins, _ = _attach(
         rejected, 'rust_allocation_handler_provenance', accounting, native_c_allocator_boundary_companion,
         lambda: attach_rust_allocation_handlers(
@@ -11841,6 +12003,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             'native_c_allocator_runtime_import_joins': native_c_allocator_runtime_import_joins,
             'native_c_allocator_private_vm_import_joins': native_c_allocator_private_vm_import_joins,
+            'native_c_allocator_public_weak_import_joins': native_c_allocator_public_weak_import_joins,
             'rust_allocation_handler_joins': rust_allocation_handler_joins,
             'stdio_alias_contract_companion': stdio_alias_contract_companion,
             'stdio_alias_contract_joins': stdio_alias_contract_joins,
