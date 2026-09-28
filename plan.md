@@ -52,7 +52,11 @@ are not transferable passes for a different revision.
   errors without child faults. On frozen `1b1511d19`, installed static and
   dynamic products each pass eight guarded metadata cases with a source-bound
   provider and physically reread link and execution receipts. Broader
-  unwinder integration remains open.
+  unwinder integration remains open. A direct Rust backtrace fixture crosses
+  owned DSO and pthread frames on a freshly linked installed product, with a
+  passing static control and physical reader. Its full three-product dynamic
+  qualification remains open after the installed arm passed all 73 cases;
+  the producer stopped before the remaining arms under disk pressure.
   Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
@@ -235,6 +239,12 @@ are not transferable passes for a different revision.
   A DSO-owned fixed-buffer `fmemopen` passes the same matrix through writes,
   seeks, flushes, a capacity short write, close, and surviving buffer checks;
   its eight final bytes and error state match pinned musl.
+  A DSO-created `open_wmemstream` passes all eleven cells while main and DSO
+  alternate wide writes, inspect the published wchar_t buffer, and close it
+  with one owner. Cross-image `fflush(NULL)` also passes the eleven-cell matrix:
+  separate main and DSO buffered pathname streams flush in pinned-musl order
+  on both calls, preserving exact writes, file bytes, shared errno, and close
+  ownership.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -329,6 +339,9 @@ are not transferable passes for a different revision.
   Retaining the pool chunk's exclusive end instead of decrementing remaining
   bytes saves another 80 and 99 paired median instructions in the same startup
   rows, with unchanged syscalls and 16 fewer release-text bytes.
+  Specializing the pool's zeroed and uninitialized allocation paths saves
+  another 104 and 128 paired median instructions across 100 development
+  startup pairs with unchanged syscall sequences; release text grows 192 bytes.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
@@ -371,7 +384,8 @@ are not transferable passes for a different revision.
      authority, fixed on main by the abi-closure commits), and the static and
      combined sysroots (the 33rd `atexit` expectation, fixed on main by
      `7fbcc1b5d`). The combined product's package-corpus reader now validates
-     its embedded static/dynamic placement maps and passes a focused physical
+     its embedded static/dynamic placement maps, rejects executable top-level
+     manifests, and passes a focused physical
      34-workload replay; a full combined rerun remains open after identical
      oracle/candidate sqlite timeouts under host contention. The finite
      `aio_cancel` oracle disposition is integrated;
