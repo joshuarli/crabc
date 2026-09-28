@@ -935,11 +935,10 @@ struct Object {
     canonical_libc_identity: Option<ObjectIdentity>,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: Option<usize>,
-    // The readable file-backed PT_LOAD (virtual start, file end) that a full
-    // program-header scan found holding the first dynsym record. Direct
-    // record reads inside it skip rescanning; see `direct_symbol`.
+    // Complete dynsym records in the first readable file-backed PT_LOAD
+    // containing its null entry. Later overlapping loads may hold more.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    symtab_file_load: Option<(u64, u64)>,
+    symtab_file_record_limit: usize,
     // The installed runtime reads DT_NEEDED name offsets from `dynamic`
     // through `needed_name_offset`, so an object has no DT_NEEDED bound.
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
@@ -1014,7 +1013,7 @@ const EMPTY_OBJECT: Object = Object {
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: None,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    symtab_file_load: None,
+    symtab_file_record_limit: 0,
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     needed: [0; MAX_NEEDED],
     needed_count: 0,
@@ -1921,9 +1920,10 @@ unsafe fn parse_mapped(
     // later direct indexed access validates exactly the named record.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     {
-        // Retain the segment found by the admission scan for direct indexed
-        // symbols; repeating the same scan cannot strengthen that proof.
-        object.symtab_file_load = Some(readable_file_load_segment(phdr, phnum, symtab_address, 24)?);
+        // The null entry's segment proves all complete records through this
+        // limit. A later overlapping segment is checked when an index exceeds it.
+        let (_, file_end) = readable_file_load_segment(phdr, phnum, symtab_address, 24)?;
+        object.symtab_file_record_limit = usize::try_from((file_end - symtab_address) / 24).ok()?;
     }
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     if !virtual_range_in_readable_file_load(phdr, phnum, symtab_address, 24) { return None; }
@@ -1942,7 +1942,7 @@ unsafe fn parse_mapped(
     {
         let sysv = match hash_virtual_address {
             Some(address) => Some(unsafe { decode_sysv_hash(phdr, phnum, base, address,
-                symtab_address, object.symtab_file_load) }?),
+                symtab_address, object.symtab_file_record_limit) }?),
             None => None,
         };
         let gnu = match gnu_hash_virtual_address {
@@ -5045,7 +5045,7 @@ unsafe fn decode_sysv_hash(
     base: u64,
     address: u64,
     symtab_address: u64,
-    symtab_file_load: Option<(u64, u64)>,
+    symtab_file_record_limit: usize,
 ) -> Option<SymbolLookupTable> {
     let (_, header_file_end) = unsafe { readable_file_load_segment(phdr, phnum, address, 8) }?;
     let table = runtime_address(base, address)? as *const u8;
@@ -5061,17 +5061,13 @@ unsafe fn decode_sysv_hash(
         return None;
     }
     if symbol_count != 0 {
-        let symtab_len = u64::try_from(symbol_count.checked_mul(24)?).ok()?;
-        let in_known_load = symtab_file_load.is_some_and(|(start, file_end)| {
-            symtab_address >= start
-                && symtab_address.checked_add(symtab_len).is_some_and(|end| end <= file_end)
-        });
         // A larger dynsym span may fit a later overlapping PT_LOAD even when
         // the null entry's retained segment ends earlier.
-        if !in_known_load
-            && !unsafe { virtual_range_in_readable_file_load(phdr, phnum, symtab_address, symtab_len) }
-        {
-            return None;
+        if symbol_count > symtab_file_record_limit {
+            let symtab_len = u64::try_from(symbol_count.checked_mul(24)?).ok()?;
+            if !unsafe { virtual_range_in_readable_file_load(phdr, phnum, symtab_address, symtab_len) } {
+                return None;
+            }
         }
     }
     let buckets = unsafe { table.add(8).cast::<u32>() };
@@ -5158,13 +5154,12 @@ unsafe fn decode_gnu_hash(
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn direct_symbol(object: &Object, index: usize) -> Option<*const u8> {
     let byte_offset = index.checked_mul(24)?;
-    let virtual_base = (object.symtab as u64).checked_sub(object.base)?;
-    let virtual_address = virtual_base.checked_add(u64::try_from(byte_offset).ok()?)?;
-    let in_known_load = object.symtab_file_load.is_some_and(|(start, file_end)| {
-        virtual_address >= start && virtual_address.checked_add(24).is_some_and(|end| end <= file_end)
-    });
-    if !in_known_load && !unsafe { virtual_range_in_readable_file_load(object.phdr, object.phnum, virtual_address, 24) } {
-        return None;
+    if index >= object.symtab_file_record_limit {
+        let virtual_base = (object.symtab as u64).checked_sub(object.base)?;
+        let virtual_address = virtual_base.checked_add(u64::try_from(byte_offset).ok()?)?;
+        if !unsafe { virtual_range_in_readable_file_load(object.phdr, object.phnum, virtual_address, 24) } {
+            return None;
+        }
     }
     Some(unsafe { object.symtab.add(byte_offset) })
 }
@@ -5483,7 +5478,7 @@ mod readable_file_load_tests {
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        assert_eq!(object.symtab_file_load, Some((0, 0x380)));
+        assert_eq!(object.symtab_file_record_limit, 4);
         let mapped = object.base as *const u8;
         assert_eq!(unsafe { *mapped.add(0x37f) }, 0xa5);
         assert!(unsafe { core::slice::from_raw_parts(mapped.add(0x380), 0x180) }
@@ -5551,6 +5546,29 @@ mod readable_file_load_tests {
         assert_eq!(unsafe { readable_file_load_segment(headers.as_ptr(), 2, u64::MAX - 12, 1) }, None);
     }
 
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    #[test]
+    fn direct_symbol_uses_retained_load_then_checks_later_overlapping_load() {
+        let mut headers = [0u8; 112];
+        load(&mut headers, 0, PF_R, 0x1000, 0x30, 0x80);
+        load(&mut headers, 1, PF_R, 0x1020, 0x50, 0x50);
+        let image = [0u8; 0x100];
+        let object = Object {
+            base: image.as_ptr() as u64 - 0x1000,
+            phdr: headers.as_ptr(),
+            phnum: 2,
+            symtab: image.as_ptr(),
+            symtab_file_record_limit: 2,
+            ..EMPTY_OBJECT
+        };
+        assert_eq!(unsafe { direct_symbol(&object, 1) }, Some(unsafe { image.as_ptr().add(24) }));
+        assert_eq!(unsafe { direct_symbol(&object, 2) }, Some(unsafe { image.as_ptr().add(48) }));
+        assert!(unsafe { direct_symbol(&object, 4) }.is_none());
+        assert!(unsafe { direct_symbol(&object, usize::MAX) }.is_none());
+        load(&mut headers, 1, PF_W, 0x1020, 0x50, 0x50);
+        assert!(unsafe { direct_symbol(&object, 2) }.is_none());
+    }
+
     #[test]
     fn relocation_load_cache_preserves_overlapping_and_malformed_ranges() {
         let mut headers = [0u8; 112];
@@ -5579,10 +5597,11 @@ mod readable_file_load_tests {
         let base = image.as_ptr() as u64;
         let null_load = unsafe { readable_file_load_segment(headers.as_ptr(), 2, 0x100, 24) };
         assert_eq!(null_load, Some((0, 0x118)));
-        let decoded = unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) };
+        let record_limit = (null_load.unwrap().1 - 0x100) as usize / 24;
+        let decoded = unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, record_limit) };
         assert!(matches!(decoded, Some(SymbolLookupTable::Sysv { symbol_count: 2, .. })));
         load(&mut headers, 1, PF_R, 0x100, 0x20, 0x20);
-        assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) }.is_none());
+        assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, record_limit) }.is_none());
     }
 
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -5596,9 +5615,10 @@ mod readable_file_load_tests {
         let base = image.as_ptr() as u64;
         let null_load = unsafe { readable_file_load_segment(headers.as_ptr(), 2, 0x100, 24) };
         assert_eq!(null_load, Some((0x80, 0x200)));
-        assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) }.is_some());
+        let record_limit = (null_load.unwrap().1 - 0x100) as usize / 24;
+        assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, record_limit) }.is_some());
         load(&mut headers, 1, PF_R, 0x80, 0x12, 0x12);
-        assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) }.is_none());
+        assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, record_limit) }.is_none());
     }
 }
 
