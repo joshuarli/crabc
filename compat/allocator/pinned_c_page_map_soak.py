@@ -39,12 +39,14 @@ PIE_STARTFILE = "/opt/musl-1.2.6/lib/rcrt1.o"
 SHARED_STARTFILE = "/opt/musl-1.2.6/lib/Scrt1.o"
 
 
-def artifact_dir(link_mode: str) -> Path:
+def artifact_dir(link_mode: str, *, class_snapshot: bool = False) -> Path:
     if link_mode == "static":
-        return ARTIFACTS
-    if link_mode == "static-pie":
-        return ARTIFACTS / "static-pie"
-    raise ValueError(f"unsupported diagnostic link mode: {link_mode}")
+        base = ARTIFACTS
+    elif link_mode == "static-pie":
+        base = ARTIFACTS / "static-pie"
+    else:
+        raise ValueError(f"unsupported diagnostic link mode: {link_mode}")
+    return base / "classes" if class_snapshot else base
 
 
 def static_pie_specs(installed: str) -> str:
@@ -64,7 +66,7 @@ def fields(line: str) -> dict[str, int]:
     return {key: int(value) for key, value in FIELD.findall(line)}
 
 
-def parse_soak(output: str) -> dict[str, object]:
+def parse_soak(output: str, *, require_class_snapshot: bool = False) -> dict[str, object]:
     lines = output.splitlines()
     if not lines or lines[0] != (
         f"soak seed=0x000000005eed0002 rounds={ROUNDS} workers={WORKERS} "
@@ -87,7 +89,7 @@ def parse_soak(output: str) -> dict[str, object]:
         raise ValueError("the pinned C soak did not complete all owner exits")
     first = max(point["page_map_entries"] for point in checkpoints if point["round"] <= ROUNDS // 2)
     second = max(point["page_map_entries"] for point in checkpoints if point["round"] > ROUNDS // 2)
-    return {
+    result: dict[str, object] = {
         "first_half_max": first,
         "second_half_max": second,
         "second_half_allowed_at_ten_percent": first + first // 10,
@@ -99,6 +101,47 @@ def parse_soak(output: str) -> dict[str, object]:
         ],
         "summary": summaries[0],
     }
+    class_lines = [line for line in lines if line.startswith("class_snapshot ")]
+    if require_class_snapshot:
+        if len(class_lines) != 2:
+            raise ValueError("the pinned C class snapshot needs exactly two peak records")
+        snapshots: list[dict[str, int | str]] = []
+        required = {
+            "round", "entries", "small_empty", "small_used", "medium_empty", "medium_used",
+            "large_empty", "large_used", "singleton_empty", "singleton_used", "unknown_kind",
+            "abandoned", "detached", "attached", "nonprimary", "medium_abandoned",
+            "medium_detached", "medium_attached", "medium_remote_pending", "medium_reusable",
+            "medium_retired",
+        }
+        for line, half, peak in zip(class_lines, ("first", "second"), (first, second)):
+            if f"half={half}" not in line.split():
+                raise ValueError("the pinned C class snapshot halves are missing or out of order")
+            point = fields(line)
+            if required - point.keys():
+                raise ValueError("the pinned C class snapshot omits a required state field")
+            matching = [record["round"] for record in checkpoints
+                        if (record["round"] <= ROUNDS // 2) == (half == "first")
+                        and record["page_map_entries"] == peak]
+            if point["entries"] != peak or point["round"] != matching[0]:
+                raise ValueError("the pinned C class snapshot does not name the half peak")
+            kinds = sum(point[f"{kind}_{state}"] for kind in
+                        ("small", "medium", "large", "singleton") for state in ("empty", "used"))
+            if kinds + point["unknown_kind"] != peak:
+                raise ValueError("the pinned C class snapshot kind buckets do not sum to entries")
+            if point["abandoned"] + point["detached"] + point["attached"] != peak:
+                raise ValueError("the pinned C class snapshot owner buckets do not sum to entries")
+            medium = point["medium_empty"] + point["medium_used"]
+            if point["medium_abandoned"] + point["medium_detached"] + point["medium_attached"] != medium:
+                raise ValueError("the pinned C class snapshot medium owner buckets do not sum")
+            if (point["medium_remote_pending"] > point["medium_used"]
+                    or point["medium_reusable"] > medium or point["medium_retired"] > medium
+                    or point["nonprimary"] > peak):
+                raise ValueError("the pinned C class snapshot overlapping state exceeds its class")
+            snapshots.append({"half": half, **point})
+        result["class_snapshots"] = snapshots
+    elif class_lines:
+        raise ValueError("unexpected class snapshot in the ordinary pinned C soak")
+    return result
 
 
 def digest(path: Path) -> str:
@@ -190,19 +233,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--replays", type=int, default=1)
     parser.add_argument("--link-mode", choices=("static", "static-pie"), default="static")
+    parser.add_argument("--class-snapshot", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.replays <= 32:
         parser.error("--replays must be between 1 and 32")
-    artifacts = artifact_dir(args.link_mode)
+    artifacts = artifact_dir(args.link_mode, class_snapshot=args.class_snapshot)
     artifacts.mkdir(parents=True, exist_ok=True)
     binary, product = build_product(artifacts, args.link_mode)
     environment = os.environ.copy()
-    environment.pop("CRABC_NATIVE_ALLOCATOR_CLASS_SNAPSHOT", None)
+    if args.class_snapshot:
+        environment["CRABC_NATIVE_ALLOCATOR_CLASS_SNAPSHOT"] = "1"
+    else:
+        environment.pop("CRABC_NATIVE_ALLOCATOR_CLASS_SNAPSHOT", None)
     report: dict[str, object] = {
         "diagnostic": "pinned-c-page-map-soak",
         "workload": {"seed": SEED, "rounds": ROUNDS, "workers": WORKERS,
                      "checkpoint_interval": INTERVAL, "watchdog_seconds": WATCHDOG},
         "product": product,
+        "class_snapshot_enabled": args.class_snapshot,
         "replays": [],
     }
     command = [str(binary), SEED, str(ROUNDS), str(WORKERS), str(INTERVAL), str(WATCHDOG)]
@@ -215,7 +263,7 @@ def main() -> None:
         (artifacts / f"{name}.status").write_text(f"{status}\n")
         if status != 0:
             raise ValueError(f"{name} exited {status}; raw output retained at {stdout}")
-        observation = parse_soak(stdout.read_text())
+        observation = parse_soak(stdout.read_text(), require_class_snapshot=args.class_snapshot)
         report["replays"].append({"name": name, **observation})
         (artifacts / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         print(f"{name}: first={observation['first_half_max']} "
