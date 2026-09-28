@@ -320,7 +320,9 @@ def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
                     address, function, instruction, repeats = match.groups()
                     address = int(address, 16)
                     item = images[lane].instructions.get(address)
-                    if item is None or images[lane].function_at(address) != function or item.text != instruction:
+                    expected_instruction = item.text if item is not None else "<no disassembly>"
+                    if (images[lane].function_at(address) != function
+                            or expected_instruction != instruction):
                         unmet.append(f"codegen {scenario.name}/{region}/{lane} listing differs from its executable")
                         break
                     rips.extend([address] * (int(repeats) if repeats else 1))
@@ -333,9 +335,23 @@ def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
                     raw = artifacts / f"trace-{scenario.name}-{region}-{lane}.json"
                     if raw.is_symlink() or not raw.is_file():
                         unmet.append(f"codegen {scenario.name}/{region}/{lane} lacks its retained raw trace")
-                    elif (rips != replayed.rips or json.loads(raw.read_text(encoding="utf-8"))
-                          != codegen.trace_record(images[lane], replayed)):
-                        unmet.append(f"codegen {scenario.name}/{region}/{lane} executed trace differs from replay")
+                    else:
+                        raw_record = json.loads(raw.read_text(encoding="utf-8"))
+                        if rips != replayed.rips:
+                            first = next((index for index, (retained, actual) in enumerate(zip(rips, replayed.rips))
+                                          if retained != actual), min(len(rips), len(replayed.rips)))
+                            if first < min(len(rips), len(replayed.rips)):
+                                retained, actual = rips[first], replayed.rips[first]
+                                external = ("; both outside the executable image"
+                                            if retained not in images[lane].instructions
+                                            and actual not in images[lane].instructions else "")
+                                difference = f"step {first}: retained {retained:#x}, replayed {actual:#x}{external}"
+                            else:
+                                difference = f"step {first}: one trace ended"
+                            unmet.append(f"codegen {scenario.name}/{region}/{lane} executed trace differs from replay "
+                                         f"({difference}; {len(rips)} retained steps, {len(replayed.rips)} replayed)")
+                        if raw_record != codegen.trace_record(images[lane], replayed) and rips == replayed.rips:
+                            unmet.append(f"codegen {scenario.name}/{region}/{lane} raw atomic trace differs from replay")
                     replay_summary, _ = codegen.analyze_region(images[lane], replayed)
                     if (summary.get("atomic_rmw_targets") != replay_summary["atomic_rmw_targets"]
                             or summary.get("atomic_rmw_non_thread_local")

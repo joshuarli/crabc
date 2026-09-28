@@ -430,7 +430,7 @@ class CodegenTests(GateFixture):
                 self.by_name = {name: (0x1000, 0x1001) for name in codegen.ENTRY_SYMBOLS}
 
             def function_at(self, address: int) -> str:
-                return codegen.ENTRY_SYMBOLS[0]
+                return codegen.ENTRY_SYMBOLS[0] if address in self.instructions else f"<unknown:{address:#x}>"
 
             def function_range(self, name: str) -> tuple[int, int]:
                 return self.by_name[name]
@@ -551,6 +551,32 @@ class CodegenTests(GateFixture):
         (self.artifacts / "trace-local_64-malloc-rust_engine.json").unlink()
         detail = self.evaluate_codegen(report)["detail"]
         self.assertTrue(any("lacks its retained raw trace" in item for item in detail), detail)
+
+    def test_external_clock_trace_variation_names_raw_addresses(self) -> None:
+        report = self.codegen_report()
+        scenario = report["scenarios"]["thread_lifecycle"]
+        retained = self.codegen.Region([0x1000, 0x7F000B50, 0x1000], {})
+        for lane in engine.LANES:
+            summary, listing = self.codegen.analyze_region(self.image, retained)
+            filename = f"trace-thread_lifecycle-thread_done-{lane}"
+            (self.artifacts / f"{filename}.txt").write_text("\n".join(listing) + "\n", encoding="utf-8")
+            (self.artifacts / f"{filename}.json").write_text(
+                json.dumps(self.codegen.trace_record(self.image, retained)), encoding="utf-8")
+            scenario["lanes"][lane]["thread_done"] = dict(summary, listing=f"{filename}.txt")
+        scenario["comparison"]["thread_done"] = self.codegen.compare_regions(
+            scenario["lanes"]["pinned_c"]["thread_done"],
+            scenario["lanes"]["rust_engine"]["thread_done"])
+
+        def replay(binary: Path, image: object, selected: object, scratch: Path, cpu: int) -> list:
+            regions = [self.codegen.Region([0x1000], {}) for _ in selected.regions]
+            if selected.name == "thread_lifecycle":
+                regions[1] = self.codegen.Region([0x1000, 0x7F100B50, 0x1000], {})
+            return regions
+
+        with patch.object(self.codegen, "trace_scenario", side_effect=replay):
+            detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("retained 0x7f000b50, replayed 0x7f100b50" in item
+                            and "outside the executable image" in item for item in detail), detail)
 
     def test_report_without_retained_codegen_products_is_refused(self) -> None:
         report = self.codegen_report()
