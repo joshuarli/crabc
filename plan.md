@@ -247,6 +247,9 @@ are not transferable passes for a different revision.
   Reusing the bounded private relocation name cuts another 466 median user
   instructions in 100 paired simple and graph development startups, with
   unchanged syscall traces and 16 fewer release-text bytes.
+  A sequential full-RELR-bitmap path saves another paired median 568 user
+  instructions in both startup rows, with unchanged syscalls and 64 more
+  release-text bytes.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
