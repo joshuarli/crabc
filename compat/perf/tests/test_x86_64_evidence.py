@@ -942,6 +942,36 @@ class CollectorCompositionTests(unittest.TestCase):
                 self.assertEqual(list(checked.blockers), release["blockers"])
 
                 original_last = json.loads(attempt_paths[-1].read_text(encoding="utf-8"))
+                inconsistent_environment = copy.deepcopy(original_last)
+                inconsistent_environment["tools"]["before"]["host"]["environment"]["CRABC_PERF_DOCKER_IMAGE_ID"] = (
+                    "sha256:" + "f" * 64)
+                inconsistent_environment["tools"]["after"] = copy.deepcopy(
+                    inconsistent_environment["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(inconsistent_environment), encoding="utf-8")
+                image_rehashed = {**report, "uncontended_host": host, "scorecard": scorecard, "release": release,
+                                  "attempts": [*report["attempts"][:-1],
+                                               {"index": 3, "report": identity(attempt_paths[-1])}]}
+                report_path.write_text(json.dumps(image_rehashed), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "environment image ID differs"):
+                    evidence.validate_collector_report(ROOT, report_path)
+                for name, value, expected in (
+                    ("CRABC_PERF_DOCKER_IMAGE_ID", image_id, None),
+                    ("UNRECORDED_IMAGE_SETTING", "present", "environment record differs"),
+                    ("PATH", 7, "environment record differs"),
+                ):
+                    with self.subTest(environment=name):
+                        altered = copy.deepcopy(original_last)
+                        altered["tools"]["before"]["host"]["environment"][name] = value
+                        altered["tools"]["after"] = copy.deepcopy(altered["tools"]["before"])
+                        attempt_paths[-1].write_text(json.dumps(altered), encoding="utf-8")
+                        image_rehashed["attempts"][-1]["report"] = identity(attempt_paths[-1])
+                        report_path.write_text(json.dumps(image_rehashed), encoding="utf-8")
+                        if expected is None:
+                            self.assertTrue(evidence.validate_collector_report(ROOT, report_path).evidence_valid)
+                        else:
+                            with self.assertRaisesRegex(evidence.EvidenceError, expected):
+                                evidence.validate_collector_report(ROOT, report_path)
+
                 contradictory_governor = copy.deepcopy(original_last)
                 contradictory_governor["tools"]["before"]["host"]["governor"]["scaling_governor"] = "powersave"
                 contradictory_governor["tools"]["after"] = copy.deepcopy(contradictory_governor["tools"]["before"])

@@ -77,6 +77,10 @@ IMAGE_TOOL_MANIFEST_FORMAT = "crabc-x86_64-performance-image-tools/v2"
 FIXED_COMPILE_FLAGS = ("-std=c11", "-O3", "-fno-builtin")
 APP_RUNPATH = "/app/lib:/usr/lib"
 PERFORMANCE_CONTAINER_POLICY = "cgroupns=private,network=none,SYS_CHROOT,SYS_ADMIN,SYS_PTRACE,seccomp=unconfined"
+HOST_ENVIRONMENT_KEYS = frozenset({
+    "PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "CRABC_PERF_DOCKER_IMAGE_ID",
+    "CRABC_PERF_CONTAINER_POLICY", "CRABC_WORK_DIR", "CARGO_HOME",
+})
 # ``performance.release`` is the last gate of the ordered x86 qualification
 # chain.  Its correctness predecessor is every earlier gate of that chain, as
 # owned by the checked qualification manifest; this adapter only reads it.
@@ -2763,10 +2767,17 @@ def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: M
     ), f"attempt {index} peer CPU differs from the original allowed affinity")
     _verify_cache_topology(checkout, host["cache_topology"], cpu=host["benchmark_cpu"], index=index)
     _verify_governor(host["governor"], index=index)
-    require(isinstance(host["environment"], dict), f"attempt {index} environment record is absent")
-    require(host["environment"].get("CRABC_PERF_CONTAINER_POLICY") == PERFORMANCE_CONTAINER_POLICY, f"attempt {index} container authority differs")
     require(isinstance(host["docker_image_id"], str) and re.fullmatch(r"sha256:[0-9a-f]{64}", host["docker_image_id"]) is not None
             and host["docker_image_id"] == attempt["attempt"]["docker_image_id"], f"attempt {index} image provenance differs")
+    environment = host["environment"]
+    require(isinstance(environment, dict) and set(environment) <= HOST_ENVIRONMENT_KEYS
+            and all(isinstance(value, str) for value in environment.values()),
+            f"attempt {index} environment record differs from captured variables")
+    require(environment.get("CRABC_PERF_CONTAINER_POLICY") == PERFORMANCE_CONTAINER_POLICY,
+            f"attempt {index} container authority differs")
+    if "CRABC_PERF_DOCKER_IMAGE_ID" in environment:
+        require(environment["CRABC_PERF_DOCKER_IMAGE_ID"] == host["docker_image_id"],
+                f"attempt {index} environment image ID differs from attempt provenance")
 
 
 def _verify_attempt_source(
