@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import tempfile
@@ -48,6 +49,11 @@ def allocator_metrics(**changes: object) -> dict[str, object]:
 
 
 HOST = {"status": "uncontended", "evidence": {"load_average": [0.0, 0.0, 0.0]}}
+SOURCE_REVISION = "a" * 40
+HOST_IDENTITY = {
+    "cpu_model": "Test CPU", "kernel_release": "5.10.0-test", "allowed_cpus": [0, 1],
+    "logical_cpus": 1,
+}
 
 
 class ThresholdTests(unittest.TestCase):
@@ -115,12 +121,34 @@ class ReceiptTests(unittest.TestCase):
         self.rows = {"startup": {"attempts": [runtime_row(), runtime_row(), runtime_row()]}}
         self.blockers: tuple[str, ...] = ()
         self.allocator_metrics = [allocator_metrics() for _ in range(3)]
-        self.identities = [{"source": "a" * 40, "host": "h"}] * 3
+        self.identities = [{"source": "source-seal", "host": HOST_IDENTITY}] * 3
         self.native_error: Exception | None = None
         self.allocator_reader = True
-        self.collector = self.write("collector.json", {"uncontended_host": HOST})
-        self.native = self.write("native.json", {"mode": "full", "status": "complete-evidence", "uncontended_host": HOST})
-        self.allocator = [self.write(f"allocator-{index}.json", {"index": index, "uncontended_host": HOST})
+        cpuinfo = self.directory / "cpuinfo.raw"
+        cpuinfo.write_text("model name: Test CPU\n", encoding="utf-8")
+        self.cpu_identity = hashlib.sha256(cpuinfo.read_bytes()).hexdigest()
+        self.attempt = self.write("attempt.json", {"tools": {
+            "before": {"host": {
+                "kernel_release": HOST_IDENTITY["kernel_release"],
+                "allowed_affinity_before_pin": HOST_IDENTITY["allowed_cpus"],
+                "cpuinfo_sha256": self.cpu_identity,
+            }},
+            "host_cpuinfo_diagnostics": {"before": {"model_names": [HOST_IDENTITY["cpu_model"]]}},
+        }})
+        self.collector = self.write("collector.json", {
+            "collector": {"source_revision": SOURCE_REVISION},
+            "attempts": [{"report": {"path": str(self.attempt)}}],
+            "uncontended_host": HOST,
+        })
+        self.native = self.write("native.json", {
+            "mode": "full", "status": "complete-evidence", "uncontended_host": HOST,
+            "diagnostics": {"allowed_affinity": HOST_IDENTITY["allowed_cpus"],
+                            "cpuinfo": {"path": str(cpuinfo)}},
+        })
+        self.allocator = [self.write(f"allocator-{index}.json", {
+            "index": index, "uncontended_host": HOST,
+            "provenance": {"git": {"head": SOURCE_REVISION}, "host": HOST_IDENTITY},
+        })
                           for index in range(3)]
         patcher = patch.object(gate, "_module", side_effect=self.module)
         patcher.start()
@@ -138,7 +166,12 @@ class ReceiptTests(unittest.TestCase):
                 del root, path
                 return types.SimpleNamespace(release_qualified=not self.blockers, blockers=self.blockers,
                                              scorecard={"rows": self.rows})
-            return types.SimpleNamespace(validate_collector_report=validate_collector_report)
+            return types.SimpleNamespace(
+                validate_collector_report=validate_collector_report,
+                SOURCE_MOUNT="/workspace",
+                translate_source_path=lambda root, mount, path: Path(path),
+                cpuinfo_identity_sha256=lambda raw: hashlib.sha256(raw).hexdigest(),
+            )
         if name == "x86_64_runner":
             def validate_report(root, path, *, rustybench_source, rustix_source):
                 del root, path, rustybench_source, rustix_source
@@ -206,10 +239,11 @@ class ReceiptTests(unittest.TestCase):
         receipt = self.receipt(self.allocator[:2])
         self.assertIn("2 allocator report(s); M9 requires at least 3", self.details(receipt, "allocator-m9-reports"))
 
-        self.identities = [{"source": "a" * 40, "host": "h"}] * 2 + [{"source": "a" * 40, "host": "other"}]
+        self.identities = [{"source": "source-seal", "host": HOST_IDENTITY}] * 2 + [
+            {"source": "source-seal", "host": {**HOST_IDENTITY, "cpu_model": "other"}}]
         self.assertIn("do not agree", self.details(self.receipt(), "allocator-m9-reports")[0])
 
-        self.identities = [{"source": "a" * 40, "host": "h"}] * 3
+        self.identities = [{"source": "source-seal", "host": HOST_IDENTITY}] * 3
         self.allocator_metrics[0] = allocator_metrics(throughput={
             "suite_geometric_mean_lower_95": 0.5, "critical_lower_95": {"local": 1.0, "remote": 1.0}})
         self.assertIn("allocator-0.json: suite geometric-mean", self.details(self.receipt(), "allocator-m9-reports")[0])
@@ -220,6 +254,27 @@ class ReceiptTests(unittest.TestCase):
     def test_native_facade_must_be_full_mode_evidence(self):
         self.write("native.json", {"mode": "smoke", "status": "bounded-implementation-smoke", "uncontended_host": HOST})
         self.assertIn("not full complete evidence", self.details(self.receipt(), "native-facade-full")[0])
+
+    def test_rehashed_allocator_cohort_from_other_source_or_host_is_rejected(self):
+        for field, changed in (("source", "b" * 40), ("host", "Other CPU")):
+            with self.subTest(field=field):
+                for index, path in enumerate(self.allocator):
+                    report = json.loads(path.read_text(encoding="utf-8"))
+                    if field == "source":
+                        report["provenance"]["git"]["head"] = changed
+                    else:
+                        self.identities[index] = {
+                            "source": "source-seal", "host": {**HOST_IDENTITY, "cpu_model": changed}}
+                        report["provenance"]["git"]["head"] = SOURCE_REVISION
+                        report["provenance"]["host"]["cpu_model"] = changed
+                    path.write_text(json.dumps(report), encoding="utf-8")
+                receipt = self.receipt()
+                self.assertFalse(receipt["passed"], receipt)
+                self.assertIn("performance-evidence-identity", receipt["unmet"])
+                path = gate.write_receipt(self.directory / f"gate-{field}", receipt)
+                with self.assertRaisesRegex(gate.GateInputError, "performance-evidence-identity"):
+                    gate.validate_receipt(ROOT, path)
+                self.identities = [{"source": "source-seal", "host": HOST_IDENTITY}] * 3
 
     def test_inputs_and_outputs_stay_inside_the_checkout(self):
         with self.assertRaisesRegex(gate.GateInputError, "below this checkout"):
