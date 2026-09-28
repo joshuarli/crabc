@@ -421,6 +421,55 @@ class ResolverAliasRunnerInterfaceTests(unittest.TestCase):
 
 
 class ResolverAliasReceiptFilesystemTests(unittest.TestCase):
+    def test_recomputed_object_identity_does_not_admit_transplanted_probe(self) -> None:
+        scratch = ROOT / '.work' / 'x86_64' / 'test-tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            source = work / 'probe.c'
+            source.write_text('int probe(void) { return 1; }\n', encoding='utf-8')
+            compiler = work / 'compiler'
+            compiler.write_text(
+                '#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\n'
+                'shift\nprintf "compiled from selected source" > "$1"\n', encoding='utf-8',
+            )
+            compiler.chmod(0o755)
+            object_path = work / 'objects/public-probe.o'
+            object_path.parent.mkdir()
+            object_path.write_bytes(b'transplanted object')
+            record = _record_in_work(work, object_path)
+            argv = [str(compiler), '-c', str(source), '-o', str(object_path)]
+            with self.assertRaisesRegex(ReceiptError, 'source compile differs'):
+                resolver_reader._validate_source_object(work, work, record, argv, 'public probe')
+            self.assertEqual(object_path.read_bytes(), b'transplanted object')
+            object_path.write_bytes(b'compiled from selected source')
+            resolver_reader._validate_source_object(work, work, _record_in_work(work, object_path),
+                                                    argv, 'public probe')
+
+    def test_recomputed_executable_identity_does_not_admit_transplanted_link(self) -> None:
+        scratch = ROOT / '.work' / 'x86_64' / 'test-tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            linker = work / 'linker'
+            linker.write_text(
+                '#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\n'
+                'shift\nprintf "linked from selected object" > "$1"\n', encoding='utf-8',
+            )
+            linker.chmod(0o755)
+            output = work / 'outputs/dynamic-pie-contract'
+            output.parent.mkdir()
+            output.write_bytes(b'transplanted executable')
+            record = _record_in_work(work, output)
+            argv = [str(linker), str(work / 'objects/public-probe.o'), '-o', str(output)]
+            with self.assertRaisesRegex(ReceiptError, 'linked executable differs'):
+                resolver_reader._validate_linked_executable(work, work, record, argv,
+                                                            'dynamic pie', scratch_root=work)
+            self.assertEqual(output.read_bytes(), b'transplanted executable')
+            output.write_bytes(b'linked from selected object')
+            resolver_reader._validate_linked_executable(work, work, _record_in_work(work, output),
+                                                        argv, 'dynamic pie', scratch_root=work)
+
     def test_selected_git_regular_mode_is_normalized_to_permission_bits(self) -> None:
         revision = _git(ROOT, 'rev-parse', 'HEAD')
         mode, contents = _git_file(ROOT, revision, Path('libc/Cargo.toml'))

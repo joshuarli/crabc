@@ -19,6 +19,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
 MODULE_DIR = Path(__file__).resolve().parent
@@ -826,6 +827,104 @@ def _validate_commands(commands: Any, receipt_root: Path, inputs: Mapping[str, A
     return commands
 
 
+def _validate_source_object(receipt_root: Path, origin_work: Path, record: Mapping[str, Any],
+                            argv: Sequence[str], description: str, *, scratch_root: Path | None = None) -> None:
+    """Recreate one retained object from its authenticated compiler and source."""
+    object_path = _retained_record(receipt_root, record, f'resolver {description} object')
+    output_positions = [index for index, value in enumerate(argv[:-1]) if value == '-o']
+    require(len(output_positions) == 1, f'resolver {description} compile output differs')
+    output_position = output_positions[0] + 1
+    expected_output = origin_work / record['retained']
+    require(argv[output_position] == str(expected_output)
+            and record['path'] == record['retained']
+            and object_path == receipt_root / record['retained'],
+            f'resolver {description} object placement differs')
+    temporary_root = scratch_root or receipt_root
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='resolver-alias-source-', dir=temporary_root) as temporary:
+        rebuilt = Path(temporary) / 'object.o'
+        replay_argv = list(argv)
+        replay_argv[output_position] = str(rebuilt)
+        environment = dict(os.environ, LC_ALL='C', PATH='/opt/cargo/bin:/usr/bin:/bin')
+        try:
+            result = subprocess.run(replay_argv, cwd=origin_work, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment,
+                                    check=False, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ReceiptError(f'resolver {description} source compile failed') from error
+        require(result.returncode == 0 and rebuilt.is_file() and not rebuilt.is_symlink(),
+                f'resolver {description} source compile failed')
+        require(rebuilt.read_bytes() == object_path.read_bytes(),
+                f'resolver {description} source compile differs')
+
+
+def _validate_source_objects(root: Path, receipt_root: Path, origin_root: Path, origin_work: Path,
+                             inputs: Mapping[str, Any], artifacts: Mapping[str, Any]) -> None:
+    expected = _expected_command_argvs(inputs, origin_root, origin_work)
+    objects = artifacts['object']
+    commands = {'header_cpp': 'header-cpp', 'public_probe': 'compile-public-probe'}
+    for alias in ('mkquery', 'send', 'search'):
+        commands[f'{alias}_definition'] = f'compile-override-{alias}'
+        commands[f'{alias}_caller'] = f'compile-override-{alias}-caller'
+    scratch = root / '.work/x86_64/tmp'
+    scratch.mkdir(parents=True, exist_ok=True)
+    for name, command in commands.items():
+        _validate_source_object(receipt_root, origin_work, objects[name], expected[command], name,
+                                scratch_root=scratch)
+
+
+def _validate_linked_executable(receipt_root: Path, origin_work: Path, record: Mapping[str, Any],
+                                argv: Sequence[str], description: str, *, scratch_root: Path) -> None:
+    """Recreate one executable without touching its retained link sidecars."""
+    executable = _retained_record(receipt_root, record, f'resolver {description} executable')
+    output_positions = [index for index, value in enumerate(argv[:-1]) if value == '-o']
+    require(len(output_positions) == 1, f'resolver {description} link output differs')
+    output_position = output_positions[0] + 1
+    expected_output = origin_work / record['retained']
+    require(argv[output_position] == str(expected_output)
+            and record['path'] == record['retained']
+            and executable == receipt_root / record['retained'],
+            f'resolver {description} executable placement differs')
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='resolver-alias-link-', dir=scratch_root) as temporary:
+        work = Path(temporary)
+        rebuilt = work / 'executable'
+        replay_argv = list(argv)
+        replay_argv[output_position] = str(rebuilt)
+        environment = dict(os.environ, LC_ALL='C', PATH='/opt/cargo/bin:/usr/bin:/bin')
+        try:
+            result = subprocess.run(replay_argv, cwd=work, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment,
+                                    check=False, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ReceiptError(f'resolver {description} link replay failed') from error
+        require(result.returncode == 0 and rebuilt.is_file() and not rebuilt.is_symlink(),
+                f'resolver {description} link replay failed')
+        require(rebuilt.read_bytes() == executable.read_bytes(),
+                f'resolver {description} linked executable differs')
+
+
+def _validate_linked_executables(root: Path, receipt_root: Path, origin_root: Path, origin_work: Path,
+                                 inputs: Mapping[str, Any], artifacts: Mapping[str, Any]) -> None:
+    expected = _expected_command_argvs(inputs, origin_root, origin_work)
+    commands = {
+        'oracle': 'oracle-runtime-link',
+        'static_et_exec': 'static-normal-et-exec-link',
+        'static_pie': 'static-normal-pie-link',
+        'dynamic_pie': 'dynamic-normal-pie-link',
+        'dynamic_non_pie': 'dynamic-normal-nopie-link',
+    }
+    scratch = root / '.work/x86_64/tmp'
+    for name, command in commands.items():
+        _validate_linked_executable(receipt_root, origin_work, artifacts['normal'][name], expected[command],
+                                    name, scratch_root=scratch)
+    for alias in ('mkquery', 'send', 'search'):
+        for lane in ('static', 'dynamic'):
+            name = f'{lane}_{alias}'
+            _validate_linked_executable(receipt_root, origin_work, artifacts['overrides'][name],
+                                        expected[f'{lane}-override-{alias}'], name, scratch_root=scratch)
+
+
 def _runtime_tree_record(work: Path, root: Path) -> dict[str, Any]:
     """Record one physical execution root before its runtime command runs."""
     work = work.resolve(strict=True)
@@ -1297,9 +1396,9 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_product: Pat
                     base_inventory: Path | None = None) -> dict[str, Any]:
     """Replay retained bytes against the exact supplied current product cohort.
 
-    Replay never invokes a compiler, linker, readelf, or target product tool.
-    It consumes only retained command streams/objects and compares their input
-    identities to the caller-supplied current cohort.
+    Replay recompiles objects and relinks executables into isolated ignored
+    scratch, then compares their bytes with retained artifacts. It does not
+    mutate retained inputs or run a consumer.
     """
     require(all(value is not None for value in (static_product, dynamic_product, product_report,
                                                  static_preparation, elf_facts, base_inventory)),
@@ -1373,6 +1472,8 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_product: Pat
     _validate_static_link_authority(receipt_root, origin_work, report['artifacts'], report['inputs'])
     _validate_selected_source_routes(receipt_root, report['inputs'])
     commands = _validate_commands(report['commands'], receipt_root, report['inputs'], origin_root, origin_work)
+    _validate_source_objects(root, receipt_root, origin_root, origin_work, report['inputs'], report['artifacts'])
+    _validate_linked_executables(root, receipt_root, origin_root, origin_work, report['inputs'], report['artifacts'])
     _validate_runtime_roots(report['runtime_roots'], receipt_root, report['inputs'], report['artifacts'])
     execution = exact(report['execution'], {'image', 'stdin', 'environment'}, 'resolver execution')
     require(execution == {'image': IMAGE, 'stdin': '/dev/null', 'environment': {'LC_ALL': 'C', 'PATH': '/opt/cargo/bin:/usr/bin:/bin'}},
