@@ -2085,8 +2085,15 @@ mod tests {
             fault::Plan::at_pair(fault::Point::Commit, commit_ordinal,
                 fault::Point::Unmap, if selected == 5 { 1 } else { usize::MAX }, Errno::NOMEM)
         });
-        let allocation = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB),
-            128 * KIB, 128 * KIB, crate::arena::ArenaId::none());
+        // The detached source Theap supplies the reservation hint random
+        // image for each attempt, including a retry after a present submap.
+        let mut random = unsafe { crate::os::CurrentTheapRandom::new(
+            NonNull::from(session.theap()),
+        ) };
+        let allocation = OsAlignedPageClaim::allocate_for_process_with_random(
+            process, config(4 * KIB), 128 * KIB, 128 * KIB,
+            crate::arena::ArenaId::none(), Some(&mut random),
+        );
         let mut facts = [false; 9];
         facts[8] = true;
         let owner = match allocation {
@@ -2185,8 +2192,13 @@ mod tests {
         map: &crate::page_map::PageMap,
         session: &mut crate::bootstrap::ExclusiveTheapSession<'_>,
     ) -> bool {
-        let Ok(claim) = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB),
-            128 * KIB, 128 * KIB, crate::arena::ArenaId::none()) else { return false };
+        let mut random = unsafe { crate::os::CurrentTheapRandom::new(
+            NonNull::from(session.theap()),
+        ) };
+        let Ok(claim) = OsAlignedPageClaim::allocate_for_process_with_random(
+            process, config(4 * KIB), 128 * KIB, 128 * KIB,
+            crate::arena::ArenaId::none(), Some(&mut random),
+        ) else { return false };
         let layout = claim.layout();
         let start = claim.slice_start().unwrap();
         let memory = claim.memory_id().unwrap();

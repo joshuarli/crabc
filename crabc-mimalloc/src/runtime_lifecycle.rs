@@ -23988,17 +23988,17 @@ mod tests {
                 0,
                 "the dormant ticket-zero owner has no leaked private OS-abandoned list member"
             );
-            // The first OS-aligned singleton route may lazily allocate the
-            // PageMap submaps that cover its clipped alias/mapping range.
-            // Those process-owned submaps are intentionally retained after
-            // terminal release, so require the complete state to plateau
-            // after one warmup cycle rather than falsely treating this first
-            // immutable publication as a per-worker leak.
-            let mut warmed_owner_exit_state = None;
+            // An OS singleton can land in a new PageMap submap on any worker
+            // cycle. Retained submaps may grow only when that cycle actually
+            // maps a previously unseen singleton submap; all other owner
+            // state must return to the same process baseline.
+            let mut observed_os_submaps = std::vec::Vec::new();
+            let mut prior_submap_count = baseline.page_map_published_submap_count;
+            let mut prior_lazy_count = baseline.page_map_lazy_submap_allocation_count;
             let mut warmed_metadata_high_water = None;
 
             for worker_number in 1..=OWNER_EXIT_STATE_AUDIT_CYCLES {
-                thread::spawn(move || {
+                let os_submap_range = thread::spawn(move || {
                     // SAFETY: the fixture keeps the permanent process owner
                     // and its immutable shared main Heap witness alive while
                     // A detaches and its joined B consumes only the opaque
@@ -24049,6 +24049,26 @@ mod tests {
                             .expect("the dormant ticket-zero pair admits the mixed owner-exit worker");
                         let mut workload = OwnerExitMappedRegularWorkload::allocate(&mut allocator)
                             .expect("the mixed owner-exit worker allocates its bounded source workload");
+                        let os_client = workload.os_singleton
+                            .expect("the mixed workload retains its OS singleton");
+                        let os_page = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(os_client)
+                        })
+                        .expect("the OS singleton remains PageMap-published");
+                        let memory = unsafe { os_page.as_ref() }.memid();
+                        let base = memory.os_base()
+                            .expect("the singleton retains OS mapping provenance").value();
+                        let layout = crate::os_page::OsAlignedPageLayout::for_fresh_page(
+                            config, OWNER_EXIT_OS_SINGLETON_REQUEST,
+                            OWNER_EXIT_OS_SINGLETON_ALIGNMENT,
+                        )
+                        .expect("the bounded OS singleton has source-valid geometry");
+                        let start = base.checked_add(layout.alignment()).unwrap();
+                        let last = start.checked_add(layout.page_map_size() - 1).unwrap();
+                        let os_submap_range = (
+                            crate::page_map::location_of_address(start).map_index,
+                            crate::page_map::location_of_address(last).map_index,
+                        );
 
                         let direct_small_page_pointer = core::ptr::NonNull::new(unsafe {
                             allocator.test_page_for_block(
@@ -24672,13 +24692,11 @@ mod tests {
                             0,
                             "B's terminal proof is the only transition that makes A fork-quiescent"
                         );
-                        Ok(())
+                        Ok(os_submap_range)
                     });
-                    assert_eq!(
-                        completed,
-                        Some(()),
-                        "the dormant ticket-zero pair completes mixed owner-exit cycle {worker_number}"
-                    );
+                    completed.expect(
+                        "the dormant ticket-zero pair completes its mixed owner-exit cycle"
+                    )
                 })
                 .join()
                 .expect("each mixed owner-exit A remains on a fresh worker thread");
@@ -24691,40 +24709,29 @@ mod tests {
                     subprocess,
                 );
                 let expected_total_thread_count = baseline.total_thread_count + worker_number * 2;
-                match warmed_owner_exit_state {
-                    Some(warmed) => {
-                        let expected = PersistentWorkerStateAudit {
-                            total_thread_count: expected_total_thread_count,
-                            ..warmed
-                        };
-                        assert_eq!(
-                            after_worker, expected,
-                            "mixed owner-exit cycle {worker_number} leaves no PageMap, arena, TLD, or Theap residue after warmup"
-                        );
-                    }
-                    None => {
-                        assert!(
-                            after_worker.page_map_published_submap_count
-                                >= baseline.page_map_published_submap_count
-                                && after_worker.page_map_lazy_submap_allocation_count
-                                    >= baseline.page_map_lazy_submap_allocation_count,
-                            "the first OS owner-exit cycle may publish, but never discard, its process PageMap submaps"
-                        );
-                        let expected = PersistentWorkerStateAudit {
-                            total_thread_count: expected_total_thread_count,
-                            page_map_published_submap_count: after_worker
-                                .page_map_published_submap_count,
-                            page_map_lazy_submap_allocation_count: after_worker
-                                .page_map_lazy_submap_allocation_count,
-                            ..baseline
-                        };
-                        assert_eq!(
-                            after_worker, expected,
-                            "the first mixed owner-exit warmup leaves only the retained process PageMap submaps"
-                        );
-                        warmed_owner_exit_state = Some(after_worker);
+                let mut new_os_submaps = 0;
+                for index in os_submap_range.0..=os_submap_range.1 {
+                    if !observed_os_submaps.contains(&index) {
+                        observed_os_submaps.push(index);
+                        new_os_submaps += 1;
                     }
                 }
+                let published = after_worker.page_map_published_submap_count;
+                let lazy = after_worker.page_map_lazy_submap_allocation_count;
+                assert!(published >= prior_submap_count && lazy >= prior_lazy_count);
+                assert_eq!(published - prior_submap_count, lazy - prior_lazy_count);
+                assert!(published - prior_submap_count <= new_os_submaps,
+                    "retained submaps grow only for a newly mapped OS singleton range");
+                prior_submap_count = published;
+                prior_lazy_count = lazy;
+                let expected = PersistentWorkerStateAudit {
+                    total_thread_count: expected_total_thread_count,
+                    page_map_published_submap_count: published,
+                    page_map_lazy_submap_allocation_count: lazy,
+                    ..baseline
+                };
+                assert_eq!(after_worker, expected,
+                    "mixed owner-exit cycle {worker_number} leaves no live PageMap, arena, TLD, or Theap residue");
                 let metadata_audit = metadata.test_allocation_audit();
                 assert_eq!(
                     metadata_audit.live_capability_count,
