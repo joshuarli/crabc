@@ -1032,7 +1032,7 @@ int main(void) {
       fail_next_munmap = (variant == 5);
       munmap_calls = 0;
       retained_addr = NULL;
-      _mi_os_free(&owner->subproc, memid.mem.os.base, memid.mem.os.size, memid);
+      _mi_arenas_free(&owner->subproc, start, MI_ARENA_SLICE_SIZE, memid);
       fail_next_munmap = false;
       emit((int64_t)munmap_calls);
       emit(retained_addr != NULL);
