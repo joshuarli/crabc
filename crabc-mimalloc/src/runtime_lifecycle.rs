@@ -5497,7 +5497,7 @@ impl NativeRuntimeLiveClientPageAudit {
     pub const fn registered_slice_count(self) -> usize { self.registered_slice_count }
 }
 
-/// Opaque identity of one regular medium page's arena span.
+/// Opaque identity of one regular medium or huge singleton arena span.
 ///
 /// The selected process registry must still publish this arena when the
 /// caller later requests a scalar state copy. The identity grants no claim,
@@ -5510,7 +5510,7 @@ pub struct NativeRuntimeArenaSpanTestAudit {
     arena_address: usize,
     slice_index: usize,
     slice_count: usize,
-    bin: usize,
+    abandoned_bin: Option<usize>,
 }
 
 #[cfg(feature = "native-runtime-test-audit")]
@@ -5521,9 +5521,10 @@ impl NativeRuntimeArenaSpanTestAudit {
 
 /// Copied bitmap counts over one registered arena span.
 ///
-/// Page and abandoned counts refer to the span's first slice. Free,
-/// committed, and purge counts cover every slice in the span, including
-/// after its PageMap entries have been cleared.
+/// Page and abandoned counts refer to the span's first slice. A huge
+/// singleton does not enter a regular page's per-bin abandoned bitmap, so
+/// its abandoned count is zero. Free, committed, and purge counts cover
+/// every slice in the span, including after PageMap entries are cleared.
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -6750,7 +6751,8 @@ pub unsafe fn native_runtime_live_client_page_test_audit(
     })
 }
 
-/// Captures the selected arena identity of one exact live regular medium client.
+/// Captures the selected arena identity of one exact live regular medium or
+/// huge singleton client.
 ///
 /// # Safety
 ///
@@ -6772,9 +6774,10 @@ pub unsafe fn native_runtime_live_client_arena_span_test_audit(
     let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
     let page_ref = unsafe { page.as_ref() };
     let block_size = page_ref.block_size();
-    if block_size <= SMALL_SIZE_MAX || block_size > MEDIUM_MAX_OBJ_SIZE
-        || block_size % core::mem::size_of::<usize>() != 0
-    {
+    let regular_medium = block_size > SMALL_SIZE_MAX && block_size <= MEDIUM_MAX_OBJ_SIZE;
+    let huge_singleton = block_size > crate::config::LARGE_PAGE_SIZE && page_ref.reserved() == 1;
+    if (!regular_medium && !huge_singleton)
+        || block_size % core::mem::size_of::<usize>() != 0 {
         return None;
     }
     let memory = page_ref.memid().arena_memory()?;
@@ -6798,20 +6801,20 @@ pub unsafe fn native_runtime_live_client_arena_span_test_audit(
     {
         return None;
     }
-    let bin = size_class::bin_for_regular_page_block_size(block_size);
+    let abandoned_bin = regular_medium.then(|| size_class::bin_for_regular_page_block_size(block_size));
     // SAFETY: the exact registry publication and live page retain this arena.
     let view = unsafe { ArenaView::from_ptr(memory.arena) }?;
-    view.abandoned_pages(bin)?;
+    if let Some(bin) = abandoned_bin { view.abandoned_pages(bin)?; }
     Some(NativeRuntimeArenaSpanTestAudit {
         arena_index,
         arena_address: memory.arena.addr(),
         slice_index,
         slice_count,
-        bin,
+        abandoned_bin,
     })
 }
 
-/// Copies the arena bitmap state for a previously validated regular span.
+/// Copies the arena bitmap state for a previously validated page span.
 ///
 /// # Safety
 ///
@@ -6842,7 +6845,10 @@ pub unsafe fn native_runtime_arena_span_state_test_audit(
     // excludes mutation while these atomic bitmap fields are copied.
     let view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(published).cast_mut()) }?;
     let pages = unsafe { view.pages() }?;
-    let abandoned = view.abandoned_pages(span.bin)?;
+    let abandoned = match span.abandoned_bin {
+        Some(bin) => Some(view.abandoned_pages(bin)?),
+        None => None,
+    };
     let free = unsafe { view.slices_free() }?;
     let committed = unsafe { view.slices_committed() }?;
     let purge = unsafe { view.slices_purge() }?;
@@ -6857,7 +6863,8 @@ pub unsafe fn native_runtime_arena_span_state_test_audit(
     Some(NativeRuntimeArenaSpanStateTestAudit {
         arena_registry_count: registry.count(),
         page_record_set: usize::from(pages.is_set_range(span.slice_index, 1)?),
-        abandoned_record_set: usize::from(!abandoned.bitmap_is_clear(span.slice_index)),
+        abandoned_record_set: usize::from(abandoned.is_some_and(|bitmap|
+            !bitmap.bitmap_is_clear(span.slice_index))),
         free_slices,
         committed_slices,
         purge_slices,
