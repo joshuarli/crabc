@@ -38428,10 +38428,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         // whose remaining capacity is within its final eighth.
                         let page_reserved = unsafe { (*page).reserved() as usize };
                         let page_used = unsafe { (*page).used() };
-                        let mostly_used = page_reserved
-                            .checked_sub(page_used)
-                            .map(|free| free <= page_reserved / 8)
-                            .unwrap_or(true);
+                        let mostly_used = page_used >= page_reserved - page_reserved / 8;
                         if page_used >= unsafe { (*candidate).used() } && !mostly_used {
                             candidate = page;
                         }
