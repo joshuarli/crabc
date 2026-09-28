@@ -16,7 +16,7 @@ spec.loader.exec_module(receipt)
 
 
 class FileDsoReceiptTests(unittest.TestCase):
-    def test_reopened_path_and_memory_stream_bytes_are_reread(self) -> None:
+    def test_path_memory_and_global_flush_bytes_are_reread(self) -> None:
         case = "oracle-static-process"
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             work = Path(temporary)
@@ -35,11 +35,16 @@ class FileDsoReceiptTests(unittest.TestCase):
             (raw / f"{case}.stderr").write_bytes(b"")
             (raw / f"{case}.scratch-before.json").write_text("[]\n")
             (raw / f"{case}.scratch-after.json").write_text(
-                '["stream.exit", "stream.fini", "stream.new", "stream.old"]\n')
+                '["stream.dso-global", "stream.exit", "stream.fini", '
+                '"stream.main-global", "stream.new", "stream.old"]\n')
             (raw / f"{case}.strace").write_text(
                 'unlink("/scratch/stream") = 0\n'
                 'fcntl(3, F_GETFD) = -1 EBADF (Bad file descriptor)\n'
                 'write(3, "\\xe2\\x82\\xac", 3) = 3\n'
+                'write(4, "dso-before\\n", 11) = 11\n'
+                'write(3, "main-before\\n", 12) = 12\n'
+                'write(4, "dso-after\\n", 10) = 10\n'
+                'write(3, "main-after\\n", 11) = 11\n'
                 'write(3, "fini-before-flush:fd-live\\n", 26) = 26\n'
                 'write(3, "dso-exit-once\\n", 14) = 14\n')
             with mock.patch.object(receipt, "CASES", (case,)):
@@ -63,6 +68,20 @@ class FileDsoReceiptTests(unittest.TestCase):
                 (raw / f"{case}.stdout").write_bytes(receipt.EXPECTED_STDOUT)
                 (scratch / "stream.old").write_bytes(b"beforetaim")
                 with self.assertRaisesRegex(receipt.ReceiptError, "retained pathname bytes differ"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                (scratch / "stream.old").write_bytes(b"beforetail")
+                (scratch / "stream.dso-global").write_bytes(b"dso-before\ndso-after!")
+                with self.assertRaisesRegex(receipt.ReceiptError, "retained pathname bytes differ"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                (scratch / "stream.dso-global").write_bytes(b"dso-before\ndso-after\n")
+                trace_path = raw / f"{case}.strace"
+                trace = trace_path.read_text()
+                trace_path.write_text(trace.replace(
+                    'write(4, "dso-before\\n", 11) = 11\n'
+                    'write(3, "main-before\\n", 12) = 12\n',
+                    'write(3, "main-before\\n", 12) = 12\n'
+                    'write(4, "dso-before\\n", 11) = 11\n'))
+                with self.assertRaisesRegex(receipt.ReceiptError, "global flush order differs"):
                     receipt.audit_runtime(work, work / "unused-dynamic")
 
 

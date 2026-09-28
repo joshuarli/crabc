@@ -439,6 +439,100 @@ int crabc_wide_memory_dso_release(int *main_errno)
     return 0;
 }
 
+/* Both pathname streams join the same global list. The DSO owns this FILE
+ * and buffer, while the executable retains its own FILE through both flushes.
+ */
+static FILE *global_dso_stream;
+static char global_dso_buffer[64];
+static int global_dso_descriptor;
+static unsigned global_dso_stage;
+
+static int global_dso_sizes(FILE *main_stream, off_t main_size, off_t dso_size)
+{
+    struct stat main_state, dso_state;
+
+    return fstat(fileno(main_stream), &main_state) == 0 &&
+        fstat(global_dso_descriptor, &dso_state) == 0 &&
+        main_state.st_size == main_size && dso_state.st_size == dso_size &&
+        ferror(main_stream) == 0 && ferror(global_dso_stream) == 0 &&
+        feof(main_stream) == 0 && feof(global_dso_stream) == 0;
+}
+
+int crabc_global_dso_buffer(FILE *main_stream, const char *path, int *main_errno)
+{
+    if (main_stream == NULL || path == NULL || main_errno != &errno ||
+        errno != EDOM || global_dso_stage != 0 || ferror(main_stream))
+        return 1;
+    global_dso_stream = fopen(path, "w");
+    if (global_dso_stream == NULL ||
+        setvbuf(global_dso_stream, global_dso_buffer, _IOFBF,
+                sizeof(global_dso_buffer)) != 0)
+        return 2;
+    global_dso_descriptor = fileno(global_dso_stream);
+    if (global_dso_descriptor < 0 ||
+        fwrite("dso-before\n", 1, 11, global_dso_stream) != 11 ||
+        !global_dso_sizes(main_stream, 0, 0))
+        return 3;
+    global_dso_stage = 1;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_global_dso_flush(FILE *main_stream, int *main_errno)
+{
+    if (main_stream == NULL || main_errno != &errno || errno != EDOM ||
+        global_dso_stage != 1 || !global_dso_sizes(main_stream, 0, 0))
+        return 1;
+    if (fflush(NULL) != 0 || !global_dso_sizes(main_stream, 12, 11))
+        return 2;
+    global_dso_stage = 2;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_global_dso_tail(FILE *main_stream, int *main_errno)
+{
+    if (main_stream == NULL || main_errno != &errno || errno != EDOM ||
+        global_dso_stage != 2 || !global_dso_sizes(main_stream, 12, 11))
+        return 1;
+    if (fwrite("dso-after\n", 1, 10, global_dso_stream) != 10 ||
+        !global_dso_sizes(main_stream, 12, 11))
+        return 2;
+    global_dso_stage = 3;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_global_dso_after_second(FILE *main_stream, int *main_errno)
+{
+    if (main_stream == NULL || main_errno != &errno || errno != EDOM ||
+        global_dso_stage != 3 || !global_dso_sizes(main_stream, 23, 21))
+        return 1;
+    if (fcntl(fileno(main_stream), F_GETFD) < 0 ||
+        fcntl(global_dso_descriptor, F_GETFD) < 0)
+        return 2;
+    global_dso_stage = 4;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_global_dso_close(int *main_errno)
+{
+    if (main_errno != &errno || errno != EDOM || global_dso_stage != 4 ||
+        global_dso_stream == NULL ||
+        fcntl(global_dso_descriptor, F_GETFD) < 0)
+        return 1;
+    if (fclose(global_dso_stream) != 0)
+        return 2;
+    global_dso_stream = NULL;
+    errno = 0;
+    if (fcntl(global_dso_descriptor, F_GETFD) != -1 || errno != EBADF)
+        return 3;
+    global_dso_stage = 5;
+    errno = ERANGE;
+    return 0;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];

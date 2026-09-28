@@ -14,6 +14,8 @@ owns the published allocation after close. A DSO-owned fmemopen FILE exposes
 fixed caller storage to main through buffered writes, reads and a short write.
 The DSO's wide memory stream publishes its wchar_t buffer across alternating
 main/DSO wide writes and keeps that buffer alive until main closes the FILE.
+Main and the DSO also own separate buffered pathname streams. Global flushes
+called from each image publish both streams before their owners close them.
 """
 
 from __future__ import annotations
@@ -51,11 +53,13 @@ MEMSTREAM_FINAL = b"alXYa!\0\0Z"
 WIDE_MEMORY_FINAL = struct.pack("<7I", 0x20AC, 0x03BB, 0x1F600, 0, 0, 0x03A9, 0)
 EXPECTED_STDOUT = (b"memstream-final:" + MEMSTREAM_FINAL +
                    b"\nfixed-final:abcDEFGH\nwide-final:" + WIDE_MEMORY_FINAL +
-                   b"\nstdio-file-dso-wmemstream-ok\n")
+                   b"\nstdio-file-dso-global-flush-ok\n")
 EXIT_PAYLOAD = b"dso-exit-once\n"
 EXIT_MARKER = b"fini-before-flush:fd-live\n"
-RETAINED_PATHS = ("stream.exit", "stream.fini", "stream.new", "stream.old")
-RETAINED_BYTES = (EXIT_PAYLOAD, EXIT_MARKER, b"replacement!", b"beforetail")
+RETAINED_PATHS = ("stream.dso-global", "stream.exit", "stream.fini",
+                  "stream.main-global", "stream.new", "stream.old")
+RETAINED_BYTES = (b"dso-before\ndso-after\n", EXIT_PAYLOAD, EXIT_MARKER,
+                  b"main-before\nmain-after\n", b"replacement!", b"beforetail")
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 ORACLE_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.so")
@@ -365,6 +369,15 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
                 f"{case} did not observe a closed descriptor")
         require(re.search(r'(?:write|writev|pwrite64)\([^\n]*"\\xe2\\x82\\xac"[^\n]*\)\s+=\s+3\b', trace) is not None,
                 f"{case} did not write the selected UTF-8 bytes")
+        global_writes = []
+        for payload, length in ((r"dso-before\n", 11), (r"main-before\n", 12),
+                                (r"dso-after\n", 10), (r"main-after\n", 11)):
+            matches = list(re.finditer(
+                r'(?:write|writev|pwrite64)\([^\n]*"' + re.escape(payload) +
+                r'"[^\n]*\)\s+=\s+' + str(length) + r'\b', trace))
+            require(len(matches) == 1, f"{case} global flush write count differs: {payload}")
+            global_writes.append(matches[0].start())
+        require(global_writes == sorted(global_writes), f"{case} global flush order differs")
         marker_writes = list(re.finditer(
             r'(?:write|writev|pwrite64)\([^\n]*"fini-before-flush:fd-live\\n"[^\n]*\)\s+=\s+26\b', trace))
         stream_writes = list(re.finditer(
@@ -413,7 +426,10 @@ def audit_elf(work: Path) -> None:
                           "crabc_memstream_dso_checkpoint", "crabc_memstream_dso_release",
                           "crabc_fixed_dso_open", "crabc_fixed_dso_step",
                           "crabc_fixed_dso_after_close", "crabc_wide_memory_dso_open",
-                          "crabc_wide_memory_dso_step", "crabc_wide_memory_dso_release"):
+                          "crabc_wide_memory_dso_step", "crabc_wide_memory_dso_release",
+                          "crabc_global_dso_buffer", "crabc_global_dso_flush",
+                          "crabc_global_dso_tail", "crabc_global_dso_after_second",
+                          "crabc_global_dso_close"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
                         f"{role} lacks {entry}")
         elif dynamic_main:
@@ -427,7 +443,10 @@ def audit_elf(work: Path) -> None:
                           "crabc_memstream_dso_checkpoint", "crabc_memstream_dso_release",
                           "crabc_fixed_dso_open", "crabc_fixed_dso_step",
                           "crabc_fixed_dso_after_close", "crabc_wide_memory_dso_open",
-                          "crabc_wide_memory_dso_step", "crabc_wide_memory_dso_release"):
+                          "crabc_wide_memory_dso_step", "crabc_wide_memory_dso_release",
+                          "crabc_global_dso_buffer", "crabc_global_dso_flush",
+                          "crabc_global_dso_tail", "crabc_global_dso_after_second",
+                          "crabc_global_dso_close"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
                         f"{role} does not import {entry}")
         else:

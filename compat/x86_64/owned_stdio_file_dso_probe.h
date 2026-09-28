@@ -72,4 +72,10 @@ FILE *crabc_wide_memory_dso_open(wchar_t ***buffer_slot, size_t **length_slot,
 int crabc_wide_memory_dso_step(FILE *stream, enum crabc_wide_memory_dso_stage stage,
                                 int *main_errno);
 int crabc_wide_memory_dso_release(int *main_errno);
+
+int crabc_global_dso_buffer(FILE *main_stream, const char *path, int *main_errno);
+int crabc_global_dso_flush(FILE *main_stream, int *main_errno);
+int crabc_global_dso_tail(FILE *main_stream, int *main_errno);
+int crabc_global_dso_after_second(FILE *main_stream, int *main_errno);
+int crabc_global_dso_close(int *main_errno);
 #endif

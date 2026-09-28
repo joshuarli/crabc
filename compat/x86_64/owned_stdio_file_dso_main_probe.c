@@ -482,6 +482,88 @@ static int wide_memory_dso_roundtrip(void)
     return 0;
 }
 
+static int global_readback(const char *path, const char *expected, size_t length)
+{
+    char observed[64];
+    int descriptor = open(path, O_RDONLY);
+    ssize_t count;
+
+    if (descriptor < 0 || length > sizeof(observed))
+        return 1;
+    count = read(descriptor, observed, sizeof(observed));
+    if (close(descriptor) != 0 || count != (ssize_t)length ||
+        memcmp(observed, expected, length) != 0)
+        return 2;
+    return 0;
+}
+
+static int global_dso_roundtrip(const char *path)
+{
+    static const char main_bytes[] = "main-before\nmain-after\n";
+    static const char dso_bytes[] = "dso-before\ndso-after\n";
+    char main_path[PATH_MAX], dso_path[PATH_MAX], main_buffer[64];
+    struct stat state;
+    FILE *stream;
+    int main_length, dso_length, descriptor, result;
+
+    main_length = snprintf(main_path, sizeof(main_path), "%s.main-global", path);
+    dso_length = snprintf(dso_path, sizeof(dso_path), "%s.dso-global", path);
+    if (main_length < 0 || dso_length < 0 ||
+        (size_t)main_length >= sizeof(main_path) ||
+        (size_t)dso_length >= sizeof(dso_path))
+        return 1;
+    stream = fopen(main_path, "w");
+    if (stream == NULL ||
+        setvbuf(stream, main_buffer, _IOFBF, sizeof(main_buffer)) != 0)
+        return 2;
+    descriptor = fileno(stream);
+    if (descriptor < 0 || fwrite("main-before\n", 1, 12, stream) != 12 ||
+        fstat(descriptor, &state) != 0 || state.st_size != 0 ||
+        ferror(stream) || feof(stream))
+        return 3;
+    errno = EDOM;
+    result = crabc_global_dso_buffer(stream, dso_path, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 10 + result;
+    errno = EDOM;
+    result = crabc_global_dso_flush(stream, &errno);
+    if (result != 0 || errno != ERANGE ||
+        fstat(descriptor, &state) != 0 || state.st_size != 12 ||
+        stat(dso_path, &state) != 0 || state.st_size != 11 ||
+        ferror(stream) || feof(stream))
+        return 20 + result;
+    if (fwrite("main-after\n", 1, 11, stream) != 11)
+        return 30;
+    errno = EDOM;
+    result = crabc_global_dso_tail(stream, &errno);
+    if (result != 0 || errno != ERANGE ||
+        fstat(descriptor, &state) != 0 || state.st_size != 12 ||
+        stat(dso_path, &state) != 0 || state.st_size != 11)
+        return 40 + result;
+    errno = EDOM;
+    if (fflush(NULL) != 0 || errno != EDOM ||
+        fstat(descriptor, &state) != 0 || state.st_size != 23 ||
+        stat(dso_path, &state) != 0 || state.st_size != 21 ||
+        ferror(stream) || feof(stream))
+        return 50;
+    result = crabc_global_dso_after_second(stream, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 60 + result;
+    if (fclose(stream) != 0)
+        return 70;
+    errno = 0;
+    if (fcntl(descriptor, F_GETFD) != -1 || errno != EBADF)
+        return 71;
+    errno = EDOM;
+    result = crabc_global_dso_close(&errno);
+    if (result != 0 || errno != ERANGE)
+        return 80 + result;
+    if (global_readback(main_path, main_bytes, sizeof(main_bytes) - 1) != 0 ||
+        global_readback(dso_path, dso_bytes, sizeof(dso_bytes) - 1) != 0)
+        return 90;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -531,6 +613,9 @@ int main(int argc, char **argv)
     result = wide_dso_roundtrip(argv[1]);
     if (result != 0)
         return 100 + result;
+    result = global_dso_roundtrip(argv[1]);
+    if (result != 0)
+        return result;
     result = prepare_dso_exit_stream(argv[1]);
     if (result != 0)
         return 130 + result;
@@ -546,7 +631,7 @@ int main(int argc, char **argv)
     result = wide_memory_dso_roundtrip();
     if (result != 0)
         return result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-wmemstream-ok\n", 29) != 29)
+    if (write(STDOUT_FILENO, "stdio-file-dso-global-flush-ok\n", 31) != 31)
         return 11;
     return 0;
 }
