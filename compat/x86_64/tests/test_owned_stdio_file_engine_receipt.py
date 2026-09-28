@@ -17,6 +17,7 @@ spec = importlib.util.spec_from_file_location("owned_stdio_file_engine_receipt",
 assert spec is not None and spec.loader is not None
 receipt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(receipt)
+import owned_dynamic_qualification as qualification
 
 
 def identity(root: Path, path: Path) -> dict[str, object]:
@@ -93,6 +94,11 @@ class ReceiptFixture:
         for product in (self.static, self.dynamic):
             (product / "share/crabc").mkdir(parents=True)
             (product / "share/crabc/manifest.json").write_text("{}\n")
+        self.dynamic_state = self.dynamic / "share/crabc/dynamic-product-state.json"
+        self.dynamic_state.write_text(json.dumps({
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+            "status": "materialized-unqualified", "source_sha256": "a" * 64,
+        }) + "\n")
         (self.static / "bin").mkdir()
         self.static_driver = self.static / "bin/crabc-cc"
         self.static_driver.write_bytes(b"static driver\n")
@@ -476,6 +482,8 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
             mock.patch.object(receipt.products, "_validate_dynamic_product", return_value=(self.fixture.dynamic / "share/crabc/manifest.json", {})),
             mock.patch.object(receipt.products, "validate_link", side_effect=self._link),
             mock.patch.object(receipt.copies, "audit_execution_payload", side_effect=self._payload),
+            mock.patch.object(qualification, "source_digest", return_value="a" * 64),
+            mock.patch.object(qualification, "ROOT", self.fixture.checkout),
         ]
         for patch in self.patches:
             patch.start()
@@ -520,6 +528,17 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         self.assertEqual(report["products"], self.fixture.report["products"])
         self.assertEqual(report["source"], self.fixture.report["source"])
         self.assertEqual(report["frozen_surface"], {key: len(value) for key, value in FIXTURE_SURFACE.items()})
+
+    def test_rehashed_transplanted_dynamic_product_source_is_rejected(self) -> None:
+        state = json.loads(self.fixture.dynamic_state.read_text())
+        state["source_sha256"] = "b" * 64
+        self.fixture.dynamic_state.write_text(json.dumps(state) + "\n")
+        self.fixture._write_seals()
+        for phase in ("source-product-before", "source-product-after"):
+            self.fixture.report["seals"][phase] = identity(self.fixture.work, self.fixture.work / (phase + ".json"))
+        self.fixture.write_report()
+        with self.assertRaisesRegex(receipt.ReceiptError, "dynamic product source differs"):
+            self.validate()
 
     def test_objects_must_reference_every_frozen_capability_symbol(self) -> None:
         self.use_fixture(ReceiptFixture(Path(self.temporary.name) / "missing", frozenset({"getline"})))

@@ -27,6 +27,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import owned_crypt_runtime_evidence as copies
+import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as products
 
 SCHEMA = "crabc.x86_64-owned-stdio-file-engine/v1"
@@ -344,6 +345,17 @@ def validate_source_product_seals(checkout: Path, work: Path, report: Mapping[st
         products._validate_dynamic_product(dynamic_product)
     except Exception as error:
         raise ReceiptError("supplied product validation failed") from error
+    state = strict_json(dynamic_product / "share/crabc/dynamic-product-state.json", "dynamic product state")
+    require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
+            and state.get("status") == "materialized-unqualified", "dynamic product state differs")
+    source_digest = state.get("source_sha256")
+    require(type(source_digest) is str and SHA256.fullmatch(source_digest) is not None,
+            "dynamic product source digest is invalid")
+    try:
+        current_source = qualification.source_digest()
+    except Exception as error:
+        raise ReceiptError("current source digest cannot be read") from error
+    require(source_digest == current_source, "dynamic product source differs from current checkout")
     return all_sources
 
 
@@ -970,6 +982,8 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = True) 
     """Validate a full supplied-product FILE-engine receipt without executing it."""
     require(require_static is True, "FILE engine requires supplied-static admission")
     checkout = directory(checkout, "checkout")
+    require(checkout == directory(qualification.ROOT, "reader source checkout"),
+            "FILE engine checkout differs from reader source checkout")
     report_path = regular(path, "FILE engine report")
     work = directory(report_path.parent, "FILE engine work")
     require(work.is_relative_to(checkout / ".work"), "FILE engine report escapes checkout .work")
