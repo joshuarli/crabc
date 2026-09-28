@@ -61,7 +61,12 @@ are not transferable passes for a different revision.
   owned DSO and pthread frames on a freshly linked installed product, with a
   passing static control and physical reader. Its full three-product dynamic
   qualification remains open after the installed arm passed all 73 cases;
-  the producer stopped before the remaining arms under disk pressure.
+  the producer stopped before the remaining arms under disk pressure. A
+  guarded CFI expression in a real installed DSO worker returns a phase error
+  for an unreadable saved return address while the mapped control unwinds;
+  the retained pre-guard provider faults on the same case. This focused
+  diagnostic is folded into the installed backtrace matrix and does not
+  qualify the older product for the current source.
   Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
@@ -300,8 +305,11 @@ are not transferable passes for a different revision.
   the final merged zero count. An arena-backed 32 KiB medium cross-thread
   free now matches 53 selected C/Rust keys through owner merges, surviving
   PageMap membership, and terminal page-bin release without new OS mapping.
-  All 15 statistics evidence rows pass on a clean
-  source. Other page and fast-path
+  A level-two arena-backed huge singleton now matches 39 selected C/Rust
+  page-bin and worker-merge keys. The JSON caller-buffer differential uses a
+  stable sufficient capacity while retaining small-buffer error and guard
+  checks. All 16 statistics evidence rows pass on a clean source, while the
+  gate remains blocked by named unproved producers. Other page and fast-path
   shapes, other remote bin-free, and metadata-Theap statistics producers remain
   unproved, so full M7
   stays open. Static
