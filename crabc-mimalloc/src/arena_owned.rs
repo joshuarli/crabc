@@ -165,6 +165,31 @@ pub(crate) struct ProcessExternalArenaLease {
     callback: CommitHook,
 }
 
+/// A caller-owned external mapping registered without a commit callback.
+/// The arena may request normal OS commit and purge transitions, but it never
+/// owns an unmap operation for these bytes.
+struct ProcessExternalOsArenaLease {
+    base: NonNull<u8>,
+    size: usize,
+}
+
+impl ProcessExternalOsArenaLease {
+    fn new(base: *mut u8, size: usize) -> Option<Self> {
+        Some(Self { base: NonNull::new(base)?, size })
+    }
+
+    fn contains_covering_page_area(&self, page_size: PageSize, start: *mut u8, size: usize) -> bool {
+        if start.is_null() || size == 0 { return false; }
+        let Some(end) = (start as usize).checked_add(size) else { return false };
+        let page = page_size.bytes();
+        let Some(first) = crate::invariants::align_down(start as usize, page) else { return false };
+        let Some(last) = crate::invariants::align_up(end, page) else { return false };
+        let base = self.base.as_ptr() as usize;
+        let Some(limit) = base.checked_add(self.size) else { return false };
+        base <= first && last <= limit
+    }
+}
+
 impl ProcessExternalArenaLease {
     /// Forms the process-lived external ownership and transition capability.
     ///
@@ -336,6 +361,7 @@ enum ArenaBacking {
     Regular(Mapping),
     Huge(HugeOsAllocation<'static>),
     External(ProcessExternalArenaLease),
+    ExternalOs(ProcessExternalOsArenaLease),
 }
 
 impl ArenaBacking {
@@ -344,6 +370,7 @@ impl ArenaBacking {
             Self::Regular(mapping) => mapping.base(),
             Self::Huge(allocation) => Ok(allocation.base().as_ptr()),
             Self::External(lease) => Ok(lease.base()),
+            Self::ExternalOs(lease) => Ok(lease.base.as_ptr()),
         }
     }
 
@@ -352,20 +379,21 @@ impl ArenaBacking {
             Self::Regular(mapping) => mapping.length(),
             Self::Huge(allocation) => Ok(allocation.size()),
             Self::External(lease) => Ok(lease.size()),
+            Self::ExternalOs(lease) => Ok(lease.size),
         }
     }
 
     fn regular(&self) -> Option<&Mapping> {
         match self {
             Self::Regular(mapping) => Some(mapping),
-            Self::Huge(_) | Self::External(_) => None,
+            Self::Huge(_) | Self::External(_) | Self::ExternalOs(_) => None,
         }
     }
 
     fn external(&self) -> Option<&ProcessExternalArenaLease> {
         match self {
             Self::External(lease) => Some(lease),
-            Self::Regular(_) | Self::Huge(_) => None,
+            Self::Regular(_) | Self::Huge(_) | Self::ExternalOs(_) => None,
         }
     }
 }
@@ -413,6 +441,20 @@ impl OwnedArenaAllocation {
             }
             ArenaBacking::Huge(_) => ArenaCommitOutcome::failed(),
             ArenaBacking::External(lease) => unsafe { lease.commit(start, size) },
+            ArenaBacking::ExternalOs(lease) => {
+                if !lease.contains_covering_page_area(self.config.page_size(), start, size) {
+                    return ArenaCommitOutcome::failed();
+                }
+                // SAFETY: the external lease retains the complete covering
+                // pages and this owner holds the selected commit transition.
+                if unsafe { self.process().commit_external_arena_range(
+                    self.config.page_size(), start, size, already_committed,
+                ) }.is_ok() {
+                    ArenaCommitOutcome::committed(false)
+                } else {
+                    ArenaCommitOutcome::failed()
+                }
+            }
         }
     }
 
@@ -451,6 +493,16 @@ impl OwnedArenaAllocation {
                 // SAFETY: the outer page owner exclusively owns the direct
                 // prefix; the lease check above proves full source covering
                 // range containment without acquiring unmap authority.
+                unsafe { self.process().commit_direct_page_area(self.config.page_size(), start, size) }
+                    .map(|_| ())
+                    .map_err(ArenaPageCommitError::Mapping)
+            }
+            ArenaBacking::ExternalOs(lease) => {
+                if !lease.contains_covering_page_area(self.config.page_size(), start, size) {
+                    return Err(invalid);
+                }
+                // SAFETY: the caller retains its external backing and the
+                // covering-page check excludes transitions outside that span.
                 unsafe { self.process().commit_direct_page_area(self.config.page_size(), start, size) }
                     .map(|_| ())
                     .map_err(ArenaPageCommitError::Mapping)
@@ -894,6 +946,7 @@ impl ProcessArenaBacking {
                 },
                 exclusive,
                 Some(hook),
+                Some(hook),
                 memory,
                 |arena| {
                     let _guard = self
@@ -973,6 +1026,39 @@ impl ProcessArenaBacking {
             })
     }
 
+    /// Registers caller-owned external memory using normal OS transitions.
+    /// This owner retains its address and flags, but never an unmap right.
+    ///
+    /// # Safety
+    /// `start..start + size` remains one live external mapping for every
+    /// published arena and page. Initial commitment and zero flags are
+    /// truthful; uncommitted pages can be made writable by this process.
+    /// The process and its arena backing remain live through every
+    /// arena release, and no overlapping owner is installed.
+    pub(crate) unsafe fn install_owned_external_os_arena(
+        &'static self,
+        process: VmProcess<'static>,
+        config: MemoryConfig,
+        start: *mut u8,
+        size: usize,
+        initially_committed: bool,
+        is_pinned: bool,
+        initially_zero: bool,
+        numa_node: i32,
+        exclusive: bool,
+    ) -> Result<ManagedExternalRegion, ManageArenaError> {
+        let lease = ProcessExternalOsArenaLease::new(start, size)
+            .ok_or(ManageArenaError::InvalidRegion)?;
+        let memory = MemoryId::external(start, size, initially_committed, is_pinned, initially_zero);
+        let _guard = self.reserve_lock.lock().map_err(|_| ManageArenaError::RegistryFull)?;
+        // SAFETY: the caller retains external backing and this lock protects
+        // the stable owner slot through first registry publication.
+        unsafe { self.install_owned_allocation_locked(
+            process, StoredVmProcess::from_static_process(process), config, size,
+            ArenaBacking::ExternalOs(lease), memory, numa_node, exclusive,
+        ) }.map_err(|(error, _lease)| error)
+    }
+
     /// Caller holds reserve_lock until slot publication or complete rollback.
     ///
     /// # Safety
@@ -1007,6 +1093,8 @@ impl ProcessArenaBacking {
                 && memory.is_pinned() && memory.initially_committed() && managed_size == size,
             ArenaBacking::External(lease) => memory.kind() == MemoryKind::External
                 && lease.base() == start && lease.size() == size,
+            ArenaBacking::ExternalOs(lease) => memory.kind() == MemoryKind::External
+                && lease.base.as_ptr() == start && lease.size == size,
         };
         if exact && valid_kind && managed_size <= size {
             // `mi_manage_os_memory_ex2` warns before rejecting a region that
@@ -1042,15 +1130,21 @@ impl ProcessArenaBacking {
         let Some(slot) = self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY) else {
             return Err(fail(ManageArenaError::RegistryFull, allocation));
         };
+        let external_os = matches!(allocation, ArenaBacking::ExternalOs(_));
         unsafe { (*slot.value.get()).write(OwnedArenaAllocation {
             allocation, memory, process: stored_process, config,
         }); }
         slot.state.store(INITIALIZING, Ordering::Release);
         let hook = (memory.kind() == MemoryKind::Os).then(||
             CommitHook::new(commit_owned_arena, (slot as *const ArenaAllocationSlot).cast_mut().cast()));
-        // The internal hook carries Rust ownership, not an externally supplied
-        // source callback. Its zero-already-committed path is exactly the OS
-        // commit used by source arena initialization and page metadata.
+        let metadata_hook = if external_os {
+            Some(CommitHook::new(commit_external_os_metadata,
+                (slot as *const ArenaAllocationSlot).cast_mut().cast()))
+        } else {
+            hook
+        };
+        // The metadata-only external capability is used before publication;
+        // the source arena field retains no callback for ordinary OS memory.
         let result = unsafe {
             super::manage_in_place_with_publisher_and_numa_source(
                 &self.registry, start, managed_size, config.page_size(),
@@ -1062,7 +1156,7 @@ impl ProcessArenaBacking {
                         process.current_numa_node() as i32
                     } else { numa_node }
                 },
-                exclusive, hook, memory,
+                exclusive, hook, metadata_hook, memory,
                 |arena| {
                     if self.registry.insert(arena) {
                         Ok(())
@@ -1103,6 +1197,19 @@ impl ProcessArenaBacking {
         // slots: their failed manage may move/drop/reuse the contained owner.
         let _guard = self.reserve_lock.lock().ok()?;
         self.published_allocation(memory.base, memory.size)
+    }
+
+    /// The null-callback arm of source arena page commitment. Only a
+    /// process-owned caller mapping can authorize this OS transition; its
+    /// published arena retains no callback or mapping release right.
+    pub(super) fn commit_external_os_page_area(
+        &self, arena: &Arena, start: *mut u8, size: usize,
+    ) -> bool {
+        // SAFETY: the caller holds a live claim from this published arena;
+        // the owner lookup checks its stable process-bound allocation slot.
+        let Some(owner) = (unsafe { self.allocation_for_arena(arena) }) else { return false };
+        if !matches!(owner.allocation, ArenaBacking::ExternalOs(_)) { return false; }
+        owner.commit(start, size, 0)
     }
 
     fn published_allocation(&self, base: *mut u8, size: usize) -> Option<&OwnedArenaAllocation> {
@@ -1529,6 +1636,27 @@ unsafe extern "C" fn commit_owned_arena(
     }
 }
 
+/// Commits an initially reserved external arena's metadata while its owner
+/// slot is preparing. This capability never enters the published arena's
+/// `commit_function` field; later page claims use normal OS transitions.
+unsafe extern "C" fn commit_external_os_metadata(
+    commit: bool, start: *mut u8, size: usize, is_zero: *mut bool, argument: *mut c_void,
+) -> bool {
+    if !commit { return false; }
+    let Some(slot) = (unsafe { argument.cast::<ArenaAllocationSlot>().as_ref() }) else { return false };
+    let Some(owner) = (unsafe { slot.initialized() }) else { return false };
+    let ArenaBacking::ExternalOs(lease) = &owner.allocation else { return false };
+    if !lease.contains_covering_page_area(owner.config.page_size(), start, size) { return false; }
+    if !is_zero.is_null() {
+        // SAFETY: source metadata calls pass null, but the typed hook also
+        // accepts a writable zero observation for a direct caller.
+        unsafe { is_zero.write(false) };
+    }
+    // SAFETY: the initializing slot retains the caller's external range,
+    // and no published reader can overlap this metadata transition.
+    unsafe { owner.process().commit_direct_page_area(owner.config.page_size(), start, size) }.is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -1639,6 +1767,151 @@ mod tests {
             assert!(destroyed.is_released());
             assert_eq!(process.subprocess().vm_statistics().snapshot(), accounted);
         }
+    }
+
+    #[test]
+    fn public_external_os_arena_destroy_retains_callers_mapping() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = process();
+        let backing = backing();
+        let base = external_storage(process, ARENA_MIN_SIZE);
+        // SAFETY: the external mapping is committed and zeroed; this test
+        // retains it through arena destruction and frees it explicitly below.
+        let managed = unsafe { backing.install_owned_external_os_arena(
+            process, config(), base, ARENA_MIN_SIZE, true, false, true, -1, true,
+        ) }.expect("public external OS arena publishes");
+        assert!(managed.is_complete());
+        assert_eq!(backing.registry.count(), 1);
+        assert!(unsafe { (*managed.arena_id().as_ptr()).commit_function.is_none() });
+        let owner = unsafe { backing.allocation_for_arena(&*managed.arena_id().as_ptr()) }
+            .expect("published external backing is findable for allocation");
+        assert!(matches!(owner.allocation, ArenaBacking::ExternalOs(_)));
+        // All owner views expire before the exclusive source teardown.
+        let destroyed = unsafe { backing.destroy_all(&mut []) }.expect("arena destroy");
+        assert!(destroyed.is_released());
+        assert_eq!(backing.registry.count(), 0);
+        // SAFETY: destroy transferred no unmap right. The caller's mapping
+        // remains live and writable until its explicit raw release.
+        unsafe { base.add(ARENA_MIN_SIZE - 1).write(0x5a) };
+        assert_eq!(unsafe { base.add(ARENA_MIN_SIZE - 1).read() }, 0x5a);
+        unsafe { crabc_core::mm::munmap_raw(base, ARENA_MIN_SIZE) }.unwrap();
+    }
+
+    #[test]
+    fn public_external_os_arena_forced_purge_keeps_callers_mapping() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = purge_process(100_000, true);
+        let backing = backing();
+        let base = external_storage(process, ARENA_MIN_SIZE);
+        // SAFETY: this committed caller-owned mapping stays live through the
+        // claim, release, forced purge, and final arena teardown.
+        let managed = unsafe { backing.install_owned_external_os_arena(
+            process, config(), base, ARENA_MIN_SIZE, true, false, true, -1, true,
+        ) }.expect("public external OS arena publishes");
+        let id = managed.arena_id();
+        let claim = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }
+            .expect("one external slice is claimable");
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+        let index = claim.slice_index();
+        assert!(claim.release());
+        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_set_range(index, 1), Some(true));
+        let before = process.subprocess().vm_statistics().snapshot();
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        let after = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after.purge_calls, before.purge_calls + 1);
+        assert_eq!(after.purged, before.purged + ARENA_SLICE_SIZE as i64);
+        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_clear_range(index, 1), Some(true));
+        let destroyed = unsafe { backing.destroy_all(&mut []) }.expect("arena destroy");
+        assert!(destroyed.is_released());
+        // SAFETY: neither purge nor destruction owns an external unmap.
+        unsafe { crabc_core::mm::munmap_raw(base, ARENA_MIN_SIZE) }.unwrap();
+    }
+
+    #[test]
+    fn public_external_os_arena_mixed_commit_counts_only_new_slice() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = process();
+        let backing = backing();
+        let (mapping, _) = NormalOsAllocation::allocate_aligned_base_for_process(
+            process, config(), ARENA_MIN_SIZE, ARENA_ALIGNMENT, MapAccess::Reserved,
+            false, None,
+        ).unwrap().into_mapping_and_memory();
+        let base = mapping.base().unwrap();
+        core::mem::forget(mapping);
+        // SAFETY: the caller retains its reserved mapping; setup commits
+        // metadata before writing and later claims commit their own slices.
+        let managed = unsafe { backing.install_owned_external_os_arena(
+            process, config(), base, ARENA_MIN_SIZE, false, false, true, -1, true,
+        ) }.expect("reserved external arena publishes");
+        let id = managed.arena_id();
+        let first = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }
+            .expect("one slice commits");
+        let first_index = first.slice_index();
+        assert!(first.release());
+        let before = process.subprocess().vm_statistics().snapshot();
+        let pair = unsafe { backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }
+            .expect("mixed committed and reserved pair commits");
+        assert_eq!(pair.slice_index(), first_index);
+        let after = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after.commit_calls, before.commit_calls + 1);
+        assert_eq!(after.committed_current - before.committed_current, ARENA_SLICE_SIZE as i64);
+        assert_eq!(after.committed_total - before.committed_total, ARENA_SLICE_SIZE as i64);
+        assert!(pair.release());
+        assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
+        // SAFETY: public external management never transferred unmap rights.
+        unsafe { crabc_core::mm::munmap_raw(base, ARENA_MIN_SIZE) }.unwrap();
+    }
+
+    #[test]
+    fn public_external_os_arena_reserved_page_metadata_and_prefix_commit() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = process();
+        let backing = backing();
+        let (mapping, _) = NormalOsAllocation::allocate_aligned_base_for_process(
+            process, config(), ARENA_MIN_SIZE, ARENA_ALIGNMENT, MapAccess::Reserved,
+            false, None,
+        ).unwrap().into_mapping_and_memory();
+        let base = mapping.base().unwrap();
+        core::mem::forget(mapping);
+        // SAFETY: this reserved caller mapping stays live through page
+        // metadata and initial-prefix commitments, then is unmapped by us.
+        let managed = unsafe { backing.install_owned_external_os_arena(
+            process, config(), base, ARENA_MIN_SIZE, false, false, true, -1, true,
+        ) }.expect("reserved external arena publishes");
+        let claim = unsafe { backing.try_find_free(search(managed.arena_id()), 1, ARENA_SLICE_SIZE, false) }
+            .expect("one reserved page slice is claimable");
+        assert!(claim.page_metadata().is_some(), "source commits separate page metadata through OS");
+        assert!(claim.commit_initial_page_prefix(4096), "source commits the first page prefix through OS");
+        assert!(claim.release());
+        assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
+        unsafe { crabc_core::mm::munmap_raw(base, ARENA_MIN_SIZE) }.unwrap();
+    }
+
+    #[test]
+    fn public_external_os_arena_failed_metadata_commit_returns_unpublished_mapping() {
+        let fault = fault::install(fault::Plan::disabled());
+        let process = process();
+        let backing = backing();
+        let (mapping, _) = NormalOsAllocation::allocate_aligned_base_for_process(
+            process, config(), ARENA_MIN_SIZE, ARENA_ALIGNMENT, MapAccess::Reserved,
+            false, None,
+        ).unwrap().into_mapping_and_memory();
+        let base = mapping.base().unwrap();
+        core::mem::forget(mapping);
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        // SAFETY: the caller retains its exact reserved mapping through the
+        // refused metadata commit and releases it after checking publication.
+        let result = unsafe { backing.install_owned_external_os_arena(
+            process, config(), base, ARENA_MIN_SIZE, false, false, true, -1, true,
+        ) };
+        assert_eq!(result, Err(ManageArenaError::CommitFailed));
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(backing.registry.count(), 0);
+        assert!(backing.slots.iter().all(|slot| slot.state.load(Ordering::Acquire) == EMPTY));
+        let mut residency = 0u8;
+        // SAFETY: `mincore` observes one live mapping page and writes one byte.
+        assert!(unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok());
+        unsafe { crabc_core::mm::munmap_raw(base, ARENA_MIN_SIZE) }.unwrap();
     }
 
     fn process() -> VmProcess<'static> {
@@ -3662,7 +3935,7 @@ mod tests {
 
     // ---- Native arena lifecycle differential -------------------------------
     //
-    // Field-for-field Rust receiver of `compat/allocator/m2_arena_lifecycle_x86_64.c`.
+    // Field-for-field receiver of pinned arena lifecycle behavior.
     // Every scenario owns a fresh process arena group and subprocess image,
     // matching the C fixture's zeroed per-scenario `mi_subproc_t`, and drives
     // the production `try_allocate_slices` (`mi_arenas_try_alloc`) and

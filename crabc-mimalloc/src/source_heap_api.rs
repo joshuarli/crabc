@@ -101,6 +101,96 @@ pub unsafe fn arena_area(arena: *mut c_void, size: *mut usize) -> *mut c_void {
     start.cast()
 }
 
+/// The calling thread's source arena group, including child subprocess
+/// membership, held only for the duration of one public arena operation.
+fn with_current_arena_registry<R>(operation: impl FnOnce(&crate::arena::ArenaRegistry) -> R) -> Option<R> {
+    let _active = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+    // SAFETY: this thread alone owns its initialized default Theap and TLD.
+    let current = unsafe { Theap::initialized_default_subprocess_at(crate::compiler_tls::default_theap()) };
+    let identity = current.and_then(NonNull::new).map_or(
+        MainSubprocess::global().identity(),
+        |identity| {
+            // SAFETY: current membership and the active operation retain the
+            // selected subprocess for this short projection.
+            unsafe { identity.as_ref() }
+        },
+    );
+    Some(operation(identity.arena_backing().registry()))
+}
+
+/// `mi_arena_contains` checks the parent's own slice range, then published
+/// child ranges in the calling thread's subprocess arena group.
+///
+/// # Safety
+/// A non-null `arena` is a live parent ID and its backing remains live for
+/// this query; no arena destruction overlaps it.
+pub unsafe fn arena_contains(arena: *mut c_void, pointer: *const c_void) -> bool {
+    let Some(id) = (unsafe { crate::arena::ArenaId::from_arena(arena.cast()) }) else { return false };
+    with_current_arena_registry(|registry| {
+        // SAFETY: caller retains the ID, and the operation guard retains the
+        // selected registry's published arenas.
+        unsafe { id.contains_in(registry, pointer.cast()) }
+    }).unwrap_or(false)
+}
+
+/// Pinned public geometry for this native allocator configuration.
+pub const fn arena_min_size() -> usize { crate::config::ARENA_MIN_SIZE }
+
+/// Pinned public alignment for externally registered arena memory.
+pub const fn arena_min_alignment() -> usize { crate::config::ARENA_ALIGNMENT }
+
+/// `mi_arena_max_object_size` observes the live source option value.
+pub fn arena_max_object_size() -> usize {
+    let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs() else { return crate::config::ARENA_MIN_OBJ_SIZE };
+    crate::arena::arena_max_object_size(binding.process().policy())
+}
+
+/// `mi_manage_os_memory_ex` registers caller-owned mapped backing in the
+/// process main subprocess. A child member is rejected because its arena
+/// backing requires a separately retained child-context owner. The caller
+/// retains the external mapping's unmap right through ordinary arena release.
+///
+/// # Safety
+/// `start..start + size` is one live external mapping that outlives
+/// every arena, Heap, Theap and page registered over it. Commitment and zero
+/// flags describe its actual initial state; uncommitted pages may be
+/// inaccessible until this allocator commits them. `arena_id` is null or writable;
+/// concurrent access or unmapping of the region is excluded during setup.
+pub unsafe fn manage_os_memory_ex(
+    start: *mut c_void,
+    size: usize,
+    is_committed: bool,
+    is_pinned: bool,
+    is_zero: bool,
+    numa_node: c_int,
+    exclusive: bool,
+    arena_id: *mut *mut c_void,
+) -> bool {
+    if !arena_id.is_null() {
+        // SAFETY: caller supplied a writable output.
+        unsafe { arena_id.write(null_mut()) };
+    }
+    let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs() else { return false };
+    let Ok(config) = binding.page_map().memory_config() else { return false };
+    let Some(_active) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return false };
+    if crate::subproc::lifecycle::current_thread_is_child_member() {
+        return false;
+    }
+    // SAFETY: caller retains the external backing; the process-static owner
+    // records its address without taking an unmap right.
+    let Ok(managed) = (unsafe { MainSubprocess::global().arena_backing().install_owned_external_os_arena(
+        binding.process(), config, start.cast(), size, is_committed, is_pinned,
+        is_zero, numa_node, exclusive,
+    ) }) else { return false };
+    if !arena_id.is_null() {
+        // SAFETY: as above.
+        unsafe { arena_id.write(managed.arena_id().as_ptr().cast()) };
+    }
+    true
+}
+
 /// The initialized default Theap of the calling thread. A cold main-subprocess
 /// thread attaches its owner; a child member already retains its own owner.
 pub fn theap_get_default() -> *mut c_void {

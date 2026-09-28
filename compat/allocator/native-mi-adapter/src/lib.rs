@@ -1414,6 +1414,52 @@ pub unsafe extern "C" fn mi_arena_area(arena_id: *mut c_void, size: *mut usize) 
     unsafe { heaps::arena_area(arena_id, size) }
 }
 
+#[no_mangle]
+pub extern "C" fn mi_arena_min_size() -> usize {
+    heaps::arena_min_size()
+}
+
+#[no_mangle]
+pub extern "C" fn mi_arena_min_alignment() -> usize {
+    heaps::arena_min_alignment()
+}
+
+#[no_mangle]
+pub extern "C" fn mi_arena_max_object_size() -> usize {
+    heaps::arena_max_object_size()
+}
+
+#[no_mangle]
+/// # Safety
+/// A non-null arena ID names a live parent arena whose backing remains live
+/// throughout the query.
+pub unsafe extern "C" fn mi_arena_contains(arena_id: *mut c_void, pointer: *const c_void) -> bool {
+    bind_thread();
+    // SAFETY: the C caller supplies a live arena ID for this query.
+    unsafe { heaps::arena_contains(arena_id, pointer) }
+}
+
+#[no_mangle]
+/// # Safety
+/// The external writable range and its true commitment and zero state are
+/// retained by the caller for every arena owner; `arena_id` is null or writable.
+pub unsafe extern "C" fn mi_manage_os_memory_ex(
+    start: *mut c_void,
+    size: usize,
+    is_committed: bool,
+    is_pinned: bool,
+    is_zero: bool,
+    numa_node: c_int,
+    exclusive: bool,
+    arena_id: *mut *mut c_void,
+) -> bool {
+    bind_thread();
+    // SAFETY: the C caller retains the external region and writable output.
+    unsafe { heaps::manage_os_memory_ex(
+        start, size, is_committed, is_pinned, is_zero, numa_node, exclusive, arena_id,
+    ) }
+}
+
 // ---------------------------------------------------------------------------
 // Heap reallocation, strings, `new`, and collection.
 // ---------------------------------------------------------------------------

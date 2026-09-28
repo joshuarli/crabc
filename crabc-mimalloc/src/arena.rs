@@ -142,6 +142,41 @@ impl ArenaId {
         let arena = unsafe { arena.as_ref() };
         Some((arena.start, arena.total_size))
     }
+
+    /// Tests the source slice range of this parent, then its published child
+    /// ranges in the calling subprocess. A parent's owned mapping can exceed
+    /// its own slice range after a large external region is split.
+    ///
+    /// # Safety
+    /// The ID and every published arena inspected through `registry` remain
+    /// live for the query. The registry is the calling thread's subprocess.
+    pub(crate) unsafe fn contains_in(self, registry: &ArenaRegistry, pointer: *const u8) -> bool {
+        let Some(parent) = self.0 else { return false };
+        // SAFETY: the caller retains the parent and its published children.
+        let parent = unsafe { parent.as_ref() };
+        if arena_strictly_contains(parent, pointer) {
+            return true;
+        }
+        for index in 0..registry.count() {
+            // SAFETY: the caller retains every arena published by this registry.
+            let Some(arena) = (unsafe { registry.arena_at(index) }) else { continue };
+            if (core::ptr::eq(arena, parent) || core::ptr::eq(arena.parent, parent))
+                && arena_strictly_contains(arena, pointer)
+            {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Source arena containment excludes the end address and uses the slice
+/// range, which can be shorter than a parent arena's total backing span.
+fn arena_strictly_contains(arena: &Arena, pointer: *const u8) -> bool {
+    let Some(size) = invariants::size_of_slices(arena.slice_count) else { return false };
+    let address = pointer as usize;
+    let start = arena.start as usize;
+    address >= start && address - start < size
 }
 
 /// Exact arena suitability relation used for requested exclusive arenas.
@@ -1272,6 +1307,7 @@ where
             numa_node_source,
             exclusive,
             commit_hook,
+            commit_hook,
             memory,
             |arena| {
                 if registry.insert(arena) {
@@ -1312,6 +1348,7 @@ unsafe fn manage_in_place(
             initially_committed,
             || numa_node,
             exclusive,
+            commit_hook,
             commit_hook,
             memory,
             |arena| {
@@ -1363,6 +1400,7 @@ where
             || numa_node,
             exclusive,
             commit_hook,
+            commit_hook,
             memory,
             publish,
         )
@@ -1384,6 +1422,7 @@ unsafe fn manage_in_place_with_publisher_and_numa_source<F, N>(
     mut numa_node_source: N,
     exclusive: bool,
     commit_hook: Option<CommitHook>,
+    metadata_commit_hook: Option<CommitHook>,
     mut memory: MemoryId,
     mut publish: F,
 ) -> Result<ManagedExternalRegion, ManageArenaError>
@@ -1426,6 +1465,7 @@ where
                 memory,
                 initially_committed,
                 commit_hook,
+                metadata_commit_hook,
             )
         };
         match initialized {
@@ -1542,15 +1582,18 @@ impl ArenaSliceClaim<'_> {
         if committed.is_clear_range(metadata_slice_index, 1)? {
             let metadata_start = arena_slice_start(arena, metadata_slice_index)?;
             let metadata_size = invariants::size_of_slices(metadata_slice_count)?;
-            let commit = arena.commit_function?;
-            let committed_now = unsafe {
-                commit(
-                    true,
-                    metadata_start,
-                    metadata_size,
-                    null_mut(),
-                    arena.commit_function_argument,
-                )
+            let committed_now = if let Some(commit) = arena.commit_function {
+                unsafe {
+                    commit(
+                        true,
+                        metadata_start,
+                        metadata_size,
+                        null_mut(),
+                        arena.commit_function_argument,
+                    )
+                }
+            } else {
+                self.backing?.commit_external_os_page_area(arena, metadata_start, metadata_size)
             };
             if !committed_now {
                 return None;
@@ -1571,10 +1614,8 @@ impl ArenaSliceClaim<'_> {
     /// the claim has deliberately observed `initially_committed == false`.
     /// It intentionally does not mutate `slices_committed`: a partial page
     /// prefix is tracked by `Page::slice_pcommitted`, while that bitmap records
-    /// complete source arena slices. The bounded test-only page-on-demand
-    /// seam reaches this only for a process-owned arena with its stable commit
-    /// callback; an arena with no callback remains an explicit unsupported
-    /// source-policy path here.
+    /// complete source arena slices. A caller-owned OS arena uses the source
+    /// null-callback branch and keeps its mapping release right with the caller.
     #[inline]
     pub(crate) fn commit_initial_page_prefix(&self, size: usize) -> bool {
         let Some(span_size) = self.slice_count().checked_mul(ARENA_SLICE_SIZE) else {
@@ -1584,21 +1625,24 @@ impl ArenaSliceClaim<'_> {
             return false;
         }
         let arena = unsafe { self.arena.as_ref() };
-        let Some(commit) = arena.commit_function else {
-            return false;
-        };
-        let mut is_zero = false;
-        // SAFETY: `self` owns the exact live slice span, the validated prefix
-        // begins at its leading slice, and the arena callback is stable while
-        // the registered arena remains live.
-        unsafe {
-            commit(
-                true,
-                self.start.as_ptr(),
-                size,
-                &mut is_zero,
-                arena.commit_function_argument,
-            )
+        if let Some(commit) = arena.commit_function {
+            let mut is_zero = false;
+            // SAFETY: `self` owns the exact live slice span, the validated
+            // prefix begins at its leading slice, and the arena callback is
+            // stable while the registered arena remains live.
+            unsafe {
+                commit(
+                    true,
+                    self.start.as_ptr(),
+                    size,
+                    &mut is_zero,
+                    arena.commit_function_argument,
+                )
+            }
+        } else {
+            self.backing.is_some_and(|backing| backing.commit_external_os_page_area(
+                arena, self.start.as_ptr(), size,
+            ))
         }
     }
 
@@ -1998,6 +2042,7 @@ unsafe fn prepare_arena_in_place<N>(
     memory: MemoryId,
     metadata_already_accessible: bool,
     commit_hook: Option<CommitHook>,
+    metadata_commit_hook: Option<CommitHook>,
 ) -> Result<*mut Arena, ManageArenaError>
 where
     N: FnMut() -> i32,
@@ -2018,7 +2063,7 @@ where
     }
 
     if !memory.initially_committed() && !metadata_already_accessible {
-        let Some(hook) = commit_hook else {
+        let Some(hook) = metadata_commit_hook else {
             return Err(ManageArenaError::CommitRequired);
         };
         let committed = unsafe {
@@ -3270,6 +3315,38 @@ pub(crate) mod tests {
         assert_eq!(child.slice_count(), BCHUNK_BITS);
         assert_eq!(child.total_size(), 0);
         assert_eq!(child.parent_index(), Some(0));
+    }
+
+    #[test]
+    fn public_arena_contains_excludes_end_and_other_registered_parent() {
+        let mut first_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let mut second_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let subprocess = MainSubprocess::test_static_owner();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        // SAFETY: both writable external regions and their subprocess owner
+        // remain live until all arena identity and range observations finish.
+        let first = unsafe { manage_external_in_place(
+            &registry, first_region.as_ptr(), ARENA_MIN_SIZE, PageSize::new(4096).unwrap(),
+            true, false, true, -1, true, None,
+        ) }.unwrap();
+        let second = unsafe { manage_external_in_place(
+            &registry, second_region.as_ptr(), ARENA_MIN_SIZE, PageSize::new(4096).unwrap(),
+            true, false, true, -1, true, None,
+        ) }.unwrap();
+        let first_id = first.arena_id();
+        let second_id = second.arena_id();
+        let start = first_region.as_ptr();
+        let end = (start as usize + ARENA_MIN_SIZE) as *const u8;
+        // SAFETY: both IDs and the registry remain live and published.
+        unsafe {
+            assert!(first_id.contains_in(&registry, start));
+            assert!(first_id.contains_in(&registry, start.add(ARENA_MIN_SIZE - 1)));
+            assert!(!first_id.contains_in(&registry, end));
+            assert!(!first_id.contains_in(&registry, second_region.as_ptr()));
+            assert!(second_id.contains_in(&registry, second_region.as_ptr()));
+            assert!(!ArenaId::none().contains_in(&registry, start));
+            assert!(!first_id.contains_in(&registry, core::ptr::null()));
+        }
     }
 
     #[test]

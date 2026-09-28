@@ -190,7 +190,9 @@ impl ProcessArenaBacking {
                         Err(HugeOsReleaseFailure::Tracking(_)) => unreachable!("preflight checked exact tracking capacity"),
                     }
                 }
-                ArenaBacking::External(_) => {}
+                // External callers retain the unmap right for both callback
+                // and ordinary OS transition registrations.
+                ArenaBacking::External(_) | ArenaBacking::ExternalOs(_) => {}
             }
         }
         let _ = self.registry.count.compare_exchange(count, 0, Ordering::AcqRel, Ordering::Acquire);

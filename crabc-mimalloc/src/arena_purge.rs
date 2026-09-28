@@ -6,7 +6,7 @@
 //! The arena owner retains both the bitmap range and its exact VM pair; it
 //! does not route ordinary OS backing through an external callback policy.
 
-use super::{OwnedArenaAllocation, ProcessArenaBacking};
+use super::{ArenaBacking, OwnedArenaAllocation, ProcessArenaBacking};
 use crate::arena::{ArenaView, arena_slice_range_is_usable};
 use crate::atomic::{AtomicGuardWord, i64_cas_strong_acq_rel, i64_load_relaxed,
     i64_store_release, try_atomic_guard};
@@ -221,6 +221,16 @@ fn purge_claimed(view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
         owner.process().purge_with_callback(size, || {
             owner.invoke_external_purge(address, size)
         })?
+    } else if let ArenaBacking::ExternalOs(lease) = &owner.allocation {
+        if !lease.contains_covering_page_area(owner.config.page_size(), address, size) {
+            return None;
+        }
+        // SAFETY: the caller-owned external lease retains the complete
+        // covering base pages and the claimed bitmap span is quiescent for
+        // this ordinary no-callback source purge.
+        unsafe { owner.process().purge_external_arena_range(
+            owner.config.page_size(), address, size, all_committed, stat_size,
+        ) }.unwrap_or(false)
     } else {
         owner.allocation.regular()?.purge_for_process(owner.process(), offset, size,
             all_committed, stat_size).unwrap_or(false)
