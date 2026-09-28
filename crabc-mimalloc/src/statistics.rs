@@ -1869,10 +1869,13 @@ mod tests {
         let snapshot = destination.bitmap().snapshot();
         assert_eq!(snapshot.chunk_bins[0].total, 1);
         assert_eq!(snapshot.chunk_bins[0].current, 0);
-        assert_eq!(snapshot.chunk_bins[4].total, 3);
-        assert_eq!(snapshot.chunk_bins[4].current, 3);
+        // The heap merge resets its local chunk bins without adding them to
+        // the subprocess image; bitmap transitions already update that image.
+        assert_eq!(snapshot.chunk_bins[4].total, 1);
+        assert_eq!(snapshot.chunk_bins[4].current, 1);
         assert_eq!(snapshot.chunk_bins[STAT_CHUNK_BIN_COUNT - 1].total, 0);
         assert_eq!(snapshot.pages_unabandon_busy_wait, 4);
+        assert_eq!(i64_load_relaxed(&source.chunk_bins[4].total), 0);
         assert_eq!(i64_load_relaxed(&source.chunk_bins[4].current), 0);
         assert_eq!(i64_load_relaxed(&source.pages_unabandon_busy_wait.total), 0);
     }
