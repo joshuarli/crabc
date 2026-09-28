@@ -147,13 +147,15 @@ class ReceiptTests(unittest.TestCase):
         self.native_error: Exception | None = None
         self.allocator_reader = True
         cpuinfo = self.directory / "cpuinfo.raw"
-        cpuinfo.write_text("model name: Test CPU\nmodel name: Test CPU\n", encoding="utf-8")
+        cpuinfo.write_text("processor: 0\nmodel name: Test CPU\n\n"
+                           "processor: 1\nmodel name: Test CPU\n", encoding="utf-8")
         self.cpu_identity = hashlib.sha256(cpuinfo.read_bytes()).hexdigest()
         self.attempt = self.write("attempt.json", {"tools": {
             "before": {"host": {
                 "kernel_release": HOST_IDENTITY["kernel_release"],
                 "allowed_affinity_before_pin": HOST_IDENTITY["allowed_cpus"],
                 "cpuinfo_sha256": self.cpu_identity,
+                "benchmark_cpu": 0,
             }},
             "host_cpuinfo_diagnostics": {"before": {"model_names": [HOST_IDENTITY["cpu_model"]] * 2}},
         }})
@@ -164,7 +166,7 @@ class ReceiptTests(unittest.TestCase):
         })
         self.native = self.write("native.json", {
             "mode": "full", "status": "complete-evidence", "uncontended_host": HOST,
-            "diagnostics": {"allowed_affinity": HOST_IDENTITY["allowed_cpus"],
+            "diagnostics": {"allowed_affinity": HOST_IDENTITY["allowed_cpus"], "client_cpu": 0,
                             "cpuinfo": {"path": str(cpuinfo)}},
         })
         self.allocator = [self.write(f"allocator-{index}.json", {
@@ -230,6 +232,55 @@ class ReceiptTests(unittest.TestCase):
 
     def details(self, receipt, identifier: str) -> list[str]:
         return next(row for row in receipt["conditions"] if row["id"] == identifier)["detail"]
+
+    def select_allocator_cpu(self, cpu: int) -> None:
+        self.identities = [{"source": "source-seal", "host": {**HOST_IDENTITY, "measurement_cpus": [cpu]}}] * 3
+        for path in self.allocator:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report["provenance"]["host"]["measurement_cpus"] = [cpu]
+            report["uncontended_host"]["evidence"]["measurement_cpus"] = [cpu]
+            for group in ("rows", "memory_rows"):
+                for row in report[group].values():
+                    row["cpus"] = [cpu]
+                    for lane in row["lanes"].values():
+                        lane["samples"][0]["cpus"] = [cpu]
+            path.write_text(json.dumps(report), encoding="utf-8")
+
+    def set_second_cpu_model(self, model: str) -> None:
+        cpuinfo = Path(json.loads(self.native.read_text(encoding="utf-8"))["diagnostics"]["cpuinfo"]["path"])
+        raw = cpuinfo.read_text(encoding="utf-8").replace(
+            "processor: 1\nmodel name: Test CPU", f"processor: 1\nmodel name: {model}")
+        cpuinfo.write_text(raw, encoding="utf-8")
+        attempt = json.loads(self.attempt.read_text(encoding="utf-8"))
+        attempt["tools"]["before"]["host"]["cpuinfo_sha256"] = hashlib.sha256(raw.encode()).hexdigest()
+        attempt["tools"]["host_cpuinfo_diagnostics"]["before"]["model_names"] = ["Test CPU", model]
+        self.attempt.write_text(json.dumps(attempt), encoding="utf-8")
+
+    def test_rehashed_raw_cpuinfo_must_match_the_allocator_selected_cpu_model(self):
+        self.set_second_cpu_model("Other CPU")
+        self.select_allocator_cpu(1)
+        receipt = self.receipt()
+        self.assertEqual(receipt["unmet"], ["performance-evidence-identity"])
+        self.assertTrue(any("selected CPU model differs" in detail
+                            for detail in self.details(receipt, "performance-evidence-identity")))
+        path = gate.write_receipt(self.directory / "gate-other-cpu-model", receipt)
+        with self.assertRaisesRegex(gate.GateInputError, "selected CPU model differs"):
+            gate.validate_receipt(ROOT, path)
+
+    def test_allocator_may_use_another_cpu_with_the_same_model(self):
+        self.select_allocator_cpu(1)
+        self.assertTrue(self.receipt()["passed"])
+
+    def test_mixed_model_host_can_use_the_same_nonfirst_model_for_all_measurements(self):
+        self.set_second_cpu_model("Other CPU")
+        attempt = json.loads(self.attempt.read_text(encoding="utf-8"))
+        attempt["tools"]["before"]["host"]["benchmark_cpu"] = 1
+        self.attempt.write_text(json.dumps(attempt), encoding="utf-8")
+        native = json.loads(self.native.read_text(encoding="utf-8"))
+        native["diagnostics"]["client_cpu"] = 1
+        self.native.write_text(json.dumps(native), encoding="utf-8")
+        self.select_allocator_cpu(1)
+        self.assertTrue(self.receipt()["passed"])
 
     def test_passing_receipts_publish_and_reread_while_their_inputs_are_unchanged(self):
         receipt = self.receipt()

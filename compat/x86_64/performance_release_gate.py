@@ -349,6 +349,35 @@ def allocator_conditions(reports: Sequence[str]) -> list[dict[str, Any]]:
     return rows
 
 
+def _cpu_models_by_processor(raw: bytes) -> dict[int, str]:
+    """Read the processor-to-model relation from retained Linux x86 CPU information."""
+    models: dict[int, str] = {}
+    fields: dict[str, str] = {}
+    for line in [*raw.decode("utf-8", errors="replace").splitlines(), ""]:
+        if not line.strip():
+            if fields:
+                if set(fields) != {"processor", "model name"}:
+                    raise GateInputError("retained CPU information lacks a processor or model name")
+                try:
+                    cpu = int(fields["processor"])
+                except ValueError as error:
+                    raise GateInputError("retained CPU information has an invalid processor number") from error
+                if cpu < 0 or cpu in models or not fields["model name"]:
+                    raise GateInputError("retained CPU information has duplicate or empty CPU identity")
+                models[cpu] = fields["model name"]
+                fields = {}
+            continue
+        key, separator, value = line.partition(":")
+        key = key.strip()
+        if separator and key in {"processor", "model name"}:
+            if key in fields:
+                raise GateInputError("retained CPU information repeats a processor identity field")
+            fields[key] = value.strip()
+    if not models:
+        raise GateInputError("retained CPU information has no processor models")
+    return models
+
+
 def performance_identity_condition(inputs: Mapping[str, Any]) -> dict[str, Any]:
     """Join owner-validated measurements by source revision and stable host facts."""
 
@@ -365,23 +394,34 @@ def performance_identity_condition(inputs: Mapping[str, Any]) -> dict[str, Any]:
     native_diagnostics = native["diagnostics"]
     native_cpuinfo = (ROOT / _checkout_path(native_diagnostics["cpuinfo"]["path"])).read_bytes()
     native_cpu_identity = evidence.cpuinfo_identity_sha256(native_cpuinfo)
+    cpu_models = _cpu_models_by_processor(native_cpuinfo)
+    # Allocator host provenance records the first CPU model even when it measures another CPU.
+    first_model = next(iter(cpu_models.values()))
+    native_model = cpu_models.get(native_diagnostics["client_cpu"])
     for item in collector["attempts"]:
         path = evidence.translate_source_path(ROOT, evidence.SOURCE_MOUNT, item["report"]["path"])
         attempt = json.loads(path.read_text(encoding="utf-8"))
         tools = attempt["tools"]
         host = tools["before"]["host"]
         runtime_models = tools["host_cpuinfo_diagnostics"]["before"]["model_names"]
-        runtime_model = runtime_models[0]
+        runtime_model = cpu_models.get(host["benchmark_cpu"])
         if host["cpuinfo_sha256"] != native_cpu_identity:
             unmet.add(f"{path}: native facade and runtime C CPU identities differ")
+        if runtime_models != list(cpu_models.values()):
+            unmet.add(f"{path}: runtime CPU model inventory differs from retained CPU information")
+        if runtime_model is None or native_model is None or runtime_model != native_model:
+            unmet.add(f"{path}: native facade and runtime C selected CPU models differ")
         if host["allowed_affinity_before_pin"] != native_diagnostics["allowed_affinity"]:
             unmet.add(f"{path}: native facade and runtime C allowed CPU sets differ")
         for report, allocator_path in allocator:
             allocator_host = report["provenance"]["host"]
+            if runtime_model is None or any(cpu_models.get(cpu) != runtime_model
+                                            for cpu in allocator_host["measurement_cpus"]):
+                unmet.add(f"{allocator_path}: allocator selected CPU model differs from runtime C/native facade")
             if (allocator_host["kernel_release"] != host["kernel_release"]
                     or allocator_host["allowed_cpus"] != host["allowed_affinity_before_pin"]
-                    or allocator_host["logical_cpus"] != len(runtime_models)
-                    or allocator_host["cpu_model"] != runtime_model):
+                    or allocator_host["logical_cpus"] != len(cpu_models)
+                    or allocator_host["cpu_model"] != first_model):
                 unmet.add(f"{allocator_path}: allocator host identity differs from runtime C/native facade")
     return _condition("performance-evidence-identity", sorted(unmet), "source revision and host identities agree")
 
