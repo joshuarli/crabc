@@ -2337,6 +2337,10 @@ mod tests {
         // unregistration, so this source flag can be published before the
         // read-only interior-client operation below.
         unsafe { page.as_mut() }.set_has_interior_pointers(true);
+        assert_eq!(normal.usable_size(), BLOCK_SIZE);
+        let normal_reallocation = normal.into_reallocation_copy_source(BLOCK_SIZE + 1);
+        assert_eq!(normal_reallocation.usable_prefix_len(), BLOCK_SIZE);
+        assert_eq!(normal_reallocation.copy_prefix_len(), BLOCK_SIZE);
         // SAFETY: `client` is an exact current interior allocation from this
         // registered page, and the same live-block invariant spans lookup.
         let pointer = unsafe { lease.lookup_live_allocation(client) }
@@ -2356,6 +2360,12 @@ mod tests {
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - 5);
 
         store_source_xthread_id_for_pointer_test(page, THREAD_ID_ABANDONED | PAGE_IN_FULL_QUEUE);
+        assert_eq!(pointer.usable_size(), BLOCK_SIZE - 5);
+        let interior_reallocation = pointer.into_reallocation_copy_source(BLOCK_SIZE);
+        assert_eq!(interior_reallocation.copy_client(), client);
+        assert_eq!(interior_reallocation.canonical_block_for_release(), block);
+        assert_eq!(interior_reallocation.usable_prefix_len(), BLOCK_SIZE - 5);
+        assert_eq!(interior_reallocation.copy_prefix_len(), BLOCK_SIZE - 5);
         // SAFETY: `block` remains an exact live allocation. The source state
         // snapshot is deliberately abandoned but still PageMap-published.
         let abandoned = unsafe { lease.lookup_live_allocation(block) }
