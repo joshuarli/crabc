@@ -39,6 +39,8 @@ FIXTURE_SURFACE = {
     "stdio.format-scan": ("__isoc99_sscanf", "vfscanf"),
 }
 FIXTURE_LEDGER_EXTRA = {"stdio.fopen64-alias": ("fopen64",), "stdio.memory-stream": ("fmemopen",)}
+ENGINE_MODEL_TRANSCRIPT = b"".join(
+    f"scenario {index} lines=1 digest=12345678\n".encode() for index in range(16384))
 
 
 def elf_object(undefined: tuple[str, ...], defined: tuple[str, ...] = (), machine: int = 62) -> bytes:
@@ -263,7 +265,8 @@ class ReceiptFixture:
             oracle = self.work / f"oracle-{role}"
             oracle.write_bytes((role + " oracle executable\n").encode())
             self.command(role + "-oracle-link", [str(self.tool), "-std=c11", "-static", "-fno-pie", "-no-pie", str(workload), "-o", str(oracle)])
-            oracle_raw = (role + " pinned-musl transcript\n").encode()
+            oracle_raw = (ENGINE_MODEL_TRANSCRIPT if role == "stdio.engine-model"
+                          else (role + " pinned-musl transcript\n").encode())
             if role == "stdio.process-streams":
                 root = receipt._process_root(self.work, "oracle")
                 root.mkdir(parents=True)
@@ -543,6 +546,16 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         path.write_bytes(b"forged transcript\n")
         self.fixture.refresh("commands")
         with self.assertRaisesRegex(receipt.ReceiptError, "wide-format dynamic non-pie direct raw output"):
+            self.validate()
+
+    def test_rehashed_matching_engine_model_transcripts_cannot_omit_scenarios(self) -> None:
+        role = "stdio.engine-model"
+        for stem in (f"{role}-oracle-run", f"{role}-static-run", f"{role}-static-pie-run",
+                     f"{role}-pie-kernel", f"{role}-pie-direct", f"{role}-non-pie-kernel",
+                     f"{role}-non-pie-direct"):
+            (self.fixture.work / f"{stem}.stdout").write_bytes(b"scenario 0 lines=1 digest=12345678\n")
+        self.fixture.refresh("commands")
+        with self.assertRaisesRegex(receipt.ReceiptError, "engine-model.*scenario"):
             self.validate()
 
     def test_recomputed_hashes_cannot_trace_an_ambient_header(self) -> None:

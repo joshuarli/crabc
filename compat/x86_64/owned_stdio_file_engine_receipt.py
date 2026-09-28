@@ -52,6 +52,8 @@ EXECUTION_CELLS = (
     "static", "static-pie", "dynamic-pie-kernel", "dynamic-pie-direct",
     "dynamic-non-pie-kernel", "dynamic-non-pie-direct",
 )
+ENGINE_MODEL_SCENARIOS = 16384
+ENGINE_MODEL_LINE = re.compile(rb"scenario ([0-9]+) lines=([1-9][0-9]*) digest=[0-9a-f]{8}\n\Z")
 
 # The role labels describe only behavior observed by the named, pre-existing
 # probe.  They are closed receipt values, not an attempt to enumerate stdio.
@@ -635,6 +637,17 @@ def _expected_run(executable: Path, scratch: Path) -> list[str]:
     return ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", str(executable), str(scratch)]
 
 
+def validate_engine_model_transcript(raw: bytes) -> None:
+    # The seeded model announces one digest after each scenario. A matching
+    # oracle/candidate pair is insufficient if both retained logs are short.
+    lines = raw.splitlines(keepends=True)
+    require(len(lines) == ENGINE_MODEL_SCENARIOS, "engine-model scenario count differs")
+    for expected, line in enumerate(lines):
+        match = ENGINE_MODEL_LINE.fullmatch(line)
+        require(match is not None and match.group(1) == str(expected).encode(),
+                f"engine-model scenario {expected} announcement differs")
+
+
 def validate_object_seals(work: Path, report: Mapping[str, Any], sources: Mapping[str, Path],
                           control: Mapping[str, dict[str, Path]]) -> dict[str, Path]:
     workloads_value = report["workloads"]
@@ -870,6 +883,8 @@ def validate_commands(checkout: Path, work: Path, report: Mapping[str, Any], sou
             oracle_scratch = work / f"oracle-{role}-stream"
             require_argv(oracle_run, _expected_run(oracle, oracle_scratch), role + " oracle run")
         require(oracle_run["stderr"].read_bytes() == b"", role + " oracle stderr differs")  # type: ignore[union-attr]
+        if role == "stdio.engine-model":
+            validate_engine_model_transcript(oracle_run["stdout"].read_bytes())  # type: ignore[union-attr]
 
         for linkage, cell in (("static", "static"), ("static-pie", "static-pie")):
             executable = work / f"{role}-{linkage}"
