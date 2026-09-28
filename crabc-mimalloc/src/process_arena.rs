@@ -3457,6 +3457,119 @@ mod tests {
             && retried_state && maps_live);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_arena_reset_c_rust_trace() {
+        use crate::arena::{ArenaSearch, ArenaView};
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaReserve, (ARENA_MIN_SIZE / 1024) as i64);
+        options.set(VmOption::ArenaEagerCommit, 0);
+        options.set(VmOption::AllowLargeOsPages, 0);
+        options.set(VmOption::AllowThp, 0);
+        options.set(VmOption::ArenaIsNumaLocal, 0);
+        options.set(VmOption::PurgeDelay, 100_000);
+        options.set(VmOption::ArenaPurgeMult, 1);
+        options.set(VmOption::PurgeDecommits, 0);
+        // SAFETY: the coordinator, subprocess, policy, and PageMap remain
+        // live for the lifetime of both published arena mappings.
+        let binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding(
+                config, options, MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            ) }.expect("the reset-policy arena process initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let search = ArenaSearch {
+            heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+            numa_node: -1, requested: ArenaId::none(), allow_pinned: false,
+        };
+        let mut claims = std::vec::Vec::new();
+        for _ in 0..4 {
+            // SAFETY: the fixture holds every returned source claim through
+            // the selected partial release below.
+            claims.push(unsafe { backing.try_allocate_slices(
+                process, config, search, 256, ARENA_SLICE_SIZE, false,
+            ) }.expect("four claims publish a second arena"));
+        }
+        assert_eq!(backing.registry().count(), 2);
+        // SAFETY: registry entries are permanent for this process fixture.
+        let first = unsafe { backing.registry().arena_at(0) }.unwrap();
+        let second = unsafe { backing.registry().arena_at(1) }.unwrap();
+        let second_id = unsafe { ArenaId::from_arena(core::ptr::from_ref(second).cast_mut()) }
+            .expect("the second published arena has a source ID");
+        let selected = ArenaSearch { requested: second_id, ..search };
+        // SAFETY: the exact second parent remains mapped and process-owned.
+        let released = unsafe { backing.try_find_free(selected, 1, ARENA_SLICE_SIZE, true) }
+            .expect("one slice is committed for the reset arm");
+        let survivor = unsafe { backing.try_find_free(selected, 1, ARENA_SLICE_SIZE, false) }
+            .expect("the neighboring second-arena slice stays claimed");
+        let index = released.slice_index();
+        let survivor_index = survivor.slice_index();
+        let view = unsafe { ArenaView::from_ptr(second_id.as_ptr()) }.unwrap();
+        // SAFETY: these bitmap views are read only during this fixture's
+        // single-threaded claim and collection sequence.
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        let committed = unsafe { view.slices_committed() }.unwrap();
+        let setup = index == 265 && survivor_index == 266
+            && committed.is_set_range(index, 1) == Some(true);
+        let before = process.subprocess().statistics().snapshot();
+        assert!(released.release());
+        let pending = purge.is_set_range(index, 1) == Some(true)
+            && committed.is_set_range(index, 1) == Some(true)
+            && free.is_set_range(index, 1) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true)
+            && process.subprocess().vm_statistics().snapshot().reset_calls == before.vm.reset_calls;
+        let advice = fault.capture_advice_range();
+        // SAFETY: only the returned one-slice span is scheduled; its adjacent
+        // claim and both arena mappings retain their process owner.
+        assert!(unsafe { backing.collect_purge(process, config, true, true, 0) });
+        let advice_calls = advice.count();
+        let recorded = advice.range();
+        drop(advice);
+        let exact_range = recorded.is_some_and(|(address, length, _)|
+            address == second.start as usize + index * ARENA_SLICE_SIZE
+                && length == ARENA_SLICE_SIZE);
+        let advice_kind = recorded.map_or(0, |(_, _, kind)| kind as i64);
+        let reset_state = purge.is_clear_range(index, 1) == Some(true)
+            && committed.is_set_range(index, 1) == Some(true)
+            && free.is_set_range(index, 1) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true)
+            && second.purge_expire.load(Ordering::Acquire) == 0;
+        let after = process.subprocess().statistics().snapshot();
+        let mut residence = 0u8;
+        // SAFETY: both published mappings remain live; `mincore` writes one
+        // residence byte for each mapped base.
+        let maps_live = unsafe { crabc_core::mm::mincore_raw(first.start, 4096, &mut residence) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(second.start, 4096, &mut residence) }.is_ok()
+            && after.vm.reserved_current == before.vm.reserved_current
+            && backing.registry().count() == 2;
+        for (field, value) in [
+            ("setup", i64::from(setup)), ("pending", i64::from(pending)),
+            ("reset_state", i64::from(reset_state)),
+            ("advice_calls", advice_calls as i64),
+            ("advice_exact", i64::from(exact_range)),
+            ("advice_kind", advice_kind),
+            ("reset_calls", after.vm.reset_calls - before.vm.reset_calls),
+            ("reset_bytes", after.vm.reset - before.vm.reset),
+            ("purge_calls", after.vm.purge_calls - before.vm.purge_calls),
+            ("purged_bytes", after.vm.purged - before.vm.purged),
+            ("arena_purges", after.arena.arena_purges - before.arena.arena_purges),
+            ("committed_delta", after.vm.committed_current - before.vm.committed_current),
+            ("maps_live", i64::from(maps_live)),
+            ("released_slice", index as i64), ("survivor_slice", survivor_index as i64),
+        ] {
+            std::println!("m2.second_reset.{field}={value}");
+        }
+        assert!(setup && pending && reset_state && exact_range && maps_live);
+    }
+
     #[test]
     fn default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold() {
         let config = memory_config();
