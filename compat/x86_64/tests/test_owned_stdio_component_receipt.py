@@ -585,6 +585,14 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "dynamic pie link map"):
             self.validate()
 
+    def test_dynamic_link_map_cannot_claim_a_shared_library_output_section(self) -> None:
+        path = self.fixture.work / "dynamic-pie.crabc-link.map"
+        library = self.fixture.dynamic / "usr/lib/libc.so"
+        path.write_text(path.read_text() +
+                        f"            1000             1000        1     1         {library}:(.text)\n")
+        with self.assertRaisesRegex(receipt.ReceiptError, "shared library output section"):
+            self.validate()
+
     def test_rehashed_dynamic_link_map_cannot_change_output_placement(self) -> None:
         path = self.fixture.work / "dynamic-pie.crabc-link.map"
         path.write_bytes(path.read_bytes().replace(

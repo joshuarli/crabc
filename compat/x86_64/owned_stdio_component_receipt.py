@@ -811,7 +811,7 @@ def validate_link_map(work: Path, name: str, product: Path, workload: Path) -> N
              "dynamic-pie": "Scrt1.o", "dynamic-non-pie": "crt1.o"}[name]
     static = name in ("static", "static-pie")
     direct = (entry, "crti.o", "crtn.o") if static else (
-        entry, "crti.o", "crtn.o", "crabc-dynamic-attach.o", "libc.so")
+        entry, "crti.o", "crtn.o", "crabc-dynamic-attach.o")
     allowed = {str(workload), "<internal>", *(str(library / item) for item in direct)}
     archives = ("libcrabc-builtins.a", "libc.a") if static else ("libcrabc-builtins.a",)
     archive_prefixes = tuple(str(library / archive) + "(" for archive in archives)
@@ -825,6 +825,8 @@ def validate_link_map(work: Path, name: str, product: Path, workload: Path) -> N
             mapped[entry] = (address, size)
         elif ":(" in entry:
             source = entry.split(":(", 1)[0]
+            require(static or source != str(library / "libc.so"),
+                    label + " names a shared library output section")
             if source not in allowed:
                 prefix = next((candidate for candidate in archive_prefixes
                                if source.startswith(candidate) and source.endswith(")")), None)
