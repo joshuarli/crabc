@@ -146,9 +146,9 @@ fn allocate_block<const ZEROED: bool>(bytes: usize, align: usize) -> Option<*mut
 /// # Safety
 /// `block` came from `allocate(bytes, align)` and is not used afterwards.
 pub(super) unsafe fn release(block: *mut u8, bytes: usize, align: usize) {
-    let bytes = bytes.max(1);
     let Some((index, _)) = class(bytes, align) else {
-        unsafe { syscall2(SYS_MUNMAP, block as i64, bytes as i64); }
+        // A zero-length request with larger alignment mapped one byte.
+        unsafe { syscall2(SYS_MUNMAP, block as i64, bytes.max(1) as i64); }
         return;
     };
     let _guard = AllocationGuard::acquire();
@@ -299,6 +299,34 @@ mod pool_tests {
             }
         }
         assert_eq!(class(LARGEST_CLASS + 1, 16), None);
+    }
+
+    #[test]
+    fn zero_length_release_recycles_the_smallest_class_without_exposing_stale_bytes() {
+        let first = allocate_block::<true>(0, 1).unwrap();
+        let neighbor = allocate(1, 1).unwrap();
+        assert_ne!(first, neighbor);
+        unsafe { first.write(0xa5); neighbor.write(0x5a); release(first, 0, 1); }
+        let recycled = allocate(1, 1).unwrap();
+        assert_eq!(unsafe { recycled.read() }, 0);
+        assert_eq!(unsafe { neighbor.read() }, 0x5a);
+        unsafe { release(recycled, 1, 1); release(neighbor, 1, 1); }
+    }
+
+    #[test]
+    fn zero_length_with_large_alignment_releases_its_mapping() {
+        use super::super::x86_64_runtime_lock::{isolated_mapping_probe, RuntimeGuard};
+        unsafe fn probe(_: &RuntimeGuard) -> bool {
+            let Some(block) = allocate_block::<true>(0, 32) else { return false; };
+            let mut residency = 0u8;
+            let before = unsafe { syscall3(27, block as i64, PAGE as i64,
+                core::ptr::addr_of_mut!(residency) as i64) } == 0;
+            unsafe { release(block, 0, 32); }
+            let after = unsafe { syscall3(27, block as i64, PAGE as i64,
+                core::ptr::addr_of_mut!(residency) as i64) } == -12;
+            before && after
+        }
+        unsafe { isolated_mapping_probe(probe); }
     }
 
     #[test]
