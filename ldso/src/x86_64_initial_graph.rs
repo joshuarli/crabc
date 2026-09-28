@@ -3202,12 +3202,12 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
         }
 
         let start = next_virtual_address?;
-        let bitmap = encoded >> 1;
-        for bit in 0..ELF64_RELR_BITMAP_BITS {
-            if bitmap & (1u64 << bit) != 0 {
-                let target = start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?;
-                apply_relr_target(object, target)?;
-            }
+        let mut bitmap = encoded >> 1;
+        while bitmap != 0 {
+            let bit = bitmap.trailing_zeros() as u64;
+            let target = start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?;
+            apply_relr_target(object, target)?;
+            bitmap &= bitmap - 1;
         }
         next_virtual_address = Some(
             start.checked_add(ELF64_RELR_BITMAP_BITS.checked_mul(ELF64_RELR_SIZE as u64)?)?,
@@ -3222,6 +3222,34 @@ unsafe fn apply_relr_target(object: &Object, virtual_address: u64) -> Option<()>
     // preflight rejects an overflowing addend before this runs.
     *slot = (*slot).wrapping_add(object.base);
     Some(())
+}
+
+#[cfg(test)]
+mod relr_bitmap_tests {
+    use super::*;
+
+    #[test]
+    fn sparse_and_full_bitmaps_relocate_only_selected_words() {
+        let mut words = [7u64; 128];
+        let sparse = (1u64 | (1u64 << 5) | (1u64 << 62)) << 1 | 1;
+        let table = [0u64, sparse, 0x200, u64::MAX];
+        let mut object = Object {
+            base: words.as_mut_ptr() as u64,
+            relr: table.as_ptr().cast::<u8>(),
+            relrsz: table.len() * ELF64_RELR_SIZE,
+            ..EMPTY_OBJECT
+        };
+        assert!(unsafe { apply_relr_table(&object) }.is_some());
+        for (index, value) in words.iter().enumerate() {
+            let selected = matches!(index, 0 | 1 | 6 | 63 | 64) || index >= 65;
+            assert_eq!(*value, if selected { 7u64.wrapping_add(object.base) } else { 7 });
+        }
+
+        let leading_bitmap = [1u64];
+        object.relr = leading_bitmap.as_ptr().cast::<u8>();
+        object.relrsz = ELF64_RELR_SIZE;
+        assert!(unsafe { apply_relr_table(&object) }.is_none());
+    }
 }
 
 /// Evaluate the constrained relocation vocabulary before a relocation table
