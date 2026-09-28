@@ -140,6 +140,9 @@ are not transferable passes for a different revision.
   24 C/Rust fields match claim, registry, ownership, and terminal release.
   A failed regular-arena parent unmap matches 15 C/Rust destroy, warning-order,
   registry, and raw-retry fields after restoring the source warning call.
+  A failed huge-arena primitive unmap now emits the pinned-C warning before
+  accounting; its focused differential matches while all eight M3 components
+  pass, with M1/M2 prerequisites still required for the M3 gate.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
@@ -151,6 +154,9 @@ are not transferable passes for a different revision.
   including local-free reuse and page spill. The 8 KiB regular small
   queue-head path falls from 809 to 161 instructions and 13 to three calls;
   its 23-event C/Rust trace covers reuse, page spill, and `calloc` zeroing.
+  Reusing the owner-local queue head across the generic count step reduces
+  the 64-byte local malloc path from 153 to 150 instructions in 100 matched
+  traces, with local free and remote publication codegen unchanged.
   Contended timing is not qualifying. Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
@@ -209,6 +215,9 @@ are not transferable passes for a different revision.
   its DSO finalizer sees the descriptor live before one exit flush writes the
   payload. Pinned musl and all eleven owned/oracle cells preserve the exact
   finalizer marker, write order, and post-exit bytes.
+  A cross-DSO `freopen` handoff now passes all eleven cells with exact old and
+  replacement pathname bytes. It exposed and fixed a read-on-write-only stream
+  defect: pending output must flush before the direction error is set.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -335,7 +344,11 @@ are not transferable passes for a different revision.
      `owned-resolver-family` (cross-member hidden TLS in the static link
      authority, fixed on main by the abi-closure commits), and the static and
      combined sysroots (the 33rd `atexit` expectation, fixed on main by
-     `7fbcc1b5d`). The finite `aio_cancel` oracle disposition is integrated;
+     `7fbcc1b5d`). The combined product's package-corpus reader now validates
+     its embedded static/dynamic placement maps and passes a focused physical
+     34-workload replay; a full combined rerun remains open after identical
+     oracle/candidate sqlite timeouts under host contention. The finite
+     `aio_cancel` oracle disposition is integrated;
      a clean `80724223a` native OS-test replay profile-qualifies 5,395 outcome
      pairs with exactly six selected `stdatomic` dispositions. A full libc-test
      component on clean `02b6fa8a6` profile-qualifies
