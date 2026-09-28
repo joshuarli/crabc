@@ -7,6 +7,8 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import resource
+import shlex
 import shutil
 import stat
 import sys
@@ -50,13 +52,33 @@ class OwnedRegexComponentReceiptTests(unittest.TestCase):
         self.write(".work/x86_64/dynamic/share/crabc/crabc_cc_static.py", b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n")
         self.static = self.mkdir(".work/x86_64/static")
         self.workload = self.write_elf(".work/x86_64/owned-regex-products.fixture/workload.o", etype=1)
-        self.oracle = self.write(".work/x86_64/owned-regex-products.fixture/oracle", b"oracle\n")
+        oracle_bytes = (
+            b"#!/bin/sh\nset -eu\n"
+            b"if [ \"${1-}\" = --bounded-backreference ]; then\n"
+            b"  printf 'bounded-backreference source-fault signal=11\\n'\n"
+            b"else\n  printf 'match fixture nsub=0 so=0 eo=1\\nowned-regex-installed-header-ok\\n'\nfi\n"
+        )
+        self.oracle_template = self.write(".work/x86_64/oracle-template", oracle_bytes)
+        self.oracle_template.chmod(0o755)
+        self.oracle = self.write(".work/x86_64/owned-regex-products.fixture/oracle", oracle_bytes)
+        self.oracle.chmod(0o755)
         self.static_executable = self.write_elf(".work/x86_64/owned-regex-products.fixture/static", etype=2)
         self.static_pie_executable = self.write_elf(".work/x86_64/owned-regex-products.fixture/static-pie", etype=3)
         self.dynamic_pie = self.write_elf(".work/x86_64/owned-regex-products.fixture/dynamic-pie", etype=3)
         self.dynamic_non_pie = self.write_elf(".work/x86_64/owned-regex-products.fixture/dynamic-non-pie", etype=2)
-        self.tools = {name: self.identity(self.write(f".work/x86_64/{name}", name.encode()))
-                      for name in ("oracle-tool", "dynamic-driver", "compiler", "linker", "static-driver", "nm", "readelf", "env")}
+        compiler = self.write(
+            ".work/x86_64/oracle-tool",
+            ("#!/bin/sh\nset -eu\n"
+             "while [ \"$#\" -gt 0 ]; do\n"
+             "  if [ \"$1\" = -o ]; then shift; cp " + shlex.quote(str(self.oracle_template)) +
+             " \"$1\"; exit 0; fi\n"
+             "  shift\n"
+             "done\nexit 1\n").encode(),
+        )
+        compiler.chmod(0o755)
+        self.tools = {"oracle-tool": self.identity(compiler)}
+        self.tools.update({name: self.identity(self.write(f".work/x86_64/{name}", name.encode()))
+                           for name in ("dynamic-driver", "compiler", "linker", "static-driver", "nm", "readelf", "env")})
         self.tool_roster = {
             "oracle": self.tools["oracle-tool"], "dynamic_driver": self.tools["dynamic-driver"],
             "compiler": self.tools["compiler"], "linker": self.tools["linker"],
@@ -234,6 +256,41 @@ class OwnedRegexComponentReceiptTests(unittest.TestCase):
 
     def test_full_six_mode_control_reconstructs_before_negative_mutations(self) -> None:
         self.assertEqual(self.validate()["execution_mode"], "full-six-mode")
+
+    def test_changed_oracle_bytes_reject_even_when_symbol_rows_still_match(self) -> None:
+        self.oracle.write_bytes(b"substituted oracle\n")
+        with self.assertRaisesRegex(self.module.RegexReceiptError, "oracle"):
+            self.validate()
+
+    def test_matching_forged_oracle_and_candidate_transcripts_reject(self) -> None:
+        record = self.report_value()
+        for label in (
+            "oracle-run", "static-run", "static-pie-run", "dynamic-pie-kernel",
+            "dynamic-pie-direct", "dynamic-non-pie-kernel", "dynamic-non-pie-direct",
+        ):
+            item = record["commands"][label]["stdout"]
+            path = self.root / item["path"]
+            path.write_bytes(path.read_bytes().replace(b"match fixture", b"forged fixture"))
+            self.rewrite_identity(item)
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.RegexReceiptError, "oracle-run pinned musl replay"):
+            self.validate()
+
+    def test_oracle_replay_disables_child_core_dumps(self) -> None:
+        original_limit = resource.getrlimit(resource.RLIMIT_CORE)
+        if original_limit[1] == 0:
+            self.skipTest("core hard limit is already zero")
+        checked = self.oracle.read_bytes().replace(
+            b"set -eu\n", b"set -eu\n[ \"$(ulimit -c)\" = 0 ] || exit 97\n", 1,
+        )
+        self.oracle.write_bytes(checked)
+        self.oracle_template.write_bytes(checked)
+        permitted = 1024 if original_limit[1] == resource.RLIM_INFINITY else min(original_limit[1], 1024)
+        try:
+            resource.setrlimit(resource.RLIMIT_CORE, (permitted, original_limit[1]))
+            self.validate()
+        finally:
+            resource.setrlimit(resource.RLIMIT_CORE, original_limit)
 
     def test_recomputed_identity_does_not_admit_garbage_candidate_output(self) -> None:
         record = self.report_value()

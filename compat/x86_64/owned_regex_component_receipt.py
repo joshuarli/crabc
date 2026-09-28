@@ -17,9 +17,11 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import resource
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Mapping
 
 
@@ -44,7 +46,7 @@ HEADERS = (
 ORACLE_COMPLETION = b"owned-regex-installed-header-ok\n"
 # `--bounded-backreference`: pinned musl faults reading past a guarded subject;
 # the owned port rejects the out-of-subject range and reports musl's
-# ordinary-memory answer (docs/evidence/x86-owned-regex.md).
+# ordinary-memory answer.
 BOUNDED_ARGUMENT = "--bounded-backreference"
 BOUNDED_ORACLE = b"bounded-backreference source-fault signal=11\n"
 BOUNDED_OWNED = b"bounded-backreference status=0 match=0,3 group=0,1\n"
@@ -407,6 +409,43 @@ def replay_symbol_reader(root: Path, label: str, argv: list[str]) -> bytes:
     return completed.stdout
 
 
+def replay_oracle(root: Path, work: Path, plan: Mapping[str, list[str]],
+                  raw: Mapping[str, Mapping[str, bytes]]) -> None:
+    """Authenticate the pinned-musl link before executing its retained oracle."""
+
+    def disable_core_dumps() -> None:
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+    oracle = physical_file(work / "oracle", "pinned musl regex oracle")
+    with tempfile.TemporaryDirectory(prefix="regex-oracle-relink-", dir=work.parent) as temporary:
+        rebuilt = Path(temporary) / "oracle"
+        argv = [*plan["oracle-link"][:-1], str(rebuilt)]
+        try:
+            completed = subprocess.run(argv, cwd=root, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       check=False, timeout=300, preexec_fn=disable_core_dumps)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RegexReceiptError("pinned musl regex oracle relink could not finish") from error
+        require(completed.returncode == 0 and completed.stdout == raw["oracle-link"]["stdout"] and
+                completed.stderr == raw["oracle-link"]["stderr"],
+                "pinned musl regex oracle relink differs from retained command")
+        require(physical_file(rebuilt, "rebuilt pinned musl regex oracle").read_bytes() == oracle.read_bytes(),
+                "pinned musl regex oracle differs from exact rebuilt link")
+    for label, index in (("oracle-run", -1), ("oracle-bounded", -2)):
+        argv = list(plan[label])
+        require(argv[index] == mounted(root, oracle), f"{label} does not name the retained oracle")
+        argv[index] = str(oracle)
+        try:
+            completed = subprocess.run(argv, cwd=root, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       check=False, timeout=300, preexec_fn=disable_core_dumps)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RegexReceiptError(f"{label} pinned musl replay could not finish") from error
+        require(completed.returncode == 0 and completed.stdout == raw[label]["stdout"] and
+                completed.stderr == raw[label]["stderr"],
+                f"{label} pinned musl replay differs from retained transcript")
+
+
 def validate_report(root: Path, report_path: Path, *, require_static: bool = False) -> dict[str, object]:
     root = physical_directory(root, "checkout root")
     report_path = physical_file(report_path, "regex component report")
@@ -479,6 +518,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
     for header in HEADERS:
         require(mounted(root, dynamic / "usr/include" / header) in trace_paths,
                 f"installed header trace omitted {header}")
+    replay_oracle(root, work, plan, raw)
     # The probe self-checks its directed contracts and exits nonzero on any
     # failure; its differential corpus is judged by candidate equality below.
     oracle_stdout = raw["oracle-run"]["stdout"]
