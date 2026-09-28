@@ -140,11 +140,16 @@ unconditional backward branch from hanging an unwind phase. Exhaustion returns
 fixture checks invalid CFA/source/destination/expression registers, unsupported
 states/results, a backward loop, valid register arithmetic, an address pointing
 into a guard page without dereferencing it, and every 1–8-byte read width ending
-exactly at that page boundary, including nonzero value and zero-extension checks. These corrections do **not** establish arbitrary
-address readability: CFI register restoration and expression memory reads still
-need a fault-contained memory owner, and LSDA parsing remains the consuming
-personality's responsibility. No broader malformed-metadata safety claim
-follows from this regression.
+exactly at that page boundary, including nonzero value and zero-extension checks.
+On x86-64, `unwinder/patches/unwinding-0.2.10-frame-bounds.rs` now reads CFI
+register offsets, register expressions, and DWARF expression memory through an
+exact-length kernel self-read. An inaccessible or partial read returns an unwind
+phase error without dereferencing the address in the provider. The guarded
+register-rule fixture in `unwinder/fixtures/guarded_register_rule.rs` proves
+this boundary, while the cleanup fixture proves valid stack reads still unwind.
+The self-read can fail under kernel policy; the provider then returns a phase
+error. This does not validate LSDA contents or keep a mapping alive after a
+successful read, and it does not qualify an installed runtime product.
 
 ## Standalone cleanup regression
 
