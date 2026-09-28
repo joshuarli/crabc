@@ -338,5 +338,27 @@ class M8AllocatorOverrideReceiptTests(unittest.TestCase):
         self.assertEqual(result["product:allocator-override"]["status"], "failed")
 
 
+class M8StartupErrnoReceiptTests(unittest.TestCase):
+    def test_successful_startup_command_without_its_physical_receipt_fails(self) -> None:
+        products = {"evidence": "product:p", "evidence_line": "p evidence: ",
+                    "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
+        runnable = {
+            "product:p": ["scripts/dev-x86_64.sh", "produce"],
+            "product:mimalloc-startup-errno": ["scripts/dev-x86_64.sh", "owned-mimalloc-startup-errno",
+                                              "--static-sysroot", "{static_sysroot}", "{dynamic_sysroot}"],
+        }
+
+        def command_record(command, **_kwargs):
+            line = ("p evidence: /workspace/.work/product\n" if command[1] == "produce"
+                    else "owned mimalloc startup errno evidence: "
+                         "/workspace/.work/x86_64/tmp/owned-mimalloc-startup-errno.missing\n")
+            return {"status": 0, "stdout": line, "stderr": ""}
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            with mock.patch.object(harness, "command_record", command_record):
+                result = gate.run_evidence(runnable, products, ["product:mimalloc-startup-errno"], Path(directory))
+        self.assertEqual(result["product:mimalloc-startup-errno"]["status"], "failed")
+
+
 if __name__ == "__main__":
     unittest.main()

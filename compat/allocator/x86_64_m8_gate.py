@@ -40,6 +40,7 @@ sys.path.insert(0, str(harness.ROOT / "compat/x86_64"))
 import consumer_rust_std_lto as consumer
 import owned_dynamic_qualification as qualification
 import native_shadow_receipt
+import owned_mimalloc_startup_errno_receipt as startup_errno
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m8-gate-x86_64-v3.5.0.json"
@@ -881,6 +882,64 @@ def read_allocator_override_receipt(command: Sequence[str], output: str) -> dict
         raise harness.HarnessError(f"allocator override physical receipt is invalid: {error}") from error
 
 
+def read_startup_constructor_receipt(command: Sequence[str], output: str) -> dict[str, Any]:
+    """Bind the executed startup and errno matrix to the supplied native-shadow sysroots."""
+
+    if (len(command) != 5 or command[:3] != [
+            DISPATCHER, startup_errno.RUNNER, "--static-sysroot",
+    ]):
+        raise harness.HarnessError("startup errno runner did not consume two supplied products")
+    evidence = product_directory(output, "owned mimalloc startup errno evidence: ")
+    if evidence is None:
+        raise harness.HarnessError("startup errno runner did not emit one private evidence directory")
+    try:
+        work = Path(evidence).relative_to(CONTAINER_ROOT)
+        if (work.parent != Path(".work/x86_64/tmp")
+                or not work.name.startswith("owned-mimalloc-startup-errno.")):
+            raise harness.HarnessError("startup errno evidence escaped its private root")
+        roots = []
+        for value in command[3:]:
+            relative = Path(value).relative_to(CONTAINER_ROOT)
+            if not relative.is_relative_to(".work"):
+                raise harness.HarnessError("startup errno product escaped checkout work")
+            roots.append(harness.ROOT / relative)
+        static, dynamic = roots
+        receipt = startup_errno.read_startup_errno_receipt(harness.ROOT)
+        raw = json.loads(receipt.path.read_text(encoding="utf-8"))
+        if raw.get("work") != work.as_posix():
+            raise harness.HarnessError("startup errno receipt names another execution root")
+        consumer.owned_cleanup.product_snapshot(static, "static")
+        consumer.owned_cleanup.product_snapshot(dynamic, "dynamic")
+        sources = {
+            "input-startup-source": harness.ROOT / "compat/x86_64/owned_mimalloc_startup_errno_probe.c",
+            "input-success-source": harness.ROOT / "compat/x86_64/owned_success_errno_probe.c",
+            "input-static-manifest": static / "share/crabc/manifest.json",
+            "input-static-libc-provenance": static / "share/crabc/libc-static.provenance.json",
+            "input-static-libc": static / "usr/lib/libc.a",
+            "input-dynamic-manifest": dynamic / "share/crabc/manifest.json",
+            "input-dynamic-libc-provenance": dynamic / "share/crabc/libc-shared.provenance.json",
+            "input-dynamic-loader-provenance": dynamic / "share/crabc/loader.provenance.json",
+            "input-dynamic-libc": dynamic / "usr/lib/libc.so",
+            "input-dynamic-loader": dynamic / "lib/ld-crabc-x86_64.so.1",
+        }
+        for name, original in sources.items():
+            original = consumer.owned_cleanup.physical(original, f"startup errno {name}")
+            if {"sha256": consumer.owned_cleanup.digest(original), "size": original.stat().st_size} != receipt.products[name]:
+                raise harness.HarnessError(f"startup errno receipt used another input product: {name}")
+        state = json.loads((dynamic / "share/crabc/dynamic-product-state.json").read_text())
+        if (state.get("allocator_backend") != "native-shadow"
+                or state.get("source_sha256") != qualification.source_digest()):
+            raise harness.HarnessError("startup errno product is not current native-shadow source")
+        return {"path": str(receipt.path), "sha256": consumer.sha256_file(receipt.path),
+                "source": dict(receipt.source), "source_sha256": qualification.source_digest(),
+                "products": {mode: consumer.sha256_file(root / "share/crabc/manifest.json")
+                             for mode, root in (("static", static), ("dynamic", dynamic))},
+                "case_count": len(receipt.cases)}
+    except (native_shadow_receipt.ReceiptError, consumer.owned_cleanup.OwnedCleanupError,
+            qualification.QualificationError, OSError, ValueError, KeyError, TypeError) as error:
+        raise harness.HarnessError(f"startup errno physical receipt is invalid: {error}") from error
+
+
 def run_evidence(
     runnable: Mapping[str, Sequence[str]], products: Mapping[str, str], selected: Sequence[str], artifacts: Path,
 ) -> dict[str, dict[str, Any]]:
@@ -949,6 +1008,14 @@ def run_evidence(
             except harness.HarnessError as error:
                 with log.open("a", encoding="utf-8") as stream:
                     stream.write(f"allocator override receipt reader: {error}\n")
+                passed = False
+        if evidence_id == "product:mimalloc-startup-errno" and passed:
+            try:
+                receipt = read_startup_constructor_receipt(
+                    command, str(record["stdout"]) + str(record["stderr"]))
+            except harness.HarnessError as error:
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(f"startup errno receipt reader: {error}\n")
                 passed = False
         if evidence_id in selected:
             results[evidence_id] = {
