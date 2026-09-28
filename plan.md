@@ -63,8 +63,11 @@ are not transferable passes for a different revision.
   17 matching C/Rust observations. A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
-  while immediate purge releases at collection. The intermittent native RSS
-  breach remains unexplained.
+  while immediate purge releases at collection. A two-arena pressure profile
+  matches C/Rust medium and PageMap transitions in six profiles; three more
+  paired replays found no canonical RSS step. A separate 65,536-byte profile
+  exposes a medium-page capacity difference now under reduction. The
+  intermittent native RSS breach remains unexplained.
   The full M2 runner records complete
   metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
   arenas, initialization, and fault injection remain partial. Its direct fresh
