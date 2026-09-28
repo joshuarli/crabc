@@ -62,6 +62,9 @@ are not transferable passes for a different revision.
   publication. `consumer.source-build` passes on a development cohort and
   publishes its receipt; a clean `0bb16e482` Lua source-build admission makes the
   latter evidence condition met while 14 prerequisite families remain open.
+  A sealed `libc.resolver` assessment admits all six components with no gaps;
+  its receipt passed independent physical validation, while final-candidate
+  replay and public promotion remain separate.
   `performance.release` is a read-only receipt gate whose
   runtime, native-facade and allocator M9 inputs do not exist yet. The pinned
   standalone unwinder now returns a phase error for faulting CFI
@@ -221,6 +224,9 @@ are not transferable passes for a different revision.
   after three faulted requests, charging each actual lazy PageMap submap by
   its 64 KiB extent. The M2 fault component has four matched checks and four
   remaining conditions; its full gate remains partial.
+  A second explicit arena metadata-commit fault now matches 34 pinned-C/Rust
+  observations while an earlier registered arena remains usable and releases
+  terminally; shared M2 registration is pending.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
@@ -255,6 +261,10 @@ are not transferable passes for a different revision.
   fusing owner-local quick collection with the block pop lowers them to 130
   and 123. Two source-equivalent retirement changes put the 64-byte local
   free path at 109 and 102 instructions.
+  Marking the existing out-of-line allocation fallback cold lowers a later
+  clean 64-byte malloc trace from 121/114 to 111/104 Rust instructions on
+  initial/worker owners, against 87/87 pinned C; owner traces and M5 pointer
+  dispatch still pass. These are structural measurements, not qualified timing.
   34,084 source-built C/Rust local allocation and free trace lines match.
   A clean allocator-engine smoke physically rehashes final link maps and finds
   108,311 bytes of pinned-C allocator text/read-only data versus 717,923 bytes
@@ -428,8 +438,9 @@ are not transferable passes for a different revision.
   match. Source-faithful peak adjustment now matches the physical VM
   reserved, committed, and process-commit peak rows. Counting the successful
   initial static Theap attachment makes all four worker-reset Theap stages
-  and the full `MI_STAT=2` output match pinned C on a clean source; static
-  teardown retains that count as pinned C does.
+  and deterministic `MI_STAT=2` rows match pinned C; static teardown retains
+  that count as pinned C does. Full raw output matched in one clean run; a
+  later rerun differed only in elapsed and process system time.
   The prior 16 statistics evidence
   rows pass on a clean source, and the focused differentials pass; the
   source-built OS-large remote-free probe matches 35 statistics payload keys;
