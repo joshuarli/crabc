@@ -69,8 +69,9 @@ are not transferable passes for a different revision.
   `m8.static-dynamic-products` pass on
   source-built native-shadow products with physically reread receipts on their respective source revisions;
   the corpus covers all 34 frozen cases. The complete nine-leaf M8 gate
-  passed on clean `8a96f1f8f` with no missing evidence; qualification on the
-  merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
+  passed again on clean `111d44939` with all 16 evidence entries passing and
+  13 physical receipt identities matching a post-exit reread; qualification
+  on the merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
   also passes. A selected `MI_STAT=1` binned allocation, merge/reset, free,
