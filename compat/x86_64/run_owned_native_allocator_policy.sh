@@ -17,6 +17,20 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly programs=(basic observability policy)
+readonly receipt_runner=owned-native-allocator-policy
+readonly case_timeout=120
+
+source_seal() {
+    python3 -B - "$ROOT" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / 'compat/x86_64'))
+from native_shadow_receipt import source_seal
+print(json.dumps(source_seal(root), sort_keys=True, separators=(',', ':')))
+PY
+}
 
 program_source() {
     case "$1" in
@@ -65,6 +79,40 @@ readonly work
 chmod a+rx "$work"
 printf 'native-allocator-policy evidence: %s\n' "$work"
 
+rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+receipt_cases=()
+receipt_products=()
+source_before="$(source_seal)"
+publish_receipt() {
+    local status=$?
+    trap - EXIT
+    local source_after=''
+    if ! source_after="$(source_seal)" || [ "$source_after" != "$source_before" ]; then
+        printf 'native-allocator-policy: source changed during the run\n' >&2
+        status=1
+    fi
+    printf '%s\n' "$status" >"$work/runner.status"
+    receipt_cases+=("runner=$status:runner.status")
+    local -a arguments=(--runner "$receipt_runner" --work "$work" --canonical yes
+        --parameter "CASE_TIMEOUT=$case_timeout"
+        --parameter 'PROGRAMS=basic,observability,policy'
+        --parameter 'STATIC_MODES=static,static-pie'
+        --parameter 'DYNAMIC_MODES=kernel-pie,direct-pie,kernel-non-pie,direct-non-pie'
+        --parameter 'ENVIRONMENT=empty-with-pinned-PATH')
+    local entry
+    for entry in "${receipt_cases[@]}"; do arguments+=(--case "$entry"); done
+    for entry in "${receipt_products[@]}"; do arguments+=(--product "$entry"); done
+    if ! python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" write "${arguments[@]}"; then
+        status=1
+    elif [ "$(source_seal)" != "$source_before" ]; then
+        rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+        printf 'native-allocator-policy: source changed while publishing the receipt\n' >&2
+        status=1
+    fi
+    exit "$status"
+}
+trap publish_receipt EXIT
+
 if [ -z "$static_sysroot" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --allocator-backend native-shadow \
         --output "$work/static-sysroot" >"$work/static-build.json"
@@ -85,6 +133,18 @@ for path in sys.argv[1:]:
     if backend != 'native-shadow':
         raise SystemExit(f'{path}: allocator_backend is {backend!r}, not native-shadow')
 PY
+receipt_products+=(
+    "static-manifest=$static_sysroot/share/crabc/manifest.json"
+    "static-libc-provenance=$static_sysroot/share/crabc/libc-static.provenance.json"
+    "static-libc-archive=$static_sysroot/usr/lib/libc.a"
+    "dynamic-manifest=$dynamic_sysroot/share/crabc/manifest.json"
+    "dynamic-product-state=$dynamic_sysroot/share/crabc/dynamic-product-state.json"
+    "dynamic-libc-provenance=$dynamic_sysroot/share/crabc/libc-shared.provenance.json"
+    "dynamic-libc=$dynamic_sysroot/usr/lib/libc.so"
+    "dynamic-loader=$dynamic_sysroot/lib/ld-crabc-x86_64.so.1"
+)
+if [ -f "$work/static-build.json" ]; then receipt_products+=("static-build=$work/static-build.json"); fi
+if [ -f "$work/dynamic-build.json" ]; then receipt_products+=("dynamic-build=$work/dynamic-build.json"); fi
 
 # The allocator-basic probe builds a small symlink graph below the relative
 # directory `.work/x86_64` and compares realpath results with getcwd, so
@@ -104,9 +164,10 @@ run_case() {
     local name="$mode-$program"
     shift 2
     local status=0
-    (cd "$work/host-cwd" && timeout 120 env -i PATH="$PATH" "$@") \
+    (cd "$work/host-cwd" && timeout "$case_timeout" env -i PATH="$PATH" "$@") \
         >"$work/$name.stdout" 2>"$work/$name.stderr" || status=$?
     printf '%s\n' "$status" >"$work/$name.status"
+    receipt_cases+=("$name=$status:$name.stdout,$name.stderr,$name.status")
     if [ "$status" -ne 0 ] || [ -s "$work/$name.stderr" ]; then
         printf 'native-allocator-policy: %s exited %s\n' "$name" "$status" >&2
         cat "$work/$name.stderr" >&2
@@ -123,14 +184,17 @@ readonly common_flags=(-std=c11 -D_GNU_SOURCE -pthread -fno-builtin)
 for program in "${programs[@]}"; do
     source="$(program_source "$program")"
     "$oracle_cc" -static -fno-pie -no-pie "${common_flags[@]}" "$source" -o "$work/oracle-$program.exe"
+    receipt_products+=("oracle-$program=$work/oracle-$program.exe")
     run_case oracle "$program" "$work/oracle-$program.exe"
     for mode in static static-pie; do
         "$static_sysroot/bin/crabc-cc" "-$mode" "${common_flags[@]}" "$source" -o "$work/$mode-$program.exe"
+        receipt_products+=("$mode-$program=$work/$mode-$program.exe")
         run_case "$mode" "$program" "$work/$mode-$program.exe"
     done
     for mode in pie non-pie; do
         "$dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" "${common_flags[@]}" "$source" \
             -o "$work/dynamic-$mode-$program.exe"
+        receipt_products+=("dynamic-$mode-$program=$work/dynamic-$mode-$program.exe")
         cp "$work/dynamic-$mode-$program.exe" "$work/execution-root/consumer-$mode-$program"
         run_case "kernel-$mode" "$program" "${enter_root[@]}" "/consumer-$mode-$program"
         run_case "direct-$mode" "$program" "${enter_root[@]}" /lib/ld-crabc-x86_64.so.1 \
