@@ -44,6 +44,11 @@ MINIMUM_REPORTS = 3
 ENGINE_REPORTS = engine.REPORT_ROOT
 CODEGEN_REPORTS = engine.REPORT_ROOT.parent / "codegen-audit"
 CORRECTNESS_GATES = ("m4", "m5", "m6", "m7")
+M8_REPORT = harness.REPORT_ROOT / "x86_64/m8-gate/report.json"
+M8_COMMAND_ONLY_EVIDENCE = frozenset({
+    "product:c-allocation-interposition", "product:stdio-allocator-interposition",
+    "product:package-corpus-input",
+})
 CORRECTNESS_INPUTS = {
     "m4": ("x86_64_m4_gate.py", "m4-gate-x86_64-v3.5.0.json"),
     "m5": ("x86_64_m5_gate.py", "m5-gate-x86_64-v3.5.0.json"),
@@ -626,8 +631,11 @@ def physical_tree(root: Path, *, exclude: set[str] | None = None) -> tuple[dict[
     return files, symlinks
 
 
-def correctness_condition(accepted_paths: Sequence[Path], gate_root: Path = harness.ARTIFACT_ROOT / "x86_64") -> dict[str, Any]:
-    unmet = ["allocator M8 has no gate in this launcher"]
+def correctness_condition(
+    accepted_paths: Sequence[Path], gate_root: Path = harness.ARTIFACT_ROOT / "x86_64",
+    m8_report_path: Path = M8_REPORT,
+) -> dict[str, Any]:
+    unmet: list[str] = []
     newest = max((Path(path).stat().st_mtime_ns for path in accepted_paths), default=None)
     for gate in CORRECTNESS_GATES:
         path = gate_root / f"{gate}-gate/report.json"
@@ -647,7 +655,123 @@ def correctness_condition(accepted_paths: Sequence[Path], gate_root: Path = harn
         else:
             unmet.extend(f"{gate.upper()} gate {reason}" for reason in correctness_evidence_unmet(
                 gate, report, path.parent, newest))
+    if not m8_report_path.is_file() or m8_report_path.is_symlink():
+        unmet.append(f"M8 gate has no retained report ({harness.relative(m8_report_path)})")
+    else:
+        try:
+            report = json.loads(m8_report_path.read_text(encoding="utf-8"))
+            status = report.get("overall_status")
+        except (OSError, json.JSONDecodeError, AttributeError) as error:
+            unmet.append(f"M8 gate report is unreadable: {error}")
+        else:
+            if status != "passed":
+                unmet.append(f"M8 gate report is {status}")
+            elif newest is not None and m8_report_path.stat().st_mtime_ns < newest:
+                unmet.append("M8 gate report predates the newest qualified report")
+            else:
+                unmet.extend(f"M8 gate {reason}" for reason in m8_evidence_unmet(report, m8_report_path, newest))
     return _condition("m9.correctness", unmet, "M4-M8 correctness gates passed after the qualified reports")
+
+
+def read_m8_receipt(name: str, entry: Mapping[str, Any], output: str) -> dict[str, Any]:
+    """Reread one retained integration receipt with its producer's validator."""
+
+    import x86_64_m8_gate as m8
+
+    command = entry["command"]
+    receipt = entry["receipt"]
+    if name == "product:native-allocator-policy":
+        return m8.read_native_allocator_policy_receipt(command, output)
+    if name == "consumer:rust-std-lto":
+        return m8.read_native_shadow_receipt(command, m8.qualification.source_digest())
+    if name.startswith("consumer:lua-"):
+        return m8.read_lua_evidence(name.removeprefix("consumer:lua-"), Path(receipt["path"]))
+    if name == "product:package-corpus":
+        position = command.index("--dynamic-sysroot")
+        return m8.read_corpus_evidence(Path(receipt["path"]), Path(command[position + 1]))
+    if name in {"product:native-worker-lifecycle", "product:native-allocator-fork",
+                "product:native-allocator-stress"}:
+        return m8.read_threads_fork_receipt(name, command, output)
+    if name == "product:allocator-override":
+        return m8.read_allocator_override_receipt(command, output)
+    if name == "product:mimalloc-startup-errno":
+        return m8.read_startup_constructor_receipt(command, output)
+    if name in {"product:native-allocator-dso", "product:loader-synthetic",
+                "product:loader-libc-identity"}:
+        return m8.read_dso_loader_receipt(name, command, output)
+    raise ValueError(f"no physical integration reader for {name}")
+
+
+def m8_evidence_unmet(report: Mapping[str, Any], path: Path, newest: int | None) -> list[str]:
+    """Bind the integration gate's existing readers to its retained logs and receipts."""
+
+    import x86_64_m8_gate as m8
+
+    try:
+        contract, summary = m8.load_summary()
+        evidence = report["evidence"]
+        if (report.get("contract") != harness.relative(m8.CONTRACT)
+                or not isinstance(evidence, Mapping)
+                or set(evidence) != set(summary["runnable_evidence"])
+                or report.get("gates") != m8.gate_report(contract, summary, evidence)["gates"]
+                or report.get("unmet_required") != []):
+            return ["report lacks the complete passing integration roster"]
+        current_git = engine.git_provenance()
+        if current_git.get("clean") is not True:
+            return ["report lacks a current clean checkout"]
+        source = m8.qualification.source_digest()
+        producer = summary["products"]["evidence"]
+        producer_log = path.parent / f"{producer.replace(':', '-')}.log"
+        if not producer_log.is_file() or producer_log.is_symlink():
+            return ["native-shadow product log is not physical"]
+        directory = m8.product_directory(producer_log.read_text(encoding="utf-8"),
+                                         summary["products"]["evidence_line"])
+        if directory is None:
+            return ["native-shadow product root is missing from its log"]
+        for name, canonical in summary["runnable_evidence"].items():
+            entry = evidence[name]
+            expected_command = (m8.bind_products(canonical, summary["products"], directory)
+                                if m8._uses_products(canonical) else canonical)
+            log = path.parent / f"{name.replace(':', '-')}.log"
+            if (not isinstance(entry, Mapping) or entry.get("status") != "passed"
+                    or entry.get("command") != expected_command
+                    or entry.get("log") != harness.relative(log)):
+                return [f"evidence {name} lacks its passing canonical command"]
+            if not log.is_file() or log.is_symlink():
+                return [f"evidence {name} lacks its physical raw log"]
+            if newest is not None and log.stat().st_mtime_ns < newest:
+                return [f"evidence {name} predates the newest qualified report"]
+            receipt = entry.get("receipt")
+            if name in M8_COMMAND_ONLY_EVIDENCE:
+                if receipt is not None:
+                    return [f"evidence {name} unexpectedly claims a physical receipt"]
+                continue
+            if not isinstance(receipt, Mapping):
+                return [f"evidence {name} lacks its physical receipt"]
+            receipt_path = Path(receipt["path"])
+            if not receipt_path.is_absolute():
+                receipt_path = harness.ROOT / receipt_path
+            if (not receipt_path.is_file() or receipt_path.is_symlink()
+                    or engine.sha256_file(receipt_path) != receipt.get("sha256")):
+                return [f"evidence {name} physical receipt differs"]
+            if name.startswith("consumer:lua-"):
+                if receipt.get("source_identity") != {"revision": current_git["head"],
+                                                      "source_sha256": source}:
+                    return [f"evidence {name} lacks current source identity"]
+            elif receipt.get("source_sha256") != source:
+                return [f"evidence {name} lacks current source identity"]
+            reread = read_m8_receipt(name, entry, log.read_text(encoding="utf-8"))
+            reread_path = Path(reread["path"])
+            if not reread_path.is_absolute():
+                reread_path = harness.ROOT / reread_path
+            if (not reread_path.is_relative_to(harness.ROOT / ".work")
+                    or not reread_path.is_file() or reread_path.is_symlink()
+                    or not receipt_path.samefile(reread_path)
+                    or {**reread, "path": receipt["path"]} != receipt):
+                return [f"evidence {name} differs from its physical receipt"]
+    except Exception as error:  # noqa: BLE001 - a rejected integration receipt must fail closed
+        return [f"report lacks current physical evidence: {type(error).__name__}: {error}"]
+    return []
 
 
 def correctness_evidence_unmet(

@@ -700,14 +700,59 @@ class CorrectnessTests(GateFixture):
         self.gate_report("m4", "passed", 3000)
         self.gate_report("m5", "unmet", 3000)
         self.gate_report("m6", "passed", 1000)
-        detail = gate.correctness_condition([perf], self.root / "gates")["detail"]
+        detail = gate.correctness_condition([perf], self.root / "gates", self.root / "m8-gate/report.json")["detail"]
         self.assertEqual(detail, [
-            "allocator M8 has no gate in this launcher",
             "M4 gate report lacks current evidence provenance",
             "M5 gate report is unmet",
             "M6 gate report predates the newest qualified report",
             f"M7 gate has no retained report ({gate.harness.relative(self.root / 'gates/m7-gate/report.json')})",
+            f"M8 gate has no retained report ({gate.harness.relative(self.root / 'm8-gate/report.json')})",
         ])
+
+    def test_current_m8_report_requires_its_physical_receipts(self) -> None:
+        import x86_64_m8_gate as m8
+
+        perf = self.root / "perf.json"
+        perf.write_text("{}", encoding="utf-8")
+        os.utime(perf, (2000, 2000))
+        for name in gate.CORRECTNESS_GATES:
+            self.gate_report(name, "passed")
+        report_path = self.root / "m8-gate/report.json"
+        report_path.parent.mkdir(parents=True)
+        contract, summary = m8.load_summary()
+        source = m8.qualification.source_digest()
+        product = self.root / "native-policy"
+        product.mkdir()
+        results = {}
+        no_receipt = {"product:c-allocation-interposition", "product:stdio-allocator-interposition",
+                      "product:package-corpus-input"}
+        for name, canonical in summary["runnable_evidence"].items():
+            log = report_path.parent / f"{name.replace(':', '-')}.log"
+            log.write_text(f"native-allocator-policy evidence: {product}\n" if name == summary["products"]["evidence"]
+                           else "passed\n", encoding="utf-8")
+            command = (m8.bind_products(canonical, summary["products"], str(product))
+                       if m8._uses_products(canonical) else canonical)
+            entry = {"command": command, "log": gate.harness.relative(log), "status": "passed"}
+            if name not in no_receipt:
+                physical = self.root / f"{name.replace(':', '-')}.json"
+                physical.write_text(json.dumps({"evidence": name}), encoding="utf-8")
+                entry["receipt"] = {"path": str(physical), "sha256": engine.sha256_file(physical),
+                                    "source_sha256": source}
+                if name.startswith("consumer:lua-"):
+                    del entry["receipt"]["source_sha256"]
+                    entry["receipt"]["source_identity"] = {"revision": "fixture", "source_sha256": source}
+            results[name] = entry
+        report_path.write_text(json.dumps(m8.gate_report(contract, summary, results)), encoding="utf-8")
+        with (patch.object(engine, "git_provenance", return_value={"head": "fixture", "clean": True}),
+              patch.object(gate, "correctness_evidence_unmet", return_value=[]),
+              patch.object(gate, "read_m8_receipt",
+                           side_effect=lambda name, entry, output: entry["receipt"])):
+            condition = gate.correctness_condition([perf], self.root / "gates", report_path)
+            self.assertTrue(condition["met"], condition)
+            receipt = self.root / "product-native-allocator-policy.json"
+            receipt.write_text("changed", encoding="utf-8")
+            detail = gate.correctness_condition([perf], self.root / "gates", report_path)["detail"]
+            self.assertTrue(any("M8 gate" in item and "receipt" in item for item in detail), detail)
 
     def test_copied_status_only_reports_do_not_prove_current_correctness(self) -> None:
         perf = self.root / "perf.json"
