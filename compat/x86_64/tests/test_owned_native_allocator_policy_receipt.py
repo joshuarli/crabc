@@ -2,6 +2,8 @@
 """Physical native-shadow allocator-policy receipt regression."""
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -14,6 +16,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import native_shadow_receipt as receipt  # noqa: E402
+import owned_native_allocator_policy_receipt as policy_receipt  # noqa: E402
 
 RUNNER = "owned-native-allocator-policy"
 EVIDENCE = re.compile(r"^native-allocator-policy evidence: (/workspace/\.work/x86_64/tmp/owned-native-allocator-policy\.[^\s]+)$", re.M)
@@ -68,6 +71,32 @@ class OwnedNativeAllocatorPolicyReceiptTests(unittest.TestCase):
             receipt.read_receipt(ROOT, RUNNER)
         log.write_bytes(original)
         receipt.read_receipt(ROOT, RUNNER)
+        policy_receipt.read_policy_receipt(ROOT)
+
+        receipt_path = latest / "receipt.json"
+        target = latest / "products/static-basic"
+        link = latest / "products/link-static-basic"
+        saved = {path: path.read_bytes() for path in (receipt_path, target, link)}
+        try:
+            replacement = (latest / "products/static-observability").read_bytes()
+            target.write_bytes(replacement)
+            changed_link = json.loads(saved[link])
+            changed_link["output"]["sha256"] = hashlib.sha256(replacement).hexdigest()
+            link.write_text(json.dumps(changed_link))
+            changed_receipt = json.loads(saved[receipt_path])
+            for name, path in (("static-basic", target), ("link-static-basic", link)):
+                data = path.read_bytes()
+                changed_receipt["products"][name] = {
+                    "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+                }
+            receipt_path.write_text(json.dumps(changed_receipt))
+            receipt.read_receipt(ROOT, RUNNER)
+            with self.assertRaisesRegex(receipt.ReceiptError, "static-basic ELF main differs from retained map"):
+                policy_receipt.read_policy_receipt(ROOT)
+        finally:
+            for path, data in saved.items():
+                path.write_bytes(data)
+        policy_receipt.read_policy_receipt(ROOT)
 
 
 if __name__ == "__main__":

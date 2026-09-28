@@ -123,6 +123,69 @@ def _elf_mode(path: Path) -> tuple[int, str | None]:
     return kind, interpreters[0] if interpreters else None
 
 
+def _static_main_symbol(path: Path) -> tuple[int, int]:
+    """Read the one defined application entry symbol from an ELF symbol table."""
+    data = path.read_bytes()
+    _require(len(data) >= 64 and data[:7] == b"\x7fELF\x02\x01\x01",
+             f"{path.name} lacks an ELF64 symbol table")
+    section_offset = struct.unpack_from("<Q", data, 40)[0]
+    section_size, section_count = struct.unpack_from("<HH", data, 58)
+    _require(section_size == 64 and section_count > 0 and
+             section_offset + section_size * section_count <= len(data),
+             f"{path.name} has an invalid section table")
+    sections = []
+    for index in range(section_count):
+        offset = section_offset + index * section_size
+        kind = struct.unpack_from("<I", data, offset + 4)[0]
+        file_offset, size = struct.unpack_from("<QQ", data, offset + 24)
+        link = struct.unpack_from("<I", data, offset + 40)[0]
+        entry_size = struct.unpack_from("<Q", data, offset + 56)[0]
+        _require(file_offset + size <= len(data) or kind == 8,
+                 f"{path.name} has an out-of-bounds section")
+        sections.append((kind, file_offset, size, link, entry_size))
+    tables = [section for section in sections if section[0] == 2]
+    _require(len(tables) == 1, f"{path.name} lacks one static symbol table")
+    _, offset, size, string_index, entry_size = tables[0]
+    _require(entry_size == 24 and size % entry_size == 0 and string_index < len(sections),
+             f"{path.name} has an invalid static symbol table")
+    string_kind, string_offset, string_size, _, _ = sections[string_index]
+    _require(string_kind == 3, f"{path.name} has no linked symbol string table")
+    strings = data[string_offset:string_offset + string_size]
+    matches = []
+    for entry in range(offset, offset + size, entry_size):
+        name, info, _, section, value, symbol_size = struct.unpack_from("<IBBHQQ", data, entry)
+        if info == 0x12 and section != 0 and strings[name:name + 5] == b"main\0":
+            matches.append((value, symbol_size))
+    _require(len(matches) == 1 and matches[0][1] > 0,
+             f"{path.name} lacks one defined global main function")
+    return matches[0]
+
+
+def _static_map_main(path: Path, object_name: str) -> tuple[int, int]:
+    """Read the application's linked main address and extent from the LLD map."""
+    main = []
+    application_text = []
+    for line in path.read_text().splitlines():
+        fields = line.split()
+        if len(fields) != 5:
+            continue
+        try:
+            address, size = int(fields[0], 16), int(fields[2], 16)
+        except ValueError:
+            continue
+        if fields[4] == "main":
+            main.append((address, size))
+        elif fields[4].endswith(f"/{object_name}:(.text)"):
+            application_text.append((address, size))
+    _require(len(main) == 1 and len(application_text) == 1,
+             f"{path.name} lacks one application main and text section")
+    address, size = main[0]
+    text_address, text_size = application_text[0]
+    _require(size > 0 and text_address <= address and address + size <= text_address + text_size,
+             f"{path.name} main is outside the retained application object")
+    return address, size
+
+
 def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
     retained = read.path.parent
     product = retained / "products"
@@ -340,6 +403,14 @@ def _check_static_link(retained: Path, hashes: dict[str, str], program: str, mod
     _require(application.get("sha256") == hashes[f"object-{name}"] and
              Path(str(application.get("path"))).name == f"object-{name}.o",
              f"{name} static application object differs")
+    # The output hash in the link receipt can be rewritten with a substituted
+    # same-mode ELF. Its main function must also be the one placed from the
+    # retained application object at the address recorded by the linker map.
+    object_main = _static_main_symbol(retained / f"object-{name}")
+    map_main = _static_map_main(retained / f"map-{name}", f"object-{name}.o")
+    output_main = _static_main_symbol(retained / name)
+    _require(output_main == map_main and output_main[1] == object_main[1],
+             f"{name} ELF main differs from retained map or application object")
 
 
 def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mode: str) -> None:
