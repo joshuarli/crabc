@@ -6,6 +6,7 @@ import dataclasses
 import hashlib
 import importlib.util
 import io
+import json
 import os
 import sys
 import tarfile
@@ -119,6 +120,90 @@ class NativeManifestTests(unittest.TestCase):
              mock.patch.object(RUNNER.subprocess, "run", side_effect=reject_index):
             with self.assertRaisesRegex(RUNNER.CorpusError, "index signature verification failed"):
                 RUNNER.verify_inputs(self.manifest, archive_dir, index)
+
+
+class ProductIdentityTests(unittest.TestCase):
+    def test_combined_product_selects_its_unchanged_dynamic_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dynamic = root / "dynamic"
+            combined = root / "combined"
+            for product in (dynamic, combined):
+                (product / "lib").mkdir(parents=True)
+                (product / "usr/lib").mkdir(parents=True)
+                (product / "share/crabc").mkdir(parents=True)
+                (product / "lib/ld-crabc-x86_64.so.1").write_bytes(b"selected loader")
+                (product / "usr/lib/libc.so").write_bytes(b"selected libc")
+                (product / "lib/ld-crabc-x86_64.so.1").chmod(0o755)
+                (product / "usr/lib/libc.so").chmod(0o755)
+                (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+            selected = {
+                name: RUNNER.sha256_file(dynamic / name, name)
+                for name in ("lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so")
+            }
+            dynamic_manifest = {
+                "schema": 1, "format": RUNNER.PRODUCT_FORMAT,
+                "target": "x86_64-unknown-linux-musl", "toolchain": "pinned-test",
+                "files": selected,
+                "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
+            }
+            (dynamic / "share/crabc/manifest.json").write_text(json.dumps(dynamic_manifest))
+            (combined / "share/crabc/dynamic").mkdir()
+            embedded = combined / "share/crabc/dynamic/manifest.json"
+            embedded.write_text(json.dumps(dynamic_manifest))
+            (combined / "share/crabc/static").mkdir()
+            static_archive = combined / "usr/lib/libc.a"
+            static_archive.write_bytes(b"selected archive")
+            static_manifest = combined / "share/crabc/static/manifest.json"
+            static_manifest.write_text(json.dumps({
+                "schema": 1, "format": "crabc-x86-64-owned-static-sysroot-v1",
+                "target": "x86_64-unknown-linux-musl", "toolchain": "pinned-test",
+                "installed": {"files": {"usr/lib/libc.a": RUNNER.sha256_file(static_archive, "static archive")}},
+            }))
+            files = dict(selected)
+            files["share/crabc/dynamic/manifest.json"] = RUNNER.sha256_file(embedded, "embedded manifest")
+            files["usr/lib/libc.a"] = RUNNER.sha256_file(static_archive, "static archive")
+            files["share/crabc/static/manifest.json"] = RUNNER.sha256_file(static_manifest, "static manifest")
+            combined_manifest = {
+                "schema": 1, "format": "crabc-x86-64-owned-sysroot-v1",
+                "target": "x86_64-unknown-linux-musl", "toolchain": "pinned-test",
+                "modes": ["static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+                "files": files, "executables": sorted(selected), "symlinks": dynamic_manifest["symlinks"],
+                "products": {
+                    "dynamic": {"format": RUNNER.PRODUCT_FORMAT,
+                                "manifest": "share/crabc/dynamic/manifest.json",
+                                "placements": {**{name: name for name in selected},
+                                               "share/crabc/manifest.json": "share/crabc/dynamic/manifest.json"}},
+                    "static": {"format": "crabc-x86-64-owned-static-sysroot-v1",
+                               "manifest": "share/crabc/static/manifest.json",
+                               "placements": {"usr/lib/libc.a": "usr/lib/libc.a",
+                                              "share/crabc/manifest.json": "share/crabc/static/manifest.json"}},
+                },
+            }
+            (combined / "share/crabc/manifest.json").write_text(json.dumps(combined_manifest))
+
+            self.assertEqual(RUNNER.validate_product(dynamic)["files"], selected)
+            self.assertEqual(RUNNER.validate_product(combined)["files"], files)
+
+            combined_manifest["products"]["dynamic"]["placements"]["usr/lib/libc.so"] = "usr/lib/libc.a"
+            (combined / "share/crabc/manifest.json").write_text(json.dumps(combined_manifest))
+            with self.assertRaisesRegex(RUNNER.CorpusError, "dynamic placement differs"):
+                RUNNER.validate_product(combined)
+            combined_manifest["products"]["dynamic"]["placements"]["usr/lib/libc.so"] = "usr/lib/libc.so"
+
+            extra = combined / "share/crabc/unowned.bin"
+            extra.write_bytes(b"unowned payload")
+            combined_manifest["files"]["share/crabc/unowned.bin"] = RUNNER.sha256_file(extra, "extra payload")
+            (combined / "share/crabc/manifest.json").write_text(json.dumps(combined_manifest))
+            with self.assertRaisesRegex(RUNNER.CorpusError, "not exactly the embedded products"):
+                RUNNER.validate_product(combined)
+            extra.unlink()
+            del combined_manifest["files"]["share/crabc/unowned.bin"]
+
+            (combined / "usr/lib/libc.so").write_bytes(b"substituted libc")
+            (combined / "share/crabc/manifest.json").write_text(json.dumps(combined_manifest))
+            with self.assertRaisesRegex(RUNNER.CorpusError, "payload differs: usr/lib/libc.so"):
+                RUNNER.validate_product(combined)
 
 
 class PrivatePayloadTests(unittest.TestCase):

@@ -46,6 +46,10 @@ TIERS = ("A", "B", "C", "D")
 TIMEOUT_SECONDS = 12
 SCHEMA = "crabc.x86_64-owned-package-corpus/v3"
 PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+COMBINED_PRODUCT_FORMAT = "crabc-x86-64-owned-sysroot-v1"
+STATIC_PRODUCT_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
+COMBINED_MODES = ("static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie", "dynamic-shared-object")
+PRODUCT_ALIAS = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
 CANONICAL_INTERPRETER = "/lib/ld-musl-x86_64.so.1"
 CANONICAL_LIBC = "/lib/libc.musl-x86_64.so.1"
 CASE_ENVIRONMENT = {"PATH": "/bin:/usr/bin", "HOME": "/root", "LC_ALL": "C", "LANG": "C", "TZ": "UTC"}
@@ -974,6 +978,124 @@ def audit_application_elf_closure(
     return records
 
 
+def combined_payload_map(value: object, label: str) -> dict[str, str]:
+    if not isinstance(value, dict):
+        fail(f"{label} payload map drifted")
+    result: dict[str, str] = {}
+    for relative, expected in value.items():
+        path = PurePosixPath(relative) if isinstance(relative, str) else None
+        if (path is None or path.is_absolute() or str(path) != relative or relative in ("", ".")
+                or ".." in path.parts or not isinstance(expected, str)
+                or re.fullmatch(r"[0-9a-f]{64}", expected) is None):
+            fail(f"{label} has an unsafe payload entry")
+        result[relative] = expected
+    return result
+
+
+def validate_combined_product(product: Path, manifest_path: Path, raw: dict[str, object]) -> dict[str, object]:
+    """Bind every installed byte and both embedded placement maps before selecting libc."""
+    if (set(raw) != {"schema", "format", "target", "toolchain", "modes", "files",
+                     "executables", "symlinks", "products"}
+            or type(raw["schema"]) is not int or raw["schema"] != 1
+            or raw["target"] != "x86_64-unknown-linux-musl"
+            or not isinstance(raw["toolchain"], str) or not raw["toolchain"]
+            or raw["modes"] != list(COMBINED_MODES) or raw["symlinks"] != PRODUCT_ALIAS):
+        fail("supplied combined product identity drifted")
+    files = combined_payload_map(raw["files"], "combined product")
+    executables = raw["executables"]
+    if (not isinstance(executables, list) or any(not isinstance(name, str) for name in executables)
+            or executables != sorted(set(executables))
+            or not set(executables) <= set(files)):
+        fail("supplied combined product executable roster drifted")
+    products = raw["products"]
+    if not isinstance(products, dict) or set(products) != {"static", "dynamic"}:
+        fail("supplied combined product component roster drifted")
+
+    observed_files: set[str] = set()
+    observed_links: dict[str, str] = {}
+    for path in product.rglob("*"):
+        relative = path.relative_to(product).as_posix()
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            continue
+        if stat.S_ISLNK(mode):
+            observed_links[relative] = os.readlink(path)
+        elif stat.S_ISREG(mode):
+            if relative != "share/crabc/manifest.json":
+                observed_files.add(relative)
+                if relative not in files or sha256_file(path, f"combined product {relative}") != files[relative]:
+                    fail(f"supplied combined product payload differs: {relative}")
+                expected_mode = 0o755 if relative in executables else 0o644
+                if stat.S_IMODE(mode) != expected_mode:
+                    fail(f"supplied combined product mode differs: {relative}")
+        else:
+            fail(f"supplied combined product has a non-regular entry: {relative}")
+    if observed_files != set(files) or observed_links != PRODUCT_ALIAS:
+        fail("supplied combined product installed roster drifted")
+
+    component_files: dict[str, dict[str, str]] = {}
+    placements: dict[str, dict[str, str | None]] = {}
+    expected_files: dict[str, str] = {}
+    for name, identity in (("static", STATIC_PRODUCT_FORMAT), ("dynamic", PRODUCT_FORMAT)):
+        embedded_path = f"share/crabc/{name}/manifest.json"
+        record = products[name]
+        if (not isinstance(record, dict) or set(record) != {"format", "manifest", "placements"}
+                or record["format"] != identity or record["manifest"] != embedded_path
+                or not isinstance(record["placements"], dict)):
+            fail(f"supplied combined product {name} placement identity drifted")
+        try:
+            embedded = json.loads((product / embedded_path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CorpusError(f"supplied combined product {name} manifest is unreadable") from error
+        if (not isinstance(embedded, dict) or type(embedded.get("schema")) is not int
+                or embedded.get("schema") != 1
+                or embedded.get("format") != identity
+                or embedded.get("target") != raw["target"]
+                or embedded.get("toolchain") != raw["toolchain"]):
+            fail(f"supplied combined product {name} manifest identity drifted")
+        if name == "static":
+            installed = embedded.get("installed")
+            payload = installed.get("files") if isinstance(installed, dict) else None
+        else:
+            payload = embedded.get("files")
+        component_files[name] = combined_payload_map(payload, f"embedded {name} product")
+        if name == "dynamic" and embedded.get("symlinks") != PRODUCT_ALIAS:
+            fail("supplied combined product dynamic aliases drifted")
+        if (set(record["placements"]) != set(component_files[name]) | {"share/crabc/manifest.json"}
+                or record["placements"]["share/crabc/manifest.json"] != embedded_path):
+            fail(f"supplied combined product {name} placement roster drifted")
+        placements[name] = record["placements"]
+        expected_files[embedded_path] = sha256_file(product / embedded_path, f"embedded {name} manifest")
+
+    for name in ("static", "dynamic"):
+        other = "dynamic" if name == "static" else "static"
+        for relative, digest in component_files[name].items():
+            conflict = relative in component_files[other] and component_files[other][relative] != digest
+            if name == "static" and relative == "usr/lib/Scrt1.o" and conflict:
+                expected_placement = None
+            elif name == "dynamic" and relative == "usr/lib/Scrt1.o" and conflict:
+                expected_placement = relative
+            elif conflict and relative.startswith("share/crabc/"):
+                expected_placement = f"share/crabc/{name}/{relative[len('share/crabc/'):]}"
+            else:
+                if conflict:
+                    fail(f"supplied combined product has a conflicting runtime path: {relative}")
+                expected_placement = relative
+            if placements[name][relative] != expected_placement:
+                fail(f"supplied combined product {name} placement differs: {relative}")
+            if expected_placement is not None:
+                if expected_placement in expected_files and expected_files[expected_placement] != digest:
+                    fail(f"supplied combined product placement collides: {expected_placement}")
+                expected_files[expected_placement] = digest
+    if expected_files != files:
+        fail("supplied combined product payload is not exactly the embedded products")
+    required = {"lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so"}
+    if not required <= component_files["dynamic"].keys() or not required <= set(executables):
+        fail("supplied combined product lacks selected dynamic runtime")
+    return {"path": str(product), "manifest_sha256": sha256_file(manifest_path, "combined product manifest"),
+            "files": dict(sorted(files.items())), "aliases": PRODUCT_ALIAS}
+
+
 def validate_product(product: Path) -> dict[str, object]:
     product = require_physical_directory(product, "supplied owned dynamic product")
     manifest_path = product / "share/crabc/manifest.json"
@@ -981,10 +1103,14 @@ def validate_product(product: Path) -> dict[str, object]:
         raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise CorpusError("supplied owned dynamic product manifest is unreadable") from error
+    if not isinstance(raw, dict):
+        fail("supplied owned dynamic product identity drifted")
+    if raw.get("format") == COMBINED_PRODUCT_FORMAT:
+        return validate_combined_product(product, manifest_path, raw)
     if (raw.get("schema"), raw.get("format"), raw.get("target")) != (1, PRODUCT_FORMAT, "x86_64-unknown-linux-musl"):
         fail("supplied owned dynamic product identity drifted")
     files, aliases = raw.get("files"), raw.get("symlinks")
-    if not isinstance(files, dict) or aliases != {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}:
+    if not isinstance(files, dict) or aliases != PRODUCT_ALIAS:
         fail("supplied owned dynamic product payload map drifted")
     required = {"lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so"}
     if not required <= set(files):
