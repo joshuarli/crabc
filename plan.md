@@ -33,8 +33,11 @@ are not transferable passes for a different revision.
   pending on the final candidate revision. `consumer.rust-std-lto` and
   `consumer.source-build` pass their evidence on development cohorts and
   publish receipts; `performance.release` is a read-only receipt gate whose
-  runtime, native-facade and allocator M9 inputs do not exist yet. Allocator
-  M5 remains open. C mimalloc remains the selected
+  runtime, native-facade and allocator M9 inputs do not exist yet. The pinned
+  standalone unwinder now returns a phase error for faulting CFI
+  register or expression memory reads; a guarded source-built regression and
+  valid cleanup control pass, while installed-product unwind proof remains open.
+  Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
   static-PIE PageMap high-water spike, and left codegen/performance blocked;
