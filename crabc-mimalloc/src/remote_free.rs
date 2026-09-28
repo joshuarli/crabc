@@ -414,6 +414,20 @@ fn retain_checked_observation_until_claim_tail(
     }
 }
 
+/// Keeps the checked client proof with a source claim after an unowned-head CAS.
+/// The ordinary owned-head publication has no claim to construct or retain.
+#[cold]
+#[inline(never)]
+fn claim_post_owner_exit_publication(
+    allocation: LiveAllocationPointer,
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+) -> LiveRemoteFreePublish {
+    let mut claim = ClaimedAbandonedRemoteFree::from_published_source_block(page, block);
+    claim.retain_checked_source_observation(allocation);
+    LiveRemoteFreePublish::ClaimedAbandonedPage(claim)
+}
+
 /// Projects the atomic source fields from one concrete PageMap observation.
 ///
 /// # Safety
@@ -598,8 +612,12 @@ pub(crate) unsafe fn push_post_owner_exit_live_allocation(
     // SAFETY: this checked PageMap observation keeps its canonical block and
     // page live through the publication and any resulting claim tail.
     let (page, producer, block, _) = unsafe { page_map_live_allocation_parts(&allocation) };
-    let publication = unsafe { publish_canonical_source_block(page, producer, block) }?;
-    Ok(retain_checked_observation_until_claim_tail(allocation, publication))
+    let was_owned = unsafe { push_source_block_mt::<true>(producer, block, true) }?;
+    if was_owned {
+        Ok(LiveRemoteFreePublish::PublishedToOwner)
+    } else {
+        Ok(claim_post_owner_exit_publication(allocation, page, block))
+    }
 }
 
 /// Source `mi_free_block_mt(page, block, allow_collect=false)` for one exact
