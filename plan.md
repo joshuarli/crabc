@@ -68,7 +68,11 @@ are not transferable passes for a different revision.
   of ten components and retains three allocator components at the selected C
   backend. Independent physical replay of that same-source assessment and its
   three-pair POSIX matrix passes; the C ABI gate remains incomplete at seven
-  components and nine of eleven capabilities. `consumer.rust-std-lto` passes its
+  components and nine of eleven capabilities. A source-bound native-shadow
+  diagnostic passes all three allocator C ABI leaves but its dynamic
+  qualification reproducibly stops when a POSIX timer callback's 4097-byte
+  allocation returns `ENOMEM`; the same-source accepted-C control passes.
+  `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
   publication. `consumer.source-build` passes on a development cohort and
@@ -298,6 +302,9 @@ are not transferable passes for a different revision.
   branch cuts another 38 bytes from its own clean final map; the measured
   candidate is 717,067 Rust bytes against the same 108,311 C bytes. This is a
   code-size investigation, not qualifying M9 timing.
+  A later clean queue insertion sharing change reduces the linked Rust total
+  from 716,602 to 716,353 bytes against the unchanged 108,311-byte C reference;
+  the 64-byte local allocation and free instruction counts do not change.
   Remote publication is at 165 Rust instructions after source-equivalent
   owner-word and published-PageMap checks, with its 100-trace and 25-value
   differentials passing.
@@ -349,6 +356,9 @@ are not transferable passes for a different revision.
   failures now match pinned C on the return, null output, errno, and all six
   ordered warning lines. The clean source-bound M6 gate passes all eighteen
   runnable evidence rows, including this warning differential.
+  Public `mi_manage_os_memory` now matches five more source-built main and
+  child allocation, registration, release, and caller-held unmap observations;
+  the newer clean M6 gate passes all nineteen runnable rows.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
