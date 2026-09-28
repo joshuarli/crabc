@@ -50,7 +50,8 @@ are not transferable passes for a different revision.
   owned-libc integration gate exists; the named `unown_with`
   release-then-classify race has a source-bound regression, and the canonical
   native allocator stress plus three soak seeds pass. `m8.rust-std`,
-  `m8.lua`, `m8.corpus`, `m8.threads-fork`, and `m8.weak-interposed` pass on
+  `m8.lua`, `m8.corpus`, `m8.threads-fork`, `m8.weak-interposed`, and
+  `m8.startup-constructors` pass on
   source-built native-shadow products with physically reread receipts on their respective source revisions;
   the corpus covers all 34 frozen cases. Full M8 and the
   merged-revision qualification remain open. All 57 `native_*` integration targets pass; the earlier attachment
@@ -123,7 +124,7 @@ are not transferable passes for a different revision.
      freestanding C and stock Rust std consumers, and automatic exit selects
      the signed native `destroy_on_exit` behavior; their merged-revision
      qualification remains open. `m8.rust-std`, `m8.lua`, `m8.corpus`,
-     `m8.threads-fork`, and `m8.weak-interposed` pass on source-built native-shadow products; the other M8 leaves and merged-revision
+     `m8.threads-fork`, `m8.weak-interposed`, and `m8.startup-constructors` pass on source-built native-shadow products; the other M8 leaves and merged-revision
      qualification remain open. Known open items from the last lane reports:
      `materialized-dynamic-sysroot` still has load-sensitive deadlines (aio
      fresh-signal and behavior, credentials `threads`, message-queues,
@@ -133,7 +134,8 @@ are not transferable passes for a different revision.
      now names the core image once): shadow-ABI and churn fixtures, and
      remaining image-input receipts. The native perf profile's operation
      denominator now matches its route geometry. The owned dynamic
-     `.list` digests, mimalloc visibility, errno-alias, Lua admission, and
+     `.list` digests, mimalloc visibility, errno-alias, Lua admission, native
+     allocator DSO bindings, utmpx oracle bytes, and
      resolver-network image inputs have passed physical source-built audits.
      The protocol database producer and reader now require the exact pinned
      musl 1.2.6 archive; its corrected source-built receipt passes.
