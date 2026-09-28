@@ -2941,6 +2941,8 @@ impl Mapping {
         let Some(range) = self.page_range(offset, length, PageAlignment::Covering)? else {
             return Ok(None);
         };
+        #[cfg(test)]
+        fault::record_protection_range(range.address, range.length, PROT_READ | PROT_WRITE);
         fault_before(FaultPoint::Commit)?;
 
         // SAFETY: `range` is derived from this still-live mapping, starts on
@@ -2973,7 +2975,17 @@ impl Mapping {
         // `commit_calls` precedes source page normalization, including the
         // successful empty-range branch.
         process.subprocess.vm_statistics().commit_call();
-        let outcome = self.commit(offset, length)?;
+        let outcome = match self.commit(offset, length) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if let Ok(Some(range)) = self.page_range(offset, length, PageAlignment::Covering) {
+                    process.policy.source_warning(SourceFormattedMessage::os_commit_failure(
+                        error, range.address.addr(), range.length,
+                    ));
+                }
+                return Err(error);
+            }
+        };
         if outcome.is_some() {
             process
                 .subprocess
@@ -2983,9 +2995,7 @@ impl Mapping {
         Ok(outcome)
     }
 
-    /// The fresh OS page-area receiver forwards the source warning after a
-    /// failed primitive commit, using the page-rounded address and size that
-    /// `_mi_os_commit_ex` passed to the kernel.
+    /// Keeps existing callers on the same source-warning commit path.
     pub(crate) fn commit_for_process_with_warning(
         &self,
         process: VmProcess<'_>,
@@ -2993,15 +3003,7 @@ impl Mapping {
         length: usize,
         stat_already_committed: usize,
     ) -> Result<Option<CommitOutcome>> {
-        let result = self.commit_for_process(process, offset, length, stat_already_committed);
-        if let Err(error) = result {
-            if let Ok(Some(range)) = self.page_range(offset, length, PageAlignment::Covering) {
-                process.policy.source_warning(SourceFormattedMessage::os_commit_failure(
-                    error, range.address.addr(), range.length,
-                ));
-            }
-        }
-        result
+        self.commit_for_process(process, offset, length, stat_already_committed)
     }
 
     /// Releases physical contents for complete pages inside the requested range.

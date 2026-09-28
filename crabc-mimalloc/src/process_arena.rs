@@ -3237,6 +3237,245 @@ mod tests {
     }
 
     #[cfg(target_arch = "x86_64")]
+    static EXPLICIT_METADATA_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn explicit_metadata_environment() -> *const *const core::ffi::c_char {
+        EXPLICIT_METADATA_ENVIRONMENT.load(Ordering::Acquire)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct ExplicitMetadataWarnings {
+        order: core::sync::atomic::AtomicUsize,
+        count: core::sync::atomic::AtomicUsize,
+        subprocess: core::sync::atomic::AtomicPtr<crate::subproc::SubprocessIdentity>,
+        reserved: [core::sync::atomic::AtomicI64; 4],
+        committed: [core::sync::atomic::AtomicI64; 4],
+        commit_calls: [core::sync::atomic::AtomicI64; 4],
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn explicit_metadata_warning(
+        message: *const core::ffi::c_char,
+        argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the output registration retains this capture for the
+        // process lifetime and passes a terminated message synchronously.
+        let warnings = unsafe { &*argument.cast::<ExplicitMetadataWarnings>() };
+        let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+        let category = if bytes.starts_with(b"unable to allocate aligned OS memory directly") {
+            1
+        } else if bytes.starts_with(b"cannot commit OS memory") {
+            2
+        } else if bytes.starts_with(b"unable to commit meta-data for OS memory") {
+            3
+        } else if bytes.starts_with(b"unable to free OS memory") {
+            4
+        } else {
+            0
+        };
+        if category == 0 { return; }
+        warnings.order.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+            |order| Some(order * 10 + category)).unwrap();
+        warnings.count.fetch_add(1, Ordering::AcqRel);
+        let subprocess = warnings.subprocess.load(Ordering::Acquire);
+        if subprocess.is_null() { return; }
+        // SAFETY: this process identity remains live through the synchronous
+        // warning; no registry teardown overlaps the callback.
+        let snapshot = unsafe { &*subprocess }.vm_statistics().snapshot();
+        warnings.reserved[category - 1].store(snapshot.reserved_current, Ordering::Release);
+        warnings.committed[category - 1].store(snapshot.committed_current, Ordering::Release);
+        warnings.commit_calls[category - 1].store(snapshot.commit_calls, Ordering::Release);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_explicit_arena_metadata_fault_c_rust_trace() {
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        const PROFILE: &str = "CRABC_M2_EXPLICIT_METADATA_PROFILE";
+        const CHILD: &str = "CRABC_M2_EXPLICIT_METADATA_CHILD";
+        const BEGIN: &str = "CRABC_M2_EXPLICIT_ARENA_METADATA_FAULT_RUST_TRACE_BEGIN";
+        const END: &str = "CRABC_M2_EXPLICIT_ARENA_METADATA_FAULT_RUST_TRACE_END";
+        let profile = std::env::var(PROFILE).unwrap_or_else(|_| "clean".into());
+        assert!(profile == "clean" || profile == "leaked");
+        if std::env::var_os(CHILD).is_none() {
+            let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+                .arg("process_arena::tests::emit_m2_explicit_arena_metadata_fault_c_rust_trace")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD, "1")
+                .env(PROFILE, &profile)
+                .output()
+                .expect("fresh explicit metadata child runs");
+            assert!(child.status.success(), "the metadata fault preserves cleanup ownership");
+            assert!(child.stderr.is_empty(), "selected warnings are routed to the output callback");
+            let output = std::str::from_utf8(&child.stdout).expect("child trace is ASCII");
+            let start = output.find(BEGIN).expect("child emits metadata trace");
+            let end = output.find(END).expect("child closes metadata trace") + END.len();
+            std::println!("{}", &output[start..end]);
+            return;
+        }
+
+        let leaked = profile == "leaked";
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        EXPLICIT_METADATA_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(ExplicitMetadataWarnings {
+            order: core::sync::atomic::AtomicUsize::new(0),
+            count: core::sync::atomic::AtomicUsize::new(0),
+            subprocess: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            reserved: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(i64::MIN)),
+            committed: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(i64::MIN)),
+            commit_calls: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(i64::MIN)),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(policy_trim_default_output),
+        ));
+        // SAFETY: the source environment and warning capture outlive this
+        // fresh process owner and its exact selected reservation transition.
+        unsafe {
+            output.initialize_source_options(explicit_metadata_environment);
+            output.register_output(Some(explicit_metadata_warning as OutputCallback),
+                warnings as *mut ExplicitMetadataWarnings as *mut core::ffi::c_void);
+        }
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        // SAFETY: this child exclusively owns the process, PageMap, output,
+        // and arena group until all selected mapping cleanup is complete.
+        let binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding_with_source_output(
+                config, output, MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            ) }.expect("the explicit metadata process initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let size = ARENA_MIN_SIZE;
+        let alignment = ARENA_ALIGNMENT;
+        let page = 4096;
+        let span = size + 5 * alignment + 2 * page;
+        // SAFETY: this private PROT_NONE reservation only selects vacant,
+        // page-aligned addresses for subsequent non-replacing fixed maps.
+        let reservation = unsafe { crabc_core::mm::mmap_raw(
+            core::ptr::null_mut(), span, 0, 0x02 | 0x20, -1, 0,
+        ) }.expect("temporary explicit metadata map targets");
+        let aligned = (reservation.addr() + alignment - 1) & !(alignment - 1);
+        let direct = aligned + page;
+        let over = aligned + 2 * alignment + page;
+        assert!(over + size + alignment <= reservation.addr() + span);
+        // SAFETY: no reference or owner was built from this temporary span;
+        // a competing claim causes either later fixed map to fail safely.
+        unsafe { crabc_core::mm::munmap_raw(reservation, span) }
+            .expect("release temporary explicit metadata targets");
+        let mut selected_config = config;
+        selected_config.test_aligned_overmap_targets(direct, over);
+        let middle = (over + alignment - 1) & !(alignment - 1);
+        let prefix = middle - over;
+        let suffix = alignment - prefix;
+        let before = process.subprocess().statistics().snapshot();
+        warnings.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        let plan = if leaked {
+            fault::Plan::at_pair(fault::Point::Commit, 1,
+                fault::Point::Unmap, 1, Errno::NOMEM)
+        } else {
+            fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM)
+        };
+        let fault = fault::install(plan);
+        let unmaps = fault.capture_unmap_ranges();
+        let protection = fault.capture_protection_ranges();
+        // SAFETY: this child is the sole arena publisher; the selected
+        // mapping and process policy outlive the failed metadata setup.
+        let result = unsafe { backing.reserve_os_memory_for_process(
+            process, selected_config, size, MapAccess::Reserved, false, false, None,
+        ) };
+        let (ranges, unmap_count) = unmaps.all().expect("four selected cleanup releases fit");
+        let (attempts, protection_count) = protection.attempts()
+            .expect("one selected metadata protection attempt fits");
+        drop(unmaps);
+        drop(protection);
+        let commit_attempts = fault.observed();
+        let failed_cleanup_attempts = fault.secondary_observed();
+        fault.set(fault::Plan::disabled());
+        let after = process.subprocess().statistics().snapshot();
+        let geometry = unmap_count == 4 && ranges[0] == (direct, size)
+            && ranges[1] == (over, prefix)
+            && ranges[2] == (middle + size, suffix)
+            && ranges[3] == (middle, size)
+            && commit_attempts == 1
+            && failed_cleanup_attempts == usize::from(leaked);
+        let protection_exact = protection_count == 1
+            && attempts[0].0 == middle && attempts[0].2 == 0x03
+            && attempts[0].1 > 0 && attempts[0].1 <= size;
+        let protection_length = if protection_count == 1 { attempts[0].1 } else { 0 };
+        let warning_timing = [0, 1, 2].into_iter().all(|index|
+            warnings.reserved[index].load(Ordering::Acquire)
+                == before.vm.reserved_current + size as i64
+                && warnings.committed[index].load(Ordering::Acquire)
+                    == before.vm.committed_current)
+            && (!leaked || warnings.reserved[3].load(Ordering::Acquire)
+                == before.vm.reserved_current + size as i64)
+            && warnings.commit_calls[1].load(Ordering::Acquire)
+                == before.vm.commit_calls + 1
+            && warnings.commit_calls[2].load(Ordering::Acquire)
+                == before.vm.commit_calls + 1;
+        let registry = backing.registry().count();
+        let no_memory_id = result.is_err() && registry == 0;
+        let mut residence = 0u8;
+        // SAFETY: the middle address remains page aligned; either the failed
+        // cleanup left it live or the successful cleanup removed it.
+        let middle_live = unsafe { crabc_core::mm::mincore_raw(middle as *mut u8, page, &mut residence) }.is_ok();
+        // SAFETY: only a failed cleanup leaves the unpublished middle mapped;
+        // it has no arena or Mapping owner and this fixture retains its extent.
+        let raw_cleanup = !middle_live || unsafe { crabc_core::mm::munmap_raw(middle as *mut u8, size) }.is_ok();
+        // SAFETY: the middle address remains page aligned and no reference or
+        // mapping owner survives the selected cleanup or raw retry.
+        let middle_gone = unsafe { crabc_core::mm::mincore_raw(middle as *mut u8, page, &mut residence) }.is_err();
+        let raw_stats = process.subprocess().statistics().snapshot();
+        std::println!("{BEGIN}");
+        for (field, value) in [
+            ("profile", i64::from(leaked)), ("size", size as i64),
+            ("alignment", alignment as i64), ("prefix", prefix as i64),
+            ("suffix", suffix as i64), ("refused", i64::from(result.is_err())),
+            ("no_memory_id", i64::from(no_memory_id)),
+            ("geometry", i64::from(geometry)),
+            ("protection_exact", i64::from(protection_exact)),
+            ("protection_length", protection_length as i64),
+            ("warning_order", warnings.order.load(Ordering::Acquire) as i64),
+            ("warning_count", warnings.count.load(Ordering::Acquire) as i64),
+            ("warning_timing", i64::from(warning_timing)),
+            ("registry", registry as i64),
+            ("reserved_delta", after.vm.reserved_current - before.vm.reserved_current),
+            ("committed_delta", after.vm.committed_current - before.vm.committed_current),
+            ("mmap_calls_delta", after.vm.mmap_calls - before.vm.mmap_calls),
+            ("commit_calls_delta", after.vm.commit_calls - before.vm.commit_calls),
+            ("arena_count_delta", after.arena.arena_count - before.arena.arena_count),
+            ("middle_live", i64::from(middle_live)),
+            ("raw_cleanup", i64::from(raw_cleanup)),
+            ("middle_gone", i64::from(middle_gone)),
+            ("raw_reserved_delta", raw_stats.vm.reserved_current - before.vm.reserved_current),
+        ] {
+            std::println!("{field}={value}");
+        }
+        std::println!("{END}");
+        assert_eq!(warnings.order.load(Ordering::Acquire), if leaked { 1234 } else { 123 });
+        assert_eq!(warnings.count.load(Ordering::Acquire), if leaked { 4 } else { 3 });
+        assert!(warning_timing && geometry && protection_exact && no_memory_id);
+        assert_eq!(middle_live, leaked);
+        assert!(raw_cleanup && middle_gone);
+    }
+
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn emit_m2_second_regular_arena_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};

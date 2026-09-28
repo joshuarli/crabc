@@ -1237,6 +1237,17 @@ impl ProcessArenaBacking {
             Err(error) => {
                 // manage_in_place returns Err only before its first registry
                 // publication. Its synchronous callback has already returned.
+                // A failed metadata commit reports its arena warning after
+                // the OS commit warning and before the caller frees the
+                // unpublished mapping, while its statistics still include
+                // that complete reservation.
+                if matches!(error, ManageArenaError::CommitFailed) {
+                    process.policy().source_warning(
+                        crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                            c"unable to commit meta-data for OS memory",
+                        ),
+                    );
+                }
                 slot.state.store(EMPTY, Ordering::Release);
                 let owner = unsafe { (*slot.value.get()).assume_init_read() };
                 Err(fail(error, owner.allocation))
@@ -1604,13 +1615,9 @@ impl ProcessArenaBacking {
         let commit_size = if memory.initially_committed() {
             memory.os_memory().expect("unpublished arena failure retains OS provenance").size
         } else { 0 };
-        let address = memory.os_memory().map_or(0, |os| os.base as usize);
-        let length = memory.os_memory().map_or(0, |os| os.size);
-        if let Err(error) = mapping.unmap_for_process(process, commit_size, false) {
+        if let Err(error) = mapping.unmap_for_process_with_warning(process, commit_size, false, true) {
             // Dropping the still-mapped non-RAII owner leaks it, as the
-            // source does after its warning.
-            process.policy().source_warning(
-                crate::diagnostic_output::SourceFormattedMessage::os_free_failure(error, length, address));
+            // source does after its warning and statistics update.
             return Err(Some(error));
         }
         Err(None)
