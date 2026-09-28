@@ -319,6 +319,34 @@ def cpuinfo_identity_sha256(raw: bytes) -> str:
     return hashlib.sha256(b"\n".join(lines) + b"\n").hexdigest()
 
 
+def _cpuinfo_models_by_processor(raw: bytes) -> dict[int, str]:
+    """Bind each online processor number to its retained model observation."""
+
+    models: dict[int, str] = {}
+    fields: dict[str, str] = {}
+    for line in [*raw.decode("utf-8", errors="replace").splitlines(), ""]:
+        if not line.strip():
+            if fields:
+                require(set(fields) == {"processor", "model name"},
+                        "retained cpuinfo lacks a processor or model name")
+                try:
+                    cpu = int(fields["processor"])
+                except ValueError as error:
+                    raise EvidenceError("retained cpuinfo has an invalid processor number") from error
+                require(cpu >= 0 and cpu not in models and bool(fields["model name"]),
+                        "retained cpuinfo has duplicate or empty processor identity")
+                models[cpu] = fields["model name"]
+                fields = {}
+            continue
+        key, separator, value = line.partition(":")
+        key = key.strip()
+        if separator and key in {"processor", "model name"}:
+            require(key not in fields, "retained cpuinfo repeats a processor identity field")
+            fields[key] = value.strip()
+    require(models, "retained cpuinfo has no processor models")
+    return models
+
+
 def file_identity(path: Path) -> dict[str, Any]:
     """Return the portable identity used for all retained ordinary files."""
 
@@ -2413,8 +2441,7 @@ def collector_scorecard(attempts: Sequence[Mapping[str, Mapping[str, Any]]]) -> 
     }
 
 
-# The measuring-host load policy this adapter applies (plan.md: qualifying
-# benchmarks need an uncontended host). Each attempt retains raw
+# The measuring-host load policy requires an uncontended host. Each attempt retains raw
 # `/proc/loadavg` and `/proc/stat` captures before its build and after its
 # last measurement. A snapshot is uncontended when the host-wide one-minute
 # load average is at most HOST_LOAD_1MIN_MAX and at most
@@ -2572,9 +2599,17 @@ def _verify_stable_cpuinfo_identity(
     after_cpuinfo_raw = retained_file_identity(
         checkout, SOURCE_MOUNT, diagnostics["after"]["raw"], f"attempt {index} after raw cpuinfo",
     )
-    require(cpuinfo_identity_sha256(before_cpuinfo_raw.read_bytes()) == stable_cpu_identity
-            and cpuinfo_identity_sha256(after_cpuinfo_raw.read_bytes()) == stable_cpu_identity,
+    before_raw = before_cpuinfo_raw.read_bytes()
+    after_raw = after_cpuinfo_raw.read_bytes()
+    require(cpuinfo_identity_sha256(before_raw) == stable_cpu_identity
+            and cpuinfo_identity_sha256(after_raw) == stable_cpu_identity,
             f"attempt {index} stable CPU identity differs from retained cpuinfo")
+    models = _cpuinfo_models_by_processor(before_raw)
+    selected = host.get("benchmark_cpu")
+    allowed = host.get("allowed_affinity_before_pin")
+    require(type(selected) is int and isinstance(allowed, list)
+            and selected in models and all(type(cpu) is int and cpu in models for cpu in allowed),
+            f"attempt {index} selected CPU is absent from retained cpuinfo")
 
 
 def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: Mapping[str, Any], index: int) -> None:

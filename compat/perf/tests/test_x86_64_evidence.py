@@ -579,11 +579,13 @@ class CpuDiagnosticReplayTests(unittest.TestCase):
             before = directory / "cpuinfo.before"
             after = directory / "cpuinfo.after"
             before.write_bytes(
+                b"processor\t: 0\n"
                 b"model name\t: Example x86 CPU\n"
                 b"cpu MHz\t\t: 3200.000\n"
                 b"bogomips\t: 6400.00\n"
             )
             after.write_bytes(
+                b"processor\t: 0\n"
                 b"model name\t: Example x86 CPU\n"
                 b"cpu MHz\t\t: 800.000\n"
                 b"bogomips\t: 1600.00\n"
@@ -592,7 +594,8 @@ class CpuDiagnosticReplayTests(unittest.TestCase):
                 "before": {"raw": identity(before), **evidence.cpuinfo_diagnostics(before.read_bytes())},
                 "after": {"raw": identity(after), **evidence.cpuinfo_diagnostics(after.read_bytes())},
             }
-            host = {"cpuinfo_sha256": evidence.cpuinfo_identity_sha256(before.read_bytes())}
+            host = {"cpuinfo_sha256": evidence.cpuinfo_identity_sha256(before.read_bytes()),
+                    "benchmark_cpu": 0, "allowed_affinity_before_pin": [0]}
             evidence._verify_stable_cpuinfo_identity(ROOT, host, diagnostics, index=1)
             after.write_bytes(after.read_bytes().replace(b"Example x86 CPU", b"Other x86 CPU"))
             diagnostics["after"] = {"raw": identity(after), **evidence.cpuinfo_diagnostics(after.read_bytes())}
@@ -750,14 +753,17 @@ class CorrectnessAdmissionTests(unittest.TestCase):
 
 
 class CollectorCompositionTests(unittest.TestCase):
-    def test_collector_replays_each_attempt_and_derives_its_release_decision(self) -> None:
-        """The live three-attempt loop derives, never accepts, scorecard and release."""
+    def test_collector_replays_attempt_host_identity_scorecard_and_release(self) -> None:
+        """Each retained attempt must bind its raw host identity before release replay."""
 
         with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
             directory = Path(temporary)
             source_revision = "a" * 40
             source_digest = "b" * 64
-            product = {"manifest": {"sha256": "c" * 64}, "driver": {"path": "/workspace/product/driver"}}
+            driver = directory / "product" / "crabc-cc-dynamic"
+            driver.parent.mkdir()
+            driver.write_bytes(b"candidate driver fixture\n")
+            product = {"manifest": {"sha256": "c" * 64}, "driver": identity(driver)}
             dynamic = {"status": "unavailable", "reason": "no validated owned-dynamic-qualification receipt was supplied"}
             admission = evidence.correctness_admission(ROOT)
 
@@ -784,6 +790,57 @@ class CollectorCompositionTests(unittest.TestCase):
             roster_path.write_text(json.dumps(roster), encoding="utf-8")
             attempt_paths: list[Path] = []
             image_id = "sha256:" + "d" * 64
+            external_paths = {
+                "musl_compiler": evidence.FIXED_MUSL_COMPILER,
+                "readelf": evidence.FIXED_READELF,
+                "strace": evidence.FIXED_STRACE,
+                "musl_loader": evidence.FIXED_MUSL_LOADER,
+                "musl_libc": evidence.FIXED_MUSL_LIBC,
+            }
+
+            def attempt_tools(index: int) -> dict[str, object]:
+                raw = directory / f"attempt-{index}"
+                cpuinfo = raw / "cpuinfo.raw"
+                cpuinfo.write_bytes(b"processor: 0\nmodel name: Example CPU\n\n"
+                                    b"processor: 1\nmodel name: Example CPU\n")
+                diagnostic = {"raw": identity(cpuinfo), **evidence.cpuinfo_diagnostics(cpuinfo.read_bytes())}
+                hashes = {path: format(offset + 1, "x") * 64
+                          for offset, path in enumerate(external_paths.values())}
+                manifest = raw / "image-tools.manifest"
+                manifest.write_text(
+                    f"format={evidence.IMAGE_TOOL_MANIFEST_FORMAT}\n"
+                    + "".join(f"{path} {digest}\n" for path, digest in hashes.items()), encoding="ascii")
+                snapshot = {
+                    "candidate_driver": product["driver"],
+                    **{name: {"path": path, "sha256": hashes[path], "mode": 0o755, "bytes": 1}
+                       for name, path in external_paths.items()},
+                    "image_tool_manifest": {
+                        "raw": identity(manifest), "format": evidence.IMAGE_TOOL_MANIFEST_FORMAT,
+                        "tools": hashes,
+                    },
+                    "host": {
+                        "system": "Linux", "machine": "x86_64", "kernel_release": "5.10.0-test",
+                        "cpuinfo_sha256": evidence.cpuinfo_identity_sha256(cpuinfo.read_bytes()),
+                        "benchmark_cpu": 0, "allowed_affinity_before_pin": [0, 1], "peer_cpu": 1,
+                        "affinity": [0], "cache_topology": {},
+                        "governor": {"scaling_governor": "performance", "scaling_available_governors": "performance"},
+                        "environment": {"CRABC_PERF_CONTAINER_POLICY": evidence.PERFORMANCE_CONTAINER_POLICY},
+                        "docker_image_id": image_id,
+                    },
+                }
+                return {
+                    "before": snapshot, "after": copy.deepcopy(snapshot),
+                    "host_cpuinfo_diagnostics": {"before": diagnostic, "after": copy.deepcopy(diagnostic)},
+                    "compile_policy": {
+                        "flags": list(evidence.FIXED_COMPILE_FLAGS), "pie": "installed driver --dynamic-pie",
+                        "pic": "installed driver --dynamic-shared-object", "headers": "installed product usr/include",
+                    },
+                    "link_policy": {
+                        "binding": "now", "hash_style": "sysv", "runpath": evidence.APP_RUNPATH,
+                        "candidate": "installed bin/crabc-cc-dynamic", "reference": evidence.FIXED_MUSL_COMPILER,
+                    },
+                }
+
             def host_load(index: int, when: str, load: str) -> dict[str, object]:
                 raw = directory / f"attempt-{index}" / f"load-{when}"
                 raw.mkdir()
@@ -804,7 +861,7 @@ class CollectorCompositionTests(unittest.TestCase):
                         "roster": {"status": "bound", "plan": identity(roster_path), "request": request, "predecessor": prior},
                     },
                     "source": {}, "product": {"before": product, "after": copy.deepcopy(product)},
-                    "tools": {}, "build": {}, "execution": {},
+                    "tools": attempt_tools(index), "build": {}, "execution": {},
                     # The second attempt ends on a busy host: the collection
                     # must record it as contended and block release.
                     "host_load": {"before": host_load(index, "before", "0.05"),
@@ -837,14 +894,7 @@ class CollectorCompositionTests(unittest.TestCase):
             failing = evidence.row_scorecard(
                 _row_workload(**{**PASSING_ROW, "whole": (11, 81)}), _row_observer(**PASSING_MEMORY),
             )
-            seen: list[dict[str, object]] = []
             replayed: list[tuple[int, str, str]] = []
-
-            def tools_replay(_checkout: Path, attempt: dict[str, object], product_record: object, _index: int) -> None:
-                self.assertIsInstance(product_record, dict)
-                self.assertEqual(product_record, attempt["product"]["before"])
-                self.assertIn("driver", product_record)
-                seen.append(product_record)
 
             def measurement_replay(_checkout: Path, attempt: dict[str, object], _workloads: object, *, full: bool, budget: str) -> list[str]:
                 self.assertTrue(full)
@@ -857,7 +907,6 @@ class CollectorCompositionTests(unittest.TestCase):
             with patch.object(evidence, "verify_dynamic_product_identity", return_value=directory / "product"), \
                  patch.object(evidence, "verify_file_seal"), \
                  patch.object(evidence, "_verify_attempt_source"), \
-                 patch.object(evidence, "_verify_attempt_tools", side_effect=tools_replay), \
                  patch.object(evidence, "_verify_attempt_build"), \
                  patch.object(evidence, "_verify_attempt_execution"), \
                  patch.object(evidence, "validate_measurement_attempt", side_effect=measurement_replay), \
@@ -867,7 +916,6 @@ class CollectorCompositionTests(unittest.TestCase):
                 self.assertEqual([item["after"]["uncontended"] for item in host["evidence"]["attempts"]],
                                  [True, False, True])
                 self.assertTrue(any("measuring host was contended" in item for item in release["blockers"]))
-                self.assertEqual(len(seen), evidence.COLLECTOR_ATTEMPTS)
                 self.assertEqual([entry[:2] for entry in replayed],
                                  [(1, evidence.SMOKE_BUDGET), (2, evidence.SMOKE_BUDGET), (3, evidence.SMOKE_BUDGET)])
                 self.assertEqual([entry[2] for entry in replayed], [request["work_dir"] for request in requests])
@@ -908,6 +956,24 @@ class CollectorCompositionTests(unittest.TestCase):
                 }
                 with self.assertRaisesRegex(evidence.EvidenceError, "ordered qualification chain"):
                     evidence.replay_collection(ROOT, self_admitted)
+
+                cpuinfo = directory / "attempt-3" / "cpuinfo.raw"
+                cpuinfo.write_bytes(b"processor: 1\nmodel name: Example CPU\n")
+                last_attempt = json.loads(attempt_paths[-1].read_text(encoding="utf-8"))
+                last_attempt["tools"]["host_cpuinfo_diagnostics"] = {
+                    when: {"raw": identity(cpuinfo), **evidence.cpuinfo_diagnostics(cpuinfo.read_bytes())}
+                    for when in ("before", "after")
+                }
+                last_attempt["tools"]["before"]["host"]["cpuinfo_sha256"] = (
+                    evidence.cpuinfo_identity_sha256(cpuinfo.read_bytes()))
+                last_attempt["tools"]["after"] = copy.deepcopy(last_attempt["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(last_attempt), encoding="utf-8")
+                rehashed = {**report, "uncontended_host": host, "scorecard": scorecard, "release": release,
+                            "attempts": [*report["attempts"][:-1],
+                                         {"index": 3, "report": identity(attempt_paths[-1])}]}
+                report_path.write_text(json.dumps(rehashed), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "selected CPU is absent from retained cpuinfo"):
+                    evidence.validate_collector_report(ROOT, report_path)
 
 
 class DynamicQualificationReplayTests(unittest.TestCase):
