@@ -976,6 +976,8 @@ fn gnu_lookup_checks_reached_name_and_version_without_rejecting_bloom_miss() {
     gnu.put_u64(IMAGE_HASH + 16, 0);
     assert_eq!(unsafe { exported_index(&object, b"value") }, Some(None));
     gnu.put_u64(IMAGE_HASH + 16, bloom);
+    object.strsz = 0;
+    assert_eq!(unsafe { exported_index(&object, b"value") }, None);
     object.strsz = 8;
     unsafe { gnu.storage.add(IMAGE_STRTAB + 7).write(b'X') };
     assert_eq!(unsafe { exported_index(&object, b"value") }, Some(Some(1)));

@@ -327,10 +327,10 @@ unsafe fn exported_record_with_hashes(
         }
         // A bloom or empty-bucket miss has no name to validate. For a reached
         // candidate, a final NUL allows comparison through the first mismatch.
-        let terminated = object.strsz != 0 && unsafe { object.strtab.add(object.strsz - 1).read() } == 0;
+        let offset = unsafe { read_u32(symbol) } as usize;
+        if offset >= object.strsz { return None; }
+        let terminated = unsafe { object.strtab.add(object.strsz - 1).read() } == 0;
         if terminated {
-            let offset = unsafe { read_u32(symbol) } as usize;
-            if offset >= object.strsz { return None; }
             Some(unsafe { terminated_name_equals(object.strtab.add(offset), object.strsz - offset, name) }.then_some(symbol))
         } else {
             Some((unsafe { symbol_name(object, index) }? == name).then_some(symbol))
