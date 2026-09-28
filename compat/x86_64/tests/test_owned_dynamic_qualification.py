@@ -263,7 +263,14 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
 
     def test_materialization_binds_payload_source_and_contracts_without_publication(self):
         product = self.work / "installed"
-        payloads = {"payload": qualification.digest(product / "payload")}
+        provenance = self.put(
+            "installed/share/crabc/libc-shared.provenance.json",
+            {"allocator_backend": qualification.MATERIALIZATION_ALLOCATOR_BACKEND},
+        )
+        payloads = {
+            "payload": qualification.digest(product / "payload"),
+            "share/crabc/libc-shared.provenance.json": qualification.digest(provenance),
+        }
         state = {
             "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
             "status": "materialized-unqualified", "source_sha256": self.source,
@@ -291,11 +298,88 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                     with self.assertRaises(qualification.QualificationError):
                         REAL_PRODUCT_IDENTITY(product)
 
+    def test_materialization_accepts_native_shadow_selected_by_sealed_product(self):
+        product = self.work / "installed"
+        provenance = self.put(
+            "installed/share/crabc/libc-shared.provenance.json",
+            {"allocator_backend": "native-shadow"},
+        )
+        payloads = {
+            "payload": qualification.digest(product / "payload"),
+            "share/crabc/libc-shared.provenance.json": qualification.digest(provenance),
+        }
+        state = {
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+            "status": "materialized-unqualified", "source_sha256": self.source,
+            "contracts": {"contracts": "c" * 64}, "payload_files": payloads,
+            "allocator_backend": "native-shadow",
+            "allocator_lifecycle_test_audit": False, "allocator_promoted": False,
+            "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
+            "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+            "runtime_profile": qualification.MATERIALIZATION_PROFILE,
+            "qualification": qualification.MATERIALIZATION_QUALIFICATION,
+        }
+        state_path = self.put("installed/share/crabc/dynamic-product-state.json", state)
+        manifest = {"files": {
+            **payloads,
+            "share/crabc/dynamic-product-state.json": qualification.digest(state_path),
+        }}
+        manifest_path = product / "share/crabc/manifest.json"
+        manifest_path.write_text(json.dumps(manifest))
+        def validate_sealed_product(root):
+            for name, expected in manifest["files"].items():
+                if qualification.digest(root / name) != expected:
+                    raise driver.shared.DriverError("installed payload hash mismatch")
+            return manifest
+
+        with mock.patch.object(driver, "validate", side_effect=validate_sealed_product):
+            self.assertEqual(REAL_PRODUCT_IDENTITY(product), qualification.digest(manifest_path))
+
+            # A rewritten state digest still cannot claim a backend different
+            # from the separately sealed linker provenance.
+            forged = {**state, "allocator_backend": "accepted-c"}
+            state_path.write_text(json.dumps(forged))
+            manifest["files"]["share/crabc/dynamic-product-state.json"] = qualification.digest(state_path)
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(qualification.QualificationError,
+                                        "materialization allocator provenance drifted"):
+                REAL_PRODUCT_IDENTITY(product)
+
+            # Matching rehashed fields do not make an unconfigured backend
+            # selection a materialized product.
+            provenance_path = product / "share/crabc/libc-shared.provenance.json"
+            provenance_path.write_text(json.dumps({"allocator_backend": "invented-backend"}))
+            unknown_payloads = {
+                **payloads,
+                "share/crabc/libc-shared.provenance.json": qualification.digest(provenance_path),
+            }
+            unknown_state = {
+                **state,
+                "allocator_backend": "invented-backend",
+                "payload_files": unknown_payloads,
+            }
+            state_path.write_text(json.dumps(unknown_state))
+            manifest["files"] = {
+                **unknown_payloads,
+                "share/crabc/dynamic-product-state.json": qualification.digest(state_path),
+            }
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(qualification.QualificationError,
+                                        "materialization allocator provenance drifted"):
+                REAL_PRODUCT_IDENTITY(product)
+
     def test_combined_sysroot_binds_materialization_to_its_embedded_dynamic_manifest(self):
         """The state binds the dynamic product, not the combined roster around it."""
 
         product = self.work / "installed"
-        payloads = {"payload": qualification.digest(product / "payload")}
+        provenance = self.put(
+            "installed/share/crabc/libc-shared.provenance.json",
+            {"allocator_backend": qualification.MATERIALIZATION_ALLOCATOR_BACKEND},
+        )
+        payloads = {
+            "payload": qualification.digest(product / "payload"),
+            "share/crabc/libc-shared.provenance.json": qualification.digest(provenance),
+        }
         state = {
             "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
             "status": "materialized-unqualified", "source_sha256": self.source,

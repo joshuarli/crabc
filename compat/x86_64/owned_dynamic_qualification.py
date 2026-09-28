@@ -30,6 +30,10 @@ SCHEMA = "crabc.x86_64-owned-dynamic-qualification/v1"
 PRODUCTS = ("installed", "second", "extracted")
 PUBLICATION = ROOT / ".work/x86_64/owned-dynamic-qualification.json"
 MATERIALIZATION_ALLOCATOR_BACKEND = "accepted-c"
+# Materialized products can record only a backend selected by the owned builder.
+MATERIALIZATION_ALLOCATOR_BACKENDS = frozenset({
+    "accepted-c", "native-shadow", "pinned-c-evidence", "native",
+})
 MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT = False
 MATERIALIZATION_ALLOCATOR_PROMOTED = False
 MATERIALIZATION_STATE_FIELDS = frozenset({
@@ -227,6 +231,7 @@ def product_identity(product: Path) -> str:
     if manifest.get("format") == driver.COMBINED_FORMAT:
         manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
     state = read(product / "share/crabc/dynamic-product-state.json")
+    provenance = read(product / "share/crabc/libc-shared.provenance.json")
     require(set(state) == MATERIALIZATION_STATE_FIELDS, "materialization fields drifted")
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1", "wrong materialization schema")
     require(state.get("payload_files") == {name: value for name, value in manifest["files"].items()
@@ -234,8 +239,10 @@ def product_identity(product: Path) -> str:
     require(state.get("status") == "materialized-unqualified", "builder state must remain unqualified")
     require(state.get("source_sha256") == source_digest(), "installed product source is stale")
     require(state.get("contracts") == contract_digests(), "installed product contracts are stale")
+    allocator_backend = state.get("allocator_backend")
     require(
-        state.get("allocator_backend") == MATERIALIZATION_ALLOCATOR_BACKEND
+        type(allocator_backend) is str and allocator_backend in MATERIALIZATION_ALLOCATOR_BACKENDS
+        and allocator_backend == provenance.get("allocator_backend")
         and state.get("allocator_lifecycle_test_audit") is MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT
         and state.get("allocator_promoted") is MATERIALIZATION_ALLOCATOR_PROMOTED,
         "materialization allocator provenance drifted",
