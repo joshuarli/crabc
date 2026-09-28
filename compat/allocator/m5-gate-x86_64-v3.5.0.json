@@ -44,6 +44,7 @@
         "native_initial_persistent_quiescent_fork",
         "native_initial_post_exit_free",
         "native_multiple_post_exit_completions",
+        "native_os_medium_split_releasers_exit",
         "native_owner_exit_collection_race",
         "native_post_exit_lifecycle",
         "native_post_exit_terminal_proof_fork_gate",
@@ -152,6 +153,15 @@
       ],
       "scope": "Two arena singletons remain live after their common owner exits while two independent survivor threads wait. Pinned C observes unmapped abandonment and separate PageMap, arena bitmap, and slice releases; native Rust matches the source geometry and ordered PageMap release without consuming the other survivor's client."
     },
+    "differential:os-medium-split-releasers-exit": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_os_medium_split_releasers_exit_evidence.py",
+        "--report",
+        "{scratch}/os-medium-split-releasers-exit.json"
+      ],
+      "scope": "Pinned C and native Rust select a non-arena OS-backed regular medium page with two live clients. Two independent attached survivors free only after owner exit; the first release retains the other client's PageMap registration and the second clears the complete OS page range."
+    },
     "lifecycle:bounded-laboratory": {
       "command": [
         "python3",
@@ -239,7 +249,8 @@
         "differential:nonabandoning-late-remote-owner-exit",
         "differential:nonabandoning-mapped-large-owner-exit",
         "differential:arena-singleton-regular-owner-exit",
-        "differential:arena-singleton-split-releasers-exit"
+        "differential:arena-singleton-split-releasers-exit",
+        "differential:os-medium-split-releasers-exit"
       ],
       "blocked_by": []
     },
