@@ -111,6 +111,12 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
     def _write_complete_receipt(self) -> None:
         self._write("workload.o", b"same application object\n")
         self._write("oracle", b"oracle\n")
+        dns = self.work / "execution-root/etc"
+        dns.mkdir(parents=True)
+        (dns / "resolv.conf").write_bytes(b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n")
+        (dns / "hosts").write_bytes(b"")
+        (dns / "resolv.conf").chmod(0o600)
+        (dns / "hosts").chmod(0o600)
         for label, _mode, _elf_mode in receipt.STATIC_ARTIFACTS:
             self._write(label, (label + " binary\n").encode())
             self._write(label + ".receipt.json", (label + " receipt\n").encode())
@@ -195,6 +201,14 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
         with patch.object(receipt, "_fixture", return_value=self.fixture), \
              patch.object(receipt, "_replay_provider_symbols"):
             with self.assertRaisesRegex(receipt.ReceiptError, "cancellation observation differs"):
+                receipt.validate_report(ROOT, self.work, static_product=self.static, dynamic_product=self.dynamic)
+
+    def test_rejects_mutated_isolated_dns_fixture(self) -> None:
+        (self.work / "execution-root/etc/resolv.conf").write_bytes(b"nameserver 203.0.113.9\n")
+
+        with patch.object(receipt, "_fixture", return_value=self.fixture), \
+             patch.object(receipt, "_replay_provider_symbols"):
+            with self.assertRaisesRegex(receipt.ReceiptError, "isolated resolver configuration differs"):
                 receipt.validate_report(ROOT, self.work, static_product=self.static, dynamic_product=self.dynamic)
 
     def test_provider_rows_reject_duplicate_or_undefined_provider(self) -> None:

@@ -271,6 +271,20 @@ def _verify_namespace(work: Path) -> dict[str, object]:
     return value
 
 
+def _verify_dns_fixture(work: Path) -> None:
+    # Each case rewrites these private files. The final case must leave its
+    # resolver input in the retained execution root for independent replay.
+    root = physical_directory(work / "execution-root", "cancellation execution root")
+    etc = physical_directory(root / "etc", "cancellation isolated etc directory")
+    config = physical_file(etc / "resolv.conf", "cancellation isolated resolver configuration")
+    hosts = physical_file(etc / "hosts", "cancellation isolated hosts fixture")
+    require(config.read_bytes() == b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n"
+            and stat.S_IMODE(config.stat().st_mode) == 0o600,
+            "cancellation isolated resolver configuration differs")
+    require(hosts.read_bytes() == b"" and stat.S_IMODE(hosts.stat().st_mode) == 0o600,
+            "cancellation isolated hosts fixture differs")
+
+
 def _provider_rows(raw: bytes, providers: frozenset[str]) -> dict[str, list[str]]:
     try:
         lines = raw.decode("utf-8").splitlines()
@@ -408,6 +422,7 @@ def validate_report(root: Path, work: Path, *, static_product: Path, dynamic_pro
     _replay_artifact_audits(root, work, static, dynamic, audit, fixture)
     _replay_provider_symbols(work, dynamic, cancellation)
     namespace = _verify_namespace(work)
+    _verify_dns_fixture(work)
     _verify_transition(work, cancellation, fallback=False)
     _verify_transition(work, cancellation, fallback=True)
     ordinary, source_later = _replay_observations(work, cancellation)
