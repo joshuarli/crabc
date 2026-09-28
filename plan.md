@@ -74,8 +74,9 @@ are not transferable passes for a different revision.
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
-  and the quiescent page-utilization query; six
-  runnable evidence rows pass, while all ten required gates remain blocked
+  and the quiescent page-utilization query; seven
+  runnable evidence rows pass, including fresh-process Heap membership
+  regressions, while all ten required gates remain blocked
   by named missing API and lifetime evidence. Accumulated mixed-workload
   main-Heap page-population parity remains unproved. Integrated products are
   compared against an evidence-only pinned v3.5.0 C product (the selected C
