@@ -53,8 +53,12 @@ are not transferable passes for a different revision.
   closure remains open. A later sealed cohort binds all six static C allocator
   `__errno_location` callers to the final TLS accessor in ET_EXEC, static PIE,
   and shared libc; its selector has 721 blockers after that ordinary-import
-  reason is discharged. `libc.c-abi-compat` now runs a physical same-cohort
-  text/math/locale/stdio family admission; its current assessment admits seven
+  reason is discharged. A later pinned same-source cohort also binds both
+  ordinary `abort` archive importers through their distinct GOT and direct
+  call forms to the final static and shared libc provider; its selector has
+  720 blockers (701 identities, 17 family admissions, one declaration
+  companion, and one semantic receipt). `libc.c-abi-compat` now runs a physical
+  same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
   backend. Independent physical replay is pending. `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
@@ -317,7 +321,9 @@ are not transferable passes for a different revision.
   The public main-process `mi_reserve_huge_os_pages_at_ex` entry matches five
   source-built C/Rust return, output, errno, and warning observations on this
   host's unavailable 1 GiB huge-page path; physical success and nonzero child
-  reservation remain unproved.
+  reservation remain unproved. Public main and child regular arena reservation
+  failures now match pinned C on the return, null output, errno, and all six
+  ordered warning lines; shared M6 gate registration is in progress.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
