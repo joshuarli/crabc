@@ -20,10 +20,24 @@ fn unwind_once() {
     assert_eq!(drops.load(Ordering::SeqCst), 2);
 }
 
+#[inline(never)]
+fn nested_backtrace_inner() {
+    let target = crabc_cleanup_dependency::executable_target(nested_backtrace_outer as *const () as usize);
+    crabc_cleanup_dependency::probe_backtrace("static-nested", target, None);
+    std::hint::black_box(target.marker);
+}
+
+#[inline(never)]
+fn nested_backtrace_outer() {
+    nested_backtrace_inner();
+    std::hint::black_box(73usize);
+}
+
 fn main() {
     // Keep the ordinary Cargo dependency in both executable and cdylib links.
     assert_eq!(crabc_cleanup_dependency::dependency_marker(), 73);
     std::panic::set_hook(Box::new(|_| {}));
+    nested_backtrace_outer();
     unwind_once();
     std::thread::spawn(unwind_once).join().unwrap();
     println!("unwind: backtrace cleanup payload main thread");

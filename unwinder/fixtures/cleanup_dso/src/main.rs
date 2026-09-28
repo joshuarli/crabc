@@ -29,10 +29,12 @@ fn main() {
         if entry_symbol.is_null() || ready_symbol.is_null() || release_symbol.is_null() {
             std::process::exit(2);
         }
-        let run: unsafe extern "C" fn() -> c_int = std::mem::transmute(entry_symbol);
+        let run: unsafe extern "C" fn(*const crabc_cleanup_dependency::BacktraceTarget) -> c_int =
+            std::mem::transmute(entry_symbol);
         let ready: unsafe extern "C" fn() -> c_int = std::mem::transmute(ready_symbol);
         let release: unsafe extern "C" fn() -> c_int = std::mem::transmute(release_symbol);
-        let running = std::thread::spawn(move || unsafe { run() });
+        let host = crabc_cleanup_dependency::executable_target(main as *const () as usize);
+        let running = std::thread::spawn(move || unsafe { run(&host) });
         // A fixed yield count races the worker's first scheduling on a loaded
         // host. Wait on elapsed time instead; the runner's timeout remains
         // the outer bound for a plugin that never reaches its close stage.
@@ -53,7 +55,7 @@ fn main() {
         // The host's last handle is gone. The loader contract retains the
         // admitted mapping, so these saved function pointers may finish the
         // in-flight internal cleanup and exercise it once more after close.
-        if release() != 0 || !matches!(running.join(), Ok(0)) || run() != 0 {
+        if release() != 0 || !matches!(running.join(), Ok(0)) || run(&host) != 0 {
             std::process::exit(5);
         }
     }

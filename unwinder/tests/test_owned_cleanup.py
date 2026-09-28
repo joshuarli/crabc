@@ -20,6 +20,36 @@ WORK = Path(__file__).parents[2] / ".work/x86_64/unwinder-output-tests"
 
 
 class OwnedCleanupContract(unittest.TestCase):
+    def test_installed_backtrace_requires_bounded_frames_in_linked_code(self):
+        static = ("backtrace static-nested thread=100 status=5 cutoff=3 cutoff_frames=3 "
+                  "target=150:100:200 host=none pcs=120,130,300")
+        dso_worker = ("backtrace dso-worker thread=200 status=5 cutoff=3 cutoff_frames=3 "
+                      "target=1050:1000:1100 host=2050:2000:2100 pcs=1010,1020,2030,3000")
+        dso_main = dso_worker.replace("dso-worker thread=200", "dso-main thread=100")
+        static_output = static + "\nunwind: backtrace cleanup payload main thread\n"
+        dso_output = (dso_worker + "\nunwind: backtrace cleanup payload main thread dso\n"
+                      + dso_main + "\nunwind: backtrace cleanup payload main thread dso\n")
+        self.assertEqual(len(owned_cleanup.assert_backtrace_execution(
+            0, static_output, "", ("static-nested",))), 1)
+        self.assertEqual(len(owned_cleanup.assert_backtrace_execution(
+            0, dso_output, "", ("dso-worker", "dso-main"))), 2)
+        for altered in (static.replace("cutoff=3", "cutoff=5"),
+                        static.replace("pcs=120,130,300", "pcs=120,300"),
+                        static.replace("host=none", "host=2050:2000:2100")):
+            with self.subTest(altered=altered), self.assertRaises(owned_cleanup.OwnedCleanupError):
+                owned_cleanup.backtrace_observation(altered, "static-nested")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "linked executable"):
+            owned_cleanup.backtrace_observation(
+                dso_worker.replace("2030", "3030"), "dso-worker")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "main thread"):
+            owned_cleanup.assert_backtrace_execution(
+                0, dso_output.replace("dso-main thread=100", "dso-main thread=200"), "",
+                ("dso-worker", "dso-main"))
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "failed or wrote stderr"):
+            owned_cleanup.assert_backtrace_execution(-11, dso_output, "", ("dso-worker", "dso-main"))
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "missing or extra"):
+            owned_cleanup.assert_backtrace_execution(0, dso_output + "extra\n", "", ("dso-worker", "dso-main"))
+
     def setUp(self):
         WORK.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=WORK)

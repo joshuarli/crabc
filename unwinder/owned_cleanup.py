@@ -79,7 +79,7 @@ PROVIDER_LINK_ANCHOR_DEFINITION = (
     '    unwinding::abi::_Unwind_RaiseException\n'
     '}'
 )
-DSO_HOST_POST_CLOSE_SUCCESS = "if release() != 0 || !matches!(running.join(), Ok(0)) || run() != 0 {"
+DSO_HOST_POST_CLOSE_SUCCESS = "if release() != 0 || !matches!(running.join(), Ok(0)) || run(&host) != 0 {"
 DSO_PLUGIN_WORKER_SUCCESS = "if !matches!(worker.join(), Ok(true)) {"
 DSO_RESULT_EQUALITIES = ("running.join() != Ok(0)", "worker.join() != Ok(true)")
 CARGO_VENDOR_CONFIG = """[source.crates-io]
@@ -2037,7 +2037,8 @@ def prepare_source_graph_package(
         sources.append(_write_anchored_source(package / "src/main.rs", root / "src/main.rs", "fn main() {", "cleanup DSO host"))
         sources.append(_write_anchored_source(
             package / "src/plugin.rs", root / "src/plugin.rs",
-            "pub extern \"C\" fn crabc_owned_cleanup_dso() -> i32 {", "cleanup DSO plugin",
+            "pub unsafe extern \"C\" fn crabc_owned_cleanup_dso(host: *const crabc_cleanup_dependency::BacktraceTarget) -> i32 {",
+            "cleanup DSO plugin",
         ))
     else:
         raise OwnedCleanupError("source-built fixture has no approved Cargo graph adapter")
@@ -2493,7 +2494,65 @@ def binary_unwind_symbols(binary: Path, environment: dict[str, str], log: Path, 
     })
 
 
-def execute_mode(mode: str, consumer: dict[str, Any], dynamic_root: Path, output: Path) -> None:
+BACKTRACE_LINE = re.compile(
+    r"backtrace ([a-z-]+) thread=([0-9]+) status=([0-9]+) cutoff=([0-9]+) cutoff_frames=([0-9]+) "
+    r"target=([0-9]+):([0-9]+):([0-9]+) host=(none|[0-9]+:[0-9]+:[0-9]+) "
+    r"pcs=([0-9]+(?:,[0-9]+)*)"
+)
+
+
+def backtrace_observation(line: str, label: str) -> dict[str, Any]:
+    match = BACKTRACE_LINE.fullmatch(line)
+    require(match is not None and match.group(1) == label, f"{label} backtrace record is malformed")
+    thread = int(match.group(2))
+    status, cutoff, cutoff_frames = (int(match.group(index)) for index in (3, 4, 5))
+    marker, start, end = (int(match.group(index)) for index in (6, 7, 8))
+    pcs = [int(value) for value in match.group(10).split(",")]
+    require(thread > 0, f"{label} backtrace has no calling thread")
+    require((status, cutoff, cutoff_frames) == (5, 3, 3), f"{label} backtrace completion or callback bound drifted")
+    require(0 < len(pcs) < 64 and start <= marker < end and start > 0,
+            f"{label} backtrace code range or frame bound is invalid")
+    require(sum(start <= pc < end for pc in pcs) >= 2, f"{label} backtrace lacks nested frames in target code")
+    host_text = match.group(9)
+    host = None
+    if label.startswith("dso-"):
+        require(host_text != "none", f"{label} backtrace lacks the executable range")
+        host_marker, host_start, host_end = (int(value) for value in host_text.split(":"))
+        require(host_start <= host_marker < host_end and host_start > 0,
+                f"{label} backtrace executable range is invalid")
+        require(host_end <= start or end <= host_start, f"{label} backtrace code ranges overlap")
+        require(any(host_start <= pc < host_end for pc in pcs),
+                f"{label} backtrace did not traverse the linked executable")
+        host = {"marker": host_marker, "start": host_start, "end": host_end}
+    else:
+        require(host_text == "none", f"{label} static backtrace has an unexpected DSO range")
+    return {"label": label, "thread": thread, "status": status, "cutoff": cutoff, "cutoff_frames": cutoff_frames,
+            "target": {"marker": marker, "start": start, "end": end}, "host": host, "pcs": pcs}
+
+
+def assert_backtrace_execution(status: int, stdout: str, stderr: str,
+                               labels: tuple[str, ...]) -> list[dict[str, Any]]:
+    require(status == 0 and stderr == "", "installed backtrace execution failed or wrote stderr")
+    lines = stdout.splitlines()
+    expected: list[str] = []
+    for label in labels:
+        expected.extend((label, "unwind: backtrace cleanup payload main thread" +
+                         (" dso" if label.startswith("dso-") else "")))
+    require(len(lines) == len(expected), "installed backtrace output has missing or extra lines")
+    observations = []
+    for index, (line, item) in enumerate(zip(lines, expected)):
+        if index % 2 == 0:
+            observations.append(backtrace_observation(line, item))
+        else:
+            require(line == item, "installed backtrace cleanup result differs")
+    if labels == ("dso-worker", "dso-main"):
+        require(observations[0]["thread"] != observations[1]["thread"],
+                "DSO worker backtrace ran on the main thread")
+    return observations
+
+
+def execute_mode(mode: str, consumer: dict[str, Any], dynamic_root: Path, output: Path,
+                 *, backtrace_labels: tuple[str, ...] = ()) -> None:
     binary = Path(consumer["binary"]["path"])
     environment = clean_environment()
     if mode == "static":
@@ -2505,13 +2564,18 @@ def execute_mode(mode: str, consumer: dict[str, Any], dynamic_root: Path, output
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     (output / "execution.stdout").write_text(result.stdout, encoding="utf-8")
     (output / "execution.stderr").write_text(result.stderr, encoding="utf-8")
-    cleanup.assert_execution(result.returncode, result.stdout + result.stderr)
+    observations = (assert_backtrace_execution(result.returncode, result.stdout, result.stderr, backtrace_labels)
+                    if backtrace_labels else None)
+    if observations is None:
+        cleanup.assert_execution(result.returncode, result.stdout + result.stderr)
     consumer["execution"] = {
         "command": [str(item) for item in command],
         "status": result.returncode,
         "stdout": record_file(output / "execution.stdout", f"{mode} execution stdout"),
         "stderr": record_file(output / "execution.stderr", f"{mode} execution stderr"),
     }
+    if observations is not None:
+        consumer["execution"]["backtrace"] = observations
 
 
 def execute_dso_mode(consumer: dict[str, Any], dynamic_root: Path, output: Path) -> None:
@@ -2526,17 +2590,15 @@ def execute_dso_mode(consumer: dict[str, Any], dynamic_root: Path, output: Path)
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     (output / "execution.stdout").write_text(result.stdout, encoding="utf-8")
     (output / "execution.stderr").write_text(result.stderr, encoding="utf-8")
-    require(
-        result.returncode == 0
-        and result.stdout == "unwind: backtrace cleanup payload main thread dso\n" * 2
-        and result.stderr == "",
-        "source-built Rust cleanup DSO execution did not prove retained post-close cleanup",
+    observations = assert_backtrace_execution(
+        result.returncode, result.stdout, result.stderr, ("dso-worker", "dso-main"),
     )
     consumer["execution"] = {
         "command": [str(item) for item in command],
         "status": result.returncode,
         "stdout": record_file(output / "execution.stdout", "source-built DSO execution stdout"),
         "stderr": record_file(output / "execution.stderr", "source-built DSO execution stderr"),
+        "backtrace": observations,
     }
 
 
@@ -2664,7 +2726,8 @@ def run_source_built_static(static_root: Path, provider_vendor_root: Path, outpu
     consumer["symbols_log"] = record_file(
         output / "source-built-static" / "symbols.log", "source-built static cleanup symbol inventory",
     )
-    execute_mode("static", consumer, Path(static["root"]), output / "source-built-static")
+    execute_mode("static", consumer, Path(static["root"]), output / "source-built-static",
+                 backtrace_labels=("static-nested",))
     assert_same_product(static, "static")
     require(source_snapshot() == source_before, "owned Rust consumer source changed during collection")
     receipt = {
@@ -2810,7 +2873,8 @@ def run(static_root: Path, dynamic_root: Path, provider_vendor_root: Path, outpu
     source_static["symbols_log"] = record_file(
         output / "source-built-static" / "symbols.log", "source-built static cleanup symbol inventory",
     )
-    execute_mode("static", source_static, Path(dynamic["root"]), output / "source-built-static")
+    execute_mode("static", source_static, Path(dynamic["root"]), output / "source-built-static",
+                 backtrace_labels=("static-nested",))
     source_dynamic_dso = compile_source_built_mode(
         label="source-built-dynamic-dso", mode="dynamic", root=Path(dynamic["root"]), channel=channel,
         output=output, package=BUILD_STD_DSO_FIXTURE, binary_name=BUILD_STD_DSO_HOST, with_plugin=True,

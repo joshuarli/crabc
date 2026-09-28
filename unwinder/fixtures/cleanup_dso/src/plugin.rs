@@ -1,7 +1,8 @@
 use std::backtrace::{Backtrace, BacktraceStatus};
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{Arc, OnceLock, atomic::{AtomicUsize, Ordering}};
 
 static CLOSE_STAGE: AtomicUsize = AtomicUsize::new(0);
+static PLUGIN_TARGET: OnceLock<crabc_cleanup_dependency::BacktraceTarget> = OnceLock::new();
 
 struct Cleanup(Arc<AtomicUsize>);
 
@@ -45,7 +46,22 @@ fn wait_for_last_handle_close() -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn crabc_owned_cleanup_dso() -> i32 {
+/// # Safety
+/// `host` must point to a readable, aligned `BacktraceTarget` that remains
+/// valid until this call returns. The caller must keep its recorded code range
+/// mapped while this function walks its stack.
+pub unsafe extern "C" fn crabc_owned_cleanup_dso(host: *const crabc_cleanup_dependency::BacktraceTarget) -> i32 {
+    if host.is_null() {
+        return 4;
+    }
+    // The caller keeps its target on the current thread's stack until this
+    // synchronous call returns; copy the numeric range before using it.
+    let host = unsafe { *host };
+    let plugin = *PLUGIN_TARGET.get_or_init(|| {
+        crabc_cleanup_dependency::executable_target(crabc_owned_cleanup_dso as *const () as usize)
+    });
+    let label = if CLOSE_STAGE.load(Ordering::SeqCst) == 0 { "dso-worker" } else { "dso-main" };
+    crabc_cleanup_dependency::probe_backtrace(label, plugin, Some(host));
     // The first call remains live while the Rust host closes its final DSO
     // handle. Panic cleanup starts only after the saved release pointer is
     // called post-close, so all unwinding stays inside this mapped plugin.
