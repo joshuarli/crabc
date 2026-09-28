@@ -18,10 +18,10 @@ code two ways:
   formatting and panic machinery, division, atomic, and memory-helper sites
   that the traced steady state did not happen to execute.
 
-The trace is deterministic user-mode machine code, independent of host
-contention. It is structural evidence for the plan's codegen audit, never a
-throughput measurement. Annotated per-region instruction listings are
-retained beside the JSON report.
+The trace is user-mode machine code, independent of host throughput. It is
+structural evidence, never a throughput measurement. Raw instruction sequences
+and classified atomic targets are retained with annotated instruction listings
+beside the JSON report so a reader can replay the same executable.
 """
 
 from __future__ import annotations
@@ -488,6 +488,18 @@ def classify_target(image: Image, address: int, kind: str, stack_pointer: int) -
     return "dynamic"
 
 
+def trace_record(image: Image, region: Region) -> dict[str, Any]:
+    """Retain the observed instruction sequence and classified atomic targets."""
+
+    return {
+        "rips": region.rips,
+        "atomic_targets": [
+            {"step": step, "target": classify_target(image, address, kind, stack_pointer)}
+            for step, (address, kind, stack_pointer) in sorted(region.atomic_targets.items())
+        ],
+    }
+
+
 def analyze_region(image: Image, region: Region) -> tuple[dict[str, Any], list[str]]:
     rips = region.rips
     atomic_targets: dict[str, int] = {}
@@ -636,8 +648,8 @@ def compare_regions(c_summary: Mapping[str, Any], rust_summary: Mapping[str, Any
         result[key] = {"pinned_c": total(c_summary, key), "rust_engine": total(rust_summary, key)}
     for key in ("thread_pointer_accesses", "pushes", "stack_bytes_allocated", "atomic_rmw_non_thread_local"):
         result[key] = {"pinned_c": c_summary[key], "rust_engine": rust_summary[key]}
-    # Each flag names one class of structural cost the plan's codegen audit
-    # looks for: helpers the source inlines (calls), checks (panic paths),
+    # Each flag names one class of structural cost: helpers the source inlines
+    # (calls), checks (panic paths),
     # fences/atomics, division, formatting, and zeroing/copying (string
     # operations or memory helpers) that the pinned C path does not execute.
     excess = []
@@ -681,7 +693,9 @@ def run(arguments: argparse.Namespace) -> Path:
     if arguments.only and len(selected) != len(set(arguments.only)):
         raise HarnessError("unknown --only scenario")
     report: dict[str, Any] = {"schema": SCHEMA, "kind": KIND, "label": label, "status": "pending"}
-    with tempfile.TemporaryDirectory(prefix="crabc-codegen-audit-") as temporary:
+    scratch_root = ROOT / ".work"
+    scratch_root.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="crabc-codegen-audit-", dir=scratch_root) as temporary:
         temporary_path = Path(temporary)
         source = shared.safe_extract(archive, temporary_path / "source", pin["archive_root"])
         report["provenance"] = {
@@ -708,6 +722,8 @@ def run(arguments: argparse.Namespace) -> Path:
                     summary, listing = analyze_region(images[lane], region)
                     listing_path = artifacts / f"trace-{scenario.name}-{region_name}-{lane}.txt"
                     listing_path.write_text("\n".join(listing) + "\n", encoding="utf-8")
+                    raw_path = artifacts / f"trace-{scenario.name}-{region_name}-{lane}.json"
+                    engine.atomic_write_json(raw_path, trace_record(images[lane], region))
                     summary["listing"] = listing_path.name
                     lane_regions[region_name] = summary
                 per_lane[lane] = lane_regions

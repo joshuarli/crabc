@@ -107,6 +107,13 @@ class TraceAnalysisTests(unittest.TestCase):
         self.assertEqual(sum(entry["count"] for entry in summary["atomic_rmw"]), 2)
         self.assertEqual(summary["atomic_rmw_targets"], {"static:PROCESS_STATIC+0x40": 1, "thread-local": 1})
         self.assertEqual(summary["atomic_rmw_non_thread_local"], 1)
+        self.assertEqual(audit.trace_record(image, region), {
+            "rips": rips,
+            "atomic_targets": [
+                {"step": 3, "target": "static:PROCESS_STATIC+0x40"},
+                {"step": 6, "target": "thread-local"},
+            ],
+        })
         self.assertEqual(sum(entry["count"] for entry in summary["divisions"]), 1)
         self.assertEqual(summary["entered_memory_helpers"], ["memset"])
         self.assertEqual(summary["stack_bytes_allocated"], 0x48)

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Read-only native Linux/x86-64 allocator evidence gate.
+"""Native Linux/x86-64 allocator evidence gate.
 
 The gate requires a complete matrix, three distinct qualified reports with
 matching source, configuration, host and built products, a complete codegen
 audit without Rust-only structural cost, source convergence, one qualified
-integrated-product report, and current correctness gate reports. It measures
-nothing and names every unmet condition. Numerical promotion thresholds are
-applied separately to the qualified reports' metrics.
+integrated-product report, and current correctness gate reports. It names
+every unmet condition. Numerical promotion thresholds are applied separately
+to the qualified reports' metrics.
+The codegen condition replays retained executables to check executed traces;
+it does not take a performance measurement.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -289,6 +292,9 @@ def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
     if set(report["scenarios"]) != {scenario.name for scenario in codegen.SCENARIOS}:
         unmet.append("codegen audit scenario roster differs from the complete audit")
         return unmet
+    scratch_root = harness.ROOT / ".work"
+    scratch_root.mkdir(exist_ok=True)
+    cpu = min(os.sched_getaffinity(0))
     for scenario in codegen.SCENARIOS:
         record = report["scenarios"][scenario.name]
         if (record.get("workload") != scenario.workload or record.get("params") != dict(scenario.params)
@@ -296,7 +302,10 @@ def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
                 or set(record.get("comparison", {})) != set(scenario.regions)):
             unmet.append(f"codegen {scenario.name} does not describe the selected trace")
             continue
-        for region in scenario.regions:
+        with tempfile.TemporaryDirectory(prefix="codegen-replay-", dir=scratch_root) as temporary:
+            observed = {lane: codegen.trace_scenario(artifacts / names[lane], images[lane], scenario,
+                                                      Path(temporary), cpu) for lane in names}
+        for region_index, region in enumerate(scenario.regions):
             for lane in names:
                 summary = record["lanes"][lane][region]
                 listing = artifacts / f"trace-{scenario.name}-{region}-{lane}.txt"
@@ -320,6 +329,18 @@ def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
                     if any(summary.get(key) != value for key, value in recomputed.items()
                            if key not in ("atomic_rmw_targets", "atomic_rmw_non_thread_local")):
                         unmet.append(f"codegen {scenario.name}/{region}/{lane} summary differs from its listing")
+                    replayed = observed[lane][region_index]
+                    raw = artifacts / f"trace-{scenario.name}-{region}-{lane}.json"
+                    if raw.is_symlink() or not raw.is_file():
+                        unmet.append(f"codegen {scenario.name}/{region}/{lane} lacks its retained raw trace")
+                    elif (rips != replayed.rips or json.loads(raw.read_text(encoding="utf-8"))
+                          != codegen.trace_record(images[lane], replayed)):
+                        unmet.append(f"codegen {scenario.name}/{region}/{lane} executed trace differs from replay")
+                    replay_summary, _ = codegen.analyze_region(images[lane], replayed)
+                    if (summary.get("atomic_rmw_targets") != replay_summary["atomic_rmw_targets"]
+                            or summary.get("atomic_rmw_non_thread_local")
+                            != replay_summary["atomic_rmw_non_thread_local"]):
+                        unmet.append(f"codegen {scenario.name}/{region}/{lane} atomic targets differ from replay")
                     targets = summary.get("atomic_rmw_targets")
                     if (not isinstance(targets, Mapping) or any(type(value) is not int or value < 0
                                                                  for value in targets.values())

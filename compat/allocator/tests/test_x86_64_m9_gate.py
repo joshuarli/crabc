@@ -438,6 +438,10 @@ class CodegenTests(GateFixture):
         image = patch.object(codegen, "Image", FixtureImage)
         image.start()
         self.addCleanup(image.stop)
+        replay = patch.object(codegen, "trace_scenario", side_effect=lambda binary, image, scenario, scratch, cpu:
+                              [codegen.Region([0x1000], {}) for _ in scenario.regions])
+        replay.start()
+        self.addCleanup(replay.stop)
         git = patch.object(engine, "git_provenance", return_value={"head": "fixture", "clean": True})
         git.start()
         self.addCleanup(git.stop)
@@ -484,9 +488,12 @@ class CodegenTests(GateFixture):
             for lane in engine.LANES:
                 lanes[lane] = {}
                 for region in scenario.regions:
-                    summary, listing = codegen.analyze_region(self.image, codegen.Region([0x1000], {}))
+                    observed = codegen.Region([0x1000], {})
+                    summary, listing = codegen.analyze_region(self.image, observed)
                     filename = f"trace-{scenario.name}-{region}-{lane}.txt"
                     (self.artifacts / filename).write_text("\n".join(listing) + "\n", encoding="utf-8")
+                    (self.artifacts / f"trace-{scenario.name}-{region}-{lane}.json").write_text(
+                        json.dumps(codegen.trace_record(self.image, observed)), encoding="utf-8")
                     lanes[lane][region] = dict(summary, listing=filename)
             scenarios[scenario.name] = {
                 "workload": scenario.workload, "params": dict(scenario.params), "measures": scenario.measures,
@@ -514,6 +521,36 @@ class CodegenTests(GateFixture):
 
     def test_a_clean_current_complete_audit_is_met(self) -> None:
         self.assertTrue(self.evaluate_codegen(self.codegen_report())["met"])
+
+    def test_fabricated_trace_with_genuine_products_is_refused(self) -> None:
+        report = self.codegen_report()
+        scenario = report["scenarios"]["local_64"]
+        forged, listing = self.codegen.analyze_region(self.image, self.codegen.Region([0x1000, 0x1000], {}))
+        (self.artifacts / "trace-local_64-malloc-rust_engine.txt").write_text(
+            "\n".join(listing) + "\n", encoding="utf-8")
+        scenario["lanes"]["rust_engine"]["malloc"] = dict(forged, listing="trace-local_64-malloc-rust_engine.txt")
+        scenario["comparison"]["malloc"] = self.codegen.compare_regions(
+            scenario["lanes"]["pinned_c"]["malloc"], scenario["lanes"]["rust_engine"]["malloc"])
+        detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("executed trace differs" in item for item in detail), detail)
+
+    def test_fabricated_atomic_targets_with_genuine_products_are_refused(self) -> None:
+        report = self.codegen_report()
+        scenario = report["scenarios"]["local_64"]
+        for lane in engine.LANES:
+            summary = scenario["lanes"][lane]["malloc"]
+            summary["atomic_rmw_targets"] = {"dynamic": 1}
+            summary["atomic_rmw_non_thread_local"] = 1
+        scenario["comparison"]["malloc"] = self.codegen.compare_regions(
+            scenario["lanes"]["pinned_c"]["malloc"], scenario["lanes"]["rust_engine"]["malloc"])
+        detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("atomic targets differ from replay" in item for item in detail), detail)
+
+    def test_missing_raw_execution_record_is_refused(self) -> None:
+        report = self.codegen_report()
+        (self.artifacts / "trace-local_64-malloc-rust_engine.json").unlink()
+        detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("lacks its retained raw trace" in item for item in detail), detail)
 
     def test_report_without_retained_codegen_products_is_refused(self) -> None:
         report = self.codegen_report()
