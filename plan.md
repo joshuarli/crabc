@@ -81,7 +81,10 @@ are not transferable passes for a different revision.
   counters. An abandoned OS regular medium page survives interleaved reclaim,
   local reuse, remote publication, collection, and final release across two
   survivors; 23 shared observations and four direct pinned-C list states pass.
-  The clean M5 generic-exit gate passes all ten evidence rows.
+  A further OS medium case publishes its first remote free before reclaim,
+  crosses the source mostly-used threshold on the second, then reuses and
+  releases; 29 shared observations and six direct pinned-C list checks pass.
+  The clean M5 generic-exit gate passes all eleven evidence rows.
   A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
