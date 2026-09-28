@@ -270,6 +270,15 @@ def _request_paths(root: Path, request: dict) -> dict[str, Path]:
     return paths
 
 
+def _dynamic_work(root: Path, receipt: Path, value: object) -> Path:
+    require(isinstance(value, str) and value and not Path(value).is_absolute()
+            and '..' not in Path(value).parts, 'POSIX matrix dynamic work differs')
+    work = physical(root, root / value)
+    require(work.is_dir(), 'POSIX matrix dynamic work is not a directory')
+    require(receipt == work / 'qualification.json', 'dynamic qualification receipt path differs')
+    return work
+
+
 def _validated_input_products(root: Path, request: dict, evidence: object) -> _ValidatedInputProducts:
     """Recover a matrix's current product mapping after its full validation.
 
@@ -300,10 +309,7 @@ def _validated_input_products(root: Path, request: dict, evidence: object) -> _V
         require(same_json(manifest, static_records[label]),
                 f'POSIX matrix static product manifest changed: {label}')
 
-    work_value = evidence['dynamic_work']
-    require(isinstance(work_value, str) and work_value and not Path(work_value).is_absolute()
-            and '..' not in Path(work_value).parts, 'POSIX matrix dynamic work differs')
-    dynamic_work = physical(root, root / work_value)
+    dynamic_work = _dynamic_work(root, paths['dynamic_qualification'], evidence['dynamic_work'])
     dynamic_records = evidence['dynamic_products']
     require(isinstance(dynamic_records, dict) and set(dynamic_records) == set(PAIRS),
             'POSIX matrix dynamic product roster differs')
@@ -337,7 +343,7 @@ def input_products(root: Path, request: dict) -> tuple[dict, dict[str, dict[str,
     require(shared['family_completion'] is False and shared['public_support'] is False,
             'product qualification cannot replace family execution')
     static_paths = static_products.product_paths(paths['static_preparation'].parent)
-    dynamic_work = physical(root, root / shared['work'])
+    dynamic_work = _dynamic_work(root, paths['dynamic_qualification'], shared['work'])
     products = {label: {'static': static_paths[label], 'dynamic': dynamic_work / dynamic_label}
                 for label, dynamic_label in PAIRS.items()}
     evidence = {name: file_identity(root, path) for name, path in paths.items()}

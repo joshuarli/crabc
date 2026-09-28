@@ -390,6 +390,35 @@ class ValidatedInputProductsTests(unittest.TestCase):
         self.assertEqual(recovered.static_preparation, self.static_receipt)
         self.assertEqual(recovered.dynamic_work, self.dynamic_work)
 
+    def test_copied_qualification_receipt_cannot_select_rehashed_product_inputs(self):
+        import owned_dynamic_qualification as dynamic
+
+        copied = self.root / '.work/copied-qualification.json'
+        copied.write_bytes(self.dynamic_receipt.read_bytes())
+        request = {**self.request, 'dynamic_qualification': copied.relative_to(self.root).as_posix()}
+        evidence = {**self.evidence, 'dynamic_qualification': execution.file_identity(self.root, copied)}
+        with patch.object(execution.static_products, 'source_identity', return_value=self.source):
+            with self.assertRaisesRegex(execution.ExecutionError, 'dynamic qualification receipt path differs'):
+                execution._validated_input_products(self.root, request, evidence)
+
+        static = {'source': self.source, 'products': {
+            label: {'manifest': record} for label, record in self.evidence['static_products'].items()
+        }}
+        qualified = {'work': self.evidence['dynamic_work'],
+                     'source_sha256': self.source['content_sha256'],
+                     'family_completion': False, 'public_support': False,
+                     'products': {dynamic_label: self.evidence['dynamic_products'][label]['manifest_sha256']
+                                  for label, dynamic_label in execution.PAIRS.items()}}
+        with patch.object(dynamic, 'ROOT', self.root), \
+                patch.object(dynamic, 'validate_receipt', return_value=qualified), \
+                patch.object(dynamic, 'read', return_value={'oracle': self.evidence['oracle']}), \
+                patch.object(execution.static_products, 'validate_receipt', return_value=static), \
+                patch.object(execution.static_products, 'source_identity', return_value=self.source):
+            valid, _ = execution.input_products(self.root, self.request)
+            self.assertEqual(valid['dynamic_work'], self.evidence['dynamic_work'])
+            with self.assertRaisesRegex(execution.ExecutionError, 'dynamic qualification receipt path differs'):
+                execution.input_products(self.root, request)
+
 
 if __name__ == '__main__':
     unittest.main()
