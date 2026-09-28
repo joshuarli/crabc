@@ -13421,11 +13421,38 @@ M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_RECEIVERS = {
         "scope": "pinned-c-rust-registered-os-arena-survives-second-metadata-fault-claim-and-terminal-destroy",
     },
 }
+M2_X86_64_REGISTERED_ARENA_PAGE_MAP_RECEIVERS = {
+    "registered-arena-page-map-fault-c-rust-differential": {
+        "artifact": "m2-registered-arena-page-map-fault",
+        "target": "compat/allocator/m2_registered_arena_page_map_fault_x86_64.py",
+        "kind": "c-rust-registered-arena-page-map-fault-differential",
+        "cases": (),
+        "fields": {
+            "first_reserved", "second_reserved", "first_claim_held", "partial_top",
+            "registry_before_fault", "reserved_before_fault", "committed_before_fault",
+            "commits_before_fault", "mmaps_before_fault", "first_returned",
+            "first_in_second", "faults", "protection_calls", "first_protection_offset",
+            "first_protection_length", "second_protection_offset", "second_protection_length",
+            "third_protects_top", "third_protection_length", "fourth_replays_top",
+            "top_advanced_after_fault", "registry_after_failure", "reserved_after_failure",
+            "committed_after_failure", "commits_after_failure", "mmaps_after_failure",
+            "first_mapped", "second_mapped", "warning_order", "warning_count",
+            "warning_first_commits", "warning_second_commits", "warning_first_committed",
+            "warning_second_committed", "retry_in_second", "retry_published",
+            "retry_cleared", "top_advanced", "registry_after_retry", "terminal_registry",
+            "terminal_reserved", "terminal_committed", "terminal_first_gone",
+            "terminal_second_gone",
+        },
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-two-registered-arenas-page-map-top-commit-fault-retry-and-terminal-destroy",
+    },
+}
 M2_X86_64_VM_PROCESS_RECEIVERS = {
     **{check_id: {**receiver, "kind": "c-rust-process-external-os-differential"}
        for check_id, receiver in M2_X86_64_EXTERNAL_OS_RECEIVERS.items()},
     **M2_X86_64_EXPLICIT_ARENA_TRIM_RECEIVERS,
     **M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_RECEIVERS,
+    **M2_X86_64_REGISTERED_ARENA_PAGE_MAP_RECEIVERS,
 }
 
 
@@ -13981,6 +14008,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-process-external-os-differential",
                     "c-rust-explicit-arena-trim-differential",
                     "c-rust-explicit-arena-metadata-fault-differential",
+                    "c-rust-registered-arena-page-map-fault-differential",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
@@ -14167,6 +14195,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                 "c-rust-process-external-os-differential",
                 "c-rust-explicit-arena-trim-differential",
                 "c-rust-explicit-arena-metadata-fault-differential",
+                "c-rust-registered-arena-page-map-fault-differential",
             }:
                 receiver = M2_X86_64_VM_PROCESS_RECEIVERS.get(raw_check["id"])
                 if (

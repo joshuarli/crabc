@@ -177,6 +177,11 @@ CHECKS = (
         "compat/allocator/m2_registered_arena_metadata_fault_x86_64.py",
     ),
     (
+        "registered-arena-page-map-fault-c-rust-differential",
+        "c-rust-registered-arena-page-map-fault-differential",
+        "compat/allocator/m2_registered_arena_page_map_fault_x86_64.py",
+    ),
+    (
         "selected-subprocess-statistics-aggregation",
         "rust-unit",
         "statistics::tests::subprocess_statistics_merges_selected_fields_in_source_declaration_order",
@@ -330,6 +335,7 @@ EXPLICIT_ARENA_SOURCE_CHECK_IDS = (
     *EXPLICIT_ARENA_TRIM_CHECK_IDS,
     EXPLICIT_ARENA_METADATA_FAULT_CHECK_ID,
     "registered-arena-metadata-fault-c-rust-differential",
+    "registered-arena-page-map-fault-c-rust-differential",
 )
 THP_PROCESS_CHECK_IDS = (
     "process-thp-madvise-success-c-rust-differential",
