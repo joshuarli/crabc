@@ -101,6 +101,8 @@ def extract(package_path: Path, output: Path) -> None:
             raise driver.shared.DriverError("incomplete package contract")
         if set(names) != {*files, "share/crabc/manifest.json", *driver.ALIASES}:
             raise driver.shared.DriverError("package manifest roster mismatch")
+        if names != sorted(names):
+            raise driver.shared.DriverError("package member order differs")
         payloads = {}
         for entry in members:
             if entry.name in driver.ALIASES and not entry.issym():

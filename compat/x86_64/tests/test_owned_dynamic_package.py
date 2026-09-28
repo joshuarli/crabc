@@ -86,8 +86,8 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                     package.extract(forged, workspace / "forged")
                 self.assertFalse((workspace / "forged").exists())
 
-    def test_archive_and_extraction_preserve_canonical_dynamic_member_metadata(self) -> None:
-        """Every archive member uses the writer's fixed mode and owner metadata."""
+    def test_archive_and_extraction_require_canonical_dynamic_members(self) -> None:
+        """Archive members use the writer's order, modes, and metadata."""
 
         modes = {
             "bin/crabc-cc-dynamic": 0o755,
@@ -163,6 +163,19 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                 },
                 modes,
             )
+
+            reordered = workspace / "reordered.tar"
+            with tarfile.open(archive, "r:") as original, \
+                 tarfile.open(reordered, "w", format=tarfile.USTAR_FORMAT) as rewritten:
+                for member in reversed(original.getmembers()):
+                    payload = original.extractfile(member) if member.isfile() else None
+                    rewritten.addfile(copy.copy(member), payload)
+            output = workspace / "rejected-reordered"
+            with mock.patch.object(package.driver, "validate", return_value=record), \
+                 mock.patch.object(package.qualification, "product_identity"):
+                with self.assertRaisesRegex(package.driver.shared.DriverError, "package member order"):
+                    package.extract(reordered, output)
+            self.assertFalse(output.exists())
 
             for relative, changed_mode in (("usr/lib/libc.so", 0o644),
                                            ("usr/lib/crt1.o", 0o755),
