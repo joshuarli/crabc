@@ -64,15 +64,19 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         self.assertEqual(receipt.COMPONENT, "protocol-database-product")
         self.assertEqual(receipt.REPORT_NAME, "owned-protocol-database-products.json")
 
-    def test_pinned_musl_archive_path_normalizes_compiler_lexical_parent_components(self) -> None:
-        raw = "/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/../../../../lib/libc.a\n"
+    def test_source_built_musl_archive_matches_the_pinned_image_input(self) -> None:
+        manifest = json.loads((ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json").read_text())
+        archive = manifest["files"][str(producer.PINNED_MUSL_ARCHIVE)]
+        self.assertEqual(archive["sha256"], producer.PINNED_MUSL_ARCHIVE_SHA256)
 
-        self.assertEqual(
-            producer.canonical_pinned_musl_archive(raw),
-            Path("/usr/lib/libc.a"),
-        )
-        with self.assertRaisesRegex(producer.ProtocolDatabaseError, "relative path"):
-            producer.canonical_pinned_musl_archive("lib/libc.a")
+    def test_reader_rejects_compiler_reported_alpine_archive_as_proto_oracle(self) -> None:
+        oracle = {
+            "archive": {"path": "/usr/lib/libc.a", "sha256": "0" * 64,
+                        "byte_length": 1, "mode": 0o644},
+            "object": {}, "symbols": {}, "undefined": {},
+        }
+        with self.assertRaisesRegex(receipt.ReceiptError, "source-built musl 1.2.6 archive"):
+            receipt._oracle(ROOT, self.work, oracle)
 
     def test_product_arms_admit_byte_identical_extraction_directory_modes(self) -> None:
         """Extraction may preserve setgid header directories without changing payload bytes."""

@@ -160,13 +160,10 @@ def _oracle(root: Path, work: Path, value: object) -> None:
     archive_record = value["archive"]
     require(isinstance(archive_record, dict) and set(archive_record) == {"path", "sha256", "byte_length", "mode"},
             "protocol receipt musl archive identity differs")
-    try:
-        output = subprocess.run((producer.MUSL_CC, "-print-file-name=libc.a"), cwd=root, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, check=False, timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ReceiptError("cannot query pinned musl archive") from error
-    require(output.returncode == 0 and not output.stderr, "cannot query pinned musl archive")
-    archive = physical(producer.canonical_pinned_musl_archive(output.stdout.decode("utf-8")), "pinned musl archive")
+    require(archive_record["path"] == str(producer.PINNED_MUSL_ARCHIVE)
+            and archive_record["sha256"] == producer.PINNED_MUSL_ARCHIVE_SHA256,
+            "protocol receipt does not select the source-built musl 1.2.6 archive")
+    archive = physical(producer.PINNED_MUSL_ARCHIVE, "source-built musl 1.2.6 archive")
     observed_archive = {"path": str(archive), "sha256": sha256(archive.read_bytes()).hexdigest(),
                         "byte_length": archive.stat().st_size, "mode": stat.S_IMODE(archive.stat().st_mode)}
     require(archive_record == observed_archive, "protocol receipt musl archive differs")

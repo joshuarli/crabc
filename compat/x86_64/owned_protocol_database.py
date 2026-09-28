@@ -49,6 +49,8 @@ PROVIDERS = (
     "setprotoent",
 )
 MUSL_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+PINNED_MUSL_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
+PINNED_MUSL_ARCHIVE_SHA256 = "d0400c3754724e89c4185e3388d2e139461aa0cc4029f2ec566c962916852775"
 PROBE = Path("compat/x86_64/libc_protocol_database_probe.c")
 RUST_PROVIDER = Path("libc/src/c_abi/x86_64/protocol_database.rs")
 PROVIDER_CONTRACT = Path("compat/x86_64/protocol-database-provider.toml")
@@ -124,23 +126,6 @@ def source_records(root: Path = ROOT) -> dict[str, dict[str, object]]:
     return {path.as_posix(): artifact(root, root / path) for path in SOURCE_FILES}
 
 
-def canonical_pinned_musl_archive(raw: str) -> Path:
-    """Normalize only lexical components in the pinned compiler's archive path.
-
-    ``-print-file-name`` is a compiler-owned diagnostic, not a user-supplied
-    product path. Alpine GCC currently emits its libc archive with literal
-    ``..`` components; producer and independent reader must seal the same
-    physical spelling before the usual no-symlink regular-file check. This
-    does not resolve or admit a symlink.
-    """
-
-    value = raw.strip()
-    require(value, "pinned musl archive query returned no path")
-    path = Path(value)
-    require(path.is_absolute(), "pinned musl archive query returned a relative path")
-    return Path(os.path.normpath(value))
-
-
 def _run(arguments: Sequence[str | Path], *, cwd: Path, timeout: float, description: str) -> tuple[int, bytes, bytes]:
     try:
         result = subprocess.run([str(argument) for argument in arguments], cwd=cwd,
@@ -194,10 +179,11 @@ def provider_rows(raw: bytes, description: str) -> dict[str, list[list[str]]]:
 
 def _oracle_object(work: Path, timeout: float) -> dict[str, object]:
     _physical(MUSL_CC, "pinned musl compiler")
-    _status, stdout, _stderr = _run((MUSL_CC, "-print-file-name=libc.a"), cwd=ROOT, timeout=timeout,
-                                    description="pinned musl archive query")
-    archive = canonical_pinned_musl_archive(stdout.decode("utf-8"))
-    _physical(archive, "pinned musl archive")
+    # GCC's archive lookup can select Alpine's bootstrap libc.a even when its
+    # specs select the source-built musl tree for compilation and linking.
+    archive = _physical(PINNED_MUSL_ARCHIVE, "source-built musl 1.2.6 archive")
+    require(sha256(archive.read_bytes()).hexdigest() == PINNED_MUSL_ARCHIVE_SHA256,
+            "source-built musl 1.2.6 archive differs")
     object_file = work / "oracle-proto.lo"
     _status, payload, _stderr = _run(("ar", "p", archive, "proto.lo"), cwd=ROOT, timeout=timeout,
                                      description="pinned musl proto.lo extraction")
