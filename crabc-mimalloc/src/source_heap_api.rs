@@ -1206,6 +1206,42 @@ pub fn reserve_os_memory(size: usize, commit: bool, allow_large: bool) -> Source
     unsafe { reserve_os_memory_ex(size, commit, allow_large, false, null_mut()) }
 }
 
+#[cfg(test)]
+mod reserve_os_failure_tests {
+    extern crate std;
+    use super::*;
+    use crate::os::fault;
+
+    unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn public_reserve_os_memory_map_failure_clears_output_and_keeps_arena_count() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::reserve_os_failure_tests::public_reserve_os_memory_map_failure_clears_output_and_keeps_arena_count",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let backing = MainSubprocess::global().arena_backing();
+                let before = backing.registry().count();
+                let fault = fault::install(fault::Plan::every(fault::Point::Map, Errno::NOMEM));
+                let mut arena_id = 1usize as *mut c_void;
+                // SAFETY: the local output is writable and every primitive
+                // map attempt is forced to fail before arena publication.
+                let result = unsafe { reserve_os_memory_ex(64 * 1024 * 1024,
+                    true, false, true, &mut arena_id) };
+                assert_eq!(result.value, Errno::NOMEM.raw());
+                assert_eq!(result.errno, SourceErrno::Store(Errno::NOMEM));
+                assert!(arena_id.is_null());
+                assert!(fault.observed() > 0);
+                assert_eq!(backing.registry().count(), before);
+            },
+        );
+    }
+}
+
 /// `mi_reserve_huge_os_pages_at_ex` clears its output before the zero-page
 /// return, then reserves physical huge backing in the process-main arena
 /// group. A child member is rejected before selecting any parent backing.
