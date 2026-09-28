@@ -10279,7 +10279,10 @@ pub(crate) fn test_initialize_process_from_host_environment(
 /// after startup has begun is an ordinary unattached thread and receives no
 /// lazy authority; a failed lazy startup is retained exactly like a failed
 /// explicit one.
+/// Inlining keeps the registered entry in the allocation caller's frame;
+/// the unregistered first-allocation branch still runs the same once body.
 #[cfg(target_arch = "x86_64")]
+#[inline(always)]
 fn enter_native_allocation_operation() -> Option<admission::NativeAllocatorOperationGuard> {
     match admission::NativeAllocatorOperationGuard::enter() {
         Ok(operation) => return Some(operation),
@@ -11290,6 +11293,10 @@ enum NativeAllocationShape {
     Aligned { alignment: usize, offset: usize },
 }
 
+/// Inlines the selected request shape into its public allocation caller so
+/// fixed alignment and offset values need no runtime shape transfer. The
+/// complete fallback stays out of line after this local attempt.
+#[inline(always)]
 fn native_allocate_shaped(
     request: usize,
     shape: NativeAllocationShape,
