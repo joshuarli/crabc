@@ -36,7 +36,7 @@ use crabc_mimalloc::__crabc_runtime::{
     NativeProcessStartupFacts, RuntimeStderrOutput, ThreadAttachResult,
     attach_current_thread, current_native_allocator_thread_descriptor,
     finish_current_thread_native_after_user_destructors, initialize_process,
-    publish_native_process_startup_facts,
+    prepare_native_initial_thread_owner, publish_native_process_startup_facts,
     register_current_native_allocator_worker_descriptor,
 };
 
@@ -107,9 +107,9 @@ unsafe fn host_environment() -> *const *const c_char {
     unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
 }
 
-/// Pinned `mi_process_load`: publish the host facts and start the process.
-/// With default options, an arena is reserved later when allocation needs
-/// one. Runs once, from the initial thread, before `main`.
+/// Pinned `mi_process_load`: publish the host facts, start the process, and
+/// install the initial thread owner. With default options, an arena is
+/// reserved later when allocation needs one. Runs before `main`.
 extern "C" fn process_load() {
     // SAFETY: the loader runs constructors on the initial thread.
     INITIAL_THREAD.store(unsafe { pthread_self() } as usize, Ordering::Release);
@@ -131,6 +131,7 @@ extern "C" fn process_load() {
     let ready = match facts {
         Some(facts) => {
             publish_native_process_startup_facts(facts) && initialize_process()
+                && prepare_native_initial_thread_owner()
         }
         None => false,
     };
