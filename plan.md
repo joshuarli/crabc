@@ -92,7 +92,9 @@ are not transferable passes for a different revision.
   registration failure matches 122 C/Rust relations for rollback state,
   mapping lifetime, accounting, and warning order. External arena purge
   publishes its purge statistics before the callback, matching eight more
-  C/Rust observations.
+  C/Rust observations. A second regular arena claims the fourth 256-slice
+  request after the first fills and matches pinned C across 33 claim,
+  mapping, purge, and registry observations.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
