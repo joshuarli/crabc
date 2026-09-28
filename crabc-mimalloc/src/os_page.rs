@@ -586,6 +586,9 @@ impl OsAlignedPageClaim {
             // still-private prefix writable before any Page is published.
             unsafe { core::ptr::write_bytes(claim.mapping.base().unwrap(), 0, metadata_size); }
         }
+        // Once the block area is committed, terminal free charges that area;
+        // the metadata prefix was already excluded from committed statistics.
+        claim.release_commit_size = layout.allocation_size();
         claim.ready = true;
         Ok(claim)
     }
@@ -664,6 +667,7 @@ impl OsAlignedPageClaim {
             // SAFETY: the successful metadata commit makes this prefix writable.
             unsafe { core::ptr::write_bytes(claim.mapping.base().unwrap(), 0, metadata_size); }
         }
+        claim.release_commit_size = layout.allocation_size();
         claim.ready = true;
         Ok(claim)
     }

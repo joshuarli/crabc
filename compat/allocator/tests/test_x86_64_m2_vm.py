@@ -21,6 +21,8 @@ EXPECTED_VM_CHECK_IDS = (
     "runtime-source-environment-thp-ready-configuration-admission",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
+    "legacy-os-page-suffix-trim-and-raw-release",
+    "process-os-page-suffix-trim-and-terminal-release",
     "process-policy-first-arena-clean-primary-fallback",
     "process-policy-first-arena-trim-leak",
     "selected-subprocess-statistics-aggregation",
@@ -181,6 +183,29 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "fixture": {"path": "compat/allocator/m2_vm_x86_64.c", "sha256": "b" * 64, "bytes": 1},
             "format": 1,
             "profile": producer.EVIDENCE_PROFILE,
+            "legacy_os_page_trim": {
+                "command": ["python3", producer.LEGACY_OS_PAGE_TRIM_READER,
+                    "--offline", "--rust-test-binary", str(rust_binary)],
+                "comparison": {
+                    "status": "source-different", "shared_relations": 8,
+                    "known_differences": {
+                        "reserved_claim": {"c": 196608, "rust": 0},
+                        "committed_claim": {"c": 65536, "rust": 0},
+                        "mmap_claim": {"c": 2, "rust": 0},
+                    },
+                },
+                "fixture": {"path": "compat/allocator/m2_legacy_os_page_trim_x86_64.c",
+                    "bytes": 1, "sha256": "b" * 64},
+                "rust_test": "os::tests::emit_legacy_os_page_suffix_trim_trace",
+            },
+            "process_os_page_trim": {
+                "command": ["python3", producer.PROCESS_OS_PAGE_TRIM_READER,
+                    "--offline", "--rust-test-binary", str(rust_binary)],
+                "comparison": {"status": "matched", "compared_value_count": 17},
+                "fixture": {"path": "compat/allocator/m2_legacy_os_page_trim_x86_64.c",
+                    "bytes": 1, "sha256": "b" * 64},
+                "rust_test": "os::tests::emit_process_os_page_suffix_trim_trace",
+            },
             "reset_advice_matrix": {
                 "command": [
                     "python3", producer.RESET_ADVICE_MATRIX_READER,
@@ -563,7 +588,6 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
         self.assertEqual(tuple(check["id"] for check in vm["checks"]), EXPECTED_VM_CHECK_IDS)
-        self.assertEqual(len(vm["checks"]), 33)
         self.assertEqual(len(vm["bounded_source_definitions"]), 20)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
@@ -631,13 +655,17 @@ class NativeVmAssemblyTests(unittest.TestCase):
         records = RUNNER._m2_x86_64_vm_check_records(
             self.summary(), self.vm_evidence(self.summary())
         )
-        self.assertEqual(len(records), 4)
+        self.assertEqual(len(records), 6)
         self.assertEqual(records[0]["id"], "native-vm-fixed-lifecycle-differential")
         self.assertEqual(records[1]["id"], "aligned-hint-source-profile-and-direct-caller-matrix")
         self.assertEqual(records[2]["id"], "aligned-overmap-cleanup-c-rust-boundary-matrix")
         self.assertEqual(records[2]["comparison_status"], "matched")
         self.assertEqual(records[3]["id"], "second-arena-reset-advice-c-rust-matrix")
         self.assertEqual(records[3]["passed_test_count"], 3)
+        self.assertEqual(records[4]["id"], "legacy-os-page-suffix-trim-and-raw-release")
+        self.assertEqual(records[4]["comparison_status"], "source-different")
+        self.assertEqual(records[5]["id"], "process-os-page-suffix-trim-and-terminal-release")
+        self.assertEqual(records[5]["comparison_status"], "matched")
 
     def test_rust_binary_binding_accepts_both_cargo_profile_layouts_only(self):
         """The pinned nightly's per-unit test executable remains gate-owned."""
@@ -956,6 +984,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "aligned-hint-source-profile-and-direct-caller-matrix",
                 "aligned-overmap-cleanup-c-rust-boundary-matrix",
                 "second-arena-reset-advice-c-rust-matrix",
+                "legacy-os-page-suffix-trim-and-raw-release",
+                "process-os-page-suffix-trim-and-terminal-release",
                 "runtime-source-environment-thp-ready-configuration-admission",
             },
             {record["id"] for record in vm_records},

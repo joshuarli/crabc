@@ -13310,6 +13310,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-vm-primitives-source-profile-matrix",
                     "c-rust-aligned-overmap-cleanup-boundary-matrix",
                     "c-rust-legacy-os-page-trim-receiver",
+                    "c-rust-process-os-page-trim-receiver",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
@@ -13463,6 +13464,14 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or not (ROOT / reader).is_file()
                 ):
                     raise HarnessError("native x86 M2 legacy OS-page receiver is absent")
+            elif raw_check.get("kind") == "c-rust-process-os-page-trim-receiver":
+                reader = _m2_x86_64_vm_producer().PROCESS_OS_PAGE_TRIM_READER
+                if (
+                    component_id != "vm-primitives"
+                    or raw_check.get("target") != reader
+                    or not (ROOT / reader).is_file()
+                ):
+                    raise HarnessError("native x86 M2 process OS-page receiver is absent")
             elif component_id != "bitmaps":
                 _m2_memory_substrate_source_test_exists(
                     str(raw_check["target"]), str(raw_check["id"])
@@ -14139,6 +14148,10 @@ def _m2_x86_64_vm_check_records(
         check for check in component["checks"]
         if check["id"] == producer.LEGACY_OS_PAGE_TRIM_ID
     )
+    process_trim_check = next(
+        check for check in component["checks"]
+        if check["id"] == producer.PROCESS_OS_PAGE_TRIM_ID
+    )
     runtime_thp_check = next(
         check for check in component["checks"]
         if check["id"] == "runtime-source-environment-thp-ready-configuration-admission"
@@ -14393,6 +14406,44 @@ def _m2_x86_64_vm_check_records(
         "id": legacy_trim_check["id"],
         "passed_test_count": 1,
         "target": legacy_trim_check["target"],
+    })
+    process_trim = evidence.get("process_os_page_trim")
+    process_command = process_trim.get("command") if isinstance(process_trim, Mapping) else None
+    process_fixture = process_trim.get("fixture") if isinstance(process_trim, Mapping) else None
+    process_comparison = process_trim.get("comparison") if isinstance(process_trim, Mapping) else None
+    if (
+        process_trim_check != {
+            "id": producer.PROCESS_OS_PAGE_TRIM_ID,
+            "kind": "c-rust-process-os-page-trim-receiver",
+            "target": producer.PROCESS_OS_PAGE_TRIM_READER,
+            "expected_passed_test_count": 1,
+        }
+        or process_command not in (
+            ["python3", producer.PROCESS_OS_PAGE_TRIM_READER,
+             "--rust-test-binary", str(command[0])],
+            ["python3", producer.PROCESS_OS_PAGE_TRIM_READER,
+             "--offline", "--rust-test-binary", str(command[0])],
+        )
+        or process_comparison != {"status": "matched", "compared_value_count": 17}
+        or process_trim.get("rust_test") != "os::tests::emit_process_os_page_suffix_trim_trace"
+        or not isinstance(process_fixture, Mapping)
+        or process_fixture.get("path") != relative(
+            ALLOCATOR_ROOT / "m2_legacy_os_page_trim_x86_64.c"
+        )
+        or type(process_fixture.get("bytes")) is not int
+        or process_fixture["bytes"] <= 0
+        or not isinstance(process_fixture.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", process_fixture["sha256"]) is None
+    ):
+        raise HarnessError("native x86 M2 process OS-page receiver receipt is invalid")
+    records.append({
+        "comparison_status": "matched",
+        "component": "vm-primitives",
+        "command": list(process_command),
+        "evidence_scope": "bounded-process-os-page-suffix-trim-terminal-accounting-and-raw-retry",
+        "id": process_trim_check["id"],
+        "passed_test_count": 1,
+        "target": process_trim_check["target"],
     })
     if runtime_thp_evidence is None:
         return records
