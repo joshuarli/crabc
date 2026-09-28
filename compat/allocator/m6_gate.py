@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import run as harness
+import perf_engine_x86_64 as engine
+import perf_integrated_x86_64 as integrated
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m6-gate-v3.5.0.json"
@@ -212,6 +214,18 @@ def gate_report(
     }
 
 
+def report_provenance(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind executed evidence to the checkout and its retained raw logs."""
+
+    return {
+        "git": engine.git_provenance(),
+        "seal": {**integrated.source_seal(), "gate": engine.file_record(Path(__file__)),
+                 "contract": engine.file_record(CONTRACT)},
+        "evidence": {name: engine.file_record(harness.ROOT / record["log"])
+                     for name, record in report["evidence"].items()},
+    }
+
+
 def run_evidence(runnable: Mapping[str, str], artifacts: Path) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
     for evidence_id, runner in runnable.items():
@@ -247,6 +261,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     artifacts = harness.ARTIFACT_ROOT / "x86_64/m6-gate"
     artifacts.mkdir(parents=True, exist_ok=True)
     report = gate_report(contract, summary, run_evidence(summary["runnable_evidence"], artifacts))
+    report["provenance"] = report_provenance(report)
     harness.write_json(artifacts / "report.json", report)
     for record in report["gates"]:
         print(f"{record['id']}: {record['status']}")

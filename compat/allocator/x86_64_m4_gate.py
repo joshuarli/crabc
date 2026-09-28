@@ -46,6 +46,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import run as harness
+import perf_engine_x86_64 as engine
+import perf_integrated_x86_64 as integrated
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m4-gate-x86_64-v3.5.0.json"
@@ -299,6 +301,18 @@ def gate_report(
         "item_count": summary["item_count"],
         "overall_status": "passed" if not unmet else "unmet",
         "unmet_required": unmet,
+    }
+
+
+def report_provenance(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind executed evidence to the checkout and its retained raw logs."""
+
+    return {
+        "git": engine.git_provenance(),
+        "seal": {**integrated.source_seal(), "gate": engine.file_record(Path(__file__)),
+                 "contract": engine.file_record(CONTRACT)},
+        "evidence": {name: engine.file_record(harness.ROOT / record["log"])
+                     for name, record in report["evidence"].items()},
     }
 
 
@@ -697,6 +711,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         runnable = {key: value for key, value in runnable.items() if key in selected["evidence"]}
         contract = {**contract, "gates": [selected]}
     report = gate_report(contract, summary, run_evidence(runnable, ARTIFACTS))
+    report["provenance"] = report_provenance(report)
     report_path = ARTIFACTS / ("report.json" if arguments.gate is None else f"{arguments.gate}.json")
     harness.write_json(report_path, report)
     for record in report["gates"]:

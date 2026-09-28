@@ -40,6 +40,12 @@ MINIMUM_REPORTS = 3
 ENGINE_REPORTS = engine.REPORT_ROOT
 CODEGEN_REPORTS = engine.REPORT_ROOT.parent / "codegen-audit"
 CORRECTNESS_GATES = ("m4", "m5", "m6", "m7")
+CORRECTNESS_INPUTS = {
+    "m4": ("x86_64_m4_gate.py", "m4-gate-x86_64-v3.5.0.json"),
+    "m5": ("x86_64_m5_gate.py", "m5-gate-x86_64-v3.5.0.json"),
+    "m6": ("m6_gate.py", "m6-gate-v3.5.0.json"),
+    "m7": ("x86_64_m7_gate.py", "m7-gate-x86_64-v3.5.0.json"),
+}
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m9-gate"
 Reader = Callable[[Path, Path], Mapping[str, Any]]
 
@@ -391,22 +397,76 @@ def physical_tree(root: Path, *, exclude: set[str] | None = None) -> tuple[dict[
 
 def correctness_condition(accepted_paths: Sequence[Path], gate_root: Path = harness.ARTIFACT_ROOT / "x86_64") -> dict[str, Any]:
     unmet = ["allocator M8 has no gate in this launcher"]
-    newest = max((Path(path).stat().st_mtime for path in accepted_paths), default=None)
+    newest = max((Path(path).stat().st_mtime_ns for path in accepted_paths), default=None)
     for gate in CORRECTNESS_GATES:
         path = gate_root / f"{gate}-gate/report.json"
         if not path.is_file():
             unmet.append(f"{gate.upper()} gate has no retained report ({harness.relative(path)})")
             continue
         try:
-            status = json.loads(path.read_text(encoding="utf-8")).get("overall_status")
+            report = json.loads(path.read_text(encoding="utf-8"))
+            status = report.get("overall_status")
         except (OSError, json.JSONDecodeError, AttributeError) as error:
             unmet.append(f"{gate.upper()} gate report is unreadable: {error}")
             continue
         if status != "passed":
             unmet.append(f"{gate.upper()} gate report is {status}")
-        elif newest is not None and path.stat().st_mtime < newest:
+        elif newest is not None and path.stat().st_mtime_ns < newest:
             unmet.append(f"{gate.upper()} gate report predates the newest qualified report")
+        else:
+            unmet.extend(f"{gate.upper()} gate {reason}" for reason in correctness_evidence_unmet(
+                gate, report, path.parent, newest))
     return _condition("m9.correctness", unmet, "M4-M8 correctness gates passed after the qualified reports")
+
+
+def correctness_evidence_unmet(
+    gate: str, report: Mapping[str, Any], artifacts: Path, newest: int | None,
+) -> list[str]:
+    """Recheck source identity, complete gate coverage, and retained raw evidence."""
+
+    if not isinstance(report.get("provenance"), Mapping):
+        return ["report lacks current evidence provenance"]
+    try:
+        gate_file, contract_file = (harness.ALLOCATOR_ROOT / name for name in CORRECTNESS_INPUTS[gate])
+        contract = json.loads(contract_file.read_text(encoding="utf-8"))
+        expected_gates = [record["id"] for record in contract["gates"]]
+        observed = report["gates"]
+        if ([record["id"] for record in observed] != expected_gates
+                or any(record["status"] != "passed" for record in observed)
+                or report["unmet_required"] != []):
+            return ["report lacks the complete passing gate roster"]
+        evidence = report["evidence"]
+        expected_evidence = {name for record in contract["gates"] for name in record["evidence"]}
+        if not isinstance(evidence, Mapping) or set(evidence) != expected_evidence:
+            return ["report lacks current evidence for every gate"]
+        provenance = report["provenance"]
+        recorded_git = provenance["git"]
+        current_git = engine.git_provenance()
+        if (recorded_git.get("clean") is not True or current_git.get("clean") is not True
+                or recorded_git.get("head") != current_git.get("head")):
+            return ["report lacks current clean checkout identity"]
+        seal = provenance["seal"]
+        if not isinstance(seal, Mapping) or integrated.source_seal_unmet(seal):
+            return ["report lacks current source and product identity"]
+        if (seal.get("gate") != engine.file_record(gate_file)
+                or seal.get("contract") != engine.file_record(contract_file)):
+            return ["report lacks current gate and contract identity"]
+        records = provenance["evidence"]
+        if not isinstance(records, Mapping) or set(records) != set(evidence):
+            return ["report lacks current evidence file records"]
+        for name, entry in evidence.items():
+            if not isinstance(entry, Mapping) or entry.get("status") != "passed":
+                return [f"evidence {name} did not pass"]
+            log = harness.ROOT / entry["log"]
+            if log.parent.resolve() != artifacts.resolve() or log.is_symlink() or not log.is_file():
+                return [f"evidence {name} lacks its retained raw log"]
+            if records[name] != engine.file_record(log):
+                return [f"evidence {name} differs from its retained raw log"]
+            if newest is not None and log.stat().st_mtime_ns < newest:
+                return [f"evidence {name} predates the newest qualified report"]
+    except Exception as error:  # noqa: BLE001 - malformed gate evidence must fail closed
+        return [f"report lacks current evidence: {type(error).__name__}: {error}"]
+    return []
 
 
 def evaluate(

@@ -38,6 +38,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import run as harness
+import perf_engine_x86_64 as engine
+import perf_integrated_x86_64 as integrated
 
 sys.path.insert(0, str(harness.ROOT / "compat/x86_64"))
 import native_shadow_receipt  # noqa: E402
@@ -241,6 +243,18 @@ def gate_report(
     }
 
 
+def report_provenance(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind executed evidence to the checkout and its retained raw logs."""
+
+    return {
+        "git": engine.git_provenance(),
+        "seal": {**integrated.source_seal(), "gate": engine.file_record(Path(__file__)),
+                 "contract": engine.file_record(CONTRACT)},
+        "evidence": {name: engine.file_record(harness.ROOT / record["log"])
+                     for name, record in report["evidence"].items()},
+    }
+
+
 def check_receipt(check: Mapping[str, str], root: Path = harness.ROOT) -> tuple[bool, str]:
     """Validate one runner receipt; the message names its seal or its defect."""
 
@@ -313,6 +327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         wanted = set(selected["gates"][0]["evidence"])
         runnable = {key: value for key, value in runnable.items() if key in wanted}
     report = gate_report(selected, summary, run_evidence(runnable, ARTIFACTS))
+    report["provenance"] = report_provenance(report)
     harness.write_json(ARTIFACTS / "report.json", report)
     for record in report["gates"]:
         print(f"{record['id']}: {record['status']}")

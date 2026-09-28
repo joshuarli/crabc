@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib
 import importlib.util
 import json
 import os
@@ -423,6 +424,17 @@ class CodegenTests(GateFixture):
 
 
 class CorrectnessTests(GateFixture):
+    def test_gate_producers_record_their_raw_evidence_files(self) -> None:
+        log = self.root / "gate.log"
+        log.write_text("raw evidence output", encoding="utf-8")
+        report = {"evidence": {"fixture": {"log": gate.harness.relative(log)}}}
+        for module_name in ("x86_64_m4_gate", "x86_64_m5_gate", "m6_gate"):
+            producer = importlib.import_module(module_name)
+            provenance = producer.report_provenance(report)
+            self.assertEqual(provenance["evidence"], {"fixture": gate.engine.file_record(log)})
+            self.assertEqual(provenance["seal"]["gate"], gate.engine.file_record(Path(producer.__file__)))
+            self.assertEqual(provenance["seal"]["contract"], gate.engine.file_record(producer.CONTRACT))
+
     def gate_report(self, name: str, status: str, mtime: float | None = None) -> None:
         path = self.root / "gates" / f"{name}-gate/report.json"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -440,10 +452,67 @@ class CorrectnessTests(GateFixture):
         detail = gate.correctness_condition([perf], self.root / "gates")["detail"]
         self.assertEqual(detail, [
             "allocator M8 has no gate in this launcher",
+            "M4 gate report lacks current evidence provenance",
             "M5 gate report is unmet",
             "M6 gate report predates the newest qualified report",
             f"M7 gate has no retained report ({gate.harness.relative(self.root / 'gates/m7-gate/report.json')})",
         ])
+
+    def test_copied_status_only_reports_do_not_prove_current_correctness(self) -> None:
+        perf = self.root / "perf.json"
+        perf.write_text("{}", encoding="utf-8")
+        os.utime(perf, (2000, 2000))
+        for name in gate.CORRECTNESS_GATES:
+            self.gate_report(name, "passed", 3000)
+        detail = gate.correctness_condition([perf], self.root / "gates")["detail"]
+        self.assertTrue(any("M4 gate report lacks current evidence" in item for item in detail), detail)
+
+    def test_current_report_requires_all_gates_and_unchanged_physical_logs(self) -> None:
+        git = patch.object(gate.engine, "git_provenance", return_value={"head": "fixture", "clean": True})
+        git.start()
+        self.addCleanup(git.stop)
+        name = "m4"
+        contract = json.loads((gate.harness.ALLOCATOR_ROOT / gate.CORRECTNESS_INPUTS[name][1]).read_text(encoding="utf-8"))
+        path = self.root / "gates/m4-gate/report.json"
+        path.parent.mkdir(parents=True)
+        evidence = {}
+        for evidence_name in {item for record in contract["gates"] for item in record["evidence"]}:
+            log = path.parent / f"{evidence_name.replace(':', '-')}.log"
+            log.write_text("passed", encoding="utf-8")
+            evidence[evidence_name] = {"log": gate.harness.relative(log), "status": "passed"}
+        source, selected_contract = (gate.harness.ALLOCATOR_ROOT / item for item in gate.CORRECTNESS_INPUTS[name])
+        report = {
+            "overall_status": "passed", "unmet_required": [], "evidence": evidence,
+            "gates": [{"id": item["id"], "status": "passed"} for item in contract["gates"]],
+            "provenance": {
+                "git": copy.deepcopy(gate.engine.git_provenance()),
+                "seal": {**gate.integrated.source_seal(), "gate": gate.engine.file_record(source),
+                         "contract": gate.engine.file_record(selected_contract)},
+                "evidence": {item: gate.engine.file_record(gate.harness.ROOT / record["log"])
+                             for item, record in evidence.items()},
+            },
+        }
+        path.write_text(json.dumps(report), encoding="utf-8")
+        self.assertEqual(gate.correctness_evidence_unmet(name, report, path.parent, None), [])
+        report["gates"].pop()
+        self.assertIn("complete passing gate roster", gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
+        report["gates"].append({"id": contract["gates"][-1]["id"], "status": "passed"})
+        evidence_name = next(iter(evidence))
+        (gate.harness.ROOT / evidence[evidence_name]["log"]).write_text("changed", encoding="utf-8")
+        self.assertIn("differs from its retained raw log",
+                      gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
+        (gate.harness.ROOT / evidence[evidence_name]["log"]).write_text("passed", encoding="utf-8")
+        report["provenance"]["git"]["head"] = "old source"
+        self.assertIn("current clean checkout identity",
+                      gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
+        report["provenance"]["git"]["head"] = "fixture"
+        report["provenance"]["seal"]["gate"]["sha256"] = "0" * 64
+        self.assertIn("current gate and contract identity",
+                      gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
+        report["provenance"]["seal"]["gate"] = gate.engine.file_record(source)
+        os.utime(gate.harness.ROOT / evidence[evidence_name]["log"], ns=(1000, 1000))
+        self.assertIn("predates the newest qualified report",
+                      gate.correctness_evidence_unmet(name, report, path.parent, 2000)[0])
 
 
 if __name__ == "__main__":
