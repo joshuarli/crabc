@@ -3704,11 +3704,13 @@ unsafe fn protect_segments(object: &Object) -> Option<()> {
         let p = object.phdr.add(index * 56);
         if read_u32(p) != PT_LOAD { continue; }
         let vaddr = read_u64(p.add(16));
-        let file_end = align_up(vaddr.checked_add(read_u64(p.add(32)))?);
-        let end = align_up(vaddr.checked_add(read_u64(p.add(40)))?);
+        let file_end = vaddr.checked_add(read_u64(p.add(32)))?;
+        let end = vaddr.checked_add(read_u64(p.add(40)))?;
         let protection = segment_protection(p);
-        already_final &= load_protection(p) == protection
-            && (end <= file_end || protection == PROT_READ | PROT_WRITE);
+        // A read-write load has its final file and anonymous-page protection.
+        // Its extents still need overflow checks, but no page rounding.
+        already_final &= protection == PROT_READ | PROT_WRITE
+            || (load_protection(p) == protection && align_up(end) <= align_up(file_end));
     }
     if already_final { return Some(()); }
     for index in 0..object.phnum {
@@ -3720,6 +3722,40 @@ unsafe fn protect_segments(object: &Object) -> Option<()> {
         if end > start && syscall3(SYS_MPROTECT, start as i64, (end - start) as i64, protection) < 0 { return None; }
     }
     Some(())
+}
+
+#[cfg(test)]
+mod protect_segments_tests {
+    use super::*;
+
+    #[test]
+    fn writable_load_needs_no_protection_change_but_still_checks_extents() {
+        let mut phdr = [0u8; 56];
+        phdr[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
+        phdr[4..8].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        phdr[16..24].copy_from_slice(&0x1000u64.to_le_bytes());
+        phdr[32..40].copy_from_slice(&0x800u64.to_le_bytes());
+        phdr[40..48].copy_from_slice(&0x1000u64.to_le_bytes());
+        let object = Object {
+            phdr: phdr.as_ptr(),
+            phnum: 1,
+            map_provenance: ObjectMapProvenance::Transaction,
+            ..EMPTY_OBJECT
+        };
+        assert!(unsafe { protect_segments(&object) }.is_some());
+        phdr[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(unsafe { protect_segments(&object) }.is_none());
+        phdr[16..24].copy_from_slice(&0x1000u64.to_le_bytes());
+        phdr[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(unsafe { protect_segments(&object) }.is_none());
+        phdr[32..40].copy_from_slice(&0u64.to_le_bytes());
+        phdr[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(unsafe { protect_segments(&object) }.is_none());
+        phdr[32..40].copy_from_slice(&0x800u64.to_le_bytes());
+        phdr[40..48].copy_from_slice(&0x1000u64.to_le_bytes());
+        phdr[4..8].copy_from_slice(&(PF_R | PF_X).to_le_bytes());
+        assert!(unsafe { protect_segments(&object) }.is_none());
+    }
 }
 
 unsafe fn apply_relro(object: &Object) -> Option<()> {
