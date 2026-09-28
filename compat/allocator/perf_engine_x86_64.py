@@ -1744,7 +1744,7 @@ def _checked_report_path(root: Path, path: Path) -> Path:
 
 
 def physical_products_unmet(report: Mapping[str, Any], path: Path) -> list[str]:
-    """Bind recorded lane products to the retained, source-shared fixture artifacts."""
+    """Bind recorded lane products and size attribution to the retained final links."""
 
     artifacts = path.with_suffix(".artifacts")
     lanes = report.get("lanes", {})
@@ -1760,6 +1760,26 @@ def physical_products_unmet(report: Mapping[str, Any], path: Path) -> list[str]:
         recorded = lanes.get(lane, {}).get("executable", {}).get("artifact")
         if not physical.is_file() or recorded != artifact_record(physical):
             unmet.append(f"{lane} executable differs from the recorded product identity")
+    calculated: dict[str, Any] = {}
+    for lane, name, owner in (("pinned_c", "engine-fixture-pinned-c.map", c_lane_owner),
+                              ("rust_engine", "engine-fixture-rust-engine.map", rust_lane_owner)):
+        physical = artifacts / name
+        recorded = lanes.get(lane, {}).get("link_map")
+        if not physical.is_file() or recorded != artifact_record(physical):
+            unmet.append(f"{lane} final link map differs from the recorded product identity")
+            continue
+        attribution = link_map_attribution(physical, owner)
+        calculated[lane] = {"size_attribution_bytes": attribution}
+        if lanes[lane].get("size_attribution_bytes") != attribution:
+            unmet.append(f"{lane} link-map attribution differs from retained final link map")
+    if len(calculated) == len(LANES):
+        try:
+            comparison = code_size_comparison(calculated)
+        except HarnessError as error:
+            unmet.append(f"retained final link maps lack allocator code: {error}")
+        else:
+            if report.get("code_size") != comparison:
+                unmet.append("code_size differs from retained final link maps")
     return unmet
 
 

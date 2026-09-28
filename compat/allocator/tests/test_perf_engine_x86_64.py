@@ -25,6 +25,13 @@ engine = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = engine
 SPEC.loader.exec_module(engine)
 
+C_LINK_MAP = ("Linker script and memory map\n"
+              " .text.mi_malloc 0x0000000000401000 0x20 /b/mimalloc-src-alloc.o\n"
+              " .rodata.mi_options 0x0000000000402000 0x10 /b/mimalloc-src-options.o\n")
+RUST_LINK_MAP = ("Linker script and memory map\n"
+                 " .text.engine 0x0000000000401000 0x40 /b/libcrabc_allocator_engine_rust_backend.a(core.o)\n"
+                 " .rodata.engine 0x0000000000402000 0x8 /b/libcrabc_allocator_engine_rust_backend.a(core.o)\n")
+
 
 def proc_snapshot(rss_kib: int, pss_kib: int, *, maps: bool = True) -> dict[str, object]:
     status = (f"VmRSS: {rss_kib} kB\nVmHWM: {rss_kib} kB\nVmSize: {rss_kib * 2} kB\n"
@@ -312,10 +319,17 @@ def synthetic_report(rust_cost_factor: float = 1.0, peak_hook: bool = True) -> d
     report["lanes"] = {
         "shared_fixture_object_sha256": fixture_hash,
         "pinned_c": {"executable": {"artifact": {"filename": "engine-fixture-pinned-c", "bytes": 8,
-                                                  "sha256": hashlib.sha256(b"C binary").hexdigest()}}},
+                                                  "sha256": hashlib.sha256(b"C binary").hexdigest()}},
+                     "link_map": {"filename": "engine-fixture-pinned-c.map", "bytes": len(C_LINK_MAP.encode()),
+                                  "sha256": hashlib.sha256(C_LINK_MAP.encode()).hexdigest()},
+                     "size_attribution_bytes": {"allocator": {"text": 32, "rodata": 16, "data": 0}}},
         "rust_engine": {"executable": {"artifact": {"filename": "engine-fixture-rust-engine", "bytes": 11,
-                                                     "sha256": hashlib.sha256(b"Rust binary").hexdigest()}}},
+                                                     "sha256": hashlib.sha256(b"Rust binary").hexdigest()}},
+                        "link_map": {"filename": "engine-fixture-rust-engine.map", "bytes": len(RUST_LINK_MAP.encode()),
+                                     "sha256": hashlib.sha256(RUST_LINK_MAP.encode()).hexdigest()},
+                        "size_attribution_bytes": {"allocator": {"text": 64, "rodata": 8, "data": 0}}},
     }
+    report["code_size"] = engine.code_size_comparison(report["lanes"])
     timed, memory = engine.selected_rows(manifest, "matrix")
     for index, row in enumerate(timed):
         batches = engine.expected_batches(row, mode["batch_divisor"])
@@ -386,7 +400,9 @@ class QualifiedReportTests(unittest.TestCase):
         for name, content in (("engine-fixture-c.o", b"shared fixture object"),
                               ("engine-fixture-rust.o", b"shared fixture object"),
                               ("engine-fixture-pinned-c", b"C binary"),
-                              ("engine-fixture-rust-engine", b"Rust binary")):
+                              ("engine-fixture-rust-engine", b"Rust binary"),
+                              ("engine-fixture-pinned-c.map", C_LINK_MAP.encode()),
+                              ("engine-fixture-rust-engine.map", RUST_LINK_MAP.encode())):
             (artifacts / name).write_bytes(content)
         path.write_text(json.dumps(report), encoding="utf-8")
         return path
@@ -408,6 +424,26 @@ class QualifiedReportTests(unittest.TestCase):
         self.assertLess(abs(metrics["memory"]["geometric_mean_peak_upper"]["pss"] - 1.0), 0.1)
         self.assertLess(abs(metrics["memory"]["critical_peak_upper"][roster[0]]["pss"] - 1.0), 0.1)
         self.assertEqual(set(validated["identity"]), {"source", "configuration", "host"})
+
+    def test_rejects_forged_size_attribution_and_code_size_with_retained_maps(self) -> None:
+        report = copy.deepcopy(self.report)
+        report["lanes"]["rust_engine"]["size_attribution_bytes"]["allocator"]["text"] = 1
+        report["code_size"]["rust_engine_text_rodata_bytes"] = 9
+        report["code_size"]["growth_rust_over_c"] = -0.5
+        unmet = self.unmet(report)
+        self.assertTrue(any("rust_engine link-map attribution differs" in item for item in unmet), unmet)
+        self.assertTrue(any("code_size differs from retained final link maps" in item for item in unmet), unmet)
+
+    def test_rejects_a_rehashed_final_map_with_stale_size_attribution(self) -> None:
+        report = copy.deepcopy(self.report)
+        path = self.write(report)
+        physical = path.with_suffix(".artifacts") / "engine-fixture-rust-engine.map"
+        physical.write_text(RUST_LINK_MAP.replace("0x40", "0x10"), encoding="utf-8")
+        report["lanes"]["rust_engine"]["link_map"] = engine.artifact_record(physical)
+        path.write_text(json.dumps(report), encoding="utf-8")
+        unmet = engine.inspect_full_report(engine.ROOT, path)["unmet"]
+        self.assertTrue(any("rust_engine link-map attribution differs" in item for item in unmet), unmet)
+        self.assertTrue(any("code_size differs from retained final link maps" in item for item in unmet), unmet)
 
     def test_a_slower_rust_lane_lowers_every_throughput_bound(self) -> None:
         metrics = engine.validate_qualified_full_report(engine.ROOT, self.write(synthetic_report(2.0)))["metrics"]
