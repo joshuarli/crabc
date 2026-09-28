@@ -2753,13 +2753,10 @@ unsafe fn render_final_statistics(
                 unsafe { emit_final_statistics_line(output, &separator) };
             }
         }
-        #[cfg(feature = "mi-stat-2")]
         let (normal_unit, huge_unit) = (
             if statistics.malloc_normal_count == 0 { -1 } else { 1 },
             if statistics.malloc_huge_count == 0 { -1 } else { 1 },
         );
-        #[cfg(not(feature = "mi-stat-2"))]
-        let (normal_unit, huge_unit) = (-1, -1);
         emit_final_stat(output, statistics.malloc_normal, b"binned", normal_unit, FINAL_NOT_ALL_FREED);
         emit_final_stat(output, statistics.malloc_huge, b"huge", huge_unit, FINAL_NOT_ALL_FREED);
         // `mi_stat_count_add_mt` first adds normal into zero, then combines
@@ -3211,6 +3208,35 @@ mod tests {
         std::println!("CRABC_MI_M7_STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_END");
     }
 
+    #[cfg(feature = "mi-stat-1")]
+    #[test]
+    fn level_one_huge_page_count_prints_binary_byte_units() {
+        let mut owner = output_owner();
+        let capture = Capture::new();
+        // SAFETY: registration and rendering stay on this test thread, and
+        // the capture outlives the synchronous callback delivery.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        let statistics = HeapTheapStatistics::new();
+        statistics.malloc_huge_allocated(589_824);
+        let view = FinalProcessDiagnosticView::new(
+            7, statistics.final_output_snapshot(), FinalProcessInfo::new(0, 0, 0, 0, 0, 0),
+        );
+        // SAFETY: the callback and scalar statistics image remain valid for
+        // the entire source-order render.
+        unsafe {
+            super::render_final_statistics(
+                super::StatisticsOutput::default_route(&owner), b"subproc", view, 0,
+            )
+        };
+        let row = (0..capture.count())
+            .map(|index| capture.message(index))
+            .find(|message| message.starts_with(b"  huge      :"))
+            .expect("the live huge allocation prints its row");
+        let row = std::str::from_utf8(row).expect("source statistics output is ASCII");
+        assert_eq!(row.matches("578.2 KiB").count(), 3);
+        assert!(row.ends_with("not all freed\n"));
+    }
+
     #[cfg(feature = "mi-stat-2")]
     fn level_two_requested_output(
         name: &str, process: &HeapTheapStatistics, owner: &OutputOwner, capture: &Capture,
@@ -3480,9 +3506,9 @@ mod tests {
             malloc_huge: final_stat_count(0, 0, 0),
             #[cfg(feature = "mi-stat-2")]
             malloc_requested: final_stat_count(0, 0, 0),
-            #[cfg(feature = "mi-stat-2")]
+            #[cfg(feature = "mi-stat-1")]
             malloc_normal_count: 0,
-            #[cfg(feature = "mi-stat-2")]
+            #[cfg(feature = "mi-stat-1")]
             malloc_huge_count: 0,
             #[cfg(feature = "mi-stat-2")]
             malloc_bins: [final_stat_count(0, 0, 0); crate::config::BIN_HUGE + 1],

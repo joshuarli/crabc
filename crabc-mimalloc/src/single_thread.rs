@@ -39451,6 +39451,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
         let page = self.allocate_fresh_os_aligned_page(block_size, alignment)?;
+        #[cfg(feature = "mi-stat-1")]
+        {
+            // `mi_huge_page_alloc` records the fresh aligned singleton before
+            // its sole block is popped or the full-page transition runs.
+            let physical_size = unsafe { page.as_ref().block_size() };
+            self.session.theap().record_malloc_huge_allocated(physical_size);
+        }
         match self.pop_or_extend(page, zero) {
             Ok(Some(block)) => {
                 // `page.c` creates this aligned singleton in `BIN_HUGE`, but

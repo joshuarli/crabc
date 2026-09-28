@@ -57,6 +57,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:show-errors-profile",
             "differential:startup-page-map-failure",
             "differential:statistics",
+            "differential:statistics-aligned-huge",
             "differential:statistics-huge",
             "differential:statistics-json",
             "differential:statistics-level-one",
@@ -330,6 +331,29 @@ class M7GateContractTests(unittest.TestCase):
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_remote_normal({**trace,
                 "worker.binned.hex": worker_row.replace("-64", "  0").encode("ascii").hex()}, "lost worker current")
+
+    def test_statistics_aligned_huge_requires_source_built_producer(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-aligned-huge", statistics["evidence"])
+        self.assertIn("differential:statistics-aligned-huge", summary["runnable_evidence"])
+
+    def test_statistics_aligned_huge_reader_rejects_lost_units_and_merge(self) -> None:
+        row = "  huge      :   578.2 KiB   578.2 KiB   578.2 KiB                          not all freed"
+        trace = {"profile.level": "1", "allocation.aligned": "1", "allocation.usable": "589824",
+                 "allocated.huge": "589824,589824,589824", "allocated.huge_count": "1",
+                 "merged.huge": "589824,589824,589824", "merged.huge_count": "1",
+                 "freed.huge": "589824,589824,0", "freed.huge_count": "1",
+                 "thread.live_huge": "1", "thread.live_huge.hex": row.encode("ascii").hex(),
+                 "warning.count": "0"}
+        gate.require_statistics_aligned_huge(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_aligned_huge({**trace,
+                "thread.live_huge.hex": row.replace("KiB", "Ki ").encode("ascii").hex()}, "lost units")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_aligned_huge({**trace, "merged.huge": "0,0,0"}, "lost merge")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_aligned_huge({**trace, "warning.count": "1"}, "extra warning")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:

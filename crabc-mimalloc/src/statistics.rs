@@ -467,9 +467,11 @@ pub(crate) struct FinalStatisticsSnapshot {
     pub(crate) malloc_huge: FinalStatCount,
     #[cfg(feature = "mi-stat-2")]
     pub(crate) malloc_requested: FinalStatCount,
-    #[cfg(feature = "mi-stat-2")]
+    // Both allocation counters select byte units in `mi_stat_print` at
+    // every nonzero statistics level, even though bin rows need level two.
+    #[cfg(feature = "mi-stat-1")]
     pub(crate) malloc_normal_count: i64,
-    #[cfg(feature = "mi-stat-2")]
+    #[cfg(feature = "mi-stat-1")]
     pub(crate) malloc_huge_count: i64,
     #[cfg(feature = "mi-stat-2")]
     pub(crate) malloc_bins: [FinalStatCount; STAT_BIN_COUNT],
@@ -1101,9 +1103,9 @@ impl HeapTheapStatistics {
             malloc_huge: final_stat_count(&self.malloc_huge),
             #[cfg(feature = "mi-stat-2")]
             malloc_requested: final_stat_count(&self.malloc_requested),
-            #[cfg(feature = "mi-stat-2")]
+            #[cfg(feature = "mi-stat-1")]
             malloc_normal_count: i64_load_relaxed(&self.malloc_normal_count.total),
-            #[cfg(feature = "mi-stat-2")]
+            #[cfg(feature = "mi-stat-1")]
             malloc_huge_count: i64_load_relaxed(&self.malloc_huge_count.total),
             #[cfg(feature = "mi-stat-2")]
             malloc_bins: core::array::from_fn(|bin| final_stat_count(&self.malloc_bins[bin])),

@@ -972,6 +972,9 @@ STATISTICS_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_HUGE_TRACE_END"
 STATISTICS_REMOTE_NORMAL_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_remote_normal_driver.c"
 STATISTICS_REMOTE_NORMAL_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REMOTE_NORMAL_TRACE_BEGIN"
 STATISTICS_REMOTE_NORMAL_TRACE_END = "CRABC_MI_M7_STATISTICS_REMOTE_NORMAL_TRACE_END"
+STATISTICS_ALIGNED_HUGE_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_aligned_huge_driver.c"
+STATISTICS_ALIGNED_HUGE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_ALIGNED_HUGE_TRACE_BEGIN"
+STATISTICS_ALIGNED_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_ALIGNED_HUGE_TRACE_END"
 
 
 def require_statistics_level_one(trace: Mapping[str, str], description: str) -> None:
@@ -1205,6 +1208,28 @@ def require_statistics_remote_normal(trace: Mapping[str, str], description: str)
         raise harness.HarnessError(f"{description} has invalid worker statistics text") from error
     if worker_row.split() != ["binned", ":", "8", "8", "-64", "not", "all", "freed"]:
         raise harness.HarnessError(f"{description} lost the freeing-Theap peak/current: {worker_row}")
+
+
+def require_statistics_aligned_huge(trace: Mapping[str, str], description: str) -> None:
+    """Require the aligned page's physical bytes and byte-unit print before merge."""
+
+    expected = {
+        "profile.level": "1", "allocation.aligned": "1", "allocation.usable": "589824",
+        "allocated.huge": "589824,589824,589824", "allocated.huge_count": "1",
+        "merged.huge": "589824,589824,589824", "merged.huge_count": "1",
+        "freed.huge": "589824,589824,0", "freed.huge_count": "1",
+        "thread.live_huge": "1", "thread.live_huge.hex": trace.get("thread.live_huge.hex"),
+        "warning.count": "0",
+    }
+    if dict(trace) != expected:
+        raise harness.HarnessError(f"{description} lost aligned huge accounting or warning behavior: {trace}")
+    try:
+        row = bytes.fromhex(trace["thread.live_huge.hex"]).decode("ascii")
+    except (ValueError, UnicodeDecodeError) as error:
+        raise harness.HarnessError(f"{description} has invalid huge statistics text") from error
+    if row.split() != ["huge", ":", "578.2", "KiB", "578.2", "KiB", "578.2", "KiB",
+                       "not", "all", "freed"]:
+        raise harness.HarnessError(f"{description} lost the pre-merge physical-byte row: {row}")
 
 
 def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
@@ -1450,6 +1475,14 @@ def run_statistics_remote_normal_differential(offline: bool) -> dict[str, Any]:
     )
 
 
+def run_statistics_aligned_huge_differential(offline: bool) -> dict[str, Any]:
+    return run_public_level_one_statistics_differential(
+        offline, subject="aligned-huge", driver=STATISTICS_ALIGNED_HUGE_DRIVER,
+        begin=STATISTICS_ALIGNED_HUGE_TRACE_BEGIN, end=STATISTICS_ALIGNED_HUGE_TRACE_END,
+        report_name="statistics-aligned-huge.json", require_complete=require_statistics_aligned_huge,
+    )
+
+
 def run_adapter_differential(
     offline: bool, *, driver: Path = ADAPTER_DRIVER, begin: str = ADAPTER_TRACE_BEGIN,
     end: str = ADAPTER_TRACE_END, report_name: str = "adapter.json",
@@ -1592,6 +1625,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare pinned-C/Rust huge allocation statistics under MI_STAT=1")
     mode.add_argument("--statistics-remote-normal-differential", action="store_true",
         help="compare pinned-C/Rust cross-thread normal free statistics under MI_STAT=1")
+    mode.add_argument("--statistics-aligned-huge-differential", action="store_true",
+        help="compare pinned-C/Rust OS-aligned huge statistics under MI_STAT=1")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1674,6 +1709,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_remote_normal_differential:
         report = run_statistics_remote_normal_differential(arguments.offline)
         print(f"M7 remote normal statistics differential passed: {len(report['c_trace'])} keys")
+        return 0
+    if arguments.statistics_aligned_huge_differential:
+        report = run_statistics_aligned_huge_differential(arguments.offline)
+        print(f"M7 aligned huge statistics differential passed: {len(report['c_trace'])} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)
