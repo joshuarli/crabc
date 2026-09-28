@@ -948,6 +948,13 @@ names = ["crabc_x86_math_complex_internal_mulsc3", "crabc_x86_math_complex_inter
 sources = ["libc/src/c_abi/x86_64/math_complex_complete.rs", "libc/src/c_abi/x86_64/math_complex_complete_musl_x86_64.S"]
 reason = "The three compiler complex-multiply bodies are private to the owned math implementation."
 
+[private_float_scanner_helpers]
+id = "source-owned-float-scanner-helpers"
+owner = "x86-float-scanner"
+names = ["crabc_x86_float_parse_shlim", "crabc_x86_float_parse_floatscan"]
+sources = ["libc/src/c_abi/x86_64/float_parse.rs", "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S", "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S", "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S", "libc/src/c_abi/x86_64/float_parse_locale_musl_x86_64.S"]
+reason = "The two private pseudo-FILE scanner helpers serve the owned string and locale entry objects."
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]

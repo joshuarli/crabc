@@ -1872,6 +1872,174 @@ class PrivateComplexMultiplyPhysicalFactsTests(unittest.TestCase):
         self.assertEqual(accounting['blockers'], [])
 
 
+class PrivateFloatScannerBindingTests(unittest.TestCase):
+    """The pseudo-FILE scanner helpers have one static and shared boundary."""
+
+    NAMES = ('crabc_x86_float_parse_shlim', 'crabc_x86_float_parse_floatscan')
+    SIZES = (58, 2240)
+    SECTIONS = (18, 8)
+    PROVIDER = 'c.c.example-cgu.1052.rcgu.o'
+    ENTRY = 'c.c.example-cgu.1238.rcgu.o'
+    LOCALE = 'c.c.example-cgu.1697.rcgu.o'
+
+    def fixture(self):
+        rule = {'id': 'source-owned-float-scanner-helpers', 'owner': 'x86-float-scanner',
+                'names': list(self.NAMES),
+                'sources': ['libc/src/c_abi/x86_64/float_parse.rs',
+                            'libc/src/c_abi/x86_64/float_parse_musl_x86_64.S',
+                            'libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S',
+                            'libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S',
+                            'libc/src/c_abi/x86_64/float_parse_locale_musl_x86_64.S'],
+                'reason': 'The two private pseudo-FILE scanner helpers serve the owned string and locale entry objects.'}
+        static_sha, shared_sha = 'a' * 64, 'b' * 64
+        accounting = {'identities': [], 'occurrences': [], 'placement_joins': [], 'blockers': [],
+                      'artifacts': {
+                          'candidate-static': {'artifact': {'identity': {'sha256': static_sha}}},
+                          'candidate-shared': {'artifact': {'identity': {'sha256': shared_sha}}},
+                      }}
+        reasons = ['candidate binding ownership is unresolved',
+                   'candidate definition placement is not selected: candidate-static',
+                   selection.ORDINARY_IMPORT_REASON]
+        for name, size, section_index in zip(self.NAMES, self.SIZES, self.SECTIONS):
+            ident = identity(name)
+            accounting['identities'].append({'identity': ident,
+                'selection': {'disposition': 'unresolved', 'owner': None},
+                'expected_placements': [], 'unresolved': list(reasons)})
+            accounting['blockers'].extend({'code': 'identity-unresolved', 'identity': ident, 'reason': reason}
+                                          for reason in reasons)
+            for artifact, member, role, binding, visibility, section, index in (
+                ('candidate-static', self.PROVIDER, 'definition', 'GLOBAL', 'HIDDEN', str(section_index), section_index),
+                ('candidate-static', self.ENTRY, 'import', 'GLOBAL', 'DEFAULT', 'UND', None),
+                ('candidate-static', self.LOCALE, 'import', 'GLOBAL', 'HIDDEN', 'UND', None),
+                ('candidate-shared', None, 'local-definition', 'LOCAL', 'HIDDEN', '9', 9),
+            ):
+                accounting['occurrences'].append({
+                    'index': len(accounting['occurrences']), 'artifact_key': artifact,
+                    'artifact_sha256': static_sha if artifact == 'candidate-static' else shared_sha,
+                    'member_name': member, 'member_occurrence': 0 if member else None,
+                    'role': role, 'table': '.symtab',
+                    'row': symbol(name, binding=binding, visibility=visibility, section=section,
+                                  kind='NOTYPE' if role == 'import' else 'FUNC',
+                                  size=0 if role == 'import' else size),
+                    'definition_section': None if role == 'import' else {
+                        'index': index, 'name': '.text.' + name if artifact == 'candidate-static' else '.text',
+                        'type': 'PROGBITS', 'flags': 'AX'},
+                })
+        return rule, accounting, [self.PROVIDER, self.ENTRY, self.LOCALE]
+
+    def test_source_owned_scanner_class_selects_both_helpers(self):
+        rule, accounting, rust_members = self.fixture()
+        joins = selection.attach_private_float_scanner_helpers(accounting, rule, rust_members)
+        self.assertEqual([row['identity']['name'] for row in joins], list(self.NAMES))
+        self.assertEqual(accounting['blockers'], [])
+        self.assertTrue(all(row['selection']['owner'] == rule['owner'] for row in accounting['identities']))
+
+    def test_foreign_consumer_or_visibility_retains_both_helpers(self):
+        cases = {
+            'missing locale import': lambda a: a['occurrences'].pop(2),
+            'foreign entry member': lambda a: a['occurrences'][1].update(member_name='foreign.o'),
+            'duplicate provider': lambda a: a['occurrences'].append({**copy.deepcopy(a['occurrences'][0]), 'index': 8}),
+            'wrong locale visibility': lambda a: a['occurrences'][2]['row'].update(visibility='DEFAULT'),
+            'shared export': lambda a: a['occurrences'][3]['row'].update(binding='GLOBAL'),
+            'shared dynsym': lambda a: a['occurrences'][3].update(table='.dynsym'),
+            'wrong source section': lambda a: a['occurrences'][4]['definition_section'].update(name='.text.foreign'),
+            'wrong archive hash': lambda a: a['artifacts']['candidate-static']['artifact']['identity'].update(sha256='0' * 64),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                rule, accounting, rust_members = self.fixture()
+                alter(accounting)
+                self.assertEqual(selection.attach_private_float_scanner_helpers(accounting, rule, rust_members), [])
+                self.assertEqual(len(accounting['blockers']), 6)
+
+
+class PrivateFloatScannerPhysicalFactsTests(unittest.TestCase):
+    """Reread both scanner helpers from the installed static and shared ELF."""
+
+    def test_retained_float_scanner_rows_replay_from_physical_products(self):
+        retained = os.environ.get('CRABC_FLOAT_SCANNER_ELF_DIR')
+        if retained is None:
+            self.skipTest('retained static and shared ELF products were not supplied')
+        work = Path(retained)
+        self.assertTrue(work.is_dir() and not work.is_symlink())
+        report = json.loads((work / 'elf-report.json').read_text())
+        provenance = json.loads((work / 'libc-static.provenance.json').read_text())
+        archive, shared = work / 'libc.a', work / 'libc.so'
+        self.assertEqual(PrivateFloatScannerBindingTests.NAMES,
+                         tuple(selection.load_contract()['private_float_scanner_helpers']['names']))
+        for key, path in (('candidate-static', archive), ('candidate-shared', shared)):
+            self.assertTrue(path.is_file() and not path.is_symlink())
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                             report['artifacts'][key]['identity']['sha256'])
+        self.assertEqual(provenance['archive']['sha256'], report['artifacts']['candidate-static']['identity']['sha256'])
+        for tool in ('ar', 'readelf'):
+            path = Path('/usr/bin') / tool
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                             report['tools'][tool]['original']['sha256'])
+
+        def captured(tool, flag, path):
+            result = subprocess.run([f'/usr/bin/{tool}', flag, str(path)], check=True,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.stderr, '')
+            return result.stdout
+
+        inventory = selection.inventory
+        roster = inventory.parse_archive_members(captured('ar', 't', archive))
+        current = inventory.parse_archive_elf_facts(
+            captured('readelf', '-hW', archive), captured('readelf', '-SW', archive),
+            captured('readelf', '-sW', archive), roster, expected_archive=str(archive))
+        expected = report['facts']['candidate-static']
+        self.assertEqual([row['member'] for row in current], [row['member'] for row in expected])
+        names = set(PrivateFloatScannerBindingTests.NAMES)
+        relevant = {member['member'] for member in expected for table in member['symbol_tables']
+                    for row in table['rows'] if row['name'] in names}
+        self.assertEqual(len(relevant), 3)
+        for observed, retained_member in zip(current, expected):
+            if observed['member'] in relevant:
+                observed['archive'] = retained_member['archive']
+                self.assertEqual(observed, retained_member)
+        shared_facts = inventory.parse_elf_facts(
+            captured('readelf', '-hW', shared), captured('readelf', '-SW', shared),
+            captured('readelf', '-sW', shared), expected_type='DYN')
+        self.assertEqual(shared_facts, report['facts']['candidate-shared'])
+        selected = provenance['selected_members']
+        self.assertEqual([row['name'] for row in selected], roster)
+        installed = {row['name']: row['sha256'] for row in selected}
+        for member in relevant:
+            extracted = subprocess.run(['/usr/bin/ar', 'p', str(archive), member], check=True,
+                                       capture_output=True).stdout
+            self.assertEqual(hashlib.sha256(extracted).hexdigest(), installed[member])
+
+        rule, accounting, _ = PrivateFloatScannerBindingTests().fixture()
+        static_sha = report['artifacts']['candidate-static']['identity']['sha256']
+        shared_sha = report['artifacts']['candidate-shared']['identity']['sha256']
+        accounting['artifacts']['candidate-static']['artifact']['identity']['sha256'] = static_sha
+        accounting['artifacts']['candidate-shared']['artifact']['identity']['sha256'] = shared_sha
+        accounting['occurrences'] = []
+        for artifact_key, members, digest in (
+            ('candidate-static', current, static_sha),
+            ('candidate-shared', [shared_facts], shared_sha),
+        ):
+            for member in members:
+                sections = {str(row['index']): row for row in member['sections']}
+                for table in member['symbol_tables']:
+                    for row in table['rows']:
+                        if row['name'] not in names:
+                            continue
+                        accounting['occurrences'].append({
+                            'index': len(accounting['occurrences']), 'artifact_key': artifact_key,
+                            'artifact_sha256': digest, 'member_name': member.get('member'),
+                            'member_occurrence': member.get('member_occurrence'), 'table': table['name'],
+                            'role': selection.row_role(row), 'row': row,
+                            'definition_section': sections.get(row['section_index']),
+                        })
+        self.assertEqual(len(accounting['occurrences']), 8)
+        rust_members = [row['name'] for row in selected if row['name'].startswith('c.')]
+        joins = selection.attach_private_float_scanner_helpers(accounting, rule, rust_members)
+        self.assertEqual([row['identity']['name'] for row in joins], list(PrivateFloatScannerBindingTests.NAMES))
+        self.assertEqual(accounting['blockers'], [])
+
+
 class CompanionRejectionTests(unittest.TestCase):
     """One rejected companion is a named blocker, never an aborted report."""
 

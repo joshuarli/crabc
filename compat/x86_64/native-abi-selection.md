@@ -831,6 +831,17 @@ physical facts test in `tests/test_native_abi_selection.py` can reread a
 retained archive and shared libc with the pinned ELF tools when
 `CRABC_COMPLEX_HELPER_ELF_DIR` names their containing directory.
 
+The two `crabc_x86_float_parse_{shlim,floatscan}` helpers belong to the
+string-only floating scanner in `float_parse.rs` and its owned assembly
+sources. The `private_float_scanner_helpers` rule admits them together only
+when the static archive has one hidden provider member and the two separate
+string and locale entry members import both names with their selected
+visibility. The shared libc must retain one local hidden `.symtab` definition
+of each and no `.dynsym` entry. The selector ties all rows to the selected
+static and shared ELF identities. `PrivateFloatScannerPhysicalFactsTests`
+can reread the retained archive and shared libc with pinned ELF tools when
+`CRABC_FLOAT_SCANNER_ELF_DIR` names their containing directory.
+
 The private feature witnesses have actual evidence consumers. Crypt helper
 names, private musl alias targets, process/runtime seams, and compiler helpers
 also require their own physical visibility and consumer decisions. They do
