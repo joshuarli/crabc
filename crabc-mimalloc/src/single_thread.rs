@@ -42906,6 +42906,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         Some((start, index))
     }
 
+    // Allocation, release, and full-page movement share this queue-head
+    // update. Keep its range walk in one function across those transitions.
+    #[inline(never)]
     fn update_direct_cache(&mut self, bin: usize) {
         let (block_size, first) = match self.session.queue(bin) {
             Some(queue) => (queue.block_size(), queue.first()),
