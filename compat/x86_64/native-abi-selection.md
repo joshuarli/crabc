@@ -332,6 +332,19 @@ archive callers/providers, wrong call targets, and mismatched TLS address
 expressions before removing this one ordinary-import reason. Per-thread
 lifecycle and broader TLS semantics remain separate receipt obligations.
 
+The same ordinary-import attachment also accounts for `abort`. The archive has
+one Rust `__assert_fail` caller with a `GOTPCREL` call and the fixed C allocator
+member with `PLT32` calls. The retained installed-header workload selects both
+members with a static-only `mi_new` call; the dynamic object omits that
+non-exported allocator entry. The reader maps each source relocation to its selected ET_EXEC and
+static-PIE section, decodes direct calls or GOT slots, and requires the unique
+owned Rust `abort` provider as the final target. It also checks matching
+source-named calls in shared libc, its two provider symbol rows, and absence
+of an implementation import in the dynamic executables. Archive occurrence
+accounting rejects added or foreign callers and weak, missing, or duplicate
+providers. This joins the ordinary import/provider boundary; termination and
+signal behavior remain separate runtime obligations.
+
 `--utmpx-receipt-report REPORT` is independently optional. Its owning
 process-free reader reconstructs the retained eight selected aliases and
 sixteen provider spellings, static executable function proof, dynamic import

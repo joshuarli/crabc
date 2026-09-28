@@ -60,7 +60,11 @@ PUBLIC_WEAK_WORKLOAD = ("#define _GNU_SOURCE\n#include <sys/timeb.h>\n#include <
                         "return getloadavg(loads, 3) < 0 ? 2 : 0; }\n")
 ERRNO_IMPORT_NAME = "__errno_location"
 ERRNO_WORKLOAD = ("#include <stdlib.h>\n#include <stdio.h>\n#include <wchar.h>\n"
-                  "int main(void) { char *end; int decimal = 0, wide = 0; "
+                  "#include <assert.h>\n"
+                  "#ifdef CRABC_STATIC_ABORT_PROBE\nextern void *mi_new(size_t);\n#endif\n"
+                  "int main(int argc, char **argv) { (void)argv; assert(argc >= 1);\n"
+                  "#ifdef CRABC_STATIC_ABORT_PROBE\nif (argc == 1000) free(mi_new(1));\n#endif\n"
+                  "char *end; int decimal = 0, wide = 0; "
                   "volatile double value = strtod(\"3.25e2\", &end); "
                   "if (sscanf(\"7\", \"%d\", &decimal) != 1) return 1; "
                   "if (swscanf(L\"8\", L\"%d\", &wide) != 1) return 2; "
@@ -896,8 +900,8 @@ def _public_weak_relocations(transcript: str, name: str, kind: str) -> list[dict
     return rows
 
 
-def _errno_import_relocations(transcript: str) -> list[dict[str, object]]:
-    """Retain every direct errno call in one authenticated archive member."""
+def _ordinary_import_relocations(transcript: str, name: str) -> list[dict[str, object]]:
+    """Retain call relocations for one archive import, including their call form."""
     section: str | None = None
     calls = []
     for line in transcript.splitlines():
@@ -909,15 +913,23 @@ def _errno_import_relocations(transcript: str) -> list[dict[str, object]]:
             section = None
             continue
         row = re.match(r"^\s*([0-9a-f]{16})\s+\S+\s+(R_X86_64_\w+)\s+\S+\s+(\S+)\s+([+-])\s+(\d+)\s*$", line)
-        if row is None or row.group(3) != ERRNO_IMPORT_NAME:
+        if row is None or row.group(3) != name:
             continue
-        require(section is not None and row.group(2) == "R_X86_64_PLT32"
+        require(section is not None and row.group(2) in {"R_X86_64_PLT32", "R_X86_64_GOTPCREL"}
                 and row.group(4) == "-" and row.group(5) == "4",
-                "errno import relocation is not a direct call")
-        calls.append({"section": section, "offset": int(row.group(1), 16)})
+                f"ordinary import {name} relocation is not a supported call")
+        calls.append({"section": section, "offset": int(row.group(1), 16),
+                      "kind": row.group(2)})
     require(calls and len({(row["section"], row["offset"]) for row in calls}) == len(calls),
-            "errno import relocation roster differs")
+            f"ordinary import {name} relocation roster differs")
     return calls
+
+
+def _errno_import_relocations(transcript: str) -> list[dict[str, object]]:
+    calls = _ordinary_import_relocations(transcript, ERRNO_IMPORT_NAME)
+    require(all(call["kind"] == "R_X86_64_PLT32" for call in calls),
+            "errno import relocation is not a direct call")
+    return [{"section": call["section"], "offset": call["offset"]} for call in calls]
 
 
 def _elf_virtual_bytes(image: bytes, address: int, size: int, expected_type: int) -> bytes:
@@ -1059,32 +1071,70 @@ def _errno_static_accessor(image: bytes, address: int, symbol_text: str, elf_typ
             "fs_displacement": displacement}
 
 
-def _errno_final_member_calls(image: bytes, *, archive_member: str,
-                              source_calls: Sequence[Mapping[str, object]], map_text: str,
-                              provider_address: int, elf_type: int) -> dict[str, object]:
+def _ordinary_final_member_calls(image: bytes, *, archive_member: str,
+                                 source_calls: Sequence[Mapping[str, object]], map_text: str,
+                                 relocation_text: str, provider_address: int,
+                                 elf_type: int, name: str) -> dict[str, object]:
     resolved = []
     discarded = []
     for relocation in source_calls:
         section, offset = relocation["section"], relocation["offset"]
         rows = [line for line in map_text.splitlines()
                 if line.rstrip().endswith(f"{archive_member}:({section})")]
-        require(len(rows) <= 1, f"errno source section map is ambiguous: {section}")
+        require(len(rows) <= 1, f"ordinary {name} source section map is ambiguous: {section}")
         if not rows:
             discarded.append(dict(relocation))
             continue
         parts = rows[0].split()
         require(len(parts) >= 5 and type(offset) is int
                 and 1 <= offset and offset + 4 <= int(parts[2], 16),
-                f"errno source call leaves selected section: {section}")
-        call_address = int(parts[0], 16) + offset - 1
-        opcode = _public_weak_virtual_bytes(image, call_address, 5, elf_type, executable=True)
-        require(opcode[0] == 0xe8, "errno final direct-call opcode differs")
-        target = call_address + 5 + struct.unpack_from("<i", opcode, 1)[0]
-        require(target == provider_address, "errno final call resolves to a foreign provider")
-        resolved.append({"section": section, "offset": offset,
-                         "call_address": call_address, "target_address": target})
-    require(resolved, f"errno final image has no selected call from importer: {archive_member}")
+                f"ordinary {name} source call leaves selected section: {section}")
+        kind = relocation.get("kind", "R_X86_64_PLT32")
+        if kind == "R_X86_64_PLT32":
+            call_address = int(parts[0], 16) + offset - 1
+            opcode = _public_weak_virtual_bytes(image, call_address, 5, elf_type, executable=True)
+            require(opcode[0] == 0xe8, f"ordinary {name} direct-call opcode differs")
+            target = call_address + 5 + struct.unpack_from("<i", opcode, 1)[0]
+            require(target == provider_address, f"ordinary {name} call resolves to a foreign provider")
+            call = {"section": section, "offset": offset, "call_address": call_address,
+                    "target_address": target}
+        else:
+            require(kind == "R_X86_64_GOTPCREL", f"ordinary {name} source call form differs")
+            call_address = int(parts[0], 16) + offset - 2
+            opcode = _public_weak_virtual_bytes(image, call_address, 6, elf_type, executable=True)
+            require(opcode[:2] == b"\xff\x15", f"ordinary {name} GOT-call opcode differs")
+            slot = call_address + 6 + struct.unpack_from("<i", opcode, 2)[0]
+            target = struct.unpack("<Q", _public_weak_virtual_bytes(
+                image, slot, 8, elf_type, executable=False))[0]
+            relative = re.findall(rf"^0*{slot:x}\s+\S+\s+R_X86_64_RELATIVE\s+([0-9a-f]+)\s*$",
+                                  relocation_text, re.MULTILINE)
+            relr = re.findall(rf"^\s*0*{slot:x}\s+\.got\b", relocation_text, re.MULTILINE)
+            relocations_at_slot = re.findall(
+                rf"^\s*0*{slot:x}\s+\S+\s+(R_X86_64_\w+)", relocation_text, re.MULTILINE)
+            if elf_type == 2:
+                require(target == provider_address and not relocations_at_slot and not relr,
+                        f"ordinary {name} ET_EXEC GOT resolves to a foreign provider")
+            else:
+                require((len(relative) == 1 and int(relative[0], 16) == provider_address
+                         and target == 0 and not relr
+                         and relocations_at_slot == ["R_X86_64_RELATIVE"])
+                        or (len(relr) == 1 and target == provider_address
+                            and not relocations_at_slot),
+                        f"ordinary {name} PIE GOT resolves to a foreign provider")
+            call = {"section": section, "offset": offset, "call_address": call_address,
+                    "got_slot": slot, "target_address": provider_address}
+        resolved.append(call)
+    require(resolved, f"ordinary {name} final image has no selected call from importer: {archive_member}")
     return {"resolved_calls": resolved, "discarded_calls": discarded}
+
+
+def _errno_final_member_calls(image: bytes, *, archive_member: str,
+                              source_calls: Sequence[Mapping[str, object]], map_text: str,
+                              provider_address: int, elf_type: int) -> dict[str, object]:
+    return _ordinary_final_member_calls(
+        image, archive_member=archive_member, source_calls=source_calls,
+        map_text=map_text, relocation_text="", provider_address=provider_address,
+        elf_type=elf_type, name=ERRNO_IMPORT_NAME)
 
 
 def _errno_shared_caller_calls(image: bytes, symbol_text: str, functions: Sequence[str],
@@ -1108,6 +1158,55 @@ def _errno_shared_caller_calls(image: bytes, symbol_text: str, functions: Sequen
                 calls.append({"function": function, "call_address": address + offset,
                               "target_address": target})
     require(calls, "errno shared importer has no direct provider call")
+    return calls
+
+
+def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: str,
+                                  source_calls: Sequence[Mapping[str, object]],
+                                  provider_address: int, name: str) -> list[dict[str, object]]:
+    """Read matching shared call forms from source-named functions and GOT slots."""
+    functions = set()
+    for source in source_calls:
+        section = source["section"]
+        require(isinstance(section, str) and section.startswith(".text."),
+                f"ordinary {name} source caller section differs")
+        suffix = section[6:]
+        functions.add(suffix)
+        if suffix.startswith("unlikely."):
+            functions.add(suffix[len("unlikely."):])
+            functions.add(suffix[len("unlikely."):] + ".cold")
+    calls = []
+    for function in sorted(functions):
+        rows = []
+        for binding in ("LOCAL", "GLOBAL"):
+            rows.extend(_errno_elf_symbols(symbol_text, function, kind="FUNC", binding=binding))
+        if not rows:
+            continue
+        require(len(set(rows)) == 1, f"ordinary {name} shared caller is ambiguous: {function}")
+        address, size = rows[0]
+        require(size > 0, f"ordinary {name} shared caller is empty: {function}")
+        body = _public_weak_virtual_bytes(image, address, size, 3, executable=True)
+        for offset in range(size):
+            if offset + 5 <= size and body[offset] == 0xe8:
+                target = address + offset + 5 + struct.unpack_from("<i", body, offset + 1)[0]
+                if target == provider_address:
+                    calls.append({"function": function, "call_address": address + offset,
+                                  "target_address": target})
+            if offset + 6 <= size and body[offset:offset + 2] == b"\xff\x15":
+                slot = address + offset + 6 + struct.unpack_from("<i", body, offset + 2)[0]
+                try:
+                    target = struct.unpack("<Q", _public_weak_virtual_bytes(
+                        image, slot, 8, 3, executable=False))[0]
+                except AllocatorBoundaryError:
+                    continue
+                if target != provider_address:
+                    continue
+                require(len(re.findall(rf"^\s*0*{slot:x}\s+\.got\b", relocations,
+                                       re.MULTILINE)) == 1,
+                        f"ordinary {name} shared GOT relocation differs")
+                calls.append({"function": function, "call_address": address + offset,
+                              "got_slot": slot, "target_address": target})
+    require(calls, f"ordinary {name} shared importer has no provider call")
     return calls
 
 
@@ -1450,6 +1549,160 @@ def public_weak_resolution(report: Mapping[str, Any], *, report_path: Path,
     return {"imports": claims, "dynamic_final_import_absent": True}
 
 
+def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
+                               static_product: Path, dynamic_product: Path,
+                               elf_facts_report: Path, name: str) -> dict[str, object]:
+    """Bind all archive callers of one ordinary import to final libc providers."""
+    facts = json_object(elf_facts_report, f"{name} ELF facts")["facts"]
+    members = facts["candidate-static"]
+    runtime = report["inputs"]["c_runtime_import_bindings"]
+    c_member = runtime["static_c_member"]
+    claim = next((row for row in runtime["imports"] if row["name"] == name), None)
+    require(claim is not None and claim["binding"] == "GLOBAL",
+            f"ordinary {name} runtime import account differs")
+    provider = claim["static_rust_provider_member"]
+    provider_fact = members[provider["member_index"]]
+    require(provider_fact["member"] == provider["member"]
+            and provider_fact["member_occurrence"] == 0,
+            f"ordinary {name} provider archive member differs")
+    sections = [row for row in provider_fact["sections"]
+                if str(row["index"]) == claim["static_rust_provider"]["section_index"]]
+    require(len(sections) == 1 and sections[0]["flags"].find("X") >= 0,
+            f"ordinary {name} provider source section differs")
+    provider_section = sections[0]["name"]
+    archive = physical_file(static_product / "usr/lib/libc.a", f"ordinary {name} archive")
+    mounted_archive = mounted_path(archive)
+    imported = []
+    for member in members:
+        try:
+            rows = producer._symbol_tables(member["symbol_tables"],
+                                           f"ordinary {name} archive member", {".symtab"})[".symtab"]
+        except producer.ProducerMetadataError as error:
+            raise AllocatorBoundaryError(str(error)) from error
+        matches = [row for row in rows if row.get("name") == name
+                   and row.get("section_index") == "UND"]
+        if not matches:
+            continue
+        require(len(matches) == 1 and all(matches[0].get(field) == value for field, value in {
+            "type": "NOTYPE", "binding": "GLOBAL", "visibility": "DEFAULT",
+            "section_index": "UND", "size_bytes": 0, "value": "0000000000000000",
+        }.items()) and member["member_occurrence"] == 0,
+                f"ordinary {name} archive import row differs")
+        selected = subprocess.run(["/usr/bin/ar", "p", str(archive), member["member"]],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        require(selected.returncode == 0 and selected.stdout,
+                f"ordinary {name} importer archive member is unreadable")
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            object_path = Path(temporary) / "importer.o"
+            object_path.write_bytes(selected.stdout)
+            relocations = subprocess.run(["/usr/bin/readelf", "-rW", str(object_path)],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         text=True, check=False)
+        require(relocations.returncode == 0, f"ordinary {name} source relocations unreadable")
+        calls = _ordinary_import_relocations(relocations.stdout, name)
+        is_c = member["member_index"] == c_member["member_index"]
+        require(all(call["kind"] == ("R_X86_64_PLT32" if is_c else "R_X86_64_GOTPCREL")
+                    for call in calls), f"ordinary {name} importer call form differs")
+        imported.append({
+            "member": _member_identity(member),
+            "import": {key: matches[0][key] for key in (
+                "name", "type", "binding", "visibility", "section_index", "size_bytes", "value")},
+            "member_sha256": hashlib.sha256(selected.stdout).hexdigest(),
+            "source_calls": calls,
+            "shared_caller_functions": sorted({call["section"][6:]
+                                               for call in calls}),
+        })
+    require(len(imported) >= 2
+            and len({item["member"]["member_index"] for item in imported}) == len(imported)
+            and len([item for item in imported if item["member"]["member_index"] == c_member["member_index"]]) == 1
+            and all(item["member"]["member_index"] != provider["member_index"] for item in imported),
+            f"ordinary {name} static importer roster differs")
+    work = physical_directory(report_path.parent / report["errno_import"]["work"],
+                              f"ordinary {name} retained links")
+    static_modes = {}
+    for mode, elf_type in (("static", 2), ("static-pie", 3)):
+        executable = physical_file(work / f"static-{mode}", f"ordinary {name} {mode} ELF")
+        map_text = physical_file(work / f"static-{mode}.crabc-link.map",
+                                 f"ordinary {name} {mode} map").read_text(encoding="utf-8")
+        trace = physical_file(work / f"static-{mode}.crabc-link.trace",
+                              f"ordinary {name} {mode} trace").read_text(encoding="utf-8")
+        symbols = subprocess.run(["/usr/bin/readelf", "-Ws", str(executable)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        relocations = subprocess.run(["/usr/bin/readelf", "-rW", str(executable)],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        require(symbols.returncode == relocations.returncode == 0
+                and not re.search(rf"\b{re.escape(name)}\b", relocations.stdout),
+                f"ordinary {name} {mode} retains an external import")
+        provider_rows = _errno_elf_symbols(symbols.stdout, name, kind="FUNC", binding="GLOBAL")
+        require(len(provider_rows) == 1
+                and provider_rows[0][1] == claim["static_rust_provider"]["size_bytes"],
+                f"ordinary {name} {mode} provider differs")
+        address = provider_rows[0][0]
+        selected_provider = f"{mounted_archive}({provider['member']})"
+        require(trace.splitlines().count(selected_provider) == 1
+                and len([line for line in map_text.splitlines()
+                         if line.rstrip().endswith(f"{selected_provider}:({provider_section})")
+                         and int(line.split()[0], 16) == address]) == 1,
+                f"ordinary {name} {mode} provider map differs")
+        image = executable.read_bytes()
+        linked = []
+        for item in imported:
+            selected = f"{mounted_archive}({item['member']['member']})"
+            require(trace.splitlines().count(selected) == 1,
+                    f"ordinary {name} {mode} importer is not selected once")
+            linked.append({
+                "member": dict(item["member"]),
+                **_ordinary_final_member_calls(
+                    image, archive_member=selected, source_calls=item["source_calls"],
+                    map_text=map_text, relocation_text=relocations.stdout,
+                    provider_address=address, elf_type=elf_type, name=name),
+            })
+        static_modes[mode] = {"provider_member": dict(provider),
+                              "provider_address": address, "importers": linked}
+    shared_libc = physical_file(dynamic_product / "usr/lib/libc.so",
+                                f"ordinary {name} shared libc")
+    shared_symbols = subprocess.run(["/usr/bin/readelf", "-Ws", str(shared_libc)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True, check=False)
+    shared_relocations = subprocess.run(["/usr/bin/readelf", "-rW", str(shared_libc)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        text=True, check=False)
+    require(shared_symbols.returncode == shared_relocations.returncode == 0
+            and not re.search(rf"\b{re.escape(name)}\b", shared_relocations.stdout),
+            f"ordinary {name} shared libc retains an external import")
+    shared_provider = _errno_elf_symbols(shared_symbols.stdout, name, kind="FUNC", binding="GLOBAL")
+    require(len(shared_provider) == 2 and len(set(shared_provider)) == 1
+            and shared_provider[0][1] == claim["shared_dynsym_provider"]["size_bytes"],
+            f"ordinary {name} shared provider differs")
+    shared_address = shared_provider[0][0]
+    shared_image = shared_libc.read_bytes()
+    shared_calls = [{"member": dict(item["member"]),
+                     "calls": _ordinary_shared_caller_calls(
+                         shared_image, shared_symbols.stdout, shared_relocations.stdout,
+                         item["source_calls"], shared_address, name)}
+                    for item in imported]
+    for mode in DYNAMIC_MODES:
+        executable = physical_file(work / f"dynamic-{mode}",
+                                   f"ordinary {name} dynamic {mode} ELF")
+        dynamic = subprocess.run(["/usr/bin/readelf", "-dW", str(executable)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        symbols = subprocess.run(["/usr/bin/readelf", "-Ws", str(executable)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        require(dynamic.returncode == symbols.returncode == 0
+                and len(re.findall(r"\(NEEDED\).*\[libc\.so\]", dynamic.stdout)) == 1
+                and not re.search(rf"\b{re.escape(name)}$", symbols.stdout, re.MULTILINE),
+                f"ordinary {name} dynamic {mode} imports implementation")
+    return {
+        "static_provider_member": dict(provider),
+        "static_provider": dict(claim["static_rust_provider"]),
+        "shared_dynsym_provider": dict(claim["shared_dynsym_provider"]),
+        "shared_symtab_provider": dict(claim["shared_symtab_provider"]),
+        "importers": imported, "static_final_links": static_modes,
+        "shared_final": {"provider_address": shared_address, "importers": shared_calls},
+        "dynamic_final_import_absent": True,
+    }
+
+
 def errno_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                             static_product: Path, dynamic_product: Path,
                             elf_facts_report: Path) -> dict[str, object]:
@@ -1757,7 +2010,7 @@ def _replay_public_weak_links(output: Path, static_product: Path, dynamic_produc
 
 
 def _errno_links(output: Path, static_product: Path, dynamic_product: Path) -> dict[str, object]:
-    """Select the float-parser importer alongside the ordinary startup members."""
+    """Select float and abort callers in installed static and dynamic links."""
     work = output / "errno-import"
     work.mkdir(mode=0o755)
     source = work / "workload.c"
@@ -1770,17 +2023,25 @@ def _errno_links(output: Path, static_product: Path, dynamic_product: Path) -> d
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     require(completed.returncode == 0 and not completed.stdout and not completed.stderr,
             "errno installed-header compilation failed")
+    static_object = work / "static-workload.o"
+    static_compile = [str(physical_file(dynamic_product / "bin/crabc-cc-dynamic", "ordinary installed compiler")),
+                      "--dynamic-pie", "-std=c11", "-fno-builtin", "-DCRABC_STATIC_ABORT_PROBE",
+                      "-c", mounted_path(source), "-o", mounted_path(static_object)]
+    completed = subprocess.run(static_compile, cwd=work, env=workload_environment(output),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    require(completed.returncode == 0 and not completed.stdout and not completed.stderr,
+            "ordinary static installed-header compilation failed")
     links = {}
     for mode in STATIC_MODES:
         stem = f"static-{mode}"
         command = [str(physical_file(static_product / "bin/crabc-cc", "errno static linker")),
                    f"-{mode}", "--link-receipt", f"{stem}.crabc-link.json",
-                   mounted_path(object_path), "-o", mounted_path(work / stem)]
+                   mounted_path(static_object), "-o", mounted_path(work / stem)]
         completed = subprocess.run(command, cwd=work, env=workload_environment(output),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         require(completed.returncode == 0 and not completed.stdout and not completed.stderr,
                 f"errno {mode} installed link failed")
-        links[mode] = _link(work, output, static_product, object_path, stem,
+        links[mode] = _link(work, output, static_product, static_object, stem,
                             f"{stem}.crabc-link.json", mode)
     for mode in DYNAMIC_MODES:
         stem = f"dynamic-{mode}"
@@ -1795,25 +2056,30 @@ def _errno_links(output: Path, static_product: Path, dynamic_product: Path) -> d
     return {"work": work.relative_to(output).as_posix(),
             "source": identity(source, logical_path=source.relative_to(output).as_posix()),
             "object": identity(object_path, logical_path=object_path.relative_to(output).as_posix()),
+            "static_object": identity(static_object, logical_path=static_object.relative_to(output).as_posix()),
             "links": links}
 
 
 def _replay_errno_links(output: Path, static_product: Path, dynamic_product: Path,
                         observed: object) -> dict[str, object]:
-    item = exact(observed, {"work", "source", "object", "links"}, "errno import links")
+    item = exact(observed, {"work", "source", "object", "static_object", "links"}, "errno import links")
     require(item["work"] == "errno-import", "errno import work path differs")
     work = physical_directory(output / item["work"], "errno import retained work")
     source = physical_file(work / "workload.c", "errno import workload source")
     object_path = physical_file(work / "workload.o", "errno import workload object")
+    static_object = physical_file(work / "static-workload.o", "ordinary static workload object")
     require(source.read_text(encoding="utf-8") == ERRNO_WORKLOAD
             and same(item["source"], identity(source, logical_path=source.relative_to(output).as_posix()))
             and same(item["object"], identity(object_path, logical_path=object_path.relative_to(output).as_posix())),
             "errno import installed workload differs")
+    require(same(item["static_object"], identity(
+        static_object, logical_path=static_object.relative_to(output).as_posix())),
+        "ordinary static installed workload differs")
     links = exact(item["links"], {*STATIC_MODES, *(f"dynamic-{mode}" for mode in DYNAMIC_MODES)},
                   "errno import link roster")
     for mode in STATIC_MODES:
         stem = f"static-{mode}"
-        _replay_link(work, output, static_product, object_path, stem,
+        _replay_link(work, output, static_product, static_object, stem,
                      f"{stem}.crabc-link.json", mode, links[mode], export_dynamic=False)
     for mode in DYNAMIC_MODES:
         stem = f"dynamic-{mode}"

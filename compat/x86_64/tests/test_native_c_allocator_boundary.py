@@ -24,6 +24,18 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_ordinary_import_relocations_keep_direct_and_got_calls_separate(self) -> None:
+        transcript = (
+            "Relocation section '.rela.text.unlikely.failure' at offset 0x100 contains 1 entry:\n"
+            "0000000000000028  0000000700000009 R_X86_64_GOTPCREL 0000000000000000 abort - 4\n"
+            "Relocation section '.rela.text.mi_new' at offset 0x200 contains 1 entry:\n"
+            "0000000000000043  0000000800000004 R_X86_64_PLT32 0000000000000000 abort - 4\n"
+        )
+        self.assertEqual(BOUNDARY._ordinary_import_relocations(transcript, "abort"), [
+            {"section": ".text.unlikely.failure", "offset": 40, "kind": "R_X86_64_GOTPCREL"},
+            {"section": ".text.mi_new", "offset": 67, "kind": "R_X86_64_PLT32"},
+        ])
+
     def test_errno_import_relocations_require_direct_calls(self) -> None:
         source = ("Relocation section '.rela.text' at offset 0x100 contains 1 entry:\n"
                   "000000000000001d  0000000300000004 R_X86_64_PLT32 0000000000000000 __errno_location - 4\n")
@@ -71,6 +83,33 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
         struct.pack_into("<i", forged, 0x18c, -0x18)
         with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign TLS slot"):
             BOUNDARY._errno_static_accessor(bytes(forged), 0x1080, symbols, 2)
+
+    def test_pie_got_call_resolves_relative_addend_before_slot_population(self) -> None:
+        image = bytearray(0x300)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 3)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x100)
+        struct.pack_into("<IIQQQQ", image, 120, 1, 6, 0x200, 0x2000, 0, 0x100)
+        image[0x110:0x112] = b"\xff\x15"
+        struct.pack_into("<i", image, 0x112, 0x2010 - 0x1016)
+        member = "/workspace/current/libc.a(importer.o)"
+        kwargs = {
+            "archive_member": member,
+            "source_calls": [{"section": ".text.failure", "offset": 2,
+                              "kind": "R_X86_64_GOTPCREL"}],
+            "map_text": f"1010 1010 20 1 {member}:(.text.failure)",
+            "provider_address": 0x1080, "elf_type": 3, "name": "abort",
+        }
+        relocation = "0000000000002010 0000000000000008 R_X86_64_RELATIVE 1080\n"
+        resolved = BOUNDARY._ordinary_final_member_calls(
+            bytes(image), relocation_text=relocation, **kwargs)["resolved_calls"]
+        self.assertEqual(resolved[0]["target_address"], 0x1080)
+        self.assertEqual(resolved[0]["got_slot"], 0x2010)
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign provider"):
+            BOUNDARY._ordinary_final_member_calls(
+                bytes(image), relocation_text=relocation.replace("1080", "1090"), **kwargs)
 
     def test_public_weak_import_relocations_keep_c_and_rust_call_forms_distinct(self) -> None:
         c = ("Relocation section '.rela.text.clock' at offset 0x100 contains 1 entry:\n"

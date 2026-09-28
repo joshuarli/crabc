@@ -1007,7 +1007,7 @@ class ErrnoStaticImportBindingTests(unittest.TestCase):
             'blockers': [{'code': 'identity-unresolved', 'identity': ident,
                           'reason': selection.ORDINARY_IMPORT_REASON}],
         }
-        self.assertEqual(selection.attach_errno_static_imports(accounting, None), [])
+        self.assertEqual(selection.attach_ordinary_static_imports(accounting, None), [])
         self.assertEqual(accounting['identities'][0]['unresolved'],
                          [selection.ORDINARY_IMPORT_REASON])
         self.assertEqual(len(accounting['blockers']), 1)

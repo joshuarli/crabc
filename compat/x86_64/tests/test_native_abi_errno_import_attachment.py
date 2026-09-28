@@ -123,7 +123,7 @@ def fixture() -> tuple[dict, dict]:
                                  "shared_dynsym_provider": shared_provider,
                                  "shared_symtab_provider": shared_provider}]}},
         "private_vm_resolution": {}, "public_weak_resolution": {},
-        "errno_import_resolution": projection,
+        "ordinary_import_resolutions": {name: projection},
         "limits": list(selection.C_ALLOCATOR_BOUNDARY_LIMITS),
     }
     return accounting, companion
@@ -132,7 +132,7 @@ def fixture() -> tuple[dict, dict]:
 class ErrnoImportAttachmentTests(unittest.TestCase):
     def test_all_six_callers_bind_one_global_tls_accessor(self) -> None:
         accounting, companion = fixture()
-        joins = selection.attach_errno_static_imports(accounting, companion)
+        joins = selection._attach_ordinary_static_import(accounting, companion, "__errno_location")
         self.assertEqual([join["identity"]["name"] for join in joins], ["__errno_location"])
         self.assertEqual(len(joins[0]["import_occurrence_indices"]), 6)
         self.assertEqual(accounting["blockers"], [])
@@ -143,7 +143,7 @@ class ErrnoImportAttachmentTests(unittest.TestCase):
                          "foreign-shared-target", "wrong-tls-offset", "missing-final-call"):
             with self.subTest(mutation=mutation):
                 accounting, companion = fixture()
-                projection = companion["errno_import_resolution"]
+                projection = companion["ordinary_import_resolutions"]["__errno_location"]
                 if mutation == "foreign-import":
                     accounting["occurrences"][0]["member_name"] = "foreign.o"
                 elif mutation == "duplicate-import":
@@ -170,7 +170,89 @@ class ErrnoImportAttachmentTests(unittest.TestCase):
                     projection["static_final_links"]["static"]["importers"][0][
                         "resolved_calls"] = []
                 with self.assertRaises(selection.SelectionError):
-                    selection.attach_errno_static_imports(accounting, companion)
+                    selection._attach_ordinary_static_import(accounting, companion, "__errno_location")
+
+
+def abort_fixture() -> tuple[dict, dict]:
+    accounting, companion = fixture()
+    name = "abort"
+    ident = selection.identity(name)
+    record = accounting["identities"][0]
+    record["identity"] = ident
+    accounting["blockers"][0]["identity"] = ident
+    accounting["placement_joins"][0]["identity"] = ident
+    accounting["placement_joins"][1]["identity"] = ident
+    accounting["occurrences"] = [row for row in accounting["occurrences"]
+                                 if row["index"] in {0, 5, 6, 7, 8}]
+    for row in accounting["occurrences"]:
+        row["row"]["name"] = name
+        row["row"]["raw_name"] = name
+    claim = companion["account"]["c_runtime_imports"]["imports"][0]
+    claim["name"] = name
+    for field in ("static_rust_provider", "shared_dynsym_provider", "shared_symtab_provider"):
+        claim[field]["name"] = name
+    projection = companion["ordinary_import_resolutions"].pop("__errno_location")
+    companion["ordinary_import_resolutions"][name] = projection
+    projection["static_provider"]["name"] = name
+    projection["shared_dynsym_provider"]["name"] = name
+    projection["shared_symtab_provider"]["name"] = name
+    projection["importers"] = [projection["importers"][0], projection["importers"][5]]
+    for index, item in enumerate(projection["importers"]):
+        item["import"]["name"] = name
+        item["source_calls"][0]["kind"] = (
+            "R_X86_64_GOTPCREL" if index == 0 else "R_X86_64_PLT32")
+    for mode in ("static", "static-pie"):
+        link = projection["static_final_links"][mode]
+        link.pop("accessor_tls")
+        link["importers"] = [link["importers"][0], link["importers"][5]]
+        link["importers"][0]["resolved_calls"][0]["got_slot"] = 0x3500
+        link["importers"][0]["resolved_calls"][0]["kind"] = "R_X86_64_GOTPCREL"
+        link["importers"][1]["resolved_calls"][0]["kind"] = "R_X86_64_PLT32"
+    shared = projection["shared_final"]
+    for field in ("tls_symbol_offset", "tls_segment_size", "tls_relocation_slot"):
+        shared.pop(field)
+    shared["importers"] = [shared["importers"][0], shared["importers"][5]]
+    return accounting, companion
+
+
+class OrdinaryAbortImportAttachmentTests(unittest.TestCase):
+    def test_two_archive_call_forms_join_unique_provider(self) -> None:
+        accounting, companion = abort_fixture()
+        joins = selection._attach_ordinary_static_import(accounting, companion, "abort")
+        self.assertEqual([join["identity"]["name"] for join in joins], ["abort"])
+        self.assertEqual(len(joins[0]["import_occurrence_indices"]), 2)
+        self.assertEqual(accounting["blockers"], [])
+
+    def test_foreign_or_duplicate_importer_provider_and_call_reject(self) -> None:
+        for mutation in ("foreign-import", "duplicate-import", "weak-provider",
+                         "duplicate-provider", "foreign-got-target", "missing-direct-call",
+                         "foreign-shared-target"):
+            with self.subTest(mutation=mutation):
+                accounting, companion = abort_fixture()
+                projection = companion["ordinary_import_resolutions"]["abort"]
+                if mutation == "foreign-import":
+                    accounting["occurrences"][0]["member_name"] = "foreign.o"
+                elif mutation == "duplicate-import":
+                    extra = deepcopy(accounting["occurrences"][0])
+                    extra["index"] = 100
+                    accounting["occurrences"].append(extra)
+                elif mutation == "weak-provider":
+                    accounting["occurrences"][2]["row"]["binding"] = "WEAK"
+                elif mutation == "duplicate-provider":
+                    extra = deepcopy(accounting["occurrences"][2])
+                    extra["index"] = 100
+                    accounting["occurrences"].append(extra)
+                elif mutation == "foreign-got-target":
+                    projection["static_final_links"]["static"]["importers"][0][
+                        "resolved_calls"][0]["target_address"] += 1
+                elif mutation == "missing-direct-call":
+                    projection["static_final_links"]["static-pie"]["importers"][1][
+                        "resolved_calls"] = []
+                else:
+                    projection["shared_final"]["importers"][1]["calls"][0][
+                        "target_address"] += 1
+                with self.assertRaises(selection.SelectionError):
+                    selection._attach_ordinary_static_import(accounting, companion, "abort")
 
 
 if __name__ == "__main__":

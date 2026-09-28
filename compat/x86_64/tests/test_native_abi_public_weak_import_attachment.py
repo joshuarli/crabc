@@ -96,7 +96,7 @@ def fixture() -> tuple[dict, dict]:
                 "static_c_member": f"{archive}({c_member['name']})"}}}},
         "private_vm_resolution": {},
         "public_weak_resolution": {"imports": claims, "dynamic_final_import_absent": True},
-        "errno_import_resolution": {},
+        "ordinary_import_resolutions": {},
         "limits": list(selection.C_ALLOCATOR_BOUNDARY_LIMITS),
     }
     return accounting, companion
