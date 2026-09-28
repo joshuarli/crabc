@@ -10382,13 +10382,6 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
             Some(heap) => heap,
             None => return Err(self),
         };
-        // SAFETY: the same typed draining session establishes the frozen
-        // source option image.  A non-abandoning Theap must not be routed
-        // through this source `MI_ABANDON` connector.
-        if !unsafe { theap.as_ref().allows_page_abandon() } {
-            return Err(self);
-        }
-
         let result = {
             let mut callbacks = ProductionOwnerExitCallbacks {
                 thread,
@@ -42853,52 +42846,102 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         });
     }
 
-    /// Ports the `MI_ABANDON` retired-page phase before the generic visitor.
-    /// The field-scoped source capability owns only the local retirement,
-    /// queue, direct-cache, and count fields. In particular, this path never
-    /// forms `&mut Theap` while the shared Heap list can update `hprev`.
+    /// Runs retired-page collection and the non-abandoning full-page scan
+    /// before the generic owner-exit visitor. The latter first collects
+    /// remote frees without force, then releases empty full pages or moves
+    /// newly nonfull pages into their regular bins. The field-scoped source
+    /// capability owns only local retirement, queue, direct-cache, and count
+    /// fields; it never forms `&mut Theap` while the shared Heap list can
+    /// update `hprev`.
     fn collect_retired_prepass(
         &mut self,
         theap: &mut TheapCollectAbandonFieldAccess,
     ) -> Result<(), ProductionOwnerExitError> {
-        if !theap.allows_page_abandon() {
-            return Err(ProductionOwnerExitError::Retired);
-        }
         let (minimum, maximum) = theap.retired_bounds();
         theap.reset_retired_bounds();
-        if minimum >= BIN_FULL || minimum > maximum {
-            return Ok(());
+        if minimum < BIN_FULL && minimum <= maximum {
+            for bin in minimum..=maximum {
+                let mut current = theap
+                    .queue(bin)
+                    .map(|queue| queue.first())
+                    .ok_or(ProductionOwnerExitError::Retired)?;
+                let mut visited = 0usize;
+                while !current.is_null() && visited < RETIRE_MAX_PAGES {
+                    visited += 1;
+                    let page = NonNull::new(current).ok_or(ProductionOwnerExitError::Retired)?;
+                    // SAFETY: `theap` owns queue links; raw projection keeps the
+                    // link read disjoint from a valid atomic producer projection.
+                    let next = unsafe { Page::queue_next_at(page) };
+                    let expire = unsafe { Self::retire_expire_at(page) };
+                    if expire == 0 {
+                        break;
+                    }
+                    if unsafe { Self::used_at(page) } == 0 {
+                        // The retired page's zero use excludes a live
+                        // producer before its terminal release.
+                        unsafe { Page::set_retire_expire_at(page, expire - 1) };
+                        if self.release_retired_page(theap, bin, page).is_err() {
+                            self.retain_collection_poison(page, PageCollectError::Lifecycle);
+                            return Err(ProductionOwnerExitError::Retired);
+                        }
+                    } else {
+                        // A revived page is no longer retired; preserve it for
+                        // the following ordinary source traversal.
+                        unsafe { Page::set_retire_expire_at(page, 0) };
+                    }
+                    current = next;
+                }
+            }
         }
 
-        for bin in minimum..=maximum {
+        if !theap.allows_page_abandon() {
             let mut current = theap
-                .queue(bin)
+                .queue(BIN_FULL)
                 .map(|queue| queue.first())
                 .ok_or(ProductionOwnerExitError::Retired)?;
-            let mut visited = 0usize;
-            while !current.is_null() && visited < RETIRE_MAX_PAGES {
-                visited += 1;
-                let page = NonNull::new(current).ok_or(ProductionOwnerExitError::Retired)?;
-                // SAFETY: `theap` owns queue links; raw projection keeps the
-                // link read disjoint from a valid atomic producer projection.
+            while let Some(page) = NonNull::new(current) {
+                // A collection or release may unlink the current member.
+                // Preserve its successor before touching any queue links.
                 let next = unsafe { Page::queue_next_at(page) };
-                let expire = unsafe { Self::retire_expire_at(page) };
-                if expire == 0 {
-                    break;
+                if let Err(error) = self.page_free_collect_false(page) {
+                    self.retain_collection_poison(page, error);
+                    return Err(ProductionOwnerExitError::Retired);
                 }
-                if unsafe { Self::used_at(page) } == 0 {
-                    // `_mi_page_try_retire` decrements before its forced
-                    // all-free release.  Zero used excludes a live client,
-                    // so the following terminal release can retire metadata.
-                    unsafe { Page::set_retire_expire_at(page, expire - 1) };
-                    if self.release_retired_page(theap, bin, page).is_err() {
-                        self.retain_collection_poison(page, PageCollectError::Lifecycle);
-                        return Err(ProductionOwnerExitError::Retired);
+                // SAFETY: the current page stays live in the owned full
+                // queue. Producers may touch only its disjoint atomic head.
+                let page_state = unsafe { Page::abandonment_state_at(page) };
+                let used = unsafe { Self::used_at(page) };
+                let reserved = usize::from(page_state.reserved);
+                if used > reserved {
+                    self.retain_collection_poison(page, PageCollectError::Lifecycle);
+                    return Err(ProductionOwnerExitError::Retired);
+                }
+                if used < reserved {
+                    if used == 0 {
+                        if self.release_retired_page(theap, BIN_FULL, page).is_err() {
+                            self.retain_collection_poison(page, PageCollectError::Lifecycle);
+                            return Err(ProductionOwnerExitError::Retired);
+                        }
+                    } else {
+                        let bin = size_class::bin(page_state.block_size)
+                            .filter(|bin| *bin < BIN_FULL)
+                            .ok_or(ProductionOwnerExitError::Retired)?;
+                        let regular = theap.queue_mut(bin)
+                            .ok_or(ProductionOwnerExitError::Retired)? as *mut _;
+                        let full = theap.queue_mut(BIN_FULL)
+                            .ok_or(ProductionOwnerExitError::Retired)? as *mut _;
+                        // SAFETY: the field-scoped owner controls these
+                        // disjoint queues and this current full-page link.
+                        unsafe {
+                            page_queue_enqueue_from_full_metadata(
+                                &mut *regular, &mut *full, page.as_ptr(),
+                            )
+                        };
+                        if !theap.update_direct_cache(bin) {
+                            self.retain_collection_poison(page, PageCollectError::Lifecycle);
+                            return Err(ProductionOwnerExitError::Retired);
+                        }
                     }
-                } else {
-                    // A revived page is no longer retired; preserve it for
-                    // the following ordinary source traversal.
-                    unsafe { Page::set_retire_expire_at(page, 0) };
                 }
                 current = next;
             }

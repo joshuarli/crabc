@@ -18889,6 +18889,38 @@ mod tests {
         .expect("the native x86 fixture uses a supported base page size")
     }
 
+    #[cfg(target_arch = "x86_64")]
+    struct FullQueueEnvironment([*const core::ffi::c_char; 2]);
+
+    // SAFETY: both the vector and its C string are immutable static data.
+    #[cfg(target_arch = "x86_64")]
+    unsafe impl Sync for FullQueueEnvironment {}
+
+    #[cfg(target_arch = "x86_64")]
+    static FULL_QUEUE_ENVIRONMENT: FullQueueEnvironment = FullQueueEnvironment([
+        c"mimalloc_page_full_retain=-1".as_ptr(),
+        core::ptr::null(),
+    ]);
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn full_queue_environment() -> *const *const core::ffi::c_char {
+        FULL_QUEUE_ENVIRONMENT.0.as_ptr()
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn full_queue_startup_facts() -> NativeProcessStartupFacts {
+        // SAFETY: this immutable process-lifetime vector selects the source
+        // non-abandoning full-page mode before runtime initialization.
+        unsafe {
+            NativeProcessStartupFacts::new(
+                4096,
+                full_queue_environment,
+                RuntimeStderrOutput::new(deferred_free_boundary_test_stderr),
+            )
+        }
+        .expect("the native x86 fixture uses a supported base page size")
+    }
+
     /// Allocates, writes, and frees one C-aligned native client on the caller.
     #[cfg(target_arch = "x86_64")]
     fn native_round_trip(size: usize) -> bool {
@@ -20641,6 +20673,168 @@ mod tests {
                 assert!(unsafe {
                     page_map.page_map().unwrap().checked_lookup(blocks[2] as *mut u8)
                 }.is_null(), "the survivor's final free releases the abandoned page");
+                assert!(native_round_trip(64), "the surviving owner remains usable");
+            },
+        );
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn native_owner_exit_traverses_full_medium_and_os_singleton_before_survivor_frees() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::native_owner_exit_traverses_full_medium_and_os_singleton_before_survivor_frees",
+            || {
+                assert!(publish_native_process_startup_facts(full_queue_startup_facts()));
+                assert!(initialize_process());
+                assert!(native_round_trip(48));
+                assert!(prepare_native_later_thread_arena());
+
+                let (clients_sender, clients_receiver) = mpsc::sync_channel(0);
+                let (exit_sender, exit_receiver) = mpsc::sync_channel(0);
+                let owner = thread::spawn(move || {
+                    let descriptor = admission::current_native_allocator_thread_descriptor();
+                    // SAFETY: this later worker registers its exact TLS
+                    // descriptor through its normal source exit.
+                    assert!(unsafe {
+                        admission::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let NativePageAllocationResult::Allocated(first_medium) =
+                        native_allocate_aligned(
+                            OWNER_EXIT_FULL_MEDIUM_REQUEST,
+                            NATIVE_C_MALLOC_ALIGNMENT,
+                            false,
+                        )
+                    else {
+                        panic!("the later owner starts its regular medium page");
+                    };
+                    let page_map = RUNTIME_PROCESS
+                        .page_map_for_live_native_allocation()
+                        .expect("the active process publishes a PageMap");
+                    // SAFETY: the first client remains live on the current
+                    // source owner, so its page metadata is stable here.
+                    let medium_page = unsafe {
+                        page_map.page_map().unwrap().checked_lookup(first_medium.as_ptr())
+                    };
+                    assert!(!medium_page.is_null());
+                    let medium_capacity = unsafe { (*medium_page).reserved() as usize };
+                    assert!(medium_capacity > 1);
+                    let mut medium = std::vec::Vec::with_capacity(medium_capacity);
+                    medium.push(first_medium.as_ptr().addr());
+                    while medium.len() < medium_capacity {
+                        let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(
+                            OWNER_EXIT_FULL_MEDIUM_REQUEST,
+                            NATIVE_C_MALLOC_ALIGNMENT,
+                            false,
+                        ) else {
+                            panic!("the later owner fills its regular medium page");
+                        };
+                        medium.push(block.as_ptr().addr());
+                    }
+                    // A page with no available block moves to the full
+                    // queue when the next same-size allocation searches it.
+                    // Retire that trigger's separate page before exit.
+                    let NativePageAllocationResult::Allocated(trigger) = native_allocate_aligned(
+                        OWNER_EXIT_FULL_MEDIUM_REQUEST,
+                        NATIVE_C_MALLOC_ALIGNMENT,
+                        false,
+                    ) else {
+                        panic!("the full medium page advances to its source full queue");
+                    };
+                    assert_ne!(unsafe {
+                        page_map.page_map().unwrap().checked_lookup(trigger.as_ptr())
+                    }, medium_page);
+                    // SAFETY: this owner exclusively owns the trigger client
+                    // and frees it before any remote publication starts.
+                    assert_eq!(unsafe { native_free(trigger) }, NativePageFreeResult::Freed);
+                    let NativePageAllocationResult::Allocated(singleton) = native_allocate_aligned(
+                        OWNER_EXIT_OS_SINGLETON_REQUEST,
+                        OWNER_EXIT_OS_SINGLETON_ALIGNMENT,
+                        false,
+                    ) else {
+                        panic!("the later owner allocates its OS singleton");
+                    };
+                    let singleton = singleton.as_ptr().addr();
+                    // SAFETY: the worker still owns every live client, so
+                    // their PageMap entries and source pages cannot retire.
+                    let singleton_page = unsafe {
+                        page_map.page_map().unwrap().checked_lookup(singleton as *mut u8)
+                    };
+                    assert!(!singleton_page.is_null());
+                    assert_ne!(medium_page, singleton_page);
+                    for &address in &medium {
+                        assert_eq!(unsafe {
+                            page_map.page_map().unwrap().checked_lookup(address as *mut u8)
+                        }, medium_page, "all medium clients occupy one regular page");
+                    }
+                    // SAFETY: the worker owns both stable source pages and
+                    // no remote publication has begun at this point.
+                    let medium_page = unsafe { &*medium_page };
+                    let singleton_page = unsafe { &*singleton_page };
+                    assert_eq!(medium_page.used(), medium.len());
+                    assert_eq!(medium_page.reserved() as usize, medium.len());
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(medium_page.block_size()),
+                        Some(crate::types::PageKind::Medium),
+                    );
+                    assert!(crate::types::page_queue::page_is_in_full(medium_page),
+                        "medium source state: used={} capacity={} reserved={} immediate_free={} collectable_local={}",
+                        medium_page.used(), medium_page.capacity(), medium_page.reserved(),
+                        !medium_page.free_list_head().is_null(),
+                        medium_page.has_owner_exit_collectable_local_free());
+                    assert!(singleton_page.memid().is_os());
+                    assert_eq!(singleton_page.used(), 1);
+                    assert!(crate::types::page_queue::page_is_in_full(singleton_page));
+                    clients_sender.send((medium, singleton))
+                        .expect("the survivor receives both source page clients");
+                    exit_receiver.recv().expect("the survivor starts the source exit traversal");
+                    assert_eq!(
+                        finish_current_thread_native_after_user_destructors(),
+                        ThreadFinishResult::Finished,
+                    );
+                });
+
+                let (medium, singleton) = clients_receiver.recv()
+                    .expect("the owner transfers its full queue clients");
+                let page_map = RUNTIME_PROCESS
+                    .page_map_for_live_native_allocation()
+                    .expect("the process retains its PageMap for survivor frees");
+                let client = |address| {
+                    NonNull::new(address as *mut u8).expect("a live client is nonnull")
+                };
+                // SAFETY: the surviving thread exclusively owns the first
+                // medium client, and the worker is waiting before owner exit.
+                assert_eq!(unsafe { native_free(client(medium[0])) }, NativePageFreeResult::Freed);
+                exit_sender.send(()).expect("the source owner begins its full queue traversal");
+                owner.join().expect("the mixed source owner completes its normal exit");
+
+                // SAFETY: the remaining medium clients and singleton keep
+                // their distinct PageMap entries live after the old owner.
+                let medium_page = unsafe {
+                    page_map.page_map().unwrap().checked_lookup(medium[1] as *mut u8)
+                };
+                assert!(!medium_page.is_null());
+                assert!(!unsafe {
+                    page_map.page_map().unwrap().checked_lookup(singleton as *mut u8)
+                }.is_null());
+                assert_eq!(unsafe { (*medium_page).used() }, medium.len() - 1,
+                    "owner exit force-collects the medium remote publication");
+
+                // SAFETY: these exact clients have not been freed; each
+                // post-exit call consumes one independent survivor claim.
+                assert_eq!(unsafe { native_free(client(singleton)) }, NativePageFreeResult::Freed);
+                assert!(unsafe {
+                    page_map.page_map().unwrap().checked_lookup(singleton as *mut u8)
+                }.is_null(), "the OS singleton releases without consuming the medium page");
+                assert_eq!(unsafe {
+                    page_map.page_map().unwrap().checked_lookup(medium[1] as *mut u8)
+                }, medium_page);
+                for address in medium.iter().copied().skip(1) {
+                    assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::Freed);
+                }
+                assert!(unsafe {
+                    page_map.page_map().unwrap().checked_lookup(medium[1] as *mut u8)
+                }.is_null(), "the last medium free releases its regular page");
                 assert!(native_round_trip(64), "the surviving owner remains usable");
             },
         );
