@@ -14,8 +14,75 @@ chmod 755 "$work"
 readonly driver="$installed/bin/crabc-cc-dynamic"
 readonly source="$work/identity.c"
 readonly expected_stderr="$work/expected-libcidentity.stderr"
+readonly receipt_runner=owned-loader-libc-identity
+
+source_seal() {
+    python3 -B - "$ROOT" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / 'compat/x86_64'))
+from native_shadow_receipt import source_seal
+print(json.dumps(source_seal(root), sort_keys=True, separators=(',', ':')))
+PY
+}
+
+rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+receipt_cases=()
+receipt_products=()
+allocator_backend=unknown
+canonical_receipt=no
+source_before="$(source_seal)"
+publish_receipt() {
+    local status=$?
+    trap - EXIT
+    local source_after=''
+    if ! source_after="$(source_seal)" || [ "$source_after" != "$source_before" ]; then
+        printf 'owned loader libc identity: source changed during the run\n' >&2
+        status=1
+    fi
+    printf '%s\n' "$status" >"$work/runner.status"
+    receipt_cases+=("runner=$status:runner.status")
+    local -a arguments=(--runner "$receipt_runner" --work "$work" --canonical "$canonical_receipt"
+        --parameter "ALLOCATOR_BACKEND=$allocator_backend"
+        --parameter 'MODES=pie,non-pie'
+        --parameter 'ENTRY=direct-copied-interpreter'
+        --parameter 'IDENTITY_FAILURE_STATUS=127')
+    local entry
+    for entry in "${receipt_cases[@]}"; do arguments+=(--case "$entry"); done
+    for entry in "${receipt_products[@]}"; do arguments+=(--product "$entry"); done
+    if ! python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" write "${arguments[@]}"; then
+        status=1
+    elif [ "$(source_seal)" != "$source_before" ]; then
+        rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+        printf 'owned loader libc identity: source changed while publishing the receipt\n' >&2
+        status=1
+    fi
+    exit "$status"
+}
+trap publish_receipt EXIT
 
 trap 'printf "owned loader libc identity FAIL mode=%s case=%s; evidence: %s\n" "${mode:-setup}" "${case_name:-setup}" "$work" >&2' ERR
+
+allocator_backend="$(python3 -B - "$installed/share/crabc/libc-shared.provenance.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding='utf-8') as stream:
+    print(json.load(stream)['allocator_backend'])
+PY
+)"
+[ "$allocator_backend" != native-shadow ] || canonical_receipt=yes
+receipt_products+=(
+    "dynamic-manifest=$installed/share/crabc/manifest.json"
+    "dynamic-product-state=$installed/share/crabc/dynamic-product-state.json"
+    "dynamic-libc-provenance=$installed/share/crabc/libc-shared.provenance.json"
+    "dynamic-loader-provenance=$installed/share/crabc/loader.provenance.json"
+    "dynamic-libc=$installed/usr/lib/libc.so"
+    "dynamic-loader=$installed/lib/ld-crabc-x86_64.so.1"
+    "dynamic-driver=$driver"
+    "identity-source=$source"
+)
 
 cat >"$source" <<'C'
 #define _GNU_SOURCE
@@ -148,16 +215,45 @@ assert_distinct_identity() {
     [ ! "$1" -ef "$2" ]
 }
 
+record_case_evidence() {
+    local root="$1" program="$2" expected="$3"
+    local id="$mode-$case_name" relative entry
+    local -a paths=(
+        prefix/lib/loader usr/lib/libc.so lib/libc.musl-x86_64.so.1
+        prefix/usr/lib/libc.so prefix/lib/libc.musl-x86_64.so.1
+        p/libc.so override/libc.so consumer consumer-mutated plugins/libcli.so
+    )
+    local -a logs=("$id.stdout" "$id.stderr" "$id.status" "$id.identity" "$(basename "$expected")")
+    : >"$work/$id.identity"
+    for relative in "${paths[@]}"; do
+        [ -f "$root/$relative" ] || continue
+        stat -Lc '%n dev=%d inode=%i size=%s' "$root/$relative" >>"$work/$id.identity"
+        entry="${relative//\//-}"
+        receipt_products+=("$id-$entry=$root/$relative")
+    done
+    for entry in "$work/$id-"*.dynamic; do
+        [ -f "$entry" ] && logs+=("$(basename "$entry")")
+    done
+    [ -f "$root${program}" ]
+    entry="${program#/}"
+    receipt_products+=("$id-executed-program=$root${program}")
+    receipt_cases+=("$id=0:$(IFS=,; printf '%s' "${logs[*]}")")
+}
+
 run_success() {
     local root="$1" program="$2" expected_libc="$3"
     local stdout="$work/$mode-$case_name.stdout" stderr="$work/$mode-$case_name.stderr"
     local expected="$work/$mode-$case_name.expected.stdout"
+    local status=0
     printf '%s\n' \
         'identity dependency constructor' \
         'identity application constructor' \
         "identity libc $expected_libc" \
         'identity application main 17' >"$expected"
-    timeout 20 chroot "$root" /prefix/lib/loader "$program" >"$stdout" 2>"$stderr"
+    timeout 20 chroot "$root" /prefix/lib/loader "$program" >"$stdout" 2>"$stderr" || status=$?
+    printf '%s\n' "$status" >"$work/$mode-$case_name.status"
+    record_case_evidence "$root" "$program" "$expected"
+    [ "$status" -eq 0 ]
     cmp "$expected" "$stdout"
     [ ! -s "$stderr" ]
 }
@@ -167,6 +263,8 @@ run_identity_failure() {
     local stdout="$work/$mode-$case_name.stdout" stderr="$work/$mode-$case_name.stderr"
     local status=0
     timeout 20 chroot "$root" /prefix/lib/loader "$program" >"$stdout" 2>"$stderr" || status=$?
+    printf '%s\n' "$status" >"$work/$mode-$case_name.status"
+    record_case_evidence "$root" "$program" "$expected_stderr"
     [ "$status" -eq 127 ]
     [ ! -s "$stdout" ]
     cmp "$expected_stderr" "$stderr"
