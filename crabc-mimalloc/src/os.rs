@@ -6796,6 +6796,110 @@ mod tests {
         std::println!("CRABC_M2_THP_PRCTL_RUST_TRACE_END");
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_thp_prctl_get_failure_process_trace() {
+        use crate::diagnostic_output::ProcessDiagnosticInputs;
+        use crate::process_init::{ProcessMainInitError, ProcessMainInitializationStorage};
+
+        const CHILD: &str = "CRABC_M2_THP_PRCTL_GET_FAILURE_CHILD";
+        const BEGIN: &str = "CRABC_M2_THP_PRCTL_RUST_TRACE_BEGIN";
+        const END: &str = "CRABC_M2_THP_PRCTL_RUST_TRACE_END";
+        if std::env::var_os(CHILD).is_none() {
+            let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+                .arg("os::tests::emit_m2_thp_prctl_get_failure_process_trace")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD, "1")
+                .output()
+                .expect("fresh source-process child runs");
+            assert!(child.status.success(), "the isolated process owner completes");
+            assert!(child.stderr.is_empty(), "failed THP GET emits no diagnostics");
+            let output = std::str::from_utf8(&child.stdout).expect("child trace is ASCII");
+            let start = output.find(BEGIN).expect("child emits its THP trace");
+            let end = output.find(END).expect("child closes its THP trace") + END.len();
+            std::println!("{}", &output[start..end]);
+            return;
+        }
+
+        unsafe extern "C" {
+            static mut stderr: *mut c_void;
+            fn fputs(message: *const c_char, stream: *mut c_void) -> i32;
+        }
+
+        unsafe extern "C" fn selected_stderr(message: *const c_char) {
+            // SAFETY: the selected musl FILE remains live for this isolated
+            // process, and fputs owns its stream locking and buffering.
+            let stream = unsafe { core::ptr::read(core::ptr::addr_of!(stderr)) };
+            let _ = unsafe { fputs(message, stream) };
+        }
+
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            c"mimalloc_allow_thp=0".as_ptr(),
+            core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let fault = fault::install(fault::Plan::disabled());
+        let capture = fault.capture_thp_direct_policy_case(fault::ThpDirectPolicyCase::QueryPerm);
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).expect("selected Linux page size"),
+            1024 * 1024,
+            true,
+            true,
+        );
+        // SAFETY: this exact-test binary is the sole process-start owner; its
+        // leaked environment vector and selected musl FILE live until exit.
+        let inputs = unsafe {
+            ProcessDiagnosticInputs::new(
+                vm_policy_source_environment_for_test,
+                unsafe { RuntimeStderrOutput::new(selected_stderr) }.into_default_stderr_output(),
+            )
+        };
+        let storage = ProcessMainInitializationStorage::global();
+        // SAFETY: this fresh process owns its initial thread and retains the
+        // returned source owner through every observation below.
+        let owner = unsafe { storage.initialize_from_source_environment(config, inputs) }
+            .expect("failed THP GET must not prevent process initialization");
+        let ready = owner.ready().expect("source process remains ready");
+        let ready_config = ready.memory_config().expect("ready configuration is retained");
+        let process = ready.vm_process().expect("ready VM process is retained");
+        let backing = ready.process_backing().expect("ready backing is retained");
+        let first_attempts = capture.attempts().expect("THP call tuples are captured");
+        assert_eq!(first_attempts.1, 1);
+        assert_eq!(first_attempts.0[0], (PR_GET_THP_DISABLE, [0, 0, 0, 0]));
+        // A later process-init request observes the once owner and cannot
+        // repeat a failed best-effort process policy transition.
+        let retry = unsafe {
+            storage.initialize_from_source_environment(
+                config,
+                ProcessDiagnosticInputs::new(
+                    vm_policy_source_environment_for_test,
+                    RuntimeStderrOutput::new(selected_stderr).into_default_stderr_output(),
+                ),
+            )
+        };
+        assert!(matches!(retry, Err(ProcessMainInitError::AlreadyInitialized)));
+        let final_attempts = capture.attempts().expect("THP calls remain captured");
+        assert_eq!(final_attempts.1, 1);
+        assert!(backing.is_active());
+        assert!(core::ptr::eq(backing.process().policy(), process.policy()));
+        assert!(!ready_config.has_transparent_huge_pages());
+        std::println!("CRABC_M2_THP_PRCTL_RUST_TRACE_BEGIN");
+        std::println!("selected_allow_thp_raw={}", process.policy().source_option_value(VmOption::AllowThp.source()));
+        std::println!("config_has_transparent_huge_pages={}", usize::from(ready_config.has_transparent_huge_pages()));
+        std::println!("process_ready=1");
+        std::println!("process_backing_active={}", usize::from(backing.is_active()));
+        std::println!("first_prctl_count={}", first_attempts.1);
+        std::println!("retry_prctl_count={}", final_attempts.1);
+        std::println!("get_count=1");
+        std::println!("set_count=0");
+        std::println!("tuples_match=1");
+        std::println!("retry_refused={}", usize::from(matches!(retry, Err(ProcessMainInitError::AlreadyInitialized))));
+        std::println!("CRABC_M2_THP_PRCTL_RUST_TRACE_END");
+    }
+
     /// Executes one finite direct source case without mutating the test process.
     /// C observes continuation from void `_mi_prim_mem_init`; Rust separately
     /// exposes its typed outcome before the production owner discards it.
