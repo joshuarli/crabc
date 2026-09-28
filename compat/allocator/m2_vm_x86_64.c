@@ -674,6 +674,48 @@ typedef struct aligned_overmap_probe_s {
 } aligned_overmap_probe_t;
 
 static aligned_overmap_probe_t aligned_overmap_probe = {0};
+static int64_t current_reserved(const mi_subproc_t* subproc);
+
+typedef struct aligned_receiver_warnings_s {
+  bool active;
+  bool order_matches;
+  bool final_free_before_decrease;
+  mi_subproc_t* subproc;
+  int64_t final_free_current;
+  size_t bodies;
+  size_t fragments;
+  size_t prefixes;
+  size_t fallback_bodies;
+  size_t free_bodies;
+} aligned_receiver_warnings_t;
+
+static aligned_receiver_warnings_t aligned_receiver_warnings = {0};
+
+static void aligned_receiver_output(const char* message, void* argument) {
+  (void)argument;
+  if (!aligned_receiver_warnings.active || message == NULL) return;
+  aligned_receiver_warnings.fragments++;
+  if (strncmp(message, "mimalloc: warning: thread 0x",
+              sizeof("mimalloc: warning: thread 0x") - 1) == 0) {
+    aligned_receiver_warnings.prefixes++;
+  } else if (strncmp(message, "unable to allocate aligned OS memory directly",
+                     sizeof("unable to allocate aligned OS memory directly") - 1) == 0) {
+    aligned_receiver_warnings.order_matches &= aligned_receiver_warnings.bodies == 0;
+    aligned_receiver_warnings.bodies++;
+    aligned_receiver_warnings.fallback_bodies++;
+  } else if (strncmp(message, "unable to free OS memory",
+                     sizeof("unable to free OS memory") - 1) == 0) {
+    aligned_receiver_warnings.order_matches &=
+        aligned_receiver_warnings.bodies == 1 || aligned_receiver_warnings.bodies == 2;
+    if (aligned_receiver_warnings.bodies == 2) {
+      aligned_receiver_warnings.final_free_before_decrease =
+          current_reserved(aligned_receiver_warnings.subproc)
+              == aligned_receiver_warnings.final_free_current;
+    }
+    aligned_receiver_warnings.bodies++;
+    aligned_receiver_warnings.free_bodies++;
+  }
+}
 
 int __real_munmap(void* address, size_t length);
 void* __real_mmap(void* address, size_t length, int protection, int flags,
@@ -3519,6 +3561,8 @@ typedef struct aligned_overmap_matrix_record_s {
   bool prefix_cleanup_failure_committed_source_continues_escaped_live_stats;
   bool suffix_cleanup_failure_reserved_source_continues_escaped_live_stats;
   bool suffix_cleanup_failure_committed_source_continues_escaped_live_stats;
+  bool normal_receiver_prefix_failure_memid_warning_and_raw_retry;
+  bool normal_receiver_suffix_failure_memid_warning_and_raw_retry;
 } aligned_overmap_matrix_record_t;
 
 static aligned_overmap_statistics_t aligned_overmap_statistics(
@@ -3716,6 +3760,83 @@ static bool run_aligned_overmap_case(
   return complete;
 }
 
+static bool run_normal_aligned_receiver_case(mi_subproc_t* subproc,
+                                             size_t failed_trim_ordinal) {
+  const size_t page = _mi_os_page_size();
+  const size_t length = 2 * page;
+  const size_t alignment = 8 * page;
+  const size_t over_length = length + alignment;
+  if (page == 0 || failed_trim_ordinal < 2 || failed_trim_ordinal > 3) return false;
+  aligned_overmap_targets_t targets = {0};
+  if (!aligned_overmap_prepare_targets(page, alignment, over_length, &targets)) return false;
+  const uintptr_t over_base = (uintptr_t)targets.over_unaligned;
+  const uintptr_t aligned = (over_base + alignment - 1) & ~(uintptr_t)(alignment - 1);
+  const size_t prefix = (size_t)(aligned - over_base);
+  const size_t suffix = over_length - prefix - length;
+  if (prefix == 0 || suffix == 0) return false;
+  void* const escaped = failed_trim_ordinal == 2
+      ? targets.over_unaligned : (void*)(aligned + length);
+  const size_t escaped_length = failed_trim_ordinal == 2 ? prefix : suffix;
+
+  const aligned_overmap_statistics_t before = aligned_overmap_statistics(subproc);
+  aligned_receiver_warnings = (aligned_receiver_warnings_t){
+      .active = true, .order_matches = true, .subproc = subproc,
+      .final_free_current = before.reserved_current + (int64_t)length,
+  };
+  mi_memid_t memid = _mi_memid_none();
+  aligned_overmap_begin(false, failed_trim_ordinal,
+                        targets.direct_unaligned, targets.over_unaligned);
+  void* const result = _mi_os_alloc_aligned(
+      subproc, length, alignment, false, false, &memid);
+  const aligned_overmap_probe_t probe = aligned_overmap_probe;
+  aligned_overmap_probe.active = false;
+  if (result == NULL) return false;
+  bool complete = result == (void*)aligned
+      && memid.mem.os.base == result && memid.mem.os.size == length
+      && !memid.initially_committed
+      && probe.cleanup_munmap_calls == 3
+      && probe.cleanup_addresses[0] == targets.direct_unaligned
+      && probe.cleanup_lengths[0] == length
+      && probe.cleanup_addresses[1] == targets.over_unaligned
+      && probe.cleanup_lengths[1] == prefix
+      && probe.cleanup_addresses[2] == (void*)(aligned + length)
+      && probe.cleanup_lengths[2] == suffix
+      && aligned_overmap_allocation_statistics_match(before, subproc, length, false, 2)
+      && aligned_overmap_mapping_is_live(escaped, page);
+
+  captured_release_munmap_calls = 0;
+  capture_release_munmap = true;
+  fail_next_munmap = true;
+  _mi_os_free_ex(subproc, result, length, false, memid);
+  capture_release_munmap = false;
+  complete = complete && !fail_next_munmap
+      && captured_release_munmap_calls == 1
+      && captured_release_munmap_addresses[0] == result
+      && captured_release_munmap_lengths[0] == length
+      && aligned_overmap_release_statistics_match(before, subproc, length, false, 2)
+      && aligned_overmap_mapping_is_live(result, page)
+      && aligned_overmap_mapping_is_live(escaped, page)
+      && aligned_receiver_warnings.fragments == 6
+      && aligned_receiver_warnings.bodies == 3
+      && aligned_receiver_warnings.order_matches
+      && aligned_receiver_warnings.final_free_before_decrease
+      && aligned_receiver_warnings.prefixes == 3
+      && aligned_receiver_warnings.fallback_bodies == 1
+      && aligned_receiver_warnings.free_bodies == 2;
+  aligned_receiver_warnings.active = false;
+  const aligned_overmap_statistics_t accounted = aligned_overmap_statistics(subproc);
+  const bool middle_released = __real_munmap(result, length) == 0;
+  const bool escaped_released = __real_munmap(escaped, escaped_length) == 0;
+  const aligned_overmap_statistics_t after_raw_release = aligned_overmap_statistics(subproc);
+  complete = complete && middle_released && escaped_released
+      && accounted.reserved_total == after_raw_release.reserved_total
+      && accounted.reserved_current == after_raw_release.reserved_current
+      && accounted.committed_total == after_raw_release.committed_total
+      && accounted.committed_current == after_raw_release.committed_current
+      && accounted.mmap_calls == after_raw_release.mmap_calls;
+  return complete;
+}
+
 static int run_aligned_overmap_matrix_child(int record_descriptor) {
   aligned_overmap_matrix_record_t record = {0};
   _mi_os_init();
@@ -3742,6 +3863,13 @@ static int run_aligned_overmap_matrix_child(int record_descriptor) {
       run_aligned_overmap_case(subproc, ALIGNED_OVERMAP_SUFFIX_CLEANUP_FAILURE, false);
   record.suffix_cleanup_failure_committed_source_continues_escaped_live_stats =
       run_aligned_overmap_case(subproc, ALIGNED_OVERMAP_SUFFIX_CLEANUP_FAILURE, true);
+  mi_option_set(mi_option_max_warnings, 100);
+  mi_option_set_enabled(mi_option_show_errors, true);
+  mi_register_output(aligned_receiver_output, NULL);
+  record.normal_receiver_prefix_failure_memid_warning_and_raw_retry =
+      run_normal_aligned_receiver_case(subproc, 2);
+  record.normal_receiver_suffix_failure_memid_warning_and_raw_retry =
+      run_normal_aligned_receiver_case(subproc, 3);
   if (!write_all(record_descriptor, &record, sizeof(record))) return 2;
   return record.normal_direct_aligned
       && record.direct_map_failure_fallback
@@ -3752,7 +3880,9 @@ static int run_aligned_overmap_matrix_child(int record_descriptor) {
       && record.prefix_cleanup_failure_reserved_source_continues_escaped_live_stats
       && record.prefix_cleanup_failure_committed_source_continues_escaped_live_stats
       && record.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats
-      && record.suffix_cleanup_failure_committed_source_continues_escaped_live_stats ? 0 : 3;
+      && record.suffix_cleanup_failure_committed_source_continues_escaped_live_stats
+      && record.normal_receiver_prefix_failure_memid_warning_and_raw_retry
+      && record.normal_receiver_suffix_failure_memid_warning_and_raw_retry ? 0 : 3;
 }
 
 static bool capture_aligned_overmap_matrix_child(
@@ -4941,6 +5071,10 @@ int main(void) {
       aligned_overmap_record.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats);
   U("m2.vm.aligned_overmap.suffix_cleanup_failure_committed_continues_escaped_live_stats",
       aligned_overmap_record.suffix_cleanup_failure_committed_source_continues_escaped_live_stats);
+  U("m2.vm.aligned_overmap.normal_receiver_prefix_failure_memid_warning_raw_retry",
+      aligned_overmap_record.normal_receiver_prefix_failure_memid_warning_and_raw_retry);
+  U("m2.vm.aligned_overmap.normal_receiver_suffix_failure_memid_warning_raw_retry",
+      aligned_overmap_record.normal_receiver_suffix_failure_memid_warning_and_raw_retry);
   puts("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END");
   return 0;
 }

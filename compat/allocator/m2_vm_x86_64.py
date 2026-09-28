@@ -410,6 +410,8 @@ ALIGNED_OVERMAP_TRACE_KEYS = (
     "m2.vm.aligned_overmap.prefix_cleanup_failure_committed_continues_escaped_live_stats",
     "m2.vm.aligned_overmap.suffix_cleanup_failure_reserved_continues_escaped_live_stats",
     "m2.vm.aligned_overmap.suffix_cleanup_failure_committed_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.normal_receiver_prefix_failure_memid_warning_raw_retry",
+    "m2.vm.aligned_overmap.normal_receiver_suffix_failure_memid_warning_raw_retry",
 )
 
 ALIGNED_OVERMAP_COMPARISON = {

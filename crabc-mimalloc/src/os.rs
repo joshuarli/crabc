@@ -3033,6 +3033,18 @@ impl Mapping {
         commit_size: usize,
         adjust: bool,
     ) -> Result<()> {
+        self.unmap_for_process_with_warning(process, commit_size, adjust, false)
+    }
+
+    /// A normal source free warns before its unconditional statistics update.
+    /// Other receivers retain their own warning route after this primitive.
+    fn unmap_for_process_with_warning(
+        &mut self,
+        process: VmProcess<'_>,
+        commit_size: usize,
+        adjust: bool,
+        warn_on_error: bool,
+    ) -> Result<()> {
         self.active()?;
         if commit_size > self.length {
             return Err(Errno::INVAL);
@@ -3048,6 +3060,13 @@ impl Mapping {
             Ok(()) => unsafe { crabc_core::mm::munmap_raw(self.address, self.length) },
             Err(error) => Err(error),
         };
+        if warn_on_error {
+            if let Err(error) = result {
+                process.policy.source_warning(SourceFormattedMessage::os_free_failure(
+                    error, self.length, self.address.addr(),
+                ));
+            }
+        }
         let stats = process.subprocess.vm_statistics();
         if adjust {
             if commit_size != 0 {
@@ -4546,7 +4565,7 @@ impl NormalOsAllocation {
         } else {
             0
         };
-        match self.mapping.unmap_for_process(process, commit_size, false) {
+        match self.mapping.unmap_for_process_with_warning(process, commit_size, false, true) {
             Ok(()) => Ok(()),
             Err(error) => Err(NormalOsAllocationReleaseFailure {
                 error,
@@ -6060,7 +6079,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     use core::ffi::{c_char, c_void, CStr};
     #[cfg(target_arch = "x86_64")]
-    use core::sync::atomic::{AtomicBool, AtomicUsize};
+    use core::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicUsize};
 
     /* This deadline exists only in the native test schedule. The production
      * source CAS never waits; a missed helper handoff must fail the witness
@@ -6187,6 +6206,85 @@ mod tests {
         unsafe {
             (&mut *capture.fragments.get())[index][..bytes.len()].copy_from_slice(bytes);
             (&mut *capture.lengths.get())[index] = bytes.len();
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct NormalReceiverWarnings {
+        bodies: AtomicUsize,
+        fragments: AtomicUsize,
+        prefixes: AtomicUsize,
+        fallback_bodies: AtomicUsize,
+        free_bodies: AtomicUsize,
+        subprocess: AtomicPtr<crate::subproc::SubprocessIdentity>,
+        final_free_current: AtomicI64,
+        final_free_observed: AtomicI64,
+        order_matches: AtomicBool,
+        final_free_before_decrease: AtomicBool,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    impl NormalReceiverWarnings {
+        const fn new() -> Self {
+            Self { bodies: AtomicUsize::new(0), fragments: AtomicUsize::new(0),
+                prefixes: AtomicUsize::new(0), fallback_bodies: AtomicUsize::new(0),
+                free_bodies: AtomicUsize::new(0), final_free_current: AtomicI64::new(0),
+                subprocess: AtomicPtr::new(core::ptr::null_mut()),
+                final_free_observed: AtomicI64::new(0),
+                order_matches: AtomicBool::new(true), final_free_before_decrease: AtomicBool::new(false) }
+        }
+
+        fn reset(&self, process: VmProcess<'_>, final_free_current: i64) {
+            self.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+            self.bodies.store(0, Ordering::Release);
+            self.fragments.store(0, Ordering::Release);
+            self.prefixes.store(0, Ordering::Release);
+            self.fallback_bodies.store(0, Ordering::Release);
+            self.free_bodies.store(0, Ordering::Release);
+            self.final_free_current.store(final_free_current, Ordering::Release);
+            self.final_free_observed.store(0, Ordering::Release);
+            self.order_matches.store(true, Ordering::Release);
+            self.final_free_before_decrease.store(false, Ordering::Release);
+        }
+
+        fn matched(&self) -> bool {
+            self.fragments.load(Ordering::Acquire) == 6
+                && self.bodies.load(Ordering::Acquire) == 3
+                && self.prefixes.load(Ordering::Acquire) == 3
+                && self.fallback_bodies.load(Ordering::Acquire) == 1
+                && self.free_bodies.load(Ordering::Acquire) == 2
+                && self.order_matches.load(Ordering::Acquire)
+                && self.final_free_before_decrease.load(Ordering::Acquire)
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_normal_receiver_warning(message: *const c_char, argument: *mut c_void) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the test keeps this capture alive and serializes every delivery.
+        let capture = unsafe { &*(argument as *const NormalReceiverWarnings) };
+        let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+        capture.fragments.fetch_add(1, Ordering::AcqRel);
+        if bytes.starts_with(b"mimalloc: warning: thread 0x") {
+            capture.prefixes.fetch_add(1, Ordering::AcqRel);
+        } else if bytes.starts_with(b"unable to allocate aligned OS memory directly") {
+            let index = capture.bodies.fetch_add(1, Ordering::AcqRel);
+            if index != 0 { capture.order_matches.store(false, Ordering::Release); }
+            capture.fallback_bodies.fetch_add(1, Ordering::AcqRel);
+        } else if bytes.starts_with(b"unable to free OS memory") {
+            let index = capture.bodies.fetch_add(1, Ordering::AcqRel);
+            if index != 1 && index != 2 { capture.order_matches.store(false, Ordering::Release); }
+            if index == 2 {
+                let subprocess = capture.subprocess.load(Ordering::Acquire);
+                // SAFETY: the capture is armed with the live process identity
+                // before this serialized callback and retained for its lifetime.
+                let current = unsafe { &*subprocess }.vm_statistics().snapshot().reserved_current;
+                capture.final_free_observed.store(current, Ordering::Release);
+                capture.final_free_before_decrease.store(
+                    current == capture.final_free_current.load(Ordering::Acquire), Ordering::Release,
+                );
+            }
+            capture.free_bodies.fetch_add(1, Ordering::AcqRel);
         }
     }
 
@@ -10192,6 +10290,102 @@ mod tests {
             .expect("fixture teardown of the leaked candidate");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    fn m2_normal_receiver_process_fixture() -> (MemoryConfig, VmProcess<'static>, &'static NormalReceiverWarnings) {
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let max_warnings = b"mimalloc_max_warnings=100\0";
+        let environment = std::boxed::Box::leak(std::boxed::Box::new([
+            show_errors.as_ptr().cast(), max_warnings.as_ptr().cast(), core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let output = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(
+            unexpected_default_diagnostic_output,
+        )));
+        // SAFETY: the fixture retains the environment, output, and capture for
+        // the process policy's whole lifetime under the source environment lock.
+        unsafe { output.initialize_source_options(vm_policy_source_environment_for_test) };
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(NormalReceiverWarnings::new()));
+        unsafe { output.register_output(Some(capture_normal_receiver_warning as OutputCallback),
+            warnings as *mut NormalReceiverWarnings as *mut c_void) };
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(
+            unsafe { VmPolicy::from_process_options(output) },
+        ));
+        policy.finish_preloading();
+        let mut config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(),
+            1024 * 1024, true, false);
+        config.test_force_full_aligned_map_trim();
+        (config, VmProcess::new(policy, crate::subproc::MainSubprocess::test_static_owner()), warnings)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn m2_normal_receiver_case(config: MemoryConfig, process: VmProcess<'_>,
+        warnings: &NormalReceiverWarnings, ordinal: usize) -> bool {
+        let length = 2 * config.page_size().bytes();
+        let alignment = 2 * config.page_size().bytes();
+        let page = config.page_size().bytes();
+        let before = process.subprocess().vm_statistics().snapshot();
+        warnings.reset(process, before.reserved_current + length as i64);
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, ordinal, Errno::NOMEM));
+        let capture = fault.capture_unmap_ranges();
+        let allocation = NormalOsAllocation::allocate_aligned_for_process(
+            process, config, length, alignment, MapAccess::Reserved, false, None, ThpAdvice::Source,
+        ).expect("the source returns the aligned allocation after a failed trim");
+        let (ranges, count) = capture.all().expect("the source attempts three cleanup releases");
+        drop(capture);
+        assert_eq!(count, 3);
+        assert_eq!(fault.observed(), 3);
+        let base = allocation.base().unwrap().addr();
+        let memory = allocation.memory_id().unwrap();
+        assert_eq!(memory.kind(), MemoryKind::Os);
+        assert_eq!(memory.os_base().unwrap().value(), base);
+        assert_eq!(memory.size(), Some(length));
+        assert!(!memory.initially_committed());
+        assert_eq!(base % alignment, 0);
+        let (escaped, escaped_length) = ranges[ordinal - 1];
+        assert!(escaped_length > 0);
+        assert!(m2_aligned_overmap_page_is_live(escaped, page));
+        let after = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after.mmap_calls - before.mmap_calls, 2);
+        assert_eq!(after.reserved_current - before.reserved_current, length as i64);
+        assert_eq!(after.reserved_total - before.reserved_total, length as i64);
+
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let failure = allocation.release_for_process(process, false)
+            .expect_err("the source release fault retains the Rust owner");
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(failure.error(), Errno::NOMEM);
+        let accounted = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(accounted.reserved_current, before.reserved_current);
+        assert_eq!(accounted.reserved_total - before.reserved_total, length as i64);
+        assert!(m2_aligned_overmap_page_is_live(base, page));
+        fault.set(fault::Plan::disabled());
+        failure.into_allocation().release().expect("raw retry releases the retained middle");
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), accounted);
+        assert!(m2_aligned_overmap_page_is_live(escaped, page));
+        assert!(warnings.matched(), "warning fragments={} prefixes={} fallback={} free={} bodies={} order={} final_before={} expected={} observed={}",
+            warnings.fragments.load(Ordering::Acquire), warnings.prefixes.load(Ordering::Acquire),
+            warnings.fallback_bodies.load(Ordering::Acquire), warnings.free_bodies.load(Ordering::Acquire),
+            warnings.bodies.load(Ordering::Acquire), warnings.order_matches.load(Ordering::Acquire),
+            warnings.final_free_before_decrease.load(Ordering::Acquire),
+            warnings.final_free_current.load(Ordering::Acquire),
+            warnings.final_free_observed.load(Ordering::Acquire));
+        // SAFETY: the failed best-effort trim left this span without an owner.
+        unsafe { crabc_core::mm::munmap_raw(escaped as *mut u8, escaped_length) }
+            .expect("fixture teardown releases the escaped span");
+        true
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn normal_os_receiver_keeps_memid_and_raw_retry_after_failed_trim() {
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let (config, process, warnings) = m2_normal_receiver_process_fixture();
+        for ordinal in [2, 3] {
+            assert!(m2_normal_receiver_case(config, process, warnings, ordinal));
+        }
+    }
+
     #[test]
     fn forced_aligned_mapping_exercises_all_three_release_edges_before_returning_the_exact_range() {
         let fault = fault::install(fault::Plan::at(
@@ -10372,6 +10566,18 @@ mod tests {
         std::println!("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN");
         for (key, case, access) in rows {
             std::println!("{key}={}", u8::from(m2_aligned_overmap_case(case, access)));
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
+            let _environment_reset = VmPolicySourceEnvironmentReset;
+            let (config, process, warnings) = m2_normal_receiver_process_fixture();
+            for (key, ordinal) in [
+                ("m2.vm.aligned_overmap.normal_receiver_prefix_failure_memid_warning_raw_retry", 2),
+                ("m2.vm.aligned_overmap.normal_receiver_suffix_failure_memid_warning_raw_retry", 3),
+            ] {
+                std::println!("{key}={}", u8::from(m2_normal_receiver_case(config, process, warnings, ordinal)));
+            }
         }
         std::println!("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END");
     }

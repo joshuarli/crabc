@@ -3136,10 +3136,16 @@ geometry, successful direct/prefix/suffix cleanup, and every cleanup failure
 for Reserved and Committed requests. Both sides follow
 the source `mi_os_prim_free` rule: a failed direct, prefix, or suffix release
 is warned, still counted, and leaked live, and the aligned middle is returned.
-`os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace` emits the
-same ten row verdicts as the C fixture, and the receipt requires equality.
-The VM component remains partial because other receivers, callbacks, retry paths,
-source runtime options, huge-page success, and NUMA policy are unqualified.
+The same boundary now exercises the normal aligned allocation receiver after
+failed prefix and suffix trims. Each side checks its returned `MemoryId`, the
+escaped live range, counter changes, warning order and delivery before the
+final failed free's counter decrease, and raw cleanup without a second
+statistics update. Rust retains the failed final release owner for that raw
+retry. `os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace`
+emits twelve row verdicts, and the receipt requires equality with pinned C.
+The VM component remains partial because other receivers, broader callbacks
+and retry paths, source runtime options, huge-page success, and NUMA policy
+are unqualified.
 
 ### Native huge-registry ownership prerequisite
 
