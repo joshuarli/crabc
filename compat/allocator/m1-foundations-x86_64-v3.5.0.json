@@ -545,7 +545,7 @@
     "components": [
       {
         "check_count": 5,
-      "checks_sha256": "37d66fadada3c80587b152a0a5974661370bc29878c8f9f09e2be0b740324a99",
+        "checks_sha256": "37d66fadada3c80587b152a0a5974661370bc29878c8f9f09e2be0b740324a99",
         "id": "configuration-and-arithmetic",
         "layout_key_count": 71,
         "layout_keys_sha256": "cff3e3fd23239e8b54a8652a184e198d34ac0beb514cad2c5be45f29a24d92c3",
