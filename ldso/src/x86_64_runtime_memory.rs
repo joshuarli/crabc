@@ -89,17 +89,17 @@ fn map(bytes: usize) -> Option<*mut u8> {
 
 /// Allocate `bytes` (at least one) zeroed bytes aligned to `align`.
 pub(super) fn allocate(bytes: usize, align: usize) -> Option<*mut u8> {
-    allocate_block(bytes, align, true)
+    allocate_block::<true>(bytes, align)
 }
 
 /// [`allocate`] for a caller that writes every byte it later reads
 /// (LoaderBuffer initializes each element; LoaderVec reads only pushed
 /// ones): a recycled block keeps its stale bytes instead of being zeroed.
 fn allocate_uninitialized(bytes: usize, align: usize) -> Option<*mut u8> {
-    allocate_block(bytes, align, false)
+    allocate_block::<false>(bytes, align)
 }
 
-fn allocate_block(bytes: usize, align: usize, zeroed: bool) -> Option<*mut u8> {
+fn allocate_block<const ZEROED: bool>(bytes: usize, align: usize) -> Option<*mut u8> {
     let bytes = bytes.max(1);
     if bytes > isize::MAX as usize || align > PAGE as usize { return None; }
     let Some((index, size)) = class(bytes, align) else { return map(bytes); };
@@ -111,7 +111,7 @@ fn allocate_block(bytes: usize, align: usize, zeroed: bool) -> Option<*mut u8> {
         // SAFETY: a free block stores its successor in its first word.
         pool.free[index] = unsafe { block.cast::<*mut u8>().read() };
         // SAFETY: the block is `size` bytes of pool memory owned by us now.
-        if zeroed { unsafe { core::ptr::write_bytes(block, 0, size); } }
+        if ZEROED { unsafe { core::ptr::write_bytes(block, 0, size); } }
         block
     } else {
         // Carve the block at the next `size`-aligned address of the current
@@ -333,6 +333,39 @@ mod pool_tests {
                 for block in blocks { unsafe { release(block, LARGEST_CLASS, 16); } }
             })
         }).collect();
+        for worker in workers { worker.join().unwrap(); }
+    }
+
+    #[test]
+    fn recycled_class_blocks_zero_requested_bytes_across_size_changes() {
+        // Both requests share one class, so a shorter reuse may leave bytes
+        // that a later, longer request must clear before returning them.
+        for &(first_size, second_size) in &[(127usize, 65usize), (65, 127)] {
+            let first = allocate(first_size, 8).unwrap();
+            unsafe { core::ptr::write_bytes(first, 0xa5, first_size); release(first, first_size, 8); }
+            let second = allocate(second_size, 8).unwrap();
+            assert!(unsafe { core::slice::from_raw_parts(second, second_size) }
+                .iter().all(|&byte| byte == 0));
+            unsafe { release(second, second_size, 8); }
+        }
+    }
+
+    #[test]
+    fn concurrent_mixed_requests_keep_zeroing_and_ownership() {
+        let workers: std::vec::Vec<_> = (0..4usize).map(|worker| std::thread::spawn(move || {
+            for round in 0..500usize {
+                let bytes = if (worker + round) % 2 == 0 { 65 } else { 127 };
+                let block = allocate(bytes, 8).unwrap();
+                assert!(unsafe { core::slice::from_raw_parts(block, bytes) }
+                    .iter().all(|&byte| byte == 0));
+                let tag = (worker + 1) as u8;
+                unsafe { core::ptr::write_bytes(block, tag, bytes); }
+                std::thread::yield_now();
+                assert!(unsafe { core::slice::from_raw_parts(block, bytes) }
+                    .iter().all(|&byte| byte == tag));
+                unsafe { release(block, bytes, 8); }
+            }
+        })).collect();
         for worker in workers { worker.join().unwrap(); }
     }
 
