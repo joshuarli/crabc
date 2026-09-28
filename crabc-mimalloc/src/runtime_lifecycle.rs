@@ -11894,6 +11894,8 @@ unsafe fn native_reallocate_inner(
 /// head. A detached PageMap observation remains a typed source refusal and is
 /// fail-closed as retained; it never revives a former owner through a route,
 /// registry, client ledger, scheduler bridge, or geometry selector.
+/// Inlining the entry lets C-facing callers share admission and local dispatch
+/// while the pointer-first remainder stays out of the local fast-path frame.
 ///
 /// # Safety
 ///
@@ -11901,6 +11903,7 @@ unsafe fn native_reallocate_inner(
 /// reports `InvalidPointer`. Callers must not route any native failure to the
 /// C allocator as recovery.
 #[doc(hidden)]
+#[inline(always)]
 pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
     #[cfg(target_arch = "x86_64")]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
