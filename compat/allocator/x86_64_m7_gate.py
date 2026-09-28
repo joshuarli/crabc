@@ -1414,6 +1414,7 @@ def require_statistics_remote_normal(trace: Mapping[str, str], description: str)
 
 def require_statistics_remote_normal_fresh(
     trace: Mapping[str, str], description: str, *, checked_free: bool = False,
+    queried_usable: bool = False,
 ) -> None:
     """Require an uninitialized freeing worker's metadata-Theap accounting."""
 
@@ -1429,6 +1430,8 @@ def require_statistics_remote_normal_fresh(
         "worker.cfree_owned": "1" if checked_free else "0",
         "worker.binned.hex": "",
     }
+    if queried_usable:
+        expected["worker.query_usable"] = "32768"
     for stage in ("allocated", "freed"):
         expected.update({f"{stage}.{field}": value for field, value in allocated.items()})
     if dict(trace) != expected:
@@ -1780,6 +1783,21 @@ def run_statistics_remote_normal_fresh_cfree_differential(offline: bool) -> dict
     )
 
 
+def run_statistics_remote_normal_fresh_usable_differential(offline: bool) -> dict[str, Any]:
+    return run_public_statistics_differential(
+        offline, subject="remote-normal-fresh-usable", driver=STATISTICS_REMOTE_NORMAL_DRIVER,
+        begin=STATISTICS_REMOTE_NORMAL_TRACE_BEGIN, end=STATISTICS_REMOTE_NORMAL_TRACE_END,
+        report_name="statistics-remote-normal-fresh-usable.json", stat_level=2,
+        require_complete=lambda trace, description: require_statistics_remote_normal_fresh(
+            trace, description, queried_usable=True,
+        ),
+        driver_defines=("-DCRABC_MI_FRESH_WORKER=1", "-DCRABC_MI_STAT_LEVEL=2",
+                        "-DCRABC_MI_TARGET_REQUEST=32768",
+                        "-DCRABC_MI_FRESH_WORKER_UFREE=1",
+                        "-DCRABC_MI_FRESH_WORKER_QUERY_USABLE=1"),
+    )
+
+
 def run_statistics_aligned_huge_differential(offline: bool) -> dict[str, Any]:
     return run_public_statistics_differential(
         offline, subject="aligned-huge", driver=STATISTICS_ALIGNED_HUGE_DRIVER,
@@ -1972,6 +1990,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare a fresh worker's cross-thread medium ufree under MI_STAT=2")
     mode.add_argument("--statistics-remote-normal-fresh-cfree-differential", action="store_true",
         help="compare a fresh worker's checked cross-thread medium free under MI_STAT=2")
+    mode.add_argument("--statistics-remote-normal-fresh-usable-differential", action="store_true",
+        help="compare a fresh worker's usable-size query before cross-thread medium free")
     mode.add_argument("--statistics-aligned-huge-differential", action="store_true",
         help="compare pinned-C/Rust OS-aligned huge statistics under MI_STAT=1")
     mode.add_argument("--statistics-requested-production-differential", action="store_true",
@@ -2082,6 +2102,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_remote_normal_fresh_cfree_differential:
         report = run_statistics_remote_normal_fresh_cfree_differential(arguments.offline)
         print(f"M7 fresh-worker checked free statistics differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.statistics_remote_normal_fresh_usable_differential:
+        report = run_statistics_remote_normal_fresh_usable_differential(arguments.offline)
+        print(f"M7 fresh-worker usable-size-before-free differential passed: {report['compared_key_count']} keys")
         return 0
     if arguments.statistics_aligned_huge_differential:
         report = run_statistics_aligned_huge_differential(arguments.offline)

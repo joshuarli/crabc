@@ -372,16 +372,16 @@ pub extern "C" fn mi_new_n(count: usize, size: usize) -> *mut c_void {
 // Free and usable size (free.c, page-queue.c, heap.c, init.c)
 // ---------------------------------------------------------------------------
 
-/// Registers a worker for pointer-first free without creating its default Theap.
+/// Registers pointer-only work without creating the worker's default Theap.
 #[inline]
-fn register_thread_for_free() {
+fn register_thread_for_pointer_access() {
     if PROCESS.load(Ordering::Acquire) == PROCESS_READY {
         let key = THREAD_KEY.load(Ordering::Acquire) as PthreadKey;
         // SAFETY: the process's Release publication follows key creation.
         if unsafe { pthread_getspecific(key) }.is_null() {
-            // Pinned `mi_free` validates the page and records the free without
+            // Pinned pointer lookup and free use page metadata without
             // `_mi_thread_init`. Register only the runtime admission descriptor
-            // so an uninitialized worker can take the metadata-Theap stats path.
+            // so a later free can take the metadata-Theap stats path.
             let initial = unsafe {
                 pthread_equal(pthread_self(), INITIAL_THREAD.load(Ordering::Acquire) as Pthread)
             } != 0;
@@ -406,7 +406,7 @@ pub unsafe extern "C" fn mi_free(block: *mut c_void) {
     if block.is_null() {
         return;
     }
-    register_thread_for_free();
+    register_thread_for_pointer_access();
     // SAFETY: the C caller passes null or a live allocation it gives up.
     freed(unsafe { api::free(block.cast()) });
 }
@@ -438,7 +438,7 @@ pub unsafe extern "C" fn mi_free_size_aligned(block: *mut c_void, _size: usize, 
 #[no_mangle]
 pub unsafe extern "C" fn mi_ufree(block: *mut c_void, block_size: *mut usize) {
     if !block.is_null() {
-        register_thread_for_free();
+        register_thread_for_pointer_access();
     }
     // SAFETY: forwarded free contract.
     let (outcome, size) = unsafe { api::ufree(block.cast()) };
@@ -450,7 +450,7 @@ pub unsafe extern "C" fn mi_ufree(block: *mut c_void, block_size: *mut usize) {
 #[no_mangle]
 pub unsafe extern "C" fn mi_cfree(block: *mut c_void) -> bool {
     if !block.is_null() {
-        register_thread_for_free();
+        register_thread_for_pointer_access();
     }
     // SAFETY: `mi_cfree` accepts any pointer the process owns.
     let (outcome, owned) = unsafe { api::cfree(block.cast()) };
@@ -460,7 +460,9 @@ pub unsafe extern "C" fn mi_cfree(block: *mut c_void) -> bool {
 
 #[no_mangle]
 pub unsafe extern "C" fn mi_usable_size(block: *const c_void) -> usize {
-    bind_thread();
+    if !block.is_null() {
+        register_thread_for_pointer_access();
+    }
     // SAFETY: the C caller passes null or a live allocation.
     unsafe { api::usable_size(block.cast()) }
 }

@@ -21,6 +21,9 @@
 #ifndef CRABC_MI_FRESH_WORKER_CFREE
 #define CRABC_MI_FRESH_WORKER_CFREE 0
 #endif
+#ifndef CRABC_MI_FRESH_WORKER_QUERY_USABLE
+#define CRABC_MI_FRESH_WORKER_QUERY_USABLE 0
+#endif
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t changed = PTHREAD_COND_INITIALIZER;
@@ -29,6 +32,7 @@ static int release_worker;
 static void* remote_block;
 static size_t warm_usable;
 static size_t worker_free_usable;
+static size_t worker_query_usable;
 static int worker_cfree_owned;
 static char worker_output[16384];
 static size_t worker_output_length;
@@ -114,6 +118,9 @@ static void* worker(void* argument) {
   void* block = remote_block;
   if (pthread_mutex_unlock(&lock) != 0) abort();
 
+#if CRABC_MI_FRESH_WORKER_QUERY_USABLE
+  worker_query_usable = mi_usable_size(block);
+#endif
 #if CRABC_MI_FRESH_WORKER_UFREE
   mi_ufree(block, &worker_free_usable);
 #elif CRABC_MI_FRESH_WORKER_CFREE
@@ -159,6 +166,9 @@ int main(void) {
   printf("target.request=%d\n", CRABC_MI_TARGET_REQUEST);
   printf("worker.free_usable=%zu\n", worker_free_usable);
   printf("worker.cfree_owned=%d\n", worker_cfree_owned);
+#if CRABC_MI_FRESH_WORKER_QUERY_USABLE
+  printf("worker.query_usable=%zu\n", worker_query_usable);
+#endif
 #endif
   printf("warm.usable=%zu\n", warm_usable);
   printf("target.usable=%zu\n", target_usable);

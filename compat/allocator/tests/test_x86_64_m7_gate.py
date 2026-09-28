@@ -74,6 +74,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-remote-normal",
             "differential:statistics-remote-normal-fresh",
             "differential:statistics-remote-normal-fresh-cfree",
+            "differential:statistics-remote-normal-fresh-usable",
             "differential:statistics-requested-production",
             "differential:thread-init-failure",
         ])
@@ -403,6 +404,7 @@ class M7GateContractTests(unittest.TestCase):
         statistics = self.gate_record(self.contract, "m7.statistics")
         self.assertIn("differential:statistics-remote-normal-fresh", statistics["evidence"])
         self.assertIn("differential:statistics-remote-normal-fresh-cfree", statistics["evidence"])
+        self.assertIn("differential:statistics-remote-normal-fresh-usable", statistics["evidence"])
         trace = {
             "profile.level": "2", "worker.fresh": "1", "warm.usable": "0",
             "target.request": "32768", "target.usable": "32768",
@@ -416,6 +418,13 @@ class M7GateContractTests(unittest.TestCase):
                 f"{stage}.pages": "1,1,1", f"{stage}.requested": "32768,32768,32768",
             })
         gate.require_statistics_remote_normal_fresh(trace, "ufree")
+        queried = {**trace, "worker.query_usable": "32768"}
+        gate.require_statistics_remote_normal_fresh(queried, "usable before ufree", queried_usable=True)
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_normal_fresh(
+                {**queried, "freed.bin": "1,1,0"}, "query attached worker Theap",
+                queried_usable=True,
+            )
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_remote_normal_fresh(
                 {**trace, "freed.normal": "32768,32768,0"}, "premature attachment",
