@@ -282,12 +282,25 @@ archive member as well as its index, occurrence, section, and symbol value; a
 foreign member cannot inherit an otherwise matching definition. It discharges
 only those thirteen bodies' explicit receipt requirements. `__statfs` and
 `__fstatfs` are source-local observations,
-not selected providers. The six public ordinary-import reasons for
-`clock_gettime`, `madvise`, `mmap`, `mprotect`, `munmap`, and `sysinfo` remain
-open because this attachment has no selected installed-caller relocation
-receipt. All unowned and unnamed physical rows remain in the complete ELF
+not selected providers. Public alias imports need their own selected caller
+and provider evidence; this alias/body attachment does not discharge them.
+All unowned and unnamed physical rows remain in the complete ELF
 accounting. No syscall family, qualification, promotion, or public-support
 claim follows.
+
+The separate selected C allocator receipt binds only `__madvise`, `__mmap`,
+and `__mprotect` ordinary imports. Its fixed-C producer account authenticates
+the compiler's private-name rewrites and the one installed C archive member.
+The reader checks each `GLOBAL DEFAULT UND` row and the member's direct
+`R_X86_64_PLT32` call relocations. For both an ordinary static ET_EXEC and
+static PIE link, it checks archive extraction, the unique hidden Rust provider
+member and mapped section, and decodes each surviving final call instruction
+to that provider's symbol address. A collected-away call section carries no
+resolution claim. The shared libc has one local hidden body per name, no
+same-named dynamic symbol, and no same-named dynamic relocation. The selector
+requires those exact occurrences and rejects foreign or duplicate importers
+and providers before removing these three private ordinary-import reasons.
+Public alias imports remain separate from these private C calls.
 
 `--utmpx-receipt-report REPORT` is independently optional. Its owning
 process-free reader reconstructs the retained eight selected aliases and
@@ -827,7 +840,8 @@ requires their absence from dynsym, their LOCAL shared symtab definitions, and
 preserved static providers and public allocation metadata. This fixed-C
 attachment supplies metadata only for that exact list. It neither selects an
 unrelated private owner. The separate native C allocator-boundary receipt can
-prove only its seven exact static Rust-root imports; allocator semantics,
+prove its seven exact static Rust-root imports and the selected C member's
+three private VM calls; allocator semantics,
 lifecycle beyond that bounded receipt, family completion, promotion, and
 public support remain open.
 

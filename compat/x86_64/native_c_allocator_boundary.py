@@ -16,8 +16,10 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
+import tempfile
 import tomllib
 from typing import Any, Mapping, Sequence
 
@@ -49,6 +51,7 @@ C_RUNTIME_IMPORTS = (
     ("realpath", "GLOBAL"), ("sleep", "GLOBAL"), ("strtol", "GLOBAL"),
     ("syscall", "GLOBAL"), ("sysconf", "GLOBAL"), ("sysinfo", "WEAK"),
 )
+VM_PRIVATE_IMPORTS = ("__madvise", "__mmap", "__mprotect")
 RUNTIME_SOURCES = (
     "libc/src/allocator_mimalloc.rs",
     "libc/src/allocator_observability_mimalloc.rs",
@@ -829,6 +832,233 @@ def _runtime_static_member_links(work: Path, output: Path, static_product: Path,
             "selected_members": dict(selected),
         }
     return result
+
+
+def _vm_private_relocations(transcript: str) -> dict[str, list[dict[str, object]]]:
+    """Keep only direct calls from the selected C object to private VM bodies."""
+    result: dict[str, list[dict[str, object]]] = {name: [] for name in VM_PRIVATE_IMPORTS}
+    section: str | None = None
+    for line in transcript.splitlines():
+        header = re.match(r"^Relocation section '\.rela(\.text\.[^']+)'", line)
+        if header:
+            section = header.group(1)
+            continue
+        if line.startswith("Relocation section "):
+            section = None
+            continue
+        row = re.match(r"^\s*([0-9a-f]{16})\s+\S+\s+(R_X86_64_\w+)\s+\S+\s+(\S+)\s+([+-])\s+(\d+)\s*$", line)
+        if row is None or row.group(3) not in result:
+            continue
+        name = row.group(3)
+        require(section is not None and row.group(2) == "R_X86_64_PLT32"
+                and row.group(4) == "-" and row.group(5) == "4",
+                f"private VM import {name} is not a direct C call")
+        result[name].append({"section": section, "offset": int(row.group(1), 16)})
+    require(all(rows and len({(row['section'], row['offset']) for row in rows}) == len(rows)
+                for rows in result.values()), "private VM C-call relocation roster differs")
+    return result
+
+
+def _elf_virtual_bytes(image: bytes, address: int, size: int, expected_type: int) -> bytes:
+    """Read a final ELF virtual address through its own load segments."""
+    require(len(image) >= 64 and image[:6] == b"\x7fELF\x02\x01"
+            and struct.unpack_from("<H", image, 16)[0] == expected_type,
+            "private VM final ELF type differs")
+    offset = struct.unpack_from("<Q", image, 32)[0]
+    entry_size, count = struct.unpack_from("<HH", image, 54)
+    require(entry_size >= 56 and offset + entry_size * count <= len(image),
+            "private VM final ELF program headers differ")
+    matches = []
+    for index in range(count):
+        header = offset + index * entry_size
+        kind, flags = struct.unpack_from("<II", image, header)
+        file_offset = struct.unpack_from("<Q", image, header + 8)[0]
+        virtual = struct.unpack_from("<Q", image, header + 16)[0]
+        file_size = struct.unpack_from("<Q", image, header + 32)[0]
+        if kind == 1 and flags & 1 and virtual <= address and address + size <= virtual + file_size:
+            location = file_offset + address - virtual
+            require(location + size <= len(image), "private VM final ELF load segment exceeds file")
+            matches.append(image[location:location + size])
+    require(len(matches) == 1, "private VM callsite has no unique executable load segment")
+    return matches[0]
+
+
+def _vm_final_symbols(transcript: str) -> dict[str, int]:
+    result: dict[str, list[int]] = {name: [] for name in VM_PRIVATE_IMPORTS}
+    for line in transcript.splitlines():
+        parts = line.split()
+        if len(parts) < 8 or parts[-1] not in result or not parts[0].endswith(":"):
+            continue
+        name = parts[-1]
+        require(parts[3:6] == ["FUNC", "LOCAL", "HIDDEN"] and parts[6] != "UND",
+                f"private VM final provider {name} metadata differs")
+        result[name].append(int(parts[1], 16))
+    require(all(len(rows) == 1 for rows in result.values()),
+            "private VM final provider is missing or duplicate")
+    return {name: rows[0] for name, rows in result.items()}
+
+
+def _vm_final_link_calls(relocations: Mapping[str, list[dict[str, object]]], *,
+                         archive_member: str, provider_members: Mapping[str, str],
+                         map_text: str, trace_text: str, symbol_text: str,
+                         relocation_text: str, image: bytes, elf_type: int) -> dict[str, object]:
+    """Match every surviving C call instruction to its final hidden provider."""
+    require(trace_text.splitlines().count(archive_member) == 1,
+            "private VM C member is not selected exactly once")
+    addresses = _vm_final_symbols(symbol_text)
+    require(not any(re.search(rf"\b{re.escape(name)}\b", relocation_text)
+                    for name in VM_PRIVATE_IMPORTS),
+            "private VM final ELF retains an unresolved relocation")
+    selected: dict[str, dict[str, object]] = {}
+    for name in VM_PRIVATE_IMPORTS:
+        member = provider_members[name]
+        require(member != archive_member and trace_text.splitlines().count(member) == 1,
+                f"private VM final provider {name} is not selected exactly once")
+        provider_rows = [line for line in map_text.splitlines()
+                         if line.rstrip().endswith(f"{member}:(.text.{name})")]
+        require(len(provider_rows) == 1, f"private VM final provider map differs: {name}")
+        provider_address = int(provider_rows[0].split()[0], 16)
+        require(provider_address == addresses[name],
+                f"private VM final provider address differs: {name}")
+        calls: list[dict[str, object]] = []
+        discarded: list[dict[str, object]] = []
+        for relocation in relocations[name]:
+            section = relocation["section"]
+            source_rows = [line for line in map_text.splitlines()
+                           if line.rstrip().endswith(f"{archive_member}:({section})")]
+            require(len(source_rows) <= 1, f"private VM C section map is ambiguous: {section}")
+            if not source_rows:
+                discarded.append(dict(relocation))
+                continue
+            parts = source_rows[0].split()
+            require(len(parts) >= 5, f"private VM C section map differs: {section}")
+            start, size = int(parts[0], 16), int(parts[2], 16)
+            offset = relocation["offset"]
+            require(type(offset) is int and 1 <= offset and offset + 4 <= size,
+                    f"private VM C relocation exceeds selected section: {name}")
+            call_address = start + offset - 1
+            opcode = _elf_virtual_bytes(image, call_address, 5, elf_type)
+            require(opcode[0] == 0xe8, f"private VM C call instruction differs: {name}")
+            target = call_address + 5 + struct.unpack_from("<i", opcode, 1)[0]
+            require(target == provider_address,
+                    f"private VM C call resolves to a foreign provider: {name}")
+            calls.append({"section": section, "offset": offset,
+                          "call_address": call_address, "target_address": target})
+        require(calls, f"private VM final image has no selected C call: {name}")
+        selected[name] = {"provider_member": member, "provider_address": provider_address,
+                          "resolved_calls": calls, "discarded_calls": discarded}
+    return selected
+
+
+def private_vm_resolution(report: Mapping[str, Any], *, report_path: Path,
+                          static_product: Path, dynamic_product: Path,
+                          elf_facts_report: Path) -> dict[str, object]:
+    """Resolve the fixed C allocator's three private VM calls in both static images.
+
+    The caller first replays the complete component receipt. Its authenticated
+    C member, retained ordinary links, and supplied ELF facts bound every byte
+    read here. Final call targets are decoded from the linked executable, so
+    link-map presence alone cannot discharge an import.
+    """
+    inputs = report["inputs"]
+    account = inputs["producer_account"]
+    build = account["source_authority"]["build"]
+    for flags in (build["static_target_flags"], build["shared_allocator_flags"]):
+        require(all(f"-D{name[2:]}={name}" in flags for name in VM_PRIVATE_IMPORTS),
+                "private VM C source rewriting differs")
+    runtime = inputs["c_runtime_import_bindings"]
+    c_member = runtime["static_c_member"]
+    facts_report = json_object(elf_facts_report, "private VM ELF facts")
+    for name in ("ar", "readelf"):
+        tool = Path("/usr/bin") / name
+        require(same(facts_report["tools"][name]["original"], identity(tool)),
+                f"private VM {name} differs from the pinned ELF collector")
+    facts = facts_report["facts"]
+    static_members = facts["candidate-static"]
+    require(static_members[c_member["member_index"]]["member"] == c_member["name"]
+            and static_members[c_member["member_index"]]["member_occurrence"] == 0,
+            "private VM C member differs from authenticated archive")
+    try:
+        c_rows = producer._symbol_tables(static_members[c_member["member_index"]]["symbol_tables"],
+                                         "private VM C imports", {".symtab"})[".symtab"]
+        shared_tables = producer._symbol_tables(facts["candidate-shared"]["symbol_tables"],
+                                                 "private VM shared bodies", {".dynsym", ".symtab"})
+    except producer.ProducerMetadataError as error:
+        raise AllocatorBoundaryError(str(error)) from error
+    shared_libc = physical_file(dynamic_product / "usr/lib/libc.so", "private VM shared libc")
+    shared_relocations = subprocess.run(["/usr/bin/readelf", "-rW", str(shared_libc)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        text=True, check=False)
+    require(shared_relocations.returncode == 0 and not any(
+        re.search(rf"\b{re.escape(name)}\b", shared_relocations.stdout)
+        for name in VM_PRIVATE_IMPORTS),
+        "private VM shared libc retains an external relocation")
+    provider_members: dict[str, str] = {}
+    imports: list[dict[str, object]] = []
+    archive = physical_file(static_product / "usr/lib/libc.a", "private VM archive")
+    mounted_archive = mounted_path(archive)
+    for name in VM_PRIVATE_IMPORTS:
+        c_imports = [row for row in c_rows if row.get("name") == name]
+        require(len(c_imports) == 1 and all(c_imports[0].get(field) == value for field, value in {
+            "type": "NOTYPE", "binding": "GLOBAL", "visibility": "DEFAULT", "section_index": "UND",
+            "size_bytes": 0, "value": "0000000000000000",
+        }.items()), f"private VM C import differs: {name}")
+        member, provider = _static_definition(facts_report, name, "private VM body")
+        require(all(provider.get(field) == value for field, value in {
+            "type": "FUNC", "binding": "GLOBAL", "visibility": "HIDDEN",
+        }.items()) and member["member"] != c_member["name"],
+                f"private VM static provider differs: {name}")
+        shared = [row for row in shared_tables[".symtab"] if row.get("name") == name]
+        require(len(shared) == 1 and all(shared[0].get(field) == value for field, value in {
+            "type": "FUNC", "binding": "LOCAL", "visibility": "HIDDEN",
+        }.items()) and shared[0].get("section_index") != "UND"
+                and not [row for row in shared_tables[".dynsym"] if row.get("name") == name],
+                f"private VM shared provider/import differs: {name}")
+        provider_members[name] = f"{mounted_archive}({member['member']})"
+        imports.append({"name": name,
+                        "static_c_import": {key: c_imports[0][key] for key in (
+                            "name", "type", "binding", "visibility", "section_index", "size_bytes", "value")},
+                        "static_provider_member": _member_identity(member),
+                        "static_provider": {key: provider[key] for key in (
+                            "name", "type", "binding", "visibility", "section_index", "size_bytes", "value")},
+                        "shared_provider": {key: shared[0][key] for key in (
+                            "name", "type", "binding", "visibility", "section_index", "size_bytes", "value")}})
+    ar = subprocess.run(["/usr/bin/ar", "p", str(archive), c_member["name"]],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    require(ar.returncode == 0 and hashlib.sha256(ar.stdout).hexdigest() == c_member["sha256"],
+            "private VM C member bytes differ")
+    with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+        object_path = Path(temporary) / "allocator-c.o"
+        object_path.write_bytes(ar.stdout)
+        source = subprocess.run(["/usr/bin/readelf", "-rW", str(object_path)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    require(source.returncode == 0, "private VM C relocations are unreadable")
+    relocations = _vm_private_relocations(source.stdout)
+    startup = report["startup"]
+    work = physical_directory(report_path.parent / startup["work"], "private VM retained link work")
+    modes: dict[str, object] = {}
+    for mode, elf_type in (("static", 2), ("static-pie", 3)):
+        executable = physical_file(work / f"static-{mode}", f"private VM {mode} final ELF")
+        link = startup["observation"]["links"][mode]
+        require(same(link["executable"], identity(executable, logical_path=executable.relative_to(report_path.parent).as_posix())),
+                f"private VM {mode} final ELF bytes differ")
+        map_text = physical_file(work / f"static-{mode}.crabc-link.map", f"private VM {mode} map").read_text(encoding="utf-8")
+        trace_text = physical_file(work / f"static-{mode}.crabc-link.trace", f"private VM {mode} trace").read_text(encoding="utf-8")
+        symbols = subprocess.run(["/usr/bin/readelf", "-Ws", str(executable)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        final_relocations = subprocess.run(["/usr/bin/readelf", "-rW", str(executable)],
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        require(symbols.returncode == final_relocations.returncode == 0,
+                f"private VM {mode} final ELF is unreadable")
+        modes[mode] = _vm_final_link_calls(
+            relocations, archive_member=f"{mounted_archive}({c_member['name']})",
+            provider_members=provider_members, map_text=map_text, trace_text=trace_text,
+            symbol_text=symbols.stdout, relocation_text=final_relocations.stdout,
+            image=executable.read_bytes(), elf_type=elf_type,
+        )
+    return {"c_member": dict(c_member), "imports": imports,
+            "source_relocations": relocations, "static_final_links": modes,
+            "shared_private_import_absent": True}
 
 
 def _startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path,

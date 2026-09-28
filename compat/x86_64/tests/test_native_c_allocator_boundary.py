@@ -6,6 +6,7 @@ from __future__ import annotations
 from copy import deepcopy
 import importlib.util
 import json
+import struct
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,57 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_private_vm_final_calls_reject_foreign_and_duplicate_providers(self) -> None:
+        archive = "/workspace/.work/x86_64/current/usr/lib/libc.a"
+        c_member = f"{archive}(selected-c.o)"
+        names = BOUNDARY.VM_PRIVATE_IMPORTS
+        members = {name: f"{archive}(provider-{name}.o)" for name in names}
+        source = "".join(
+            f"Relocation section '.rela.text.call_{name}' at offset 0x100 contains 1 entry:\n"
+            "    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend\n"
+            f"0000000000000001  0000000100000004 R_X86_64_PLT32         0000000000000000 {name} - 4\n"
+            for name in names
+        )
+        relocations = BOUNDARY._vm_private_relocations(source)
+        image = bytearray(0x300)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 2)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 1)
+        struct.pack_into("<IIQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x200)
+        map_rows = []
+        symbols = []
+        for index, name in enumerate(names):
+            call = 0x1000 + index * 0x10
+            target = 0x1080 + index * 0x10
+            image[0x100 + index * 0x10] = 0xe8
+            struct.pack_into("<i", image, 0x101 + index * 0x10, target - call - 5)
+            map_rows.append(f"{call:x} {call:x} 5 1 {c_member}:(.text.call_{name})")
+            map_rows.append(f"{target:x} {target:x} 8 1 {members[name]}:(.text.{name})")
+            symbols.append(f"{index}: {target:016x} 8 FUNC LOCAL HIDDEN 1 {name}")
+        kwargs = dict(
+            archive_member=c_member, provider_members=members,
+            map_text="\n".join(map_rows), trace_text="\n".join((c_member, *members.values())),
+            symbol_text="\n".join(symbols), relocation_text="", image=bytes(image), elf_type=2,
+        )
+        linked = BOUNDARY._vm_final_link_calls(relocations, **kwargs)
+        self.assertEqual(set(linked), set(names))
+        self.assertTrue(all(len(row["resolved_calls"]) == 1 for row in linked.values()))
+        forged = bytearray(image)
+        struct.pack_into("<i", forged, 0x101, 0x10)
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign provider"):
+            BOUNDARY._vm_final_link_calls(relocations, **{**kwargs, "image": bytes(forged)})
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "provider map differs"):
+            BOUNDARY._vm_final_link_calls(relocations, **{
+                **kwargs, "map_text": kwargs["map_text"] + "\n" + map_rows[1],
+            })
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "unresolved relocation"):
+            BOUNDARY._vm_final_link_calls(relocations, **{
+                **kwargs, "relocation_text": f"R_X86_64_JUMP_SLOT {names[0]}",
+            })
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "not a direct C call"):
+            BOUNDARY._vm_private_relocations(source.replace("R_X86_64_PLT32", "R_X86_64_GOTPCREL", 1))
+
     def test_source_resolution_accepts_default_c_with_native_shadow_selection(self) -> None:
         revision = BOUNDARY.subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
