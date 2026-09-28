@@ -37935,11 +37935,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 zero,
             });
         }
-        let page_size = self.page_map.memory_config().page_size().bytes();
-        let block_size = size_class::good_size(request, page_size)?;
-        if size_class::bin(block_size)? != bin {
-            return None;
-        }
+        // With no per-block padding, regular `mi_good_size` is exactly the
+        // selected queue's block size. The huge branch above alone needs an
+        // OS page-size calculation.
+        let block_size = size_class::bin_size(bin)?;
         let kind = size_class::page_kind_for_block_size(block_size)?;
         if kind == PageKind::Singleton {
             return None;
