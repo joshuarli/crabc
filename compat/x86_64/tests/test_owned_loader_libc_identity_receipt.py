@@ -2,17 +2,22 @@
 """Physical native-shadow receipt for copied-loader libc identity cases."""
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import native_shadow_receipt as receipt  # noqa: E402
+import owned_loader_libc_identity_receipt as identity_receipt  # noqa: E402
 
 RUNNER = "owned-loader-libc-identity"
 EVIDENCE = re.compile(r"evidence: (/workspace/\.work/x86_64/tmp/owned-loader-libc-identity\.[^\s]+)")
@@ -80,6 +85,7 @@ class OwnedLoaderLibcIdentityReceiptTests(unittest.TestCase):
         evidence_file_command(work, "rm", "-rf")
         self.assertFalse(work.exists())
         receipt.read_receipt(ROOT, RUNNER, case_prefix="non-pie-")
+        identity_receipt.read_identity_receipt(ROOT)
         with self.assertRaisesRegex(receipt.ReceiptError, "receipt seals"):
             receipt.read_receipt(ROOT, RUNNER, seal={"revision": "0" * 40, "worktree_sha256": "0" * 64})
         for case_id in expected:
@@ -111,6 +117,108 @@ class OwnedLoaderLibcIdentityReceiptTests(unittest.TestCase):
             receipt.read_receipt(ROOT, RUNNER)
         log.write_bytes(original)
         receipt.read_receipt(ROOT, RUNNER)
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp") as temporary:
+            copied_root = Path(temporary)
+            copied = receipt.receipt_directory(copied_root, RUNNER)
+            copied.parent.mkdir(parents=True)
+            shutil.copytree(latest, copied)
+            report = copied / "receipt.json"
+            document = json.loads(report.read_text())
+            document["cases"] = [case for case in document["cases"]
+                                 if case["id"] != "pie-hardlink-one-identity"]
+            report.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+            receipt.read_receipt(copied_root, RUNNER, seal=published.source)
+            with self.assertRaisesRegex(receipt.ReceiptError, "missing identity cases"):
+                identity_receipt.read_identity_receipt(copied_root, seal=published.source)
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp") as temporary:
+            copied_root = Path(temporary)
+            copied = receipt.receipt_directory(copied_root, RUNNER)
+            copied.parent.mkdir(parents=True)
+            shutil.copytree(latest, copied)
+            case_id = "pie-prefix-only-libc"
+            identity = copied / "logs" / f"{case_id}.identity"
+            lines = identity.read_text().splitlines()
+            root_line = next(line for line in lines if line.split(" dev=")[0].endswith(
+                f"/{case_id}/usr/lib/libc.so"))
+            prefix_line = next(line for line in lines if line.split(" dev=")[0].endswith(
+                f"/{case_id}/prefix/usr/lib/libc.so"))
+            root_id = root_line.split(" dev=")[1].split(" size=")[0]
+            prefix_id = prefix_line.split(" dev=")[1].split(" size=")[0]
+            self.assertNotEqual(root_id, prefix_id)
+            lines[lines.index(prefix_line)] = prefix_line.replace(f" dev={prefix_id} size=",
+                                                                   f" dev={root_id} size=")
+            changed = ("\n".join(lines) + "\n").encode()
+            identity.write_bytes(changed)
+            report = copied / "receipt.json"
+            document = json.loads(report.read_text())
+            case = next(case for case in document["cases"] if case["id"] == case_id)
+            case["logs"][f"{case_id}.identity"] = {
+                "sha256": hashlib.sha256(changed).hexdigest(), "size": len(changed),
+            }
+            report.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+            receipt.read_receipt(copied_root, RUNNER, seal=published.source)
+            with self.assertRaisesRegex(receipt.ReceiptError, "alias identity"):
+                identity_receipt.read_identity_receipt(copied_root, seal=published.source)
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp") as temporary:
+            copied_root = Path(temporary)
+            copied = receipt.receipt_directory(copied_root, RUNNER)
+            copied.parent.mkdir(parents=True)
+            shutil.copytree(latest, copied)
+            case_id = "pie-copied-prefix-root-libc"
+            log_name = f"{case_id}.stdout"
+            changed = (copied / "logs" / log_name).read_bytes().replace(
+                b"identity libc /usr/lib/libc.so", b"identity libc /prefix/usr/lib/libc.so")
+            (copied / "logs" / log_name).write_bytes(changed)
+            report = copied / "receipt.json"
+            document = json.loads(report.read_text())
+            case = next(case for case in document["cases"] if case["id"] == case_id)
+            case["logs"][log_name] = {"sha256": hashlib.sha256(changed).hexdigest(), "size": len(changed)}
+            report.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+            receipt.read_receipt(copied_root, RUNNER, seal=published.source)
+            with self.assertRaisesRegex(receipt.ReceiptError, "wrong successful transcript"):
+                identity_receipt.read_identity_receipt(copied_root, seal=published.source)
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp") as temporary:
+            copied_root = Path(temporary)
+            copied = receipt.receipt_directory(copied_root, RUNNER)
+            copied.parent.mkdir(parents=True)
+            shutil.copytree(latest, copied)
+            state_file = copied / "products/dynamic-product-state"
+            state = json.loads(state_file.read_text())
+            state["payload_files"]["lib/ld-crabc-x86_64.so.1"] = "0" * 64
+            changed = (json.dumps(state, indent=2, sort_keys=True) + "\n").encode()
+            state_file.write_bytes(changed)
+            report = copied / "receipt.json"
+            document = json.loads(report.read_text())
+            document["products"]["dynamic-product-state"] = {
+                "sha256": hashlib.sha256(changed).hexdigest(), "size": len(changed),
+            }
+            report.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+            receipt.read_receipt(copied_root, RUNNER, seal=published.source)
+            with self.assertRaisesRegex(receipt.ReceiptError, "product provenance"):
+                identity_receipt.read_identity_receipt(copied_root, seal=published.source)
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp") as temporary:
+            copied_root = Path(temporary)
+            copied = receipt.receipt_directory(copied_root, RUNNER)
+            copied.parent.mkdir(parents=True)
+            shutil.copytree(latest, copied)
+            case_id = "non-pie-hardlink-one-identity"
+            product_name = f"{case_id}-executed-program"
+            changed = (copied / "products" / f"{case_id}-plugins-libcli.so").read_bytes()
+            (copied / "products" / product_name).write_bytes(changed)
+            report = copied / "receipt.json"
+            document = json.loads(report.read_text())
+            document["products"][product_name] = {
+                "sha256": hashlib.sha256(changed).hexdigest(), "size": len(changed),
+            }
+            report.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+            receipt.read_receipt(copied_root, RUNNER, seal=published.source)
+            with self.assertRaisesRegex(receipt.ReceiptError, "executed fixture"):
+                identity_receipt.read_identity_receipt(copied_root, seal=published.source)
 
 
 if __name__ == "__main__":
