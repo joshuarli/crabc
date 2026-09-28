@@ -177,8 +177,11 @@ are not transferable passes for a different revision.
   shared aggregate with ten matching C/Rust observations; lazy submap rollback
   adds twelve matched observations in the same aggregate. Selected process
   startup THP `prctl` GET and SET failures each match eight pinned-C/Rust
-  observations, including READY state and no retry. A legacy processless aligned
-  OS-page claim preserves the same MemoryId, live escaped suffix, and raw
+  observations, including READY state and no retry. A selected process-owned
+  `MADV_HUGEPAGE` success matches 21 C/Rust observations, including the exact
+  2 MiB advice, kernel mapping flag, accounting, and release. A legacy
+  processless aligned OS-page claim preserves the same MemoryId, live escaped
+  suffix, and raw
   cleanup as pinned C after failed suffix trim and terminal unmap. Its absent
   subprocess accounting and warning callback are recorded as exact source
   differences. A process-owned claim now matches 17 C/Rust suffix-trim,
@@ -216,6 +219,8 @@ are not transferable passes for a different revision.
   the 64-byte local malloc path from 153 to 150 instructions in 100 matched
   traces. Deferring regular-page classification past the direct small head
   reduces that initial path to 139 and the worker path from 143 to 132;
+  trusting the selected small queue's class lowers those paths again to 136
+  and 129 instructions, respectively;
   34,084 source-built C/Rust local allocation and free trace lines match.
   Remote publication is at 166 Rust instructions after two source-equivalent
   owner-word changes, with its 100-trace and 25-value differentials passing.
@@ -359,8 +364,10 @@ are not transferable passes for a different revision.
   stable sufficient capacity while retaining small-buffer error and guard
   checks. A fresh worker's huge free through the metadata Theap and later
   first allocation each match 41 pinned-C/Rust keys after descriptor-only
-  registration preserves delayed attachment. The prior 16 statistics evidence
-  rows pass on a clean source, and these two focused differentials pass; the
+  registration preserves delayed attachment. A fresh worker's usable-size
+  query before remote free now leaves its default Theap unattached, matching
+  21 source-built C/Rust statistics keys. The prior 16 statistics evidence
+  rows pass on a clean source, and the focused differentials pass; the
   full current-source gate remains blocked by named unproved producers. Other
   page and fast-path shapes, other remote bin-free, and other metadata-Theap
   statistics producers remain unproved, so full M7
@@ -468,7 +475,8 @@ are not transferable passes for a different revision.
   allocator reports that reuse the same raw timed and memory samples, or whose
   reported row CPUs exceed the retained host observation set. The runtime C
   collector reader also rejects a claimed benchmark or allowed CPU absent
-  from the retained raw CPUinfo; no
+  from the retained raw CPUinfo, and reconstructs the selected CPU's cache
+  classes from retained sysfs bytes; no
   qualifying performance measurements exist yet.
 - **Resume here, in order:**
   1. Family admissions are the critical path: every selected-private
