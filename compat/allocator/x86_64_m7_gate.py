@@ -32,6 +32,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import run as harness
+import perf_engine_x86_64 as engine
+import perf_integrated_x86_64 as integrated
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m7-gate-x86_64-v3.5.0.json"
@@ -127,6 +129,9 @@ DESTROY_ON_EXIT_RUST_TESTS = (
     "runtime_lifecycle::destroy::tests::physical_destroy_transfers_live_worker_before_arena_and_page_map_release",
     "runtime_lifecycle::destroy::tests::physical_destroy_os_only_retains_source_pages_but_seals_all_native_access",
 )
+PAGE_MAX_CANDIDATES_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_page_max_candidates_driver.c"
+PAGE_MAX_CANDIDATES_TRACE_BEGIN = "CRABC_MI_M7_PAGE_MAX_CANDIDATES_TRACE_BEGIN"
+PAGE_MAX_CANDIDATES_TRACE_END = "CRABC_MI_M7_PAGE_MAX_CANDIDATES_TRACE_END"
 # Every decision family both halves must trace; a family absent from both
 # traces would otherwise compare equal.
 OPTION_EFFECT_FAMILIES = (
@@ -692,6 +697,72 @@ def run_destroy_on_exit_differential(offline: bool) -> dict[str, Any]:
     return result
 
 
+def require_page_max_candidates_choice(trace: Mapping[str, str], limit: int, description: str) -> None:
+    """Require a changed page choice with both live block patterns preserved."""
+
+    expected = "first" if limit == 0 else "transferred"
+    if trace != {
+        "case.limit": str(limit), "case.distinct_pages": "1", "case.selected": expected,
+        "case.first_data": "1", "case.transferred_data": "1", "case.usable": "8192",
+    }:
+        raise harness.HarnessError(f"{description} did not select {expected} with intact live data: {trace}")
+
+
+def run_page_max_candidates_differential(offline: bool) -> dict[str, Any]:
+    """Build one public driver against pinned C and the native Rust adapter."""
+
+    import x86_64_m4_gate as m4
+
+    harness.require_native_x86_64()
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m7-page-max-candidates-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        compiler = harness.require_tool("musl-gcc")
+        c_driver = temporary / "page-max-candidates-c"
+        c_build = harness.command_record([
+            compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+            "-DCRABC_PINNED_C=1", *harness.CONFIGURATION_PROFILES["release"],
+            "-I", str(source / "include"), "-I", str(source / "src"),
+            str(PAGE_MAX_CANDIDATES_DRIVER), "-pthread", "-o", str(c_driver),
+        ], cwd=source, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+        harness.require_success(c_build, "pinned C page-max-candidates driver build")
+        library = m4.build_adapter_library(temporary)
+        rust_driver = temporary / "page-max-candidates-rust"
+        rust_build = harness.command_record([
+            compiler, "-std=c11", "-O2", "-I", str(source / "include"),
+            str(PAGE_MAX_CANDIDATES_DRIVER), str(library), "-pthread", "-o", str(rust_driver),
+        ], cwd=source, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+        harness.require_success(rust_build, "Rust page-max-candidates driver link")
+        report: dict[str, Any] = {"c_build_command": c_build["command"],
+                                  "rust_build_command": rust_build["command"], "modes": {}}
+        for limit in (0, 4):
+            executions = {
+                side: harness.command_record([str(binary), str(limit)], cwd=temporary, env={}, timeout_seconds=60)
+                for side, binary in (("c", c_driver), ("rust", rust_driver))
+            }
+            for side, execution in executions.items():
+                harness.require_success(execution, f"{side} page-max-candidates limit {limit}")
+            c_trace = parse_options_trace(str(executions["c"]["stdout"]), f"C limit {limit}",
+                                          PAGE_MAX_CANDIDATES_TRACE_BEGIN, PAGE_MAX_CANDIDATES_TRACE_END)
+            rust_trace_image = parse_options_trace(str(executions["rust"]["stdout"]), f"Rust limit {limit}",
+                                                   PAGE_MAX_CANDIDATES_TRACE_BEGIN, PAGE_MAX_CANDIDATES_TRACE_END)
+            source_queue = c_trace.pop("source.queue", None)
+            if source_queue != "2,1,8,1,2,8,1,1":
+                raise harness.HarnessError(f"C limit {limit} lacks the two expandable source candidates: {source_queue}")
+            require_page_max_candidates_choice(c_trace, limit, f"C limit {limit}")
+            require_page_max_candidates_choice(rust_trace_image, limit, f"Rust limit {limit}")
+            compare_options_traces(c_trace, rust_trace_image)
+            report["modes"][str(limit)] = {
+                "c_command": executions["c"]["command"], "rust_command": executions["rust"]["command"],
+                "source_queue": source_queue, "trace": dict(sorted(c_trace.items())),
+            }
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    harness.write_json(ARTIFACTS / "page-max-candidates.json", report)
+    return report
+
+
 def require_complete_error_sites_trace(trace: Mapping[str, str], description: str) -> None:
     """Reject a trace that omits a request or one of its three records."""
 
@@ -988,6 +1059,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust option-effects differential")
     mode.add_argument("--destroy-on-exit-differential", action="store_true",
         help="run the pinned-C/Rust process-done option-effects differential")
+    mode.add_argument("--page-max-candidates-differential", action="store_true",
+        help="run the pinned-C/Rust bounded page candidate differential")
     mode.add_argument("--thread-init-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter thread-initialization failure differential")
     mode.add_argument("--page-map-differential", action="store_true",
@@ -1055,6 +1128,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = run_destroy_on_exit_differential(arguments.offline)
         print(f"M7 destroy-on-exit differential passed: {len(report['modes'])} modes")
         return 0
+    if arguments.page_max_candidates_differential:
+        report = run_page_max_candidates_differential(arguments.offline)
+        print(f"M7 page-max-candidates differential passed: {len(report['modes'])} limits")
+        return 0
     if arguments.default_baseline_audit:
         if arguments.scratch is None:
             parser.error("--default-baseline-audit requires --scratch")
@@ -1079,6 +1156,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         contract = {**contract, "gates": [selected]}
     report = gate_report(contract, summary, run_evidence(runnable, ARTIFACTS))
     report_path = ARTIFACTS / ("report.json" if arguments.gate is None else f"{arguments.gate}.json")
+    report["provenance"] = {
+        "seal": {**integrated.source_seal(), "gate": engine.file_record(Path(__file__)),
+                 "contract": engine.file_record(CONTRACT)},
+        "git": engine.git_provenance(),
+        "evidence": {name: engine.file_record(harness.ROOT / record["log"])
+                     for name, record in report["evidence"].items()},
+    }
     harness.write_json(report_path, report)
     for record in report["gates"]:
         print(f"{record['id']}: {record['status']}")

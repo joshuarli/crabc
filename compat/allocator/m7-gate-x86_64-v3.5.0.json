@@ -97,6 +97,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--destroy-on-exit-differential"],
       "scope": "Pinned C and Rust set destroy_on_exit before first client allocation, then compare automatic process-done release of an arena-backed page, retention of a direct OS page, terminal arena and PageMap state, quiet final output, and successful exit."
     },
+    "differential:page-max-candidates": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--page-max-candidates-differential"],
+      "scope": "One driver linked against pinned C and the Rust native adapter constructs two expandable medium pages in a single queue through Heap deletion and reclaim-on-free; page_max_candidates 0 selects the first page, 4 selects the transferred page, and both live data patterns remain intact."
+    },
     "differential:reclaim-options": {
       "command": ["python3", "compat/allocator/reclaim_on_free.py"],
       "scope": "Pinned C and Rust reach the same `mi_abandoned_page_try_reclaim` decision, page `used` count, and queue length for an own full page, foreign pages with an empty and a nonempty queue, and a large page, under environment profiles for the default, cross-thread (1) and disabled (-1) page_reclaim_on_free, zero page_max_reclaim and page_cross_thread_max_reclaim, and page_full_retain 0 and 5 (the Theap option image and the full-retain countdown)."
@@ -230,13 +234,12 @@
       "evidence": [
         "differential:option-effects",
         "differential:destroy-on-exit",
+        "differential:page-max-candidates",
         "differential:option-profiles",
         "differential:reclaim-options"
       ],
       "blocked_by": [
-        "The option-effects differential traces the arena max-object size, arena purge delay, minimal purge size, NUMA node count, generic-collect frequency, arena reservation size/eager commit, and `_mi_os_purge_ex` (purge_decommits, purge_delay, allow_reset) decisions after `mi_option_set`. The option-profile differential covers, through process start and page allocation, disallow_arena_alloc, disallow_os_alloc, reserve_os_memory, arena_reserve, arena_eager_commit, page_commit_on_demand (a page's `slice_pcommitted` in a lazily committed arena), arena_is_numa_local (the first arena's stored node), allow_thp (the process THP state), and max_vabits (the PageMap reservation). On this host (no reserved huge pages, overcommit enabled) the reserve_huge_os_pages, reserve_huge_os_pages_at, allow_large_os_pages, and pagemap_commit profiles run but cannot discriminate their decisions: the huge and large-page mappings fail over, and overcommit commits the PageMap regardless.",
-
-        "page_max_candidates (src/page.c:805) is read from the process table at its source point but has no discriminating C/Rust trace: the reclaim profiles never build a queue of expandable, not-immediately-available pages."
+        "The option-effects differential traces the arena max-object size, arena purge delay, minimal purge size, NUMA node count, generic-collect frequency, arena reservation size/eager commit, and `_mi_os_purge_ex` (purge_decommits, purge_delay, allow_reset) decisions after `mi_option_set`. The option-profile differential covers, through process start and page allocation, disallow_arena_alloc, disallow_os_alloc, reserve_os_memory, arena_reserve, arena_eager_commit, page_commit_on_demand (a page's `slice_pcommitted` in a lazily committed arena), arena_is_numa_local (the first arena's stored node), allow_thp (the process THP state), and max_vabits (the PageMap reservation). On this host (no reserved huge pages, overcommit enabled) the reserve_huge_os_pages, reserve_huge_os_pages_at, allow_large_os_pages, and pagemap_commit profiles run but cannot discriminate their decisions: the huge and large-page mappings fail over, and overcommit commits the PageMap regardless."
       ]
     },
     {

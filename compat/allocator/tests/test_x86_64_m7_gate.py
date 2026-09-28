@@ -52,6 +52,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:option-effects",
             "differential:option-profiles",
             "differential:options-environment",
+            "differential:page-max-candidates",
             "differential:reclaim-options",
             "differential:show-errors-profile",
             "differential:startup-page-map-failure",
@@ -87,6 +88,23 @@ class M7GateContractTests(unittest.TestCase):
         self.assertEqual(gate.destroy_on_exit_fields(rows, "destroy_on_exit", "fixture"), [2, 1, 0, 0, 1, 0, 1])
         with self.assertRaises(harness.HarnessError):
             gate.destroy_on_exit_fields(rows.replace("destroy_on_exit.6=1\n", ""), "destroy_on_exit", "fixture")
+
+    def test_page_max_candidates_requires_discriminating_option_effect_evidence(self) -> None:
+        summary = self.validate()
+        effect = self.gate_record(self.contract, "m7.option-effects")
+        self.assertIn("differential:page-max-candidates", effect["evidence"])
+        self.assertIn("differential:page-max-candidates", summary["runnable_evidence"])
+
+    def test_page_max_candidates_reader_requires_changed_choice_and_intact_data(self) -> None:
+        first = {"case.limit": "0", "case.distinct_pages": "1", "case.selected": "first",
+                 "case.first_data": "1", "case.transferred_data": "1", "case.usable": "8192"}
+        transferred = {**first, "case.limit": "4", "case.selected": "transferred"}
+        gate.require_page_max_candidates_choice(first, 0, "first")
+        gate.require_page_max_candidates_choice(transferred, 4, "transferred")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_page_max_candidates_choice({**transferred, "case.selected": "first"}, 4, "unchanged")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_page_max_candidates_choice({**first, "case.transferred_data": "0"}, 0, "corrupted")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:
