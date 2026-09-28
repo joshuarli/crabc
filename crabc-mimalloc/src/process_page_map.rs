@@ -2356,6 +2356,15 @@ mod tests {
         assert!(pointer.has_interior_pointers());
         assert_eq!(pointer.block_size(), BLOCK_SIZE);
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - 5);
+        // The final client byte still belongs to this canonical block and
+        // leaves exactly one usable byte before the next block starts.
+        let last_client = NonNull::new(unsafe { block.as_ptr().add(BLOCK_SIZE - 1) })
+            .expect("the final client byte is non-null");
+        let last = unsafe { lease.lookup_live_allocation(last_client) }
+            .expect("the process root stays ready")
+            .expect("the final interior client resolves through the source page map");
+        assert_eq!(last.canonical_block(), block);
+        assert_eq!(last.usable_size(), 1);
 
         store_source_xthread_id_for_pointer_test(page, THREAD_ID_ABANDONED | PAGE_IN_FULL_QUEUE);
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - 5);
