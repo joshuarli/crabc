@@ -20680,13 +20680,33 @@ mod tests {
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn native_owner_exit_traverses_full_medium_and_os_singleton_before_survivor_frees() {
-        crate::test_process::run_in_fresh_process(
+        native_owner_exit_mixed_full_queue_fixture(
+            false,
             "runtime_lifecycle::tests::native_owner_exit_traverses_full_medium_and_os_singleton_before_survivor_frees",
+        );
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn native_owner_exit_active_survivor_reclaims_full_medium_then_retires() {
+        native_owner_exit_mixed_full_queue_fixture(
+            true,
+            "runtime_lifecycle::tests::native_owner_exit_active_survivor_reclaims_full_medium_then_retires",
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn native_owner_exit_mixed_full_queue_fixture(active_survivor: bool, test_name: &'static str) {
+        crate::test_process::run_in_fresh_process(
+            test_name,
             || {
                 assert!(publish_native_process_startup_facts(full_queue_startup_facts()));
                 assert!(initialize_process());
                 assert!(native_round_trip(48));
                 assert!(prepare_native_later_thread_arena());
+                if active_survivor {
+                    assert!(native_round_trip(48), "the survivor reactivates its default Theap before worker admission");
+                }
 
                 let (clients_sender, clients_receiver) = mpsc::sync_channel(0);
                 let (exit_sender, exit_receiver) = mpsc::sync_channel(0);
@@ -20828,8 +20848,58 @@ mod tests {
                 assert_eq!(unsafe {
                     page_map.page_map().unwrap().checked_lookup(medium[1] as *mut u8)
                 }, medium_page);
-                for address in medium.iter().copied().skip(1) {
+                for (index, address) in medium.iter().copied().skip(1).enumerate() {
                     assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::Freed);
+                    if active_survivor && index == 0 {
+                        // SAFETY: at least four medium clients remain live,
+                        // and the survivor has finished this exact free.
+                        let page = unsafe {
+                            page_map.page_map().unwrap().checked_lookup(medium[2] as *mut u8)
+                        };
+                        assert_eq!(page, medium_page);
+                        assert_eq!(unsafe { (*page).used() }, medium.len() - 2);
+                        assert!(unsafe { crate::types::Page::is_live_owner_for_thread_at(
+                            NonNull::new(page).unwrap(),
+                            RUNTIME_PROCESS.initial_live_thread_identity().unwrap(),
+                        ) }, "the active survivor reclaims the still-used medium page");
+                    }
+                }
+                if active_survivor {
+                    // SAFETY: final local free completed before this scalar
+                    // observation; no other thread can mutate the page.
+                    let retired = unsafe {
+                        page_map.page_map().unwrap().checked_lookup(medium[1] as *mut u8)
+                    };
+                    assert_eq!(retired, medium_page);
+                    let retired = unsafe { &*retired };
+                    assert_eq!(retired.used(), 0);
+                    assert_eq!(retired.retire_expire(), 4);
+                    assert!(!crate::types::page_queue::page_is_in_full(retired));
+                    assert!(unsafe { crate::types::Page::is_live_owner_for_thread_at(
+                        NonNull::from(retired),
+                        RUNTIME_PROCESS.initial_live_thread_identity().unwrap(),
+                    ) });
+                    std::println!("CRABC_MI_ACTIVE_MIXED_OWNER_EXIT_BEGIN");
+                    std::println!("full_retain=-1");
+                    std::println!("medium_capacity={}", medium.len());
+                    std::println!("medium_full=1");
+                    std::println!("singleton_os_full=1");
+                    std::println!("remote_collected=1");
+                    std::println!("singleton_live_after_exit=1");
+                    std::println!("singleton_released=1");
+                    std::println!("medium_reclaimed=1");
+                    std::println!("medium_retired_used=0");
+                    std::println!("medium_retired_expire={}", retired.retire_expire());
+                    std::println!("medium_registered_before_collect=1");
+                    native_collect(true);
+                    assert!(unsafe {
+                        page_map.page_map().unwrap().checked_lookup(medium[1] as *mut u8)
+                    }.is_null(), "forced collection releases the retired medium page");
+                    std::println!("medium_released_after_collect=1");
+                    assert!(native_round_trip(64), "the surviving owner remains usable");
+                    std::println!("survivor_usable=1");
+                    std::println!("CRABC_MI_ACTIVE_MIXED_OWNER_EXIT_END");
+                    return;
                 }
                 assert!(unsafe {
                     page_map.page_map().unwrap().checked_lookup(medium[1] as *mut u8)
