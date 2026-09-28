@@ -1968,12 +1968,13 @@ unsafe fn parse_mapped(
             }
         }
     }
+    let mut relocation_load = ValidatedLoadRange::default();
     match (rela_virtual_address, rela_byte_len, rela_entry_len) {
         (None, None, None) => {}
         (Some(address), Some(byte_len), Some(entry_len))
             if entry_len == ELF64_RELA_SIZE as u64
                 && byte_len % ELF64_RELA_SIZE as u64 == 0
-                && virtual_range_in_load(phdr, phnum, address, byte_len) =>
+                && relocation_load.contains_or_scan(phdr, phnum, address, byte_len) =>
         {
             object.rela = runtime_address(base, address)? as *const u8;
             object.relasz = usize::try_from(byte_len).ok()?;
@@ -1984,7 +1985,7 @@ unsafe fn parse_mapped(
         (None, None, None) => {}
         (Some(address), Some(byte_len), Some(true))
             if byte_len % ELF64_RELA_SIZE as u64 == 0
-                && virtual_range_in_load(phdr, phnum, address, byte_len) =>
+                && relocation_load.contains_or_scan(phdr, phnum, address, byte_len) =>
         {
             object.jmprel = runtime_address(base, address)? as *const u8;
             object.pltrelsz = usize::try_from(byte_len).ok()?;
@@ -4787,6 +4788,32 @@ unsafe fn virtual_range_in_load(phdr: *const u8, phnum: usize, address: u64, byt
     false
 }
 
+/// Cache one relocation table's containing PT_LOAD for the next table. A hit
+/// came from an ordered full scan that met no overflowing load before it, so
+/// another range inside the same segment passes that same full scan.
+#[derive(Default)]
+struct ValidatedLoadRange { hit: Option<(u64, u64)> }
+
+impl ValidatedLoadRange {
+    unsafe fn contains_or_scan(&mut self, phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
+        let Some(end) = address.checked_add(byte_len) else { return false; };
+        if let Some((start, load_end)) = self.hit {
+            if address >= start && end <= load_end { return true; }
+        }
+        for index in 0..phnum {
+            let header = phdr.add(index * 56);
+            if read_u32(header) != PT_LOAD { continue; }
+            let start = read_u64(header.add(16));
+            let Some(load_end) = start.checked_add(read_u64(header.add(40))) else { return false; };
+            if address >= start && end <= load_end {
+                self.hit = Some((start, load_end));
+                return true;
+            }
+        }
+        false
+    }
+}
+
 /// Whether a range fits the page-rounded mapping of one PT_LOAD segment.
 /// This is intentionally narrower than an arbitrary adjacent mapping: it
 /// exists solely for the linker-permitted final-page extension of PT_GNU_RELRO.
@@ -5441,6 +5468,23 @@ mod readable_file_load_tests {
         assert!(!unsafe { virtual_range_in_readable_file_load(headers.as_ptr(), 2, u64::MAX - 12, 1) });
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(unsafe { readable_file_load_segment(headers.as_ptr(), 2, u64::MAX - 12, 1) }, None);
+    }
+
+    #[test]
+    fn relocation_load_cache_preserves_overlapping_and_malformed_ranges() {
+        let mut headers = [0u8; 112];
+        load(&mut headers, 0, PF_R, 0x1000, 0x80, 0x80);
+        load(&mut headers, 1, PF_R, 0x1040, 0x80, 0x80);
+        let mut cache = ValidatedLoadRange::default();
+        for (address, expected) in [(0x1010, true), (0x1040, true), (0x1080, true), (0x10c0, false), (u64::MAX - 8, false)] {
+            assert_eq!(unsafe { cache.contains_or_scan(headers.as_ptr(), 2, address, 16) }, expected);
+            assert_eq!(unsafe { virtual_range_in_load(headers.as_ptr(), 2, address, 16) }, expected);
+        }
+
+        load(&mut headers, 0, PF_R, u64::MAX - 8, 16, 16);
+        let mut malformed = ValidatedLoadRange::default();
+        assert!(!unsafe { malformed.contains_or_scan(headers.as_ptr(), 2, 0x1080, 16) });
+        assert!(!unsafe { virtual_range_in_load(headers.as_ptr(), 2, 0x1080, 16) });
     }
 
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
