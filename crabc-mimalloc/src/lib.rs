@@ -213,7 +213,13 @@ pub mod __crabc_runtime {
 
     #[cfg(feature = "native-runtime-test-fault")]
     pub use crate::runtime_lifecycle::{
-        NativeRuntimeTestUnmapFailure, native_runtime_test_fail_next_unmap,
+        NativeRuntimeTestUnmapFailure, NativeRuntimeTestUnmapRange,
+        native_runtime_test_fail_next_unmap,
+    };
+
+    #[cfg(all(feature = "native-runtime-test-audit", feature = "native-runtime-test-fault"))]
+    pub use crate::runtime_lifecycle::{
+        NativeRuntimeTerminalVmCurrentAudit, native_runtime_terminal_vm_current_test_audit,
     };
 
     #[cfg(feature = "native-runtime-test-audit")]

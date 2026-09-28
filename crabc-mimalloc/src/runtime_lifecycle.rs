@@ -7523,6 +7523,34 @@ impl NativeRuntimeTestUnmapFailure {
     pub fn observed(&self) -> usize {
         self.guard.observed()
     }
+
+    /// Captures the raw range submitted by the next selected release attempt.
+    /// The capture borrows this fault guard so no other test plan can replace
+    /// its range before the caller finishes observing the failed operation.
+    #[doc(hidden)]
+    pub fn capture_range(&self) -> NativeRuntimeTestUnmapRange<'_> {
+        NativeRuntimeTestUnmapRange {
+            capture: self.guard.capture_unmap_ranges(),
+        }
+    }
+}
+
+/// One diagnostic range from a failed native terminal unmap attempt.
+#[cfg(feature = "native-runtime-test-fault")]
+#[doc(hidden)]
+pub struct NativeRuntimeTestUnmapRange<'guard> {
+    capture: crate::os::fault::UnmapRangeCapture<'guard>,
+}
+
+#[cfg(feature = "native-runtime-test-fault")]
+impl NativeRuntimeTestUnmapRange<'_> {
+    /// Returns the sole raw `(base, length)` attempt, refusing absent or
+    /// repeated releases so the test cannot mistake a later unmap for it.
+    #[doc(hidden)]
+    pub fn single(&self) -> Option<(usize, usize)> {
+        let (ranges, count) = self.capture.all()?;
+        (count == 1).then_some(ranges[0])
+    }
 }
 
 /// Installs the one direct-test `munmap` failure used at the native post-exit
@@ -7541,6 +7569,52 @@ pub fn native_runtime_test_fail_next_unmap() -> NativeRuntimeTestUnmapFailure {
             crabc_core::Errno::NOMEM,
         )),
     }
+}
+
+/// Current main-subprocess VM bytes at a quiescent terminal-release boundary.
+///
+/// A failed final `munmap` has already closed ordinary allocator admission,
+/// so this default-off diagnostic reads only atomic statistics through the
+/// still-live process owner. It does not reopen the retained page or acquire
+/// a PageMap lease. Concurrent statistics updates are safe but can make the
+/// two counters an inconsistent pair; differential tests sample after the
+/// other allocator workers have joined.
+#[cfg(all(feature = "native-runtime-test-audit", feature = "native-runtime-test-fault"))]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeTerminalVmCurrentAudit {
+    pub reserved: i64,
+    pub committed: i64,
+}
+
+#[cfg(all(feature = "native-runtime-test-audit", feature = "native-runtime-test-fault"))]
+fn terminal_vm_current_for_process_test_audit(
+    runtime: &'static RuntimeProcessStorage,
+) -> Option<NativeRuntimeTerminalVmCurrentAudit> {
+    // The initial-owner Release store follows the one write to `owner`. A
+    // retained startup failure may otherwise set PROCESS_RETAINED before that
+    // slot exists, so state alone cannot justify `assume_init_ref`.
+    if runtime.initial_owner.load(Ordering::Acquire) != INITIAL_OWNER_INSTALLED {
+        return None;
+    }
+    let state = runtime.state.load(Ordering::Acquire);
+    if state != PROCESS_ACTIVE && state != PROCESS_RETAINED { return None; }
+    // SAFETY: the acquired initial-owner publication follows the process
+    // owner's one write. Terminal retention closes entry but never drops its
+    // immutable subprocess identity or atomic statistics.
+    let owner = unsafe { (&*runtime.owner.get()).assume_init_ref() };
+    let subprocess = owner.ready().ok()?.subprocess().ok()?;
+    let snapshot = subprocess.identity().vm_statistics().snapshot();
+    Some(NativeRuntimeTerminalVmCurrentAudit {
+        reserved: snapshot.reserved_current,
+        committed: snapshot.committed_current,
+    })
+}
+
+#[cfg(all(feature = "native-runtime-test-audit", feature = "native-runtime-test-fault"))]
+#[doc(hidden)]
+pub fn native_runtime_terminal_vm_current_test_audit() -> Option<NativeRuntimeTerminalVmCurrentAudit> {
+    terminal_vm_current_for_process_test_audit(&RUNTIME_PROCESS)
 }
 
 /// Reads the scalar static-Heap state while holding exactly the established
@@ -18885,6 +18959,15 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::thread;
+
+    #[cfg(all(feature = "native-runtime-test-audit", feature = "native-runtime-test-fault"))]
+    #[test]
+    fn terminal_vm_audit_rejects_retained_startup_without_published_owner() {
+        static UNPUBLISHED: RuntimeProcessStorage = RuntimeProcessStorage::new();
+        UNPUBLISHED.retain();
+        assert!(terminal_vm_current_for_process_test_audit(&UNPUBLISHED).is_none(),
+            "terminal state alone cannot justify reading the uninitialized owner slot");
+    }
 
     static NATIVE_DEFERRED_FREE_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
     static NATIVE_DEFERRED_FREE_CALLBACK_FORCE: AtomicUsize = AtomicUsize::new(usize::MAX);

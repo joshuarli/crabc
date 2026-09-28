@@ -44,6 +44,7 @@
         "native_initial_persistent_quiescent_fork",
         "native_initial_post_exit_free",
         "native_multiple_post_exit_completions",
+        "native_os_medium_failed_unmap_exit",
         "native_os_medium_split_releasers_exit",
         "native_owner_exit_collection_race",
         "native_post_exit_lifecycle",
@@ -55,7 +56,7 @@
         "native_three_post_exit_lifecycle",
         "native_two_post_exit_lifecycle"
       ],
-      "scope": "One generic owner-exit traversal abandons or releases every page shape, races live publishers, and leaves post-exit clients freeable in any order by independent owners, including across fork gates."
+      "scope": "One generic owner-exit traversal abandons or releases every page shape, races live publishers, and leaves post-exit clients freeable in any order by independent owners, including across fork gates. A failed final regular OS-page unmap retains its exact terminal owner after the second survivor free."
     },
     "native:abandon-reclaim-release": {
       "native_tests": [
@@ -162,6 +163,15 @@
       ],
       "scope": "Pinned C and native Rust select a non-arena OS-backed regular medium page with two live clients. Two independent attached survivors free only after owner exit; the first reclaims the page before its own exit while retaining the other client's PageMap registration, and the second clears the complete OS page range."
     },
+    "differential:os-medium-failed-unmap-exit": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_os_medium_failed_unmap_exit_evidence.py",
+        "--report",
+        "{scratch}/os-medium-failed-unmap-exit.json"
+      ],
+      "scope": "Pinned C and native Rust fail only the final OS unmap after separate survivors free a regular medium page. The source warning, exact failed range, PageMap clear, retained physical mapping, VM counter drops, and one-way Rust terminal owner are compared without retrying C's already-freed client."
+    },
     "lifecycle:bounded-laboratory": {
       "command": [
         "python3",
@@ -250,7 +260,8 @@
         "differential:nonabandoning-mapped-large-owner-exit",
         "differential:arena-singleton-regular-owner-exit",
         "differential:arena-singleton-split-releasers-exit",
-        "differential:os-medium-split-releasers-exit"
+        "differential:os-medium-split-releasers-exit",
+        "differential:os-medium-failed-unmap-exit"
       ],
       "blocked_by": []
     },
