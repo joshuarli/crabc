@@ -190,11 +190,11 @@ are not transferable passes for a different revision.
   A separate source-built reset-advice matrix matches 78 C/Rust fields across
   isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
   slice range, warning order, and live bitmap state. A clean full M2 run passed
-  all 85 runnable checks with VM primitives, arenas, initialization, and fault
-  injection still partial. The VM inventory now registers 46 checks, including
+  all 87 runnable checks with VM primitives, arenas, initialization, and fault
+  injection still partial. The VM inventory now registers 48 checks, including
   direct process-owned successful and failed THP advice and disabled process
   policy and inherited process disable with source-selected advice; the clean
-  rerun executed all 46, including 209 further matched external OS reset,
+  rerun executed all 48, including 209 further matched external OS reset,
   retry, and no-advice relations. Five VM conditions remain open. A
   failed second OS-page block commit and failed rollback unmap match pinned C
   in eleven process-owned
@@ -216,7 +216,7 @@ are not transferable passes for a different revision.
   callers remain separately qualified or open. Separate source-built explicit
   arena reservation receivers match 31 C/Rust fields each for failed prefix
   and failed suffix trim, through registry retirement, terminal release, and
-  raw cleanup of the escaped mapping; shared M2 registration is pending.
+  raw cleanup of the escaped mapping; both receivers are in the clean M2 VM gate.
   The metadata publication receiver also matches 15 recovery observations
   after three faulted requests, charging each actual lazy PageMap submap by
   its 64 KiB extent. The M2 fault component has four matched checks and four
@@ -304,6 +304,10 @@ are not transferable passes for a different revision.
   and caller-held terminal unmap. A child-subprocess external arena now matches
   eighteen C/Rust registration, selection, and caller-held release keys; the
   clean M6 gate passes all seventeen runnable rows.
+  The public main-process `mi_reserve_huge_os_pages_at_ex` entry matches five
+  source-built C/Rust return, output, errno, and warning observations on this
+  host's unavailable 1 GiB huge-page path; physical success and nonzero child
+  reservation remain unproved.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
