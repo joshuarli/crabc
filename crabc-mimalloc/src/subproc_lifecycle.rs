@@ -1169,16 +1169,19 @@ pub(crate) unsafe fn native_child_heap_allocate_variant(
     Some(allocated.ok().flatten())
 }
 
-/// Resolve the current child thread's Theap for `heap` before a Heap
-/// reallocation checks its old block, alignment, or multiplied size.
+/// Resolve the current child thread's Theap for a live Heap. The child main
+/// Heap keeps its fixed-slot Theap; a non-main Heap may create a per-thread
+/// Theap. Both paths publish the selected Theap in the cache.
 ///
 /// # Safety
 /// `heap` is a live Heap held against destruction for the call. A Heap of a
 /// different subprocess is refused without selecting or creating a Theap.
-pub(crate) unsafe fn native_child_heap_select_theap(heap: core::ptr::NonNull<crate::types::Heap>) -> bool {
+pub(crate) unsafe fn native_child_heap_theap(
+    heap: core::ptr::NonNull<crate::types::Heap>,
+) -> Option<core::ptr::NonNull<crate::types::Theap>> {
     // SAFETY: the current thread alone accesses its membership slot.
-    let Some(current) = (unsafe { current_child_member() }).as_mut() else { return false };
-    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return false };
+    let current = (unsafe { current_child_member() }).as_mut()?;
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
     let (id, binding) = (current.id, current.binding);
     let member = &mut current.member;
     // SAFETY: the child record lock excludes another context operation,
@@ -1191,12 +1194,41 @@ pub(crate) unsafe fn native_child_heap_select_theap(heap: core::ptr::NonNull<cra
                 let same_child = child.identity_pointer().is_some_and(|identity| {
                     heap.as_ref().subprocess_pointer() == identity
                 });
-                same_child && member.owner_mut().heap_theap(child, binding, heap).is_ok()
+                if !same_child {
+                    return None;
+                }
+                let owner = member.owner_mut();
+                if child.main_heap_pointer() == Some(heap) {
+                    let base = owner.theap_pointer()?;
+                    // SAFETY: the owner retains its fixed Theap while the
+                    // child record and current-thread slot are held.
+                    if crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) != Some(base)
+                        || unsafe { crate::types::Theap::heap_at(base) } != heap.as_ptr()
+                    {
+                        return None;
+                    }
+                    // SAFETY: this thread owns the fixed Theap and cache.
+                    unsafe { owner.cached_set(child, binding, base) }.ok()?;
+                    Some(base)
+                } else {
+                    // SAFETY: the checked Heap is live in this child.
+                    unsafe { owner.heap_theap(child, binding, heap) }.ok()
+                }
             }
-            None => false,
+            None => None,
         })
     };
-    selected == Ok(true)
+    selected.ok().flatten()
+}
+
+/// Select the current child thread's Theap for a live Heap.
+///
+/// # Safety
+/// The Heap remains live through the selection and is not destroyed
+/// concurrently. A Heap of another subprocess is refused.
+pub(crate) unsafe fn native_child_heap_select_theap(heap: core::ptr::NonNull<crate::types::Heap>) -> bool {
+    // SAFETY: forwarded Heap and current-thread obligations.
+    unsafe { native_child_heap_theap(heap) }.is_some()
 }
 
 /// Frees a block on a page of a child subprocess's main Heap that the
@@ -1979,6 +2011,45 @@ pub(crate) mod tests {
                 owner.join().expect("the owning thread finishes");
                 assert_eq!(unsafe { native_subproc_destroy(second) }, Ok(()));
                 assert_eq!(unsafe { native_subproc_destroy(first) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn public_child_heap_theap_reselects_the_main_cache() {
+        use crate::runtime_lifecycle::{
+            finish_current_thread_native_after_user_destructors, prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment, ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::public_child_heap_theap_reselects_the_main_cache",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("a live child");
+                std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let main = current_child_main_heap().expect("the child main Heap");
+                    let heap = native_child_heap_new().expect("a member").expect("a live child").expect("a Heap");
+                    // SAFETY: this thread retains both child Heaps through the selections.
+                    let other = unsafe { crate::source_heap_api::heap_theap(heap.as_ptr().cast()) };
+                    assert!(!other.is_null());
+                    assert_eq!(crate::compiler_tls::cached_theap().as_ptr().cast(), other);
+                    let base = crate::compiler_tls::default_theap();
+                    assert_ne!(crate::compiler_tls::cached_theap(), base);
+                    // SAFETY: the child main Heap remains live for this thread.
+                    let selected = unsafe { crate::source_heap_api::heap_theap(main.as_ptr().cast()) };
+                    assert_eq!(selected, base.as_ptr().cast());
+                    assert_eq!(crate::compiler_tls::cached_theap(), base);
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                }).join().expect("the child worker completes");
+                // SAFETY: the worker has finished and no child Heap has users.
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
             },
         );
     }

@@ -56,10 +56,12 @@ pub fn heap_new() -> *mut c_void {
     main_heaps::native_heap_new().map_or(null_mut(), |heap| heap.as_ptr().cast())
 }
 
-/// The initialized default Theap of the calling thread. A cold thread runs
-/// its source owner attachment before this pointer is returned.
+/// The initialized default Theap of the calling thread. A cold main-subprocess
+/// thread attaches its owner; a child member already retains its own owner.
 pub fn theap_get_default() -> *mut c_void {
-    if !crate::runtime_lifecycle::prepare_current_thread_native_owner_for_heap_theaps() {
+    if !crate::subproc::lifecycle::current_thread_is_child_member()
+        && !crate::runtime_lifecycle::prepare_current_thread_native_owner_for_heap_theaps()
+    {
         return null_mut();
     }
     let theap = crate::compiler_tls::default_theap();
@@ -80,18 +82,20 @@ pub fn theap_get_default() -> *mut c_void {
 pub unsafe fn heap_theap(heap: *mut c_void) -> *mut c_void {
     let Some(heap) = NonNull::new(heap.cast::<Heap>()) else { return null_mut() };
     if theap_get_default().is_null() { return null_mut(); }
+    if crate::subproc::lifecycle::current_thread_is_child_member() {
+        // SAFETY: the caller retains the live child Heap for this selection.
+        return unsafe { crate::subproc::lifecycle::native_child_heap_theap(heap) }
+            .map_or(null_mut(), |theap| theap.as_ptr().cast());
+    }
     if heap.as_ptr().cast::<c_void>() == heap_main() {
         let Some(theap) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) else {
             return null_mut();
         };
         // SAFETY: the fixed slot and Heap stay live for this thread.
         if unsafe { Theap::heap_at(theap) } != heap.as_ptr() { return null_mut(); }
-        if !crate::subproc::lifecycle::current_thread_is_child_member() {
-            main_heaps::select_main_heap_theap();
-        }
+        main_heaps::select_main_heap_theap();
         return theap.as_ptr().cast();
     }
-    if crate::subproc::lifecycle::current_thread_is_child_member() { return null_mut(); }
     main_heaps::native_heap_theap(heap).map_or(null_mut(), |theap| theap.as_ptr().cast())
 }
 

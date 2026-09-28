@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 
 import run as harness
+import x86_64_m6_public_child_heap as public_child_heap
 
 
 TEST = "types::heap_registry::lifecycle::tests::source_ordered_empty_heap_lifecycle_trace"
@@ -92,7 +93,8 @@ def main() -> None:
         trace(main_rust["stdout"], "main", MAIN_FIELD_COUNT))
     compare("later", trace(later_oracle["stdout"], "later", LATER_FIELD_COUNT),
         trace(later_rust["stdout"], "later", LATER_FIELD_COUNT))
-    print(f"heap lifecycle: {FIELD_COUNT} + {MAIN_FIELD_COUNT} + {LATER_FIELD_COUNT} pinned C/Rust values match; {artifacts}")
+    public_count = public_child_heap.run_differential()
+    print(f"heap lifecycle: {FIELD_COUNT} + {MAIN_FIELD_COUNT} + {LATER_FIELD_COUNT} private values and {public_count} public child keys match pinned C/Rust; {artifacts}")
 
 
 if __name__ == "__main__":
