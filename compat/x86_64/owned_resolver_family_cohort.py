@@ -35,8 +35,8 @@ REQUIRED_COMPONENTS = (
     "protocol-database-product",
 )
 # A component can use a subset of the complete three-pair cohort.  The
-# protocol-table reader necessarily binds all three pairs; the other readers
-# name the exact pair(s) used by their retained behavior receipt.
+# single-pair readers run against primary, the network reader binds primary
+# and extracted, and the protocol-table reader binds all three pairs.
 EXPECTED_COMPONENT_ROOTS = {
     "resolver-network-physical": ("primary", "extracted"),
     "classic-netdb": ("selected",),
@@ -180,8 +180,8 @@ def _match_component_products(root: Path, identifier: str, value: object,
         require(candidates is not None and len(candidates) == 1,
                 f"{identifier} {declaration} roots do not form one canonical static/dynamic pair")
         label = candidates.pop()
-        if declaration != "selected":
-            require(label == declaration, f"{identifier} {declaration} binds another canonical pair")
+        expected_pair = "primary" if declaration == "selected" else declaration
+        require(label == expected_pair, f"{identifier} {declaration} binds another canonical pair")
         matched[declaration] = {"pair": label, "products": actual}
     return matched
 

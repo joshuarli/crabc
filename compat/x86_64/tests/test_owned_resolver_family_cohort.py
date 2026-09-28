@@ -99,6 +99,28 @@ class ResolverFamilyCohortTests(unittest.TestCase):
                     component_products=components,
                 )
 
+    def test_single_pair_components_cannot_switch_to_another_cohort_arm(self) -> None:
+        source = {"revision": "a" * 40, "content_sha256": "b" * 64,
+                  "static_preparation": {"path": "receipt", "sha256": "c" * 64, "byte_length": 1, "mode": 0o444},
+                  "dynamic_qualification": {"path": "receipt", "sha256": "d" * 64, "byte_length": 1, "mode": 0o444}}
+        for identifier in ("classic-netdb", "resolver-alias-private-bodies", "resolver-cancellation"):
+            with self.subTest(component=identifier):
+                components = self._component_products()
+                selected = components[identifier]
+                assert isinstance(selected, dict)
+                selected["selected"] = {
+                    kind: self._relative(path)
+                    for kind, path in self.products["extracted"].items()
+                }
+                with mock.patch.object(cohort, "_canonical_products", return_value=(source, self.canonical)):
+                    with self.assertRaisesRegex(cohort.ResolverFamilyCohortError, "selected binds another canonical pair"):
+                        cohort.validate(
+                            ROOT,
+                            static_preparation=self.work / "unused-static.json",
+                            dynamic_qualification=self.work / "unused-dynamic.json",
+                            component_products=components,
+                        )
+
 
 if __name__ == "__main__":
     unittest.main()
