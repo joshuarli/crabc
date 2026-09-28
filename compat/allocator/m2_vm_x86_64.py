@@ -222,6 +222,21 @@ CHECKS = (
         "os::tests::vm_process_purge_normal_no_callback_policy_range_matrix_matches_source",
     ),
     (
+        "external-os-purge-commit-c-rust-differential",
+        "c-rust-process-external-os-differential",
+        "compat/allocator/m2_external_os_purge_x86_64.py",
+    ),
+    (
+        "external-os-commit-failure-c-rust-differential",
+        "c-rust-process-external-os-differential",
+        "compat/allocator/m2_external_os_commit_failure_x86_64.py",
+    ),
+    (
+        "external-os-reset-policy-c-rust-differential",
+        "c-rust-process-external-os-differential",
+        "compat/allocator/m2_external_os_reset_policy_x86_64.py",
+    ),
+    (
         "normal-os-good-size-and-base-provenance",
         "rust-unit",
         "os::tests::normal_os_allocation_uses_good_size_and_base_provenance",
@@ -263,6 +278,11 @@ CHECKS = (
     ),
 )
 CHECK_IDS = tuple(check[0] for check in CHECKS)
+EXTERNAL_OS_CHECK_IDS = (
+    "external-os-purge-commit-c-rust-differential",
+    "external-os-commit-failure-c-rust-differential",
+    "external-os-reset-policy-c-rust-differential",
+)
 THP_PROCESS_CHECK_IDS = (
     "process-thp-madvise-success-c-rust-differential",
     "process-thp-madvise-failure-c-rust-differential",
@@ -730,6 +750,22 @@ def load_fragment(path: Path) -> dict[str, Any]:
             check_id not in definition["evidence_check_ids"] for check_id in THP_PROCESS_CHECK_IDS
         ):
             raise _error("process-owned THP policy lost its allocation or release source boundary")
+
+    for definition_id in ("os-fixed-range-transitions", "unix-fixed-transition-primitives"):
+        definition = next((item for item in definitions if item["id"] == definition_id), None)
+        if definition is None or any(
+            check_id not in definition["evidence_check_ids"] for check_id in EXTERNAL_OS_CHECK_IDS
+        ):
+            raise _error("external OS transition lost its fixed-range source boundary")
+    for branch_id in (
+        "os-range-transition-policy-and-failure-owners",
+        "unix-commit-decommit-reset-reuse-and-protect",
+    ):
+        branch = next((item for item in branches if item["id"] == branch_id), None)
+        if branch is None or branch["disposition"] != "partial-fixed-profile" or any(
+            check_id not in branch["evidence_check_ids"] for check_id in EXTERNAL_OS_CHECK_IDS
+        ):
+            raise _error("external OS transition lost its policy branch or open frontier")
 
     unqualified = component.get("unqualified_failure_matrix")
     if not isinstance(unqualified, list) or not unqualified:

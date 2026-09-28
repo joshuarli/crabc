@@ -44,6 +44,9 @@ EXPECTED_VM_CHECK_IDS = (
     "normal-os-offset-full-provenance-and-release-retry",
     "process-offset-prefix-decommit-advisory-owner",
     "normal-no-callback-purge-policy-range-matrix",
+    "external-os-purge-commit-c-rust-differential",
+    "external-os-commit-failure-c-rust-differential",
+    "external-os-reset-policy-c-rust-differential",
     "normal-os-good-size-and-base-provenance",
     "normal-os-offset-zero-delegation-and-geometry",
     "normal-os-aligned-trim-leak",
@@ -693,6 +696,26 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     producer.load_fragment(source)
 
+    def test_external_os_checks_keep_transition_source_anchors(self):
+        producer = RUNNER._m2_x86_64_vm_producer()
+        original = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
+        bindings = (
+            ("bounded_source_definitions", "os-fixed-range-transitions"),
+            ("bounded_source_definitions", "unix-fixed-transition-primitives"),
+            ("branch_matrix", "os-range-transition-policy-and-failure-owners"),
+            ("branch_matrix", "unix-commit-decommit-reset-reuse-and-protect"),
+        )
+        for section, row_id in bindings:
+            for check_id in producer.EXTERNAL_OS_CHECK_IDS:
+                with self.subTest(section=section, row_id=row_id, check_id=check_id):
+                    changed = copy.deepcopy(original)
+                    row = next(item for item in changed["component"][section] if item["id"] == row_id)
+                    row["evidence_check_ids"].remove(check_id)
+                    source = mock.Mock()
+                    source.read_text.return_value = json.dumps(changed)
+                    with self.assertRaises(ValueError):
+                        producer.load_fragment(source)
+
     def test_vm_producer_receipt_rejects_missing_comparison_anchors_and_nonclaims(self):
         summary = self.summary()
         for field, replacement in (
@@ -797,6 +820,114 @@ class NativeVmAssemblyTests(unittest.TestCase):
             self.assertEqual(
                 [entry["command"] for entry in evidence.values()], expected_commands
             )
+
+    def test_external_os_receipts_require_complete_case_and_commit_relations(self):
+        summary = self.summary()
+        evidence = {}
+        for check_id, receiver in RUNNER.M2_X86_64_EXTERNAL_OS_RECEIVERS.items():
+            trace = {field: 1 for field in receiver["fields"]}
+            cases = receiver["cases"]
+            commands = ({"build_status": 0, **{
+                case: {"run_status": 0, "stderr": ""} for case in cases
+            }} if cases else {"build_status": 0, "run_status": 0, "stderr": ""})
+            observed = {
+                "c": {case: dict(trace) for case in cases} if cases else dict(trace),
+                "rust": {case: dict(trace) for case in cases} if cases else dict(trace),
+                "c_commands": copy.deepcopy(commands),
+                "rust_commands": copy.deepcopy(commands),
+                "command": ["python3", receiver["target"], "--offline"],
+                "mismatches": [],
+                "scope": "one fresh caller-owned external span per side",
+                "status": "matched",
+            }
+            if receiver["commit_fields"]:
+                commit = {field: 1 for field in receiver["commit_fields"]}
+                observed.update({
+                    "commit_c": dict(commit),
+                    "commit_rust": dict(commit),
+                    "commit_c_commands": {"build_status": 0, "run_status": 0, "stderr": ""},
+                    "commit_rust_commands": {"run_status": 0, "stderr": ""},
+                })
+            evidence[check_id] = observed
+        records = RUNNER._m2_x86_64_vm_check_records(
+            summary, self.vm_evidence(summary), external_os_evidence=evidence
+        )
+        self.assertEqual([record["id"] for record in records[-len(evidence):]], list(evidence))
+        self.assertTrue(all(record["comparison_status"] == "matched" for record in records[-len(evidence):]))
+        missing = dict(evidence)
+        missing.pop(next(iter(missing)))
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(
+                summary, self.vm_evidence(summary), external_os_evidence=missing
+            )
+        for check_id, receiver in RUNNER.M2_X86_64_EXTERNAL_OS_RECEIVERS.items():
+            field = sorted(receiver["fields"])[0]
+            for name in ("status", "mismatches", "command", "field_missing", "field_different", "command_status"):
+                with self.subTest(check_id=check_id, mutation=name):
+                    changed = copy.deepcopy(evidence)
+                    row = changed[check_id]
+                    if name == "status":
+                        row["status"] = "passed"
+                    elif name == "mismatches":
+                        row["mismatches"] = [field]
+                    elif name == "command":
+                        row["command"] = ["python3", receiver["target"], "--stale"]
+                    elif name == "field_missing":
+                        (row["c"][receiver["cases"][0]] if receiver["cases"] else row["c"]).pop(field)
+                    elif name == "field_different":
+                        (row["rust"][receiver["cases"][0]] if receiver["cases"] else row["rust"])[field] = 2
+                    else:
+                        if receiver["cases"]:
+                            row["c_commands"][receiver["cases"][0]]["run_status"] = 1
+                        else:
+                            row["c_commands"]["run_status"] = 1
+                    with self.assertRaises(RUNNER.HarnessError):
+                        RUNNER._m2_x86_64_vm_check_records(
+                            summary, self.vm_evidence(summary), external_os_evidence=changed
+                        )
+            if receiver["commit_fields"]:
+                for name in ("commit_field", "commit_c_command", "commit_rust_command"):
+                    with self.subTest(check_id=check_id, mutation=name):
+                        changed = copy.deepcopy(evidence)
+                        row = changed[check_id]
+                        if name == "commit_field":
+                            row["commit_rust"][sorted(receiver["commit_fields"])[0]] = 2
+                        elif name == "commit_c_command":
+                            row["commit_c_commands"]["run_status"] = 1
+                        else:
+                            row["commit_rust_commands"]["run_status"] = 1
+                        with self.assertRaises(RUNNER.HarnessError):
+                            RUNNER._m2_x86_64_vm_check_records(
+                                summary, self.vm_evidence(summary), external_os_evidence=changed
+                            )
+
+    def test_external_os_receivers_bind_offline_and_normal_reader_commands(self):
+        receivers = RUNNER.M2_X86_64_EXTERNAL_OS_RECEIVERS
+        for offline in (False, True):
+            with self.subTest(offline=offline), mock.patch.object(
+                RUNNER, "command_record", return_value={"status": 0}
+            ) as execute, mock.patch.object(
+                RUNNER, "require_success"
+            ) as require, mock.patch.object(
+                RUNNER, "read_json", side_effect=[{"status": "matched"} for _ in receivers]
+            ) as read:
+                evidence = RUNNER._run_m2_x86_64_external_os_evidence(offline=offline)
+            expected_commands = [
+                ["python3", receiver["target"], *(["--offline"] if offline else [])]
+                for receiver in receivers.values()
+            ]
+            self.assertEqual(
+                execute.call_args_list,
+                [mock.call(command, cwd=RUNNER.ROOT, timeout_seconds=1800)
+                 for command in expected_commands],
+            )
+            self.assertEqual(require.call_count, len(receivers))
+            self.assertEqual(
+                read.call_args_list,
+                [mock.call(RUNNER.ARTIFACT_ROOT / "x86_64" / receiver["artifact"] / "evidence.json")
+                 for receiver in receivers.values()],
+            )
+            self.assertEqual([entry["command"] for entry in evidence.values()], expected_commands)
 
     def test_page_map_process_receipts_require_their_exact_trace_shapes(self):
         cases = (
@@ -933,6 +1064,16 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "passed_test_count": 1,
                 "target": receiver["target"],
             })
+        for check_id, receiver in RUNNER.M2_X86_64_EXTERNAL_OS_RECEIVERS.items():
+            vm_records.append({
+                "comparison_status": "matched",
+                "component": "vm-primitives",
+                "command": ["python3", receiver["target"], "--offline"],
+                "evidence_scope": receiver["scope"],
+                "id": check_id,
+                "passed_test_count": 1,
+                "target": receiver["target"],
+            })
         initialization_records = [
             {
                 "comparison_status": "matched",
@@ -1010,6 +1151,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         metadata_records_producer = mock.Mock(return_value=metadata_records)
         metadata_lifecycle_producer = mock.Mock(return_value={})
         thp_process_producer = mock.Mock(return_value={})
+        external_os_producer = mock.Mock(return_value={})
         observed = {}
 
         def focused_checks(_summary, _program, *, already_executed_check_ids, gate_name):
@@ -1056,6 +1198,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
             mock.patch.multiple(
                 RUNNER,
                 _run_m2_x86_64_thp_process_evidence=thp_process_producer,
+                _run_m2_x86_64_external_os_evidence=external_os_producer,
                 _m2_x86_64_vm_check_records=vm_check_records_producer,
                 _m2_x86_64_process_arena_collect_check_records=arena_records_producer,
                 _run_m2_x86_64_arena_lifecycle_evidence=arena_lifecycle_producer,
@@ -1116,7 +1259,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm_producer.assert_called_once_with(
             offline=True, test_program={}, arena_owned_check=arena_check
         )
-        vm_check_records_producer.assert_called_once_with(summary, {}, {}, {})
+        vm_check_records_producer.assert_called_once_with(summary, {}, {}, {}, {})
         arena_records_producer.assert_called_once_with(summary, {})
         arena_lifecycle_producer.assert_called_once_with(
             offline=True, test_program={}, check=arena_lifecycle_check
@@ -1126,6 +1269,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         metadata_records_producer.assert_called_once_with(summary, {}, {})
         runtime_thp_producer.assert_called_once_with()
         thp_process_producer.assert_called_once_with(offline=True)
+        external_os_producer.assert_called_once_with(offline=True)
         initialization_producer.assert_called_once_with(offline=True)
         fault_producer.assert_called_once_with(offline=True, test_program={}, vm_evidence={})
         self.assertTrue(
@@ -1166,6 +1310,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "process-thp-madvise-failure-c-rust-differential",
                 "process-thp-disabled-policy-c-rust-differential",
                 "process-thp-inherited-disable-advice-c-rust-differential",
+                "external-os-purge-commit-c-rust-differential",
+                "external-os-commit-failure-c-rust-differential",
+                "external-os-reset-policy-c-rust-differential",
             },
             {record["id"] for record in vm_records},
         )

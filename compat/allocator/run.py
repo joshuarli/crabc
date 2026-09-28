@@ -12900,6 +12900,60 @@ M2_X86_64_THP_PROCESS_RECEIVERS = {
     },
 }
 
+M2_X86_64_EXTERNAL_OS_RECEIVERS = {
+    "external-os-purge-commit-c-rust-differential": {
+        "artifact": "m2-external-os-purge",
+        "target": "compat/allocator/m2_external_os_purge_x86_64.py",
+        "cases": ("success", "failure"),
+        "fields": {"case_failure", "purge_delay_raw", "purge_decommits_raw",
+            "external_mapping_length", "raw_purge_length", "advice_calls",
+            "advice_exact", "advice_result", "needs_recommit",
+            "purge_calls_delta", "purged_delta", "reset_calls_delta",
+            "reserved_delta", "committed_delta", "warning_calls",
+            "warning_after_purge", "warning_exact", "middle_byte",
+            "neighbors_retained", "mapping_writable", "mapping_live",
+            "terminal_unmap_calls", "terminal_unmap_exact",
+            "terminal_unmap_result", "caller_released"},
+        "commit_fields": {"mapping_length", "already_committed", "commit_attempts",
+            "commit_exact", "commit_result", "source_committed", "commit_calls_delta",
+            "committed_current_delta", "committed_total_delta", "reserved_delta",
+            "first_retained", "second_writable", "mapping_live",
+            "terminal_unmap_calls", "terminal_unmap_exact", "caller_released"},
+        "scope": "pinned-c-rust-caller-owned-external-purge-success-failure-and-mixed-commit",
+    },
+    "external-os-commit-failure-c-rust-differential": {
+        "artifact": "m2-external-os-commit-failure",
+        "target": "compat/allocator/m2_external_os_commit_failure_x86_64.py",
+        "cases": (),
+        "fields": {"mapping_length", "already_committed", "attempts", "first_exact",
+            "retry_exact", "first_primitive_result", "retry_primitive_result",
+            "first_source_committed", "retry_source_committed", "calls_after_failure",
+            "current_after_failure", "total_after_failure", "warning_calls",
+            "warning_after_call", "warning_before_charge", "warning_exact",
+            "first_retained", "mapping_live_after_failure", "calls_after_retry",
+            "current_after_retry", "total_after_retry", "reserved_delta",
+            "second_writable", "terminal_unmap_calls", "terminal_unmap_exact",
+            "caller_released"},
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-caller-owned-external-failed-commit-warning-and-retry",
+    },
+    "external-os-reset-policy-c-rust-differential": {
+        "artifact": "m2-external-os-reset-policy",
+        "target": "compat/allocator/m2_external_os_reset_policy_x86_64.py",
+        "cases": ("success", "failure"),
+        "fields": {"case_failure", "purge_delay_raw", "purge_decommits_raw",
+            "external_mapping_length", "raw_purge_length", "advice_calls",
+            "advice_exact", "advice_result", "needs_recommit",
+            "purge_calls_delta", "purged_delta", "reset_calls_delta", "reset_delta",
+            "reserved_delta", "committed_delta", "warning_calls",
+            "warning_after_purge", "warning_after_reset", "warning_exact",
+            "neighbors_retained", "mapping_writable", "mapping_live",
+            "terminal_unmap_calls", "terminal_unmap_exact", "caller_released"},
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-caller-owned-external-reset-success-failure-and-warning-order",
+    },
+}
+
 
 def _m2_x86_64_page_map_first_map_fallback_producer() -> Any:
     """Load the pinned C/Rust PageMap first-map fallback producer."""
@@ -13450,6 +13504,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-process-os-page-block-commit-receiver",
                     "c-rust-process-thp-madvise-differential",
                     "c-rust-process-thp-policy-differential",
+                    "c-rust-process-external-os-differential",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
@@ -13632,6 +13687,15 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or not (ROOT / receiver["target"]).is_file()
                 ):
                     raise HarnessError("native x86 M2 process THP receiver is absent")
+            elif raw_check.get("kind") == "c-rust-process-external-os-differential":
+                receiver = M2_X86_64_EXTERNAL_OS_RECEIVERS.get(raw_check["id"])
+                if (
+                    component_id != "vm-primitives"
+                    or receiver is None
+                    or raw_check.get("target") != receiver["target"]
+                    or not (ROOT / receiver["target"]).is_file()
+                ):
+                    raise HarnessError("native x86 M2 external OS receiver is absent")
             elif raw_check.get("kind") in {
                 "c-rust-page-map-fallback-trim-fault-differential",
                 "c-rust-page-map-lazy-map-rollback-differential",
@@ -13933,6 +13997,19 @@ def _run_m2_x86_64_thp_process_evidence(*, offline: bool) -> dict[str, dict[str,
         command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
         execution = command_record(command, cwd=ROOT, timeout_seconds=1800)
         require_success(execution, "process-owned THP C/Rust receiver")
+        evidence = read_json(ARTIFACT_ROOT / "x86_64" / receiver["artifact"] / "evidence.json")
+        results[check_id] = {**evidence, "command": command}
+    return results
+
+
+def _run_m2_x86_64_external_os_evidence(*, offline: bool) -> dict[str, dict[str, Any]]:
+    """Execute source-built caller-owned external OS transition receivers."""
+
+    results: dict[str, dict[str, Any]] = {}
+    for check_id, receiver in M2_X86_64_EXTERNAL_OS_RECEIVERS.items():
+        command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
+        execution = command_record(command, cwd=ROOT, timeout_seconds=1800)
+        require_success(execution, "caller-owned external OS C/Rust receiver")
         evidence = read_json(ARTIFACT_ROOT / "x86_64" / receiver["artifact"] / "evidence.json")
         results[check_id] = {**evidence, "command": command}
     return results
@@ -14302,6 +14379,7 @@ def _m2_x86_64_vm_aligned_hint_profile_c_commands_are_bound(
 def _m2_x86_64_vm_check_records(
     summary: Mapping[str, Any], evidence: object, runtime_thp_evidence: object | None = None,
     thp_process_evidence: object | None = None,
+    external_os_evidence: object | None = None,
 ) -> list[dict[str, Any]]:
     """Bind source-built VM differentials and direct owner receivers to their receipts.
 
@@ -14712,6 +14790,83 @@ def _m2_x86_64_vm_check_records(
                 "comparison_status": "matched",
                 "component": "vm-primitives",
                 "command": list(command),
+                "evidence_scope": receiver["scope"],
+                "id": check_id,
+                "passed_test_count": 1,
+                "target": check["target"],
+            })
+    if external_os_evidence is not None:
+        if not isinstance(external_os_evidence, Mapping) or set(external_os_evidence) != set(
+            M2_X86_64_EXTERNAL_OS_RECEIVERS
+        ):
+            raise HarnessError("native x86 M2 external OS receipt inventory is invalid")
+
+        def matching_integer_traces(c_trace: object, rust_trace: object, fields: set[str]) -> bool:
+            return (
+                isinstance(c_trace, Mapping)
+                and isinstance(rust_trace, Mapping)
+                and set(c_trace) == set(rust_trace) == fields
+                and all(type(value) is int for value in (*c_trace.values(), *rust_trace.values()))
+                and all(c_trace[field] == rust_trace[field] for field in fields)
+            )
+
+        for check_id, receiver in M2_X86_64_EXTERNAL_OS_RECEIVERS.items():
+            check = next(check for check in component["checks"] if check["id"] == check_id)
+            observed = external_os_evidence[check_id]
+            if not isinstance(observed, Mapping):
+                raise HarnessError("native x86 M2 external OS receipt is invalid")
+            expected_command = ["python3", receiver["target"]]
+            expected_keys = {
+                "c", "c_commands", "command", "mismatches", "rust", "rust_commands", "scope", "status",
+            }
+            if receiver["commit_fields"]:
+                expected_keys |= {"commit_c", "commit_rust", "commit_c_commands", "commit_rust_commands"}
+            if (
+                check.get("kind") != "c-rust-process-external-os-differential"
+                or check.get("target") != receiver["target"]
+                or check.get("expected_passed_test_count") != 1
+                or set(observed) != expected_keys
+                or observed.get("status") != "matched"
+                or observed.get("mismatches") != []
+                or observed.get("command") not in (expected_command, expected_command + ["--offline"])
+                or not isinstance(observed.get("scope"), str)
+                or not observed["scope"]
+            ):
+                raise HarnessError("native x86 M2 external OS receipt is invalid")
+            cases = receiver["cases"]
+            c_trace = observed["c"]
+            rust_trace = observed["rust"]
+            if cases:
+                if (
+                    not isinstance(c_trace, Mapping)
+                    or not isinstance(rust_trace, Mapping)
+                    or set(c_trace) != set(rust_trace) or set(c_trace) != set(cases)
+                    or any(not matching_integer_traces(c_trace[case], rust_trace[case], receiver["fields"])
+                           for case in cases)
+                ):
+                    raise HarnessError("native x86 M2 external OS case traces are invalid")
+                expected_commands = {
+                    "build_status": 0,
+                    **{case: {"run_status": 0, "stderr": ""} for case in cases},
+                }
+            else:
+                if not matching_integer_traces(c_trace, rust_trace, receiver["fields"]):
+                    raise HarnessError("native x86 M2 external OS flat traces are invalid")
+                expected_commands = {"build_status": 0, "run_status": 0, "stderr": ""}
+            if any(observed.get(key) != expected_commands for key in ("c_commands", "rust_commands")):
+                raise HarnessError("native x86 M2 external OS command receipts are invalid")
+            if receiver["commit_fields"] and (
+                not matching_integer_traces(
+                    observed["commit_c"], observed["commit_rust"], receiver["commit_fields"]
+                )
+                or observed["commit_c_commands"] != {"build_status": 0, "run_status": 0, "stderr": ""}
+                or observed["commit_rust_commands"] != {"run_status": 0, "stderr": ""}
+            ):
+                raise HarnessError("native x86 M2 external OS commit receipt is invalid")
+            records.append({
+                "comparison_status": "matched",
+                "component": "vm-primitives",
+                "command": list(observed["command"]),
                 "evidence_scope": receiver["scope"],
                 "id": check_id,
                 "passed_test_count": 1,
@@ -15172,6 +15327,7 @@ def m2_x86_64_memory_substrate_report(
     metadata_ownership_evidence: Mapping[str, Any] | None = None,
     runtime_thp_evidence: Mapping[str, Any] | None = None,
     thp_process_evidence: Mapping[str, Any] | None = None,
+    external_os_evidence: Mapping[str, Any] | None = None,
     initialization_evidence: Mapping[str, Any] | None = None,
     fault_evidence: Mapping[str, Any] | None = None,
     initialization_teardown_evidence: Mapping[str, Any] | None = None,
@@ -15189,7 +15345,7 @@ def m2_x86_64_memory_substrate_report(
         summary, metadata_evidence, metadata_ownership_evidence or {}
     )
     expected_vm_records = _m2_x86_64_vm_check_records(
-        summary, vm_evidence, runtime_thp_evidence, thp_process_evidence
+        summary, vm_evidence, runtime_thp_evidence, thp_process_evidence, external_os_evidence
     )
     expected_initialization_records = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence, initialization_teardown_evidence,
@@ -15466,6 +15622,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     )
     runtime_thp_evidence = _run_m2_x86_64_runtime_thp_configuration_evidence()
     thp_process_evidence = _run_m2_x86_64_thp_process_evidence(offline=offline)
+    external_os_evidence = _run_m2_x86_64_external_os_evidence(offline=offline)
     initialization_evidence = _run_m2_x86_64_initialization_evidence(offline=offline)
     initialization_teardown_evidence = _run_m2_x86_64_initialization_teardown_evidence(
         offline=offline, test_program=test_program
@@ -15477,7 +15634,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         offline=offline, test_program=test_program, vm_evidence=vm_evidence
     )
     vm_checks = _m2_x86_64_vm_check_records(
-        summary, vm_evidence, runtime_thp_evidence, thp_process_evidence
+        summary, vm_evidence, runtime_thp_evidence, thp_process_evidence, external_os_evidence
     )
     arena_owned_checks = _m2_x86_64_process_arena_collect_check_records(summary, vm_evidence)
     _, arena_lifecycle_check = _m2_x86_64_check_by_id(
@@ -15621,6 +15778,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         metadata_ownership_evidence=metadata_ownership_evidence,
         runtime_thp_evidence=runtime_thp_evidence,
         thp_process_evidence=thp_process_evidence,
+        external_os_evidence=external_os_evidence,
         initialization_evidence=initialization_evidence,
         fault_evidence=fault_evidence,
         initialization_teardown_evidence=initialization_teardown_evidence,

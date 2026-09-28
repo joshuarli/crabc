@@ -284,6 +284,18 @@ class NativeM2VmFragmentTests(unittest.TestCase):
         branch = next(item for item in inherited_unbound["component"]["branch_matrix"]
                       if item["id"] == "unix-configuration-and-thp-process-policy")
         branch["evidence_check_ids"].remove("process-thp-inherited-disable-advice-c-rust-differential")
+        external_missing_target = copy.deepcopy(self.fragment)
+        external_check = next(item for item in external_missing_target["component"]["checks"]
+                              if item["id"] == "external-os-commit-failure-c-rust-differential")
+        external_check["target"] = "compat/allocator/missing-external-os-receiver.py"
+        external_wrong_kind = copy.deepcopy(self.fragment)
+        external_check = next(item for item in external_wrong_kind["component"]["checks"]
+                              if item["id"] == "external-os-commit-failure-c-rust-differential")
+        external_check["kind"] = "rust-unit"
+        external_unbound = copy.deepcopy(self.fragment)
+        branch = next(item for item in external_unbound["component"]["branch_matrix"]
+                      if item["id"] == "os-range-transition-policy-and-failure-owners")
+        branch["evidence_check_ids"].remove("external-os-commit-failure-c-rust-differential")
         for name, changed in (
             ("duplicate", duplicate),
             ("missing_target", missing_target),
@@ -294,6 +306,9 @@ class NativeM2VmFragmentTests(unittest.TestCase):
             ("inherited_missing_target", inherited_missing_target),
             ("inherited_wrong_kind", inherited_wrong_kind),
             ("inherited_unbound", inherited_unbound),
+            ("external_missing_target", external_missing_target),
+            ("external_wrong_kind", external_wrong_kind),
+            ("external_unbound", external_unbound),
         ):
             with self.subTest(changed=name), self.assertRaises(ValueError):
                 load_fragment(self.write_fragment(changed))
