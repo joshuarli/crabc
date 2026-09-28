@@ -50,12 +50,13 @@ are not transferable passes for a different revision.
   owned-libc integration gate exists; the named `unown_with`
   release-then-classify race has a source-bound regression, and the canonical
   native allocator stress plus three soak seeds pass. `m8.rust-std`,
-  `m8.lua`, and `m8.corpus` pass on source-built native-shadow products with
-  physically reread consumer receipts on their respective source revisions;
+  `m8.lua`, `m8.corpus`, `m8.threads-fork`, and `m8.weak-interposed` pass on
+  source-built native-shadow products with physically reread receipts on their respective source revisions;
   the corpus covers all 34 frozen cases. Full M8 and the
   merged-revision qualification remain open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
-  profile and 660-key C/Rust differential; full M7 remains open. Static
+  profile and 660-key C/Rust differential; its default-artifact baseline audit
+  also passes. Full M7 remains open. Static
   replacement now has a source-bound installed sweep with zero divergent
   functions among 1,406 musl-replaceable entries and all 831 required entries
   passing; the final merged candidate must rerun it. A scoped current-source
@@ -121,18 +122,21 @@ are not transferable passes for a different revision.
      cohort and ABI assembly are running. The source-built static libc now compiles and links both
      freestanding C and stock Rust std consumers, and automatic exit selects
      the signed native `destroy_on_exit` behavior; their merged-revision
-     qualification remains open. `m8.rust-std`, `m8.lua`, and `m8.corpus` pass
-     on source-built native-shadow products; the other M8 leaves and merged-revision
+     qualification remains open. `m8.rust-std`, `m8.lua`, `m8.corpus`,
+     `m8.threads-fork`, and `m8.weak-interposed` pass on source-built native-shadow products; the other M8 leaves and merged-revision
      qualification remain open. Known open items from the last lane reports:
      `materialized-dynamic-sysroot` still has load-sensitive deadlines (aio
      fresh-signal and behavior, credentials `threads`, message-queues,
      signal-handler-fork `raise-race`). Merge a `[[family.verified_slice]]`
      change only after rerunning its cited commands in a frozen checkout.
   3. Remaining low-churn repository-file pins (`compat/x86_64/core_image.py`
-     now names the core image once): shadow-ABI and churn fixtures, the native
-     perf profile, and remaining image-input receipts. The owned dynamic
+     now names the core image once): shadow-ABI and churn fixtures, and
+     remaining image-input receipts. The native perf profile's operation
+     denominator now matches its route geometry. The owned dynamic
      `.list` digests, mimalloc visibility, errno-alias, Lua admission, and
      resolver-network image inputs have passed physical source-built audits.
+     The protocol database producer and reader now require the exact pinned
+     musl 1.2.6 archive; its corrected source-built receipt passes.
      The syscall-alias reader now replays packed RELR against a
      source-built static/dynamic cohort; the timed pthread reader binds its
      four providers to their selected archive members. Their merged-source
