@@ -6358,18 +6358,20 @@ struct NativeProcessBackingArenaAudit {
     registry_count: usize,
 }
 
-/// Observes exactly one regular OS root retained in the canonical process
+/// Observes the first regular OS root retained in the canonical process
 /// registry after startup or the later ticket-zero fallback has published it.
+/// Later arena publication does not change this root or the process PageMap
+/// selected by the test audit.
 ///
 /// `startup_regular_arena_selection` remains the ownership admission for its
 /// bounded startup consumer.  It intentionally rejects a later lazy root
 /// when the source startup reservation was absent or failed.  This audit has
 /// a different, scalar-only question: whether the selected process binding
-/// now has one immutable regular root.  It therefore validates the source
-/// binding/configuration and exact one-slot root image directly, instead of
+/// now has an immutable first regular root. It therefore validates the source
+/// binding/configuration and the first root image directly, instead of
 /// relabeling that valid later publication as an unavailable audit fact.
 #[cfg(feature = "native-runtime-test-audit")]
-fn native_process_backing_canonical_root_arena_audit(
+fn native_process_backing_root_arena_audit(
     process_backing: crate::process_init::ProcessMainBackingBinding,
 ) -> Option<NativeProcessBackingArenaAudit> {
     let process = process_backing.process();
@@ -6382,7 +6384,7 @@ fn native_process_backing_canonical_root_arena_audit(
         return None;
     }
     let registry = backing.registry();
-    if registry.count() != 1
+    if registry.count() == 0
         || !registry.is_bound_to_subprocess(process.subprocess().as_ptr())
     {
         return None;
@@ -6429,7 +6431,7 @@ fn native_process_backing_first_arena_policy_audit(
             registry_count,
         });
     }
-    native_process_backing_canonical_root_arena_audit(process_backing)
+    native_process_backing_root_arena_audit(process_backing)
 }
 
 /// Process facts decided by source options before allocator startup, retained
@@ -6526,7 +6528,7 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
                 registry_count: lease.test_registry_count().ok()?,
             }
         }
-        Err(_) => native_process_backing_canonical_root_arena_audit(process_backing)?,
+        Err(_) => native_process_backing_root_arena_audit(process_backing)?,
     };
     let subprocess = ready.subprocess().ok()?;
     // SAFETY: see the owner access above. The copied lease permits one short

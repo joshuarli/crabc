@@ -1,7 +1,9 @@
 /* A joined remote-free workload with quiescent medium-page observations.
  *
- * One owner touches sixteen full medium pages, then parks while an independent
- * worker frees all but one block per page. The coordinator scans after that
+ * One owner fills medium pages, then parks while an independent worker frees
+ * all but one block per group. The pressure option sparsely touches enough
+ * medium blocks to span multiple regular arenas without committing their full
+ * requested size. The coordinator scans after that
  * worker joins, after the owner frees the survivors, and after owner exit.
  * A one-byte pipe handshake keeps the process still for each external mapping
  * snapshot. No allocator operation occurs between the printed audit and ack.
@@ -21,7 +23,9 @@
 #include <unistd.h>
 
 enum { EPOCHS = 4, PAGES_PER_EPOCH = 16, BLOCKS_PER_PAGE = 42,
-       BLOCKS = PAGES_PER_EPOCH * BLOCKS_PER_PAGE, REQUEST = 10248 };
+       BLOCKS = PAGES_PER_EPOCH * BLOCKS_PER_PAGE, REQUEST = 10248,
+       PRESSURE_EPOCHS = 2, PRESSURE_BLOCKS = 107520,
+       PRESSURE_BLOCKS_PER_PAGE = BLOCKS_PER_PAGE, PRESSURE_REQUEST = REQUEST };
 
 struct process_audit {
     size_t page_map_registered_entries, page_map_published_submaps, arena_registry_count,
@@ -45,7 +49,10 @@ struct page_class_audit {
 extern int __crabc_x86_owned_allocator_process_test_audit(struct process_audit *output);
 extern int __crabc_x86_owned_allocator_page_class_test_audit(struct page_class_audit *output);
 
-static void *blocks[BLOCKS];
+static void *blocks[PRESSURE_BLOCKS];
+static int pressure;
+static size_t block_count, block_stride, request_size;
+static unsigned epoch_count;
 static sem_t owner_ready;
 static sem_t owner_resume;
 static sem_t owner_cleared;
@@ -125,13 +132,14 @@ static void snapshot(unsigned epoch, const char *phase) {
     int length = snprintf(line, sizeof line,
         "snapshot epoch=%u phase=%s rss_kib=%ld hwm_kib=%ld rollup_rss_kib=%ld"
         " anonymous_kib=%ld anon_huge_kib=%ld referenced_kib=%ld"
-        " page_map_entries=%zu page_map_submaps=%zu"
+        " page_map_entries=%zu page_map_submaps=%zu arena_registry_count=%zu"
         " small_empty=%zu small_used=%zu medium_empty=%zu medium_used=%zu"
         " large_empty=%zu large_used=%zu singleton_empty=%zu singleton_used=%zu"
         " medium_abandoned=%zu medium_detached=%zu medium_attached=%zu"
         " medium_remote_pending=%zu medium_reusable=%zu medium_retired=%zu\n",
         epoch, phase, rss, hwm, rollup_rss, anonymous, huge, referenced,
         process.page_map_registered_entries, process.page_map_published_submaps,
+        process.arena_registry_count,
         classes.small_empty_slices, classes.small_used_slices,
         classes.medium_empty_slices, classes.medium_used_slices,
         classes.large_empty_slices, classes.large_used_slices,
@@ -149,14 +157,18 @@ static void snapshot(unsigned epoch, const char *phase) {
 
 static void *owner_main(void *unused) {
     (void)unused;
-    for (size_t index = 0; index < BLOCKS; index++) {
-        blocks[index] = malloc(REQUEST);
+    for (size_t index = 0; index < block_count; index++) {
+        blocks[index] = malloc(request_size);
         if (blocks[index] == NULL) fail("medium allocation failed");
-        memset(blocks[index], (int)(index & 255), REQUEST);
+        if (pressure) {
+            *(volatile unsigned char *)blocks[index] = (unsigned char)(index & 255);
+        } else {
+            memset(blocks[index], (int)(index & 255), request_size);
+        }
     }
     if (sem_post(&owner_ready) != 0) fail("owner ready failed");
     wait_sem(&owner_resume);
-    for (size_t index = BLOCKS_PER_PAGE - 1; index < BLOCKS; index += BLOCKS_PER_PAGE) {
+    for (size_t index = block_stride - 1; index < block_count; index += block_stride) {
         free(blocks[index]);
         blocks[index] = NULL;
     }
@@ -167,13 +179,13 @@ static void *owner_main(void *unused) {
 
 static void *remote_main(void *unused) {
     (void)unused;
-    for (size_t index = 0; index < BLOCKS; index++) {
+    for (size_t index = 0; index < block_count; index++) {
         unsigned char *block = blocks[index];
         if (block[0] != (unsigned char)(index & 255) ||
-            block[REQUEST - 1] != (unsigned char)(index & 255)) {
+            (!pressure && block[request_size - 1] != (unsigned char)(index & 255))) {
             fail("medium block changed before remote free");
         }
-        if (index % BLOCKS_PER_PAGE != BLOCKS_PER_PAGE - 1) {
+        if (index % block_stride != block_stride - 1) {
             free(block);
             blocks[index] = NULL;
         }
@@ -182,6 +194,12 @@ static void *remote_main(void *unused) {
 }
 
 int main(void) {
+    const char *pressure_option = getenv("CRABC_MEDIUM_CHURN_PRESSURE");
+    pressure = pressure_option != NULL && strcmp(pressure_option, "1") == 0;
+    block_count = pressure ? PRESSURE_BLOCKS : BLOCKS;
+    block_stride = pressure ? PRESSURE_BLOCKS_PER_PAGE : BLOCKS_PER_PAGE;
+    request_size = pressure ? PRESSURE_REQUEST : REQUEST;
+    epoch_count = pressure ? PRESSURE_EPOCHS : EPOCHS;
     if (sem_init(&owner_ready, 0, 0) != 0 || sem_init(&owner_resume, 0, 0) != 0 ||
         sem_init(&owner_cleared, 0, 0) != 0 || sem_init(&owner_exit, 0, 0) != 0) {
         fail("semaphore initialization failed");
@@ -191,7 +209,7 @@ int main(void) {
     *(volatile unsigned char *)warm = 7;
     free(warm);
     snapshot(0, "baseline");
-    for (unsigned epoch = 1; epoch <= EPOCHS; epoch++) {
+    for (unsigned epoch = 1; epoch <= epoch_count; epoch++) {
         pthread_t owner, remote;
         if (pthread_create(&owner, NULL, owner_main, NULL) != 0) fail("owner start failed");
         wait_sem(&owner_ready);
@@ -213,7 +231,10 @@ int main(void) {
         sem_destroy(&owner_cleared) != 0 || sem_destroy(&owner_exit) != 0) {
         fail("semaphore destruction failed");
     }
-    static const char done[] = "done epochs=4 blocks_per_epoch=672 request=10248\n";
-    write_all(done, sizeof done - 1);
+    char done[128];
+    int length = snprintf(done, sizeof done, "done epochs=%u blocks_per_epoch=%zu request=%zu\n",
+                          epoch_count, block_count, request_size);
+    if (length <= 0 || length >= (int)sizeof done) fail("done line overflow");
+    write_all(done, (size_t)length);
     return 0;
 }

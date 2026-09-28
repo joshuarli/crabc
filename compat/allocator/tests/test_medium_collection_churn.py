@@ -55,6 +55,29 @@ def product(*, immediate: bool = False, nonabandoning: bool = False) -> dict[str
     return {"samples": samples}
 
 
+def pressure_product(*, arenas: int = 2, drained_entries: int = 3) -> dict[str, object]:
+    samples = [{
+        "fields": {"epoch": 0, "phase": "baseline", "page_map_entries": 1,
+                   "arena_registry_count": 1, "rss_kib": 200, "anonymous_kib": 100,
+                   "anon_huge_kib": 0, **{key: 0 for key in churn.MEDIUM_FIELDS}},
+        "arena": {"count": 1, "rss_kib": 100},
+    }]
+    for epoch in (1, 2):
+        for phase in CONTRACT["phase_order"][1:]:
+            active = phase in ("allocated", "remote_joined")
+            fields = {key: 0 for key in churn.MEDIUM_FIELDS}
+            fields.update({
+                "epoch": epoch, "phase": phase,
+                "page_map_entries": 20483 if active else drained_entries,
+                "arena_registry_count": arenas, "rss_kib": 500000,
+                "anonymous_kib": 490000, "anon_huge_kib": 0,
+                "medium_used": 20480 if active else 0,
+                "medium_abandoned": 20480 if active else 0,
+            })
+            samples.append({"fields": fields, "arena": {"count": arenas, "rss_kib": 490000}})
+    return {"samples": samples}
+
+
 class MediumCollectionChurnReaderTest(unittest.TestCase):
     def test_snapshot_requires_a_partitioned_medium_image(self) -> None:
         parsed = churn.parse_snapshot(line())
@@ -73,11 +96,30 @@ class MediumCollectionChurnReaderTest(unittest.TestCase):
             "Size: 1048576 kB\nRss: 8192 kB\nAnonymous: 8192 kB\n"
             "AnonHugePages: 2048 kB\nReferenced: 8192 kB\nVmFlags: rd wr hg\n"
         )
-        self.assertEqual(churn.arena_mapping(smaps), {
-            "size_kib": 1_048_576, "rss_kib": 8192, "anonymous_kib": 8192,
-            "anon_huge_kib": 2048, "referenced_kib": 8192,
-            "vm_flags": ["rd", "wr", "hg"],
-        })
+        arena = churn.arena_mapping(smaps)
+        self.assertEqual(arena["count"], 1)
+        self.assertEqual(arena["rss_kib"], 8192)
+        self.assertEqual(arena["mappings"][0]["vm_flags"], ["rd", "wr", "hg"])
+
+    def test_mapping_sums_multiple_regular_arenas(self) -> None:
+        one = (
+            "1000-2000 rw-p 00000000 00:00 0\n"
+            "Size: 1048576 kB\nRss: 8192 kB\nAnonymous: 8192 kB\n"
+            "AnonHugePages: 2048 kB\nReferenced: 4096 kB\nVmFlags: rd wr hg\n"
+        )
+        two = one.replace("1000-2000", "3000-4000").replace(
+            "Rss: 8192", "Rss: 4096").replace("VmFlags: rd wr hg", "VmFlags: rd wr nh")
+        arena = churn.arena_mapping(one + two)
+        self.assertEqual(arena["count"], 2)
+        self.assertEqual(arena["rss_kib"], 12288)
+        self.assertEqual(arena["anon_huge_kib"], 4096)
+        self.assertEqual([a["vm_flags"][-1] for a in arena["mappings"]], ["hg", "nh"])
+
+    def test_pressure_profile_has_its_own_bounded_workload(self) -> None:
+        workload = churn.profile_workload(CONTRACT, "pressure-default")
+        self.assertGreater(workload["blocks_per_epoch"] * workload["request_bytes"], 1 << 30)
+        self.assertEqual(len(churn.expected_phases(CONTRACT, "pressure-default")),
+                         1 + workload["epochs"] * 5)
 
     def test_paired_source_release_timing_matches_in_both_profiles(self) -> None:
         default = churn.compare(product(), product(), CONTRACT, "source-default")
@@ -106,6 +148,18 @@ class MediumCollectionChurnReaderTest(unittest.TestCase):
         result = churn.compare(c, native, CONTRACT, "source-default")
         self.assertEqual(result["status"], "diverge")
         self.assertTrue(any("medium_used" in mismatch for mismatch in result["mismatches"]))
+
+    def test_pressure_reader_requires_multiple_arenas_and_medium_retirement(self) -> None:
+        paired = churn.compare(pressure_product(), pressure_product(),
+                               CONTRACT, "pressure-default")
+        self.assertEqual(paired["status"], "match")
+        missing_arena = churn.compare(pressure_product(), pressure_product(arenas=1),
+                                      CONTRACT, "pressure-default")
+        self.assertIn("1:native:multi-arena pressure absent", missing_arena["mismatches"])
+        retained = churn.compare(pressure_product(), pressure_product(drained_entries=20483),
+                                 CONTRACT, "pressure-default")
+        self.assertIn("1:native:registered medium image retained after drain",
+                      retained["mismatches"])
 
 
 if __name__ == "__main__":

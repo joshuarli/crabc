@@ -30,6 +30,7 @@ VMA_HEADER = re.compile(r"^[0-9a-f]+-[0-9a-f]+\s", re.MULTILINE)
 REQUIRED = {
     "epoch", "rss_kib", "hwm_kib", "rollup_rss_kib", "anonymous_kib",
     "anon_huge_kib", "referenced_kib", "page_map_entries", "page_map_submaps",
+    "arena_registry_count",
     "small_empty", "small_used", "medium_empty", "medium_used",
     "large_empty", "large_used", "singleton_empty", "singleton_used",
     "medium_abandoned", "medium_detached", "medium_attached",
@@ -76,7 +77,7 @@ def parse_snapshot(line: str) -> dict[str, int | str]:
     return numbers
 
 
-def arena_mapping(smaps: str) -> dict[str, int | str]:
+def arena_mapping(smaps: str) -> dict[str, Any]:
     blocks = re.split(r"(?=^[0-9a-f]+-[0-9a-f]+ )", smaps, flags=re.MULTILINE)
     arenas = []
     for block in blocks:
@@ -98,15 +99,27 @@ def arena_mapping(smaps: str) -> dict[str, int | str]:
             "referenced_kib": value("Referenced"),
             "vm_flags": flags.group(1).split() if flags else [],
         })
-    if len(arenas) != 1:
-        raise DiagnosticError(f"expected one regular 1 GiB arena, found {len(arenas)}")
-    return arenas[0]
+    if not arenas:
+        raise DiagnosticError("no regular 1 GiB arena mapping")
+    return {
+        "count": len(arenas), "mappings": arenas,
+        **{field: sum(arena[field] for arena in arenas)
+           for field in ("size_kib", "rss_kib", "anonymous_kib",
+                         "anon_huge_kib", "referenced_kib")},
+    }
 
 
-def expected_phases(contract: dict[str, Any]) -> list[tuple[int, str]]:
+def profile_workload(contract: dict[str, Any], profile: str) -> dict[str, int]:
+    if profile not in contract["profile_options"]:
+        raise DiagnosticError(f"unknown purge profile: {profile}")
+    return contract["pressure_workload" if profile.startswith("pressure-") else "workload"]
+
+
+def expected_phases(contract: dict[str, Any], profile: str = "source-default") -> list[tuple[int, str]]:
+    workload = profile_workload(contract, profile)
     return [(0, "baseline")] + [
         (epoch, phase)
-        for epoch in range(1, contract["workload"]["epochs"] + 1)
+        for epoch in range(1, workload["epochs"] + 1)
         for phase in contract["phase_order"][1:]
     ]
 
@@ -118,8 +131,8 @@ def run_product(binary: Path, profile: str, output: Path, contract: dict[str, An
     environment.pop("mimalloc_purge_delay", None)
     environment.pop("MIMALLOC_PAGE_FULL_RETAIN", None)
     environment.pop("mimalloc_page_full_retain", None)
-    if profile not in contract["profile_options"]:
-        raise DiagnosticError(f"unknown purge profile: {profile}")
+    environment.pop("CRABC_MEDIUM_CHURN_PRESSURE", None)
+    workload = profile_workload(contract, profile)
     environment.update(contract["profile_options"][profile])
     process = subprocess.Popen(
         [str(binary.resolve())], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -130,7 +143,7 @@ def run_product(binary: Path, profile: str, output: Path, contract: dict[str, An
     samples: list[dict[str, Any]] = []
     with (output / "stdout.txt").open("w") as raw:
         try:
-            for epoch, phase in expected_phases(contract):
+            for epoch, phase in expected_phases(contract, profile):
                 ready, _, _ = select.select([process.stdout], [], [], 30)
                 if not ready:
                     raise DiagnosticError(f"{binary.name} stalled before {epoch}:{phase}")
@@ -161,7 +174,10 @@ def run_product(binary: Path, profile: str, output: Path, contract: dict[str, An
             (output / "error.txt").write_text(f"{type(error).__name__}: {error}\n")
             raise
     (output / "stderr.txt").write_text(stderr)
-    if status != 0 or stderr or not lines or lines[-1] != "done epochs=4 blocks_per_epoch=672 request=10248\n":
+    done = (f"done epochs={workload['epochs']} "
+            f"blocks_per_epoch={workload['blocks_per_epoch']} "
+            f"request={workload['request_bytes']}\n")
+    if status != 0 or stderr or not lines or lines[-1] != done:
         raise DiagnosticError(f"incomplete workload: {binary.name}, exit {status}, stderr {stderr!r}")
     return {
         "binary_sha256": digest(binary), "profile": profile,
@@ -179,11 +195,73 @@ def release_phase(samples: list[dict[str, Any]], epoch: int, significant_kib: in
     return "retained_after_20ms"
 
 
+def compare_pressure(c: dict[str, Any], native: dict[str, Any], contract: dict[str, Any],
+                     profile: str) -> dict[str, Any]:
+    expected = expected_phases(contract, profile)
+    if len(c["samples"]) != len(expected) or len(native["samples"]) != len(expected):
+        raise DiagnosticError("pressure product omitted a transition")
+    mismatches = []
+    checkpoints = []
+    for c_sample, n_sample in zip(c["samples"], native["samples"]):
+        c_fields, n_fields = c_sample["fields"], n_sample["fields"]
+        point = (c_fields["epoch"], c_fields["phase"])
+        if point != (n_fields["epoch"], n_fields["phase"]):
+            raise DiagnosticError("pressure product reordered transitions")
+        for field in MEDIUM_FIELDS:
+            if c_fields[field] != n_fields[field]:
+                mismatches.append(f"{point[0]}:{point[1]}:{field}")
+        if c_fields["page_map_entries"] != n_fields["page_map_entries"]:
+            mismatches.append(f"{point[0]}:{point[1]}:page_map_entries")
+        checkpoints.append({
+            "epoch": point[0], "phase": point[1],
+            "c": {"page_map_entries": c_fields["page_map_entries"],
+                  "arena_registry_count": c_fields["arena_registry_count"],
+                  "medium_used": c_fields["medium_used"],
+                  "rss_kib": c_fields["rss_kib"],
+                  "anonymous_kib": c_fields["anonymous_kib"],
+                  "anon_huge_kib": c_fields["anon_huge_kib"],
+                  "arena": c_sample["arena"]},
+            "native": {"page_map_entries": n_fields["page_map_entries"],
+                       "arena_registry_count": n_fields["arena_registry_count"],
+                       "medium_used": n_fields["medium_used"],
+                       "rss_kib": n_fields["rss_kib"],
+                       "anonymous_kib": n_fields["anonymous_kib"],
+                       "anon_huge_kib": n_fields["anon_huge_kib"],
+                       "arena": n_sample["arena"]},
+        })
+    for name, product in (("c", c), ("native", native)):
+        for epoch in range(1, profile_workload(contract, profile)["epochs"] + 1):
+            points = {sample["fields"]["phase"]: sample
+                      for sample in product["samples"] if sample["fields"]["epoch"] == epoch}
+            allocated, drained = points["allocated"], points["settled_20ms"]
+            if allocated["arena"]["count"] < 2:
+                mismatches.append(f"{epoch}:{name}:multi-arena pressure absent")
+            if name == "native" and allocated["fields"]["arena_registry_count"] < 2:
+                mismatches.append(f"{epoch}:{name}:second arena absent from registry")
+            if allocated["fields"]["medium_used"] == 0:
+                mismatches.append(f"{epoch}:{name}:medium image absent")
+            if (drained["fields"]["medium_used"] != 0 or
+                allocated["fields"]["page_map_entries"] -
+                    drained["fields"]["page_map_entries"] < 128):
+                mismatches.append(f"{epoch}:{name}:registered medium image retained after drain")
+    return {"status": "match" if not mismatches else "diverge",
+            "mismatches": mismatches, "checkpoints": checkpoints,
+            "arena_release_phases": [
+                {"epoch": epoch,
+                 "c": release_phase(c["samples"], epoch, contract["significant_arena_release_kib"]),
+                 "native": release_phase(native["samples"], epoch,
+                                         contract["significant_arena_release_kib"])}
+                for epoch in range(1, profile_workload(contract, profile)["epochs"] + 1)
+            ]}
+
+
 def compare(c: dict[str, Any], native: dict[str, Any], contract: dict[str, Any],
             profile: str) -> dict[str, Any]:
+    if profile.startswith("pressure-"):
+        return compare_pressure(c, native, contract, profile)
     significant = contract["significant_arena_release_kib"]
     nonabandoning = contract["profile_options"][profile].get("MIMALLOC_PAGE_FULL_RETAIN") == "-1"
-    if len(c["samples"]) != len(native["samples"]) or len(c["samples"]) != len(expected_phases(contract)):
+    if len(c["samples"]) != len(native["samples"]) or len(c["samples"]) != len(expected_phases(contract, profile)):
         raise DiagnosticError("paired product omitted a transition")
     mismatches = []
     for c_sample, native_sample in zip(c["samples"], native["samples"]):

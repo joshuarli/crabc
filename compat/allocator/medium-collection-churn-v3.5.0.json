@@ -1,5 +1,5 @@
 {
-  "schema": "crabc-mimalloc-medium-collection-churn-diagnostic-v1",
+  "schema": "crabc-mimalloc-medium-collection-churn-diagnostic-v2",
   "upstream": {
     "version": "3.5.0",
     "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
@@ -8,16 +8,28 @@
   "workload": {
     "epochs": 4,
     "request_bytes": 10248,
+    "blocks_per_epoch": 672,
     "medium_pages_per_epoch": 16,
     "blocks_per_page": 42,
     "remote_frees_per_epoch": 656,
     "owner_survivors_per_epoch": 16
   },
+  "pressure_workload": {
+    "epochs": 2,
+    "request_bytes": 10248,
+    "blocks_per_epoch": 107520,
+    "blocks_per_group": 42,
+    "remote_frees_per_epoch": 104960,
+    "owner_survivors_per_epoch": 2560,
+    "touch_bytes_per_block": 1
+  },
   "profiles": [
     "source-default",
     "immediate-purge",
     "nonabandoning-default",
-    "nonabandoning-immediate"
+    "nonabandoning-immediate",
+    "pressure-default",
+    "pressure-immediate"
   ],
   "profile_options": {
     "source-default": {},
@@ -25,6 +37,11 @@
     "nonabandoning-default": {"MIMALLOC_PAGE_FULL_RETAIN": "-1"},
     "nonabandoning-immediate": {
       "MIMALLOC_PAGE_FULL_RETAIN": "-1",
+      "MIMALLOC_PURGE_DELAY": "0"
+    },
+    "pressure-default": {"CRABC_MEDIUM_CHURN_PRESSURE": "1"},
+    "pressure-immediate": {
+      "CRABC_MEDIUM_CHURN_PRESSURE": "1",
       "MIMALLOC_PURGE_DELAY": "0"
     }
   },
