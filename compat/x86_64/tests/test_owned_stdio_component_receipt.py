@@ -12,6 +12,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import sys
+
 
 ROOT = Path(__file__).resolve().parents[3]
 READER_PATH = ROOT / "compat/x86_64/owned_stdio_component_receipt.py"
@@ -19,6 +21,8 @@ SPEC = importlib.util.spec_from_file_location("owned_stdio_component_receipt_tes
 assert SPEC is not None and SPEC.loader is not None
 receipt = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(receipt)
+sys.path.insert(0, str(READER_PATH.parent))
+import owned_dynamic_qualification as qualification
 
 
 def identity(root: Path, path: Path) -> dict[str, object]:
@@ -96,6 +100,11 @@ class ReceiptFixture:
         self.dynamic_driver.write_bytes(b"dynamic driver\n")
         self.dynamic_driver.chmod(0o755)
         (self.dynamic / "share/crabc/manifest.json").write_bytes(b"dynamic manifest\n")
+        self.dynamic_state = self.dynamic / "share/crabc/dynamic-product-state.json"
+        self.dynamic_state.write_text(json.dumps({
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+            "status": "materialized-unqualified", "source_sha256": "a" * 64,
+        }) + "\n")
         if static:
             (self.static / "bin").mkdir()
             (self.static / "share/crabc").mkdir(parents=True)
@@ -306,6 +315,14 @@ class ReceiptFixture:
                 self.report["seals"][name] = identity(self.work, self.work / (name + ".json"))
         self.write_report()
 
+    def refresh_dynamic_product_seals(self) -> None:
+        for phase in ("before", "after"):
+            path = self.work / ("source-product-" + phase + ".json")
+            value = json.loads(path.read_text())
+            value["dynamic"]["tree"] = receipt.tree_identity(self.dynamic)
+            path.write_text(json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n")
+        self.refresh("source-product-before", "source-product-after")
+
 
 class OwnedStdioComponentReceiptTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -320,6 +337,8 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
             mock.patch.object(receipt.products, "_validate_static_product", return_value=(self.fixture.static / "manifest.json", {"bin/crabc-cc": "s" * 64})),
             mock.patch.object(receipt.products, "validate_link", side_effect=self._link),
             mock.patch.object(receipt.copies, "audit_execution_payload", side_effect=self._payload),
+            mock.patch.object(qualification, "source_digest", return_value="a" * 64),
+            mock.patch.object(qualification, "ROOT", self.fixture.checkout),
         ]
         for patch in self.patches:
             patch.start()
@@ -341,6 +360,19 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         self.assertEqual(report["matrix"], "dynamic-development")
         with self.assertRaisesRegex(receipt.ReceiptError, "supplied-static"):
             self.validate(require_static=True)
+
+    def test_rehashed_transplanted_dynamic_product_source_is_rejected(self) -> None:
+        state = json.loads(self.fixture.dynamic_state.read_text())
+        state["source_sha256"] = "b" * 64
+        self.fixture.dynamic_state.write_text(json.dumps(state) + "\n")
+        self.fixture.refresh_dynamic_product_seals()
+        with self.assertRaisesRegex(receipt.ReceiptError, "dynamic product source differs"):
+            self.validate()
+
+    def test_checkout_must_be_the_reader_source_checkout(self) -> None:
+        qualification.ROOT = self.fixture.root
+        with self.assertRaisesRegex(receipt.ReceiptError, "reader source checkout"):
+            self.validate()
 
     def test_fopen64_macro_consumer_row_is_reconstructed(self) -> None:
         row = {
@@ -380,6 +412,7 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         self.patches[1].stop()
         self.patches[1] = mock.patch.object(receipt, "MUSL_INCLUDE", self.fixture.musl_include)
         self.patches[1].start()
+        qualification.ROOT = self.fixture.checkout
         report = self.validate(require_static=True)
         self.assertEqual(report["matrix"], "supplied-static")
 

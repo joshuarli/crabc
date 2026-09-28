@@ -26,6 +26,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import owned_crypt_runtime_evidence as copies
+import owned_dynamic_qualification as qualification
 import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as products
 
@@ -331,6 +332,18 @@ def validate_source_product_seals(
         products._validate_dynamic_product(dynamic)
     except Exception as error:
         raise ReceiptError("dynamic product validation failed") from error
+    state = strict_json(dynamic / "share/crabc/dynamic-product-state.json", "dynamic product materialization state")
+    require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
+            and state.get("status") == "materialized-unqualified",
+            "dynamic product materialization state differs")
+    recorded_source = state.get("source_sha256")
+    require(type(recorded_source) is str and SHA256.fullmatch(recorded_source) is not None,
+            "dynamic product source digest is invalid")
+    try:
+        current_source = qualification.source_digest()
+    except Exception as error:
+        raise ReceiptError("current source digest cannot be read") from error
+    require(recorded_source == current_source, "dynamic product source differs from current checkout")
     if static:
         static_product = directory(Path(product_paths["static"]), "static product")
         _product_seal(before_value["static"], static_product, "static")
@@ -764,6 +777,8 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = False)
 
     require(type(require_static) is bool, "require_static must be a boolean")
     checkout = directory(checkout, "checkout")
+    require(checkout == directory(qualification.ROOT, "reader source checkout"),
+            "stdio receipt checkout differs from reader source checkout")
     path = regular(path, "stdio receipt report")
     work = directory(path.parent, "stdio receipt work directory")
     require(work.is_relative_to(checkout / ".work"), "stdio receipt report escapes checkout .work")
