@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Collect and reread byte, cookie and wide FILE handoffs across a DSO.
+"""Collect and reread FILE handoffs and exit flushing across a DSO.
 
 The executable owns pathname and cookie FILEs used by its DSO. The DSO also
 creates a cookie FILE whose callbacks it owns while main uses and closes it.
 The DSO sets wide orientation on a main-owned pathname FILE, then main reads
-the same non-ASCII character. Static links run the same functions in one image
-as a baseline; only dynamic cells prove the cross-image handoffs.
+the same non-ASCII character. It also leaves a buffered pathname FILE open for
+ordinary exit while its finalizer records whether the descriptor is still
+live. Static links run the same functions in one image as a baseline; only
+dynamic cells prove the cross-image handoffs.
 """
 
 from __future__ import annotations
@@ -38,7 +40,10 @@ SOURCES = (
     "compat/x86_64/owned_stdio_file_dso_probe.h",
     "compat/x86_64/owned_stdio_file_dso_receipt.py",
 )
-EXPECTED_STDOUT = b"stdio-file-dso-wide-ok\n"
+EXPECTED_STDOUT = b"stdio-file-dso-exit-ok\n"
+EXIT_PAYLOAD = b"dso-exit-once\n"
+EXIT_MARKER = b"fini-before-flush:fd-live\n"
+EXIT_PATHS = ("stream.exit", "stream.fini")
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 ORACLE_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.so")
@@ -57,7 +62,7 @@ ELFS = (
     "oracle-libfile-dso.so", "candidate-libfile-dso.so",
     "oracle-pie", "oracle-non-pie", "candidate-pie", "candidate-non-pie",
 )
-STRACE_FILTER = "trace=open,openat,unlink,unlinkat,close,fcntl,fstat,newfstatat,read,write,writev,pwrite64"
+STRACE_FILTER = "trace=open,openat,unlink,unlinkat,close,fcntl,fstat,newfstatat,read,write,writev,pwrite64,exit,exit_group"
 
 
 class ReceiptError(ValueError):
@@ -318,6 +323,9 @@ def expected_root(work: Path, case: str, dynamic: Path) -> dict[str, object]:
     expected["consumer"] = {"kind": "file", "mode": stat.S_IMODE(program.stat().st_mode),
                             "size": program.stat().st_size, "sha256": digest(program)}
     expected["scratch"] = {"kind": "directory", "mode": 0o755}
+    for name, contents in zip(EXIT_PATHS, (EXIT_PAYLOAD, EXIT_MARKER)):
+        expected["scratch/" + name] = {"kind": "file", "mode": 0o644,
+            "size": len(contents), "sha256": hashlib.sha256(contents).hexdigest()}
     return expected
 
 
@@ -331,10 +339,13 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
         require((raw / f"{case}.status").read_bytes() == b"0\n", f"{case} status differs")
         require((raw / f"{case}.stdout").read_bytes() == EXPECTED_STDOUT, f"{case} stdout differs")
         require((raw / f"{case}.stderr").read_bytes() == b"", f"{case} stderr differs")
+        scratch = work / "execution-roots" / case / "scratch"
         require(read_json(raw / f"{case}.scratch-before.json") == []
-                and read_json(raw / f"{case}.scratch-after.json") == []
-                and not any((work / "execution-roots" / case / "scratch").iterdir()),
-                f"{case} pathname cleanup differs")
+                and read_json(raw / f"{case}.scratch-after.json") == list(EXIT_PATHS)
+                and sorted(item.name for item in scratch.iterdir()) == list(EXIT_PATHS)
+                and (scratch / EXIT_PATHS[0]).read_bytes() == EXIT_PAYLOAD
+                and (scratch / EXIT_PATHS[1]).read_bytes() == EXIT_MARKER,
+                f"{case} ordinary-exit pathname bytes differ")
         trace = (raw / f"{case}.strace").read_text(encoding="utf-8")
         require(re.search(r'unlink\("/scratch/stream"\)\s+=\s+0', trace) is not None,
                 f"{case} did not unlink the main-owned pathname")
@@ -342,6 +353,13 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
                 f"{case} did not observe a closed descriptor")
         require(re.search(r'(?:write|writev|pwrite64)\([^\n]*"\\xe2\\x82\\xac"[^\n]*\)\s+=\s+3\b', trace) is not None,
                 f"{case} did not write the selected UTF-8 bytes")
+        marker_writes = list(re.finditer(
+            r'(?:write|writev|pwrite64)\([^\n]*"fini-before-flush:fd-live\\n"[^\n]*\)\s+=\s+26\b', trace))
+        stream_writes = list(re.finditer(
+            r'(?:write|writev|pwrite64)\([^\n]*"dso-exit-once\\n"[^\n]*\)\s+=\s+14\b', trace))
+        require(len(marker_writes) == len(stream_writes) == 1
+                and marker_writes[0].start() < stream_writes[0].start(),
+                f"{case} DSO finalizer or once-only exit flush differs")
         execution = work / "execution-roots" / case
         require(same(tree(execution), expected_root(work, case, dynamic)),
                 f"{case} execution root differs from its selected product")
@@ -378,7 +396,7 @@ def audit_elf(work: Path) -> None:
                     f"{role} libc dependency differs")
             for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer",
                           "crabc_cookie_dso_open", "crabc_cookie_dso_check",
-                          "crabc_file_dso_write_wide"):
+                          "crabc_file_dso_write_wide", "crabc_file_dso_buffer_exit"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
                         f"{role} lacks {entry}")
         elif dynamic_main:
@@ -387,7 +405,7 @@ def audit_elf(work: Path) -> None:
                     f"{role} DSO/libc dependencies differ")
             for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer",
                           "crabc_cookie_dso_open", "crabc_cookie_dso_check",
-                          "crabc_file_dso_write_wide"):
+                          "crabc_file_dso_write_wide", "crabc_file_dso_buffer_exit"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
                         f"{role} does not import {entry}")
         else:

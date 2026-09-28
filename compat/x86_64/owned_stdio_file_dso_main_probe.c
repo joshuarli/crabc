@@ -176,6 +176,24 @@ static int wide_dso_roundtrip(const char *path)
     return 0;
 }
 
+static int prepare_dso_exit_stream(const char *path)
+{
+    char stream_path[PATH_MAX], marker_path[PATH_MAX];
+    int stream_length, marker_length, result;
+
+    stream_length = snprintf(stream_path, sizeof(stream_path), "%s.exit", path);
+    marker_length = snprintf(marker_path, sizeof(marker_path), "%s.fini", path);
+    if (stream_length < 0 || marker_length < 0 ||
+        (size_t)stream_length >= sizeof(stream_path) ||
+        (size_t)marker_length >= sizeof(marker_path))
+        return 1;
+    errno = EDOM;
+    result = crabc_file_dso_buffer_exit(stream_path, marker_path, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 2;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -225,7 +243,10 @@ int main(int argc, char **argv)
     result = wide_dso_roundtrip(argv[1]);
     if (result != 0)
         return 100 + result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-wide-ok\n", 23) != 23)
+    result = prepare_dso_exit_stream(argv[1]);
+    if (result != 0)
+        return 130 + result;
+    if (write(STDOUT_FILENO, "stdio-file-dso-exit-ok\n", 23) != 23)
         return 11;
     return 0;
 }

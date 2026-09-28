@@ -5,10 +5,12 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <wchar.h>
 #include "owned_stdio_file_dso_probe.h"
 
@@ -170,4 +172,55 @@ int crabc_file_dso_write_wide(FILE *stream, int *main_errno)
         return 2;
     errno = ERANGE;
     return 0;
+}
+
+static FILE *exit_stream;
+static char exit_buffer[64];
+static char exit_marker_path[PATH_MAX];
+
+int crabc_file_dso_buffer_exit(const char *stream_path, const char *marker_path,
+                               int *main_errno)
+{
+    static const char payload[] = "dso-exit-once\n";
+    struct stat state;
+    size_t length;
+
+    if (stream_path == NULL || marker_path == NULL ||
+        main_errno != &errno || errno != EDOM)
+        return 1;
+    length = strlen(marker_path);
+    if (length >= sizeof(exit_marker_path))
+        return 2;
+    memcpy(exit_marker_path, marker_path, length + 1);
+    exit_stream = fopen(stream_path, "w");
+    if (exit_stream == NULL ||
+        setvbuf(exit_stream, exit_buffer, _IOFBF, sizeof(exit_buffer)) != 0)
+        return 3;
+    if (fwrite(payload, 1, sizeof(payload) - 1, exit_stream) !=
+        sizeof(payload) - 1)
+        return 4;
+    if (fstat(fileno(exit_stream), &state) != 0 || state.st_size != 0)
+        return 5;
+    errno = ERANGE;
+    return 0;
+}
+
+/* Record the descriptor's state before ordinary-exit stream flushing. */
+__attribute__((destructor)) static void record_exit_stream_finalizer(void)
+{
+    static const char before[] = "fini-before-flush:fd-live\n";
+    static const char other[] = "fini-after-or-dead\n";
+    struct stat state;
+    const char *message;
+    int marker;
+
+    if (exit_stream == NULL)
+        return;
+    message = fstat(fileno(exit_stream), &state) == 0 && state.st_size == 0 &&
+        fcntl(fileno(exit_stream), F_GETFD) >= 0 ? before : other;
+    marker = open(exit_marker_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (marker < 0)
+        return;
+    write(marker, message, strlen(message));
+    close(marker);
 }
