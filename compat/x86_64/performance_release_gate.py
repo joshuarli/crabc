@@ -310,11 +310,21 @@ def allocator_conditions(reports: Sequence[str]) -> list[dict[str, Any]]:
                 validated = reader(ROOT, ROOT / report)
                 raw = _read_json(report)
                 digest = _allocator_samples_digest(raw)
+                recorded_cpus = raw["provenance"]["host"]["measurement_cpus"]
+                observed_cpus = raw["uncontended_host"]["evidence"]["measurement_cpus"]
+                cpu_unmet = []
+                if recorded_cpus != observed_cpus:
+                    cpu_unmet.append(f"{report}: allocator host identity CPUs differ from observed host CPUs")
+                for group in ("rows", "memory_rows"):
+                    for name, row in raw[group].items():
+                        if any(cpu not in observed_cpus for cpu in row["cpus"]):
+                            cpu_unmet.append(f"{report}: {group} row {name} runs outside the observed host CPUs")
             except Exception as error:  # noqa: BLE001 - the owner's refusal is the unmet detail
                 unmet.append(f"{report}: {type(error).__name__}: {error}")
                 continue
             identities.append(validated.get("identity"))
             unmet.extend(allocator_metric_unmet(report, _rows(validated.get("metrics"))))
+            unmet.extend(cpu_unmet)
             if digest in measurements:
                 unmet.append(f"{report} and {measurements[digest]} contain the same raw measurements")
             measurements.setdefault(digest, report)

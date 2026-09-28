@@ -70,11 +70,11 @@ def allocator_memory_sample(index: int) -> dict[str, object]:
     }
 
 
-HOST = {"status": "uncontended", "evidence": {"load_average": [0.0, 0.0, 0.0]}}
+HOST = {"status": "uncontended", "evidence": {"load_average": [0.0, 0.0, 0.0], "measurement_cpus": [0]}}
 SOURCE_REVISION = "a" * 40
 HOST_IDENTITY = {
     "cpu_model": "Test CPU", "kernel_release": "5.10.0-test", "allowed_cpus": [0, 1],
-    "logical_cpus": 1,
+    "logical_cpus": 2, "measurement_cpus": [0],
 }
 
 
@@ -147,7 +147,7 @@ class ReceiptTests(unittest.TestCase):
         self.native_error: Exception | None = None
         self.allocator_reader = True
         cpuinfo = self.directory / "cpuinfo.raw"
-        cpuinfo.write_text("model name: Test CPU\n", encoding="utf-8")
+        cpuinfo.write_text("model name: Test CPU\nmodel name: Test CPU\n", encoding="utf-8")
         self.cpu_identity = hashlib.sha256(cpuinfo.read_bytes()).hexdigest()
         self.attempt = self.write("attempt.json", {"tools": {
             "before": {"host": {
@@ -155,7 +155,7 @@ class ReceiptTests(unittest.TestCase):
                 "allowed_affinity_before_pin": HOST_IDENTITY["allowed_cpus"],
                 "cpuinfo_sha256": self.cpu_identity,
             }},
-            "host_cpuinfo_diagnostics": {"before": {"model_names": [HOST_IDENTITY["cpu_model"]]}},
+            "host_cpuinfo_diagnostics": {"before": {"model_names": [HOST_IDENTITY["cpu_model"]] * 2}},
         }})
         self.collector = self.write("collector.json", {
             "collector": {"source_revision": SOURCE_REVISION},
@@ -170,11 +170,11 @@ class ReceiptTests(unittest.TestCase):
         self.allocator = [self.write(f"allocator-{index}.json", {
             "index": index, "uncontended_host": HOST,
             "provenance": {"git": {"head": SOURCE_REVISION}, "host": HOST_IDENTITY},
-            "rows": {"startup": {"lanes": {
+            "rows": {"startup": {"cpus": [0], "lanes": {
                 "pinned_c": {"samples": [allocator_timed_sample(index)]},
                 "rust_engine": {"samples": [allocator_timed_sample(index)]}},
                 "comparison": {"observed": index}}},
-            "memory_rows": {"live": {"lanes": {
+            "memory_rows": {"live": {"cpus": [0], "lanes": {
                 "pinned_c": {"samples": [allocator_memory_sample(index)]},
                 "rust_engine": {"samples": [allocator_memory_sample(index)]}},
                 "comparison": {"observed": index}}},
@@ -260,7 +260,7 @@ class ReceiptTests(unittest.TestCase):
         self.write("native.json", {"mode": "full", "status": "complete-evidence",
                                    "uncontended_host": {"status": "uncontended", "evidence": {}}})
         allocator = json.loads(self.allocator[2].read_text(encoding="utf-8"))
-        allocator["uncontended_host"] = {"status": "loaded", "evidence": {"x": 1}}
+        allocator["uncontended_host"] = {"status": "loaded", "evidence": {"measurement_cpus": [0], "x": 1}}
         self.write("allocator-2.json", allocator)
         receipt = self.receipt()
         self.assertEqual(receipt["unmet"], [
@@ -349,6 +349,44 @@ class ReceiptTests(unittest.TestCase):
         self.allocator[1].write_text(json.dumps(second), encoding="utf-8")
         receipt = self.receipt()
         self.assertTrue(receipt["passed"], receipt["unmet"])
+
+    def test_rehashed_allocator_row_cpus_must_be_covered_by_observed_host_cpus(self):
+        report = json.loads(self.allocator[1].read_text(encoding="utf-8"))
+        for group in ("rows", "memory_rows"):
+            for row in report[group].values():
+                row["cpus"] = [1]
+                for lane in row["lanes"].values():
+                    lane["samples"][0]["cpus"] = [1]
+        self.allocator[1].write_text(json.dumps(report), encoding="utf-8")
+        receipt = self.receipt()
+        self.assertEqual(receipt["unmet"], ["allocator-m9-reports"])
+        self.assertTrue(any("outside the observed host CPUs" in detail
+                            for detail in self.details(receipt, "allocator-m9-reports")))
+
+    def test_rehashed_allocator_host_cpu_identity_must_match_host_observations(self):
+        self.identities = [{"source": "source-seal", "host": {**HOST_IDENTITY, "measurement_cpus": [1]}}] * 3
+        for path in self.allocator:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report["provenance"]["host"]["measurement_cpus"] = [1]
+            path.write_text(json.dumps(report), encoding="utf-8")
+        receipt = self.receipt()
+        self.assertEqual(receipt["unmet"], ["allocator-m9-reports"])
+        self.assertTrue(any("identity CPUs differ from observed host CPUs" in detail
+                            for detail in self.details(receipt, "allocator-m9-reports")))
+
+    def test_allocator_rows_can_use_a_subset_of_the_observed_host_cpus(self):
+        self.identities = [{"source": "source-seal", "host": {**HOST_IDENTITY, "measurement_cpus": [1, 0]}}] * 3
+        for path in self.allocator:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report["provenance"]["host"]["measurement_cpus"] = [1, 0]
+            report["uncontended_host"]["evidence"]["measurement_cpus"] = [1, 0]
+            for group in ("rows", "memory_rows"):
+                for row in report[group].values():
+                    row["cpus"] = [1]
+                    for lane in row["lanes"].values():
+                        lane["samples"][0]["cpus"] = [1]
+            path.write_text(json.dumps(report), encoding="utf-8")
+        self.assertTrue(self.receipt()["passed"])
 
     def test_inputs_and_outputs_stay_inside_the_checkout(self):
         with self.assertRaisesRegex(gate.GateInputError, "below this checkout"):
