@@ -125,6 +125,10 @@ are not transferable passes for a different revision.
   including the pinned decommit warning and its callback order.
   A failed second-arena MADV_FREE reset regression now matches all 23 fields,
   including warning text and callback order.
+  A separate source-built reset-advice matrix matches 78 C/Rust fields across
+  isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
+  slice range, warning order, and live bitmap state. The M2 VM component now
+  has 33 matched checks with five conditions still open.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
