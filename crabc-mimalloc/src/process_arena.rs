@@ -3247,6 +3247,216 @@ mod tests {
             && first_survives && maps_live);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    static SECOND_PURGE_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn second_purge_environment() -> *const *const core::ffi::c_char {
+        SECOND_PURGE_ENVIRONMENT.load(Ordering::Acquire)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn second_purge_default_output(_: *const core::ffi::c_char) {}
+
+    #[cfg(target_arch = "x86_64")]
+    struct SecondPurgeWarnings {
+        calls: core::sync::atomic::AtomicUsize,
+        after_counter: core::sync::atomic::AtomicUsize,
+        subprocess: core::sync::atomic::AtomicPtr<crate::subproc::SubprocessIdentity>,
+        before_calls: core::sync::atomic::AtomicI64,
+        before_bytes: core::sync::atomic::AtomicI64,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn second_purge_capture_warning(
+        message: *const core::ffi::c_char,
+        argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the registered capture is process-lived and the output
+        // owner synchronously delivers a terminated message.
+        let warnings = unsafe { &*(argument as *const SecondPurgeWarnings) };
+        let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+        if !bytes.windows(b"cannot decommit OS memory".len())
+            .any(|part| part == b"cannot decommit OS memory") { return; }
+        warnings.calls.fetch_add(1, Ordering::AcqRel);
+        let subprocess = warnings.subprocess.load(Ordering::Acquire);
+        if subprocess.is_null() { return; }
+        // SAFETY: the isolated subprocess remains live through every warning
+        // emitted by this fixture's two forced purge collections.
+        let vm = unsafe { &*subprocess }.vm_statistics().snapshot();
+        let exact = vm.purge_calls == warnings.before_calls.load(Ordering::Acquire) + 1
+            && vm.purged == warnings.before_bytes.load(Ordering::Acquire)
+                + ARENA_SLICE_SIZE as i64
+            && bytes.windows(b"error: 5 (0x05)".len())
+                .any(|part| part == b"error: 5 (0x05)")
+            && bytes.windows(b"size: 0x10000 bytes".len())
+                .any(|part| part == b"size: 0x10000 bytes");
+        if exact { warnings.after_counter.fetch_add(1, Ordering::AcqRel); }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_arena_purge_failure_c_rust_trace() {
+        use crate::arena::{ArenaSearch, ArenaView};
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_arena_reserve=32M\0".as_ptr().cast(),
+            b"mimalloc_arena_eager_commit=0\0".as_ptr().cast(),
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=100000\0".as_ptr().cast(),
+            b"mimalloc_arena_purge_mult=1\0".as_ptr().cast(),
+            b"mimalloc_purge_decommits=1\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        SECOND_PURGE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(SecondPurgeWarnings {
+            calls: core::sync::atomic::AtomicUsize::new(0),
+            after_counter: core::sync::atomic::AtomicUsize::new(0),
+            subprocess: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            before_calls: core::sync::atomic::AtomicI64::new(0),
+            before_bytes: core::sync::atomic::AtomicI64::new(0),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(second_purge_default_output),
+        ));
+        // SAFETY: all callback inputs remain allocated for the process owner;
+        // no concurrent registration changes this isolated output owner.
+        unsafe {
+            output.initialize_source_options(second_purge_environment);
+            output.register_output(Some(second_purge_capture_warning as OutputCallback),
+                warnings as *mut SecondPurgeWarnings as *mut core::ffi::c_void);
+        }
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        // SAFETY: the coordinator, subprocess, policy, PageMap, and output
+        // owner remain live for both process-owned arena mappings.
+        let binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding_with_source_output(
+                config, output, MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            ) }.expect("the warning-capable arena process initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        warnings.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        let backing = process.subprocess().arena_backing();
+        let search = ArenaSearch {
+            heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+            numa_node: -1, requested: ArenaId::none(), allow_pinned: false,
+        };
+        let mut claims = std::vec::Vec::new();
+        for _ in 0..4 {
+            // SAFETY: all claims remain owned by this fixture until release.
+            claims.push(unsafe { backing.try_allocate_slices(
+                process, config, search, 256, ARENA_SLICE_SIZE, false,
+            ) }.expect("four claims publish a second arena"));
+        }
+        assert_eq!(backing.registry().count(), 2);
+        // SAFETY: both registry entries are permanent and process-owned.
+        let first = unsafe { backing.registry().arena_at(0) }.unwrap();
+        let second = unsafe { backing.registry().arena_at(1) }.unwrap();
+        let second_id = unsafe { ArenaId::from_arena(core::ptr::from_ref(second).cast_mut()) }
+            .expect("the selected second parent has a source ID");
+        let selected = ArenaSearch { requested: second_id, ..search };
+        // SAFETY: both one-slice claims refer to the live selected parent.
+        let released = unsafe { backing.try_find_free(selected, 1, ARENA_SLICE_SIZE, false) }
+            .expect("the scheduled one-slice span is available");
+        let survivor = unsafe { backing.try_find_free(selected, 1, ARENA_SLICE_SIZE, false) }
+            .expect("an adjacent slice remains claimed");
+        let index = released.slice_index();
+        let released_start = released.start();
+        let survivor_index = survivor.slice_index();
+        let view = unsafe { ArenaView::from_ptr(second_id.as_ptr()) }.unwrap();
+        // SAFETY: the single-threaded fixture owns every live claim and no
+        // independent writer aliases the selected in-place bitmaps.
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        let committed = unsafe { view.slices_committed() }.unwrap();
+        let setup = index == 265 && survivor_index == 266;
+        let before = process.subprocess().statistics().snapshot();
+        warnings.before_calls.store(before.vm.purge_calls, Ordering::Release);
+        warnings.before_bytes.store(before.vm.purged, Ordering::Release);
+        assert!(released.release());
+        let pending = purge.is_set_range(index, 1) == Some(true)
+            && free.is_set_range(index, 1) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true);
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1,
+            Errno::from_raw(5).unwrap()));
+        let failed_capture = fault.capture_advice_range();
+        // SAFETY: only the returned free slice can be purged; the adjacent
+        // slice and both arena mappings retain their process owner.
+        assert!(unsafe { backing.collect_purge(process, config, true, true, 0) });
+        let failed_calls = fault.observed();
+        let failed_advice_count = failed_capture.count();
+        let exact_range = (second.start as usize + index * ARENA_SLICE_SIZE,
+            ARENA_SLICE_SIZE, 4);
+        let failed_exact = failed_capture.range() == Some(exact_range);
+        drop(failed_capture);
+        let failed_state = purge.is_clear_range(index, 1) == Some(true)
+            && committed.is_clear_range(index, 1) == Some(true)
+            && free.is_set_range(index, 1) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true)
+            && second.purge_expire.load(Ordering::Acquire) == 0;
+        let failed_warnings = warnings.calls.load(Ordering::Acquire);
+        let failed_warning_order = warnings.after_counter.load(Ordering::Acquire);
+        fault.set(fault::Plan::disabled());
+        // SAFETY: the first purge restored the exact slice to the selected
+        // free bitmap while retaining the second arena mapping.
+        let retry = unsafe { backing.try_find_free(selected, 1, ARENA_SLICE_SIZE, false) }
+            .expect("the same free slice is reusable after advisory failure");
+        let same_span = retry.slice_index() == index && retry.start() == released_start;
+        assert!(retry.release());
+        let retry_pending = purge.is_set_range(index, 1) == Some(true);
+        let retry_capture = fault.capture_advice_range();
+        // SAFETY: the retry again owns only the released one-slice range.
+        assert!(unsafe { backing.collect_purge(process, config, true, true, 0) });
+        let retry_advice_count = retry_capture.count();
+        let retry_exact = retry_capture.range() == Some(exact_range);
+        drop(retry_capture);
+        let after = process.subprocess().statistics().snapshot();
+        let retried_state = purge.is_clear_range(index, 1) == Some(true)
+            && committed.is_clear_range(index, 1) == Some(true)
+            && free.is_set_range(index, 1) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true);
+        let mut residence = 0u8;
+        // SAFETY: both regular mappings stay published and process-owned;
+        // `mincore` writes only one observation byte per live base.
+        let maps_live = unsafe { crabc_core::mm::mincore_raw(first.start, 4096, &mut residence) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(second.start, 4096, &mut residence) }.is_ok()
+            && after.vm.reserved_current == before.vm.reserved_current
+            && backing.registry().count() == 2;
+        for (field, value) in [
+            ("setup", i64::from(setup)), ("pending", i64::from(pending)),
+            ("failed_state", i64::from(failed_state)),
+            ("failed_calls", failed_calls as i64),
+            ("failed_exact", i64::from(failed_exact)),
+            ("failed_warnings", failed_warnings as i64),
+            ("failed_warning_order", failed_warning_order as i64),
+            ("same_span", i64::from(same_span)),
+            ("retry_pending", i64::from(retry_pending)),
+            ("retried_state", i64::from(retried_state)),
+            ("advice_calls", (failed_advice_count + retry_advice_count) as i64),
+            ("advice_exact", (usize::from(failed_exact) + usize::from(retry_exact)) as i64),
+            ("warning_calls", warnings.calls.load(Ordering::Acquire) as i64),
+            ("maps_live", i64::from(maps_live)),
+            ("released_slice", index as i64), ("survivor_slice", survivor_index as i64),
+            ("purge_calls", after.vm.purge_calls - before.vm.purge_calls),
+            ("purged_bytes", after.vm.purged - before.vm.purged),
+            ("arena_purges", after.arena.arena_purges - before.arena.arena_purges),
+        ] {
+            std::println!("m2.second_purge_failure.{field}={value}");
+        }
+        assert!(setup && pending && failed_state && same_span && retry_pending
+            && retried_state && maps_live);
+    }
+
     #[test]
     fn default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold() {
         let config = memory_config();
