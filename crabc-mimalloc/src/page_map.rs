@@ -723,7 +723,26 @@ impl PageMap {
             .ok_or(Errno::NOMEM)?
             .min(self.header()?.reserved_size);
         let commit_count = page_map_count_of_size(commit_size);
-        self.statistics.commit(self.mapping.commit(0, commit_size), commit_size)?;
+        if let Err(error) = self.statistics.commit(self.mapping.commit(0, commit_size), commit_size) {
+            // The failed OS commit has already advanced its call statistic.
+            // Source reports that failure before the PageMap refusal; the
+            // null replay may then commit the same top range successfully.
+            let address = self.mapping.base()?.addr();
+            let os_warning = crate::diagnostic_output::SourceFormattedMessage::os_commit_failure(
+                error, address, commit_size,
+            );
+            let map_warning = crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                c"unable to commit the allocation page-map on-demand\n",
+            );
+            if let Some(process) = self.source_process {
+                process.policy().source_warning(os_warning);
+                process.policy().source_warning(map_warning);
+            } else {
+                crate::process_init::process_warning_message(os_warning);
+                crate::process_init::process_warning_message(map_warning);
+            }
+            return Err(error);
+        }
         // Fresh anonymous committed pages already contain valid aligned null
         // raw-pointer words. No placement writes race another source-faithful
         // unlocked commit; only this Release exposes the new extent.

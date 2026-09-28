@@ -447,6 +447,42 @@ impl ProcessMainInitializationStorage {
         }
     }
 
+    /// Initializes a complete test process with a caller-owned source option
+    /// table so its page and OS warnings use the same callback path as the
+    /// ordinary process policy. The supplied owner stays live after READY.
+    ///
+    /// # Safety
+    /// The output table has completed source-option initialization and all
+    /// supplied final owners remain live for this isolated process lifetime.
+    #[cfg(all(test, target_arch = "x86_64"))]
+    pub(crate) unsafe fn initialize_with_test_components_and_source_output(
+        &'static self,
+        config: MemoryConfig,
+        output: &'static OutputOwner,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        page_map_storage: &'static ProcessPageMapStorage,
+    ) -> Result<ProcessMainThread, ProcessMainInitError> {
+        // SAFETY: the caller retains the initialized output table and its
+        // callback for every policy read and warning in this process.
+        let policy = unsafe { VmPolicy::from_process_options(output) };
+        // SAFETY: forwarded process-static owners satisfy the same isolated
+        // source transition as the image-policy test constructor above.
+        unsafe {
+            self.initialize_with_components_after_claim(
+                config,
+                VmPolicyStartup::RetainOnly(policy),
+                main_static,
+                subprocess,
+                metadata,
+                page_map_storage,
+                || {},
+                || {},
+            )
+        }
+    }
+
     /// # Safety
     /// The isolated test retains every final process owner and owns the
     /// current roots until the returned source continuation finishes.

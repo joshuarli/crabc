@@ -2200,6 +2200,298 @@ mod tests {
     use crate::types::{MemoryId, Page};
     use crabc_core::Errno;
 
+    #[cfg(target_arch = "x86_64")]
+    static REGISTERED_PAGE_MAP_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn registered_page_map_environment() -> *const *const core::ffi::c_char {
+        REGISTERED_PAGE_MAP_ENVIRONMENT.load(Ordering::Acquire)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn registered_page_map_default_output(_: *const core::ffi::c_char) {}
+
+    #[cfg(target_arch = "x86_64")]
+    struct RegisteredPageMapWarnings {
+        order: core::sync::atomic::AtomicUsize,
+        count: core::sync::atomic::AtomicUsize,
+        subprocess: core::sync::atomic::AtomicPtr<crate::subproc::SubprocessIdentity>,
+        commit_calls: [core::sync::atomic::AtomicI64; 3],
+        committed: [core::sync::atomic::AtomicI64; 3],
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn registered_page_map_capture_warning(
+        message: *const core::ffi::c_char,
+        argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the callback capture and message outlive this synchronous
+        // delivery within the isolated process's source output owner.
+        let warning = unsafe { &*(argument as *const RegisteredPageMapWarnings) };
+        let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+        let category = if bytes.windows(b"cannot commit OS memory".len())
+            .any(|part| part == b"cannot commit OS memory") { 1 }
+        else if bytes.windows(b"unable to commit the allocation page-map on-demand".len())
+            .any(|part| part == b"unable to commit the allocation page-map on-demand") { 2 }
+        else { 0 };
+        if category == 0 { return; }
+        warning.order.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+            |order| Some(order * 10 + category)).unwrap();
+        warning.count.fetch_add(1, Ordering::AcqRel);
+        let subprocess = warning.subprocess.load(Ordering::Acquire);
+        if subprocess.is_null() { return; }
+        // SAFETY: the process is retained through all source warnings and
+        // callback delivery completes before terminal arena destruction.
+        let snapshot = unsafe { &*subprocess }.statistics().snapshot();
+        warning.commit_calls[category].store(snapshot.vm.commit_calls, Ordering::Release);
+        warning.committed[category].store(snapshot.vm.committed_current, Ordering::Release);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_registered_arena_page_map_fault_c_rust_trace() {
+        use crate::arena::ArenaView;
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        use crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocator;
+        use crate::main_theap::MainStaticAttachmentStorage;
+        use crate::meta::MetaAllocator;
+        use std::thread;
+
+        thread::spawn(|| {
+            let entries = std::boxed::Box::leak(std::boxed::Box::new([
+                b"mimalloc_max_vabits=47\0".as_ptr().cast(),
+                b"mimalloc_pagemap_commit=0\0".as_ptr().cast(),
+                b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+                b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+                b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+                b"mimalloc_purge_delay=-1\0".as_ptr().cast(),
+                b"mimalloc_show_errors=1\0".as_ptr().cast(),
+                b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+                core::ptr::null(),
+            ]));
+            REGISTERED_PAGE_MAP_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+            let warnings = std::boxed::Box::leak(std::boxed::Box::new(RegisteredPageMapWarnings {
+                order: core::sync::atomic::AtomicUsize::new(0),
+                count: core::sync::atomic::AtomicUsize::new(0),
+                subprocess: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+                commit_calls: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(0)),
+                committed: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(0)),
+            }));
+            let output = std::boxed::Box::leak(std::boxed::Box::new(
+                OutputOwner::new(registered_page_map_default_output),
+            ));
+            // SAFETY: both source options and callback capture retain process
+            // lifetime, and this child has no concurrent output registration.
+            unsafe {
+                output.initialize_source_options(registered_page_map_environment);
+                output.register_output(Some(registered_page_map_capture_warning as OutputCallback),
+                    warnings as *mut RegisteredPageMapWarnings as *mut core::ffi::c_void);
+            }
+            let config = MemoryConfig::from_observations(
+                PageSize::new(4096).unwrap(), 1024 * 1024, false, false,
+            );
+            let subprocess = MainSubprocess::test_static_owner();
+            // SAFETY: the leaked output, metadata, subprocess, and PageMap
+            // owners remain live for this isolated process continuation.
+            let owner = unsafe {
+                ProcessMainInitializationStorage::test_static_owner()
+                    .initialize_with_test_components_and_source_output(
+                        config, output, MainStaticAttachmentStorage::test_static_owner(),
+                        subprocess, MetaAllocator::test_static_owner(),
+                        ProcessPageMapStorage::test_static_owner(),
+                    )
+            }.expect("the partial PageMap process reaches source READY");
+            let binding = owner.ready().unwrap().process_backing().unwrap();
+            let process = binding.process();
+            warnings.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+            process.policy().finish_preloading();
+            let backing = process.subprocess().arena_backing();
+            let stats = process.subprocess().statistics();
+            let before = stats.snapshot();
+            let mut first_config = config;
+            first_config.test_aligned_overmap_targets(1usize << 40, 1usize << 40);
+            let mut second_config = config;
+            second_config.test_aligned_overmap_targets(16usize << 40, 16usize << 40);
+            // SAFETY: this child is the sole arena publisher; both fixed
+            // non-replacing targets are vacant and the process owner persists.
+            let first_id = unsafe { backing.reserve_os_memory_for_process(
+                process, first_config, ARENA_MIN_SIZE, MapAccess::Reserved,
+                false, true, None,
+            ) }.expect("the first explicit arena reserves");
+            // SAFETY: the second vacant range is disjoint from the first and
+            // the process binding retains both Mapping owners.
+            let second_id = unsafe { backing.reserve_os_memory_for_process(
+                process, second_config, ARENA_MIN_SIZE, MapAccess::Reserved,
+                false, false, None,
+            ) }.expect("the second explicit arena reserves above lazy PageMap prefix");
+            // SAFETY: both registry slots remain published until the terminal
+            // destroy; this child has no concurrent arena removal.
+            let first = unsafe { backing.registry().arena_at(0) }.unwrap();
+            let second = unsafe { backing.registry().arena_at(1) }.unwrap();
+            let first_reserved = first_id.as_ptr() == core::ptr::from_ref(first).cast_mut()
+                && first.start as usize == 1usize << 40
+                && first.memid.os_memory().is_some_and(|os| os.base as usize == 1usize << 40
+                    && os.size == ARENA_MIN_SIZE);
+            let second_reserved = second_id.as_ptr() == core::ptr::from_ref(second).cast_mut()
+                && second.start as usize == 16usize << 40
+                && second.memid.os_memory().is_some_and(|os| os.base as usize == 16usize << 40
+                    && os.size == ARENA_MIN_SIZE);
+            // SAFETY: the first published slot and its mapping are retained
+            // through the matching claim release below.
+            let first_view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(first).cast_mut()) }.unwrap();
+            let claim = first_view.try_claim_suitable_slices(first_id, 1, false, 0)
+                .expect("first exclusive arena retains one claim");
+            let top = binding.page_map().page_map().unwrap();
+            let initial_top_committed = top.committed_count().unwrap();
+            let partial_top = initial_top_committed < top.reserved_count();
+            let at_fault = stats.snapshot();
+            let registry_before_fault = backing.registry().count();
+            let session = owner.begin_process_lifetime_page_session().unwrap();
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                session, binding, ProcessSharedArenaStorage::test_static_owner(),
+            ).expect("main source page engine begins");
+            let fault = fault::install(fault::Plan::at(fault::Point::Commit, 3, Errno::NOMEM));
+            let protections = fault.capture_protection_ranges();
+            let failed = allocator.allocate(crate::config::SMALL_MAX_OBJ_SIZE + 1, false);
+            let (ranges, count) = protections.attempts().unwrap();
+            drop(protections);
+            let after_first = stats.snapshot();
+            let top_after_first = top.committed_count().unwrap();
+            let registry_after_failure = backing.registry().count();
+            let top_address = binding.page_map().root().unwrap().as_ptr() as usize;
+            let first_page = failed.and_then(|block| {
+                // SAFETY: the returned block remains live and no writer
+                // overlaps this selected PageMap lookup.
+                NonNull::new(unsafe { top.checked_lookup(block.as_ptr()) })
+            });
+            let first_in_second = first_page.is_some_and(|page| {
+                // SAFETY: the selected page and its live block retain the
+                // PageMap entry until the following allocator release.
+                let memid = unsafe { page.as_ref().memid() };
+                memid.arena_memory().is_some_and(|memory| memory.arena == second_id.as_ptr())
+            });
+            let fault_attempts = fault.observed();
+            let mut residence = 0u8;
+            // SAFETY: both page-aligned arena mappings remain live while the
+            // first high-level allocation and warning callbacks have returned.
+            let first_mapped = unsafe { crabc_core::mm::mincore_raw(
+                (1usize << 40) as *mut u8, 4096, &mut residence,
+            ) }.is_ok();
+            let second_mapped = unsafe { crabc_core::mm::mincore_raw(
+                (16usize << 40) as *mut u8, 4096, &mut residence,
+            ) }.is_ok();
+            fault.set(fault::Plan::disabled());
+            if let Some(block) = failed {
+                // SAFETY: this is the exact live block returned by the source
+                // allocation, released once through its owning allocator.
+                unsafe { allocator.free(block) }.unwrap();
+            }
+            let retry = allocator.allocate(crate::config::SMALL_MAX_OBJ_SIZE + 1, false);
+            let retry_page = retry.and_then(|block| {
+                // SAFETY: the returned block remains live through this exact
+                // PageMap read, and the owner is serial on this thread.
+                NonNull::new(unsafe { top.checked_lookup(block.as_ptr()) })
+            });
+            let retry_in_second = retry_page.is_some_and(|page| {
+                // SAFETY: the retry block remains live for this PageMap read
+                // and retains the selected page until the release below.
+                let memid = unsafe { page.as_ref().memid() };
+                memid.arena_memory().is_some_and(|memory| memory.arena == second_id.as_ptr())
+            });
+            let retry_address = retry.map(|block| block.as_ptr());
+            if let Some(block) = retry {
+                // SAFETY: the retry block is live and released exactly once
+                // through its owning allocator before terminal collection.
+                unsafe { allocator.free(block) }.unwrap();
+            }
+            let top_after_retry = top.committed_count().unwrap();
+            let registry_after_retry = backing.registry().count();
+            let first_claim_held = unsafe { first_view.slices_free() }.unwrap()
+                .is_clear_range(claim.slice_index(), 1) == Some(true);
+            assert!(allocator.prepare_quiescent_for_held_fork_gate(),
+                "the all-free initial engine force-collects before terminal arena release");
+            // SAFETY: the source collection has completed and no page owner
+            // can republish this released client range before terminal teardown.
+            let retry_cleared = retry_address.is_some_and(|address|
+                unsafe { top.checked_lookup(address) }.is_null());
+            core::mem::forget(allocator);
+            // SAFETY: the exact first claim has no page registration or
+            // client, and its arena remains published until destroy_all.
+            assert!(unsafe { backing.release_slices(claim.memory_id()) });
+            let mut tracking = [0usize; 2];
+            // SAFETY: all caller claims/pages have been released, every
+            // PageMap lookup above is complete, and this is terminal ownership.
+            let destroyed = unsafe { backing.destroy_all(&mut tracking) }.unwrap();
+            assert!(destroyed.is_released());
+            let terminal = stats.snapshot();
+            let terminal_registry = backing.registry().count();
+            // SAFETY: both former target ranges have no owner or surviving
+            // references after terminal destruction; mincore only probes them.
+            let terminal_first_gone = unsafe { crabc_core::mm::mincore_raw(
+                (1usize << 40) as *mut u8, 4096, &mut residence,
+            ) } == Err(Errno::NOMEM);
+            let terminal_second_gone = unsafe { crabc_core::mm::mincore_raw(
+                (16usize << 40) as *mut u8, 4096, &mut residence,
+            ) } == Err(Errno::NOMEM);
+            assert_eq!(warnings.order.load(Ordering::Acquire), 12,
+                "the process-ready source warning route must preserve both fault diagnostics");
+            let warning_order = warnings.order.load(Ordering::Acquire);
+            let warning_count = warnings.count.load(Ordering::Acquire);
+            let fields: [(&str, i64); 44] = [
+                ("first_reserved", i64::from(first_reserved)),
+                ("second_reserved", i64::from(second_reserved)),
+                ("first_claim_held", i64::from(first_claim_held)),
+                ("partial_top", i64::from(partial_top)),
+                ("registry_before_fault", registry_before_fault as i64),
+                ("reserved_before_fault", at_fault.vm.reserved_current - before.vm.reserved_current),
+                ("committed_before_fault", at_fault.vm.committed_current - before.vm.committed_current),
+                ("commits_before_fault", at_fault.vm.commit_calls - before.vm.commit_calls),
+                ("mmaps_before_fault", at_fault.vm.mmap_calls - before.vm.mmap_calls),
+                ("first_returned", i64::from(failed.is_some())),
+                ("first_in_second", i64::from(first_in_second)),
+                ("faults", i64::from(fault_attempts == 4 && warning_count == 2)),
+                ("protection_calls", count as i64),
+                ("first_protection_offset", (ranges[0].0 - (16usize << 40)) as i64),
+                ("first_protection_length", ranges[0].1 as i64),
+                ("second_protection_offset", (ranges[1].0 - (16usize << 40)) as i64),
+                ("second_protection_length", ranges[1].1 as i64),
+                ("third_protects_top", i64::from(ranges[2].0 == top_address)),
+                ("third_protection_length", ranges[2].1 as i64),
+                ("fourth_replays_top", i64::from(ranges[3] == ranges[2])),
+                ("top_advanced_after_fault", i64::from(top_after_first > initial_top_committed)),
+                ("registry_after_failure", registry_after_failure as i64),
+                ("reserved_after_failure", after_first.vm.reserved_current - before.vm.reserved_current),
+                ("committed_after_failure", after_first.vm.committed_current - before.vm.committed_current),
+                ("commits_after_failure", after_first.vm.commit_calls - before.vm.commit_calls),
+                ("mmaps_after_failure", after_first.vm.mmap_calls - before.vm.mmap_calls),
+                ("first_mapped", i64::from(first_mapped)),
+                ("second_mapped", i64::from(second_mapped)),
+                ("warning_order", warning_order as i64),
+                ("warning_count", warning_count as i64),
+                ("warning_first_commits", warnings.commit_calls[1].load(Ordering::Acquire) - before.vm.commit_calls),
+                ("warning_second_commits", warnings.commit_calls[2].load(Ordering::Acquire) - before.vm.commit_calls),
+                ("warning_first_committed", warnings.committed[1].load(Ordering::Acquire) - before.vm.committed_current),
+                ("warning_second_committed", warnings.committed[2].load(Ordering::Acquire) - before.vm.committed_current),
+                ("retry_in_second", i64::from(retry_in_second)),
+                ("retry_published", i64::from(retry_page.is_some())),
+                ("retry_cleared", i64::from(retry_cleared)),
+                ("top_advanced", i64::from(top_after_retry > initial_top_committed)),
+                ("registry_after_retry", registry_after_retry as i64),
+                ("terminal_registry", terminal_registry as i64),
+                ("terminal_reserved", terminal.vm.reserved_current - before.vm.reserved_current),
+                ("terminal_committed", terminal.vm.committed_current - before.vm.committed_current),
+                ("terminal_first_gone", i64::from(terminal_first_gone)),
+                ("terminal_second_gone", i64::from(terminal_second_gone)),
+            ];
+            std::println!("CRABC_M2_REGISTERED_ARENA_PAGE_MAP_FAULT_RUST_TRACE_BEGIN");
+            for (field, value) in fields { std::println!("{field}={value}"); }
+            std::println!("CRABC_M2_REGISTERED_ARENA_PAGE_MAP_FAULT_RUST_TRACE_END");
+            core::mem::forget(owner);
+        }).join().expect("isolated first-page PageMap fault child");
+    }
+
     fn memory_config() -> MemoryConfig {
         MemoryConfig::from_observations(
             PageSize::new(4096).expect("the native page size is valid"),

@@ -5433,19 +5433,19 @@ pub(crate) mod fault {
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     ];
-    // Capture the two raw protection attempts of a failed external commit
-    // followed by its caller-owned retry, including the injected failure.
-    const PROTECTION_RANGE_CAPTURE_CAPACITY: usize = 2;
+    // Capture the bounded raw protection order through arena metadata,
+    // initial page prefix, and a lazy PageMap commit or caller retry.
+    const PROTECTION_RANGE_CAPTURE_CAPACITY: usize = 4;
     static PROTECTION_RANGE_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
     static PROTECTION_RANGE_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
     static PROTECTION_RANGE_CAPTURE_ADDRESSES: [AtomicUsize; PROTECTION_RANGE_CAPTURE_CAPACITY] = [
-        AtomicUsize::new(0), AtomicUsize::new(0),
+        AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
     ];
     static PROTECTION_RANGE_CAPTURE_LENGTHS: [AtomicUsize; PROTECTION_RANGE_CAPTURE_CAPACITY] = [
-        AtomicUsize::new(0), AtomicUsize::new(0),
+        AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
     ];
     static PROTECTION_RANGE_CAPTURE_FLAGS: [AtomicUsize; PROTECTION_RANGE_CAPTURE_CAPACITY] = [
-        AtomicUsize::new(0), AtomicUsize::new(0),
+        AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
     ];
     // The option/hint/large/THP policy slice has a small, source-bounded
     // raw mmap sequence: a high aligned hint can fail and retry at null, and
