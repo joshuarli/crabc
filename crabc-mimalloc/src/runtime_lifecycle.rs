@@ -12193,13 +12193,19 @@ fn native_free_pointer_first_nonlocal(
     }
     let detached = allocation.page_state() == LiveAllocationPageState::Detached;
     #[cfg(feature = "mi-stat-1")]
-    if !detached && allocation.block_size() > crate::config::LARGE_MAX_OBJ_SIZE {
-        // `mi_free_block_mt` records the huge page's physical block size in
-        // the freeing thread's Theap before publishing its remote free. An
-        // uninitialized default Theap needs the metadata-Theap source path.
+    if !detached {
+        // `mi_free_block_mt` records the usable ordinary block size or the
+        // huge page's physical block size in the freeing thread's Theap
+        // before publishing its remote free. The captured block size is the
+        // usable size in this release profile. An uninitialized default
+        // Theap needs the metadata-Theap source path.
         let theap = default_theap();
         if unsafe { theap.as_ref().is_initialized() } {
-            unsafe { theap.as_ref() }.record_malloc_huge_freed(allocation.block_size());
+            if allocation.block_size() <= crate::config::LARGE_MAX_OBJ_SIZE {
+                unsafe { theap.as_ref() }.record_malloc_normal_freed(allocation.block_size());
+            } else {
+                unsafe { theap.as_ref() }.record_malloc_huge_freed(allocation.block_size());
+            }
         }
     }
     // SAFETY: `allocation` is the exact current PageMap-derived source

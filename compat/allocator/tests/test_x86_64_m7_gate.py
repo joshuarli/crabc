@@ -65,6 +65,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-level-two-page-huge",
             "differential:statistics-level-two-requested",
             "differential:statistics-page-extend",
+            "differential:statistics-remote-normal",
             "differential:thread-init-failure",
         ])
         # The options/environment and baseline gates have executable evidence.
@@ -311,6 +312,24 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_huge({**trace, "freed.huge": "589824,589824,589824"}, "lost free")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_huge({**trace, "allocated.huge_count": "0"}, "lost event")
+
+    def test_statistics_remote_normal_requires_source_built_producer(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-remote-normal", statistics["evidence"])
+        self.assertIn("differential:statistics-remote-normal", summary["runnable_evidence"])
+
+    def test_statistics_remote_normal_reader_rejects_lost_worker_delta(self) -> None:
+        worker_row = "  binned    :     8           8         -64                                not all freed"
+        trace = {"profile.level": "1", "warm.usable": "8", "target.usable": "64",
+                 "allocated.normal": "64,64,64", "freed.normal": "72,72,0",
+                 "worker.binned.hex": worker_row.encode("ascii").hex()}
+        gate.require_statistics_remote_normal(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_normal({**trace, "freed.normal": "72,72,64"}, "lost free")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_normal({**trace,
+                "worker.binned.hex": worker_row.replace("-64", "  0").encode("ascii").hex()}, "lost worker current")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:

@@ -969,6 +969,9 @@ STATISTICS_PAGE_EXTEND_TRACE_END = "CRABC_MI_M7_STATISTICS_PAGE_EXTEND_TRACE_END
 STATISTICS_HUGE_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_huge_driver.c"
 STATISTICS_HUGE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_HUGE_TRACE_BEGIN"
 STATISTICS_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_HUGE_TRACE_END"
+STATISTICS_REMOTE_NORMAL_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_remote_normal_driver.c"
+STATISTICS_REMOTE_NORMAL_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REMOTE_NORMAL_TRACE_BEGIN"
+STATISTICS_REMOTE_NORMAL_TRACE_END = "CRABC_MI_M7_STATISTICS_REMOTE_NORMAL_TRACE_END"
 
 
 def require_statistics_level_one(trace: Mapping[str, str], description: str) -> None:
@@ -1184,6 +1187,24 @@ def require_statistics_huge(trace: Mapping[str, str], description: str) -> None:
     }
     if dict(trace) != expected:
         raise harness.HarnessError(f"{description} lost the source huge-page producer: {trace}")
+
+
+def require_statistics_remote_normal(trace: Mapping[str, str], description: str) -> None:
+    """Require a negative freeing-Theap current before its process merge."""
+
+    expected = {
+        "profile.level": "1", "warm.usable": "8", "target.usable": "64",
+        "allocated.normal": "64,64,64", "freed.normal": "72,72,0",
+        "worker.binned.hex": trace.get("worker.binned.hex"),
+    }
+    if dict(trace) != expected:
+        raise harness.HarnessError(f"{description} lost the remote normal-byte producer: {trace}")
+    try:
+        worker_row = bytes.fromhex(trace["worker.binned.hex"]).decode("ascii")
+    except (ValueError, UnicodeDecodeError) as error:
+        raise harness.HarnessError(f"{description} has invalid worker statistics text") from error
+    if worker_row.split() != ["binned", ":", "8", "8", "-64", "not", "all", "freed"]:
+        raise harness.HarnessError(f"{description} lost the freeing-Theap peak/current: {worker_row}")
 
 
 def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
@@ -1421,6 +1442,14 @@ def run_statistics_huge_differential(offline: bool) -> dict[str, Any]:
     )
 
 
+def run_statistics_remote_normal_differential(offline: bool) -> dict[str, Any]:
+    return run_public_level_one_statistics_differential(
+        offline, subject="remote-normal", driver=STATISTICS_REMOTE_NORMAL_DRIVER,
+        begin=STATISTICS_REMOTE_NORMAL_TRACE_BEGIN, end=STATISTICS_REMOTE_NORMAL_TRACE_END,
+        report_name="statistics-remote-normal.json", require_complete=require_statistics_remote_normal,
+    )
+
+
 def run_adapter_differential(
     offline: bool, *, driver: Path = ADAPTER_DRIVER, begin: str = ADAPTER_TRACE_BEGIN,
     end: str = ADAPTER_TRACE_END, report_name: str = "adapter.json",
@@ -1561,6 +1590,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare pinned-C/Rust page extension statistics under MI_STAT=1")
     mode.add_argument("--statistics-huge-differential", action="store_true",
         help="compare pinned-C/Rust huge allocation statistics under MI_STAT=1")
+    mode.add_argument("--statistics-remote-normal-differential", action="store_true",
+        help="compare pinned-C/Rust cross-thread normal free statistics under MI_STAT=1")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1639,6 +1670,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_huge_differential:
         report = run_statistics_huge_differential(arguments.offline)
         print(f"M7 huge statistics differential passed: {len(report['c_trace'])} keys")
+        return 0
+    if arguments.statistics_remote_normal_differential:
+        report = run_statistics_remote_normal_differential(arguments.offline)
+        print(f"M7 remote normal statistics differential passed: {len(report['c_trace'])} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

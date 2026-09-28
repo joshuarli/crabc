@@ -145,6 +145,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-huge-differential"],
       "scope": "Pinned C MI_STAT=1 and the Rust native adapter allocate a 512 KiB+1 block in the initial Theap, then free its selected-main abandoned arena singleton through the nonlocal pointer-first path. The public process image must retain the physical 589824-byte total and peak, clear current on free, increment huge allocation count once, and leave normal allocation bytes unchanged. Aligned OS singletons, uninitialized freeing Theaps, and other nonlocal producers remain outside this fixture."
     },
+    "differential:statistics-remote-normal": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-remote-normal-differential"],
+      "scope": "Pinned C MI_STAT=1 and the Rust native adapter warm a worker Theap, then remotely free one 64-byte regular-page block allocated by the initial thread. The worker thread's printed binned row must show its own peak and total of 8 bytes and current of -64 before its Theap merges; the final process count must compose total and peak of 72 bytes with zero current. Metadata-Theap fallback and other nonlocal producers remain outside this fixture."
+    },
     "differential:visitation-profiles": {
       "command": null,
       "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
@@ -332,10 +336,11 @@
         "differential:statistics-json",
         "differential:statistics-page-extend",
         "differential:statistics-huge",
+        "differential:statistics-remote-normal",
         "differential:adapter"
       ],
       "blocked_by": [
-        "The selected `MI_STAT=1` binned allocation, reset/merge, free, final-output path, first successful page-extension count and touched bytes, and one huge arena-singleton allocation/nonlocal free are proven; later extension, page release/commit failure, aligned OS huge allocation, uninitialized freeing Theap metadata accounting, and other nonlocal and level-one producers remain unproved. `MI_STAT=2` requested-size, allocation-count, bin, huge, and page producers remain unproved; synthetic owner merge/reset and final requested-size, nonzero-bin, huge, and page output are proven. The public JSON formatter and caller buffer contract are proven under MI_STAT=0, 1, and 2 with a synthetic image, independent of those production producers."
+        "The selected `MI_STAT=1` binned allocation, reset/merge, free, final-output path, first successful page-extension count and touched bytes, one huge arena-singleton allocation/nonlocal free, and one regular-page cross-thread remote free with freeing-Theap merge are proven; later extension, page release/commit failure, aligned OS huge allocation, uninitialized freeing Theap metadata accounting, and other nonlocal and level-one producers remain unproved. `MI_STAT=2` requested-size, allocation-count, bin, huge, and page producers remain unproved; synthetic owner merge/reset and final requested-size, nonzero-bin, huge, and page output are proven. The public JSON formatter and caller buffer contract are proven under MI_STAT=0, 1, and 2 with a synthetic image, independent of those production producers."
       ]
     },
     {
