@@ -353,6 +353,36 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
         self.assertEqual(result["execution_mode"], "full-six-mode")
         self.assertEqual(result["scope"], ["time.clock-calendar"])
 
+    def test_rehashed_transplanted_product_source_cannot_reseal(self) -> None:
+        import owned_dynamic_qualification as qualification
+
+        state_path = self.write(".work/x86_64/dynamic/share/crabc/dynamic-product-state.json",
+                                self.module.canonical({
+                                    "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+                                    "status": "materialized-unqualified", "source_sha256": "a" * 64,
+                                }))
+        with mock.patch.object(self.module.products, "_validate_static_product", return_value=(self.static / "manifest", {})), \
+             mock.patch.object(self.module.products, "_validate_dynamic_product", return_value=(self.dynamic / "manifest", {})), \
+             mock.patch.object(qualification, "ROOT", self.root), \
+             mock.patch.object(qualification, "source_digest", return_value="a" * 64):
+            sealed = self.module.source_product_seal(self.root, self.static, self.dynamic)
+            self.assertEqual(sealed["dynamic"]["tree"], self.module.family.snapshot(self.dynamic))
+
+            state = json.loads(state_path.read_text())
+            state["source_sha256"] = "b" * 64
+            state_path.write_bytes(self.module.canonical(state))
+            sealed["dynamic"]["tree"] = self.module.family.snapshot(self.dynamic)
+            record = self.report_value()
+            for phase in ("source-product-before", "source-product-after"):
+                path = self.work / f"{phase}.json"
+                path.write_bytes(self.module.canonical(sealed))
+                record["seals"][phase] = self.identity(path)
+                self.assertEqual(json.loads(path.read_text())["dynamic"]["tree"]["share/crabc/dynamic-product-state.json"]["sha256"],
+                                 self.module.digest(state_path))
+            self.rewrite_report(record)
+            with self.assertRaisesRegex(self.module.CalendarReceiptError, "dynamic calendar product source differs"):
+                self.module.source_product_seal(self.root, self.static, self.dynamic)
+
     def test_family_adapter_consumes_the_reconstructed_calendar_report(self) -> None:
         import owned_text_math_locale_stdio_family as coordinator
 

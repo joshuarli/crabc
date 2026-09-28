@@ -28,6 +28,7 @@ if str(HERE) not in sys.path:
 import owned_posix_family_execution as family
 import installed_compiler_translation as translation_contract
 import owned_posix_product_evidence as products
+import owned_dynamic_qualification as qualification
 import core_image
 
 SCHEMA = "crabc.x86_64-owned-calendar-products/v1"
@@ -270,6 +271,8 @@ def tracked_source_identity(root: Path, relative: str) -> dict[str, object]:
 
 def source_product_seal(root: Path, static_product: Path, dynamic_product: Path) -> dict[str, object]:
     root = physical_directory(root, "checkout root")
+    require(root == physical_directory(qualification.ROOT, "reader source checkout"),
+            "calendar checkout differs from reader source checkout")
     static_product = checkout_path(root, static_product.relative_to(root).as_posix(), "static calendar product", directory=True)
     dynamic_product = checkout_path(root, dynamic_product.relative_to(root).as_posix(), "dynamic calendar product", directory=True)
     try:
@@ -277,6 +280,18 @@ def source_product_seal(root: Path, static_product: Path, dynamic_product: Path)
         dynamic_manifest, _ = products._validate_dynamic_product(dynamic_product)
     except products.ProductEvidenceError as error:
         raise CalendarReceiptError(f"calendar product validation failed: {error}") from error
+    state_path = physical_file(dynamic_product / "share/crabc/dynamic-product-state.json", "dynamic calendar product state")
+    state = read_json(state_path, "dynamic calendar product state")
+    require(isinstance(state, dict) and
+            state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
+            state.get("status") == "materialized-unqualified",
+            "dynamic calendar product state differs")
+    try:
+        current_source = qualification.source_digest()
+    except Exception as error:
+        raise CalendarReceiptError("current calendar source digest is unreadable") from error
+    require(state.get("source_sha256") == current_source,
+            "dynamic calendar product source differs from current checkout")
     return {
         "sources": {name: tracked_source_identity(root, path) for name, path in SOURCE_PATHS.items()},
         "static": {"path": static_product.relative_to(root).as_posix(), "manifest": identity(root, static_manifest),
