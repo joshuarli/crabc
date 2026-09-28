@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <wchar.h>
 #include "owned_stdio_file_dso_probe.h"
@@ -194,6 +195,71 @@ static int prepare_dso_exit_stream(const char *path)
     return 0;
 }
 
+static int reopen_dso_roundtrip(const char *path)
+{
+    static const char old_bytes[] = "beforetail";
+    static const char new_bytes[] = "replacement!";
+    char old_path[PATH_MAX], new_path[PATH_MAX], buffer[64], observed[32];
+    struct stat state;
+    FILE *stream;
+    int old_length, new_length, descriptor, reader, result;
+
+    old_length = snprintf(old_path, sizeof(old_path), "%s.old", path);
+    new_length = snprintf(new_path, sizeof(new_path), "%s.new", path);
+    if (old_length < 0 || new_length < 0 ||
+        (size_t)old_length >= sizeof(old_path) ||
+        (size_t)new_length >= sizeof(new_path))
+        return 1;
+    stream = fopen(old_path, "w");
+    if (stream == NULL || setvbuf(stream, buffer, _IOFBF, sizeof(buffer)) != 0)
+        return 2;
+    descriptor = fileno(stream);
+    if (descriptor < 0 || fwrite("before", 1, 6, stream) != 6 ||
+        fwide(stream, 0) >= 0 || fstat(descriptor, &state) != 0 ||
+        state.st_size != 0)
+        return 3;
+    if (fgetc(stream) != EOF || !ferror(stream) || feof(stream) ||
+        fstat(descriptor, &state) != 0 || state.st_size != 6)
+        return 4;
+    if (fwrite("tail", 1, 4, stream) != 4 || !ferror(stream) ||
+        fstat(descriptor, &state) != 0 || state.st_size != 6)
+        return 5;
+    errno = EDOM;
+    result = crabc_file_dso_reopen(stream, new_path, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 10 + result;
+    if (fwide(stream, 0) != 0 || ferror(stream) || feof(stream) ||
+        fcntl(fileno(stream), F_GETFD) < 0)
+        return 20;
+    if (fwrite(new_bytes, 1, sizeof(new_bytes) - 1, stream) !=
+        sizeof(new_bytes) - 1 || fseek(stream, 0, SEEK_SET) != 0 ||
+        fread(observed, 1, sizeof(new_bytes) - 1, stream) !=
+        sizeof(new_bytes) - 1 ||
+        memcmp(observed, new_bytes, sizeof(new_bytes) - 1) != 0)
+        return 21;
+    descriptor = fileno(stream);
+    if (fclose(stream) != 0)
+        return 22;
+    errno = 0;
+    if (fcntl(descriptor, F_GETFD) != -1 || errno != EBADF)
+        return 23;
+    reader = open(old_path, O_RDONLY);
+    if (reader < 0)
+        return 24;
+    result = read(reader, observed, sizeof(observed));
+    if (close(reader) != 0 || result != sizeof(old_bytes) - 1 ||
+        memcmp(observed, old_bytes, sizeof(old_bytes) - 1) != 0)
+        return 25;
+    reader = open(new_path, O_RDONLY);
+    if (reader < 0)
+        return 26;
+    result = read(reader, observed, sizeof(observed));
+    if (close(reader) != 0 || result != sizeof(new_bytes) - 1 ||
+        memcmp(observed, new_bytes, sizeof(new_bytes) - 1) != 0)
+        return 27;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -246,7 +312,10 @@ int main(int argc, char **argv)
     result = prepare_dso_exit_stream(argv[1]);
     if (result != 0)
         return 130 + result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-exit-ok\n", 23) != 23)
+    result = reopen_dso_roundtrip(argv[1]);
+    if (result != 0)
+        return 160 + result;
+    if (write(STDOUT_FILENO, "stdio-file-dso-reopen-ok\n", 25) != 25)
         return 11;
     return 0;
 }

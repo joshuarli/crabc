@@ -4,10 +4,11 @@
 The executable owns pathname and cookie FILEs used by its DSO. The DSO also
 creates a cookie FILE whose callbacks it owns while main uses and closes it.
 The DSO sets wide orientation on a main-owned pathname FILE, then main reads
-the same non-ASCII character. It also leaves a buffered pathname FILE open for
-ordinary exit while its finalizer records whether the descriptor is still
-live. Static links run the same functions in one image as a baseline; only
-dynamic cells prove the cross-image handoffs.
+the same non-ASCII character. It also reopens a main-owned pathname FILE after
+a buffered write and stream error, leaving exact old and replacement bytes.
+Another DSO-owned buffered pathname FILE remains open for ordinary exit while
+its finalizer records whether the descriptor is still live. Static links run
+the same functions in one image as a baseline; dynamic cells prove handoffs.
 """
 
 from __future__ import annotations
@@ -40,10 +41,11 @@ SOURCES = (
     "compat/x86_64/owned_stdio_file_dso_probe.h",
     "compat/x86_64/owned_stdio_file_dso_receipt.py",
 )
-EXPECTED_STDOUT = b"stdio-file-dso-exit-ok\n"
+EXPECTED_STDOUT = b"stdio-file-dso-reopen-ok\n"
 EXIT_PAYLOAD = b"dso-exit-once\n"
 EXIT_MARKER = b"fini-before-flush:fd-live\n"
-EXIT_PATHS = ("stream.exit", "stream.fini")
+RETAINED_PATHS = ("stream.exit", "stream.fini", "stream.new", "stream.old")
+RETAINED_BYTES = (EXIT_PAYLOAD, EXIT_MARKER, b"replacement!", b"beforetail")
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 ORACLE_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.so")
@@ -323,7 +325,7 @@ def expected_root(work: Path, case: str, dynamic: Path) -> dict[str, object]:
     expected["consumer"] = {"kind": "file", "mode": stat.S_IMODE(program.stat().st_mode),
                             "size": program.stat().st_size, "sha256": digest(program)}
     expected["scratch"] = {"kind": "directory", "mode": 0o755}
-    for name, contents in zip(EXIT_PATHS, (EXIT_PAYLOAD, EXIT_MARKER)):
+    for name, contents in zip(RETAINED_PATHS, RETAINED_BYTES):
         expected["scratch/" + name] = {"kind": "file", "mode": 0o644,
             "size": len(contents), "sha256": hashlib.sha256(contents).hexdigest()}
     return expected
@@ -341,11 +343,11 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
         require((raw / f"{case}.stderr").read_bytes() == b"", f"{case} stderr differs")
         scratch = work / "execution-roots" / case / "scratch"
         require(read_json(raw / f"{case}.scratch-before.json") == []
-                and read_json(raw / f"{case}.scratch-after.json") == list(EXIT_PATHS)
-                and sorted(item.name for item in scratch.iterdir()) == list(EXIT_PATHS)
-                and (scratch / EXIT_PATHS[0]).read_bytes() == EXIT_PAYLOAD
-                and (scratch / EXIT_PATHS[1]).read_bytes() == EXIT_MARKER,
-                f"{case} ordinary-exit pathname bytes differ")
+                and read_json(raw / f"{case}.scratch-after.json") == list(RETAINED_PATHS)
+                and sorted(item.name for item in scratch.iterdir()) == list(RETAINED_PATHS)
+                and all((scratch / name).read_bytes() == contents
+                        for name, contents in zip(RETAINED_PATHS, RETAINED_BYTES)),
+                f"{case} retained pathname bytes differ")
         trace = (raw / f"{case}.strace").read_text(encoding="utf-8")
         require(re.search(r'unlink\("/scratch/stream"\)\s+=\s+0', trace) is not None,
                 f"{case} did not unlink the main-owned pathname")
@@ -396,7 +398,8 @@ def audit_elf(work: Path) -> None:
                     f"{role} libc dependency differs")
             for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer",
                           "crabc_cookie_dso_open", "crabc_cookie_dso_check",
-                          "crabc_file_dso_write_wide", "crabc_file_dso_buffer_exit"):
+                          "crabc_file_dso_write_wide", "crabc_file_dso_buffer_exit",
+                          "crabc_file_dso_reopen"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
                         f"{role} lacks {entry}")
         elif dynamic_main:
@@ -405,7 +408,8 @@ def audit_elf(work: Path) -> None:
                     f"{role} DSO/libc dependencies differ")
             for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer",
                           "crabc_cookie_dso_open", "crabc_cookie_dso_check",
-                          "crabc_file_dso_write_wide", "crabc_file_dso_buffer_exit"):
+                          "crabc_file_dso_write_wide", "crabc_file_dso_buffer_exit",
+                          "crabc_file_dso_reopen"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
                         f"{role} does not import {entry}")
         else:

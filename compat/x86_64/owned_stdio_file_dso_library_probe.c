@@ -174,6 +174,20 @@ int crabc_file_dso_write_wide(FILE *stream, int *main_errno)
     return 0;
 }
 
+int crabc_file_dso_reopen(FILE *stream, const char *replacement_path,
+                          int *main_errno)
+{
+    if (stream == NULL || replacement_path == NULL || main_errno != &errno ||
+        errno != EDOM || fwide(stream, 0) >= 0 || !ferror(stream) || feof(stream))
+        return 1;
+    if (freopen(replacement_path, "w+", stream) != stream)
+        return 2;
+    if (fwide(stream, 0) != 0 || ferror(stream) || feof(stream))
+        return 3;
+    errno = ERANGE;
+    return 0;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];
