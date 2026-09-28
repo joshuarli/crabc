@@ -19,6 +19,7 @@ X86 = ROOT / "compat" / "x86_64"
 if str(X86) not in sys.path:
     sys.path.insert(0, str(X86))
 import owned_posix_product_evidence as product_evidence
+import owned_dynamic_qualification as qualification
 
 SCRIPT = X86 / "owned_dynamic_package.py"
 SPEC = importlib.util.spec_from_file_location("owned_dynamic_package_test", SCRIPT)
@@ -30,6 +31,59 @@ SPEC.loader.exec_module(package)
 
 class OwnedDynamicPackageTests(unittest.TestCase):
     """Exercise archive modes without building or executing a native product."""
+
+    def test_rehashed_archive_payload_must_match_materialization_state(self) -> None:
+        temporary_root = ROOT / ".work/x86_64/tmp"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="owned-dynamic-package-state.", dir=temporary_root) as temporary:
+            workspace = Path(temporary)
+            source = workspace / "source"
+            files = {}
+            for relative in sorted(package.driver.REQUIRED | {"bin/crabc-cc-dynamic"}):
+                path = source / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(relative.encode())
+                path.chmod(0o755 if relative in package.EXECUTABLE_PAYLOADS else 0o644)
+                files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+            state_path = source / "share/crabc/dynamic-product-state.json"
+            state = {
+                "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+                "status": "materialized-unqualified", "source_sha256": "a" * 64,
+                "contracts": {"contract": "b" * 64}, "payload_files": dict(files),
+                "allocator_backend": "accepted-c", "allocator_lifecycle_test_audit": False,
+                "allocator_promoted": False, "runtime_v1_published": False,
+                "campaign_complete": False, "public_support": False,
+                "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+                "runtime_profile": qualification.MATERIALIZATION_PROFILE,
+                "qualification": qualification.MATERIALIZATION_QUALIFICATION,
+            }
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            files["share/crabc/dynamic-product-state.json"] = hashlib.sha256(state_path.read_bytes()).hexdigest()
+            manifest_path = source / "share/crabc/manifest.json"
+            manifest = {"schema": 1, "format": package.driver.FORMAT,
+                        "target": package.driver.shared.TARGET,
+                        "symlinks": package.driver.ALIASES, "files": files}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            for relative, target in package.driver.ALIASES.items():
+                (source / relative).symlink_to(target)
+            entries = sorted({*files, "share/crabc/manifest.json", *package.driver.ALIASES})
+            baseline = workspace / "baseline.tar"
+            package.write_archive(source, baseline, manifest, entries)
+            with mock.patch.object(qualification, "source_digest", return_value="a" * 64), \
+                 mock.patch.object(qualification, "contract_digests", return_value={"contract": "b" * 64}):
+                package.package(source, workspace / "created-baseline.tar")
+                package.extract(baseline, workspace / "baseline")
+                libc = source / "usr/lib/libc.so"
+                libc.write_bytes(b"different selected libc bytes")
+                manifest["files"]["usr/lib/libc.so"] = hashlib.sha256(libc.read_bytes()).hexdigest()
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                forged = workspace / "forged.tar"
+                package.write_archive(source, forged, manifest, entries)
+                with self.assertRaisesRegex(qualification.QualificationError, "payload binding"):
+                    package.package(source, workspace / "created-forged.tar")
+                with self.assertRaisesRegex(qualification.QualificationError, "payload binding"):
+                    package.extract(forged, workspace / "forged")
+                self.assertFalse((workspace / "forged").exists())
 
     def test_archive_and_extraction_preserve_the_canonical_dynamic_mode_roster(self) -> None:
         """The package cannot demote the executable shared-libc link input."""
@@ -93,7 +147,8 @@ class OwnedDynamicPackageTests(unittest.TestCase):
             self.assertEqual(archived_modes, modes)
 
             extracted = workspace / "extracted"
-            with mock.patch.object(package.driver, "validate", return_value=record):
+            with mock.patch.object(package.driver, "validate", return_value=record), \
+                 mock.patch.object(package.qualification, "product_identity"):
                 package.extract(archive, extracted)
             self.assertEqual(
                 {

@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 
 import crabc_cc_owned_dynamic as driver
+import owned_dynamic_qualification as qualification
 import owned_static_sysroot_package as shared_package
 
 
@@ -27,6 +28,7 @@ def package(root: Path, output: Path) -> None:
     root = shared_package.require_safe_directory(root, "dynamic package source")
     output = shared_package.prospective_path(output, "dynamic package output")
     record = driver.validate(root)
+    qualification.product_identity(root)
     driver.shared.validate_application_output(root, output)
     if output.exists(): raise driver.shared.DriverError("package output already exists")
     entries = sorted({*record["files"], "share/crabc/manifest.json", *record["symlinks"]})
@@ -111,6 +113,7 @@ def extract(package_path: Path, output: Path) -> None:
         staged = Path(temporary) / "installed"
         materialize_payload(staged, payloads)
         driver.validate(staged)
+        qualification.product_identity(staged)
         shared_package.publish_noreplace(staged, output, "dynamic extraction output")
 
 
@@ -133,7 +136,8 @@ def main() -> int:
     args = parser.parse_args()
     try:
         (package if args.action == "package" else extract)(args.source, args.output)
-    except (driver.shared.DriverError, shared_package.PackageError, OSError, ValueError, KeyError, tarfile.TarError) as error:
+    except (driver.shared.DriverError, qualification.QualificationError, shared_package.PackageError,
+            OSError, ValueError, KeyError, tarfile.TarError) as error:
         parser.exit(1, f"dynamic package: {error}\n")
     return 0
 
