@@ -739,6 +739,35 @@ fn ordinary_imports_across_private_prefix_boundary_keep_bounded_lookup() {
     }
 }
 
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn long_sysv_name_routes_to_its_first_bucket_and_keeps_malformed_rejection() {
+    let name = b"ordinary_long_symbol_name_0123456789";
+    let mut main = Image::new();
+    let mut provider = Image::new();
+    for image in [&mut main, &mut provider] {
+        unsafe { core::ptr::write_bytes(image.storage.add(IMAGE_STRTAB), 0, name.len() + 2) };
+        unsafe { core::ptr::copy_nonoverlapping(name.as_ptr(), image.storage.add(IMAGE_STRTAB + 1), name.len()) };
+    }
+    main.symbol(1, 1, 1, 0, 0, 0, 8);
+    provider.symbol(1, 1, 1, 0, 1, 0x1000, 8);
+    // This name's System V hash selects bucket five of seven.
+    provider.put_u32(IMAGE_HASH + 8, 0);
+    provider.put_u32(IMAGE_HASH + 8 + 5 * 4, 1);
+    let mut objects = [main.object(false), provider.object(true)];
+    for object in &mut objects { object.strsz = name.len() + 2; }
+    objects[1].symbol_lookup = SymbolLookupTable::Sysv {
+        bucket_count: 7, buckets: unsafe { provider.storage.add(IMAGE_HASH + 8).cast() },
+        chains: unsafe { provider.storage.add(IMAGE_HASH + 36).cast() }, symbol_count: 5,
+    };
+    let scope = SymbolScope { indices: &[0, 1], module_count: 0,
+        static_tls_count: 0, initial: true };
+    assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_GLOB_DAT, 1, 0) },
+               Some(provider.data.as_ptr() as u64));
+    objects[0].strsz -= 1;
+    assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_GLOB_DAT, 1, 0) }.is_none());
+}
+
 #[test]
 fn copy_runs_after_provider_fixups_and_preserves_main_interposition_addresses() {
     let mut main = Image::new();

@@ -268,8 +268,9 @@ fn sysv_hash(name: &[u8]) -> u32 {
     for byte in name {
         hash = hash.wrapping_shl(4).wrapping_add(*byte as u32);
         let high = hash & 0xf000_0000;
-        if high != 0 { hash ^= high >> 24; }
-        hash &= !high;
+        hash ^= high >> 24;
+        // The fold changes only low bits; the top nibble is always discarded.
+        hash &= 0x0fff_ffff;
     }
     hash
 }
