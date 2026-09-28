@@ -44,10 +44,13 @@ are not transferable passes for a different revision.
   workload and PageMap slice metric. The 10% gate remains unchanged while
   medium-page collection and scheduling are assessed. Source-built C/Rust
   differentials pass for both dormant and active survivors of a non-abandoning
-  full-medium/OS-singleton owner exit, including reclaim and retirement.
+  full-medium/OS-singleton owner exit, including reclaim and retirement; a
+  late remote free after that exit also matches all 17 retained observations.
   The full M2 runner records complete
   metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
-  arenas, initialization, and fault injection remain partial. Every freestanding-C runner builds `libc.a` through
+  arenas, initialization, and fault injection remain partial. Its direct fresh
+  OS page-area metadata-commit receiver matches pinned C for both successful
+  and failed cleanup, including warning timing and accounting. Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
   measures the Rust local path at about 0.33× pinned C single-thread with
@@ -75,7 +78,8 @@ are not transferable passes for a different revision.
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
   also passes. A selected `MI_STAT=1` binned allocation, merge/reset, free,
-  and final-print differential passes; page, huge, nonlocal, and higher-level
+  and final-print differential passes; a separate level-one merge/final-output
+  differential matches 28 C/Rust fields. Page, huge, nonlocal, and higher-level
   statistics producers remain unproved, so full M7 stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
   functions among 1,406 musl-replaceable entries and all 831 required entries
