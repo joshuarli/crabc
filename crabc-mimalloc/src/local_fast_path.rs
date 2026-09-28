@@ -148,18 +148,19 @@ pub(crate) unsafe fn allocate(
     alignment: Option<usize>,
     zero: bool,
 ) -> Option<NonNull<u8>> {
-    let regular_small = size > SMALL_SIZE_MAX && size <= SMALL_MAX_OBJ_SIZE && alignment.is_none();
-    let regular_medium = size > SMALL_MAX_OBJ_SIZE && size <= MEDIUM_MAX_OBJ_SIZE && alignment.is_none();
     if size < WORD_SIZE
-        || (size > SMALL_SIZE_MAX && !regular_small && !regular_medium)
         || alignment.is_some_and(|alignment| !alignment.is_power_of_two() || alignment > size)
     {
+        return None;
+    }
+    let direct_small = size <= SMALL_SIZE_MAX;
+    if !direct_small && (size > MEDIUM_MAX_OBJ_SIZE || alignment.is_some()) {
         return None;
     }
     // SAFETY: the caller's contract makes this the exclusively owned live
     // Theap; the shared projection is the one page sessions use for reads.
     let theap_ref = unsafe { theap.as_ref() };
-    if !regular_small && !regular_medium {
+    if direct_small {
         let direct_index = invariants::word_count(size)?;
         if direct_index >= PAGES_DIRECT {
             return None;
@@ -196,6 +197,8 @@ pub(crate) unsafe fn allocate(
             }
         }
     }
+    // A direct small head can supply a block without regular-page classification.
+    let regular_medium = size > SMALL_MAX_OBJ_SIZE;
     let bin = size_class::bin(size)?;
     let first = NonNull::new(theap_ref.queue(bin)?.first())?;
     // SAFETY: the queue head is a live page of this Theap.
