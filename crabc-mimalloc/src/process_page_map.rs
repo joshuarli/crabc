@@ -309,7 +309,7 @@ impl LiveAllocationPointer {
 /// realloc decision consumes the returned facts. The caller may not treat
 /// `None` as validation of an arbitrary C pointer.
 #[inline]
-unsafe fn classify_live_allocation_in_page(
+pub(crate) unsafe fn classify_live_allocation_in_page(
     page: NonNull<Page>,
     client: NonNull<u8>,
 ) -> Option<LiveAllocationPointer> {

@@ -5273,18 +5273,65 @@ impl<'owner> MetadataEngine<'owner> {
         self: Pin<&'owner Self>,
         allocation: &mut MetaAllocation<'owner>,
     ) -> Result<(), MetaError> {
-        let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
-            .ready_child_subprocess_inputs()
-            .ok_or(MetaError::DetachedRemoteFreeUnavailable)?;
-        // SAFETY: the claimed exact block retains its metadata page and
-        // registration through the consuming remote publication.
-        let observed = unsafe { binding.page_map().lookup_live_allocation(allocation.pointer) }
-            .map_err(|_| MetaError::DetachedRemoteFreeUnavailable)?
-            .ok_or(MetaError::DetachedRemoteFreeUnavailable)?;
+        let this = self.get_ref();
+        // A detached owner must observe its block through the same PageMap
+        // that registered it. The isolated explicit-config owner retains a
+        // private map; process-backed owners retain their selected binding.
+        #[cfg(test)]
+        let private_observed = if this.test_default_subprocess.load(Ordering::Acquire).is_null()
+            || unsafe { (*this.process_backing.get()).is_some() }
+        {
+            None
+        } else {
+            if this.status.load(Ordering::Acquire) != READY {
+                return Err(MetaError::DetachedRemoteFreeUnavailable);
+            }
+            // SAFETY: READY publishes the private map, and the exact live
+            // allocation keeps its page registration stable through release.
+            let map = unsafe { (*this.page_map.get()).assume_init_ref() };
+            let page = NonNull::new(unsafe { map.checked_lookup(allocation.pointer.as_ptr()) })
+                .ok_or(MetaError::DetachedRemoteFreeUnavailable)?;
+            Some(unsafe { crate::process_page_map::classify_live_allocation_in_page(
+                page, allocation.pointer,
+            ) }
+            .ok_or(MetaError::DetachedRemoteFreeUnavailable)?)
+        };
+        let observed = {
+            #[cfg(test)]
+            if let Some(observed) = private_observed {
+                observed
+            } else {
+                unsafe { self.lookup_detached_process_allocation(allocation.pointer) }?
+            }
+            #[cfg(not(test))]
+            unsafe { self.lookup_detached_process_allocation(allocation.pointer) }?
+        };
         // SAFETY: the one PageMap observation binds the exact block to the
         // detached metadata page whose owner remains process-live.
         unsafe { crate::remote_free::push_detached_metadata_allocation(observed) }
             .map_err(MetaError::DetachedRemoteFree)
+    }
+
+    /// # Safety
+    /// `pointer` is an exact live block registered in this owner's selected
+    /// process PageMap until its detached remote publication consumes it.
+    unsafe fn lookup_detached_process_allocation(
+        self: Pin<&'owner Self>,
+        pointer: NonNull<u8>,
+    ) -> Result<crate::process_page_map::LiveAllocationPointer, MetaError> {
+        let binding = if let Some(selected) = unsafe { *self.get_ref().process_backing.get() } {
+            selected.binding
+        } else {
+            crate::process_init::ProcessMainInitializationStorage::global()
+                .ready_child_subprocess_inputs()
+                .ok_or(MetaError::DetachedRemoteFreeUnavailable)?
+                .0
+        };
+        // SAFETY: the exact live block retains its metadata page and PageMap
+        // registration until the consuming remote publication completes.
+        unsafe { binding.page_map().lookup_live_allocation(pointer) }
+            .map_err(|_| MetaError::DetachedRemoteFreeUnavailable)?
+            .ok_or(MetaError::DetachedRemoteFreeUnavailable)
     }
 
     /// Releases one metadata allocation under the detached owner lock.

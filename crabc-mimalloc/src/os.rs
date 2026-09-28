@@ -5575,6 +5575,13 @@ pub(crate) mod fault {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
+    /// Gives one isolated process fixture the source's initial reset advice
+    /// while restoring the surrounding test process after its fallback run.
+    pub(crate) struct ResetAdviceScope<'guard> {
+        previous: usize,
+        _guard: core::marker::PhantomData<&'guard Guard>,
+    }
+
     /// One raw mmap argument tuple from the bounded process-policy route.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub(crate) struct PolicyMmapAttempt {
@@ -5620,6 +5627,11 @@ pub(crate) mod fault {
     }
 
     impl Guard {
+        pub(crate) fn initial_reset_advice(&self) -> ResetAdviceScope<'_> {
+            let previous = super::RESET_ADVICE.swap(super::MADV_FREE as usize, Ordering::AcqRel);
+            ResetAdviceScope { previous, _guard: core::marker::PhantomData }
+        }
+
         pub(crate) fn set(&self, plan: Plan) {
             // `set` is an explicit test action. Existing worker fixtures that
             // select their plan inside the worker remain deliberately
@@ -5887,6 +5899,12 @@ pub(crate) mod fault {
     impl Drop for PolicyMmapCapture<'_> {
         fn drop(&mut self) {
             POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
+        }
+    }
+
+    impl Drop for ResetAdviceScope<'_> {
+        fn drop(&mut self) {
+            super::RESET_ADVICE.store(self.previous, Ordering::Release);
         }
     }
 

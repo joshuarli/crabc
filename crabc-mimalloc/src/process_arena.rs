@@ -3659,6 +3659,7 @@ mod tests {
                 warnings as *mut SecondResetFailureWarnings as *mut core::ffi::c_void);
         }
         let fault = fault::install(fault::Plan::disabled());
+        let _reset_advice = fault.initial_reset_advice();
         let config = MemoryConfig::from_observations(
             PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
         );
