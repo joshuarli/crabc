@@ -13309,6 +13309,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-vm-primitives-fixed-lifecycle",
                     "c-rust-vm-primitives-source-profile-matrix",
                     "c-rust-aligned-overmap-cleanup-boundary-matrix",
+                    "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
                     "c-rust-arena-destruction-differential",
@@ -13325,7 +13326,9 @@ def validate_x86_64_m2_memory_substrate_contract(
                 or type(raw_check.get("expected_passed_test_count")) is not int
                 or raw_check.get("expected_passed_test_count") != (
                     41 if component_id == "bitmaps" else (
-                        7 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else 1
+                        7 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else (
+                            3 if raw_check.get("kind") == "c-rust-second-arena-reset-advice-matrix" else 1
+                        )
                     )
                 )
             ):
@@ -13442,6 +13445,14 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or "pthread_barrier_wait" not in fixture_text
                 ):
                     raise HarnessError("native x86 M2 metadata lifecycle evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-second-arena-reset-advice-matrix":
+                reader = _m2_x86_64_vm_producer().RESET_ADVICE_MATRIX_READER
+                if (
+                    component_id != "vm-primitives"
+                    or raw_check.get("target") != reader
+                    or not (ROOT / reader).is_file()
+                ):
+                    raise HarnessError("native x86 M2 reset-advice reader is absent")
             elif component_id != "bitmaps":
                 _m2_memory_substrate_source_test_exists(
                     str(raw_check["target"]), str(raw_check["id"])
@@ -14110,6 +14121,10 @@ def _m2_x86_64_vm_check_records(
         check for check in component["checks"]
         if check["id"] == "aligned-overmap-cleanup-c-rust-boundary-matrix"
     )
+    reset_advice_check = next(
+        check for check in component["checks"]
+        if check["id"] == producer.RESET_ADVICE_MATRIX_ID
+    )
     runtime_thp_check = next(
         check for check in component["checks"]
         if check["id"] == "runtime-source-environment-thp-ready-configuration-admission"
@@ -14268,6 +14283,56 @@ def _m2_x86_64_vm_check_records(
             "target": aligned_overmap_check["target"],
         },
     ]
+    reset_advice = evidence.get("reset_advice_matrix")
+    expected_reset_tests = [
+        "process_arena::tests::emit_m2_second_arena_reset_advice_"
+        + profile + "_c_rust_trace"
+        for profile in ("warning_eio", "retry_eagain", "fallback_einval")
+    ]
+    expected_rust_commands = [
+        [str(command[0]), target, "--exact", "--test-threads=1", "--nocapture"]
+        for target in expected_reset_tests
+    ]
+    expected_reader_prefix = ["python3", producer.RESET_ADVICE_MATRIX_READER]
+    reader_command = reset_advice.get("command") if isinstance(reset_advice, Mapping) else None
+    reset_fixture = reset_advice.get("fixture") if isinstance(reset_advice, Mapping) else None
+    if (
+        not isinstance(reset_advice, Mapping)
+        or reset_advice_check != {
+            "id": producer.RESET_ADVICE_MATRIX_ID,
+            "kind": "c-rust-second-arena-reset-advice-matrix",
+            "target": producer.RESET_ADVICE_MATRIX_READER,
+            "expected_passed_test_count": 3,
+        }
+        or reader_command not in (
+            expected_reader_prefix + ["--rust-test-binary", str(command[0])],
+            expected_reader_prefix + ["--offline", "--rust-test-binary", str(command[0])],
+        )
+        or reset_advice.get("comparison") != {
+            "compared_value_count": producer.RESET_ADVICE_MATRIX_VALUE_COUNT,
+            "status": "matched",
+        }
+        or reset_advice.get("rust_tests") != expected_reset_tests
+        or reset_advice.get("rust_commands") != expected_rust_commands
+        or not isinstance(reset_fixture, Mapping)
+        or reset_fixture.get("path") != relative(
+            ALLOCATOR_ROOT / "m2_second_arena_reset_failure_x86_64.c"
+        )
+        or type(reset_fixture.get("bytes")) is not int
+        or reset_fixture["bytes"] <= 0
+        or not isinstance(reset_fixture.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", reset_fixture["sha256"]) is None
+    ):
+        raise HarnessError("native x86 M2 reset-advice matrix receipt is invalid")
+    records.append({
+        "comparison_status": "matched",
+        "component": "vm-primitives",
+        "command": list(reader_command),
+        "evidence_scope": "bounded-second-regular-arena-eio-eagain-einval-reset-advice-c-rust-matrix",
+        "id": reset_advice_check["id"],
+        "passed_test_count": reset_advice_check["expected_passed_test_count"],
+        "target": reset_advice_check["target"],
+    })
     if runtime_thp_evidence is None:
         return records
     runtime_thp_producer = _m2_x86_64_runtime_thp_configuration_producer()

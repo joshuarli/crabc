@@ -28,6 +28,7 @@ EXPECTED_VM_CHECK_IDS = (
     "aligned-map-trim-failure-leak",
     "aligned-map-complete-trim-sequence",
     "reset-advice-retry-snapshot",
+    "second-arena-reset-advice-c-rust-matrix",
     "aligned-map-os-page-claim-trim-leak",
     "aligned-map-process-os-page-trim-leak",
     "aligned-map-metadata-trim-leak",
@@ -180,6 +181,32 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "fixture": {"path": "compat/allocator/m2_vm_x86_64.c", "sha256": "b" * 64, "bytes": 1},
             "format": 1,
             "profile": producer.EVIDENCE_PROFILE,
+            "reset_advice_matrix": {
+                "command": [
+                    "python3", producer.RESET_ADVICE_MATRIX_READER,
+                    "--offline", "--rust-test-binary", str(rust_binary),
+                ],
+                "comparison": {
+                    "compared_value_count": producer.RESET_ADVICE_MATRIX_VALUE_COUNT,
+                    "status": "matched",
+                },
+                "fixture": {
+                    "path": "compat/allocator/m2_second_arena_reset_failure_x86_64.c",
+                    "bytes": 1, "sha256": "b" * 64,
+                },
+                "rust_tests": [
+                    "process_arena::tests::emit_m2_second_arena_reset_advice_"
+                    + profile + "_c_rust_trace"
+                    for profile in ("warning_eio", "retry_eagain", "fallback_einval")
+                ],
+                "rust_commands": [
+                    [str(rust_binary),
+                     "process_arena::tests::emit_m2_second_arena_reset_advice_"
+                     + profile + "_c_rust_trace",
+                     "--exact", "--test-threads=1", "--nocapture"]
+                    for profile in ("warning_eio", "retry_eagain", "fallback_einval")
+                ],
+            },
             "rust_build_command": [
                 "cargo",
                 "test",
@@ -536,7 +563,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
         self.assertEqual(tuple(check["id"] for check in vm["checks"]), EXPECTED_VM_CHECK_IDS)
-        self.assertEqual(len(vm["checks"]), 32)
+        self.assertEqual(len(vm["checks"]), 33)
         self.assertEqual(len(vm["bounded_source_definitions"]), 20)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
@@ -592,6 +619,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
             ("nonclaims", []),
             ("aligned_overmap_comparison", {"status": "matched"}),
             ("aligned_overmap_c_trace_sha256", "not-a-digest"),
+            ("reset_advice_matrix", {}),
         ):
             with self.subTest(field=field):
                 evidence = self.vm_evidence(summary)
@@ -603,11 +631,13 @@ class NativeVmAssemblyTests(unittest.TestCase):
         records = RUNNER._m2_x86_64_vm_check_records(
             self.summary(), self.vm_evidence(self.summary())
         )
-        self.assertEqual(len(records), 3)
+        self.assertEqual(len(records), 4)
         self.assertEqual(records[0]["id"], "native-vm-fixed-lifecycle-differential")
         self.assertEqual(records[1]["id"], "aligned-hint-source-profile-and-direct-caller-matrix")
         self.assertEqual(records[2]["id"], "aligned-overmap-cleanup-c-rust-boundary-matrix")
         self.assertEqual(records[2]["comparison_status"], "matched")
+        self.assertEqual(records[3]["id"], "second-arena-reset-advice-c-rust-matrix")
+        self.assertEqual(records[3]["passed_test_count"], 3)
 
     def test_rust_binary_binding_accepts_both_cargo_profile_layouts_only(self):
         """The pinned nightly's per-unit test executable remains gate-owned."""
@@ -925,6 +955,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "native-vm-fixed-lifecycle-differential",
                 "aligned-hint-source-profile-and-direct-caller-matrix",
                 "aligned-overmap-cleanup-c-rust-boundary-matrix",
+                "second-arena-reset-advice-c-rust-matrix",
                 "runtime-source-environment-thp-ready-configuration-admission",
             },
             {record["id"] for record in vm_records},

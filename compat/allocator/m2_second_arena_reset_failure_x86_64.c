@@ -16,10 +16,13 @@ static mi_arena_t* selected_arena;
 static size_t selected_slice;
 static size_t advice_calls;
 static size_t advice_exact;
+static size_t advice_range_exact;
+static int advice_sequence[3];
 static int advice_kind;
 static size_t warning_calls;
 static size_t warning_after_counter;
 static bool fail_next_advice;
+static int injected_errno = EIO;
 static int64_t counter_before;
 static int64_t bytes_before;
 static int64_t reset_calls_before;
@@ -28,13 +31,18 @@ static int64_t reset_bytes_before;
 int __real_madvise(void* address, size_t length, int advice);
 int __wrap_madvise(void* address, size_t length, int advice) {
   if (selected_arena != NULL) {
+    if (advice_calls < sizeof(advice_sequence) / sizeof(advice_sequence[0])) {
+      advice_sequence[advice_calls] = advice;
+    }
     advice_calls++;
+    advice_range_exact += address == mi_arena_slice_start(selected_arena, selected_slice)
+        && length == MI_ARENA_SLICE_SIZE;
     advice_exact += address == mi_arena_slice_start(selected_arena, selected_slice)
         && length == MI_ARENA_SLICE_SIZE && advice == MADV_FREE;
     advice_kind = advice;
     if (fail_next_advice) {
       fail_next_advice = false;
-      errno = EIO;
+      errno = injected_errno;
       return -1;
     }
   }
@@ -58,12 +66,26 @@ static void emit(const char* field, long long value) {
   printf("m2.second_reset_failure.%s=%lld\n", field, value);
 }
 
+static void emit_matrix(const char* field, long long value) {
+  printf("m2.second_reset_advice.%s=%lld\n", field, value);
+}
+
 static bool live_page(void* base) {
   unsigned char residence = 0;
   return mincore(base, (size_t)sysconf(_SC_PAGESIZE), &residence) == 0;
 }
 
-int main(void) {
+int main(int argc, char** argv) {
+  int profile = 0;
+  bool matrix = argc == 2;
+  if (argc > 2) return 2;
+  if (matrix) {
+    if (strcmp(argv[1], "warning-eio") == 0) profile = 0;
+    else if (strcmp(argv[1], "retry-eagain") == 0) profile = 1;
+    else if (strcmp(argv[1], "fallback-einval") == 0) profile = 2;
+    else return 2;
+  }
+  injected_errno = profile == 1 ? EAGAIN : (profile == 2 ? EINVAL : EIO);
   setvbuf(stdout, NULL, _IONBF, 0);
   mi_process_init();
   os_preloading = false;
@@ -132,6 +154,7 @@ int main(void) {
       && mi_atomic_loadi64_relaxed(&second->purge_expire) == 0;
   const size_t failed_calls = advice_calls;
   const size_t failed_exact = advice_exact;
+  const size_t first_ranges_exact = advice_range_exact;
   const size_t failed_warnings = warning_calls;
   const size_t failed_warning_order = warning_after_counter;
 
@@ -150,6 +173,56 @@ int main(void) {
   const bool maps_live = live_page(first->start) && live_page(second->start)
       && owner.subproc.stats.reserved.current == reserved_before
       && mi_arenas_get_count(&owner.subproc) == 2;
+  if (matrix) {
+    const int expected_first_calls = profile == 0 ? 1 : 2;
+    const int expected_total_calls = profile == 0 ? 2 : 3;
+    const int expected_second_advice = profile == 2 ? MADV_DONTNEED : MADV_FREE;
+    const int expected_third_advice = profile == 0 ? 0 : expected_second_advice;
+    const int expected_warnings = profile == 0 ? 1 : 0;
+    emit_matrix("profile", profile);
+    emit_matrix("setup", setup);
+    emit_matrix("pending", pending);
+    emit_matrix("first_state", failed_state);
+    emit_matrix("first_calls", failed_calls);
+    emit_matrix("first_ranges_exact", first_ranges_exact);
+    emit_matrix("first_advice", advice_sequence[0]);
+    emit_matrix("second_advice", advice_sequence[1]);
+    emit_matrix("first_warnings", failed_warnings);
+    emit_matrix("first_warning_order", failed_warning_order);
+    emit_matrix("same_span", same_span);
+    emit_matrix("retry_pending", retry_pending);
+    emit_matrix("final_state", retried_state);
+    emit_matrix("total_calls", advice_calls);
+    emit_matrix("total_ranges_exact", advice_range_exact);
+    emit_matrix("third_advice", advice_sequence[2]);
+    emit_matrix("warning_calls", warning_calls);
+    emit_matrix("maps_live", maps_live);
+    emit_matrix("released_slice", index);
+    emit_matrix("survivor_slice", survivor_index);
+    emit_matrix("purge_calls", owner.subproc.stats.purge_calls.total - purge_before);
+    emit_matrix("purged_bytes", owner.subproc.stats.purged.total - bytes_before);
+    emit_matrix("arena_purges", owner.subproc.stats.arena_purges.total - visits_before);
+    emit_matrix("reset_calls", owner.subproc.stats.reset_calls.total - reset_calls_before);
+    emit_matrix("reset_bytes", owner.subproc.stats.reset.total - reset_bytes_before);
+    emit_matrix("committed_delta", owner.subproc.stats.committed.current - committed_before);
+    return setup && pending && failed_state && failed_calls == expected_first_calls
+        && first_ranges_exact == (size_t)expected_first_calls
+        && advice_sequence[0] == MADV_FREE
+        && advice_sequence[1] == expected_second_advice
+        && failed_warnings == (size_t)expected_warnings
+        && failed_warning_order == (size_t)expected_warnings
+        && same_span && retry_pending && retried_state
+        && advice_calls == (size_t)expected_total_calls
+        && advice_range_exact == advice_calls
+        && advice_sequence[2] == expected_third_advice
+        && warning_calls == (size_t)expected_warnings && maps_live
+        && owner.subproc.stats.purge_calls.total - purge_before == 2
+        && owner.subproc.stats.purged.total - bytes_before == 2 * MI_ARENA_SLICE_SIZE
+        && owner.subproc.stats.reset_calls.total - reset_calls_before == 2
+        && owner.subproc.stats.reset.total - reset_bytes_before == 2 * MI_ARENA_SLICE_SIZE
+        && owner.subproc.stats.arena_purges.total - visits_before == 2
+        && owner.subproc.stats.committed.current == committed_before ? 0 : 1;
+  }
   emit("setup", setup); emit("pending", pending);
   emit("failed_state", failed_state); emit("failed_calls", failed_calls);
   emit("failed_exact", failed_exact); emit("failed_warnings", failed_warnings);

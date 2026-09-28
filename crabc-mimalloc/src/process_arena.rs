@@ -3622,8 +3622,7 @@ mod tests {
     }
 
     #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn emit_m2_second_arena_reset_failure_c_rust_trace() {
+    fn second_arena_reset_advice_trace(profile: usize, matrix: bool) {
         use crate::arena::{ArenaSearch, ArenaView};
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         let entries = std::boxed::Box::leak(std::boxed::Box::new([
@@ -3718,8 +3717,9 @@ mod tests {
             && committed.is_set_range(index, 1) == Some(true)
             && free.is_set_range(index, 1) == Some(true)
             && free.is_clear_range(survivor_index, 1) == Some(true);
+        let injected_error = match profile { 1 => 11, 2 => 22, _ => 5 };
         fault.set(fault::Plan::at(fault::Point::Purge, 1,
-            Errno::from_raw(5).unwrap()));
+            Errno::from_raw(injected_error).unwrap()));
         let failed_capture = fault.capture_advice_range();
         // SAFETY: only the returned one-slice span is purged beside the
         // retained adjacent claim and live second-arena mapping.
@@ -3729,6 +3729,12 @@ mod tests {
         let exact_range = (second.start as usize + index * ARENA_SLICE_SIZE,
             ARENA_SLICE_SIZE, 8);
         let failed_exact = failed_capture.range() == Some(exact_range);
+        let (first_ranges, first_range_count) = failed_capture.ranges()
+            .expect("the first reset sequence fits the source retry bound");
+        let expected_address = exact_range.0;
+        let first_ranges_exact = first_ranges[..first_range_count].iter()
+            .all(|&(address, length, _)|
+                address == expected_address && length == ARENA_SLICE_SIZE);
         drop(failed_capture);
         let failed_state = purge.is_clear_range(index, 1) == Some(true)
             && committed.is_set_range(index, 1) == Some(true)
@@ -3753,6 +3759,8 @@ mod tests {
         let retry_recorded = retry_capture.range();
         let retry_exact = retry_recorded == Some(exact_range);
         let advice_kind = retry_recorded.map_or(0, |(_, _, kind)| kind as i64);
+        let retry_range_exact = retry_recorded.is_some_and(|(address, length, _)|
+            address == expected_address && length == ARENA_SLICE_SIZE);
         drop(retry_capture);
         let retried_state = purge.is_clear_range(index, 1) == Some(true)
             && committed.is_set_range(index, 1) == Some(true)
@@ -3766,6 +3774,49 @@ mod tests {
             && unsafe { crabc_core::mm::mincore_raw(second.start, 4096, &mut residence) }.is_ok()
             && after.vm.reserved_current == before.vm.reserved_current
             && backing.registry().count() == 2;
+        if matrix {
+            let second_advice = if first_range_count == 2 {
+                first_ranges[1].2
+            } else {
+                retry_recorded.map_or(0, |(_, _, advice)| advice)
+            };
+            let third_advice = if first_range_count == 2 {
+                retry_recorded.map_or(0, |(_, _, advice)| advice)
+            } else { 0 };
+            for (field, value) in [
+                ("profile", profile as i64),
+                ("setup", i64::from(setup)), ("pending", i64::from(pending)),
+                ("first_state", i64::from(failed_state)),
+                ("first_calls", failed_advice_count as i64),
+                ("first_ranges_exact", if first_ranges_exact { failed_advice_count as i64 } else { 0 }),
+                ("first_advice", first_ranges[0].2 as i64),
+                ("second_advice", second_advice as i64),
+                ("first_warnings", failed_warnings as i64),
+                ("first_warning_order", failed_warning_order as i64),
+                ("same_span", i64::from(same_span)),
+                ("retry_pending", i64::from(retry_pending)),
+                ("final_state", i64::from(retried_state)),
+                ("total_calls", (failed_advice_count + retry_advice_count) as i64),
+                ("total_ranges_exact", if first_ranges_exact && retry_range_exact {
+                    (failed_advice_count + retry_advice_count) as i64
+                } else { 0 }),
+                ("third_advice", third_advice as i64),
+                ("warning_calls", warnings.calls.load(Ordering::Acquire) as i64),
+                ("maps_live", i64::from(maps_live)),
+                ("released_slice", index as i64), ("survivor_slice", survivor_index as i64),
+                ("purge_calls", after.vm.purge_calls - before.vm.purge_calls),
+                ("purged_bytes", after.vm.purged - before.vm.purged),
+                ("arena_purges", after.arena.arena_purges - before.arena.arena_purges),
+                ("reset_calls", after.vm.reset_calls - before.vm.reset_calls),
+                ("reset_bytes", after.vm.reset - before.vm.reset),
+                ("committed_delta", after.vm.committed_current - before.vm.committed_current),
+            ] {
+                std::println!("m2.second_reset_advice.{field}={value}");
+            }
+            assert!(setup && pending && failed_state && same_span && retry_pending
+                && retried_state && maps_live && first_ranges_exact && retry_range_exact);
+            return;
+        }
         for (field, value) in [
             ("setup", i64::from(setup)), ("pending", i64::from(pending)),
             ("failed_state", i64::from(failed_state)),
@@ -3793,6 +3844,30 @@ mod tests {
         }
         assert!(setup && pending && failed_state && same_span && retry_pending
             && retried_state && maps_live && failed_exact && retry_exact);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_arena_reset_failure_c_rust_trace() {
+        second_arena_reset_advice_trace(0, false);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_arena_reset_advice_warning_eio_c_rust_trace() {
+        second_arena_reset_advice_trace(0, true);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_arena_reset_advice_retry_eagain_c_rust_trace() {
+        second_arena_reset_advice_trace(1, true);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_arena_reset_advice_fallback_einval_c_rust_trace() {
+        second_arena_reset_advice_trace(2, true);
     }
 
     #[cfg(target_arch = "x86_64")]

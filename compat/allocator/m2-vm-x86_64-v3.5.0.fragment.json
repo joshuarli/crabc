@@ -290,6 +290,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "reset-advice-retry-snapshot",
+          "second-arena-reset-advice-c-rust-matrix",
           "normal-no-callback-purge-policy-range-matrix",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry"
@@ -329,6 +330,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "reset-advice-retry-snapshot",
+          "second-arena-reset-advice-c-rust-matrix",
           "process-offset-prefix-decommit-advisory-owner",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry"
@@ -624,6 +626,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "reset-advice-retry-snapshot",
+          "second-arena-reset-advice-c-rust-matrix",
           "normal-no-callback-purge-policy-range-matrix",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry",
@@ -735,7 +738,7 @@
       {
         "id": "unix-commit-decommit-reset-reuse-and-protect",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global MADV_FREE-to-MADV_DONTNEED fallback, and reuse semantics. Its source-indexed normal-release Rust receivers are `Mapping::{commit,decommit,reset_for_process,purge_for_process,protect,unprotect,reuse}`, the offset-prefix `NormalOsAllocation::allocate_aligned_at_offset_for_process`, `process_owned_mapping_commit`, and `ProcessPageArenaLease::commit_page_area`/`ProcessSharedArenaLease::commit_page_area`; `Mapping::{commit,decommit,reset_for_process,purge_for_process}` have the indexed non-test transition uses, while the selected external callback/page-area routes own their distinct direct uses. The selected native record faults unchanged imported mprotect/madvise calls around one regular process-owned mapping, its direct reset receiver, its distinct no-callback purge receiver, an offset-prefix advice receiver, and the direct source `mi_page_extend_free` external-page commit receiver. The reset record proves EAGAIN-before-success, EAGAIN then FREE/EINVAL, exactly one DONTNEED fallback, fallback EAGAIN failure, and persistent DONTNEED across the two actual reset/purge receivers; reset/purge counters advance at the source points and the retained mappings stay live.",
+        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global MADV_FREE-to-MADV_DONTNEED fallback, and reuse semantics. Its source-indexed normal-release Rust receivers are `Mapping::{commit,decommit,reset_for_process,purge_for_process,protect,unprotect,reuse}`, the offset-prefix `NormalOsAllocation::allocate_aligned_at_offset_for_process`, `process_owned_mapping_commit`, and `ProcessPageArenaLease::commit_page_area`/`ProcessSharedArenaLease::commit_page_area`; `Mapping::{commit,decommit,reset_for_process,purge_for_process}` have the indexed non-test transition uses, while the selected external callback/page-area routes own their distinct direct uses. The selected native record faults unchanged imported mprotect/madvise calls around one regular process-owned mapping, its direct reset receiver, its distinct no-callback purge receiver, an offset-prefix advice receiver, and the direct source `mi_page_extend_free` external-page commit receiver. Its reset record proves EAGAIN-before-success, EAGAIN then FREE/EINVAL, exactly one DONTNEED fallback, fallback EAGAIN failure, and persistent DONTNEED across the two actual reset/purge receivers. A separate source-built regular-arena matrix isolates EIO, EAGAIN, and EINVAL in separate processes and compares the exact same-slice advice sequence, range, counters, committed/purge/free bitmap state, and warning order across two purges. These records leave the mappings live.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -747,6 +750,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "reset-advice-retry-snapshot",
+          "second-arena-reset-advice-c-rust-matrix",
           "process-offset-prefix-decommit-advisory-owner",
           "normal-no-callback-purge-policy-range-matrix",
           "linux-os-reuse-contained-range-noop",
@@ -928,6 +932,12 @@
         "kind": "rust-unit",
         "target": "os::tests::reset_retries_the_initial_advice_after_a_concurrent_global_fallback",
         "expected_passed_test_count": 1
+      },
+      {
+        "id": "second-arena-reset-advice-c-rust-matrix",
+        "kind": "c-rust-second-arena-reset-advice-matrix",
+        "target": "compat/allocator/m2_second_arena_reset_advice_x86_64.py",
+        "expected_passed_test_count": 3
       },
       {
         "id": "aligned-map-os-page-claim-trim-leak",

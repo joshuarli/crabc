@@ -46,6 +46,9 @@ ARENA_OWNED_RUST_INLINE_PREFIX = (
 EXPECTED_RUST_TEST_COUNT = 1
 ARENA_OWNED_TRACE_ID = "process-wide-arena-purge-c-rust-differential"
 ARENA_OWNED_TRACE_TARGET = "arena::owned::tests::emit_native_owned_arena_purge_trace"
+RESET_ADVICE_MATRIX_ID = "second-arena-reset-advice-c-rust-matrix"
+RESET_ADVICE_MATRIX_READER = "compat/allocator/m2_second_arena_reset_advice_x86_64.py"
+RESET_ADVICE_MATRIX_VALUE_COUNT = 78
 LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE = (
     "-DCRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST=1"
 )
@@ -136,6 +139,11 @@ CHECKS = (
         "reset-advice-retry-snapshot",
         "rust-unit",
         "os::tests::reset_retries_the_initial_advice_after_a_concurrent_global_fallback",
+    ),
+    (
+        RESET_ADVICE_MATRIX_ID,
+        "c-rust-second-arena-reset-advice-matrix",
+        RESET_ADVICE_MATRIX_READER,
     ),
     (
         "aligned-map-os-page-claim-trim-leak",
@@ -542,7 +550,7 @@ def load_fragment(path: Path) -> dict[str, Any]:
             "id": check_id,
             "kind": kind,
             "target": target_name,
-            "expected_passed_test_count": 1,
+            "expected_passed_test_count": 3 if check_id == RESET_ADVICE_MATRIX_ID else 1,
         }
         for check_id, kind, target_name in CHECKS
     ]
@@ -1064,11 +1072,10 @@ def run_evidence(
     contract_fragment: Path,
     arena_owned_check: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Run the bounded native VM C/Rust differential from the aggregate gate.
+    """Run bounded VM C/Rust relations with the aggregate's native test binary.
 
-    The aggregate passes a single already-built no-default-feature native test
-    binary.  This producer never substitutes a local Cargo rebuild: that keeps
-    the M2 gate's exact-test accounting batched and its artifact identity clear.
+    The reset-advice reader uses that same binary for three isolated exact
+    tests, so each process starts with the source's initial advice state.
     """
 
     harness.require_native_x86_64()
@@ -1322,6 +1329,32 @@ def run_evidence(
     aligned_overmap_comparison = _compare_aligned_overmap_cleanup_boundary(
         c_aligned_overmap_trace, rust_aligned_overmap_trace, harness
     )
+    reset_advice_command = [
+        "python3", RESET_ADVICE_MATRIX_READER,
+        *(["--offline"] if offline else []),
+        "--rust-test-binary", str(rust_binary),
+    ]
+    reset_advice_run = harness.command_record(
+        reset_advice_command, cwd=harness.ROOT, timeout_seconds=900,
+    )
+    harness.require_success(reset_advice_run, "regular-arena reset-advice C/Rust matrix")
+    reset_advice_path = (
+        harness.ARTIFACT_ROOT / "x86_64/m2-second-arena-reset-advice/evidence.json"
+    )
+    reset_advice_evidence = harness.read_json(reset_advice_path)
+    expected_reset_tests = [
+        "process_arena::tests::emit_m2_second_arena_reset_advice_"
+        + profile + "_c_rust_trace"
+        for profile in ("warning_eio", "retry_eagain", "fallback_einval")
+    ]
+    if (
+        reset_advice_evidence.get("status") != "passed"
+        or reset_advice_evidence.get("pinned_revision") != pin["revision"]
+        or reset_advice_evidence.get("compared_value_count") != RESET_ADVICE_MATRIX_VALUE_COUNT
+        or reset_advice_evidence.get("rust_tests") != expected_reset_tests
+        or reset_advice_evidence.get("source_traces") != reset_advice_evidence.get("rust_traces")
+    ):
+        raise harness.HarnessError("regular-arena reset-advice matrix receipt is invalid")
     trace_payload = json.dumps(c_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
     profile_trace_payload = json.dumps(
         c_profile_trace, separators=(",", ":"), sort_keys=True
@@ -1357,6 +1390,16 @@ def run_evidence(
         "fixture": harness.artifact_record(FIXTURE),
         "format": 1,
         "profile": EVIDENCE_PROFILE,
+        "reset_advice_matrix": {
+            "command": reset_advice_command,
+            "comparison": {
+                "compared_value_count": RESET_ADVICE_MATRIX_VALUE_COUNT,
+                "status": "matched",
+            },
+            "fixture": reset_advice_evidence["fixture"],
+            "rust_commands": reset_advice_evidence["rust_commands"],
+            "rust_tests": expected_reset_tests,
+        },
         "rust_build_command": list(test_program.get("build_command", [])),
         "rust_command": rust_command,
         "rust_execution": dict(test_program["execution"]),
