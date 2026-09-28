@@ -16,7 +16,7 @@ spec.loader.exec_module(receipt)
 
 
 class FileDsoReceiptTests(unittest.TestCase):
-    def test_reopened_path_and_memstream_bytes_are_reread(self) -> None:
+    def test_reopened_path_and_memory_stream_bytes_are_reread(self) -> None:
         case = "oracle-static-process"
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             work = Path(temporary)
@@ -46,6 +46,11 @@ class FileDsoReceiptTests(unittest.TestCase):
                 receipt.audit_runtime(work, work / "unused-dynamic")
                 (raw / f"{case}.stdout").write_bytes(
                     receipt.EXPECTED_STDOUT.replace(b"alXYa!\0\0Z", b"alXYa!\0\0Y"))
+                with self.assertRaisesRegex(receipt.ReceiptError, "stdout differs"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                (raw / f"{case}.stdout").write_bytes(receipt.EXPECTED_STDOUT)
+                (raw / f"{case}.stdout").write_bytes(
+                    receipt.EXPECTED_STDOUT.replace(b"abcDEFGH", b"abcDEFGI"))
                 with self.assertRaisesRegex(receipt.ReceiptError, "stdout differs"):
                     receipt.audit_runtime(work, work / "unused-dynamic")
                 (raw / f"{case}.stdout").write_bytes(receipt.EXPECTED_STDOUT)

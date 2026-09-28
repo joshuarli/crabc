@@ -328,6 +328,84 @@ static int memstream_dso_roundtrip(void)
     return 0;
 }
 
+static int fixed_dso_roundtrip(void)
+{
+    static const unsigned char initial[] = {0, '?', '?', '?', '?', '?', '?', '?'};
+    static const unsigned char first[] = {'a', 'b', 'c', 0, '?', '?', '?', '?'};
+    static const unsigned char second[] = {'a', 'b', 'c', 'D', 'E', 0, '?', '?'};
+    static const unsigned char third[] = {'a', 'b', 'c', 'D', 'E', 'F', 'G', 0};
+    char local_buffer[64], observed[8];
+    unsigned char *fixed;
+    size_t capacity;
+    FILE *stream;
+    int result;
+
+    errno = EDOM;
+    stream = crabc_fixed_dso_open(&fixed, &capacity, &errno);
+    if (stream == NULL || errno != ERANGE || fixed == NULL ||
+        capacity != sizeof(observed) ||
+        memcmp(fixed, initial, sizeof(initial)) != 0 ||
+        setvbuf(stream, local_buffer, _IOFBF, sizeof(local_buffer)) != 0)
+        return 1;
+    if (fwrite("abc", 1, 3, stream) != 3 ||
+        memcmp(fixed, initial, sizeof(initial)) != 0)
+        return 2;
+    errno = EDOM;
+    result = crabc_fixed_dso_step(stream, CRABC_FIXED_DSO_FIRST_BUFFERED, &errno);
+    if (result != 0 || errno != ERANGE ||
+        memcmp(fixed, first, sizeof(first)) != 0)
+        return 10 + result;
+    errno = EDOM;
+    result = crabc_fixed_dso_step(stream, CRABC_FIXED_DSO_WRITE_DE, &errno);
+    if (result != 0 || errno != ERANGE ||
+        memcmp(fixed, first, sizeof(first)) != 0 || fflush(stream) != 0 ||
+        memcmp(fixed, second, sizeof(second)) != 0)
+        return 20 + result;
+    errno = EDOM;
+    result = crabc_fixed_dso_step(stream, CRABC_FIXED_DSO_MAIN_FLUSHED, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 30 + result;
+    if (fseek(stream, 1, SEEK_SET) != 0 ||
+        fread(observed, 1, 4, stream) != 4 ||
+        memcmp(observed, "bcDE", 4) != 0 ||
+        fseek(stream, 0, SEEK_END) != 0 ||
+        fwrite("FG", 1, 2, stream) != 2 ||
+        memcmp(fixed, second, sizeof(second)) != 0)
+        return 40;
+    errno = EDOM;
+    result = crabc_fixed_dso_step(stream, CRABC_FIXED_DSO_APPEND_BUFFERED, &errno);
+    if (result != 0 || errno != ERANGE ||
+        memcmp(fixed, third, sizeof(third)) != 0)
+        return 50 + result;
+    errno = EDOM;
+    if (fseek(stream, 9, SEEK_SET) != -1 || errno != EINVAL ||
+        ferror(stream) != 0 || ftell(stream) != 7)
+        return 60;
+    errno = EDOM;
+    result = crabc_fixed_dso_step(stream, CRABC_FIXED_DSO_SHORT_WRITE, &errno);
+    if (result != 0 || errno != ERANGE ||
+        memcmp(fixed, "abcDEFGH", capacity) != 0)
+        return 70 + result;
+    errno = EDOM;
+    if (fflush(stream) != 0 || errno != EDOM || ferror(stream) != 0 ||
+        fseek(stream, 0, SEEK_SET) != 0 ||
+        fread(observed, 1, sizeof(observed), stream) != sizeof(observed) ||
+        memcmp(observed, fixed, sizeof(observed)) != 0 ||
+        fgetc(stream) != EOF || !feof(stream) || ferror(stream) != 0)
+        return 80;
+    if (fclose(stream) != 0 || memcmp(fixed, "abcDEFGH", capacity) != 0)
+        return 81;
+    if (write(STDOUT_FILENO, "fixed-final:", 12) != 12 ||
+        write(STDOUT_FILENO, fixed, capacity) != capacity ||
+        write(STDOUT_FILENO, "\n", 1) != 1)
+        return 82;
+    errno = EDOM;
+    result = crabc_fixed_dso_after_close(&errno);
+    if (result != 0 || errno != ERANGE)
+        return 90 + result;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -386,7 +464,10 @@ int main(int argc, char **argv)
     result = memstream_dso_roundtrip();
     if (result != 0)
         return result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-memstream-ok\n", 28) != 28)
+    result = fixed_dso_roundtrip();
+    if (result != 0)
+        return result;
+    if (write(STDOUT_FILENO, "stdio-file-dso-fmemopen-ok\n", 27) != 27)
         return 11;
     return 0;
 }

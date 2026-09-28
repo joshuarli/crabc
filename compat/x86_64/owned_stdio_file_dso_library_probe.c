@@ -266,6 +266,86 @@ int crabc_memstream_dso_release(int *main_errno)
     return 0;
 }
 
+/* The fixed storage belongs to this image and remains visible to main after
+ * it closes the FILE. No stream callback owns or frees the caller buffer.
+ */
+static unsigned char fixed_buffer[8];
+static FILE *fixed_stream;
+static unsigned fixed_stage;
+
+FILE *crabc_fixed_dso_open(unsigned char **buffer, size_t *capacity,
+                            int *main_errno)
+{
+    static const unsigned char initial[] = {0, '?', '?', '?', '?', '?', '?', '?'};
+
+    if (buffer == NULL || capacity == NULL || main_errno != &errno ||
+        errno != EDOM || fixed_stream != NULL || fixed_stage != 0)
+        return NULL;
+    memset(fixed_buffer, '?', sizeof(fixed_buffer));
+    fixed_stream = fmemopen(fixed_buffer, sizeof(fixed_buffer), "w+");
+    if (fixed_stream == NULL ||
+        memcmp(fixed_buffer, initial, sizeof(initial)) != 0)
+        return NULL;
+    *buffer = fixed_buffer;
+    *capacity = sizeof(fixed_buffer);
+    errno = ERANGE;
+    return fixed_stream;
+}
+
+int crabc_fixed_dso_step(FILE *stream, enum crabc_fixed_dso_stage stage,
+                          int *main_errno)
+{
+    static const unsigned char initial[] = {0, '?', '?', '?', '?', '?', '?', '?'};
+    static const unsigned char first[] = {'a', 'b', 'c', 0, '?', '?', '?', '?'};
+    static const unsigned char second[] = {'a', 'b', 'c', 'D', 'E', 0, '?', '?'};
+    static const unsigned char third[] = {'a', 'b', 'c', 'D', 'E', 'F', 'G', 0};
+    char large[1100];
+
+    if (stream == NULL || stream != fixed_stream || main_errno != &errno ||
+        errno != EDOM || (unsigned)stage != fixed_stage + 1)
+        return 1;
+    if (stage == CRABC_FIXED_DSO_FIRST_BUFFERED) {
+        if (memcmp(fixed_buffer, initial, sizeof(initial)) != 0 ||
+            fflush(stream) != 0 ||
+            memcmp(fixed_buffer, first, sizeof(first)) != 0)
+            return 2;
+    } else if (stage == CRABC_FIXED_DSO_WRITE_DE) {
+        if (fwrite("DE", 1, 2, stream) != 2 ||
+            memcmp(fixed_buffer, first, sizeof(first)) != 0)
+            return 3;
+    } else if (stage == CRABC_FIXED_DSO_MAIN_FLUSHED) {
+        if (memcmp(fixed_buffer, second, sizeof(second)) != 0)
+            return 4;
+    } else if (stage == CRABC_FIXED_DSO_APPEND_BUFFERED) {
+        if (memcmp(fixed_buffer, second, sizeof(second)) != 0 ||
+            fflush(stream) != 0 ||
+            memcmp(fixed_buffer, third, sizeof(third)) != 0)
+            return 5;
+    } else if (stage == CRABC_FIXED_DSO_SHORT_WRITE) {
+        memset(large, 'H', sizeof(large));
+        if (ftell(stream) != 7 || fwrite(large, 1, sizeof(large), stream) != 1 ||
+            errno != EDOM || ferror(stream) != 0 || ftell(stream) != 8 ||
+            memcmp(fixed_buffer, "abcDEFGH", sizeof(fixed_buffer)) != 0)
+            return 6;
+    } else {
+        return 7;
+    }
+    fixed_stage++;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_fixed_dso_after_close(int *main_errno)
+{
+    if (main_errno != &errno || errno != EDOM || fixed_stage != 5 ||
+        memcmp(fixed_buffer, "abcDEFGH", sizeof(fixed_buffer)) != 0)
+        return 1;
+    fixed_stream = NULL;
+    fixed_stage++;
+    errno = ERANGE;
+    return 0;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];

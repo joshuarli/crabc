@@ -43,4 +43,18 @@ FILE *crabc_memstream_dso_open(char ***buffer_slot, size_t **length_slot,
 int crabc_memstream_dso_checkpoint(FILE *stream, enum crabc_memstream_dso_stage stage,
                                     int *main_errno);
 int crabc_memstream_dso_release(int *main_errno);
+
+enum crabc_fixed_dso_stage {
+    CRABC_FIXED_DSO_FIRST_BUFFERED = 1,
+    CRABC_FIXED_DSO_WRITE_DE,
+    CRABC_FIXED_DSO_MAIN_FLUSHED,
+    CRABC_FIXED_DSO_APPEND_BUFFERED,
+    CRABC_FIXED_DSO_SHORT_WRITE
+};
+
+FILE *crabc_fixed_dso_open(unsigned char **buffer, size_t *capacity,
+                            int *main_errno);
+int crabc_fixed_dso_step(FILE *stream, enum crabc_fixed_dso_stage stage,
+                          int *main_errno);
+int crabc_fixed_dso_after_close(int *main_errno);
 #endif
