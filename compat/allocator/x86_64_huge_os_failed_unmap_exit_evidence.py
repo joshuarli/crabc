@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""Compare pinned C and native Rust huge-OS failed-unmap owner exit."""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+PROBE = ROOT / "compat/allocator/x86_64_huge_os_failed_unmap_exit.c"
+RUST_SOURCE = ROOT / "crabc-mimalloc/tests/native_huge_os_failed_unmap_exit.rs"
+RUNTIME_SOURCE = ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs"
+SINGLE_THREAD_SOURCE = ROOT / "crabc-mimalloc/src/single_thread.rs"
+ABANDONED_SOURCE = ROOT / "crabc-mimalloc/src/abandoned.rs"
+REMOTE_FREE_SOURCE = ROOT / "crabc-mimalloc/src/remote_free.rs"
+LIB_SOURCE = ROOT / "crabc-mimalloc/src/lib.rs"
+PAGE_MAP_SOURCE = ROOT / "crabc-mimalloc/src/page_map.rs"
+PROCESS_PAGE_MAP_SOURCE = ROOT / "crabc-mimalloc/src/process_page_map.rs"
+PAGE_SOURCE = ROOT / "crabc-mimalloc/src/page.rs"
+OS_SOURCE = ROOT / "crabc-mimalloc/src/os.rs"
+OS_PAGE_SOURCE = ROOT / "crabc-mimalloc/src/os_page.rs"
+STATISTICS_SOURCE = ROOT / "crabc-mimalloc/src/statistics.rs"
+SUPPORT_SOURCE = ROOT / "crabc-mimalloc/tests/support/native_runtime.rs"
+REPORT = ROOT / "compat/reports/allocator/x86_64/huge-os-failed-unmap-exit.json"
+BASE = ROOT / "compat/allocator/x86_64_regular_small_evidence.py"
+spec = importlib.util.spec_from_file_location("regular_small_base", BASE)
+assert spec is not None and spec.loader is not None
+base = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(base)
+run = base.run
+
+TRACE_BEGIN = "CRABC_MI_HUGE_OS_FAILED_UNMAP_BEGIN"
+TRACE_END = "CRABC_MI_HUGE_OS_FAILED_UNMAP_END"
+C_OS_PREFIX = "CRABC_MI_C_HUGE_OS_SOURCE_STATE "
+RANGE_PREFIX = "CRABC_MI_HUGE_OS_FAILED_RANGE "
+RUST_FILTER = "failed_huge_os_singleton_unmap_preserves_raw_range_while_medium_releases"
+EXPECTED = {
+    "huge_request": 5242880,
+    "medium_request": 65536,
+    "huge_block_size": 5505024,
+    "medium_block_size": 81920,
+    "huge_map_count": 63,
+    "medium_map_count": 8,
+    "huge_os_size": 5767168,
+    "medium_os_size": 589824,
+    "setup_valid": 1,
+    "two_survivors_ready": 1,
+    "abandoned_after_exit": 1,
+    "both_registered_after_exit": 1,
+    "failed_unmap_calls": 1,
+    "exact_failed_range": 1,
+    "huge_map_clear": 1,
+    "huge_mapping_retained": 1,
+    "medium_still_registered": 1,
+    "medium_still_listed": 1,
+    "medium_map_clear": 1,
+    "medium_mapping_gone": 1,
+    "os_list_empty": 1,
+    "arena_count_stable": 1,
+    "huge_reserved_drop": 5767168,
+    "huge_committed_drop": 5701632,
+    "medium_reserved_drop": 589824,
+    "medium_committed_drop": 524288,
+    "warning_order": 1,
+    "raw_retry": 1,
+    "raw_only_retry": 1,
+    "terminal_unmapped": 1,
+}
+C_OS_EXPECTED = {"memkind": 3, "huge_reserved": 1, "medium_reserved": 6,
+                 "failed_primitive_os_unmaps": 1, "warnings": 2}
+SOURCE_ANCHORS = (
+    ("src/arena.c", 819, 855, "8deb9d795b71ad70a008b538c5be49b15f35371bc2d249aeb69b66f2c29a614d"),
+    ("src/arena.c", 1304, 1428, "337af803bb9ea1b51c6dcfffa8c23421b2aea2e28dbf34f22a7f796971b82764"),
+    ("src/free.c", 428, 512, "94e598b118523533357088427b68ca7e1bdbb6e2002495185e1d872d73f066d8"),
+    ("src/page.c", 291, 318, "9c82540ca4cd5c42767bfdd3793f1714a6ffbd3b46fd6bc149383463796241e9"),
+    ("src/page-map.c", 139, 145, "5a9d0a94640b0bd5c436f7e101872c92f73ab47cf7374ad80a0bb5acdf2f5213"),
+    ("src/theap.c", 123, 165, "a84d17ad1b74eb93e79bb3b756f099fd60fe611eda6279c17db283c44cccc1bb"),
+    ("src/os.c", 240, 255, "f16897ef5773bbab7192dbbf24a38df8d41d95e8b94be97feb2a1685aec972c0"),
+    ("src/prim/unix/prim.c", 284, 289, "626417d49c3279a026cb63f7a196e706151cdacc18b2f85eb597a8d4090fe02a"),
+    ("src/options.c", 540, 550, "a81194e743bb6a92b944f09b482084acc5511822f54689ab23f8d6e96046c9e8"),
+)
+
+
+class EvidenceError(RuntimeError):
+    """The source-bound owner-exit trace did not establish its contract."""
+
+
+def render_trace(trace: dict[str, int]) -> str:
+    return "\n".join((TRACE_BEGIN, *(f"{key}={value}" for key, value in trace.items()), TRACE_END))
+
+
+def parse_trace(output: str, description: str) -> dict[str, int]:
+    if output.count(TRACE_BEGIN) != 1 or output.count(TRACE_END) != 1:
+        raise EvidenceError(f"{description} trace markers are missing or duplicated")
+    body = output.split(TRACE_BEGIN, 1)[1].split(TRACE_END, 1)[0]
+    trace = {}
+    for line in body.strip().splitlines():
+        found = re.fullmatch(r"([a-z][a-z_]+)=(-?[0-9]+)", line)
+        if found is None or found[1] in trace:
+            raise EvidenceError(f"{description} trace has malformed or duplicate values")
+        trace[found[1]] = int(found[2])
+    if set(trace) != set(EXPECTED):
+        raise EvidenceError(f"{description} trace has missing or unexpected values")
+    return trace
+
+
+def parse_c_os_state(output: str) -> dict[str, int]:
+    lines = [line for line in output.splitlines() if line.startswith(C_OS_PREFIX)]
+    if len(lines) != 1:
+        raise EvidenceError("C OS state is missing or duplicated")
+    fields = lines[0][len(C_OS_PREFIX):].split()
+    if len(fields) != len(C_OS_EXPECTED):
+        raise EvidenceError("C OS state has missing or unexpected fields")
+    observed = {}
+    for field in fields:
+        found = re.fullmatch(r"([a-z][a-z_]+)=([0-9]+)", field)
+        if found is None or found[1] in observed:
+            raise EvidenceError("C OS state is malformed or duplicated")
+        observed[found[1]] = int(found[2])
+    if observed != C_OS_EXPECTED:
+        raise EvidenceError("C OS state did not complete its source route")
+    return observed
+
+
+def parse_failed_range(output: str) -> tuple[int, int]:
+    lines = [line for line in output.splitlines() if line.startswith(RANGE_PREFIX)]
+    if len(lines) != 1:
+        raise EvidenceError("failed OS range is missing or duplicated")
+    found = re.fullmatch(r"base=0x([0-9A-Fa-f]+) length=([0-9]+)", lines[0][len(RANGE_PREFIX):])
+    if found is None:
+        raise EvidenceError("failed OS range is malformed")
+    base_address, length = int(found[1], 16), int(found[2])
+    if base_address == 0 or base_address % 4096 or length != EXPECTED["huge_os_size"]:
+        raise EvidenceError("failed OS range differs from the source geometry")
+    return base_address, length
+
+
+def parse_warning(output: str, *, c_callback: bool) -> tuple[int, int]:
+    if output.count("unable to free OS memory") != 1:
+        raise EvidenceError("one source failed-unmap warning is required")
+    if c_callback:
+        if (output.count("warning[0]=") != 1 or output.count("warning[1]=") != 1
+                or re.search(r"warning\[[2-9]", output)):
+            raise EvidenceError("C warning callback count or order differs")
+        pattern = (r"warning\[0\]=mimalloc: warning: thread 0x[0-9A-Fa-f]+:\s*"
+                   r"warning\[1\]=unable to free OS memory ")
+    else:
+        if output.count("mimalloc: warning: thread") != 1:
+            raise EvidenceError("Rust warning count differs")
+        pattern = r"mimalloc: warning: thread 0x[0-9A-Fa-f]+: unable to free OS memory "
+    if re.search(pattern, output) is None:
+        raise EvidenceError("failed-unmap warning prefix or order differs")
+    match = re.search(r"unable to free OS memory \(error: 12 \(0x0C\), size: 0x([0-9A-Fa-f]+) bytes, address: 0x([0-9A-Fa-f]+)\)", output)
+    if match is None:
+        raise EvidenceError("failed-unmap warning body differs")
+    return int(match[2], 16), int(match[1], 16)
+
+
+def validate_failure_outputs(c: dict, rust: dict) -> None:
+    for name, record, callback in (("C", c, True), ("Rust", rust, False)):
+        address, length = parse_failed_range(record["stdout"])
+        warned = parse_warning(record["stderr"] if callback else record["stdout"] + "\n" + record["stderr"], c_callback=callback)
+        if warned != (address, length):
+            raise EvidenceError(f"{name} failed range and warning disagree")
+
+
+def compare_traces(c_trace: dict[str, int], rust_trace: dict[str, int]) -> dict[str, int]:
+    for name, trace in (("C", c_trace), ("Rust", rust_trace)):
+        if set(trace) != set(EXPECTED):
+            raise EvidenceError(f"{name} trace is incomplete")
+        for key, value in EXPECTED.items():
+            if type(trace[key]) is not int or trace[key] != value:
+                raise EvidenceError(f"{name} {key}: expected {value}, observed {trace[key]}")
+    if c_trace != rust_trace:
+        raise EvidenceError("C and Rust huge-OS owner-exit traces differ")
+    return c_trace
+
+
+def command(command: list[str], *, cwd: Path, description: str, env=None) -> dict:
+    record = run.command_record(command, cwd=cwd, env=env)
+    try:
+        run.require_success(record, description)
+    except run.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+    return record
+
+
+def source_seal() -> dict[str, str]:
+    return {
+        "c_path": base.relative(PROBE), "c_sha256": base.sha256_file(PROBE),
+        "rust_path": base.relative(RUST_SOURCE), "rust_sha256": base.sha256_file(RUST_SOURCE),
+        "runtime_path": base.relative(RUNTIME_SOURCE), "runtime_sha256": base.sha256_file(RUNTIME_SOURCE),
+        "single_thread_path": base.relative(SINGLE_THREAD_SOURCE),
+        "single_thread_sha256": base.sha256_file(SINGLE_THREAD_SOURCE),
+        "abandoned_path": base.relative(ABANDONED_SOURCE),
+        "abandoned_sha256": base.sha256_file(ABANDONED_SOURCE),
+        "remote_free_path": base.relative(REMOTE_FREE_SOURCE),
+        "remote_free_sha256": base.sha256_file(REMOTE_FREE_SOURCE),
+        "lib_path": base.relative(LIB_SOURCE), "lib_sha256": base.sha256_file(LIB_SOURCE),
+        "page_map_path": base.relative(PAGE_MAP_SOURCE), "page_map_sha256": base.sha256_file(PAGE_MAP_SOURCE),
+        "process_page_map_path": base.relative(PROCESS_PAGE_MAP_SOURCE),
+        "process_page_map_sha256": base.sha256_file(PROCESS_PAGE_MAP_SOURCE),
+        "page_path": base.relative(PAGE_SOURCE), "page_sha256": base.sha256_file(PAGE_SOURCE),
+        "os_path": base.relative(OS_SOURCE), "os_sha256": base.sha256_file(OS_SOURCE),
+        "os_page_path": base.relative(OS_PAGE_SOURCE), "os_page_sha256": base.sha256_file(OS_PAGE_SOURCE),
+        "statistics_path": base.relative(STATISTICS_SOURCE),
+        "statistics_sha256": base.sha256_file(STATISTICS_SOURCE),
+        "support_path": base.relative(SUPPORT_SOURCE), "support_sha256": base.sha256_file(SUPPORT_SOURCE),
+        "lockfile_sha256": base.sha256_file(ROOT / "Cargo.lock"),
+    }
+
+
+def run_evidence(report_path: Path, *, offline: bool) -> dict:
+    provenance = run.require_native_x86_64()
+    pin = run.load_pin()
+    if pin["sha256"] != base.EXPECTED_ARCHIVE_SHA256 or pin["revision"] != base.EXPECTED_UPSTREAM["revision"]:
+        raise EvidenceError("pinned mimalloc source identity drifted")
+    archive = run.fetch_archive(pin, offline)
+    seal = source_seal()
+    with run.temporary_directory("huge-os-failed-unmap-exit-") as name:
+        temporary = Path(name)
+        source = run.safe_extract(archive, temporary / "source", pin["archive_root"])
+        anchors = []
+        for member, first, last, expected in SOURCE_ANCHORS:
+            digest = base.sha256_bytes(base.source_range((source / member).read_bytes(), first, last))
+            if digest != expected:
+                raise EvidenceError(f"pinned source branch drifted: {member}:{first}-{last}")
+            anchors.append({"member": member, "first": first, "last": last, "sha256": digest})
+        c_binary = temporary / "huge-os-failed-unmap-exit-c"
+        c_command = [run.require_tool("musl-gcc"), "-std=c11", "-fPIC", "-ftls-model=initial-exec",
+            *base.EXPECTED_COMPILE_DEFINITIONS, "-I", str(source / "include"),
+            "-I", str(source / "src"), *run.CONFIGURATION_PROFILES["release"],
+            str(PROBE), *(str(source / member) for member in run.ORACLE_SOURCES),
+            "-Wl,--wrap=munmap", "-pthread", "-o", str(c_binary)]
+        c_build = command(c_command, cwd=source, description="pinned C huge-OS owner-exit build")
+        elf_record = command([run.require_tool("readelf"), "-h", str(c_binary)],
+            cwd=source, description="pinned C ELF identity")
+        elf = run.parse_elf_identity(str(elf_record["stdout"]), "x86_64")
+        if elf != base.EXPECTED_C_ELF:
+            raise EvidenceError("pinned C product is not native x86-64 ELF")
+        c_run = command([str(c_binary)], cwd=source, description="pinned C huge-OS owner-exit execution")
+        c_os_state = parse_c_os_state(str(c_run["stdout"]))
+        c_trace = parse_trace(str(c_run["stdout"]), "C")
+        rust_command = [run.require_tool("cargo"), "test", "--offline", "--locked", "--target",
+            base.TARGET, "--target-dir", str(run.WORK_ROOT / "target"), "-p", "crabc-mimalloc",
+            "--test", "native_huge_os_failed_unmap_exit",
+            "--no-default-features", "--features", "native-runtime-test-audit,native-runtime-test-fault",
+            RUST_FILTER, "--", "--exact", "--nocapture", "--test-threads=1"]
+        env = os.environ.copy()
+        env["CARGO_INCREMENTAL"] = "0"
+        rust_run = run.command_record(rust_command, cwd=ROOT, env=env)
+        rust_output = str(rust_run["stdout"]) + "\n" + str(rust_run["stderr"])
+        rust_trace = None
+        if rust_run["status"] == 0 and run.parse_rust_test_count(rust_output) == 1:
+            rust_trace = parse_trace(rust_output, "Rust")
+            try:
+                validate_failure_outputs(c_run, rust_run)
+                trace = compare_traces(c_trace, rust_trace)
+                comparison = {"status": "matched", "values": len(trace), "trace": trace}
+            except EvidenceError as error:
+                comparison = {"status": "diverged", "reason": str(error)}
+        else:
+            comparison = {"status": "execution-failed", "reason": f"Rust status {rust_run['status']} or test count differed"}
+        report = {
+            "kind": "pinned-c-native-rust-huge-os-failed-unmap-exit",
+            "status": comparison["status"], "target": provenance,
+            "source": {"archive_sha256": base.sha256_file(archive), "revision": pin["revision"], "anchors": anchors},
+            "probe": seal,
+            "c": {"build_command": base.normalize_command(c_command, temporary, source),
+                  "build": c_build, "elf": elf, "execution": c_run,
+                  "os_state": c_os_state, "trace": c_trace},
+            "rust": {"command": base.normalize_command(rust_command, temporary, None),
+                     "execution": rust_run, "trace": rust_trace},
+            "comparison": comparison,
+        }
+    if source_seal() != seal:
+        raise EvidenceError("source changed during native differential")
+    run.write_json(report_path, report)
+    report_path.chmod(0o644)
+    return report
+
+
+def validate_report(report: dict) -> dict[str, int]:
+    try:
+        if report["kind"] != "pinned-c-native-rust-huge-os-failed-unmap-exit" or report["status"] != "matched":
+            raise EvidenceError("huge-OS report kind or status differs")
+        source = report["source"]
+        if source["archive_sha256"] != base.EXPECTED_ARCHIVE_SHA256 or source["revision"] != run.load_pin()["revision"]:
+            raise EvidenceError("huge-OS source archive differs")
+        if source["anchors"] != [
+            {"member": member, "first": first, "last": last, "sha256": digest}
+            for member, first, last, digest in SOURCE_ANCHORS
+        ]:
+            raise EvidenceError("huge-OS source anchors differ")
+        if report["probe"] != source_seal():
+            raise EvidenceError("huge-OS source seal differs")
+        c, rust = report["c"], report["rust"]
+        if c["elf"] != base.EXPECTED_C_ELF:
+            raise EvidenceError("huge-OS C ELF identity differs")
+        if (not any(part.endswith("/" + base.relative(PROBE)) for part in c["build_command"])
+                or "-Wl,--wrap=munmap" not in c["build_command"]
+                or RUST_FILTER not in rust["command"] or "native-runtime-test-audit,native-runtime-test-fault" not in rust["command"]
+                or rust["command"][rust["command"].index("--test") + 1] != "native_huge_os_failed_unmap_exit"):
+            raise EvidenceError("huge-OS execution commands differ")
+        for name, record in (("C build", c["build"]), ("C execution", c["execution"]),
+                             ("Rust execution", rust["execution"])):
+            if record["status"] != 0 or not isinstance(record["stdout"], str) or not isinstance(record["stderr"], str):
+                raise EvidenceError(f"huge-OS {name} failed or lacks raw output")
+        if run.parse_rust_test_count(rust["execution"]["stdout"] + "\n" + rust["execution"]["stderr"]) != 1:
+            raise EvidenceError("huge-OS Rust test count differs")
+        validate_failure_outputs(c["execution"], rust["execution"])
+        c_os_state = parse_c_os_state(c["execution"]["stdout"])
+        if c["os_state"] != c_os_state:
+            raise EvidenceError("huge-OS stored C source state differs")
+        c_trace = parse_trace(c["execution"]["stdout"], "C raw report")
+        rust_trace = parse_trace(rust["execution"]["stdout"] + "\n" + rust["execution"]["stderr"], "Rust raw report")
+        trace = compare_traces(c_trace, rust_trace)
+        if c["trace"] != trace or rust["trace"] != trace or report["comparison"] != {
+            "status": "matched", "values": len(trace), "trace": trace,
+        }:
+            raise EvidenceError("huge-OS stored trace differs from raw execution")
+        return trace
+    except (KeyError, TypeError, ValueError, run.HarnessError) as error:
+        raise EvidenceError(f"malformed huge-OS report: {error}") from error
+
+
+def read_report(path: Path) -> dict[str, int]:
+    try:
+        return validate_report(json.loads(path.read_text()))
+    except (OSError, json.JSONDecodeError) as error:
+        raise EvidenceError(f"cannot read huge-OS report: {error}") from error
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--report", type=Path, default=REPORT)
+    parser.add_argument("--read-report", type=Path)
+    arguments = parser.parse_args()
+    try:
+        if arguments.read_report is not None:
+            trace = read_report(arguments.read_report)
+            print(f"huge-OS failed-unmap owner-exit receipt: PASS ({len(trace)} source-bound values)")
+            return 0
+        report = run_evidence(arguments.report, offline=arguments.offline)
+        if report["status"] == "matched":
+            read_report(arguments.report)
+    except (EvidenceError, run.HarnessError, OSError) as error:
+        print(f"huge-OS failed-unmap owner-exit differential: FAIL: {error}", file=sys.stderr)
+        return 1
+    if report["status"] != "matched":
+        print(f"huge-OS failed-unmap owner-exit differential: FAIL: {report['comparison']['reason']}; "
+              f"raw report {arguments.report}", file=sys.stderr)
+        return 1
+    print(f"huge-OS failed-unmap owner-exit differential: PASS ({report['comparison']['values']} source-bound values)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

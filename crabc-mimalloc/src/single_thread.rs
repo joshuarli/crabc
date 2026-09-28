@@ -753,13 +753,13 @@ impl ProcessPostOwnerExitRemoteClaimFailure {
 
 /// Scalar disposition of one pointer-derived owner-exit free.
 ///
-/// This is the only W03 result that crosses from the lower source tail to a
-/// pointer dispatcher.  In particular, it intentionally cannot contain a
+/// This is the only result that crosses from the lower source tail to a
+/// pointer dispatcher. In particular, it intentionally cannot contain a
 /// `ClaimedAbandonedRemoteFree`, a singleton release wrapper, a mapping owner,
-/// a PageMap view, or a former-Theap fact.  `Retained` means W03 has already
-/// placed the unique exact source owner in its private process-lifetime
-/// terminal retention state; a later caller must not try the source
-/// continuation again after it receives this scalar disposition.
+/// a PageMap view, or a former-Theap fact. A retained result means the exact
+/// source owner is sealed for the process lifetime; a caller must not retry
+/// its continuation. Only `RetainedMapMutation` also marks a blocked map
+/// mutation boundary that denies unrelated ordinary allocator admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessPostOwnerExitPointerFreeDisposition {
     PublishedToOwner,
@@ -768,6 +768,9 @@ pub(crate) enum ProcessPostOwnerExitPointerFreeDisposition {
     /// thread's Theap.
     ReclaimedOnFree,
     Released,
+    /// The exact owner is sealed and its PageMap mutation boundary remains
+    /// held or could not be released, so ordinary admission must close.
+    RetainedMapMutation,
     Retained,
 }
 
@@ -837,6 +840,27 @@ enum ProcessPostOwnerExitTerminalRetained {
     /// itself visibly failed. There is no remaining page/mapping owner to
     /// retry; this opaque terminal marker prevents a later fresh lifecycle.
     MutationLeaseReleaseFailure,
+}
+
+impl ProcessPostOwnerExitTerminalRetained {
+    /// A partially completed PageMap tail blocks a later claimed page from
+    /// mutating the same map. An exact page owner whose mutation completed
+    /// remains sealed, but does not hold that process-wide boundary.
+    fn blocks_independent_claims(&self) -> bool {
+        match self {
+            Self::MutationLeaseReleaseFailure => true,
+            Self::Claimed { owner } => match owner {
+                ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(_) => false,
+                ProcessPostOwnerExitClaimTerminalRetained::Regular { mutation, .. }
+                | ProcessPostOwnerExitClaimTerminalRetained::NonArenaRegular { mutation, .. }
+                | ProcessPostOwnerExitClaimTerminalRetained::Singleton { mutation, .. }
+                | ProcessPostOwnerExitClaimTerminalRetained::NonArenaSingleton { mutation, .. }
+                | ProcessPostOwnerExitClaimTerminalRetained::Continuation { mutation, .. } => {
+                    mutation.is_some()
+                }
+            },
+        }
+    }
 }
 
 /// Test-only category of an opaque per-claim terminal retention event.
@@ -1014,16 +1038,16 @@ impl ProcessPostOwnerExitRemoteClaimFailure {
     }
 }
 
-/// One-way process observation that a post-CAS W03 tail retained exact source
-/// state.
+/// One-way process observation that a post-CAS tail retained a PageMap
+/// mutation boundary.
 ///
 /// This is deliberately **not** a publication gate, lock, scheduler, route,
 /// or owner store. Normal `mi_free_block_mt(..., allow_collect=true)` CAS
 /// operations never consult it before publishing. Only an already-claimed
-/// post-CAS tail observes it: after the first exceptional retained owner,
-/// later claims retain their own exact token
-/// instead of entering a PageMap tail whose mutation lease may be held
-/// terminally by the first page. There is no spin or waiting state.
+/// post-CAS tail observes it: after a retained map mutation lease, later
+/// claims retain their own exact token instead of entering that blocked map
+/// tail. A sealed page owner without a mutation lease leaves independent
+/// claims free to continue. There is no spin or waiting state.
 struct ProcessPostOwnerExitTerminalMarker {
     retained: AtomicBool,
     #[cfg(test)]
@@ -1045,6 +1069,15 @@ impl ProcessPostOwnerExitTerminalMarker {
     #[inline]
     fn retain(&self) { self.retained.store(true, Ordering::Release) }
 
+    #[inline]
+    fn retained_disposition(&self) -> ProcessPostOwnerExitPointerFreeDisposition {
+        if self.is_retained() {
+            ProcessPostOwnerExitPointerFreeDisposition::RetainedMapMutation
+        } else {
+            ProcessPostOwnerExitPointerFreeDisposition::Retained
+        }
+    }
+
     #[cfg(test)]
     #[inline]
     fn test_audit_snapshot(&self) -> ProcessPostOwnerExitTerminalAuditSnapshot {
@@ -1064,14 +1097,17 @@ static PROCESS_POST_OWNER_EXIT_TERMINAL_MARKER: ProcessPostOwnerExitTerminalMark
 /// Each source page has its own low-bit serialization, so
 /// concurrent terminal failures on distinct pages retain distinct exact
 /// owners rather than
-/// contending on a process-wide pre-CAS gate. The marker is published first so
-/// every in-flight later claim bypasses the first page's retained map tail.
+/// contending on a process-wide pre-CAS gate. A retained mutation boundary
+/// publishes the marker before the owner is sealed so every in-flight later
+/// claim bypasses the blocked map tail.
 #[inline]
 fn terminalize_post_owner_exit_retained(
     marker: &ProcessPostOwnerExitTerminalMarker,
     owner: ProcessPostOwnerExitTerminalRetained,
 ) {
-    marker.retain();
+    if owner.blocks_independent_claims() {
+        marker.retain();
+    }
     #[cfg(test)]
     marker.audit.record(owner.test_audit_category());
     core::mem::forget(owner);
@@ -2105,7 +2141,7 @@ unsafe fn continue_post_owner_exit_live_allocation_with_terminal_marker(
             // while this concurrent publisher was in flight. It did publish
             // normally, but cannot report a healthy owner after that marker.
             Ok(if marker.is_retained() {
-                ProcessPostOwnerExitPointerFreeDisposition::Retained
+                ProcessPostOwnerExitPointerFreeDisposition::RetainedMapMutation
             } else {
                 ProcessPostOwnerExitPointerFreeDisposition::PublishedToOwner
             })
@@ -2145,7 +2181,7 @@ unsafe fn continue_post_owner_exit_claimed_remote_free(
                 owner: ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(claim),
             },
         );
-        return Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained);
+        return Ok(marker.retained_disposition());
     }
     // `mi_free_try_collect_mt` first needs process facts here, after
     // the CAS made this free the page's one owner.
@@ -2156,7 +2192,7 @@ unsafe fn continue_post_owner_exit_claimed_remote_free(
                 owner: ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(claim),
             },
         );
-        return Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained);
+        return Ok(marker.retained_disposition());
     };
 
     // SAFETY: the exact claim moved directly out of the source CAS;
@@ -2174,12 +2210,12 @@ unsafe fn continue_post_owner_exit_claimed_remote_free(
                 marker,
                 ProcessPostOwnerExitTerminalRetained::MutationLeaseReleaseFailure,
             );
-            Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+            Ok(marker.retained_disposition())
         }
         Ok(result) => match result.into_scalar_or_terminal() {
             Ok(disposition) => {
                 if marker.is_retained() {
-                    Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+                    Ok(marker.retained_disposition())
                 } else {
                     Ok(disposition)
                 }
@@ -2191,7 +2227,7 @@ unsafe fn continue_post_owner_exit_claimed_remote_free(
                         owner,
                     },
                 );
-                Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+                Ok(marker.retained_disposition())
             }
         },
         Err(failure) => {
@@ -2201,7 +2237,7 @@ unsafe fn continue_post_owner_exit_claimed_remote_free(
                     owner: failure.into_claim_terminal_retained(None),
                 },
             );
-            Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+            Ok(marker.retained_disposition())
         }
     }
 }
@@ -44709,7 +44745,7 @@ mod tests {
                 )
             };
             assert_eq!(result, Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained));
-            assert!(marker.is_retained());
+            assert!(!marker.is_retained(), "one page's retained claim has no PageMap mutation lease");
             assert_eq!(
                 marker.test_audit_snapshot(),
                 ProcessPostOwnerExitTerminalAuditSnapshot {
@@ -44921,7 +44957,7 @@ mod tests {
                 },
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
             );
-            assert!(marker.is_retained());
+            assert!(!marker.is_retained(), "the failed OS unmap completed its PageMap mutation");
             assert_eq!(
                 marker.test_audit_snapshot(),
                 ProcessPostOwnerExitTerminalAuditSnapshot {
@@ -44971,35 +45007,65 @@ mod tests {
     }
 
     #[test]
-    fn post_owner_exit_marker_is_post_cas_and_retains_each_in_flight_claim() {
+    fn post_owner_exit_retained_map_mutation_blocks_independent_claim_after_cas() {
         with_w03_process_page_fixture(|_config, page_map, pair, main_heap, session| {
             let marker = ProcessPostOwnerExitTerminalMarker::new();
-            // Model the first exceptional page after its source terminal tail
-            // has completed but its short mutation-lease wake failed. This
-            // has no raw page/block authority, yet must publish the same
-            // post-CAS exception observation as a retained exact owner.
-            terminalize_post_owner_exit_retained(
-                &marker,
-                ProcessPostOwnerExitTerminalRetained::MutationLeaseReleaseFailure,
-            );
-            assert!(marker.is_retained());
-            assert_eq!(
-                marker.test_audit_snapshot(),
-                ProcessPostOwnerExitTerminalAuditSnapshot {
-                    terminalizations: 1,
-                    categories: ProcessPostOwnerExitTerminalAuditCategory::MutationLeaseReleaseFailure
-                        .bit(),
-                }
-            );
-
+            let (first_page, first_block, first_base, _first_layout, first_map_size) =
+                w03_publish_external_singleton(pair, session);
             let (page, block, base, _layout, page_map_size) =
                 w03_publish_external_singleton(pair, session);
+            assert!(first_map_size > ARENA_SLICE_SIZE);
+            let first_allocation = unsafe { page_map.lookup_live_allocation(first_block) }
+                .expect("the first PageMap range remains ready")
+                .expect("the first current pointer resolves before its map tail");
             // SAFETY: this current external client produces the only coherent
             // typed pointer used by the second, in-flight source CAS.
             let allocation = unsafe { page_map.lookup_live_allocation(block) }
                 .expect("the marker fixture PageMap remains ready")
                 .expect("the marker fixture pointer resolves");
+            w03_abandon_non_arena_singleton(first_page, main_heap);
             w03_abandon_non_arena_singleton(page, main_heap);
+
+            // SAFETY: the first abandoned client keeps its exact source page
+            // alive while the allow-collect CAS transfers its low-bit owner.
+            let first_claim = match unsafe {
+                remote_free::push_post_owner_exit_live_allocation(first_allocation)
+            } {
+                Ok(remote_free::LiveRemoteFreePublish::ClaimedAbandonedPage(claim)) => claim,
+                _ => panic!("the first page yields one exact abandoned claim"),
+            };
+            // SAFETY: that exact claim owns this page's terminal map tail. An
+            // injected interruption after the first unregister keeps the
+            // short lease with the claim because the range is partly cleared.
+            let mutation = unsafe { page_map.begin_blocking_exact_post_owner_exit_mutation() }
+                .expect("the claimed page acquires its terminal map mutation");
+            let map = mutation.page_map().expect("the terminal lease sees its map");
+            unsafe { map.unregister_range(first_base.as_ptr(), ARENA_SLICE_SIZE) }
+                .expect("the first slice unregisters before the interruption");
+            assert!(unsafe { map.checked_lookup(first_base.as_ptr()) }.is_null());
+            assert_eq!(unsafe { map.checked_lookup(first_base.as_ptr().add(ARENA_SLICE_SIZE)) },
+                first_page.as_ptr());
+            terminalize_post_owner_exit_retained(
+                &marker,
+                ProcessPostOwnerExitTerminalRetained::Claimed {
+                    owner: ProcessPostOwnerExitClaimTerminalRetained::Continuation {
+                        failure: ProcessPostOwnerExitRemoteClaimFailure {
+                            claim: first_claim,
+                            error: ProcessPostOwnerExitRemoteClaimError::Continuation(
+                                AbandonError::InvalidPageGeometry),
+                        },
+                        mutation: Some(mutation),
+                    },
+                },
+            );
+            assert!(marker.is_retained(), "a partial PageMap tail denies another claim's mutation");
+            assert_eq!(
+                marker.test_audit_snapshot(),
+                ProcessPostOwnerExitTerminalAuditSnapshot {
+                    terminalizations: 1,
+                    categories: ProcessPostOwnerExitTerminalAuditCategory::ContinuationFailure.bit(),
+                }
+            );
 
             // SAFETY: although the marker is already set, W03 must first run
             // the page-local allow-collect CAS. Only the resulting exact W07
@@ -45012,13 +45078,13 @@ mod tests {
                         declined_reclaim_on_free,
                     )
                 },
-                Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::RetainedMapMutation)
             );
             assert_eq!(
                 marker.test_audit_snapshot(),
                 ProcessPostOwnerExitTerminalAuditSnapshot {
                     terminalizations: 2,
-                    categories: ProcessPostOwnerExitTerminalAuditCategory::MutationLeaseReleaseFailure
+                    categories: ProcessPostOwnerExitTerminalAuditCategory::ContinuationFailure
                         .bit()
                         | ProcessPostOwnerExitTerminalAuditCategory::UncontinuedClaim.bit(),
                 },

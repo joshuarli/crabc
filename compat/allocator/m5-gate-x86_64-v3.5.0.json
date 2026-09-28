@@ -39,6 +39,7 @@
         "native_arena_medium_pre_reclaim_remote_exit",
         "native_attachment_only_process_done",
         "native_concurrent_mixed_post_exit_completions",
+        "native_huge_os_failed_unmap_exit",
         "native_huge_singleton_medium_split_exit",
         "native_initial_all_free_local_fork",
         "native_initial_out_of_order_post_exit_free",
@@ -186,6 +187,15 @@
       ],
       "scope": "One worker exits with an 84-slice arena huge singleton whose PageMap registers 63 slices and a separate 8-slice regular medium page. Two attached survivors free the medium and huge clients independently. Pinned C and native Rust compare mapped and unmapped abandonment, arena claims, PageMap, OS abandoned list, slice purge and VM counters through terminal release."
     },
+    "differential:huge-os-failed-unmap-exit": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_huge_os_failed_unmap_exit_evidence.py",
+        "--report",
+        "{scratch}/huge-os-failed-unmap-exit.json"
+      ],
+      "scope": "A worker exits with an OS-backed huge singleton and a separate regular medium page. A first survivor's huge final free fails its one whole-mapping unmap after PageMap removal; an independent survivor still releases the medium page. Pinned C and native Rust compare the retained raw range, OS-list and PageMap ownership, warning, VM counters, and a raw-only retry after both pages' source owners finish."
+    },
     "differential:os-medium-split-releasers-exit": {
       "command": [
         "python3",
@@ -313,6 +323,7 @@
         "differential:arena-singleton-split-releasers-exit",
         "differential:mixed-regular-medium-pre-reclaim-exit",
         "differential:huge-singleton-medium-split-exit",
+        "differential:huge-os-failed-unmap-exit",
         "differential:os-medium-interleaved-reuse-exit",
         "differential:os-medium-pre-reclaim-remote-exit",
         "differential:os-medium-split-releasers-exit",

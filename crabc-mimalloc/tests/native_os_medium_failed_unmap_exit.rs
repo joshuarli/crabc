@@ -137,7 +137,7 @@ fn final_os_medium_unmap_failure_retains_one_terminal_owner() {
                 let physical_retained = unsafe {
                     crabc_core::mm::mincore_raw(failed_range.0 as *mut u8, page_size, &mut residency)
                 }.is_ok();
-                assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::Retained);
+                assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::InvalidPointer);
                 let attempts = fault.observed();
                 drop(range);
                 drop(fault);

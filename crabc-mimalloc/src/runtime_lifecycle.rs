@@ -6627,6 +6627,27 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
     })
 }
 
+/// Copies whether the process main Heap still owns an OS-abandoned page.
+///
+/// This narrow diagnostic remains usable before any regular arena exists.
+/// It takes the Heap's established short lock, copies one scalar, and releases
+/// the lock before returning; no page or list node escapes the projection.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_main_heap_os_abandoned_empty_test_audit() -> Option<bool> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    if !RUNTIME_PROCESS.is_active() {
+        return None;
+    }
+    // SAFETY: active process publication keeps the main Heap and its lock
+    // alive. The helper projects only copied counts while holding that lock.
+    let main_heap = unsafe { RUNTIME_PROCESS.active_main_heap() }?;
+    native_runtime_main_heap_lifecycle_audit(main_heap).map(|(_, empty)| empty)
+}
+
 /// Returns the policy and zero-or-one first-arena state without requiring a
 /// selected live arena.
 ///
@@ -12464,8 +12485,13 @@ fn native_free_pointer_first_nonlocal(
             | ProcessPostOwnerExitPointerFreeDisposition::Released,
         ) => NativePageFreeResult::Freed,
         Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained) => {
-            // W03 already sealed the exact post-CAS source owner. Mark the
-            // runtime terminal only after that consuming operation succeeds.
+            // The exact post-CAS page owner is sealed. A completed PageMap
+            // mutation leaves independent pages free to continue.
+            NativePageFreeResult::Retained
+        }
+        Ok(ProcessPostOwnerExitPointerFreeDisposition::RetainedMapMutation) => {
+            // A partial PageMap tail retained its mutation lease, or release
+            // of that lease failed. Close admission after sealing the owner.
             RUNTIME_PROCESS.retain_page_owner();
             NativePageFreeResult::Retained
         }
