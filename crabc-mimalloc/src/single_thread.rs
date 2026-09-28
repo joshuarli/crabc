@@ -41604,6 +41604,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let _ = unsafe { self.arena.release(memory) };
     }
 
+    // Fresh regular and singleton pages share this queue transition. Keeping
+    // it out of line avoids duplicating its metadata updates in each caller.
+    #[inline(never)]
     fn push_regular_page(&mut self, bin: usize, page: NonNull<Page>) {
         let queue = match self.session.queue_mut(bin) {
             Some(queue) => queue as *mut _,
