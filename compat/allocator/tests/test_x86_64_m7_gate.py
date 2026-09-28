@@ -266,7 +266,8 @@ class M7GateContractTests(unittest.TestCase):
             "json.malloc_normal": "320,160,96", "json.malloc_huge": "8192,4096,2048",
             "json.malloc_requested": "280,140,70", "json.malloc_bins.bin8": "5,4,2,128,65536",
             "json.page_bins.bin8": "3,2,1,128,65536",
-            "fixed.length_plus_one": "0", "fixed.length_plus_two": "1",
+            "fixed.sufficient.result": "1", "fixed.sufficient.complete": "1",
+            "fixed.sufficient.guard": "1",
             "zero_size.grown": "1", "zero_size.caller_intact": "1",
             "null_buffer.grown": "1", "invalid.version": "1",
             "invalid.caller_intact": "1", "invalid.null_image": "1",
@@ -280,7 +281,7 @@ class M7GateContractTests(unittest.TestCase):
             trace[f"fixed.{name}.guard"] = "1"
         gate.require_statistics_json(trace, 2, "complete")
         with self.assertRaises(harness.HarnessError):
-            gate.require_statistics_json({**trace, "fixed.length_plus_two": "0"}, 2, "lost final size")
+            gate.require_statistics_json({**trace, "fixed.sufficient.result": "0"}, 2, "lost full output")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_json({**trace, "json.malloc_requested": "0,0,0"}, 2, "lost field")
 

@@ -81,7 +81,6 @@ int main(void) {
   printf("profile.level=%d\n", MI_STAT);
   char* json = mi_stats_as_json(&image, 0, NULL);
   if (json == NULL) abort();
-  const size_t length = strlen(json);
   printf("json.grown=1\n");
   printf("json.version=%d\n", strstr(json, "\"stat_version\": 5,") != NULL);
   printf("json.mimalloc_version=%d\n", strstr(json, "\"mimalloc_version\": 30500,") != NULL);
@@ -100,13 +99,14 @@ int main(void) {
   show_fixed("fixed.two", &image, 2);
   show_fixed("fixed.three", &image, 3);
   show_fixed("fixed.sixtyfour", &image, 64);
-  if (length + 2 >= 65536) abort();
+  // Live process counters can gain digits between serializations.
   static char exact[65536];
   memset(exact, 'X', sizeof(exact));
-  char* result = mi_stats_as_json(&image, length + 1, exact);
-  printf("fixed.length_plus_one=%d\n", result == NULL ? 0 : result == exact ? 1 : 2);
-  result = mi_stats_as_json(&image, length + 2, exact);
-  printf("fixed.length_plus_two=%d\n", result == NULL ? 0 : result == exact ? 1 : 2);
+  const size_t sufficient_size = sizeof(exact) - 1;
+  char* result = mi_stats_as_json(&image, sufficient_size, exact);
+  printf("fixed.sufficient.result=%d\n", result == NULL ? 0 : result == exact ? 1 : 2);
+  printf("fixed.sufficient.complete=%d\n", result != NULL && strstr(exact, "\"chunk_bins\": [") != NULL);
+  printf("fixed.sufficient.guard=%d\n", exact[sufficient_size] == 'X');
 
   char sentinel[2] = {'X', 'Y'};
   result = mi_stats_as_json(&image, 0, sentinel);
