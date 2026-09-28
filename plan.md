@@ -263,7 +263,9 @@ are not transferable passes for a different revision.
   orientation on a DSO-owned FILE; both retain exact UTF-8 or byte output,
   shared errno, and one close by the owning image. A DSO-owned buffered
   `/dev/full` stream also passes eleven cells: main observes `fflush` return
-  EOF, `ENOSPC`, and `ferror`, then the DSO closes its descriptor once.
+  EOF, `ENOSPC`, and `ferror`, then the DSO closes its descriptor once. A
+  second DSO-owned stream carries pending buffered bytes into `fclose` itself;
+  all eleven cells return EOF with `ENOSPC` and close the descriptor once.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -424,6 +426,11 @@ are not transferable passes for a different revision.
      manifests and the dynamic product state must now carry one matching
      source digest before combined composition or extraction; older retained
      archives without the seal fail closed and need a fresh source-built run.
+     Static package creation and extraction now require the installed
+     manifest's source seal to equal the current checkout digest; physical
+     forged and stripped archives fail before publication. The installed
+     driver rejects missing or malformed seals, while source-bound receipt
+     readers remain responsible for authenticating installed products.
      The finite `aio_cancel` oracle disposition
      is integrated;
      a clean `80724223a` native OS-test replay profile-qualifies 5,395 outcome
