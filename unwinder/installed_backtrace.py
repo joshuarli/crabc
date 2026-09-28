@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import resource
+import shutil
 import subprocess
 import sys
+import tomllib
 from typing import Any
 
 import cleanup
@@ -23,6 +26,9 @@ import owned_posix_static_products as static_products
 
 DSO_LABELS = ("dso-worker", "dso-main")
 STATIC_LABELS = ("static-nested",)
+GUARDED_CFI_OUTPUT = "mapped unwind=5\nmapped wait=0\nunreadable unwind=3\nunreadable wait=0\n"
+GUARDED_CFI_HOST = owned.ROOT / "fixtures/guarded_dso_cfi_host.c"
+GUARDED_CFI_PLUGIN = owned.ROOT / "fixtures/guarded_dso_cfi_plugin.c"
 
 
 def require_record(record: dict[str, str], description: str) -> Path:
@@ -71,10 +77,10 @@ def source_products(static_path: Path, dynamic_path: Path) -> tuple[dict[str, st
     return {"revision": revision, "content_sha256": source}, products, static, dynamic
 
 
-def replay(command: list[str], output: Path, labels: tuple[str, ...]) -> dict[str, Any]:
+def capture(command: list[str], output: Path, *, timeout: int = 90) -> dict[str, Any]:
     try:
         result = subprocess.run(command, env=owned.clean_environment(), text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
         code, out, err = result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired as error:
         code = 124
@@ -86,24 +92,153 @@ def replay(command: list[str], output: Path, labels: tuple[str, ...]) -> dict[st
     for path, value in ((stdout, out), (stderr, err), (status, f"{code}\n")):
         with path.open("x", encoding="utf-8") as stream:
             stream.write(value)
-    observations = owned.assert_backtrace_execution(code, out, err, labels)
     return {"command": command, "status": code,
             "stdout": owned.record_file(stdout, "backtrace replay stdout"),
             "stderr": owned.record_file(stderr, "backtrace replay stderr"),
-            "status_file": owned.record_file(status, "backtrace replay status"),
-            "backtrace": observations}
+            "status_file": owned.record_file(status, "backtrace replay status")}
 
 
-def replay_record(record: dict[str, Any], labels: tuple[str, ...]) -> list[dict[str, Any]]:
+def capture_record(record: dict[str, Any]) -> tuple[int, str, str]:
     stdout = require_record(record["stdout"], "backtrace replay stdout").read_text(encoding="utf-8")
     stderr = require_record(record["stderr"], "backtrace replay stderr").read_text(encoding="utf-8")
     status = int(require_record(record["status_file"], "backtrace replay status").read_text(encoding="utf-8"))
     owned.require(status == record["status"] and isinstance(record["command"], list)
                   and all(isinstance(item, str) for item in record["command"]),
                   "backtrace replay command or exit status changed")
+    return status, stdout, stderr
+
+
+def replay(command: list[str], output: Path, labels: tuple[str, ...]) -> dict[str, Any]:
+    record = capture(command, output)
+    status, stdout, stderr = capture_record(record)
+    record["backtrace"] = owned.assert_backtrace_execution(status, stdout, stderr, labels)
+    return record
+
+
+def replay_record(record: dict[str, Any], labels: tuple[str, ...]) -> list[dict[str, Any]]:
+    status, stdout, stderr = capture_record(record)
     observations = owned.assert_backtrace_execution(status, stdout, stderr, labels)
     owned.require(observations == record["backtrace"], "backtrace replay frames changed after collection")
     return observations
+
+
+def guarded_cfi_result(status: int, stdout: str, stderr: str) -> dict[str, dict[str, int]]:
+    owned.require(status == 0 and stderr == "" and stdout == GUARDED_CFI_OUTPUT,
+                  "guarded DSO CFI child faulted or changed its unwind phase result")
+    return {"mapped": {"unwind": 5, "wait": 0}, "unreadable": {"unwind": 3, "wait": 0}}
+
+
+def guarded_cfi_link_command(linker: Path, inputs: list[Path], plugin: Path) -> list[str]:
+    return [str(linker), "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro", "-z", "now",
+            "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined",
+            "--enable-new-dtags", "-rpath", "/usr/lib", "-soname", plugin.name, "-t",
+            *(str(path) for path in inputs), "-o", str(plugin)]
+
+
+def guarded_cfi_case(product: dict[str, Any], provider: dict[str, Any], output: Path) -> dict[str, Any]:
+    """Add the guarded CFI worker to the installed DSO replay matrix."""
+    output = owned.work_child(output, "guarded DSO replay output")
+    output.mkdir(mode=0o755)
+    output = owned.physical(output, "guarded DSO replay output", directory=True)
+    root = Path(product["root"])
+    channel = tomllib.loads((owned.CHECKOUT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+    target = capture(["rustup", "run", channel, "rustc", "--target", owned.TARGET,
+                      "--print", "target-libdir"], output / "target-libdir")
+    status, target_text, stderr = capture_record(target)
+    owned.require(status == 0 and stderr == "", "guarded DSO target library discovery failed")
+    libdir = owned.physical(Path(target_text.strip()), "pinned target library directory", directory=True)
+    linker = owned.physical(libdir.parent / "bin/gcc-ld/ld.lld", "pinned linker", executable=True)
+    compiler_name = shutil.which("clang")
+    owned.require(compiler_name is not None, "pinned C compiler is unavailable")
+    compiler = owned.physical(Path(os.path.realpath(compiler_name)), "pinned C compiler", executable=True)
+    object_file = output / "plugin.o"
+    plugin = output / "libcrabc_guarded_dso_cfi.so"
+    host = output / "guarded-host"
+    compile_command = [str(compiler), "--target=x86_64-unknown-linux-musl", "-fPIC", "-O1",
+                       "-fno-omit-frame-pointer", "-nostdinc", "-isystem", str(root / "usr/include"),
+                       "-c", str(GUARDED_CFI_PLUGIN), "-o", str(object_file)]
+    inputs = [root / "usr/lib/crti.o", object_file, Path(provider["archive"]["path"]),
+              root / "usr/lib/libc.so", root / "usr/lib/libcrabc-builtins.a", root / "usr/lib/crtn.o"]
+    steps = {"target": target}
+    for name, command in (
+        ("compile", compile_command),
+        ("link", guarded_cfi_link_command(linker, inputs, plugin)),
+        ("host", [str(root / "bin/crabc-cc-dynamic"), "--dynamic-pie", str(GUARDED_CFI_HOST),
+                  "-o", str(host)]),
+        ("fde", ["readelf", "-wf", str(plugin)]),
+        ("dynamic", ["readelf", "-d", str(plugin)]),
+    ):
+        step = capture(command, output / name)
+        step_status, _, step_stderr = capture_record(step)
+        owned.require(step_status == 0 and step_stderr == "", f"guarded DSO {name} failed")
+        steps[name] = step
+    loader = owned.physical(root / "lib/ld-crabc-x86_64.so.1", "owned loader", executable=True)
+    steps["execution"] = capture([str(loader), "--library-path", f"{output}:{root / 'usr/lib'}",
+                                  str(host)], output / "execution", timeout=20)
+    record = {
+        "sources": [owned.record_file(path, "guarded DSO source") for path in (GUARDED_CFI_HOST, GUARDED_CFI_PLUGIN)],
+        "compiler": owned.record_file(compiler, "pinned C compiler"),
+        "linker": owned.record_file(linker, "pinned linker"),
+        "object": owned.record_file(object_file, "guarded DSO object"),
+        "plugin": owned.record_file(plugin, "guarded DSO plugin"),
+        "host": owned.record_file(host, "guarded DSO host"),
+        "host_link": owned.record_file(Path(str(host) + ".crabc-link.json"), "guarded host link receipt"),
+        "link_inputs": [owned.record_file(path, "guarded DSO link input") for path in inputs],
+        "steps": steps,
+        "observed": guarded_cfi_result(*capture_record(steps["execution"])),
+    }
+    validate_guarded_cfi_case(record, product, provider)
+    return record
+
+
+def validate_guarded_cfi_case(record: dict[str, Any], product: dict[str, Any], provider: dict[str, Any]) -> None:
+    root = Path(product["root"])
+    owned.require([require_record(item, "guarded DSO source") for item in record["sources"]]
+                  == [GUARDED_CFI_HOST, GUARDED_CFI_PLUGIN], "guarded DSO sources changed")
+    compiler = require_record(record["compiler"], "pinned C compiler")
+    linker = require_record(record["linker"], "pinned linker")
+    object_file = require_record(record["object"], "guarded DSO object")
+    plugin = require_record(record["plugin"], "guarded DSO plugin")
+    host = require_record(record["host"], "guarded DSO host")
+    host_link = owned.json_object(require_record(record["host_link"], "guarded host link receipt"),
+                                  "guarded host link receipt")
+    owned.require(host_link.get("output_sha256") == owned.digest(host)
+                  and host_link.get("manifest_sha256") == product["manifest"]["sha256"]
+                  and host_link.get("runtime_imports") == [], "guarded host used another runtime")
+    inputs = [root / "usr/lib/crti.o", object_file, Path(provider["archive"]["path"]),
+              root / "usr/lib/libc.so", root / "usr/lib/libcrabc-builtins.a", root / "usr/lib/crtn.o"]
+    owned.require([require_record(item, "guarded DSO link input") for item in record["link_inputs"]] == inputs,
+                  "guarded DSO link inputs changed")
+    steps = record["steps"]
+    for name in ("target", "compile", "link", "host", "fde", "dynamic"):
+        status, _, stderr = capture_record(steps[name])
+        owned.require(status == 0 and stderr == "", f"guarded DSO {name} observation changed")
+    target_text = capture_record(steps["target"])[1]
+    owned.require(Path(target_text.strip()).parent / "bin/gcc-ld/ld.lld" == linker,
+                  "guarded DSO selected another linker")
+    owned.require(steps["compile"]["command"] ==
+                  [str(compiler), "--target=x86_64-unknown-linux-musl", "-fPIC", "-O1",
+                   "-fno-omit-frame-pointer", "-nostdinc", "-isystem", str(root / "usr/include"),
+                   "-c", str(GUARDED_CFI_PLUGIN), "-o", str(object_file)],
+                  "guarded DSO compile command changed")
+    owned.require(steps["link"]["command"] == guarded_cfi_link_command(linker, inputs, plugin)
+                  and steps["host"]["command"] ==
+                  [str(root / "bin/crabc-cc-dynamic"), "--dynamic-pie", str(GUARDED_CFI_HOST), "-o", str(host)],
+                  "guarded DSO link command changed")
+    trace = capture_record(steps["link"])[1]
+    fde = capture_record(steps["fde"])[1]
+    dynamic = capture_record(steps["dynamic"])[1]
+    owned.require(str(provider["archive"]["path"]) in trace and str(root / "usr/lib/libc.so") in trace
+                  and not any(name in trace for name in ("libgcc", "libunwind"))
+                  and "DW_CFA_expression: r16 (rip) (DW_OP_breg3 (rbx): 0)" in fde
+                  and "Shared library: [libc.so]" in dynamic
+                  and "Library soname: [libcrabc_guarded_dso_cfi.so]" in dynamic,
+                  "guarded DSO CFI ELF or selected provider changed")
+    owned.require(steps["execution"]["command"] ==
+                  [str(root / "lib/ld-crabc-x86_64.so.1"), "--library-path",
+                   f"{plugin.parent}:{root / 'usr/lib'}", str(host)]
+                  and guarded_cfi_result(*capture_record(steps["execution"])) == record["observed"],
+                  "guarded DSO CFI child result changed")
 
 
 def owned_receipt(path: Path, products: dict[str, Any]) -> dict[str, Any]:
@@ -183,6 +318,8 @@ def run(static_path: Path, dynamic_path: Path, vendor: Path, image_inspect: Path
         loader = owned.physical(root / "lib/ld-crabc-x86_64.so.1", f"{name} owned dynamic loader", executable=True)
         command = [str(loader), "--library-path", f"{plugin.parent}:{root / 'usr/lib'}", dso_binary]
         dso_replays[name] = replay(command, output / f"{name}-dso-replay", DSO_LABELS)
+    dso_replays["guarded-cfi-installed"] = guarded_cfi_case(
+        products["dynamic"], selected["provider"], output / "guarded-cfi-installed")
     owned.require([entry["label"] for entry in dso_replays["installed"]["backtrace"]]
                   == [entry["label"] for entry in dso_replays["extracted"]["backtrace"]],
                   "installed and extracted DSO completion differs")
@@ -235,6 +372,8 @@ def validate(path: Path) -> dict[str, Any]:
         entry = receipt["dso_replays"][name]
         owned.require(entry["command"] == command, f"{name} DSO replay used another product")
         replay_record(entry, DSO_LABELS)
+    validate_guarded_cfi_case(receipt["dso_replays"]["guarded-cfi-installed"],
+                              products["dynamic"], selected["provider"])
     return receipt
 
 

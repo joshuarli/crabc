@@ -13,6 +13,31 @@ WORK = Path(__file__).parents[2] / ".work/x86_64/unwinder-output-tests"
 
 
 class InstalledBacktraceReplay(unittest.TestCase):
+    def test_guarded_dso_cfi_requires_phase_error_without_child_fault(self):
+        self.assertEqual(backtrace.guarded_cfi_result(0, backtrace.GUARDED_CFI_OUTPUT, ""),
+                         {"mapped": {"unwind": 5, "wait": 0},
+                          "unreadable": {"unwind": 3, "wait": 0}})
+        for output in (
+            backtrace.GUARDED_CFI_OUTPUT.replace("unreadable wait=0", "unreadable wait=139"),
+            backtrace.GUARDED_CFI_OUTPUT.replace("unreadable unwind=3", "unreadable unwind=5"),
+            backtrace.GUARDED_CFI_OUTPUT.replace("mapped unwind=5\n", ""),
+            backtrace.GUARDED_CFI_OUTPUT + "extra\n",
+        ):
+            with self.subTest(output=output), self.assertRaises(backtrace.owned.OwnedCleanupError):
+                backtrace.guarded_cfi_result(0, output, "")
+        with self.assertRaises(backtrace.owned.OwnedCleanupError):
+            backtrace.guarded_cfi_result(-11, backtrace.GUARDED_CFI_OUTPUT, "")
+
+    def test_guarded_dso_reader_rejects_changed_child_status_file(self):
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            output = Path(temporary) / "guarded-cfi"
+            record = backtrace.capture(["/bin/sh", "-c", "printf 'child\\n'"], output)
+            self.assertEqual(backtrace.capture_record(record), (0, "child\n", ""))
+            output.with_suffix(".status").write_text("139\n")
+            with self.assertRaises(backtrace.owned.OwnedCleanupError):
+                backtrace.capture_record(record)
+
     def test_post_exit_reread_rejects_missing_or_changed_streams(self):
         WORK.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=WORK) as temporary:
