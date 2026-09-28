@@ -4,7 +4,7 @@
 The required rows cover startup, threads, C ABI, interposition, static and
 dynamic products, loader, Rust std, Lua, and the selected program corpus.
 The evidence registry names each row's native-shadow product commands. The
-Lua row rereads the private source-build reports inside the pinned image.
+Lua and corpus rows reread their private reports inside the pinned image.
 
 Every evidence entry is an existing `scripts/dev-x86_64.sh` product command.
 One entry, named by the contract's `products` record, builds the native-shadow
@@ -490,6 +490,162 @@ def run_lua_receipt_reader(lane: str, output: str) -> dict[str, Any]:
     return identity
 
 
+def read_corpus_evidence(report_path: Path, dynamic_sysroot: Path) -> dict[str, Any]:
+    """Reread the signed inputs, source, installed runtime, and retained corpus roots."""
+
+    sys.path.insert(0, str(harness.ROOT / "compat/corpus"))
+    import run_x86 as corpus
+
+    try:
+        report_path = corpus.require_physical_directory(report_path.parent, "corpus run root") / report_path.name
+        corpus.sha256_file(report_path, "corpus private report")
+        root = report_path.parent
+        if (root.parent != corpus.DEFAULT_WORK or not root.name.startswith("owned-package-corpus-")
+                or report_path != root / "report.json"):
+            raise harness.HarnessError("corpus private report escaped its retained run root")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        manifest = corpus.load_manifest()
+        cases = corpus.select_cases(manifest, ("all",))
+        product = corpus.validate_product(dynamic_sysroot)
+        state = json.loads((dynamic_sysroot / "share/crabc/dynamic-product-state.json").read_text())
+        provenance = json.loads((dynamic_sysroot / "share/crabc/libc-shared.provenance.json").read_text())
+        source_sha256 = qualification.source_digest()
+        if (state.get("allocator_backend") != "native-shadow"
+                or state.get("source_sha256") != source_sha256
+                or provenance.get("allocator_backend") != "native-shadow"):
+            raise harness.HarnessError("corpus product is not current native-shadow source")
+        source = corpus.source_identity(manifest)
+        inputs = corpus.verify_inputs(manifest, corpus.DEFAULT_INPUT, corpus.DEFAULT_INDEX)
+        tools = corpus.apk_identity()
+        oracle = corpus.oracle_source_identity()
+        if (not isinstance(report, dict) or report.get("schema") != corpus.SCHEMA
+                or report.get("source_mount") != str(corpus.ROOT)
+                or report.get("execution_root") != str(root)
+                or report.get("report_path") != str(report_path)
+                or report.get("passed") is not True
+                or report.get("source") != {"before": source, "after": source}
+                or report.get("inputs") != {"verification_before": inputs, "after": inputs["identity"]}
+                or report.get("tools") != {"before": tools, "after": tools}
+                or report.get("oracle") != {"before": oracle, "after": oracle}
+                or report.get("candidate_product") != {"before": product, "after": product}
+                or report.get("case_count") != len(cases)):
+            raise harness.HarnessError("corpus report source, input, or product identity changed")
+        payload = report.get("application_payload")
+        payload_root = root / "application-payload"
+        if (not isinstance(payload, dict) or payload.get("path") != str(payload_root)
+                or payload.get("package_library_dirs") != list(manifest.package_library_dirs)
+                or payload.get("sha256") != corpus.tree_sha256(
+                    payload_root, "retained corpus payload", retention_modes=payload.get("retention_modes"))
+                or payload.get("elf_closure") != corpus.audit_application_elf_closure(
+                    payload_root, manifest.package_library_dirs)):
+            raise harness.HarnessError("corpus retained application payload changed")
+        outcomes = report.get("outcomes")
+        if (not isinstance(outcomes, list) or len(outcomes) != len(cases)
+                or [row.get("id") if isinstance(row, dict) else None for row in outcomes]
+                != [case.id for case in cases]):
+            raise harness.HarnessError("corpus report omits a frozen workload")
+        for case, outcome in zip(cases, outcomes):
+            if (outcome.get("tier") != case.tier or outcome.get("package") != case.package
+                    or outcome.get("path") != case.path or outcome.get("argv") != list(case.argv)
+                    or outcome.get("environment") != corpus.CASE_ENVIRONMENT
+                    or outcome.get("stateful") is not case.stateful
+                    or outcome.get("requires_dt_relr") is not case.requires_dt_relr):
+                raise harness.HarnessError(f"corpus workload identity changed: {case.id}")
+            roots = outcome.get("roots")
+            if not isinstance(roots, dict) or set(roots) != {"oracle", "candidate"}:
+                raise harness.HarnessError(f"corpus retained roots are absent: {case.id}")
+            for side in ("oracle", "candidate"):
+                row = roots[side]
+                if not isinstance(row, dict):
+                    raise harness.HarnessError(f"corpus retained root is invalid: {case.id} {side}")
+                retained = root / f"{case.id}-{side}"
+                if row.get("execution_tree_after_sha256") != corpus.tree_sha256(
+                        retained, f"{case.id} {side} retained root",
+                        retention_modes=row.get("retention_modes")):
+                    raise harness.HarnessError(f"corpus retained root changed: {case.id} {side}")
+                corpus.assert_runtime_boundary(retained, row["runtime"])
+                runtime = row["runtime"]
+                expected = product if side == "candidate" else None
+                if side == "candidate" and (runtime["loader"]["sha256"] != expected["files"]["lib/ld-crabc-x86_64.so.1"]
+                                            or runtime["libc"]["sha256"] != expected["files"]["usr/lib/libc.so"]):
+                    raise harness.HarnessError(f"corpus candidate runtime differs from product: {case.id}")
+                if side == "oracle" and runtime["libc"]["sha256"] != oracle["runtime"]["sha256"]:
+                    raise harness.HarnessError(f"corpus oracle runtime changed: {case.id}")
+            comparison = outcome.get("comparison")
+            if not isinstance(comparison, dict):
+                raise harness.HarnessError(f"corpus comparison is absent: {case.id}")
+            compared: dict[str, Any] = {}
+            for side in ("oracle", "candidate"):
+                result = comparison.get(side)
+                if (not isinstance(result, dict) or type(result.get("status")) is not int
+                        or type(result.get("timed_out")) is not bool):
+                    raise harness.HarnessError(f"corpus result is invalid: {case.id} {side}")
+                streams = {}
+                for name in ("stdout", "stderr"):
+                    snapshot = result.get(name)
+                    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("hex"), str):
+                        raise harness.HarnessError(f"corpus stream is invalid: {case.id} {side}")
+                    data = bytes.fromhex(snapshot["hex"])
+                    if corpus.stream_snapshot(data) != snapshot:
+                        raise harness.HarnessError(f"corpus stream changed: {case.id} {side}")
+                    streams[name] = data
+                compared[side] = corpus.ProcessResult(result["status"], streams["stdout"],
+                                                      streams["stderr"], result["timed_out"])
+            if (comparison != corpus.compare_results(compared["oracle"], compared["candidate"])
+                    or comparison.get("passed") is not True):
+                raise harness.HarnessError(f"corpus workload did not pass exactly: {case.id}")
+        return {"path": str(report_path), "sha256": corpus.sha256_file(report_path, "corpus report"),
+                "source_sha256": source_sha256, "product_manifest_sha256": product["manifest_sha256"],
+                "input_index_sha256": inputs["identity"]["index"]["sha256"], "case_count": len(cases)}
+    except (corpus.CorpusError, qualification.QualificationError, OSError, ValueError, KeyError, TypeError) as error:
+        raise harness.HarnessError(f"corpus private report is not physically valid: {error}") from error
+
+
+def run_corpus_receipt_reader(command: Sequence[str], output: str) -> dict[str, Any]:
+    """Bind the command's product and retained report to this checkout."""
+
+    positions = [index for index, value in enumerate(command) if value == "--dynamic-sysroot"]
+    if len(positions) != 1 or positions[0] + 1 >= len(command) or "--quiet" not in command:
+        raise harness.HarnessError("corpus command did not name one quiet dynamic product")
+    product = command[positions[0] + 1]
+    if not product.startswith(f"{CONTAINER_ROOT}/.work/"):
+        raise harness.HarnessError("corpus dynamic product escaped checkout work")
+    prefixes = ("owned package corpus evidence: ", "owned x86_64 package corpus: status: ",
+                "owned x86_64 package corpus: report: ")
+    found = [[line[len(prefix):] for line in output.splitlines() if line.startswith(prefix)]
+             for prefix in prefixes]
+    if any(len(values) != 1 for values in found) or found[1] != ["pass"]:
+        raise harness.HarnessError("corpus command did not emit one passing private report")
+    root, report_path = Path(found[0][0]), Path(found[2][0])
+    if (root.parent != CONTAINER_ROOT / ".work/x86_64/tmp/owned-package-corpus"
+            or not root.name.startswith("owned-package-corpus-") or report_path != root / "report.json"):
+        raise harness.HarnessError("corpus command named a foreign private report")
+    git_directory = Path(qualification.git("rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
+    reader = [
+        "docker", "run", "--rm", "--init", "--network", "none", "--platform", "linux/amd64",
+        "--volume", f"{harness.ROOT}:{CONTAINER_ROOT}",
+        "--volume", f"{git_directory}:{git_directory}:ro", "--workdir", str(CONTAINER_ROOT),
+        "--env", "GIT_OPTIONAL_LOCKS=0", "--env", "GIT_CONFIG_COUNT=1",
+        "--env", "GIT_CONFIG_KEY_0=safe.directory", "--env", f"GIT_CONFIG_VALUE_0={CONTAINER_ROOT}",
+        CORE_IMAGE, "python3", "-B", str(CONTAINER_ROOT / "compat/allocator/x86_64_m8_gate.py"),
+        "--read-corpus-evidence", str(report_path), product,
+    ]
+    result = harness.command_record(reader, cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+    if result["status"] != 0:
+        raise harness.HarnessError("corpus physical receipt reader failed: " + str(result["stderr"])[-1000:])
+    try:
+        identity = json.loads(str(result["stdout"]))
+    except ValueError as error:
+        raise harness.HarnessError(f"corpus physical receipt reader returned invalid JSON: {error}") from error
+    if (not isinstance(identity, dict) or identity.get("path") != str(report_path)
+            or identity.get("source_sha256") != qualification.source_digest()
+            or not isinstance(identity.get("sha256"), str)
+            or not isinstance(identity.get("product_manifest_sha256"), str)
+            or not isinstance(identity.get("input_index_sha256"), str)):
+        raise harness.HarnessError("corpus physical receipt identity does not match this checkout")
+    return identity
+
+
 def run_evidence(
     runnable: Mapping[str, Sequence[str]], products: Mapping[str, str], selected: Sequence[str], artifacts: Path,
 ) -> dict[str, dict[str, Any]]:
@@ -535,6 +691,13 @@ def run_evidence(
                 with log.open("a", encoding="utf-8") as stream:
                     stream.write(f"M8 Lua receipt reader: {error}\n")
                 passed = False
+        if evidence_id == "product:package-corpus" and passed:
+            try:
+                receipt = run_corpus_receipt_reader(command, str(record["stdout"]) + str(record["stderr"]))
+            except harness.HarnessError as error:
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(f"M8 corpus receipt reader: {error}\n")
+                passed = False
         if evidence_id in selected:
             results[evidence_id] = {
                 "command": list(command),
@@ -556,6 +719,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv = sys.argv[1:]
     if len(argv) == 3 and argv[0] == "--read-lua-evidence":
         print(json.dumps(read_lua_evidence(argv[1], Path(argv[2])), sort_keys=True))
+        return 0
+    if len(argv) == 3 and argv[0] == "--read-corpus-evidence":
+        print(json.dumps(read_corpus_evidence(Path(argv[1]), Path(argv[2])), sort_keys=True))
         return 0
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group()

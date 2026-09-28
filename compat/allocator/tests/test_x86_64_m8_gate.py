@@ -258,5 +258,30 @@ class M8LuaEvidenceTests(unittest.TestCase):
                     self.assertEqual(result[evidence_id]["status"], "failed")
 
 
+class M8CorpusEvidenceTests(unittest.TestCase):
+    def test_successful_corpus_command_without_private_report_fails(self) -> None:
+        products = {"evidence": "product:p", "evidence_line": "p evidence: ",
+                    "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
+        missing = "/workspace/.work/x86_64/tmp/owned-package-corpus/owned-package-corpus-missing"
+        runnable = {
+            "product:p": ["scripts/dev-x86_64.sh", "produce"],
+            "product:package-corpus": ["scripts/dev-x86_64.sh", "owned-package-corpus",
+                                       "--dynamic-sysroot", "{dynamic_sysroot}", "--quiet"],
+        }
+
+        def command_record(command, **_kwargs):
+            if command[1] == "produce":
+                return {"status": 0, "stdout": "p evidence: /workspace/.work/product\n", "stderr": ""}
+            return {"status": 0, "stdout": "", "stderr": (
+                f"owned package corpus evidence: {missing}\n"
+                "owned x86_64 package corpus: status: pass\n"
+                f"owned x86_64 package corpus: report: {missing}/report.json\n")}
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            with mock.patch.object(harness, "command_record", command_record):
+                results = gate.run_evidence(runnable, products, ["product:package-corpus"], Path(directory))
+        self.assertEqual(results["product:package-corpus"]["status"], "failed")
+
+
 if __name__ == "__main__":
     unittest.main()
