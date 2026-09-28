@@ -2,6 +2,8 @@
 """Physical native-shadow allocator DSO receipt regression."""
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -14,6 +16,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import native_shadow_receipt as receipt  # noqa: E402
+import owned_native_allocator_dso_receipt as semantic_receipt  # noqa: E402
 
 RUNNER = "owned-native-allocator-dso"
 EVIDENCE = re.compile(r"^native-allocator-dso evidence: (/workspace/\.work/x86_64/tmp/owned-native-allocator-dso\.[^\s]+)$", re.M)
@@ -54,6 +57,7 @@ class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
 
         shutil.rmtree(work)
         receipt.read_receipt(ROOT, RUNNER, case_prefix="direct-")
+        semantic_receipt.read_native_allocator_dso_receipt(ROOT)
         retained = latest / "products/candidate-plugin-dso"
         original = retained.read_bytes()
         retained.write_bytes(bytes([original[0] ^ 1]) + original[1:])
@@ -68,6 +72,55 @@ class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
             receipt.read_receipt(ROOT, RUNNER)
         log.write_bytes(original)
         receipt.read_receipt(ROOT, RUNNER)
+
+        receipt_path = latest / "receipt.json"
+        original_receipt = receipt_path.read_bytes()
+        changed = json.loads(original_receipt)
+        changed["cases"] = [case for case in changed["cases"] if case["id"] != "direct-non-pie"]
+        receipt_path.write_text(json.dumps(changed))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "case roster"):
+            semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+
+        changed = json.loads(original_receipt)
+        originals = {}
+        for name in ("oracle-pie", "kernel-pie", "direct-pie"):
+            path = latest / "logs" / f"{name}.stdout"
+            originals[name] = path.read_bytes()
+            path.write_bytes(b"wrong but matching transcript\n")
+            data = path.read_bytes()
+            case = next(case for case in changed["cases"] if case["id"] == name)
+            case["logs"][f"{name}.stdout"] = {
+                "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+            }
+        receipt_path.write_text(json.dumps(changed))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "pinned musl transcript"):
+            semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+        for name, data in originals.items():
+            (latest / "logs" / f"{name}.stdout").write_bytes(data)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+
+        state = latest / "products/dynamic-product-state"
+        original_state = state.read_bytes()
+        changed_state = json.loads(original_state)
+        changed_state["allocator_backend"] = "selected-c"
+        state.write_text(json.dumps(changed_state))
+        changed = json.loads(original_receipt)
+        data = state.read_bytes()
+        changed["products"]["dynamic-product-state"] = {
+            "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+        }
+        receipt_path.write_text(json.dumps(changed))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "allocator backend"):
+            semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+        state.write_bytes(original_state)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_native_allocator_dso_receipt(ROOT)
 
 
 if __name__ == "__main__":
