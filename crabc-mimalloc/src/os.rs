@@ -2133,6 +2133,17 @@ impl Mapping {
         default_random: OsRandom<'_>,
         thp: ThpAdvice,
     ) -> Result<Self> {
+        #[cfg(test)]
+        let mapping = if let Some((direct, over)) = config.aligned_overmap_test_targets {
+            let target = if try_alignment == 1 { over } else { direct };
+            Self::map_fixed_for_aligned_test(config, length, access, target)
+        } else {
+            Self::map_for_allocator_with_policy(
+                process.policy, config, length, try_alignment, access,
+                allow_large, default_random, thp,
+            )
+        };
+        #[cfg(not(test))]
         let mapping = Self::map_for_allocator_with_policy(
             process.policy,
             config,
@@ -6410,6 +6421,42 @@ mod tests {
     }
 
     #[cfg(target_arch = "x86_64")]
+    struct OsPageClaimWarningCapture {
+        subprocess: AtomicPtr<crate::subproc::SubprocessIdentity>,
+        deliveries: std::sync::Mutex<std::vec::Vec<(std::vec::Vec<u8>, i64, i64)>>,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    impl OsPageClaimWarningCapture {
+        fn new() -> Self {
+            Self {
+                subprocess: AtomicPtr::new(core::ptr::null_mut()),
+                deliveries: std::sync::Mutex::new(std::vec::Vec::new()),
+            }
+        }
+
+        fn arm(&self, process: VmProcess<'_>) {
+            self.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+            self.deliveries.lock().unwrap().clear();
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_os_page_claim_warning(message: *const c_char, argument: *mut c_void) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the process and address-stable capture outlive every selected
+        // serialized callback; the mutex owns its copied warning bytes.
+        let capture = unsafe { &*(argument as *const OsPageClaimWarningCapture) };
+        let subprocess = capture.subprocess.load(Ordering::Acquire);
+        if subprocess.is_null() { return; }
+        let bytes = unsafe { CStr::from_ptr(message) }.to_bytes().to_vec();
+        let statistics = unsafe { &*subprocess }.vm_statistics().snapshot();
+        capture.deliveries.lock().unwrap().push((
+            bytes, statistics.reserved_current, statistics.committed_current,
+        ));
+    }
+
+    #[cfg(target_arch = "x86_64")]
     unsafe extern "C" {
         fn fputs(message: *const c_char, stream: *mut c_void) -> i32;
         static mut stderr: *mut c_void;
@@ -10597,6 +10644,162 @@ mod tests {
         std::println!("CRABC_MI_M2_LEGACY_OS_PAGE_TRIM_END");
         assert!(memory_exact && suffix_exact && terminal_live && raw_retry
             && suffix_still_live && raw_no_stats && raw_suffix);
+    }
+
+    /// A process-owned fresh OS page retains the failed suffix as an escaped
+    /// range and accounts the returned middle exactly once before raw retry.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_process_os_page_suffix_trim_trace() {
+        use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner};
+        fn source_pointer(value: usize) -> std::string::String {
+            let width = if value <= u32::MAX as usize { 8 }
+                else if value >> 16 <= u32::MAX as usize { 12 } else { 16 };
+            std::format!("0x{value:0width$X}")
+        }
+
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let max_warnings = b"mimalloc_max_warnings=100\0";
+        let environment = std::boxed::Box::leak(std::boxed::Box::new([
+            show_errors.as_ptr().cast(), max_warnings.as_ptr().cast(), core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let output = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(
+            unexpected_default_diagnostic_output,
+        )));
+        // SAFETY: this test retains the source environment, output owner, and
+        // callback capture under the serialized policy lock for their lifetime.
+        unsafe { output.initialize_source_options(vm_policy_source_environment_for_test) };
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(OsPageClaimWarningCapture::new()));
+        unsafe { output.register_output(Some(capture_os_page_claim_warning as OutputCallback),
+            warnings as *mut OsPageClaimWarningCapture as *mut c_void) };
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(
+            unsafe { VmPolicy::from_process_options(output) },
+        ));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, crate::subproc::MainSubprocess::test_static_owner());
+        warnings.arm(process);
+        let mut config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        let alignment = crate::config::PAGE_META_ALIGNMENT;
+        let length = 192 * 1024;
+        let span = 6 * alignment + length + alignment + 4096;
+        // SAFETY: this private reservation only selects page-aligned free
+        // addresses and is removed before non-replacing fixed mmap claims.
+        let reservation = unsafe { crabc_core::mm::mmap_raw(
+            core::ptr::null_mut(), span, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0,
+        ) }.expect("temporary paired aligned target reservation");
+        let aligned = (reservation.addr() + alignment - 1) & !(alignment - 1);
+        let direct_target = aligned + 4096;
+        let over_target = aligned + 4 * alignment + 4096;
+        assert!(over_target + length + alignment <= reservation.addr() + span);
+        // SAFETY: the temporary mapping has no references or owners, and
+        // a concurrent claimant makes the later fixed mmap fail safely.
+        unsafe { crabc_core::mm::munmap_raw(reservation, span) }
+            .expect("release temporary paired aligned targets");
+        config.test_aligned_overmap_targets(direct_target, over_target);
+
+        let before = process.subprocess().vm_statistics().snapshot();
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 3, Errno::NOMEM));
+        let capture = fault.capture_unmap_ranges();
+        let claim = match OsAlignedPageClaim::allocate_for_process(
+            process, config, 4096, 128 * 1024, crate::arena::ArenaId::none(),
+        ) {
+            Ok(claim) => claim,
+            Err(_) => panic!("failed suffix trim still returns its process-owned claim"),
+        };
+        let (ranges, count) = capture.all().expect("three exact trim releases");
+        let base = claim.base().unwrap().addr();
+        let memory = claim.memory_id().unwrap();
+        let length = memory.size().unwrap();
+        let (suffix_address, suffix_length) = ranges[2];
+        let suffix_exact = count == 3 && fault.observed() == 3
+            && suffix_address == base + length && suffix_length == 4096
+            && m2_aligned_overmap_page_is_live(suffix_address, 4096);
+        let memory_exact = memory.kind() == MemoryKind::Os
+            && memory.os_base().unwrap().value() == base
+            && memory.initially_committed() && memory.initially_zero()
+            && length == 192 * 1024;
+        let claimed = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let failure = match claim.release() {
+            Ok(()) => panic!("terminal unmap failure must keep one process-owned claim"),
+            Err(failure) => failure,
+        };
+        let (terminal_ranges, terminal_count) = capture.all().expect("terminal release range");
+        let terminal_exact = terminal_count == 4 && fault.observed() == 1
+            && terminal_ranges[3] == (base, length)
+            && m2_aligned_overmap_page_is_live(base, 4096);
+        drop(capture);
+        let final_stats = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::disabled());
+        let OsAlignedPageOwner::Claim(claim) = failure.into_owner() else {
+            panic!("terminal failure changed process-owned claim ownership");
+        };
+        let raw_retry = claim.release().is_ok();
+        let suffix_still_live = m2_aligned_overmap_page_is_live(suffix_address, 4096);
+        let raw_no_stats = process.subprocess().vm_statistics().snapshot() == final_stats;
+        // SAFETY: the failed best-effort trim removed the suffix from the
+        // retained claim, leaving only this explicit fixture cleanup owner.
+        let raw_suffix = unsafe { crabc_core::mm::munmap_raw(
+            suffix_address as *mut u8, suffix_length,
+        ) }.is_ok();
+
+        let deliveries = warnings.deliveries.lock().unwrap();
+        let prefix = |bytes: &[u8]| bytes.starts_with(b"mimalloc: warning: thread 0x")
+            && bytes.ends_with(b": ");
+        let fallback = std::format!(
+            "unable to allocate aligned OS memory directly, fall back to over-allocation (size: 0x30000 bytes, address: {}, alignment: 0x10000000, commit: 0)\n",
+            source_pointer(direct_target),
+        );
+        let free_warning = |size: usize, address: usize| std::format!(
+            "unable to free OS memory (error: 12 (0x0C), size: 0x{size:X} bytes, address: {})\n",
+            source_pointer(address),
+        );
+        let warning_order = deliveries.len() == 6
+            && prefix(&deliveries[0].0) && deliveries[1].0 == fallback.as_bytes()
+            && prefix(&deliveries[2].0)
+            && deliveries[3].0 == free_warning(suffix_length, suffix_address).as_bytes()
+            && prefix(&deliveries[4].0)
+            && deliveries[5].0 == free_warning(length, base).as_bytes();
+        let warning_before_stats = deliveries.len() == 6
+            && deliveries[3].1 == before.reserved_current + length as i64 + suffix_length as i64
+            && deliveries[3].2 == before.committed_current
+            && deliveries[5].1 == before.reserved_current + length as i64
+            && deliveries[5].2 == before.committed_current + 64 * 1024;
+        let warning_bodies = deliveries.iter().filter(|delivery|
+            delivery.0.starts_with(b"unable to allocate aligned OS memory directly")
+                || delivery.0.starts_with(b"unable to free OS memory")
+        ).count();
+        std::println!("CRABC_MI_M2_PROCESS_OS_PAGE_TRIM_BEGIN");
+        for (key, value) in [
+            ("memory_exact", i64::from(memory_exact)),
+            ("suffix_exact", i64::from(suffix_exact)),
+            ("terminal_exact", i64::from(terminal_exact)),
+            ("middle_length", length as i64),
+            ("escaped_suffix_length", suffix_length as i64),
+            ("reserved_claim", claimed.reserved_current - before.reserved_current),
+            ("committed_claim", claimed.committed_current - before.committed_current),
+            ("mmap_claim", claimed.mmap_calls - before.mmap_calls),
+            ("reserved_final", final_stats.reserved_current - before.reserved_current),
+            ("committed_final", final_stats.committed_current - before.committed_current),
+            ("warning_fragments", deliveries.len() as i64),
+            ("warning_bodies", warning_bodies as i64),
+            ("warning_order", i64::from(warning_order)),
+            ("warning_before_stats", i64::from(warning_before_stats)),
+            ("raw_middle", i64::from(raw_retry)),
+            ("raw_suffix", i64::from(raw_suffix)),
+            ("raw_no_stats", i64::from(raw_no_stats)),
+            ("suffix_still_live", i64::from(suffix_still_live)),
+        ] {
+            std::println!("process.claim.{key}={value}");
+        }
+        std::println!("CRABC_MI_M2_PROCESS_OS_PAGE_TRIM_END");
+        assert!(memory_exact && suffix_exact && terminal_exact && raw_retry && raw_suffix
+            && suffix_still_live && raw_no_stats);
     }
 
     #[test]
