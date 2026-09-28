@@ -6,6 +6,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import shutil
 import struct
 import sys
 import tempfile
@@ -798,7 +799,21 @@ class CollectorCompositionTests(unittest.TestCase):
             }.items():
                 (cache / name).write_text(value, encoding="ascii")
             contract = evidence._performance_contract(str(ROOT.resolve()))
-            cache_topology = contract.benchmark_cpu_cache_topology(0, directory / "sysfs")
+            def cache_topology_for(raw: Path, source: Path) -> dict[str, object]:
+                topology = contract.benchmark_cpu_cache_topology(0, source)
+                retained = raw / "raw" / "host" / "cache-sysfs"
+                retained.mkdir(parents=True, exist_ok=True)
+                source_cache = source / "cpu0" / "cache"
+                files: dict[str, object] = {}
+                if source_cache.is_dir():
+                    shutil.copytree(source_cache, retained / "cpu0" / "cache")
+                    for path in sorted((retained / "cpu0" / "cache").rglob("*")):
+                        if path.is_file():
+                            files[path.relative_to(retained / "cpu0" / "cache").as_posix()] = identity(path)
+                topology["raw_sysfs"] = {
+                    "root": recorded(retained), "available": source_cache.is_dir(), "files": files,
+                }
+                return topology
             external_paths = {
                 "musl_compiler": evidence.FIXED_MUSL_COMPILER,
                 "readelf": evidence.FIXED_READELF,
@@ -809,6 +824,7 @@ class CollectorCompositionTests(unittest.TestCase):
 
             def attempt_tools(index: int) -> dict[str, object]:
                 raw = directory / f"attempt-{index}"
+                cache_topology = cache_topology_for(raw, directory / "sysfs")
                 cpuinfo = raw / "cpuinfo.raw"
                 cpuinfo.write_bytes(b"processor: 0\nmodel name: Example CPU\n\n"
                                     b"processor: 1\nmodel name: Example CPU\n")
@@ -942,6 +958,26 @@ class CollectorCompositionTests(unittest.TestCase):
                 self.assertEqual(list(checked.blockers), release["blockers"])
 
                 original_last = json.loads(attempt_paths[-1].read_text(encoding="utf-8"))
+                forged_cache = directory / "forged-sysfs" / "cpu0" / "cache" / "index0"
+                forged_cache.mkdir(parents=True)
+                for name, value in {
+                    "level": "1\n", "coherency_line_size": "64\n", "type": "Data\n",
+                    "size": "512K\n", "shared_cpu_list": "0-1\n",
+                }.items():
+                    (forged_cache / name).write_text(value, encoding="ascii")
+                forged_topology = contract.benchmark_cpu_cache_topology(0, directory / "forged-sysfs")
+                forged_cache_report = copy.deepcopy(original_last)
+                forged_cache_report["tools"]["before"]["host"]["cache_topology"].update(forged_topology)
+                forged_cache_report["tools"]["after"] = copy.deepcopy(forged_cache_report["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(forged_cache_report), encoding="utf-8")
+                forged_cache_collector = {
+                    **report, "uncontended_host": host, "scorecard": scorecard, "release": release,
+                    "attempts": [*report["attempts"][:-1], {"index": 3, "report": identity(attempt_paths[-1])}],
+                }
+                report_path.write_text(json.dumps(forged_cache_collector), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "cache topology differs from retained sysfs"):
+                    evidence.validate_collector_report(ROOT, report_path)
+
                 conflicting_work_root = copy.deepcopy(original_last)
                 conflicting_work_root["tools"]["before"]["host"]["environment"]["CRABC_WORK_DIR"] = (
                     requests[0]["work_dir"])
@@ -1044,13 +1080,41 @@ class CollectorCompositionTests(unittest.TestCase):
                         with self.assertRaisesRegex(evidence.EvidenceError, expected):
                             evidence.validate_collector_report(ROOT, report_path)
                 unsupported = copy.deepcopy(original_last)
-                unsupported["tools"]["before"]["host"]["cache_topology"] = (
-                    contract.benchmark_cpu_cache_topology(0, directory / "missing-sysfs"))
+                retained_cache = directory / "attempt-3" / "raw" / "host" / "cache-sysfs"
+                shutil.rmtree(retained_cache)
+                unsupported["tools"]["before"]["host"]["cache_topology"] = cache_topology_for(
+                    directory / "attempt-3", directory / "missing-sysfs")
+                unsupported["tools"]["before"]["host"]["cache_topology"]["reason"] = (
+                    "cache sysfs is unavailable: /sys/devices/system/cpu/cpu0/cache")
                 unsupported["tools"]["after"] = copy.deepcopy(unsupported["tools"]["before"])
                 attempt_paths[-1].write_text(json.dumps(unsupported), encoding="utf-8")
                 rehashed["attempts"][-1]["report"] = identity(attempt_paths[-1])
                 report_path.write_text(json.dumps(rehashed), encoding="utf-8")
                 self.assertTrue(evidence.validate_collector_report(ROOT, report_path).evidence_valid)
+                shutil.copytree(cache.parent, retained_cache / "cpu0" / "cache")
+                attempt_paths[-1].write_text(json.dumps(original_last), encoding="utf-8")
+
+                instruction = copy.deepcopy(original_last)
+                raw_type = retained_cache / "cpu0" / "cache" / "index0" / "type"
+                raw_type.write_text("Instruction\n", encoding="ascii")
+                topology = instruction["tools"]["before"]["host"]["cache_topology"]
+                topology.clear()
+                topology.update({
+                    "status": "unsupported", "reason": "no data or unified cache entries",
+                    "raw_sysfs": {
+                        **original_last["tools"]["before"]["host"]["cache_topology"]["raw_sysfs"],
+                        "files": {
+                            **original_last["tools"]["before"]["host"]["cache_topology"]["raw_sysfs"]["files"],
+                            "index0/type": identity(raw_type),
+                        },
+                    },
+                })
+                instruction["tools"]["after"] = copy.deepcopy(instruction["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(instruction), encoding="utf-8")
+                rehashed["attempts"][-1]["report"] = identity(attempt_paths[-1])
+                report_path.write_text(json.dumps(rehashed), encoding="utf-8")
+                self.assertTrue(evidence.validate_collector_report(ROOT, report_path).evidence_valid)
+                raw_type.write_text("Data\n", encoding="ascii")
                 attempt_paths[-1].write_text(json.dumps(original_last), encoding="utf-8")
 
                 forged_release = {**report, "uncontended_host": host, "scorecard": scorecard, "release": {"qualified": True, "blockers": []}}

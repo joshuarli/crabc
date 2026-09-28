@@ -2616,17 +2616,77 @@ def _verify_stable_cpuinfo_identity(
             f"attempt {index} selected CPU is absent from retained cpuinfo")
 
 
-def _verify_cache_topology(checkout: Path, record: object, *, cpu: int, index: int) -> None:
+def _verify_retained_cache_sysfs(checkout: Path, record: Mapping[str, Any], *, cpu: int,
+                                 index: int, work_dir: str) -> None:
+    """Rebuild the selected CPU topology from attempt-owned raw sysfs bytes."""
+
+    raw = record.get("raw_sysfs")
+    expected_root = f"{work_dir}/raw/host/cache-sysfs"
+    require(isinstance(raw, dict) and set(raw) == {"root", "available", "files"}
+            and raw["root"] == expected_root and type(raw["available"]) is bool
+            and isinstance(raw["files"], dict),
+            f"attempt {index} retained cache sysfs record differs")
+    retained = checkout.resolve(strict=True) / _relative_to_mount(expected_root, SOURCE_MOUNT)
+    require(retained.is_dir() and not retained.is_symlink()
+            and retained.resolve(strict=True) == retained,
+            f"attempt {index} retained cache sysfs root differs")
+    cpu_root = retained / f"cpu{cpu}"
+    require({path.name for path in retained.iterdir()} == ({cpu_root.name} if raw["available"] else set())
+            and (not raw["available"] or (
+                cpu_root.is_dir() and not cpu_root.is_symlink()
+                and {path.name for path in cpu_root.iterdir()} == {"cache"}
+            )), f"attempt {index} retained cache sysfs tree differs")
+    cache_root = retained / f"cpu{cpu}" / "cache"
+    require(cache_root.is_dir() == raw["available"] and not cache_root.is_symlink(),
+            f"attempt {index} retained cache sysfs availability differs")
+    files: set[str] = set()
+    if raw["available"]:
+        require(len(list(cache_root.iterdir())) <= 64,
+                f"attempt {index} retained cache sysfs has too many entries")
+        contract = _performance_contract(str(checkout.resolve(strict=True)))
+        for directory in cache_root.iterdir():
+            require(directory.is_dir() and not directory.is_symlink()
+                    and re.fullmatch(r"index[0-9]+", directory.name) is not None,
+                    f"attempt {index} retained cache sysfs directory differs")
+            require({path.name for path in directory.iterdir()} <= set(contract.CACHE_SYSFS_FIELDS),
+                    f"attempt {index} retained cache sysfs fields differ")
+            for name in contract.CACHE_SYSFS_FIELDS:
+                path = directory / name
+                if not path.exists():
+                    continue
+                key = f"{directory.name}/{name}"
+                files.add(key)
+                require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 4096,
+                        f"attempt {index} retained cache sysfs file differs")
+                require(isinstance(raw["files"].get(key), dict)
+                        and raw["files"][key].get("path") == f"{expected_root}/cpu{cpu}/cache/{key}",
+                        f"attempt {index} retained cache sysfs path differs")
+                retained_file_identity(checkout, SOURCE_MOUNT, raw["files"][key],
+                                       f"attempt {index} cache sysfs {key}")
+    require(set(raw["files"]) == files,
+            f"attempt {index} retained cache sysfs roster differs")
+    contract = _performance_contract(str(checkout.resolve(strict=True)))
+    derived = contract.benchmark_cpu_cache_topology(cpu, retained)
+    if derived["status"] == "unsupported":
+        derived["reason"] = derived["reason"].replace(
+            str(cache_root), f"/sys/devices/system/cpu/cpu{cpu}/cache")
+    require({key: value for key, value in record.items() if key != "raw_sysfs"} == derived,
+            f"attempt {index} cache topology differs from retained sysfs")
+
+
+def _verify_cache_topology(checkout: Path, record: object, *, cpu: int, index: int,
+                           work_dir: str) -> None:
     """Replay cache size classes from the selected CPU's recorded sysfs entries."""
 
     require(isinstance(record, dict), f"attempt {index} cache topology is absent")
     if record.get("status") == "unsupported":
-        require(set(record) == {"status", "reason"}
+        require(set(record) == {"status", "reason", "raw_sysfs"}
                 and isinstance(record["reason"], str) and bool(record["reason"]),
                 f"attempt {index} unsupported cache topology differs")
+        _verify_retained_cache_sysfs(checkout, record, cpu=cpu, index=index, work_dir=work_dir)
         return
     require(record.get("status") == "ok"
-            and set(record) == {"status", "cpu", "caches", "scalar_matrix_size_classes", "cache_span_size_class"},
+            and set(record) == {"status", "cpu", "caches", "scalar_matrix_size_classes", "cache_span_size_class", "raw_sysfs"},
             f"attempt {index} cache topology fields differ")
     require(type(record["cpu"]) is int and record["cpu"] == cpu,
             f"attempt {index} cache topology CPU differs from benchmark CPU")
@@ -2684,6 +2744,7 @@ def _verify_cache_topology(checkout: Path, record: object, *, cpu: int, index: i
             and all(same_class(scalar[str(size)], classify(size)) for size in sizes)
             and same_class(record["cache_span_size_class"], classify(contract.CACHE_SPAN_BYTES)),
             f"attempt {index} cache size classifications differ from cache entries")
+    _verify_retained_cache_sysfs(checkout, record, cpu=cpu, index=index, work_dir=work_dir)
 
 
 def _verify_governor(record: object, *, index: int) -> None:
@@ -2767,7 +2828,8 @@ def _verify_attempt_tools(
     require(peer_cpu is None or (
         type(peer_cpu) is int and peer_cpu in allowed_affinity and peer_cpu != host["benchmark_cpu"]
     ), f"attempt {index} peer CPU differs from the original allowed affinity")
-    _verify_cache_topology(checkout, host["cache_topology"], cpu=host["benchmark_cpu"], index=index)
+    _verify_cache_topology(checkout, host["cache_topology"], cpu=host["benchmark_cpu"],
+                           index=index, work_dir=work_dir)
     _verify_governor(host["governor"], index=index)
     require(isinstance(host["docker_image_id"], str) and re.fullmatch(r"sha256:[0-9a-f]{64}", host["docker_image_id"]) is not None
             and host["docker_image_id"] == attempt["attempt"]["docker_image_id"], f"attempt {index} image provenance differs")

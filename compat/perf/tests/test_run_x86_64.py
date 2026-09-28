@@ -316,6 +316,49 @@ class ImageToolManifestEnvironmentTests(unittest.TestCase):
 
 
 class HostIdentityTests(unittest.TestCase):
+    def test_cache_sysfs_capture_retains_selected_cpu_bytes_and_detects_drift(self) -> None:
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            work = Path(temporary)
+            source = work / "sysfs" / "cpu2" / "cache" / "index0"
+            source.mkdir(parents=True)
+            for name, value in {
+                "level": "1\n", "coherency_line_size": "64\n", "type": "Data\n",
+                "size": "32K\n", "shared_cpu_list": "2-3\n",
+            }.items():
+                (source / name).write_text(value, encoding="ascii")
+            retained = work / "raw" / "host" / "cache-sysfs"
+            first = runner.capture_cache_sysfs(ROOT, retained, 2, work / "sysfs")
+            self.assertTrue(first["available"])
+            self.assertEqual(set(first["files"]), {f"index0/{name}" for name in runner.aarch64_contract.CACHE_SYSFS_FIELDS})
+            self.assertEqual((retained / "cpu2/cache/index0/size").read_bytes(), b"32K\n")
+            self.assertEqual(runner.capture_cache_sysfs(ROOT, retained, 2, work / "sysfs"), first)
+            (source / "size").write_text("512K\n", encoding="ascii")
+            with self.assertRaisesRegex(runner.AdapterError, "cache sysfs changed"):
+                runner.capture_cache_sysfs(ROOT, retained, 2, work / "sysfs")
+
+    def test_cache_sysfs_capture_preserves_absent_and_instruction_only_inputs(self) -> None:
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            work = Path(temporary)
+            missing = runner.capture_cache_sysfs(ROOT, work / "missing-raw", 2, work / "absent")
+            self.assertEqual((missing["available"], missing["files"]), (False, {}))
+            source = work / "sysfs" / "cpu2" / "cache" / "index0"
+            source.mkdir(parents=True)
+            for name, value in {
+                "level": "1\n", "coherency_line_size": "64\n", "type": "Instruction\n",
+                "size": "32K\n", "shared_cpu_list": "2\n",
+            }.items():
+                (source / name).write_text(value, encoding="ascii")
+            retained = work / "instruction-raw"
+            captured = runner.capture_cache_sysfs(ROOT, retained, 2, work / "sysfs")
+            self.assertTrue(captured["available"])
+            self.assertEqual(runner.aarch64_contract.benchmark_cpu_cache_topology(2, retained),
+                             {"status": "unsupported", "reason": "no data or unified cache entries"})
+            (source / "size").unlink()
+            incomplete = runner.capture_cache_sysfs(ROOT, work / "incomplete-raw", 2, work / "sysfs")
+            self.assertNotIn("index0/size", incomplete["files"])
+            self.assertEqual(runner.aarch64_contract.benchmark_cpu_cache_topology(
+                2, work / "incomplete-raw")["status"], "unsupported")
+
     def test_cpu_identity_ignores_live_frequency_telemetry(self) -> None:
         """A normal CPU-frequency change cannot invalidate one attempt."""
 

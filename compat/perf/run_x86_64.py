@@ -369,6 +369,7 @@ def tool_snapshot(
     allowed_affinity: Sequence[int],
     peer_cpu: int | None,
     image_manifest: Path,
+    cache_sysfs: Path,
 ) -> dict[str, Any]:
     """Seal image-owned tool bytes and their content-addressed manifest."""
 
@@ -393,7 +394,7 @@ def tool_snapshot(
         "musl_loader": musl_loader,
         "musl_libc": musl_libc,
         "image_tool_manifest": manifest,
-        "host": host_snapshot(cpu, allowed_affinity, peer_cpu),
+        "host": host_snapshot(root, cache_sysfs, cpu, allowed_affinity, peer_cpu),
     }
 
 
@@ -547,7 +548,45 @@ def capture_host_load(root: Path, retained: Path) -> dict[str, Any]:
     return record
 
 
-def host_snapshot(cpu: int, allowed_affinity: Sequence[int], peer_cpu: int | None) -> dict[str, Any]:
+def capture_cache_sysfs(root: Path, retained: Path, cpu: int,
+                        sysfs_root: Path = Path("/sys/devices/system/cpu")) -> dict[str, Any]:
+    """Retain bounded selected-CPU cache inputs and check both snapshots match."""
+
+    source = sysfs_root / f"cpu{cpu}" / "cache"
+    retained.mkdir(parents=True, exist_ok=True)
+    available = source.is_dir()
+    dirs = (sorted((path for path in source.glob("index*")
+                    if path.is_dir() and path.name.removeprefix("index").isdecimal()),
+                   key=lambda path: path.name) if available else [])
+    require(len(dirs) <= 64, "selected CPU has too many cache sysfs entries")
+    paths: dict[str, Path] = {}
+    for directory in dirs:
+        for name in aarch64_contract.CACHE_SYSFS_FIELDS:
+            source_file = directory / name
+            if not source_file.exists():
+                continue
+            raw = source_file.read_bytes()
+            require(len(raw) <= 4096, f"selected CPU cache sysfs {directory.name}/{name} is too large")
+            target = retained / f"cpu{cpu}" / "cache" / directory.name / name
+            if target.exists():
+                require(target.is_file() and not target.is_symlink() and target.read_bytes() == raw,
+                        "selected CPU cache sysfs changed during performance attempt")
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+            paths[f"{directory.name}/{name}"] = target
+    copied_root = retained / f"cpu{cpu}" / "cache"
+    require(not copied_root.exists() or copied_root.is_dir(), "retained cache sysfs root differs")
+    if available:
+        copied_root.mkdir(parents=True, exist_ok=True)
+    else:
+        require(not copied_root.exists(), "selected CPU cache sysfs changed during performance attempt")
+    return {"root": recorded_path(root, retained), "available": available,
+            "files": {name: retained_identity(root, path) for name, path in paths.items()}}
+
+
+def host_snapshot(root: Path, cache_sysfs: Path, cpu: int,
+                  allowed_affinity: Sequence[int], peer_cpu: int | None) -> dict[str, Any]:
     governors: dict[str, Any] = {}
     for name in ("scaling_governor", "scaling_available_governors"):
         path = Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/{name}")
@@ -557,7 +596,9 @@ def host_snapshot(cpu: int, allowed_affinity: Sequence[int], peer_cpu: int | Non
         for name in sorted(("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "CRABC_PERF_DOCKER_IMAGE_ID", "CRABC_PERF_CONTAINER_POLICY", "CRABC_WORK_DIR", "CARGO_HOME"))
         if name in os.environ
     }
+    raw_cache = capture_cache_sysfs(root, cache_sysfs, cpu)
     cache = aarch64_contract.benchmark_cpu_cache_topology(cpu)
+    cache["raw_sysfs"] = raw_cache
     return {
         "system": platform.system(),
         "machine": platform.machine(),
@@ -3411,6 +3452,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
             "before": tool_snapshot(
                 root, product, musl_cc, cpu, allowed_affinity, peer_cpu,
                 raw_root / "image-tools.manifest",
+                raw_root / "host" / "cache-sysfs",
             ),
             "after": {},
             "host_cpuinfo_diagnostics": {
@@ -3520,6 +3562,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         report["tools"]["after"] = tool_snapshot(
             root, product, musl_cc, cpu, allowed_affinity, peer_cpu,
             raw_root / "image-tools.manifest",
+            raw_root / "host" / "cache-sysfs",
         )
         report["tools"]["host_cpuinfo_diagnostics"]["after"] = capture_cpuinfo_diagnostic(
             root, raw_root / "host" / "cpuinfo.after.raw",

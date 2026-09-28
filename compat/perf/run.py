@@ -203,6 +203,9 @@ def parse_cache_size_bytes(value: str) -> int:
     return int(match.group(1)) * multiplier[match.group(2)]
 
 
+CACHE_SYSFS_FIELDS = ("level", "coherency_line_size", "type", "size", "shared_cpu_list")
+
+
 def benchmark_cpu_cache_topology(cpu: int, sysfs_root: Path = Path("/sys/devices/system/cpu")) -> dict[str, Any]:
     """Record data/unified cache facts needed to classify scalar input sizes."""
 
