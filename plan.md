@@ -256,7 +256,10 @@ are not transferable passes for a different revision.
   count, bin lifetime, owner merge, local free, and zeroed contents. A regular
   64-byte cross-thread free now matches 18 C/Rust requested-byte and bin
   observations, including the freeing Theap's debit before publication and
-  the final merged zero count. All 15 statistics evidence rows pass on a clean
+  the final merged zero count. An arena-backed 32 KiB medium cross-thread
+  free now matches 53 selected C/Rust keys through owner merges, surviving
+  PageMap membership, and terminal page-bin release without new OS mapping.
+  All 15 statistics evidence rows pass on a clean
   source. Other page and fast-path
   shapes, other remote bin-free, and metadata-Theap statistics producers remain
   unproved, so full M7
