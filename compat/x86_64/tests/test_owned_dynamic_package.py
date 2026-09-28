@@ -87,7 +87,7 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                 self.assertFalse((workspace / "forged").exists())
 
     def test_archive_and_extraction_require_canonical_dynamic_members(self) -> None:
-        """Archive members use the writer's order, modes, and metadata."""
+        """Archive members use the writer's order, format, modes, and metadata."""
 
         modes = {
             "bin/crabc-cc-dynamic": 0o755,
@@ -176,6 +176,25 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                 with self.assertRaisesRegex(package.driver.shared.DriverError, "package member order"):
                     package.extract(reordered, output)
             self.assertFalse(output.exists())
+
+            for variant, archive_format in (("pax", tarfile.PAX_FORMAT),
+                                            ("gnu", tarfile.GNU_FORMAT)):
+                with self.subTest(variant=variant):
+                    forged = workspace / (variant + ".tar")
+                    with tarfile.open(archive, "r:") as original, \
+                         tarfile.open(forged, "w", format=archive_format) as rewritten:
+                        for member in original.getmembers():
+                            projected = copy.copy(member)
+                            if variant == "pax" and projected.name == entries[0]:
+                                projected.pax_headers = {"comment": "forged"}
+                            payload = original.extractfile(member) if member.isfile() else None
+                            rewritten.addfile(projected, payload)
+                    output = workspace / ("rejected-" + variant)
+                    with mock.patch.object(package.driver, "validate", return_value=record), \
+                         mock.patch.object(package.qualification, "product_identity"):
+                        with self.assertRaisesRegex(package.driver.shared.DriverError, "package archive format"):
+                            package.extract(forged, output)
+                    self.assertFalse(output.exists())
 
             for relative, changed_mode in (("usr/lib/libc.so", 0o644),
                                            ("usr/lib/crt1.o", 0o755),

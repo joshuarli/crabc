@@ -41,20 +41,62 @@ def package(root: Path, output: Path) -> None:
 def write_archive(root: Path, output: Path, record: dict, entries: list[str]) -> None:
     with tarfile.open(output, "w", format=tarfile.USTAR_FORMAT) as archive:
         for relative in entries:
-            entry = tarfile.TarInfo(relative)
-            entry.mtime = 1
-            entry.uid = entry.gid = 0
-            entry.uname = entry.gname = ""
             if relative in record["symlinks"]:
-                entry.type = tarfile.SYMTYPE
-                entry.linkname = record["symlinks"][relative]
-                entry.mode = 0o777
-                archive.addfile(entry)
+                archive.addfile(canonical_member_info(relative, 0, record["symlinks"]))
             else:
                 payload = (root / relative).read_bytes()
-                entry.size = len(payload)
-                entry.mode = 0o755 if relative in EXECUTABLE_PAYLOADS else 0o644
+                entry = canonical_member_info(relative, len(payload), record["symlinks"])
                 archive.addfile(entry, io.BytesIO(payload))
+
+
+def canonical_member_info(relative: str, size: int, symlinks: dict[str, str]) -> tarfile.TarInfo:
+    entry = tarfile.TarInfo(relative)
+    entry.mtime = 1
+    entry.uid = entry.gid = 0
+    entry.uname = entry.gname = ""
+    if relative in symlinks:
+        entry.type = tarfile.SYMTYPE
+        entry.linkname = symlinks[relative]
+        entry.mode = 0o777
+    else:
+        entry.size = size
+        entry.mode = 0o755 if relative in EXECUTABLE_PAYLOADS else 0o644
+    return entry
+
+
+def require_canonical_ustar(archive: tarfile.TarFile, members: list[tarfile.TarInfo]) -> None:
+    # Tarfile hides PAX and GNU extension records when it exposes members.
+    # Check physical headers and spacing so those records cannot survive projection.
+    stream = archive.fileobj
+    offset = 0
+    for member in members:
+        if member.offset != offset or member.offset_data != offset + tarfile.BLOCKSIZE:
+            raise driver.shared.DriverError("package archive format differs")
+        try:
+            header = canonical_member_info(member.name, member.size, driver.ALIASES).tobuf(
+                format=tarfile.USTAR_FORMAT
+            )
+        except (ValueError, OverflowError, tarfile.TarError) as error:
+            raise driver.shared.DriverError("package archive format differs") from error
+        stream.seek(offset)
+        if stream.read(tarfile.BLOCKSIZE) != header:
+            raise driver.shared.DriverError("package archive format differs")
+        data_end = member.offset_data + member.size
+        offset = member.offset_data + (
+            (member.size + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE
+        ) * tarfile.BLOCKSIZE
+        stream.seek(data_end)
+        if any(stream.read(offset - data_end)):
+            raise driver.shared.DriverError("package archive format differs")
+    expected_size = (
+        (offset + 2 * tarfile.BLOCKSIZE + tarfile.RECORDSIZE - 1) // tarfile.RECORDSIZE
+    ) * tarfile.RECORDSIZE
+    stream.seek(0, 2)
+    if stream.tell() != expected_size:
+        raise driver.shared.DriverError("package archive format differs")
+    stream.seek(offset)
+    if any(stream.read(expected_size - offset)):
+        raise driver.shared.DriverError("package archive format differs")
 
 
 def extract(package_path: Path, output: Path) -> None:
@@ -103,6 +145,7 @@ def extract(package_path: Path, output: Path) -> None:
             raise driver.shared.DriverError("package manifest roster mismatch")
         if names != sorted(names):
             raise driver.shared.DriverError("package member order differs")
+        require_canonical_ustar(archive, members)
         payloads = {}
         for entry in members:
             if entry.name in driver.ALIASES and not entry.issym():
