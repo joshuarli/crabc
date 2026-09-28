@@ -1320,9 +1320,10 @@ impl ProcessPageMapRoot {
         if self.storage.root.load().is_none() {
             return Err(ProcessPageMapError::Poisoned);
         }
-        // SAFETY: the exact-live-client caller proof excludes an overlapping
-        // source-plain register/unregister write for this arena slice.
-        let page = unsafe { self.storage.page_map_ref().checked_lookup(client.as_ptr()) };
+        // SAFETY: READY publication installed an active map. Terminal
+        // destruction ends all readers before changing that map's activity,
+        // and the exact live client excludes an overlapping entry write.
+        let page = unsafe { self.storage.page_map_ref().checked_lookup_in_active_map(client.as_ptr()) };
         let Some(page) = NonNull::new(page) else {
             return Ok(None);
         };
@@ -2091,6 +2092,36 @@ mod tests {
     }
 
     #[test]
+    fn published_active_lookup_keeps_live_and_unregistered_addresses_distinct() {
+        with_live_pointer_remote_fixture(|lease, page, block| {
+            let map = lease.page_map().expect("the published map remains ready");
+            let unregistered = block.as_ptr().wrapping_sub(ARENA_SLICE_SIZE);
+            let beyond_committed = core::ptr::without_provenance::<u8>(usize::MAX);
+            // SAFETY: the fixture keeps its map active and serializes this
+            // registered slice. The other two addresses are unregistered and
+            // have no overlapping PageMap entry writer.
+            unsafe {
+                assert_eq!(map.checked_lookup_in_active_map(block.as_ptr()), page.as_ptr());
+                assert!(map.checked_lookup_in_active_map(unregistered).is_null());
+                assert!(map.checked_lookup_in_active_map(beyond_committed).is_null());
+            }
+            // SAFETY: the exact current block pins its registration and page.
+            let live = unsafe { lease.lookup_live_allocation(block) }
+                .expect("the map stays ready")
+                .expect("the registered current client resolves");
+            assert_eq!(live.page(), page);
+            assert_eq!(live.client(), block);
+            assert_eq!(
+                unsafe { remote_free::push_live_allocation(live) },
+                Ok(LiveRemoteFreePublish::PublishedToOwner),
+            );
+            let owner = unsafe { Page::remote_free_owner_state_at(page) }
+                .expect("the fixture owner remains source-associated");
+            assert_eq!(unsafe { remote_free::collect_live_page(owner) }, Ok(1));
+        });
+    }
+
+    #[test]
     fn live_reallocation_copy_source_keeps_an_interior_client_prefix_bounded() {
         with_live_pointer_remote_fixture(|lease, mut page, block| {
             const INTERIOR_ADJUSTMENT: usize = 5;
@@ -2476,6 +2507,27 @@ mod tests {
             Err(ProcessPageMapError::SubprocessMismatch)
         ));
         assert_eq!(first.root().unwrap(), root);
+    }
+
+    #[test]
+    fn terminal_destroy_closes_published_lookup_before_map_release() {
+        let storage = ProcessPageMapStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let root = storage.initialize(memory_config(), subprocess)
+            .expect("the process publishes an active PageMap");
+        let unregistered = core::ptr::without_provenance::<u8>(usize::MAX);
+        // SAFETY: this address has no registered slice or overlapping writer.
+        assert_eq!(unsafe { root.lookup_registered_page(unregistered) }, Ok(None));
+        // SAFETY: this isolated map has no live pages, source owner, or reader.
+        unsafe { storage.destroy_terminal_quiescent() }
+            .expect("the empty process PageMap releases after quiescence");
+        assert!(storage.root.load().is_none());
+        // A retained root handle must reject before dereferencing the map
+        // whose backing was released by terminal destruction.
+        assert_eq!(
+            unsafe { root.lookup_registered_page(unregistered) },
+            Err(ProcessPageMapError::Poisoned),
+        );
     }
 
     #[test]

@@ -734,15 +734,25 @@ impl PageMap {
     }
 
     fn submap_at(&self, index: usize) -> Result<Option<NonNull<PageEntry>>> {
-        let header = self.header()?;
+        self.header()?;
+        // SAFETY: `header` established that this map is active.
+        Ok(unsafe { self.submap_at_active(index) })
+    }
+
+    /// # Safety
+    /// The map must remain active throughout the lookup.
+    #[inline(always)]
+    unsafe fn submap_at_active(&self, index: usize) -> Option<NonNull<PageEntry>> {
+        // SAFETY: the caller keeps the initialized mapped header live.
+        let header = unsafe { self.header.as_ref() };
         if index >= header.committed_count.load(Ordering::Acquire) {
-            return Ok(None);
+            return None;
         }
         // SAFETY: the Acquire count proves the raw pointer word is committed;
         // its atomic view is aligned and pairs with submap publication.
-        Ok(NonNull::new(
+        NonNull::new(
             unsafe { atomic_submap_slot(self.header, index) }.load(Ordering::Acquire),
-        ))
+        )
     }
 
     fn ensure_submap_at(&self, index: usize) -> Result<NonNull<PageEntry>> {
@@ -881,11 +891,23 @@ impl PageMap {
     /// The caller must prevent this plain entry read from overlapping a
     /// registration or unregistration of the same arena slice.
     pub(crate) unsafe fn checked_lookup(&self, address: *const u8) -> *mut Page {
-        let location = location_of_address(address.addr());
         if !self.active {
             return null_mut();
         }
-        let Ok(Some(submap)) = self.submap_at(location.map_index) else {
+        // SAFETY: the activity check above keeps the mapped header available.
+        unsafe { self.checked_lookup_in_active_map(address) }
+    }
+
+    /// Looks up a possibly unregistered address in a map already known active.
+    ///
+    /// # Safety
+    /// The map must remain active throughout this call. The caller must also
+    /// exclude an overlapping registration or unregistration of the selected
+    /// arena slice, as for `checked_lookup`.
+    #[inline(always)]
+    pub(crate) unsafe fn checked_lookup_in_active_map(&self, address: *const u8) -> *mut Page {
+        let location = location_of_address(address.addr());
+        let Some(submap) = (unsafe { self.submap_at_active(location.map_index) }) else {
             return null_mut();
         };
         // SAFETY: location arithmetic bounds sub_index and the caller excludes
