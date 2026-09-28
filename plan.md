@@ -100,7 +100,9 @@ are not transferable passes for a different revision.
   request after the first fills and matches pinned C across 33 claim,
   mapping, purge, and registry observations. A delayed partial release beside
   a live slice in that second arena matches 15 further purge, bitmap, mapping,
-  and survivor observations. A committed medium OS page matches 136 C/Rust
+  and survivor observations. A second-arena reset policy with
+  `purge_decommits=0` matches 15 more MADV_FREE and counter observations. A
+  committed medium OS page matches 136 C/Rust
   publication, PageMap, terminal-release, and failed-unmap relations. A
   separate second-arena EIO purge regression matches 16 of 19 fields; Rust
   still omits the pinned decommit warning and its callback-order observations.
@@ -114,7 +116,7 @@ are not transferable passes for a different revision.
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
-  and the quiescent page-utilization query; ten
+  and the quiescent page-utilization query; eleven
   runnable evidence rows pass, including fresh-process Heap membership
   regressions and a ten-case source-built main-Heap population differential
   across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
@@ -122,7 +124,9 @@ are not transferable passes for a different revision.
   remote-free lifetime through a visitor collection. A worker-abandoned
   regular page now matches six pinned-C area, live-block, and early-stop
   observations through `mi_heap_visit_abandoned_blocks`; an abandoned OS
-  singleton matches five more rows, including freed-page omission. All ten required gates
+  singleton matches five more rows, including freed-page omission. A combined
+  regular-page and OS-singleton visitor preserves their source traversal order.
+  All ten required gates
   remain blocked by 11 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
   Integrated products are
