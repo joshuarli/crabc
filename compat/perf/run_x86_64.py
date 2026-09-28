@@ -370,6 +370,7 @@ def tool_snapshot(
     peer_cpu: int | None,
     image_manifest: Path,
     cache_sysfs: Path,
+    governor_sysfs: Path,
 ) -> dict[str, Any]:
     """Seal image-owned tool bytes and their content-addressed manifest."""
 
@@ -394,7 +395,7 @@ def tool_snapshot(
         "musl_loader": musl_loader,
         "musl_libc": musl_libc,
         "image_tool_manifest": manifest,
-        "host": host_snapshot(root, cache_sysfs, cpu, allowed_affinity, peer_cpu),
+        "host": host_snapshot(root, cache_sysfs, governor_sysfs, cpu, allowed_affinity, peer_cpu),
     }
 
 
@@ -585,12 +586,44 @@ def capture_cache_sysfs(root: Path, retained: Path, cpu: int,
             "files": {name: retained_identity(root, path) for name, path in paths.items()}}
 
 
-def host_snapshot(root: Path, cache_sysfs: Path, cpu: int,
+def capture_governor_sysfs(root: Path, retained: Path, cpu: int,
+                           sysfs_root: Path = Path("/sys/devices/system/cpu")) -> dict[str, Any]:
+    """Retain stable selected-CPU policy fields across both host snapshots."""
+
+    retained.mkdir(parents=True, exist_ok=True)
+    source = sysfs_root / f"cpu{cpu}" / "cpufreq"
+    files: dict[str, Path] = {}
+    values: dict[str, str | None] = {}
+    for name in evidence.GOVERNOR_SYSFS_FIELDS:
+        source_file = source / name
+        target = retained / f"cpu{cpu}" / "cpufreq" / name
+        if not source_file.is_file():
+            require(not target.exists() and not target.is_symlink(),
+                    "selected CPU governor sysfs changed during performance attempt")
+            values[name] = None
+            continue
+        raw = source_file.read_bytes()
+        require(len(raw) <= 4096, f"selected CPU governor sysfs {name} is too large")
+        if target.exists():
+            require(target.is_file() and not target.is_symlink() and target.read_bytes() == raw,
+                    "selected CPU governor sysfs changed during performance attempt")
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw)
+        files[name] = target
+        values[name] = raw.decode("utf-8", errors="replace").strip()
+    return {
+        **values,
+        "raw_sysfs": {
+            "root": recorded_path(root, retained),
+            "files": {name: retained_identity(root, path) for name, path in files.items()},
+        },
+    }
+
+
+def host_snapshot(root: Path, cache_sysfs: Path, governor_sysfs: Path, cpu: int,
                   allowed_affinity: Sequence[int], peer_cpu: int | None) -> dict[str, Any]:
-    governors: dict[str, Any] = {}
-    for name in ("scaling_governor", "scaling_available_governors"):
-        path = Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/{name}")
-        governors[name] = path.read_text(encoding="utf-8", errors="replace").strip() if path.is_file() else None
+    governors = capture_governor_sysfs(root, governor_sysfs, cpu)
     environment = {
         name: os.environ.get(name)
         for name in sorted(("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "CRABC_PERF_DOCKER_IMAGE_ID", "CRABC_PERF_CONTAINER_POLICY", "CRABC_WORK_DIR", "CARGO_HOME"))
@@ -3453,6 +3486,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
                 root, product, musl_cc, cpu, allowed_affinity, peer_cpu,
                 raw_root / "image-tools.manifest",
                 raw_root / "host" / "cache-sysfs",
+                raw_root / "host" / "governor-sysfs",
             ),
             "after": {},
             "host_cpuinfo_diagnostics": {
@@ -3563,6 +3597,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
             root, product, musl_cc, cpu, allowed_affinity, peer_cpu,
             raw_root / "image-tools.manifest",
             raw_root / "host" / "cache-sysfs",
+            raw_root / "host" / "governor-sysfs",
         )
         report["tools"]["host_cpuinfo_diagnostics"]["after"] = capture_cpuinfo_diagnostic(
             root, raw_root / "host" / "cpuinfo.after.raw",

@@ -814,6 +814,27 @@ class CollectorCompositionTests(unittest.TestCase):
                     "root": recorded(retained), "available": source_cache.is_dir(), "files": files,
                 }
                 return topology
+            def governor_for(raw: Path, selected: str | None,
+                             available: str | None) -> dict[str, object]:
+                retained = raw / "raw" / "host" / "governor-sysfs"
+                if retained.exists():
+                    shutil.rmtree(retained)
+                retained.mkdir(parents=True)
+                files: dict[str, object] = {}
+                for name, value in (
+                    ("scaling_governor", selected),
+                    ("scaling_available_governors", available),
+                ):
+                    if value is not None:
+                        path = retained / "cpu0" / "cpufreq" / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(value + "\n", encoding="utf-8")
+                        files[name] = identity(path)
+                return {
+                    "scaling_governor": selected,
+                    "scaling_available_governors": available,
+                    "raw_sysfs": {"root": recorded(retained), "files": files},
+                }
             external_paths = {
                 "musl_compiler": evidence.FIXED_MUSL_COMPILER,
                 "readelf": evidence.FIXED_READELF,
@@ -825,6 +846,7 @@ class CollectorCompositionTests(unittest.TestCase):
             def attempt_tools(index: int) -> dict[str, object]:
                 raw = directory / f"attempt-{index}"
                 cache_topology = cache_topology_for(raw, directory / "sysfs")
+                governor = governor_for(raw, "performance", "performance")
                 cpuinfo = raw / "cpuinfo.raw"
                 cpuinfo.write_bytes(b"processor: 0\nmodel name: Example CPU\n\n"
                                     b"processor: 1\nmodel name: Example CPU\n")
@@ -848,7 +870,7 @@ class CollectorCompositionTests(unittest.TestCase):
                         "cpuinfo_sha256": evidence.cpuinfo_identity_sha256(cpuinfo.read_bytes()),
                         "benchmark_cpu": 0, "allowed_affinity_before_pin": [0, 1], "peer_cpu": 1,
                         "affinity": [0], "cache_topology": cache_topology,
-                        "governor": {"scaling_governor": "performance", "scaling_available_governors": "performance"},
+                        "governor": governor,
                         "environment": {"CRABC_PERF_CONTAINER_POLICY": evidence.PERFORMANCE_CONTAINER_POLICY},
                         "docker_image_id": image_id,
                     },
@@ -1038,17 +1060,28 @@ class CollectorCompositionTests(unittest.TestCase):
                 report_path.write_text(json.dumps(governor_rehashed), encoding="utf-8")
                 with self.assertRaisesRegex(evidence.EvidenceError, "governor is absent from available governors"):
                     evidence.validate_collector_report(ROOT, report_path)
+                forged_governor = copy.deepcopy(original_last)
+                forged_governor["tools"]["before"]["host"]["governor"].update({
+                    "scaling_governor": "powersave",
+                    "scaling_available_governors": "performance powersave",
+                })
+                forged_governor["tools"]["after"] = copy.deepcopy(forged_governor["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(forged_governor), encoding="utf-8")
+                governor_rehashed["attempts"][-1]["report"] = identity(attempt_paths[-1])
+                report_path.write_text(json.dumps(governor_rehashed), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "governor differs from retained sysfs"):
+                    evidence.validate_collector_report(ROOT, report_path)
                 for selected, available in ((None, None), ("performance", None), (None, "performance powersave")):
                     with self.subTest(governor=(selected, available)):
                         unavailable = copy.deepcopy(original_last)
-                        unavailable["tools"]["before"]["host"]["governor"] = {
-                            "scaling_governor": selected, "scaling_available_governors": available,
-                        }
+                        unavailable["tools"]["before"]["host"]["governor"] = governor_for(
+                            directory / "attempt-3", selected, available)
                         unavailable["tools"]["after"] = copy.deepcopy(unavailable["tools"]["before"])
                         attempt_paths[-1].write_text(json.dumps(unavailable), encoding="utf-8")
                         governor_rehashed["attempts"][-1]["report"] = identity(attempt_paths[-1])
                         report_path.write_text(json.dumps(governor_rehashed), encoding="utf-8")
                         self.assertTrue(evidence.validate_collector_report(ROOT, report_path).evidence_valid)
+                governor_for(directory / "attempt-3", "performance", "performance")
                 malformed = copy.deepcopy(original_last)
                 malformed["tools"]["before"]["host"]["governor"]["scaling_governor"] = True
                 malformed["tools"]["after"] = copy.deepcopy(malformed["tools"]["before"])

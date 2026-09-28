@@ -316,6 +316,41 @@ class ImageToolManifestEnvironmentTests(unittest.TestCase):
 
 
 class HostIdentityTests(unittest.TestCase):
+    def test_governor_sysfs_capture_retains_policy_fields_and_detects_drift(self) -> None:
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            work = Path(temporary)
+            source = work / "sysfs" / "cpu2" / "cpufreq"
+            source.mkdir(parents=True)
+            (source / "scaling_governor").write_text("performance\n", encoding="utf-8")
+            (source / "scaling_available_governors").write_text(
+                "performance powersave\n", encoding="utf-8")
+            (source / "scaling_cur_freq").write_text("2400000\n", encoding="utf-8")
+            retained = work / "raw" / "host" / "governor-sysfs"
+            first = runner.capture_governor_sysfs(ROOT, retained, 2, work / "sysfs")
+            self.assertEqual(first["scaling_governor"], "performance")
+            self.assertEqual(first["scaling_available_governors"], "performance powersave")
+            self.assertEqual(set(first["raw_sysfs"]["files"]), set(runner.evidence.GOVERNOR_SYSFS_FIELDS))
+            self.assertFalse((retained / "cpu2/cpufreq/scaling_cur_freq").exists())
+            self.assertEqual(runner.capture_governor_sysfs(ROOT, retained, 2, work / "sysfs"), first)
+            (source / "scaling_governor").write_text("powersave\n", encoding="utf-8")
+            with self.assertRaisesRegex(runner.AdapterError, "governor sysfs changed"):
+                runner.capture_governor_sysfs(ROOT, retained, 2, work / "sysfs")
+
+    def test_governor_sysfs_capture_preserves_unavailable_fields(self) -> None:
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            work = Path(temporary)
+            missing = runner.capture_governor_sysfs(ROOT, work / "missing-raw", 2, work / "absent")
+            self.assertEqual((missing["scaling_governor"], missing["scaling_available_governors"]),
+                             (None, None))
+            self.assertEqual(missing["raw_sysfs"]["files"], {})
+            source = work / "sysfs" / "cpu2" / "cpufreq"
+            source.mkdir(parents=True)
+            (source / "scaling_governor").write_text("performance\n", encoding="utf-8")
+            partial = runner.capture_governor_sysfs(ROOT, work / "partial-raw", 2, work / "sysfs")
+            self.assertEqual(partial["scaling_governor"], "performance")
+            self.assertIsNone(partial["scaling_available_governors"])
+            self.assertEqual(set(partial["raw_sysfs"]["files"]), {"scaling_governor"})
+
     def test_cache_sysfs_capture_retains_selected_cpu_bytes_and_detects_drift(self) -> None:
         with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
             work = Path(temporary)

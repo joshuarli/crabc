@@ -2747,11 +2747,15 @@ def _verify_cache_topology(checkout: Path, record: object, *, cpu: int, index: i
     _verify_retained_cache_sysfs(checkout, record, cpu=cpu, index=index, work_dir=work_dir)
 
 
-def _verify_governor(record: object, *, index: int) -> None:
-    """A readable selected governor must occur in the available sysfs roster."""
+GOVERNOR_SYSFS_FIELDS = ("scaling_governor", "scaling_available_governors")
+
+
+def _verify_governor(checkout: Path, record: object, *, index: int, cpu: int,
+                     work_dir: str) -> None:
+    """Replay selected-CPU policy text and check the available governor roster."""
 
     require(isinstance(record, dict)
-            and set(record) == {"scaling_governor", "scaling_available_governors"},
+            and set(record) == {*GOVERNOR_SYSFS_FIELDS, "raw_sysfs"},
             f"attempt {index} governor availability differs")
     selected = record["scaling_governor"]
     available = record["scaling_available_governors"]
@@ -2762,6 +2766,38 @@ def _verify_governor(record: object, *, index: int) -> None:
     if selected and available:
         require(selected in available.split(),
                 f"attempt {index} selected governor is absent from available governors")
+    raw = record["raw_sysfs"]
+    expected_root = f"{work_dir}/raw/host/governor-sysfs"
+    require(isinstance(raw, dict) and set(raw) == {"root", "files"}
+            and raw["root"] == expected_root and isinstance(raw["files"], dict)
+            and set(raw["files"]) <= set(GOVERNOR_SYSFS_FIELDS),
+            f"attempt {index} retained governor sysfs record differs")
+    retained = checkout.resolve(strict=True) / _relative_to_mount(expected_root, SOURCE_MOUNT)
+    require(retained.is_dir() and not retained.is_symlink()
+            and retained.resolve(strict=True) == retained,
+            f"attempt {index} retained governor sysfs root differs")
+    cpu_root = retained / f"cpu{cpu}"
+    cpufreq = cpu_root / "cpufreq"
+    require({path.name for path in retained.iterdir()} == ({cpu_root.name} if raw["files"] else set())
+            and (not raw["files"] or (
+                cpu_root.is_dir() and not cpu_root.is_symlink()
+                and {path.name for path in cpu_root.iterdir()} == {"cpufreq"}
+                and cpufreq.is_dir() and not cpufreq.is_symlink()
+                and {path.name for path in cpufreq.iterdir()} == set(raw["files"])
+            )), f"attempt {index} retained governor sysfs tree differs")
+    for name in GOVERNOR_SYSFS_FIELDS:
+        path = cpufreq / name
+        if name in raw["files"]:
+            require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 4096
+                    and isinstance(raw["files"][name], dict)
+                    and raw["files"][name].get("path") == f"{expected_root}/cpu{cpu}/cpufreq/{name}",
+                    f"attempt {index} retained governor sysfs file differs")
+            retained_file_identity(checkout, SOURCE_MOUNT, raw["files"][name],
+                                   f"attempt {index} governor sysfs {name}")
+            derived = path.read_bytes().decode("utf-8", errors="replace").strip()
+        else:
+            derived = None
+        require(record[name] == derived, f"attempt {index} governor differs from retained sysfs")
 
 
 def _verify_attempt_tools(
@@ -2830,7 +2866,8 @@ def _verify_attempt_tools(
     ), f"attempt {index} peer CPU differs from the original allowed affinity")
     _verify_cache_topology(checkout, host["cache_topology"], cpu=host["benchmark_cpu"],
                            index=index, work_dir=work_dir)
-    _verify_governor(host["governor"], index=index)
+    _verify_governor(checkout, host["governor"], index=index,
+                     cpu=host["benchmark_cpu"], work_dir=work_dir)
     require(isinstance(host["docker_image_id"], str) and re.fullmatch(r"sha256:[0-9a-f]{64}", host["docker_image_id"]) is not None
             and host["docker_image_id"] == attempt["attempt"]["docker_image_id"], f"attempt {index} image provenance differs")
     environment = host["environment"]
