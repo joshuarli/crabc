@@ -97,9 +97,11 @@ are not transferable passes for a different revision.
   also passes. A selected `MI_STAT=1` binned allocation, merge/reset, free,
   and final-print differential passes; a separate level-one merge/final-output
   differential matches 28 C/Rust fields. A default-off `MI_STAT=2` requested-size
-  merge/final-output trace also matches pinned C; nonzero bin output and page,
-  huge, nonlocal, and higher-level production statistics producers remain
-  unproved, so full M7 stays open. Static
+  merge/final-output trace also matches pinned C. Nonzero level-two allocation
+  bin output matches 27 C/Rust fields for bin order, size units, merge peaks,
+  freed rows, and empty-bin suppression; page, huge, nonlocal, and
+  higher-level production statistics producers remain unproved, so full M7
+  stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
   functions among 1,406 musl-replaceable entries and all 831 required entries
   passing; the final merged candidate must rerun it. A scoped current-source
