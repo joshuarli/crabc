@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import struct
 import sys
 from typing import Mapping
 
@@ -120,6 +121,39 @@ def _check_product_identity(retained: Receipt, directory: Path) -> None:
         _require(manifest_files.get(path) == digest and payload_files.get(path) == digest,
                  f"product provenance does not identify {name}")
 
+    producer = (ROOT / "compat/x86_64/run_owned_loader_libc_identity.sh").read_bytes()
+    start_marker = b'cat >"$source" <<\'C\'\n'
+    end_marker = b"\nC\n"
+    _require(producer.count(start_marker) == 1, "identity fixture source has no unique producer")
+    start = producer.index(start_marker) + len(start_marker)
+    _require(end_marker in producer[start:], "identity fixture source has no terminator")
+    end = producer.index(end_marker, start)
+    expected_source = producer[start:end + 1]
+    _require((directory / "products/identity-source").read_bytes() == expected_source,
+             "fixture source differs from current producer")
+
+
+def _check_consumer_entry(directory: Path, case_id: str, mode: str, program: str) -> None:
+    image = (directory / "products" / f"{case_id}-{program}").read_bytes()
+    _require(len(image) >= 64 and image[:6] == b"\x7fELF\x02\x01",
+             f"consumer ELF entry mode is invalid in {case_id}")
+    kind, machine = struct.unpack_from("<HH", image, 16)
+    expected_kind = 3 if mode == "pie" else 2
+    _require(kind == expected_kind and machine == 62,
+             f"consumer ELF entry mode differs in {case_id}")
+    phoff = struct.unpack_from("<Q", image, 32)[0]
+    phentsize, phnum = struct.unpack_from("<HH", image, 54)
+    _require(phentsize == 56 and phnum > 0 and phoff + phentsize * phnum <= len(image),
+             f"consumer ELF program headers are invalid in {case_id}")
+    interpreters = []
+    for index in range(phnum):
+        kind, _, offset, _, _, size, _, _ = struct.unpack_from("<IIQQQQQQ", image, phoff + index * phentsize)
+        if kind == 3:
+            _require(offset + size <= len(image), f"consumer ELF interpreter is invalid in {case_id}")
+            interpreters.append(image[offset:offset + size])
+    _require(interpreters == [b"/lib/ld-crabc-x86_64.so.1\0"],
+             f"consumer ELF interpreter differs in {case_id}")
+
 
 def _check_link_facts(directory: Path, logs: Mapping[str, object], case_id: str, layout: str) -> None:
     library_path = {
@@ -189,6 +223,9 @@ def read_identity_receipt(root: Path, *, seal: Mapping[str, str] | None = None) 
                     _require(retained.products[name]["sha256"] == libc,
                              f"executed libc differs from product in {case_id}")
             program = "consumer-mutated" if layout == "two-distinct-libc-identities" else "consumer"
+            _check_consumer_entry(directory, case_id, mode, "consumer")
+            if program != "consumer":
+                _check_consumer_entry(directory, case_id, mode, program)
             _require(retained.products[f"{case_id}-executed-program"] == retained.products[f"{case_id}-{program}"],
                      f"executed fixture differs from retained program in {case_id}")
             if layout == "two-distinct-libc-identities":

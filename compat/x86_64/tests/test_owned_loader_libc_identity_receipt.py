@@ -220,6 +220,56 @@ class OwnedLoaderLibcIdentityReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(receipt.ReceiptError, "executed fixture"):
                 identity_receipt.read_identity_receipt(copied_root, seal=published.source)
 
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp") as temporary:
+            copied_root = Path(temporary)
+            copied = receipt.receipt_directory(copied_root, RUNNER)
+            copied.parent.mkdir(parents=True)
+            shutil.copytree(latest, copied)
+            source = copied / "products/identity-source"
+            changed = source.read_bytes().replace(b"identity application main 17",
+                                                  b"identity application main 16")
+            self.assertNotEqual(changed, source.read_bytes())
+            source.write_bytes(changed)
+            report = copied / "receipt.json"
+            document = json.loads(report.read_text())
+            document["products"]["identity-source"] = {
+                "sha256": hashlib.sha256(changed).hexdigest(), "size": len(changed),
+            }
+            report.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+            receipt.read_receipt(copied_root, RUNNER, seal=published.source)
+            with self.assertRaisesRegex(receipt.ReceiptError, "fixture source differs"):
+                identity_receipt.read_identity_receipt(copied_root, seal=published.source)
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp") as temporary:
+            copied_root = Path(temporary)
+            copied = receipt.receipt_directory(copied_root, RUNNER)
+            copied.parent.mkdir(parents=True)
+            shutil.copytree(latest, copied)
+            case_id = "non-pie-copied-prefix-root-libc"
+            changed = (copied / "products/pie-copied-prefix-root-libc-consumer").read_bytes()
+            report = copied / "receipt.json"
+            document = json.loads(report.read_text())
+            for name in (f"{case_id}-consumer", f"{case_id}-executed-program"):
+                (copied / "products" / name).write_bytes(changed)
+                document["products"][name] = {
+                    "sha256": hashlib.sha256(changed).hexdigest(), "size": len(changed),
+                }
+            identity = copied / "logs" / f"{case_id}.identity"
+            lines = identity.read_text().splitlines()
+            consumer = next(line for line in lines if line.split(" dev=")[0].endswith(
+                f"/{case_id}/consumer"))
+            lines[lines.index(consumer)] = consumer.rsplit(" size=", 1)[0] + f" size={len(changed)}"
+            changed_identity = ("\n".join(lines) + "\n").encode()
+            identity.write_bytes(changed_identity)
+            case = next(case for case in document["cases"] if case["id"] == case_id)
+            case["logs"][f"{case_id}.identity"] = {
+                "sha256": hashlib.sha256(changed_identity).hexdigest(), "size": len(changed_identity),
+            }
+            report.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+            receipt.read_receipt(copied_root, RUNNER, seal=published.source)
+            with self.assertRaisesRegex(receipt.ReceiptError, "consumer ELF entry mode"):
+                identity_receipt.read_identity_receipt(copied_root, seal=published.source)
+
 
 if __name__ == "__main__":
     unittest.main()
