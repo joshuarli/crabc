@@ -3549,6 +3549,250 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn emit_m2_registered_arena_metadata_fault_c_rust_trace() {
+        use crate::arena::ArenaSearch;
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        const CHILD: &str = "CRABC_M2_REGISTERED_METADATA_CHILD";
+        const BEGIN: &str = "CRABC_M2_REGISTERED_ARENA_METADATA_FAULT_RUST_TRACE_BEGIN";
+        const END: &str = "CRABC_M2_REGISTERED_ARENA_METADATA_FAULT_RUST_TRACE_END";
+        if std::env::var_os(CHILD).is_none() {
+            let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+                .arg("process_arena::tests::emit_m2_registered_arena_metadata_fault_c_rust_trace")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD, "1")
+                .output()
+                .expect("registered arena metadata child runs");
+            assert!(child.status.success(), "the first arena survives a later metadata refusal");
+            assert!(child.stderr.is_empty(), "selected warnings use the output callback");
+            let output = std::str::from_utf8(&child.stdout).expect("child trace is ASCII");
+            let start = output.find(BEGIN).expect("child emits registered arena trace");
+            let end = output.find(END).expect("child closes registered arena trace") + END.len();
+            std::println!("{}", &output[start..end]);
+            return;
+        }
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=-1\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        EXPLICIT_METADATA_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(ExplicitMetadataWarnings {
+            order: core::sync::atomic::AtomicUsize::new(0),
+            count: core::sync::atomic::AtomicUsize::new(0),
+            subprocess: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            reserved: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(i64::MIN)),
+            committed: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(i64::MIN)),
+            commit_calls: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(i64::MIN)),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(policy_trim_default_output),
+        ));
+        // SAFETY: the source environment and synchronous warning capture
+        // outlive this isolated process's complete arena lifecycle.
+        unsafe {
+            output.initialize_source_options(explicit_metadata_environment);
+            output.register_output(Some(explicit_metadata_warning as OutputCallback),
+                warnings as *mut ExplicitMetadataWarnings as *mut core::ffi::c_void);
+        }
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        // SAFETY: this child exclusively owns its process, PageMap, output,
+        // and arena group through final destruction.
+        let binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding_with_source_output(
+                config, output, MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            ) }.expect("registered arena metadata process initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let size = ARENA_MIN_SIZE;
+        let alignment = ARENA_ALIGNMENT;
+        let page = 4096;
+        let span = 3 * alignment + size;
+        // SAFETY: a temporary private reservation selects two vacant aligned
+        // targets; no reference is built from its address range.
+        let reservation = unsafe { crabc_core::mm::mmap_raw(
+            core::ptr::null_mut(), span, 0, 0x02 | 0x20, -1, 0,
+        ) }.expect("temporary registered arena targets");
+        let first_target = (reservation.addr() + alignment - 1) & !(alignment - 1);
+        let second_target = first_target + alignment;
+        assert!(second_target + size <= reservation.addr() + span);
+        // SAFETY: neither target has a Mapping owner yet; later fixed maps
+        // refuse rather than replace any intervening claimant.
+        unsafe { crabc_core::mm::munmap_raw(reservation, span) }
+            .expect("release temporary registered arena targets");
+        let mut first_config = config;
+        first_config.test_aligned_overmap_targets(first_target, first_target);
+        let before = process.subprocess().statistics().snapshot();
+        warnings.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        let fault = fault::install(fault::Plan::disabled());
+        // SAFETY: this child alone publishes the selected first arena and
+        // retains its process owner through destroy_all.
+        let first_id = unsafe { backing.reserve_os_memory_for_process(
+            process, first_config, size, MapAccess::Reserved, false, false, None,
+        ) };
+        let first_arena = unsafe { backing.registry().arena_at(0) };
+        let first_exact = first_id.as_ref().is_ok_and(|id| first_arena.is_some_and(|arena|
+            id.as_ptr() == core::ptr::from_ref(arena).cast_mut()
+                && arena.start as usize == first_target
+                && arena.memid.kind() == crate::types::MemoryKind::Os
+                && arena.memid.os_memory().is_some_and(|os|
+                    os.base as usize == first_target && os.size == size)
+                && !arena.memid.initially_committed()));
+        let first_snapshot = process.subprocess().statistics().snapshot();
+        let first_registry = backing.registry().count();
+        let mut second_config = config;
+        second_config.test_aligned_overmap_targets(second_target, second_target);
+        assert_eq!(first_config, second_config, "test map targets are not process observations");
+        let different_observations = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 2 * 1024 * 1024, true, false,
+        );
+        assert_ne!(first_config, different_observations);
+        assert!(!backing.matches_existing_process_binding(process, different_observations)
+            .expect("a live first arena permits binding inspection"));
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let unmaps = fault.capture_unmap_ranges();
+        let protections = fault.capture_protection_ranges();
+        // SAFETY: the first arena owns a disjoint live mapping and its slot;
+        // the selected second target is free and this process is sole publisher.
+        let refused = unsafe { backing.reserve_os_memory_for_process(
+            process, second_config, size, MapAccess::Reserved, false, false, None,
+        ) };
+        let (failed_unmaps, failed_unmap_count) = unmaps.all()
+            .expect("second cleanup has one unmap");
+        let (failed_protections, failed_protection_count) = protections.attempts()
+            .expect("second metadata has one mprotect attempt");
+        drop(unmaps);
+        drop(protections);
+        let observed_commit = fault.observed();
+        fault.set(fault::Plan::disabled());
+        let failed_snapshot = process.subprocess().statistics().snapshot();
+        let after_failure_registry = backing.registry().count();
+        let first_id_retained = first_id.as_ref().is_ok_and(|id|
+            unsafe { backing.registry().arena_at(0) }
+                .is_some_and(|arena| id.as_ptr() == core::ptr::from_ref(arena).cast_mut()));
+        let mut residence = 0u8;
+        // SAFETY: these page-aligned targets have no Rust references; the
+        // first should remain mapped and the second was released on refusal.
+        let first_survives = unsafe { crabc_core::mm::mincore_raw(
+            first_target as *mut u8, page, &mut residence,
+        ) }.is_ok();
+        let second_gone = unsafe { crabc_core::mm::mincore_raw(
+            second_target as *mut u8, page, &mut residence,
+        ) }.is_err();
+        let second_refused = refused.is_err() && after_failure_registry == 1;
+        let first_committed = first_snapshot.vm.committed_current - before.vm.committed_current;
+        let warning_timing = [1, 2].into_iter().all(|index|
+            warnings.reserved[index].load(Ordering::Acquire)
+                == before.vm.reserved_current + 2 * size as i64
+                && warnings.committed[index].load(Ordering::Acquire)
+                    == before.vm.committed_current + first_committed
+                && warnings.commit_calls[index].load(Ordering::Acquire)
+                    == before.vm.commit_calls + 2);
+        let fault_geometry = observed_commit == 1 && failed_unmap_count == 1
+            && failed_unmaps[0] == (second_target, size)
+            && failed_protection_count == 1
+            && failed_protections[0] == (second_target, first_committed as usize, 0x03);
+        let first_id = first_id.expect("the first arena published");
+        let search = ArenaSearch {
+            heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+            numa_node: -1, requested: first_id, allow_pinned: false,
+        };
+        // SAFETY: the first arena and its complete mapping remain live; the
+        // returned slice is held until its explicit bitmap release below.
+        let claim = unsafe { backing.try_allocate_slices(
+            process, config, search, 1, ARENA_SLICE_SIZE, true,
+        ) }.expect("the registered survivor still supplies one slice");
+        let address = claim.start() as usize;
+        let survivor_claim = address >= first_target && address + ARENA_SLICE_SIZE <= first_target + size
+            && claim.memory_id().arena_memory().is_some_and(|arena|
+                arena.arena == first_id.as_ptr());
+        // SAFETY: a successful committed slice claim exclusively owns this
+        // writable byte until the claim is released.
+        let survivor_rw = unsafe {
+            core::ptr::write_volatile(claim.start(), 0x5a);
+            core::ptr::read_volatile(claim.start()) == 0x5a
+        };
+        assert!(claim.release());
+        let claim_snapshot = process.subprocess().statistics().snapshot();
+        // SAFETY: the published first arena remains live after slice release.
+        let first_after_claim = unsafe { crabc_core::mm::mincore_raw(
+            first_target as *mut u8, page, &mut residence,
+        ) }.is_ok();
+        let claim_registry = backing.registry().count();
+        let terminal_unmaps = fault.capture_unmap_ranges();
+        // SAFETY: no slice claim or reader survives; this process alone owns
+        // the remaining registered arena and its mapping.
+        let destroyed = unsafe { backing.destroy_all(&mut []) }
+            .expect("the surviving first arena releases terminally");
+        let (terminal_ranges, terminal_count) = terminal_unmaps.all()
+            .expect("one terminal release fits the capture");
+        drop(terminal_unmaps);
+        let terminal_exact = destroyed.is_released() && terminal_count == 1
+            && terminal_ranges[0] == (first_target, size);
+        // SAFETY: terminal destroy removed the sole published mapping; no
+        // reference into its range survives.
+        let first_gone = unsafe { crabc_core::mm::mincore_raw(
+            first_target as *mut u8, page, &mut residence,
+        ) }.is_err();
+        let terminal_registry = backing.registry().count();
+        let terminal_snapshot = process.subprocess().statistics().snapshot();
+        std::println!("{BEGIN}");
+        for (field, value) in [
+            ("size", size as i64), ("alignment", alignment as i64),
+            ("first_exact", i64::from(first_exact)),
+            ("first_registry", first_registry as i64),
+            ("first_reserved", first_snapshot.vm.reserved_current - before.vm.reserved_current),
+            ("first_committed", first_committed),
+            ("first_mmap", first_snapshot.vm.mmap_calls - before.vm.mmap_calls),
+            ("first_commit", first_snapshot.vm.commit_calls - before.vm.commit_calls),
+            ("second_refused", i64::from(second_refused)),
+            ("first_id_retained", i64::from(first_id_retained)),
+            ("first_survives", i64::from(first_survives)),
+            ("second_gone", i64::from(second_gone)),
+            ("after_failure_registry", after_failure_registry as i64),
+            ("failed_reserved", failed_snapshot.vm.reserved_current - before.vm.reserved_current),
+            ("failed_committed", failed_snapshot.vm.committed_current - before.vm.committed_current),
+            ("failed_mmap", failed_snapshot.vm.mmap_calls - before.vm.mmap_calls),
+            ("failed_commit", failed_snapshot.vm.commit_calls - before.vm.commit_calls),
+            ("failed_arena", failed_snapshot.arena.arena_count - before.arena.arena_count),
+            ("warning_order", warnings.order.load(Ordering::Acquire) as i64),
+            ("warning_count", warnings.count.load(Ordering::Acquire) as i64),
+            ("warning_timing", i64::from(warning_timing)),
+            ("fault_geometry", i64::from(fault_geometry)),
+            ("survivor_claim", i64::from(survivor_claim)),
+            ("survivor_rw", i64::from(survivor_rw)),
+            ("first_after_claim", i64::from(first_after_claim)),
+            ("claim_registry", claim_registry as i64),
+            ("claim_committed", claim_snapshot.vm.committed_current - before.vm.committed_current),
+            ("claim_commit", claim_snapshot.vm.commit_calls - before.vm.commit_calls),
+            ("terminal_exact", i64::from(terminal_exact)),
+            ("first_gone", i64::from(first_gone)),
+            ("terminal_registry", terminal_registry as i64),
+            ("terminal_reserved", terminal_snapshot.vm.reserved_current - before.vm.reserved_current),
+            ("terminal_committed", terminal_snapshot.vm.committed_current - before.vm.committed_current),
+            ("terminal_arena", terminal_snapshot.arena.arena_count - before.arena.arena_count),
+        ] {
+            std::println!("{field}={value}");
+        }
+        std::println!("{END}");
+        assert!(first_exact && second_refused && first_id_retained);
+        assert!(first_survives && second_gone && warning_timing && fault_geometry);
+        assert!(survivor_claim && survivor_rw && first_after_claim);
+        assert!(terminal_exact && first_gone);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn emit_m2_second_regular_arena_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};
         let _fault = fault::install(fault::Plan::disabled());

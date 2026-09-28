@@ -350,7 +350,7 @@ impl StartupInput {
 ///
 /// This is the typed counterpart of `mi_os_mem_config_t`. It contains facts
 /// observed during process initialization, not mutable allocator options.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq)]
 pub(crate) struct MemoryConfig {
     page_size: PageSize,
     large_page_size: usize,
@@ -368,6 +368,22 @@ pub(crate) struct MemoryConfig {
     force_full_aligned_map_trim: bool,
     #[cfg(test)]
     aligned_overmap_test_targets: Option<(usize, usize)>,
+}
+
+// Fixed-map fault inputs select syscalls in native tests; process binding
+// compares only the OS observations that exist in production memory policy.
+impl PartialEq for MemoryConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.page_size == other.page_size
+            && self.large_page_size == other.large_page_size
+            && self.alloc_granularity == other.alloc_granularity
+            && self.physical_memory_in_kib == other.physical_memory_in_kib
+            && self.virtual_address_bits == other.virtual_address_bits
+            && self.has_overcommit == other.has_overcommit
+            && self.has_partial_free == other.has_partial_free
+            && self.has_virtual_reserve == other.has_virtual_reserve
+            && self.has_transparent_huge_pages == other.has_transparent_huge_pages
+    }
 }
 
 impl MemoryConfig {
