@@ -714,6 +714,23 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// A failed primitive decommit reports the conservatively rounded range.
+    /// The caller has already charged its purge event before this warning.
+    pub(crate) fn os_decommit_failure(errno: Errno, address: usize, size: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length, b"cannot decommit OS memory (error: ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b"), address: ");
+        append_source_pointer(&mut bytes, &mut length, address);
+        append_mbind_bytes(&mut bytes, &mut length, b", size: 0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" bytes)\n");
+        Self { bytes, length }
+    }
+
     /// `"unable to allocate aligned OS memory directly, fall back to
     /// over-allocation (size: 0x%zx bytes, address: %p, alignment: 0x%zx,
     /// commit: %d)\n"` from `mi_os_prim_alloc_aligned` (`src/os.c:376-378`).
@@ -3649,6 +3666,14 @@ mod tests {
         let fallback = SourceFormattedMessage::aligned_direct_fallback(0x2000, 0, 0x4000, true);
         assert_eq!(fallback.as_c_str().to_bytes(),
             b"unable to allocate aligned OS memory directly, fall back to over-allocation (size: 0x2000 bytes, address: 0x00000000, alignment: 0x4000, commit: 1)\n");
+    }
+
+    #[test]
+    fn failed_decommit_warning_preserves_source_range_and_errno() {
+        let warning = SourceFormattedMessage::os_decommit_failure(
+            Errno::from_raw(5).unwrap(), 0x7F12_3456_0000, 0x10000);
+        assert_eq!(warning.as_c_str().to_bytes(),
+            b"cannot decommit OS memory (error: 5 (0x05), address: 0x7F1234560000, size: 0x10000 bytes)\n");
     }
 
     #[test]

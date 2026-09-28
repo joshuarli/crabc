@@ -2866,13 +2866,22 @@ impl Mapping {
     /// must not manufacture that outcome from a generic boolean.
     pub(crate) fn decommit_for_process(
         &self,
-        _process: VmProcess<'_>,
+        process: VmProcess<'_>,
         offset: usize,
         length: usize,
         _stat_size: usize,
     ) -> Result<Option<DecommitOutcome>> {
-        let outcome = self.decommit(offset, length)?;
-        Ok(outcome)
+        let range = self.page_range(offset, length, PageAlignment::Contained)?;
+        let result = self.decommit(offset, length);
+        if let (Some(range), Err(error)) = (range, &result) {
+            // The conservative range is the primitive's exact attempted span.
+            // A failed advisory retains mapping ownership and statistics, but
+            // its source warning is emitted before the purge caller returns.
+            process.policy.source_warning(SourceFormattedMessage::os_decommit_failure(
+                *error, range.address.addr(), range.length,
+            ));
+        }
+        result
     }
 
     /// Purges complete pages inside the requested range using the Unix reset path.
