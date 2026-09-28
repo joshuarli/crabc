@@ -171,7 +171,7 @@ are not transferable passes for a different revision.
   A separate source-built reset-advice matrix matches 78 C/Rust fields across
   isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
   slice range, warning order, and live bitmap state. A clean full M2 run passed
-  all 75 runnable checks with VM primitives, arenas, initialization, and fault
+  all 77 runnable checks with VM primitives, arenas, initialization, and fault
   injection still partial. The VM inventory now registers 38 checks, including
   direct process-owned successful and failed THP advice; its full rerun is in
   progress. Five VM conditions remain open. A failed second OS-page block
@@ -225,7 +225,8 @@ are not transferable passes for a different revision.
   reduces that initial path to 139 and the worker path from 143 to 132;
   trusting the selected small queue's class lowers those paths again to 136
   and 129 instructions, respectively. Reading the immutable empty-page
-  sentinel's null free head lowers malloc to 132 and 125 instructions; the
+  sentinel's null free head lowers malloc to 132 and 125 instructions. Moving
+  the medium-size check to queue lookup lowers these again to 131 and 124; the
   64-byte local free path is 109 and 102 instructions after two source-equivalent
   retirement changes.
   34,084 source-built C/Rust local allocation and free trace lines match.
