@@ -3316,41 +3316,40 @@ unsafe fn relocation_value(
     // weak slot deliberately remains null and cannot select conventional
     // lifecycle ownership.
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    if symbol != 0 {
-        let requested = unsafe { direct_symbol(requestor, symbol) }?;
-        let name_offset = unsafe { read_u32(requested) } as usize;
-        if name_offset < requestor.strsz {
-            let name = unsafe { requestor.strtab.add(name_offset) };
-            if matches!(
-                unsafe { bounded_nul(name, requestor.strsz - name_offset) },
-                Some(length)
-                    if length == b"__crabc_x86_64_loader_conventional_startup_v1".len()
-                        && unsafe {
-                            bytes_eq(
-                                name,
-                                b"__crabc_x86_64_loader_conventional_startup_v1".as_ptr(),
-                                length,
-                            )
-                        }
-            ) {
-                let exact_request = requestor.role == ObjectRole::Library
-                    && requestor.canonical_libc_identity.is_some()
-                    && kind == R_X86_64_GLOB_DAT
-                    && addend == 0
-                    && unsafe { *requested.add(4) >> 4 } == 2
-                    && unsafe { *requested.add(4) & 15 } == 1
-                    && unsafe { *requested.add(5) & 3 } == 0
-                    && unsafe { read_u16(requested.add(6)) } == 0;
-                if !exact_request {
-                    return None;
-                }
-                return match objects[0].main_crt_mode {
-                    MainCrtMode::Owned => Some(0),
-                    MainCrtMode::Conventional => {
-                        Some(x86_64_conventional_startup_v1::address())
-                    }
-                };
+    let requested = if symbol == 0 { None } else { Some(unsafe { direct_symbol(requestor, symbol) }?) };
+    // Both private imports begin with two underscores. Ordinary names are
+    // validated by the general resolver; do not scan them a second time here.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let private_name = requested.and_then(|requested| {
+        let offset = unsafe { read_u32(requested) } as usize;
+        let available = requestor.strsz.checked_sub(offset)?;
+        if available < 2 { return None; }
+        let name = unsafe { requestor.strtab.add(offset) };
+        if unsafe { *name != b'_' || *name.add(1) != b'_' } { return None; }
+        unsafe { bounded_nul(name, available) }.map(|length| (name, length))
+    });
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if let (Some(requested), Some((name, length))) = (requested, private_name) {
+        if length == b"__crabc_x86_64_loader_conventional_startup_v1".len()
+            && unsafe { bytes_eq(name, b"__crabc_x86_64_loader_conventional_startup_v1".as_ptr(), length) }
+        {
+            let exact_request = requestor.role == ObjectRole::Library
+                && requestor.canonical_libc_identity.is_some()
+                && kind == R_X86_64_GLOB_DAT
+                && addend == 0
+                && unsafe { *requested.add(4) >> 4 } == 2
+                && unsafe { *requested.add(4) & 15 } == 1
+                && unsafe { *requested.add(5) & 3 } == 0
+                && unsafe { read_u16(requested.add(6)) } == 0;
+            if !exact_request {
+                return None;
             }
+            return match objects[0].main_crt_mode {
+                MainCrtMode::Owned => Some(0),
+                MainCrtMode::Conventional => {
+                    Some(x86_64_conventional_startup_v1::address())
+                }
+            };
         }
     }
     // Rust-produced Scrt1.o always retains this optional owned-CRT object
@@ -3361,25 +3360,20 @@ unsafe fn relocation_value(
     // different relocation form could accidentally become loader policy.
     #[cfg(crabc_dynamic_main_thread_runtime_v1)]
     if symbol != 0 {
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        let requested = unsafe { direct_symbol(requestor, symbol) };
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         let requested = (symbol < requestor.symcount)
             .then(|| unsafe { requestor.symtab.add(symbol * 24) });
-        if let Some(requested) = requested {
-        let name_offset = read_u32(requested) as usize;
-        if name_offset < requestor.strsz {
-            let name = requestor.strtab.add(name_offset);
-            if matches!(
-                bounded_nul(name, requestor.strsz - name_offset),
-                Some(length)
-                    if length == b"__crabc_x86_64_owned_crt_handoff".len()
-                        && bytes_eq(
-                            name,
-                            b"__crabc_x86_64_owned_crt_handoff".as_ptr(),
-                            length,
-                        )
-            ) {
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        let private_name = requested.and_then(|requested| {
+            let offset = read_u32(requested) as usize;
+            let available = requestor.strsz.checked_sub(offset)?;
+            let name = requestor.strtab.add(offset);
+            bounded_nul(name, available).map(|length| (name, length))
+        });
+        if let (Some(requested), Some((name, length))) = (requested, private_name) {
+            if length == b"__crabc_x86_64_owned_crt_handoff".len()
+                && bytes_eq(name, b"__crabc_x86_64_owned_crt_handoff".as_ptr(), length)
+            {
                 let is_main = requestor.role == ObjectRole::Main
                     && requestor.base == objects[0].base
                     && requestor.phdr == objects[0].phdr;
@@ -3406,7 +3400,6 @@ unsafe fn relocation_value(
                 }
                 return None;
             }
-        }
         }
     }
     match kind {
@@ -3491,6 +3484,92 @@ unsafe fn relocation_value(
         | R_X86_64_TLSDESC_CALL
         | R_X86_64_TLSDESC => None,
         _ => None,
+    }
+}
+
+#[cfg(all(test, feature = "x86_64-owned-dynamic-runtime", crabc_dynamic_main_thread_runtime_v1))]
+mod private_relocation_name_tests {
+    use super::*;
+
+    fn fixture(name: &[u8], defined: bool) -> ([u8; 72], [u8; 56]) {
+        let mut symbols = [0u8; 72];
+        symbols[24..28].copy_from_slice(&1u32.to_le_bytes());
+        symbols[28] = 0x21; // weak undefined object import
+        if defined {
+            symbols[48..52].copy_from_slice(&1u32.to_le_bytes());
+            symbols[52] = 0x11; // global defined object
+            symbols[54..56].copy_from_slice(&1u16.to_le_bytes());
+            symbols[56..64].copy_from_slice(&0x80u64.to_le_bytes());
+        }
+        let mut phdr = [0u8; 56];
+        phdr[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
+        phdr[4..8].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        phdr[40..48].copy_from_slice(&0x100u64.to_le_bytes());
+        assert!(name.first() == Some(&0));
+        (symbols, phdr)
+    }
+
+    fn object(name: &[u8], symbols: &[u8; 72], phdr: &[u8; 56], role: ObjectRole) -> Object {
+        Object {
+            base: 0x1000,
+            phdr: phdr.as_ptr(),
+            phnum: 1,
+            strtab: name.as_ptr(),
+            strsz: name.len(),
+            symtab: symbols.as_ptr(),
+            symcount: 3,
+            symtab_file_record_limit: 3,
+            role,
+            ..EMPTY_OBJECT
+        }
+    }
+
+    #[test]
+    fn ordinary_name_keeps_definition_and_rejects_missing_terminator() {
+        let name = b"\0ordinary_import\0";
+        let (symbols, phdr) = fixture(name, true);
+        let requestor = object(name, &symbols, &phdr, ObjectRole::Main);
+        assert_eq!(unsafe { relocation_value(R_X86_64_GLOB_DAT, &requestor, &[requestor], 1, 0) }, Some(0x1080));
+        let malformed = Object { strsz: name.len() - 1, ..requestor };
+        assert_eq!(unsafe { relocation_value(R_X86_64_GLOB_DAT, &malformed, &[malformed], 1, 0) }, None);
+
+        let name = b"\0__ordinary_import\0";
+        let (symbols, phdr) = fixture(name, true);
+        let requestor = object(name, &symbols, &phdr, ObjectRole::Main);
+        assert_eq!(unsafe { relocation_value(R_X86_64_GLOB_DAT, &requestor, &[requestor], 1, 0) }, Some(0x1080));
+    }
+
+    #[test]
+    fn canonical_libc_private_import_keeps_exact_form_and_bounded_name() {
+        let name = b"\0__crabc_x86_64_loader_conventional_startup_v1\0";
+        let (symbols, phdr) = fixture(name, false);
+        let main = Object { main_crt_mode: MainCrtMode::Conventional, ..EMPTY_OBJECT };
+        let libc = Object {
+            canonical_libc_identity: Some(ObjectIdentity { device: 1, inode: 2 }),
+            ..object(name, &symbols, &phdr, ObjectRole::Library)
+        };
+        assert_eq!(unsafe { relocation_value(R_X86_64_GLOB_DAT, &libc, &[main, libc], 1, 0) },
+            Some(x86_64_conventional_startup_v1::address()));
+        assert_eq!(unsafe { relocation_value(R_X86_64_JUMP_SLOT, &libc, &[main, libc], 1, 0) }, None);
+        let untrusted = Object { canonical_libc_identity: None, ..libc };
+        assert_eq!(unsafe { relocation_value(R_X86_64_GLOB_DAT, &untrusted, &[main, untrusted], 1, 0) }, None);
+        let unreadable = Object { symtab_file_record_limit: 1, ..libc };
+        assert_eq!(unsafe { relocation_value(R_X86_64_GLOB_DAT, &unreadable, &[main, unreadable], 1, 0) }, None);
+        let malformed = Object { strsz: name.len() - 1, ..libc };
+        assert_eq!(unsafe { relocation_value(R_X86_64_GLOB_DAT, &malformed, &[main, malformed], 1, 0) }, None);
+    }
+
+    #[test]
+    fn owned_crt_private_import_keeps_main_only_weak_null_form() {
+        let name = b"\0__crabc_x86_64_owned_crt_handoff\0";
+        let (symbols, phdr) = fixture(name, false);
+        let main = Object { main_crt_mode: MainCrtMode::Owned,
+            ..object(name, &symbols, &phdr, ObjectRole::Main) };
+        assert_eq!(unsafe { relocation_value(R_X86_64_GLOB_DAT, &main, &[main], 1, 0) },
+            Some(x86_64_general_initial_lifecycle::owned_crt_handoff_address()));
+        assert_eq!(unsafe { relocation_value(R_X86_64_JUMP_SLOT, &main, &[main], 1, 0) }, None);
+        let library = Object { role: ObjectRole::Library, ..main };
+        assert_eq!(unsafe { relocation_value(R_X86_64_GLOB_DAT, &library, &[main, library], 1, 0) }, None);
     }
 }
 
