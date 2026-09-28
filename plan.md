@@ -105,12 +105,14 @@ are not transferable passes for a different revision.
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
-  and the quiescent page-utilization query; eight
+  and the quiescent page-utilization query; nine
   runnable evidence rows pass, including fresh-process Heap membership
   regressions and a ten-case source-built main-Heap population differential
   across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
   profiles. Detached Theap and replaced TLS slot images now retain the source
-  remote-free lifetime through a visitor collection. All ten required gates
+  remote-free lifetime through a visitor collection. A worker-abandoned
+  regular page now matches six pinned-C area, live-block, and early-stop
+  observations through `mi_heap_visit_abandoned_blocks`. All ten required gates
   remain blocked by 11 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
   Integrated products are
@@ -165,7 +167,10 @@ are not transferable passes for a different revision.
   1.05× kernel instructions (1.47M/2.43M against 1.24M/2.31M), still off the
   0.90× CPU gate: the two loader/libc images, symbol resolution and libc's
   allocator option parsing remain. Startup PSS is 0.86× musl (52 of 114
-  perf-c rows pass PSS); allocator rows stay 6.5–8× on the selected
+  perf-c rows pass PSS). A set-bit RELR walk saves a median 5,481 user
+  instructions in 100 matched development startups with identical syscall
+  traces; this remains unqualified under host contention. Allocator rows stay
+  6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
   huge pages on first touch. The native backend's arena reservations take the
   musl-defaults `MADV_NOHUGEPAGE` (`CRABC-MI-ARENA-RESERVATION-NO-THP`,
