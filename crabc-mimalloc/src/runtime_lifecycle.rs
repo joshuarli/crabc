@@ -9497,10 +9497,11 @@ fn native_local_fast_owner() -> Option<crate::local_fast_path::LocalFastOwner> {
     let owner = crate::local_fast_path::published()?;
     let presence = current_thread_native_owner_presence();
     let owner_selected = if presence.initial_installed {
-        // The active-state check below already implies allocation readiness
-        // for this published initial owner, after the thread identity check.
-        current_thread_identity().is_some_and(|current|
-            current.get() == RUNTIME_PROCESS.initial_thread_identity.load(Ordering::Acquire))
+        // The published initial identity came from a validated thread
+        // pointer. Equality with it also validates this raw thread pointer;
+        // the active-state check below excludes the cold zero value.
+        crate::os::thread_pointer_identity()
+            == RUNTIME_PROCESS.initial_thread_identity.load(Ordering::Acquire)
     } else {
         presence.later_installed && presence.state == ThreadLifecycleState::Attached
     };
