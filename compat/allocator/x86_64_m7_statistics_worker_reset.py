@@ -264,6 +264,7 @@ def main() -> int:
             "rust_source_sha256": {
                 path: hashlib.sha256((harness.ROOT / path).read_bytes()).hexdigest()
                 for path in ("crabc-mimalloc/src/statistics.rs", "crabc-mimalloc/src/runtime_lifecycle.rs",
+                             "crabc-mimalloc/src/main_theap.rs",
                              "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/diagnostic_output.rs",
                              "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/subproc_main_heaps.rs",
                              "compat/allocator/native-mi-adapter/src/lib.rs", "Cargo.lock")},

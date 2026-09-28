@@ -1103,6 +1103,9 @@ impl MainStaticTheapAttachment {
             storage.mark_poisoned();
             return Err(MainStaticTheapError::TheapInit(error));
         }
+        // The non-detached static Theap is counted when initialization succeeds.
+        // Its static allocation skips the later free path, retaining this count.
+        subprocess.identity().record_statistics_theap_linked();
 
         let theap_pointer = NonNull::from(&mut *theap);
         // Source `_mi_thread_init_with_heap` writes the default root first and
@@ -4402,6 +4405,30 @@ mod tests {
         })
         .join()
         .expect("main-heap publication test thread completes");
+    }
+
+    #[test]
+    fn static_main_theap_publication_counts_once_and_static_teardown_retains_count() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let theaps = || subprocess.identity().statistics().final_output_snapshot().theaps;
+            let before = theaps();
+            assert_eq!((before.current, before.total, before.peak), (0, 0, 0));
+
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("first static Theap attachment succeeds");
+            let attached = theaps();
+            assert_eq!((attached.current, attached.total, attached.peak), (1, 1, 1));
+
+            owner.teardown().expect("static Theap detaches once");
+            assert_eq!(owner.teardown(), Err(MainStaticTheapError::TornDown));
+            let detached = theaps();
+            assert_eq!((detached.current, detached.total, detached.peak), (1, 1, 1));
+        })
+        .join()
+        .expect("static Theap statistics test thread completes");
     }
 
     #[test]
