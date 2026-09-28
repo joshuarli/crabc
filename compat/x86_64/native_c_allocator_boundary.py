@@ -2,9 +2,10 @@
 """Collect and replay the installed native C allocator wrapper boundary.
 
 This finite reader consumes products prepared by their owners.  It joins the
-fixed-C producer account to the static Rust importer and replays only the
-existing lifecycle and public-interposition runners.  It is not an allocator
-builder, policy selector, or qualification campaign.
+fixed-C producer account to the static Rust importer, replays the lifecycle
+and public-interposition runners, and retains focused installed-product links
+for ordinary allocator imports. It is not an allocator builder, policy
+selector, or qualification campaign.
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ import owned_posix_static_products as static_products
 
 ROOT = inventory.ROOT
 CONTRACT_PATH = ROOT / "compat/x86_64/native_c_allocator_boundary.toml"
-SCHEMA = "crabc.x86_64-native-c-allocator-boundary/v4"
+SCHEMA = "crabc.x86_64-native-c-allocator-boundary/v5"
 TARGET = "x86_64-unknown-linux-musl"
 RAW = "raw"
 STATIC_MODES = ("static", "static-pie")
@@ -57,6 +58,13 @@ PUBLIC_WEAK_WORKLOAD = ("#define _GNU_SOURCE\n#include <sys/timeb.h>\n#include <
                         "int main(void) { struct timeb stamp; double loads[3]; "
                         "if (ftime(&stamp) != 0) return 1; "
                         "return getloadavg(loads, 3) < 0 ? 2 : 0; }\n")
+ERRNO_IMPORT_NAME = "__errno_location"
+ERRNO_WORKLOAD = ("#include <stdlib.h>\n#include <stdio.h>\n#include <wchar.h>\n"
+                  "int main(void) { char *end; int decimal = 0, wide = 0; "
+                  "volatile double value = strtod(\"3.25e2\", &end); "
+                  "if (sscanf(\"7\", \"%d\", &decimal) != 1) return 1; "
+                  "if (swscanf(L\"8\", L\"%d\", &wide) != 1) return 2; "
+                  "return value == 325.0 && *end == 0 && decimal == 7 && wide == 8 ? 0 : 3; }\n")
 RUNTIME_SOURCES = (
     "libc/src/allocator_mimalloc.rs",
     "libc/src/allocator_observability_mimalloc.rs",
@@ -888,6 +896,30 @@ def _public_weak_relocations(transcript: str, name: str, kind: str) -> list[dict
     return rows
 
 
+def _errno_import_relocations(transcript: str) -> list[dict[str, object]]:
+    """Retain every direct errno call in one authenticated archive member."""
+    section: str | None = None
+    calls = []
+    for line in transcript.splitlines():
+        header = re.match(r"^Relocation section '\.rela(\.text(?:\.[^']+)?)'", line)
+        if header:
+            section = header.group(1)
+            continue
+        if line.startswith("Relocation section "):
+            section = None
+            continue
+        row = re.match(r"^\s*([0-9a-f]{16})\s+\S+\s+(R_X86_64_\w+)\s+\S+\s+(\S+)\s+([+-])\s+(\d+)\s*$", line)
+        if row is None or row.group(3) != ERRNO_IMPORT_NAME:
+            continue
+        require(section is not None and row.group(2) == "R_X86_64_PLT32"
+                and row.group(4) == "-" and row.group(5) == "4",
+                "errno import relocation is not a direct call")
+        calls.append({"section": section, "offset": int(row.group(1), 16)})
+    require(calls and len({(row["section"], row["offset"]) for row in calls}) == len(calls),
+            "errno import relocation roster differs")
+    return calls
+
+
 def _elf_virtual_bytes(image: bytes, address: int, size: int, expected_type: int) -> bytes:
     """Read a final ELF virtual address through its own load segments."""
     require(len(image) >= 64 and image[:6] == b"\x7fELF\x02\x01"
@@ -978,6 +1010,105 @@ def _public_weak_call(image: bytes, *, source_address: int, relocation: Mapping[
                 and contents == provider_address,
                 "public weak shared RELR GOT resolves to a foreign provider")
     return {"call_address": call, "got_slot": slot, "target_address": provider_address}
+
+
+def _errno_elf_symbols(transcript: str, name: str, *, kind: str, binding: str) -> list[tuple[int, int]]:
+    values = []
+    for line in transcript.splitlines():
+        parts = line.split()
+        if len(parts) >= 8 and parts[0].endswith(":") and parts[-1] == name and parts[4] == binding:
+            require(parts[3] == kind and parts[6] != "UND",
+                    f"errno final symbol metadata differs: {name}")
+            values.append((int(parts[1], 16), int(parts[2])))
+    return values
+
+
+def _errno_tls_segment_size(image: bytes, elf_type: int) -> int:
+    require(len(image) >= 64 and image[:6] == b"\x7fELF\x02\x01"
+            and struct.unpack_from("<H", image, 16)[0] == elf_type,
+            "errno final ELF type differs")
+    offset = struct.unpack_from("<Q", image, 32)[0]
+    size, count = struct.unpack_from("<HH", image, 54)
+    require(size >= 56 and offset + size * count <= len(image),
+            "errno final program headers differ")
+    segments = [struct.unpack_from("<Q", image, offset + index * size + 40)[0]
+                for index in range(count)
+                if struct.unpack_from("<I", image, offset + index * size)[0] == 7]
+    require(len(segments) == 1 and segments[0] > 0, "errno final TLS segment differs")
+    return segments[0]
+
+
+def _errno_static_accessor(image: bytes, address: int, symbol_text: str, elf_type: int) -> dict[str, int]:
+    """Decode the fixed FS base and selected TLS slot address expression."""
+    tls_rows = []
+    for line in symbol_text.splitlines():
+        parts = line.split()
+        if len(parts) >= 8 and parts[0].endswith(":") and parts[-1].endswith("5errno5ERRNO"):
+            require(parts[2:6] == ["4", "TLS", "LOCAL", "HIDDEN"] and parts[6] != "UND",
+                    "errno final TLS symbol differs")
+            tls_rows.append(int(parts[1], 16))
+    require(len(tls_rows) == 1, "errno final TLS symbol is missing or duplicate")
+    body = _public_weak_virtual_bytes(image, address, 17, elf_type, executable=True)
+    require(body[:12] == b"\x64\x48\x8b\x04\x25\0\0\0\0\x48\x8d\x80"
+            and body[16] == 0xc3, "errno final accessor does not return an FS-relative address")
+    displacement = struct.unpack_from("<i", body, 12)[0]
+    tls_size = _errno_tls_segment_size(image, elf_type)
+    require(displacement == tls_rows[0] - tls_size,
+            "errno final accessor selects a foreign TLS slot")
+    return {"tls_symbol_offset": tls_rows[0], "tls_segment_size": tls_size,
+            "fs_displacement": displacement}
+
+
+def _errno_final_member_calls(image: bytes, *, archive_member: str,
+                              source_calls: Sequence[Mapping[str, object]], map_text: str,
+                              provider_address: int, elf_type: int) -> dict[str, object]:
+    resolved = []
+    discarded = []
+    for relocation in source_calls:
+        section, offset = relocation["section"], relocation["offset"]
+        rows = [line for line in map_text.splitlines()
+                if line.rstrip().endswith(f"{archive_member}:({section})")]
+        require(len(rows) <= 1, f"errno source section map is ambiguous: {section}")
+        if not rows:
+            discarded.append(dict(relocation))
+            continue
+        parts = rows[0].split()
+        require(len(parts) >= 5 and type(offset) is int
+                and 1 <= offset and offset + 4 <= int(parts[2], 16),
+                f"errno source call leaves selected section: {section}")
+        call_address = int(parts[0], 16) + offset - 1
+        opcode = _public_weak_virtual_bytes(image, call_address, 5, elf_type, executable=True)
+        require(opcode[0] == 0xe8, "errno final direct-call opcode differs")
+        target = call_address + 5 + struct.unpack_from("<i", opcode, 1)[0]
+        require(target == provider_address, "errno final call resolves to a foreign provider")
+        resolved.append({"section": section, "offset": offset,
+                         "call_address": call_address, "target_address": target})
+    require(resolved, f"errno final image has no selected call from importer: {archive_member}")
+    return {"resolved_calls": resolved, "discarded_calls": discarded}
+
+
+def _errno_shared_caller_calls(image: bytes, symbol_text: str, functions: Sequence[str],
+                               provider_address: int) -> list[dict[str, object]]:
+    calls = []
+    for function in functions:
+        rows = []
+        for binding in ("LOCAL", "GLOBAL"):
+            rows.extend(_errno_elf_symbols(symbol_text, function, kind="FUNC", binding=binding))
+        if not rows:
+            continue
+        require(len(set(rows)) == 1, f"errno shared caller is ambiguous: {function}")
+        address, size = rows[0]
+        require(size > 0, f"errno shared caller is empty: {function}")
+        body = _public_weak_virtual_bytes(image, address, size, 3, executable=True)
+        for offset in range(size - 4):
+            if body[offset] != 0xe8:
+                continue
+            target = address + offset + 5 + struct.unpack_from("<i", body, offset + 1)[0]
+            if target == provider_address:
+                calls.append({"function": function, "call_address": address + offset,
+                              "target_address": target})
+    require(calls, "errno shared importer has no direct provider call")
+    return calls
 
 
 def _vm_final_symbols(transcript: str) -> dict[str, int]:
@@ -1319,6 +1450,197 @@ def public_weak_resolution(report: Mapping[str, Any], *, report_path: Path,
     return {"imports": claims, "dynamic_final_import_absent": True}
 
 
+def errno_import_resolution(report: Mapping[str, Any], *, report_path: Path,
+                            static_product: Path, dynamic_product: Path,
+                            elf_facts_report: Path) -> dict[str, object]:
+    """Bind every selected errno importer to one TLS-address accessor."""
+    facts = json_object(elf_facts_report, "errno import ELF facts")["facts"]
+    members = facts["candidate-static"]
+    runtime = report["inputs"]["c_runtime_import_bindings"]
+    c_member = runtime["static_c_member"]
+    claim = next((row for row in runtime["imports"] if row["name"] == ERRNO_IMPORT_NAME), None)
+    require(claim is not None and claim["binding"] == "GLOBAL",
+            "errno C runtime import account differs")
+    provider = claim["static_rust_provider_member"]
+    require(members[provider["member_index"]]["member"] == provider["member"]
+            and members[provider["member_index"]]["member_occurrence"] == 0,
+            "errno provider archive member differs")
+    archive = physical_file(static_product / "usr/lib/libc.a", "errno import archive")
+    mounted_archive = mounted_path(archive)
+    imported = []
+    for member in members:
+        try:
+            rows = producer._symbol_tables(member["symbol_tables"], "errno archive member",
+                                           {".symtab"})[".symtab"]
+        except producer.ProducerMetadataError as error:
+            raise AllocatorBoundaryError(str(error)) from error
+        matches = [row for row in rows if row.get("name") == ERRNO_IMPORT_NAME
+                   and row.get("section_index") == "UND"]
+        if not matches:
+            continue
+        require(len(matches) == 1 and all(matches[0].get(field) == value for field, value in {
+            "type": "NOTYPE", "binding": "GLOBAL", "visibility": "DEFAULT",
+            "section_index": "UND", "size_bytes": 0, "value": "0000000000000000",
+        }.items()) and member["member_occurrence"] == 0,
+                "errno archive import row differs")
+        selected = subprocess.run(["/usr/bin/ar", "p", str(archive), member["member"]],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        require(selected.returncode == 0 and selected.stdout,
+                "errno importer archive member is unreadable")
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            object_path = Path(temporary) / "importer.o"
+            object_path.write_bytes(selected.stdout)
+            relocations = subprocess.run(["/usr/bin/readelf", "-rW", str(object_path)],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         text=True, check=False)
+        require(relocations.returncode == 0, "errno importer relocations are unreadable")
+        calls = _errno_import_relocations(relocations.stdout)
+        functions = {call["section"][6:] for call in calls if call["section"].startswith(".text.")}
+        if any(call["section"] == ".text" for call in calls):
+            functions.update(row["name"] for row in rows if row.get("type") == "FUNC"
+                             and row.get("binding") == "GLOBAL"
+                             and row.get("section_index") != "UND")
+        imported.append({
+            "member": _member_identity(member),
+            "import": {key: matches[0][key] for key in (
+                "name", "type", "binding", "visibility", "section_index", "size_bytes", "value")},
+            "member_sha256": hashlib.sha256(selected.stdout).hexdigest(),
+            "source_calls": calls, "shared_caller_functions": sorted(functions),
+        })
+    require(len(imported) == 6 and len({item["member"]["member_index"] for item in imported}) == 6
+            and len([item for item in imported if item["member"]["member_index"] == c_member["member_index"]]) == 1
+            and all(item["member"]["member_index"] != provider["member_index"] for item in imported),
+            "errno static importer roster differs")
+    provider_object = subprocess.run(["/usr/bin/ar", "p", str(archive), provider["member"]],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    require(provider_object.returncode == 0 and provider_object.stdout,
+            "errno provider archive object is unreadable")
+    with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+        object_path = Path(temporary) / "provider.o"
+        object_path.write_bytes(provider_object.stdout)
+        provider_reloc = subprocess.run(["/usr/bin/readelf", "-rW", str(object_path)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    accessor_relocations = provider_reloc.stdout.split(
+        "Relocation section '.rela.text.__errno_location'", 1)
+    accessor_relocations = (accessor_relocations[1].split("Relocation section ", 1)[0]
+                            if len(accessor_relocations) == 2 else "")
+    require(provider_reloc.returncode == 0 and len(re.findall(
+        r"R_X86_64_GOTTPOFF\s+\S+\s+\S*5errno5ERRNO\s+-\s+4",
+        provider_reloc.stdout)) == 3
+            and len(re.findall(r"R_X86_64_GOTTPOFF\s+\S+\s+\S*5errno5ERRNO\s+-\s+4",
+                               accessor_relocations)) == 1,
+            "errno provider source TLS address relocation differs")
+    work = physical_directory(report_path.parent / report["errno_import"]["work"],
+                              "errno retained final links")
+    static_modes = {}
+    for mode, elf_type in (("static", 2), ("static-pie", 3)):
+        executable = physical_file(work / f"static-{mode}", f"errno {mode} final ELF")
+        map_text = physical_file(work / f"static-{mode}.crabc-link.map",
+                                 f"errno {mode} map").read_text(encoding="utf-8")
+        trace = physical_file(work / f"static-{mode}.crabc-link.trace",
+                              f"errno {mode} trace").read_text(encoding="utf-8")
+        symbol_result = subprocess.run(["/usr/bin/readelf", "-Ws", str(executable)],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, check=False)
+        relocation_result = subprocess.run(["/usr/bin/readelf", "-rW", str(executable)],
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           text=True, check=False)
+        require(symbol_result.returncode == relocation_result.returncode == 0
+                and not re.search(r"\b__errno_location\b", relocation_result.stdout),
+                f"errno {mode} final ELF retains an external import")
+        provider_rows = _errno_elf_symbols(symbol_result.stdout, ERRNO_IMPORT_NAME,
+                                           kind="FUNC", binding="GLOBAL")
+        require(len(provider_rows) == 1 and provider_rows[0][1] == 17,
+                f"errno {mode} final provider differs")
+        provider_address = provider_rows[0][0]
+        selected_provider = f"{mounted_archive}({provider['member']})"
+        require(trace.splitlines().count(selected_provider) == 1
+                and len([line for line in map_text.splitlines()
+                         if line.rstrip().endswith(f"{selected_provider}:(.text.__errno_location)")
+                         and int(line.split()[0], 16) == provider_address]) == 1,
+                f"errno {mode} selected provider map differs")
+        image = executable.read_bytes()
+        resolved = []
+        for item in imported:
+            selected = f"{mounted_archive}({item['member']['member']})"
+            require(trace.splitlines().count(selected) == 1,
+                    f"errno {mode} importer is not selected exactly once")
+            resolved.append({
+                "member": dict(item["member"]),
+                **_errno_final_member_calls(
+                    image, archive_member=selected, source_calls=item["source_calls"],
+                    map_text=map_text, provider_address=provider_address, elf_type=elf_type),
+            })
+        static_modes[mode] = {
+            "provider_member": dict(provider), "provider_address": provider_address,
+            "accessor_tls": _errno_static_accessor(image, provider_address,
+                                                    symbol_result.stdout, elf_type),
+            "importers": resolved,
+        }
+    shared_libc = physical_file(dynamic_product / "usr/lib/libc.so", "errno shared libc")
+    shared_symbols = subprocess.run(["/usr/bin/readelf", "-Ws", str(shared_libc)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True, check=False)
+    shared_relocations = subprocess.run(["/usr/bin/readelf", "-rW", str(shared_libc)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        text=True, check=False)
+    require(shared_symbols.returncode == shared_relocations.returncode == 0
+            and not re.search(r"\b__errno_location\b", shared_relocations.stdout),
+            "errno shared libc retains an external accessor import")
+    shared_provider = _errno_elf_symbols(shared_symbols.stdout, ERRNO_IMPORT_NAME,
+                                         kind="FUNC", binding="GLOBAL")
+    require(len(shared_provider) == 2 and len(set(shared_provider)) == 1
+            and shared_provider[0][1] == 17, "errno shared provider differs")
+    shared_address = shared_provider[0][0]
+    tls_rows = []
+    for line in shared_symbols.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 8 and parts[0].endswith(":") and parts[-1].endswith("5errno5ERRNO"):
+            require(parts[2:6] == ["4", "TLS", "LOCAL", "DEFAULT"] and parts[6] != "UND",
+                    "errno shared TLS symbol differs")
+            tls_rows.append(int(parts[1], 16))
+    require(len(tls_rows) == 1, "errno shared TLS symbol is missing or duplicate")
+    shared_image = shared_libc.read_bytes()
+    body = _public_weak_virtual_bytes(shared_image, shared_address, 17, 3, executable=True)
+    require(body[:9] == b"\x64\x48\x8b\x04\x25\0\0\0\0"
+            and body[9:12] == b"\x48\x03\x05" and body[16] == 0xc3,
+            "errno shared accessor does not return an FS-relative TLS address")
+    tls_slot = shared_address + 16 + struct.unpack_from("<i", body, 12)[0]
+    tls_reloc = re.findall(
+        rf"^0*{tls_slot:x}\s+\S+\s+R_X86_64_TPOFF64\s+([0-9a-f]+)\s*$",
+        shared_relocations.stdout, re.MULTILINE)
+    require(len(tls_reloc) == 1 and int(tls_reloc[0], 16) == tls_rows[0],
+            "errno shared accessor TLS relocation differs")
+    shared_calls = [{
+        "member": dict(item["member"]),
+        "calls": _errno_shared_caller_calls(
+            shared_image, shared_symbols.stdout, item["shared_caller_functions"], shared_address),
+    } for item in imported]
+    for mode in DYNAMIC_MODES:
+        executable = physical_file(work / f"dynamic-{mode}", f"errno dynamic {mode} final ELF")
+        dynamic = subprocess.run(["/usr/bin/readelf", "-dW", str(executable)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        symbols = subprocess.run(["/usr/bin/readelf", "-Ws", str(executable)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        require(dynamic.returncode == symbols.returncode == 0
+                and len(re.findall(r"\(NEEDED\).*\[libc\.so\]", dynamic.stdout)) == 1
+                and not re.search(r"\b__errno_location$", symbols.stdout, re.MULTILINE),
+                f"errno dynamic {mode} final ELF imports the implementation")
+    return {
+        "static_provider_member": dict(provider),
+        "static_provider": dict(claim["static_rust_provider"]),
+        "shared_dynsym_provider": dict(claim["shared_dynsym_provider"]),
+        "shared_symtab_provider": dict(claim["shared_symtab_provider"]),
+        "importers": imported, "static_final_links": static_modes,
+        "shared_final": {
+            "provider_address": shared_address, "tls_symbol_offset": tls_rows[0],
+            "tls_segment_size": _errno_tls_segment_size(shared_image, 3),
+            "tls_relocation_slot": tls_slot, "importers": shared_calls,
+        },
+        "dynamic_final_import_absent": True,
+    }
+
+
 def _startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path,
                           runtime_imports: Mapping[str, Any], *, validate_links: bool = True) -> dict[str, object]:
     captures = {stem: _stream(work, output, stem) for stem in ("oracle-dynamic", "oracle-static", *[f"static-{mode}" for mode in STATIC_MODES], *[f"dynamic-{mode}-{entry}" for mode in DYNAMIC_MODES for entry in ENTRIES])}
@@ -1434,6 +1756,72 @@ def _replay_public_weak_links(output: Path, static_product: Path, dynamic_produc
     return item
 
 
+def _errno_links(output: Path, static_product: Path, dynamic_product: Path) -> dict[str, object]:
+    """Select the float-parser importer alongside the ordinary startup members."""
+    work = output / "errno-import"
+    work.mkdir(mode=0o755)
+    source = work / "workload.c"
+    source.write_text(ERRNO_WORKLOAD, encoding="utf-8")
+    object_path = work / "workload.o"
+    compile_command = [str(physical_file(dynamic_product / "bin/crabc-cc-dynamic", "errno installed compiler")),
+                       "--dynamic-pie", "-std=c11", "-fno-builtin", "-c", mounted_path(source),
+                       "-o", mounted_path(object_path)]
+    completed = subprocess.run(compile_command, cwd=work, env=workload_environment(output),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    require(completed.returncode == 0 and not completed.stdout and not completed.stderr,
+            "errno installed-header compilation failed")
+    links = {}
+    for mode in STATIC_MODES:
+        stem = f"static-{mode}"
+        command = [str(physical_file(static_product / "bin/crabc-cc", "errno static linker")),
+                   f"-{mode}", "--link-receipt", f"{stem}.crabc-link.json",
+                   mounted_path(object_path), "-o", mounted_path(work / stem)]
+        completed = subprocess.run(command, cwd=work, env=workload_environment(output),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        require(completed.returncode == 0 and not completed.stdout and not completed.stderr,
+                f"errno {mode} installed link failed")
+        links[mode] = _link(work, output, static_product, object_path, stem,
+                            f"{stem}.crabc-link.json", mode)
+    for mode in DYNAMIC_MODES:
+        stem = f"dynamic-{mode}"
+        command = [str(physical_file(dynamic_product / "bin/crabc-cc-dynamic", "errno dynamic linker")),
+                   f"--dynamic-{mode}", mounted_path(object_path), "-o", mounted_path(work / stem)]
+        completed = subprocess.run(command, cwd=work, env=workload_environment(output),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        require(completed.returncode == 0 and not completed.stdout and not completed.stderr,
+                f"errno dynamic {mode} installed link failed")
+        links[stem] = _link(work, output, dynamic_product, object_path, stem,
+                            f"{stem}.crabc-link.json", mode)
+    return {"work": work.relative_to(output).as_posix(),
+            "source": identity(source, logical_path=source.relative_to(output).as_posix()),
+            "object": identity(object_path, logical_path=object_path.relative_to(output).as_posix()),
+            "links": links}
+
+
+def _replay_errno_links(output: Path, static_product: Path, dynamic_product: Path,
+                        observed: object) -> dict[str, object]:
+    item = exact(observed, {"work", "source", "object", "links"}, "errno import links")
+    require(item["work"] == "errno-import", "errno import work path differs")
+    work = physical_directory(output / item["work"], "errno import retained work")
+    source = physical_file(work / "workload.c", "errno import workload source")
+    object_path = physical_file(work / "workload.o", "errno import workload object")
+    require(source.read_text(encoding="utf-8") == ERRNO_WORKLOAD
+            and same(item["source"], identity(source, logical_path=source.relative_to(output).as_posix()))
+            and same(item["object"], identity(object_path, logical_path=object_path.relative_to(output).as_posix())),
+            "errno import installed workload differs")
+    links = exact(item["links"], {*STATIC_MODES, *(f"dynamic-{mode}" for mode in DYNAMIC_MODES)},
+                  "errno import link roster")
+    for mode in STATIC_MODES:
+        stem = f"static-{mode}"
+        _replay_link(work, output, static_product, object_path, stem,
+                     f"{stem}.crabc-link.json", mode, links[mode], export_dynamic=False)
+    for mode in DYNAMIC_MODES:
+        stem = f"dynamic-{mode}"
+        _replay_link(work, output, dynamic_product, object_path, stem,
+                     f"{stem}.crabc-link.json", mode, links[stem], export_dynamic=False)
+    return item
+
+
 def _interposition_observations(work: Path, output: Path, dynamic_product: Path,
                                 *, validate_links: bool = True) -> dict[str, object]:
     pairs: dict[str, object] = {}
@@ -1502,6 +1890,7 @@ def collect(*, static_preparation: Path, static_product: Path, dynamic_product: 
         inputs["c_runtime_import_bindings"],
     )
     public_weak = _public_weak_links(output, Path(static_product), Path(dynamic_product))
+    errno_import = _errno_links(output, Path(static_product), Path(dynamic_product))
     interposition_before = set(output.glob("owned-c-allocation-interposition.*"))
     interposition_command = _capture(output, "interposition", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), dynamic_mount], environment)
     interposition_work = _new_work(output, "owned-c-allocation-interposition", interposition_before)
@@ -1520,6 +1909,7 @@ def collect(*, static_preparation: Path, static_product: Path, dynamic_product: 
               "collector_source": source, "component_sources": source_records(ROOT), "inputs": inputs,
               "startup": {"command": startup_command, "work": startup_work.relative_to(output).as_posix(), "observation": startup},
               "public_weak": public_weak,
+              "errno_import": errno_import,
               "interposition": {"command": interposition_command, "work": interposition_work.relative_to(output).as_posix(), "observation": interposition}}
     (output / "report.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     os.chmod(output, 0o755)
@@ -1540,7 +1930,7 @@ def validate_report(report_path: Path, *, static_preparation: Path, static_produ
                     dynamic_product: Path, elf_facts_report: Path) -> dict[str, object]:
     report_path = physical_file(report_path, "allocator boundary report")
     output = physical_directory(report_path.parent, "allocator boundary report root")
-    report = exact(json_object(report_path, "allocator boundary report"), {"schema", "target", "status", "collector_source", "component_sources", "inputs", "startup", "public_weak", "interposition"}, "allocator boundary report")
+    report = exact(json_object(report_path, "allocator boundary report"), {"schema", "target", "status", "collector_source", "component_sources", "inputs", "startup", "public_weak", "errno_import", "interposition"}, "allocator boundary report")
     require(report["schema"] == SCHEMA and report["target"] == TARGET and report["status"] == {"family_completion": False, "promotion": False, "public_support": False},
             "allocator boundary report identity drifted")
     require(same(report["collector_source"], inventory.collector_source_seal()), "collector source changed")
@@ -1560,6 +1950,7 @@ def validate_report(report_path: Path, *, static_preparation: Path, static_produ
         inputs["c_runtime_import_bindings"], startup["observation"],
     )
     _replay_public_weak_links(output, Path(static_product), Path(dynamic_product), report["public_weak"])
+    _replay_errno_links(output, Path(static_product), Path(dynamic_product), report["errno_import"])
     interposition = exact(report["interposition"], {"command", "work", "observation"}, "interposition report")
     interposition_work = physical_directory(output / interposition["work"], "interposition retained work")
     _validate_capture(output, interposition["command"], "interposition", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), dynamic_mount])

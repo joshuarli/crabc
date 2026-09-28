@@ -5356,7 +5356,7 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
     contract, import_names = _c_allocator_boundary_contract()
     _runtime_contract, runtime_roles = _c_allocator_runtime_import_contract()
     report = exact(report, {
-        'schema', 'target', 'status', 'collector_source', 'component_sources', 'inputs', 'startup', 'public_weak', 'interposition',
+        'schema', 'target', 'status', 'collector_source', 'component_sources', 'inputs', 'startup', 'public_weak', 'errno_import', 'interposition',
     }, 'native C allocator boundary reader report')
     require(report['schema'] == native_c_allocator_boundary.SCHEMA
             and report['target'] == native_c_allocator_boundary.TARGET
@@ -5472,6 +5472,13 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
         )
     except (KeyError, TypeError, ValueError, OSError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
         raise SelectionError(f'native C allocator public weak resolution rejected: {error}') from error
+    try:
+        errno_import_resolution = native_c_allocator_boundary.errno_import_resolution(
+            report, report_path=report_path, static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
+        )
+    except (KeyError, TypeError, ValueError, OSError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'native C allocator errno import resolution rejected: {error}') from error
     selected_products = {
         name: copy.deepcopy(current[name]) for name in (
             'static_manifest', 'static_libc', 'static_provenance', 'dynamic_manifest',
@@ -5497,6 +5504,7 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
         },
         'private_vm_resolution': private_vm_resolution,
         'public_weak_resolution': public_weak_resolution,
+        'errno_import_resolution': errno_import_resolution,
         'limits': list(C_ALLOCATOR_BOUNDARY_LIMITS),
     }
 
@@ -8962,86 +8970,172 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
     }]
 
 
-def attach_errno_static_imports(accounting: Mapping[str, Any], errno_join: Mapping[str, Any] | None,
-                                rust_members: Sequence[str], fixed_c_member: str) -> list[dict[str, Any]]:
-    """Bind the public errno accessor's ordinary static archive imports.
+def attach_errno_static_imports(accounting: Mapping[str, Any],
+                                companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Bind the six authenticated archive callers to one FS-relative accessor.
 
-    The errno lifecycle join authenticates the unique accessor placements.
-    The archive reconstruction authenticates Rust members and its one fixed C
-    member separately. Every undefined static occurrence must come from one
-    of those members and resolve to the selected defining Rust member.
+    The component reader replays the installed links and decodes every selected
+    direct call, the provider's static TLS offset, and the shared TPOFF64 slot.
+    This attachment still checks exact physical occurrences; a foreign archive
+    member cannot inherit another caller's final-image proof.
     """
-    if errno_join is None:
+    if companion is None:
         return []
-    rust = set(strings(list(rust_members), 'static Rust members', empty=False))
-    require(type(fixed_c_member) is str and fixed_c_member and fixed_c_member not in rust,
-            'errno static fixed C member differs')
-    records, placements, occurrences = _accounting_indexes(accounting, description='errno static imports')
+    companion = exact(companion, {
+        'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
+        'measurement_reports', 'account', 'private_vm_resolution',
+        'public_weak_resolution', 'errno_import_resolution', 'limits',
+    }, 'errno ordinary import companion')
+    require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
+            and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
+            'errno ordinary import companion differs')
+    projection = exact(companion['errno_import_resolution'], {
+        'static_provider_member', 'static_provider', 'shared_dynsym_provider',
+        'shared_symtab_provider', 'importers', 'static_final_links',
+        'shared_final', 'dynamic_final_import_absent',
+    }, 'errno ordinary import resolution')
+    runtime = companion['account']['c_runtime_imports']
+    claim = next((row for row in runtime['imports']
+                  if row['name'] == '__errno_location'), None)
+    require(claim is not None and claim['binding'] == 'GLOBAL'
+            and same(projection['static_provider_member'], claim['static_rust_provider_member'])
+            and same(projection['static_provider'], claim['static_rust_provider'])
+            and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
+            and same(projection['shared_symtab_provider'], claim['shared_symtab_provider'])
+            and projection['dynamic_final_import_absent'] is True,
+            'errno ordinary import provider account differs')
+    importers = projection['importers']
+    require(type(importers) is list and len(importers) == 6,
+            'errno ordinary import roster differs')
+    c_member = runtime['static_c_member']
+    member_indices = []
+    for item in importers:
+        item = exact(item, {'member', 'import', 'member_sha256', 'source_calls',
+                            'shared_caller_functions'}, 'errno ordinary archive importer')
+        member = exact(item['member'], {'member', 'member_index', 'member_occurrence'},
+                       'errno ordinary archive member')
+        require(type(member['member_index']) is int and member['member_index'] >= 0
+                and member['member_occurrence'] == 0
+                and type(item['member_sha256']) is str
+                and re.fullmatch(r'[0-9a-f]{64}', item['member_sha256']) is not None
+                and type(item['source_calls']) is list and item['source_calls']
+                and type(item['shared_caller_functions']) is list
+                and item['shared_caller_functions'],
+                'errno ordinary archive importer evidence differs')
+        member_indices.append(member['member_index'])
+    require(len(set(member_indices)) == len(importers)
+            and len([item for item in importers
+                     if item['member']['member_index'] == c_member['member_index']
+                     and item['member']['member'] == c_member['name']
+                     and item['member_sha256'] == c_member['sha256']]) == 1
+            and all(index != projection['static_provider_member']['member_index']
+                    for index in member_indices),
+            'errno ordinary import member roles differ')
+    records, placements, occurrences = _accounting_indexes(
+        accounting, description='errno ordinary import attachment')
     key = ('__errno_location', None, False)
     record = records.get(key)
-    if (record is None or ORDINARY_IMPORT_REASON not in record['unresolved']
-            or record['selection'].get('disposition') != 'public-provider'
-            or record['selection'].get('owner') != 'checked-header-provider-routing'
-            or record['selection'].get('group') != 'declared-callable-providers'):
+    require(record is not None
+            and record.get('selection', {}).get('disposition') == 'public-provider'
+            and record['selection'].get('owner') == 'checked-header-provider-routing',
+            'errno ordinary import selected owner differs')
+    if ORDINARY_IMPORT_REASON not in record['unresolved']:
         return []
-    public = [row for row in errno_join.get('public_identities', [])
-              if row.get('identity') == identity('__errno_location')]
-    if (len(public) != 1 or public[0].get('owner') != record['selection']['owner']
-            or public[0].get('static_placement_observed') is not True
-            or public[0].get('shared_placement_observed') is not True):
-        return []
-    static_placement = placements.get((key, 'candidate-static'))
-    shared_placement = placements.get((key, 'candidate-shared'))
-    if (not static_placement or static_placement.get('placement_observed') is not True
-            or static_placement.get('definition_count') != 1
-            or not shared_placement or shared_placement.get('placement_observed') is not True
-            or shared_placement.get('definition_count') != 1):
-        return []
-    rows = [row for row in occurrences.values() if row.get('role') != 'unnamed'
-            and row['row'].get('name') == '__errno_location'
-            and identity_key(row_identity(row['row'])) == key
-            and not row['artifact_key'].startswith('reference-')]
-    static = [row for row in rows if row['artifact_key'] == 'candidate-static']
-    shared = [row for row in rows if row['artifact_key'] == 'candidate-shared']
-    providers = [row for row in static if row['role'] == 'definition']
-    imports = [row for row in static if row['role'] == 'import']
-    if (len(providers) != 1 or not imports or len(static) != 1 + len(imports)
-            or len(rows) != len(static) + len(shared) or len(shared) != 2):
-        return []
-    provider = providers[0]
-    if (static_placement.get('occurrence_indices') != [provider['index']]
-            or public[0].get('static_occurrence_index') != provider['index']
-            or provider['table'] != '.symtab' or provider['member_name'] not in rust
-            or provider['member_occurrence'] != 0
-            or provider['row']['section_index'] == 'UND'
-            or provider['row']['type'] != 'FUNC' or provider['row']['binding'] != 'GLOBAL'
-            or provider['row']['visibility'] != 'DEFAULT'):
-        return []
-    if not (shared_placement.get('occurrence_indices') == [public[0].get('shared_occurrence_index')]
-            and {row['table'] for row in shared} == {'.dynsym', '.symtab'}
-            and all(row['role'] == 'definition' and row['row']['section_index'] != 'UND'
-                    and row['row']['type'] == 'FUNC' and row['row']['binding'] == 'GLOBAL'
-                    and row['row']['visibility'] == 'DEFAULT' for row in shared)
-            and same_definition_domain(shared[0], shared[1])):
-        return []
-    allowed = rust | {fixed_c_member}
-    if not (all(row['table'] == '.symtab' and row['member_name'] in allowed
-                and row['member_name'] != provider['member_name']
-                and row['member_occurrence'] == 0
-                and row['row']['section_index'] == 'UND'
-                and row['row']['type'] == 'NOTYPE'
-                and row['row']['binding'] == 'GLOBAL'
-                and row['row']['visibility'] == 'DEFAULT' for row in imports)
-            and any(row['member_name'] == fixed_c_member for row in imports)):
-        return []
+    rows = [row for row in occurrences.values()
+            if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
+            and row.get('row', {}).get('name') == '__errno_location']
+    static_imports = [row for row in rows if row.get('artifact_key') == 'candidate-static'
+                      and row.get('role') == 'import']
+    require(len(rows) == len(importers) + 3 and len(static_imports) == len(importers)
+            and all(sum(row.get('table') == '.symtab'
+                        and row.get('member_name') == item['member']['member']
+                        and row.get('member_index') == item['member']['member_index']
+                        and row.get('member_occurrence') == 0
+                        and all(row['row'].get(field) == value
+                                for field, value in item['import'].items())
+                        and row['row'].get('raw_name') == '__errno_location'
+                        and row['row'].get('version') is None
+                        and row['row'].get('version_default') is False
+                        for row in static_imports) == 1 for item in importers),
+            'errno ordinary import has a foreign or duplicate archive caller')
+    provider = projection['static_provider_member']
+    expected = (
+        ('candidate-static', '.symtab', projection['static_provider'], provider),
+        ('candidate-shared', '.dynsym', projection['shared_dynsym_provider'], None),
+        ('candidate-shared', '.symtab', projection['shared_symtab_provider'], None),
+    )
+    for artifact, table, metadata, member in expected:
+        matching = [row for row in rows if row.get('artifact_key') == artifact
+                    and row.get('table') == table and row.get('role') == 'definition'
+                    and (member is None or (row.get('member_name') == member['member']
+                         and row.get('member_index') == member['member_index']
+                         and row.get('member_occurrence') == 0))
+                    and all(row['row'].get(field) == value
+                            for field, value in metadata.items())]
+        require(len(matching) == 1, 'errno ordinary import has a foreign or duplicate provider')
+    for artifact in ('candidate-static', 'candidate-shared'):
+        placement = placements.get((key, artifact))
+        require(placement is not None and placement.get('placement_observed') is True
+                and placement.get('definition_count') == 1
+                and _metadata_difference_rows_are_empty(placement.get('metadata_differences'),
+                                                       'errno ordinary import placement')
+                and same(placement.get('expected_metadata'), {
+                    'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
+                'errno ordinary import provider placement differs')
+    final = exact(projection['static_final_links'], {'static', 'static-pie'},
+                  'errno ordinary final static links')
+    shared = exact(projection['shared_final'], {
+        'provider_address', 'tls_symbol_offset', 'tls_segment_size',
+        'tls_relocation_slot', 'importers',
+    }, 'errno ordinary shared final')
+    require(type(shared['provider_address']) is int and shared['provider_address'] > 0
+            and type(shared['tls_symbol_offset']) is int
+            and type(shared['tls_segment_size']) is int
+            and 0 <= shared['tls_symbol_offset'] < shared['tls_segment_size']
+            and type(shared['tls_relocation_slot']) is int
+            and [item.get('member') for item in shared['importers']] ==
+                [item['member'] for item in importers]
+            and all(type(item.get('calls')) is list and item['calls']
+                    and all(call.get('target_address') == shared['provider_address']
+                            for call in item['calls'])
+                    for item in shared['importers']),
+            'errno ordinary shared calls or TLS address differ')
+    for mode in ('static', 'static-pie'):
+        link = exact(final[mode], {'provider_member', 'provider_address',
+                                   'accessor_tls', 'importers'},
+                     f'errno ordinary {mode} final link')
+        tls = exact(link['accessor_tls'], {
+            'tls_symbol_offset', 'tls_segment_size', 'fs_displacement',
+        }, f'errno ordinary {mode} TLS address')
+        require(same(link['provider_member'], provider)
+                and type(link['provider_address']) is int and link['provider_address'] > 0
+                and type(tls['tls_symbol_offset']) is int
+                and type(tls['tls_segment_size']) is int
+                and 0 <= tls['tls_symbol_offset'] < tls['tls_segment_size']
+                and tls['fs_displacement'] == tls['tls_symbol_offset'] - tls['tls_segment_size']
+                and [item.get('member') for item in link['importers']] ==
+                    [item['member'] for item in importers],
+                f'errno ordinary {mode} provider or TLS address differs')
+        for linked, source_item in zip(link['importers'], importers):
+            linked = exact(linked, {'member', 'resolved_calls', 'discarded_calls'},
+                           f'errno ordinary {mode} importer calls')
+            calls = linked['resolved_calls']
+            require(type(calls) is list and calls
+                    and all(call.get('target_address') == link['provider_address']
+                            and type(call.get('call_address')) is int for call in calls)
+                    and sorted((call['section'], call['offset']) for call in
+                               calls + linked['discarded_calls']) ==
+                        sorted((call['section'], call['offset']) for call in source_item['source_calls']),
+                    f'errno ordinary {mode} importer final calls differ')
     _remove_identity_requirements(accounting, record, [ORDINARY_IMPORT_REASON],
-                                  description='errno static import')
+                                  description='errno ordinary import')
     return [{'identity': copy.deepcopy(record['identity']),
              'owner': record['selection']['owner'],
-             'provider_occurrence_index': provider['index'],
-             'provider_member': provider['member_name'],
-             'import_occurrence_indices': sorted(row['index'] for row in imports),
-             'import_members': sorted({row['member_name'] for row in imports}),
+             'provider_member': provider['member'],
+             'import_occurrence_indices': sorted(row['index'] for row in static_imports),
+             'import_members': [item['member']['member'] for item in importers],
+             'static_final_modes': ['static', 'static-pie'],
+             'shared_fs_tls_address': True,
              'discharged_reason': ORDINARY_IMPORT_REASON}]
 
 
@@ -9149,7 +9243,7 @@ def attach_native_c_allocator_boundary(accounting: Mapping[str, Any],
         return []
     companion = exact(companion, {
         'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
-        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'limits',
+        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'errno_import_resolution', 'limits',
     }, 'native C allocator boundary companion')
     require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
             and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
@@ -9281,7 +9375,7 @@ def attach_native_c_allocator_runtime_imports(
         return []
     companion = exact(companion, {
         'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
-        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'limits',
+        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'errno_import_resolution', 'limits',
     }, 'native C allocator runtime-import companion')
     require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
             and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
@@ -9417,7 +9511,7 @@ def attach_native_c_allocator_private_vm_imports(
         return []
     companion = exact(companion, {
         'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
-        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'limits',
+        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'errno_import_resolution', 'limits',
     }, 'native C allocator private VM companion')
     require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
             and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
@@ -9543,7 +9637,7 @@ def attach_native_c_allocator_public_weak_imports(
         return []
     companion = exact(companion, {
         'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
-        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'limits',
+        'measurement_reports', 'account', 'private_vm_resolution', 'public_weak_resolution', 'errno_import_resolution', 'limits',
     }, 'native C allocator public weak companion')
     require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
             and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
@@ -11797,11 +11891,6 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'errno_storage_lifecycle_report', accounting, errno_storage_lifecycle_companion,
         lambda: attach_errno_storage_lifecycle(accounting, errno_storage_lifecycle_companion, inputs))
     archive_map = fixed_c_producer_metadata_companion['account']['archive_map']
-    errno_static_import_joins = attach_errno_static_imports(
-        accounting,
-        errno_storage_lifecycle_joins[0] if len(errno_storage_lifecycle_joins) == 1 else None,
-        archive_map['static_rust_members'], archive_map['static_c_member'],
-    )
     stack_check_static_import_joins = attach_stack_check_static_import(
         accounting, archive_map['static_rust_members'], archive_map['static_c_member'],
     )
@@ -11822,6 +11911,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'native_c_allocator_public_weak_import_resolution', accounting,
         native_c_allocator_boundary_companion,
         lambda: attach_native_c_allocator_public_weak_imports(accounting, native_c_allocator_boundary_companion))
+    errno_static_import_joins, _ = _attach(
+        rejected, 'native_c_allocator_errno_import_resolution', accounting,
+        native_c_allocator_boundary_companion,
+        lambda: attach_errno_static_imports(accounting, native_c_allocator_boundary_companion))
     rust_allocation_handler_joins, _ = _attach(
         rejected, 'rust_allocation_handler_provenance', accounting, native_c_allocator_boundary_companion,
         lambda: attach_rust_allocation_handlers(

@@ -317,6 +317,21 @@ exact archive importer occurrences, unique weak provider placements, and all
 final call targets before discharging either ordinary-import reason. Foreign
 or duplicate importers/providers and foreign final targets reject the join.
 
+The C allocator receipt also binds the ordinary `__errno_location` import
+through a focused installed-header link that selects all six archive callers:
+the fixed C member and five Rust libc members. Its reader checks every source
+`PLT32` relocation, records discarded sections, and decodes every surviving
+ET_EXEC and static-PIE call to the unique global accessor. The accessor reads
+the FS base and returns the selected four-byte TLS slot using the final
+`PT_TLS` size and TLS symbol offset. Shared libc retains the global accessor
+in both symbol tables, with direct calls from the corresponding C and Rust
+functions and a `TPOFF64` relocation for the same FS-relative TLS address.
+The focused dynamic executables load the selected libc without importing the
+accessor implementation themselves. The selector rejects foreign or duplicate
+archive callers/providers, wrong call targets, and mismatched TLS address
+expressions before removing this one ordinary-import reason. Per-thread
+lifecycle and broader TLS semantics remain separate receipt obligations.
+
 `--utmpx-receipt-report REPORT` is independently optional. Its owning
 process-free reader reconstructs the retained eight selected aliases and
 sixteen provider spellings, static executable function proof, dynamic import

@@ -24,6 +24,54 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_errno_import_relocations_require_direct_calls(self) -> None:
+        source = ("Relocation section '.rela.text' at offset 0x100 contains 1 entry:\n"
+                  "000000000000001d  0000000300000004 R_X86_64_PLT32 0000000000000000 __errno_location - 4\n")
+        self.assertEqual(BOUNDARY._errno_import_relocations(source),
+                         [{"section": ".text", "offset": 29}])
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "errno import relocation"):
+            BOUNDARY._errno_import_relocations(source.replace("R_X86_64_PLT32", "R_X86_64_GOTPCREL"))
+
+    def test_errno_final_call_and_fs_tls_address_reject_foreign_bytes(self) -> None:
+        image = bytearray(0x300)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 2)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x100)
+        struct.pack_into("<IIQQQQ", image, 120, 7, 4, 0, 0, 0, 0)
+        struct.pack_into("<Q", image, 120 + 40, 0x38)
+        image[0x110] = 0xe8
+        struct.pack_into("<i", image, 0x111, 0x1080 - 0x1015)
+        image[0x180:0x191] = (
+            b"\x64\x48\x8b\x04\x25\0\0\0\0\x48\x8d\x80"
+            + struct.pack("<i", -0x14) + b"\xc3"
+        )
+        member = "/workspace/current/libc.a(importer.o)"
+        call = {"section": ".text.call_errno", "offset": 1}
+        kwargs = {
+            "archive_member": member, "source_calls": [call],
+            "map_text": f"1010 1010 20 1 {member}:(.text.call_errno)",
+            "provider_address": 0x1080, "elf_type": 2,
+        }
+        self.assertEqual(BOUNDARY._errno_final_member_calls(bytes(image), **kwargs)[
+            "resolved_calls"][0]["target_address"], 0x1080)
+        symbols = "1: 0000000000000024 4 TLS LOCAL HIDDEN 9 module5errno5ERRNO"
+        self.assertEqual(BOUNDARY._errno_static_accessor(
+            bytes(image), 0x1080, symbols, 2)["fs_displacement"], -0x14)
+        forged = bytearray(image)
+        struct.pack_into("<i", forged, 0x111, 0x1090 - 0x1015)
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign provider"):
+            BOUNDARY._errno_final_member_calls(bytes(forged), **kwargs)
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "ambiguous"):
+            BOUNDARY._errno_final_member_calls(bytes(image), **{
+                **kwargs, "map_text": kwargs["map_text"] + "\n" + kwargs["map_text"],
+            })
+        forged = bytearray(image)
+        struct.pack_into("<i", forged, 0x18c, -0x18)
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign TLS slot"):
+            BOUNDARY._errno_static_accessor(bytes(forged), 0x1080, symbols, 2)
+
     def test_public_weak_import_relocations_keep_c_and_rust_call_forms_distinct(self) -> None:
         c = ("Relocation section '.rela.text.clock' at offset 0x100 contains 1 entry:\n"
              "0000000000000001  0000000100000004 R_X86_64_PLT32 0000000000000000 clock_gettime - 4\n")
@@ -260,6 +308,7 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 "collector_source": source, "component_sources": {}, "inputs": inputs,
                 "startup": {"command": {}, "work": "startup", "observation": {}},
                 "public_weak": {},
+                "errno_import": {},
                 "interposition": {"command": {}, "work": "interposition", "observation": {}},
             }
             report_path.write_text(json.dumps(report), encoding="utf-8")
@@ -271,6 +320,7 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 mock.patch.object(BOUNDARY, "_validate_capture"),
                 mock.patch.object(BOUNDARY, "_replay_startup_observations") as replay_startup,
                 mock.patch.object(BOUNDARY, "_replay_public_weak_links"),
+                mock.patch.object(BOUNDARY, "_replay_errno_links"),
                 mock.patch.object(BOUNDARY, "_replay_interposition_observations"),
             ):
                 self.assertEqual(

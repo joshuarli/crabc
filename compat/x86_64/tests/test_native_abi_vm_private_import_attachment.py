@@ -99,6 +99,7 @@ def fixture() -> tuple[dict, dict]:
             'static_final_links': final, 'shared_private_import_absent': True,
         },
         'public_weak_resolution': {'imports': [], 'dynamic_final_import_absent': True},
+        'errno_import_resolution': {},
         'limits': list(selection.C_ALLOCATOR_BOUNDARY_LIMITS),
     }
     return accounting, companion
