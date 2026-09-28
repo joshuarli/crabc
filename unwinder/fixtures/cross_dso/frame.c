@@ -1,9 +1,7 @@
 /* One C frame that Rust panics must unwind through.
  *
- * The consumer gate builds this file twice with the installed dynamic
- * driver: once as the executable's DT_NEEDED dependency and once as a
- * dlopen'd runtime DSO. GCC's default x86-64 asynchronous unwind tables give
- * the frame CFI; the provider must discover it through dl_iterate_phdr. The
+ * The same frame can reside in a linked static image or in an initial/runtime
+ * DSO. Its unwind tables describe the saved context in either location. The
  * volatile slot keeps the call from becoming a tail call, so the frame is
  * live while the callback panics.
  */

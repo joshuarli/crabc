@@ -483,6 +483,13 @@ stock and plugin fixtures preserve both cleanup frames, payload identity,
 worker cleanup, and backtrace capture as observable requirements. Reproducible
 consumer qualification is separate.
 
+The installed backtrace matrix compiles `fixtures/installed_panic_static.rs`
+and `fixtures/cross_dso/frame.c` into a fresh static executable. It checks
+main and worker panic cleanup and resume across the linked C frame, then
+rehashes the C object, final ELF, selected standalone provider, and owned link
+inputs in its existing receipt. This control uses pinned stock Rust std; the
+matrix's separate source-built static consumer supplies the build-std evidence.
+
 Initial/runtime DSO unwind beyond the loaded plugin, installed/extracted
 PIE/non-PIE, provider packaging, and malformed metadata checks remain required
 by the approved design before qualification is complete.

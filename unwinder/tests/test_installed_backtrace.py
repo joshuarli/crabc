@@ -13,6 +13,21 @@ WORK = Path(__file__).parents[2] / ".work/x86_64/unwinder-output-tests"
 
 
 class InstalledBacktraceReplay(unittest.TestCase):
+    def test_static_panic_requires_control_cleanup_resume_and_worker_completion(self):
+        self.assertEqual(backtrace.panic_static_result(0, backtrace.PANIC_STATIC_OUTPUT, ""),
+                         {"status": 0, "c_frame_control": 8, "direct_drops": 2,
+                          "resume_drops": 3, "worker_join": 0})
+        for output in (
+            backtrace.PANIC_STATIC_OUTPUT.replace("panic static-control=8\n", ""),
+            backtrace.PANIC_STATIC_OUTPUT.replace("panic direct worker drops=2", "panic direct worker drops=1"),
+            backtrace.PANIC_STATIC_OUTPUT.replace("panic resume main drops=3", "panic resume main drops=2"),
+            backtrace.PANIC_STATIC_OUTPUT.replace("panic worker-join=0", "panic worker-join=139"),
+        ):
+            with self.subTest(output=output), self.assertRaises(backtrace.owned.OwnedCleanupError):
+                backtrace.panic_static_result(0, output, "")
+        with self.assertRaises(backtrace.owned.OwnedCleanupError):
+            backtrace.panic_static_result(-11, backtrace.PANIC_STATIC_OUTPUT, "")
+
     def test_panic_dso_requires_control_cleanup_resume_and_worker_completion(self):
         self.assertEqual(backtrace.panic_dso_result(0, backtrace.PANIC_DSO_OUTPUT, ""),
                          {"status": 0, "mapped_control": 8, "direct_drops": 2,
