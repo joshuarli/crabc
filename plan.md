@@ -150,8 +150,10 @@ are not transferable passes for a different revision.
   images. A source-built 64-byte allocation now matches pinned C page-extension
   attempt and touched-byte counters before and after free. A fresh huge page
   now records its physical 589,824-byte allocation and one huge count; a
-  nonlocal free brings current huge bytes to zero, matching pinned C. All ten
-  statistics evidence rows pass on a clean source. Other page, aligned-OS huge, nonlocal-normal, and
+  nonlocal free brings current huge bytes to zero, matching pinned C. A
+  cross-thread normal free records the freeing worker's 8,8,-64 binned row
+  and merges to 72,72,0 process bytes. All 11 statistics evidence rows pass
+  on a clean source. Other page, aligned-OS huge, and
   higher-level production statistics producers remain unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
