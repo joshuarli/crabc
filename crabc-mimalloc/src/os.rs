@@ -2925,7 +2925,7 @@ impl Mapping {
             return Ok(true);
         };
         process.subprocess.vm_statistics().reset(range.length);
-        reset_with_advice(&RESET_ADVICE, |advice| {
+        let result = reset_with_advice(&RESET_ADVICE, |advice| {
             // SAFETY: `range` is a complete-page subrange of this live
             // mapping. The advisory does not create aliases or change the
             // mapping's release owner.
@@ -2936,7 +2936,15 @@ impl Mapping {
             fault_before(FaultPoint::Purge)?;
             unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) }
         })
-        .map(|()| true)
+        .map(|()| true);
+        if let Err(error) = &result {
+            // The failed advisory keeps the mapping live. Report its exact
+            // attempted range after the unconditional reset counters advance.
+            process.policy.source_warning(SourceFormattedMessage::os_reset_failure(
+                *error, range.address.addr(), range.length,
+            ));
+        }
+        result
     }
 
     /// Runs the no-callback `_mi_os_purge_ex` branch for one paired process
