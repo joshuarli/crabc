@@ -70,6 +70,10 @@
       "runner": "compat/allocator/x86_64_m6_main_abandoned_os_visitor.py",
       "scope": "Source-built pinned-C/native-adapter mi_heap_visit_abandoned_blocks on the process main Heap with a main-thread OS singleton and a later worker-abandoned OS singleton: source OS-list membership and order, freed worker page omission, area/block early stops, and null-Heap selection."
     },
+    "differential:main-abandoned-mixed-heap-visitor": {
+      "runner": "compat/allocator/x86_64_m6_main_abandoned_mixed_visitor.py",
+      "scope": "Source-built pinned-C/native-adapter process-main abandoned visitation over two worker regular bins and an OS singleton allocated in reverse traversal order, with separate live main-thread regular and OS pages: exact bitmap/list membership, bin-before-OS order, freed block/page omission, area/block early stops in each selected page, and null-Heap selection."
+    },
     "differential:public-theap": {
       "runner": null,
       "scope": "Pinned-C/Rust default-Theap switching and direct Theap operation traces."
@@ -241,10 +245,11 @@
         "differential:abandoned-combined-heap-visitor",
         "differential:main-abandoned-heap-visitor",
         "differential:main-abandoned-os-heap-visitor",
+        "differential:main-abandoned-mixed-heap-visitor",
         "unit:heap-statistics-visitation"
       ],
       "blocked_by": [
-        "mi_heap_visit_blocks is exported for quiescent non-main and process-main Heaps of the main subprocess. The shared adapter covers regular-before-OS singleton order, live-block and freed-block filtering, and area/block early stops. A clean-process differential covers exact main-Heap area/block populations through 1 to 1000 non-main Heaps and detached metadata collection. mi_heap_visit_abandoned_blocks is source-differentiated for worker-abandoned regular and OS singleton pages, individually and together on one non-main Heap, for a worker regular page on the process main Heap with a separate live regular page, and for a worker OS singleton on the process main Heap with an earlier live main-thread OS singleton. Pinned source places each live OS singleton on the abandoned list immediately, so the process-main OS case proves list order and freed-page omission rather than selection against a non-abandoned OS page. Other mixed workloads and multiple-bin abandoned-page combinations, child-subprocess and full concurrent visitation, Heap statistics, and complete lifetime evidence remain open."
+        "mi_heap_visit_blocks is exported for quiescent non-main and process-main Heaps of the main subprocess. The shared adapter covers regular-before-OS singleton order, live-block and freed-block filtering, and area/block early stops. A clean-process differential covers exact main-Heap area/block populations through 1 to 1000 non-main Heaps and detached metadata collection. mi_heap_visit_abandoned_blocks is source-differentiated for worker-abandoned regular and OS singleton pages on a non-main Heap; process-main fixtures cover a selected regular bitmap page against a non-abandoned same-size page, live OS-list order, and a bounded combination of two regular bins and OS pages with live main-thread regular controls. Pinned source places each live OS singleton on the abandoned list immediately. These fixtures cover freed-block and freed-page omission, area/block early stops, and null-Heap selection. Broader mixed workloads, child-subprocess and full concurrent visitation, Heap statistics, and complete lifetime evidence remain open."
       ]
     },
     {
