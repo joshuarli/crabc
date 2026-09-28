@@ -34,7 +34,9 @@ are not transferable passes for a different revision.
   publish receipts; `performance.release` is a read-only receipt gate whose
   runtime, native-facade and allocator M9 inputs do not exist yet. Allocator
   M5 passes six of ten gates. C mimalloc remains the selected
-  backend; allocator M2–M11 remain open. Every freestanding-C runner builds `libc.a` through
+  backend; allocator M2–M11 remain open. The full M2 runner records complete
+  metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
+  arenas, initialization, and fault injection remain partial. Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
   measures the Rust local path at about 0.33× pinned C single-thread with
@@ -47,9 +49,10 @@ are not transferable passes for a different revision.
   classifies every intentional difference (`difference_kind`). The M8
   owned-libc integration gate exists; the named `unown_with`
   release-then-classify race has a source-bound regression, and the canonical
-  native allocator stress plus three soak seeds pass. `m8.rust-std` passes on
-  source-built native-shadow products with a rehashed consumer receipt; full
-  M8 remains open. All 57 `native_*` integration targets pass; the earlier attachment
+  native allocator stress plus three soak seeds pass. `m8.rust-std` and
+  `m8.lua` pass on source-built native-shadow products with physically reread
+  consumer receipts on their respective source revisions; full M8 and the
+  merged-revision qualification remain open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; full M7 remains open. Static
   replacement now has a source-bound installed sweep with zero divergent
@@ -116,7 +119,7 @@ are not transferable passes for a different revision.
      cohort. The source-built static libc now compiles and links both
      freestanding C and stock Rust std consumers, and automatic exit selects
      the signed native `destroy_on_exit` behavior; their merged-revision
-     qualification remains open. `m8.rust-std` passes on source-built
+     qualification remains open. `m8.rust-std` and `m8.lua` pass on source-built
      native-shadow products; the other M8 leaves and merged-revision
      qualification remain open. Known open items from the last lane reports:
      `materialized-dynamic-sysroot` still has load-sensitive deadlines (aio
