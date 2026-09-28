@@ -1,4 +1,7 @@
-/* Observe a worker's level-one statistics before and after its owner merges. */
+/* Observe a worker's statistics before and after its owner merges. */
+#ifndef CRABC_WORKER_STAT_LEVEL
+#define CRABC_WORKER_STAT_LEVEL 1
+#endif
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +11,9 @@
 
 static mi_stats_t before, allocated, reset, freed, exited;
 static size_t usable, second_usable;
+#if CRABC_WORKER_STAT_LEVEL > 1
+static size_t first_bin, second_bin;
+#endif
 static char output[4][32768];
 static size_t output_length;
 static char* output_target;
@@ -24,6 +30,15 @@ static void read_stats(mi_stats_t* stats) {
   mi_stats_init(stats);
   if (!mi_stats_get(stats)) abort();
 }
+
+#if CRABC_WORKER_STAT_LEVEL > 1
+static size_t bin_for_size(size_t size) {
+  for (size_t bin = 1; bin < MI_BIN_HUGE; bin++) {
+    if (mi_stats_get_bin_size(bin) == size) return bin;
+  }
+  abort();
+}
+#endif
 
 static void print_worker(unsigned index) {
   output_target = output[index];
@@ -44,13 +59,19 @@ static void* worker(void* argument) {
   void* block = mi_malloc(64);
   if (block == NULL) abort();
   usable = mi_usable_size(block);
+#if CRABC_WORKER_STAT_LEVEL > 1
+  first_bin = bin_for_size(usable);
+#endif
   print_worker(0);
   read_stats(&allocated);
   /* Printing merged the first block into the Heap. The second block leaves
      a fresh Theap record whose reset merge is visible in the next print. */
-  void* second = mi_malloc(64);
+  void* second = mi_malloc(CRABC_WORKER_STAT_LEVEL > 1 ? 32768 : 64);
   if (second == NULL) abort();
   second_usable = mi_usable_size(second);
+#if CRABC_WORKER_STAT_LEVEL > 1
+  second_bin = bin_for_size(second_usable);
+#endif
   mi_stats_reset();
   print_worker(1);
   read_stats(&reset);
@@ -76,6 +97,13 @@ static void stage(const char* name, const mi_stats_t* stats) {
   count(name, "theaps", &stats->theaps, &before.theaps);
   printf("%s.normal_count=%lld\n", name,
          (long long)(stats->malloc_normal_count.total - before.malloc_normal_count.total));
+#if CRABC_WORKER_STAT_LEVEL > 1
+  count(name, "requested", &stats->malloc_requested, &before.malloc_requested);
+  count(name, "first_bin", &stats->malloc_bins[first_bin], &before.malloc_bins[first_bin]);
+  count(name, "second_bin", &stats->malloc_bins[second_bin], &before.malloc_bins[second_bin]);
+  count(name, "first_page_bin", &stats->page_bins[first_bin], &before.page_bins[first_bin]);
+  count(name, "second_page_bin", &stats->page_bins[second_bin], &before.page_bins[second_bin]);
+#endif
 }
 
 static void output_row(unsigned index, const char* key, const char* label) {
@@ -98,6 +126,14 @@ static void output_owner(unsigned index, const char* key) {
   printf("\n");
 }
 
+#if CRABC_WORKER_STAT_LEVEL > 1
+static void output_full(unsigned index, const char* key) {
+  printf("%s=", key);
+  for (const char* p = output[index]; *p != 0; p++) printf("%02x", (unsigned char)*p);
+  printf("\n");
+}
+#endif
+
 int main(void) {
   pthread_t thread;
   read_stats(&before);
@@ -106,9 +142,13 @@ int main(void) {
   read_stats(&exited);
   print_process();
   printf("CRABC_MI_M7_STATISTICS_WORKER_RESET_TRACE_BEGIN\n");
-  printf("profile.level=1\n");
+  printf("profile.level=%d\n", CRABC_WORKER_STAT_LEVEL);
   printf("allocation.usable=%zu\n", usable);
   printf("allocation.second_usable=%zu\n", second_usable);
+#if CRABC_WORKER_STAT_LEVEL > 1
+  printf("allocation.first_bin=%zu\n", first_bin);
+  printf("allocation.second_bin=%zu\n", second_bin);
+#endif
   stage("allocated", &allocated);
   stage("reset", &reset);
   stage("freed", &freed);
@@ -125,6 +165,21 @@ int main(void) {
   output_row(2, "worker.freed_total", "total");
   output_row(3, "process.exited_binned", "binned");
   output_row(3, "process.exited_total", "total");
+#if CRABC_WORKER_STAT_LEVEL > 1
+  char first_label[32], second_label[32];
+  snprintf(first_label, sizeof(first_label), "bin%2s  %3zu", "S", first_bin);
+  snprintf(second_label, sizeof(second_label), "bin%2s  %3zu", "M", second_bin);
+  output_row(0, "worker.live_first_bin", first_label);
+  output_row(0, "worker.live_requested", "malloc req");
+  output_row(1, "worker.reset_second_bin", second_label);
+  output_row(3, "process.exited_first_bin", first_label);
+  output_row(3, "process.exited_second_bin", second_label);
+  output_row(3, "process.exited_requested", "malloc req");
+  output_full(0, "worker.live_full");
+  output_full(1, "worker.reset_full");
+  output_full(2, "worker.freed_full");
+  output_full(3, "process.exited_full");
+#endif
   printf("CRABC_MI_M7_STATISTICS_WORKER_RESET_TRACE_END\n");
   return 0;
 }

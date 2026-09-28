@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import os
 from pathlib import Path
@@ -111,12 +112,118 @@ def main() -> int:
                 and b"ok" in bytes.fromhex(traces["c"]["process.exited_total"])):
             raise harness.HarnessError("pinned C lost the worker/process output sections")
         mismatch = sorted(key for key in traces["c"] if traces["c"][key] != traces["rust"][key])
+        level_two_flags = ["-DMI_STAT=2" if flag == "-DMI_STAT=0" else flag
+                           for flag in harness.CONFIGURATION_PROFILES["release"]]
+        level_two_common = [cc, "-std=c11", "-O2", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                            "-DCRABC_WORKER_STAT_LEVEL=2", *level_two_flags,
+                            "-I", str(source / "include"), str(FIXTURE)]
+        level_two_c_driver = temp / "worker-reset-level-two-c"
+        level_two_c_build = harness.command_record([
+            *level_two_common, str(source / "src/static.c"), "-pthread", "-o", str(level_two_c_driver),
+        ], cwd=source)
+        harness.require_success(level_two_c_build, "pinned level-two worker statistics build")
+        level_two_target = temp / "cargo-target-level-two"
+        level_two_rust_build = harness.command_record([
+            cargo, "build", "--locked", "--offline", "--release", "--target", TARGET,
+            "-p", "crabc-mimalloc-native-mi-adapter", "--no-default-features",
+            "--features", "crabc-mimalloc/mi-stat-2", "--target-dir", str(level_two_target),
+        ], cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=3600)
+        harness.require_success(level_two_rust_build, "native level-two worker statistics adapter build")
+        level_two_rust_driver = temp / "worker-reset-level-two-rust"
+        level_two_library = level_two_target / TARGET / "release" / "libcrabc_mimalloc_native_mi_adapter.a"
+        level_two_rust_link = harness.command_record([
+            *level_two_common, str(level_two_library), "-pthread", "-o", str(level_two_rust_driver),
+        ], cwd=source)
+        harness.require_success(level_two_rust_link, "native level-two worker statistics driver link")
+        level_two_keys = expected_keys | {"allocation.first_bin", "allocation.second_bin"}
+        level_two_keys.update(f"{stage}.{field}" for stage in stages for field in (
+            "requested", "first_bin", "second_bin", "first_page_bin", "second_page_bin"))
+        level_two_keys.update(("worker.live_first_bin", "worker.live_requested",
+                               "worker.reset_second_bin", "process.exited_first_bin",
+                               "process.exited_second_bin", "process.exited_requested"))
+        raw_output_keys = {"worker.live_full", "worker.reset_full", "worker.freed_full",
+                           "process.exited_full"}
+        level_two_keys.update(raw_output_keys)
+        level_two_traces = {}
+        level_two_executions = {}
+        for side, driver in (("c", level_two_c_driver), ("rust", level_two_rust_driver)):
+            execution = harness.command_record([str(driver)], cwd=source, env={}, timeout_seconds=60)
+            harness.require_success(execution, f"{side} level-two worker statistics process")
+            trace = parse_options_trace(str(execution["stdout"]), f"{side} level two", BEGIN, END)
+            if set(trace) != level_two_keys or trace["profile.level"] != "2":
+                raise harness.HarnessError(f"{side} omitted level-two worker reset observations")
+            for stage in stages:
+                for field in ("normal", "threads", "heaps", "theaps", "requested", "first_bin",
+                              "second_bin", "first_page_bin", "second_page_bin"):
+                    if len(trace[f"{stage}.{field}"].split(",")) != 3:
+                        raise harness.HarnessError(f"{side} malformed {stage}.{field}")
+            for key in level_two_keys:
+                if key.startswith(("worker.", "process.")) and trace[key] != "absent":
+                    try:
+                        bytes.fromhex(trace[key])
+                    except ValueError as error:
+                        raise harness.HarnessError(f"{side} malformed {key}") from error
+            level_two_traces[side] = trace
+            level_two_executions[side] = execution["command"]
+        level_two_source_expected = {
+            "profile.level": "2", "allocation.usable": "64", "allocation.second_usable": "32768",
+            "allocation.first_bin": "8", "allocation.second_bin": "44",
+            "allocated.normal": "64,64,64", "reset.normal": "32832,32832,32832",
+            "freed.normal": "0,32832,32832", "exited.normal": "0,32832,32832",
+            "allocated.requested": "64,64,64", "reset.requested": "32832,32832,32832",
+            "freed.requested": "32832,32832,32832", "exited.requested": "32832,32832,32832",
+            "allocated.normal_count": "1", "reset.normal_count": "2",
+            "freed.normal_count": "2", "exited.normal_count": "2",
+            "allocated.first_bin": "1,1,1", "reset.first_bin": "1,1,1",
+            "freed.first_bin": "0,1,1", "exited.first_bin": "0,1,1",
+            "allocated.second_bin": "0,0,0", "reset.second_bin": "1,1,1",
+            "freed.second_bin": "0,1,1", "exited.second_bin": "0,1,1",
+            "allocated.first_page_bin": "1,1,1", "reset.first_page_bin": "1,1,1",
+            "freed.first_page_bin": "1,1,1", "exited.first_page_bin": "0,1,1",
+            "allocated.second_page_bin": "0,0,0", "reset.second_page_bin": "1,1,1",
+            "freed.second_page_bin": "1,1,1", "exited.second_page_bin": "0,1,1",
+        }
+        level_two_source_expected.update({f"{stage}.heaps": "0,0,0" for stage in stages})
+        level_two_source_expected.update({
+            f"{stage}.threads": "0,1,1" if stage == "exited" else "1,1,1"
+            for stage in stages})
+        level_two_source_expected.update({
+            f"{stage}.theaps": "0,1,1" if stage == "exited" else "1,1,1"
+            for stage in stages})
+        if any(level_two_traces["c"][key] != value
+               for key, value in level_two_source_expected.items()):
+            raise harness.HarnessError("pinned C lost level-two worker reset accounting")
+        level_two_c = level_two_traces["c"]
+        if not (level_two_c["worker.live_owner"] == level_two_c["worker.reset_owner"]
+                == level_two_c["worker.freed_owner"]
+                and bytes.fromhex(level_two_c["worker.live_owner"]).startswith(b"heap ")
+                and bytes.fromhex(level_two_c["process.exited_owner"]).startswith(b"subproc ")
+                and b"not all freed" in bytes.fromhex(level_two_c["worker.live_first_bin"])
+                and b"64" in bytes.fromhex(level_two_c["worker.live_requested"])
+                and level_two_c["worker.reset_second_bin"] == "absent"
+                and b"ok" in bytes.fromhex(level_two_c["process.exited_first_bin"])
+                and b"ok" in bytes.fromhex(level_two_c["process.exited_second_bin"])
+                and b"32.1 KiB" in bytes.fromhex(level_two_c["process.exited_requested"])):
+            raise harness.HarnessError("pinned C lost level-two worker/process output")
+        level_two_mismatch = sorted(key for key in level_two_traces["c"].keys() - raw_output_keys
+                                    if level_two_traces["c"][key] != level_two_traces["rust"][key])
+        raw_output_mismatch = sorted(key for key in raw_output_keys
+                                     if level_two_traces["c"][key] != level_two_traces["rust"][key])
+        raw_output_diffs = {
+            key: list(difflib.unified_diff(
+                bytes.fromhex(level_two_traces["c"][key]).decode().splitlines(),
+                bytes.fromhex(level_two_traces["rust"][key]).decode().splitlines(),
+                fromfile="pinned-c", tofile="rust", lineterm=""))
+            for key in raw_output_mismatch
+        }
         report = {
-            "status": "red" if mismatch else "passed", "git": engine.git_provenance(),
+            "status": ("red" if mismatch or level_two_mismatch else
+                       "partial" if raw_output_mismatch else "passed"),
+            "git": engine.git_provenance(),
             "pin": {key: pin[key] for key in ("tag", "sha256", "revision")},
             "source_files": harness.source_file_records(source, (
                 "include/mimalloc-stats.h", "src/stats.c", "src/init.c", "src/heap.c",
-                "src/theap.c", "src/static.c")),
+                "src/theap.c", "src/alloc.c", "src/free.c", "src/page.c", "src/static.c")),
             "fixture_sha256": hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
             "reader_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "rust_source_sha256": {
@@ -127,12 +234,23 @@ def main() -> int:
             "c_build_command": c_build["command"], "rust_build_command": rust_build["command"],
             "rust_link_command": rust_link["command"], "executions": executions,
             "traces": traces, "mismatch_keys": mismatch,
+            "level_two_c_build_command": level_two_c_build["command"],
+            "level_two_rust_build_command": level_two_rust_build["command"],
+            "level_two_rust_link_command": level_two_rust_link["command"],
+            "level_two_executions": level_two_executions,
+            "level_two_traces": level_two_traces, "level_two_mismatch_keys": level_two_mismatch,
+            "level_two_raw_output_mismatch_keys": raw_output_mismatch,
+            "level_two_raw_output_status": "unproved" if raw_output_mismatch else "matched",
+            "level_two_raw_output_diffs": raw_output_diffs,
         }
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     harness.write_json(REPORT, report)
-    print("worker reset: " + ("RED " + ",".join(mismatch) if mismatch else "matched"))
+    print("worker reset level one: " + ("RED " + ",".join(mismatch) if mismatch else "matched"))
+    print("worker reset level two: " + ("RED " + ",".join(level_two_mismatch)
+                                        if level_two_mismatch else "matched"))
+    print("worker reset level two full output: " + report["level_two_raw_output_status"])
     print(f"report: {harness.relative(REPORT)}")
-    return 1 if mismatch else 0
+    return 0 if report["status"] == "passed" else 1
 
 
 if __name__ == "__main__":
