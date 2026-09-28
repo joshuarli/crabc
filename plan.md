@@ -235,7 +235,11 @@ are not transferable passes for a different revision.
   remaining conditions; its full gate remains partial.
   A second explicit arena metadata-commit fault now matches 34 pinned-C/Rust
   observations while an earlier registered arena remains usable and releases
-  terminally; shared M2 registration is pending.
+  terminally; shared M2 registration is pending. The separate explicit arena
+  metadata-protection fault is now registered in the shared M2 VM gate with
+  clean and failed-cleanup profiles, each matching 41 C/Rust fields. A clean
+  source-bound rerun passes all 88 runnable checks, including all 49 VM checks;
+  VM, arenas, initialization, and fault-injection blockers remain named.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
@@ -463,8 +467,9 @@ are not transferable passes for a different revision.
   and deterministic `MI_STAT=2` rows match pinned C; static teardown retains
   that count as pinned C does. Full raw output matched in one clean run; a
   later rerun differed only in elapsed and process system time.
-  The prior 16 statistics evidence
-  rows pass on a clean source, and the focused differentials pass; the
+  A clean full M7 gate passes all 36 runnable rows, including 21 statistics
+  evidence rows, while eight required gates remain blocked by their named
+  missing profiles or producers. The focused differentials pass; the
   source-built OS-large remote-free probe matches 35 statistics payload keys;
   its full 50-key stage trace remains unproved because a 64 KiB PageMap submap
   can be charged at different stages under different address placement. A
