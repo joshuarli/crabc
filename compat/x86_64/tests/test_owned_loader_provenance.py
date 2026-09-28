@@ -240,6 +240,10 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
         cargo = record["cargo"]
         argv = cargo["argv"]
         rustflags = cargo["rustflags"]
+        container_record = json.loads(json.dumps(record))
+        container_flags = rustflags.replace(str(self.root), "/workspace")
+        container_record["cargo"] = {"argv": argv, "rustflags": container_flags}
+        read(container_record)
         tampered = (
             ("missing size profile", argv[:argv.index("--config")] + argv[argv.index("--target"):], rustflags),
             ("changed size profile", [
@@ -249,6 +253,8 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             ("extra Cargo option", argv + ["--offline"], rustflags),
             ("missing linker script", argv, rustflags.split(" -C link-arg=")[0]),
             ("changed linker script", argv, rustflags.replace("x86_64-owned-bss-layout.ld", "other.ld")),
+            ("foreign linker root", argv, container_flags.replace("/workspace/", "/tmp/workspace/")),
+            ("changed container Cargo command", argv + ["--offline"], container_flags),
         )
         for name, command, flags in tampered:
             changed = json.loads(json.dumps(record))

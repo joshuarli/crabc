@@ -206,10 +206,14 @@ def load_loader_provenance(product: Path) -> tuple[dict[str, Any], dict[str, Any
         "--config", 'profile.release.opt-level="s"',
         "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
     ]
-    expected_rustflags = LOADER_RUSTFLAGS + "".join(
-        f" -C link-arg=-Wl,-T,{ROOT / script}" for script in LOADER_LINKER_SCRIPTS
+    # The selected build mounts this checkout at /workspace; host replay sees its host path.
+    expected_rustflags = tuple(
+        LOADER_RUSTFLAGS + "".join(
+            f" -C link-arg=-Wl,-T,{source_root / script}" for script in LOADER_LINKER_SCRIPTS
+        )
+        for source_root in (ROOT, Path("/workspace"))
     )
-    require(cargo == {"argv": expected_argv, "rustflags": expected_rustflags},
+    require(cargo["argv"] == expected_argv and cargo["rustflags"] in expected_rustflags,
             "loader Cargo command or RUSTFLAGS differ")
 
     dependencies = record["compiler_dependencies"]
