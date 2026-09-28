@@ -186,6 +186,8 @@ are not transferable passes for a different revision.
   across PIE and non-PIE kernel/direct entry, with static baselines. The same
   eleven-cell matrix now passes a main-owned cookie stream through a DSO,
   including read/seek/write callbacks, past-EOF reads, and one close callback.
+  It also passes a DSO-owned cookie stream returned to main, which closes it
+  through the DSO's callback after buffered I/O and shared errno checks.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
