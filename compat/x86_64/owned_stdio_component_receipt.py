@@ -732,6 +732,66 @@ def elf_section_layout(executable: Path) -> dict[str, tuple[int, int]]:
     return result
 
 
+def archive_member_names(archive: Path) -> set[str]:
+    """Resolve GNU archive symbol-index offsets through retained member headers."""
+
+    data = regular(archive, "link map archive").read_bytes()
+    require(data.startswith(b"!<arch>\n"), "link map archive format differs")
+    offset = 8
+    long_names: bytes | None = None
+    symbol_index: bytes | None = None
+    members: dict[str, int] = {}
+    while offset < len(data):
+        require(offset + 60 <= len(data), "link map archive member header is truncated")
+        header = data[offset:offset + 60]
+        require(header[58:60] == b"`\n", "link map archive member header differs")
+        raw_size = header[48:58].strip()
+        require(raw_size and raw_size.isdigit(), "link map archive member size is invalid")
+        size = int(raw_size)
+        start = offset + 60
+        end = start + size
+        next_offset = end + (size & 1)
+        require(next_offset <= len(data) and (size & 1 == 0 or data[end:next_offset] == b"\n"),
+                "link map archive member exceeds retained bytes")
+        raw_name = header[:16].rstrip(b" ")
+        if raw_name == b"/":
+            require(symbol_index is None, "link map archive has duplicate symbol indexes")
+            symbol_index = data[start:end]
+        elif raw_name == b"//":
+            require(long_names is None, "link map archive has duplicate long-name tables")
+            long_names = data[start:end]
+        else:
+            if raw_name.startswith(b"/") and raw_name[1:].isdigit():
+                name_offset = int(raw_name[1:])
+                require(long_names is not None and name_offset < len(long_names),
+                        "link map archive long-name offset is invalid")
+                name_end = long_names.find(b"/\n", name_offset)
+                require(name_end >= 0, "link map archive long name is unterminated")
+                encoded = long_names[name_offset:name_end]
+            else:
+                encoded = raw_name.removesuffix(b"/")
+            try:
+                name = encoded.decode("ascii")
+            except UnicodeDecodeError as error:
+                raise ReceiptError("link map archive member name is not ASCII") from error
+            require(name and "/" not in name and name not in members,
+                    "link map archive member roster is ambiguous")
+            members[name] = offset
+        offset = next_offset
+    require(symbol_index is not None and len(symbol_index) >= 4 and members,
+            "link map archive has no indexed members")
+    count = int.from_bytes(symbol_index[:4], "big")
+    names_offset = 4 + 4 * count
+    require(count > 0 and names_offset <= len(symbol_index)
+            and symbol_index[names_offset:].count(b"\0") >= count,
+            "link map archive symbol index is invalid")
+    indexed_offsets = {int.from_bytes(symbol_index[index:index + 4], "big")
+                       for index in range(4, names_offset, 4)}
+    require(indexed_offsets <= set(members.values()),
+            "link map archive symbol index references an unknown member")
+    return {name for name, position in members.items() if position in indexed_offsets}
+
+
 def validate_link_map(work: Path, name: str, product: Path, workload: Path) -> None:
     """Bind LLD's retained placements and input contributors to this output."""
 
@@ -755,6 +815,7 @@ def validate_link_map(work: Path, name: str, product: Path, workload: Path) -> N
     allowed = {str(workload), "<internal>", *(str(library / item) for item in direct)}
     archives = ("libcrabc-builtins.a", "libc.a") if static else ("libcrabc-builtins.a",)
     archive_prefixes = tuple(str(library / archive) + "(" for archive in archives)
+    member_index: dict[str, set[str]] = {}
     for line in lines[1:]:
         match = re.fullmatch(r"\s*([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)\s+\d+\s+(\S.*)", line)
         require(match is not None, label + " contains a non-LLD record")
@@ -764,9 +825,14 @@ def validate_link_map(work: Path, name: str, product: Path, workload: Path) -> N
             mapped[entry] = (address, size)
         elif ":(" in entry:
             source = entry.split(":(", 1)[0]
-            require(source in allowed or any(source.startswith(prefix) and source.endswith(")")
-                                             for prefix in archive_prefixes),
-                    label + " contains a foreign input")
+            if source not in allowed:
+                prefix = next((candidate for candidate in archive_prefixes
+                               if source.startswith(candidate) and source.endswith(")")), None)
+                require(prefix is not None, label + " contains a foreign input")
+                archive = prefix[:-1]
+                if archive not in member_index:
+                    member_index[archive] = archive_member_names(Path(archive))
+                require(source[len(prefix):-1] in member_index[archive], label + " archive member is absent")
             contributors.add(source)
     require(mapped == sections, label + " output sections differ from the executable")
     require(str(workload) in contributors, label + " omits the installed-header object")

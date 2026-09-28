@@ -72,6 +72,27 @@ def undefined_elf_object(*names: str) -> bytes:
     return bytes(header) + strings + symbols + b"\0" * 64 + bytes(string_section) + bytes(symbol_section)
 
 
+def gnu_archive(member: str, unindexed_member: str | None = None) -> bytes:
+    names = member.encode("ascii") + b"/\n"
+    if unindexed_member is not None:
+        names += unindexed_member.encode("ascii") + b"/\n"
+
+    def record(name: bytes, payload: bytes) -> bytes:
+        header = (name.ljust(16, b" ") + b"0".ljust(12, b" ")
+                  + b"0".ljust(6, b" ") + b"0".ljust(6, b" ")
+                  + b"644".ljust(8, b" ") + str(len(payload)).encode().ljust(10, b" ") + b"`\n")
+        return header + payload + (b"\n" if len(payload) & 1 else b"")
+
+    index = b"\0\0\0\1" + b"\0" * 4 + b"symbol\0"
+    member_offset = 8 + len(record(b"/", index)) + len(record(b"//", names))
+    index = index[:4] + member_offset.to_bytes(4, "big") + index[8:]
+    archive = b"!<arch>\n" + record(b"/", index) + record(b"//", names) + record(b"/0", b"member")
+    if unindexed_member is not None:
+        name_offset = len(member.encode("ascii")) + 2
+        archive += record(b"/" + str(name_offset).encode(), b"unindexed")
+    return archive
+
+
 class ReceiptFixture:
     """Small physical receipt whose product/link boundaries are mocked alone.
 
@@ -108,6 +129,9 @@ class ReceiptFixture:
         if static:
             (self.static / "bin").mkdir()
             (self.static / "share/crabc").mkdir(parents=True)
+            (self.static / "usr/lib").mkdir(parents=True)
+            (self.static / "usr/lib/libc.a").write_bytes(gnu_archive("c.synthetic_member.o", "c.unindexed_member.o"))
+            (self.static / "usr/lib/libcrabc-builtins.a").write_bytes(gnu_archive("crabc-builtins.o"))
             self.static_driver = self.static / "bin/crabc-cc"
             self.static_driver.write_bytes(b"static driver\n")
             self.static_driver.chmod(0o755)
@@ -256,6 +280,8 @@ class ReceiptFixture:
                     "             VMA              LMA     Size Align Out     In      Symbol\n"
                     "            1000             1000       10    16 .text\n"
                     f"            1000             1000        0     1         {self.static / 'usr/lib' / entry}:(.text)\n"
+                    f"            1000             1000        0     1         {self.static / 'usr/lib/libc.a'}(c.synthetic_member.o):(.text)\n"
+                    f"            1000             1000        0     1         {self.static / 'usr/lib/libcrabc-builtins.a'}(crabc-builtins.o):(.text)\n"
                     f"            1000             1000       10     1         {self.object}:(.text)\n"
                     "            2000             2000        4     1 .rodata\n"
                     f"            2000             2000        4     1         {self.object}:(.rodata)\n"
@@ -590,6 +616,30 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         path = self.fixture.work / "static-pie.crabc-link.map"
         path.write_bytes(path.read_bytes().replace(b"rcrt1.o:(.text)", b"crt1.o:(.text)"))
         with self.assertRaisesRegex(receipt.ReceiptError, "static pie link map contains a foreign input"):
+            self.validate(require_static=True)
+
+    def test_rehashed_static_map_cannot_name_an_absent_libc_member(self) -> None:
+        self.static_fixture()
+        path = self.fixture.work / "static.crabc-link.map"
+        path.write_bytes(path.read_bytes().replace(b"libc.a(c.synthetic_member.o)",
+                                                  b"libc.a(nonexistent-member.o)"))
+        with self.assertRaisesRegex(receipt.ReceiptError, "static link map archive member is absent"):
+            self.validate(require_static=True)
+
+    def test_rehashed_static_pie_map_cannot_name_an_absent_builtins_member(self) -> None:
+        self.static_fixture()
+        path = self.fixture.work / "static-pie.crabc-link.map"
+        path.write_bytes(path.read_bytes().replace(b"libcrabc-builtins.a(crabc-builtins.o)",
+                                                  b"libcrabc-builtins.a(nonexistent-member.o)"))
+        with self.assertRaisesRegex(receipt.ReceiptError, "static pie link map archive member is absent"):
+            self.validate(require_static=True)
+
+    def test_rehashed_static_map_cannot_name_an_unindexed_libc_member(self) -> None:
+        self.static_fixture()
+        path = self.fixture.work / "static.crabc-link.map"
+        path.write_bytes(path.read_bytes().replace(b"libc.a(c.synthetic_member.o)",
+                                                  b"libc.a(c.unindexed_member.o)"))
+        with self.assertRaisesRegex(receipt.ReceiptError, "static link map archive member is absent"):
             self.validate(require_static=True)
 
     def test_recomputed_hashes_cannot_replace_payload_audit(self) -> None:
